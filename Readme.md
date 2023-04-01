@@ -1,4 +1,4 @@
-== Flash Cpp Compiler ==
+## Flash Cpp Compiler
 
 Flash Cpp Compiler is a C++ compiler that focuses on compile speed rather than runtime speed.
 
