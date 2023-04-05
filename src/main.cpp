@@ -11,8 +11,8 @@
 #include "CommandLineParser.h"
 
 int main(int argc, char *argv[]) {
-    CommandLineParser parser(argc, argv);
-    CompileContext context;
+	CompileContext context;
+    CommandLineParser parser(argc, argv, context);
 
     if (parser.hasOption("h") || parser.hasOption("help")) {
         std::cout << "Help message" << std::endl;
