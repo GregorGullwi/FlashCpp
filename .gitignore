@@ -31,3 +31,5 @@ x64/Debug/FlashCpp.tlog/FlashCpp.lastbuildstate
 x64/Debug/FlashCpp.tlog/link.command.1.tlog
 x64/Debug/FlashCpp.tlog/link.read.1.tlog
 x64/Debug/FlashCpp.tlog/link.write.1.tlog
+Debug/
+.vs/
