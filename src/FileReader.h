@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <unordered_map>
 
 #include "CompileContext.h"
 #include "FileTree.h"
@@ -9,8 +10,8 @@
 #pragma once
 
 struct DefineDirective {
-	std::string_view name;
-	std::vector<std::string_view> args;
+	std::string name;
+	std::vector<std::string> args;
 	std::vector<std::string> body;
 };
 
@@ -20,6 +21,9 @@ public:
 
 	bool readFile(std::string_view file) {
 		std::cout << "readFile " << file << std::endl;
+		
+		if (proccessedHeaders_.find(std::string(file.begin(), file.end()))
+			return true;
 		
 		std::ifstream stream(file.data());
 		if (!stream.is_open()) {
@@ -33,6 +37,10 @@ public:
 		bool skipping = false;
 		bool in_comment = false;
 		while (std::getline(stream, line)) {
+			if (line.size() == 0) {
+				continue;
+			}
+			
 			if (in_comment) {
 				size_t end_comment_pos = line.find("*/");
 				if (end_comment_pos != std::string::npos) {
@@ -52,7 +60,7 @@ public:
 
 			size_t comment_pos = line.find("//");
 			if (comment_pos != std::string::npos) {
-				line = line.substr(0, comment_pos);
+				continue;
 			}
 
 			size_t start_comment_pos = line.find("/*");
@@ -62,7 +70,7 @@ public:
 					line.erase(start_comment_pos, end_comment_pos - start_comment_pos + 2);
 				} else {
 					in_comment = true;
-					line.erase(start_comment_pos);
+					continue;
 				}
 			}
 
@@ -96,6 +104,9 @@ public:
 			}
 			else if (line.find("#endif", 0) == 0) {
 				skipping = false;
+			}
+			else if (line.find("#pragma once", 0) == 0) {
+				proccessedHeaders_.insert(std::string(file.begin(), file.end()));
 			}
 			else {
 				// Handle other directives
@@ -174,5 +185,6 @@ private:
 
     const CompileContext& settings_;
     FileTree& tree_;
-    std::map<std::string_view, DefineDirective> defines_;
+    std::unordered_map<std::string, DefineDirective> defines_;
+	std::unordered_set<std::string> proccessedHeaders_;
 };
