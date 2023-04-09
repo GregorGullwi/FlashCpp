@@ -3,8 +3,6 @@
 #include <vector>
 #include <sstream>
 #include <unordered_map>
-#include <ctime>
-#include <iomanip>
 
 #include "CompileContext.h"
 #include "FileTree.h"
@@ -50,7 +48,9 @@ public:
 		std::stack<bool> skipping_stack;
 		skipping_stack.push(false); // Initial state: not skipping
 
+		long line_number = 0;
 		while (std::getline(stream, line)) {
+			++line_number;
 			if (in_comment) {
 				size_t end_comment_pos = line.find("*/");
 				if (end_comment_pos != std::string::npos) {
@@ -76,6 +76,10 @@ public:
 				continue;
 			}
 			
+			if (skipping_stack.size() == 0) {
+				std::cerr << "Internal compiler error in file " << file << ":" << line_number << std::endl;
+				return false;
+			}
 			const bool skipping = skipping_stack.top();
 			
 			// Find the position of the '#' character
@@ -87,12 +91,21 @@ public:
 					// Remove whitespaces between '#' and the directive
 					line = line.substr(0, directive_pos + 1) + line.substr(next_pos);
 				}
+				
+				size_t i;
+				while ((i = line.rfind('\\')) && (i == line.size() - 1)) {
+					std::string next_line;
+					std::getline(stream, next_line);
+					line.erase(line.end() - 1);
+					line.append(next_line);
+					++line_number;
+				}
 			}
 
 			if (skipping) {
 				if (line.find("#endif", 0) == 0) {
 					skipping_stack.pop();
-				} else if (line.find("#ifdef", 0) == 0 || line.find("#ifndef", 0) == 0) {
+				} else if (line.find("#if", 0) == 0) {
 					// Nesting, push a new skipping state
 					skipping_stack.push(true);
 				}
@@ -101,7 +114,10 @@ public:
 
 			size_t comment_pos = line.find("//");
 			if (comment_pos != std::string::npos) {
-				continue;
+				if (comment_pos == 0) {
+					continue;
+				}
+				line = line.substr(0, comment_pos);
 			}
 			
 			if (size_t filePos = line.find("__FILE__"); filePos != std::string::npos) {
@@ -143,7 +159,7 @@ public:
 			}
 			else if (line.find("#if", 0) == 0) {
 				std::istringstream iss(line.substr(3));
-				int expression_result = !evaluate_expression(iss);
+				long expression_result = evaluate_expression(iss);
 				skipping_stack.push(expression_result == 0);
 			}
 			else if (line.find("#else", 0) == 0) {
@@ -169,7 +185,7 @@ public:
 	}
 
 private:
-	void apply_operator(std::stack<int>& values, std::stack<char>& ops) {
+	void apply_operator(std::stack<long>& values, std::stack<char>& ops) {
 		if (ops.empty() || values.size() < 1) {
 			return;
 		}
@@ -178,13 +194,13 @@ private:
 		ops.pop();
 
 		if (op == '!') {
-			int value = values.top();
+			auto value = values.top();
 			values.pop();
 			values.push(!value);
 		} else if (values.size() >= 2) {
-			int right = values.top();
+			auto right = values.top();
 			values.pop();
-			int left = values.top();
+			auto left = values.top();
 			values.pop();
 
 			if (op == '&') {
@@ -209,8 +225,8 @@ private:
 		}
 	}
 
-	int evaluate_expression(std::istringstream& iss) {
-		std::stack<int> values;
+	long evaluate_expression(std::istringstream& iss) {
+		std::stack<long> values;
 		std::stack<char> ops;
 		
 		auto precedence = [](char op) {
@@ -223,8 +239,9 @@ private:
 		while (iss) {
 			char c = iss.peek();
 			if (isdigit(c)) {
-				int value;
-				iss >> value;
+				std::string str_value;
+				iss >> str_value;
+				long value = stol(str_value);
 				values.push(value);
 			}
 			else if (c == '(' || c == ')' || c == '!' || c == '&' || c == '|' || c == '>' || c == '<' || c == '=' || c == '!') {
@@ -243,18 +260,27 @@ private:
 					}
 					ops.push(c);
 				}
-			} else if (isalpha(c)) {
+			} else if (isalpha(c) or c == '_') {
 				std::string keyword;
 				iss >> keyword;
-				bool negate = false;
 				if (keyword.find("defined(") == 0) {
 					keyword = keyword.substr(8);
 					keyword.erase(keyword.end()-1);
 					const bool value = defines_.count(keyword) > 0;
-					values.push(negate ? !value : value);
+					values.push(value);
+				} else if (auto it = defines_.find(keyword); it != defines_.end()) {
+					// convert the value to an int
+					const auto& body = it->second.body;
+					if (body.size() == 1) {
+						long value = stol(body[0]);
+						values.push(value);
+					} else {
+						std::cout << "Cheking unknown keyword value in #if directive: " << keyword << std::endl;
+						values.push(0);
+					}
 				} else {
-					std::cerr << "Unknown keyword in #if directive: !" << keyword << std::endl;
-					return 0;
+					std::cout << "Cheking unknown keyword in #if directive: " << keyword << std::endl;
+					values.push(0);
 				}
 			} else {
 				c = iss.get();
@@ -338,8 +364,8 @@ private:
 	
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
-		// For example, C++17
 		defines_["__cplusplus"] = { "__cplusplus", {}, { "201703L" } };
+		defines_["_LIBCPP_LITTLE_ENDIAN"] = { "_LIBCPP_LITTLE_ENDIAN" };
 	}
 
     const CompileContext& settings_;
