@@ -45,7 +45,7 @@ static Operator string_to_operator(const std::string& op) {
 	if (op == "||") return Operator::Or;
 	if (op == ">") return Operator::Greater;
 	if (op == "<") return Operator::Less;
-	if (op == "=") return Operator::Equals;
+	if (op == "==") return Operator::Equals;
 	if (op == "!=") return Operator::NotEquals;
 	if (op == "<=") return Operator::LessEquals;
 	if (op == ">=") return Operator::GreaterEquals;
@@ -53,6 +53,23 @@ static Operator string_to_operator(const std::string& op) {
 	if (op == "(") return Operator::OpenParen;
 	throw std::invalid_argument("Invalid operator: " + op);
 }
+
+struct CharInfo {
+	Operator op;
+	bool is_multi_char;
+};
+
+static std::unordered_map<char, CharInfo> char_info_table = {
+	{'(', {Operator::OpenParen, false}},
+	{')', {Operator::OpenParen, false}}, // Placeholder, will be handled in code
+	{'!', {Operator::Not, true}},
+	{'&', {Operator::And, true}},
+	{'|', {Operator::Or, true}},
+	{'>', {Operator::Greater, true}},
+	{'<', {Operator::Less, true}},
+	{'=', {Operator::Equals, true}},
+};
+
 
 class FileReader {
 public:
@@ -297,14 +314,15 @@ private:
 				long value = stol(str_value);
 				values.push(value);
 			}
-			else if (c == '(' || c == ')' || c == '!' || c == '&' || c == '|' || c == '>' || c == '<' || c == '=' || c == '!') {
+			else if (char_info_table.count(c)) {
+				CharInfo info = char_info_table[c];
 				op_str = iss.get(); // Consume the operator
-				
+
 				// Handle multi-character operators
-				if ((op_str == "&" || op_str == "|" || op_str == "<" || op_str == ">" || op_str == "!") && (iss.peek() == '=' || (op_str != "!" && iss.peek() == op_str[0]))) {
+				if (info.is_multi_char && (iss.peek() == '=' || (c != '!' && iss.peek() == c))) {
 					op_str += iss.get();
 				}
-				
+
 				const Operator op = string_to_operator(op_str);
 				
 				if (c == '(') {
