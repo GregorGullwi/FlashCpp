@@ -35,6 +35,8 @@ public:
 		
 		std::cout << "readFile " << file << std::endl;
 		
+		ScopedFileStack filestack(filestack_, file);
+		
 		std::ifstream stream(file.data());
 		if (!stream.is_open()) {
 			std::cerr << "Failed to open file: " << file << std::endl;
@@ -48,7 +50,7 @@ public:
 		std::stack<bool> skipping_stack;
 		skipping_stack.push(false); // Initial state: not skipping
 
-		long line_number = 0;
+		long& line_number = filestack_.top().line_number;
 		while (std::getline(stream, line)) {
 			++line_number;
 			if (in_comment) {
@@ -185,15 +187,20 @@ public:
 	}
 
 private:
-	void apply_operator(std::stack<long>& values, std::stack<char>& ops) {
+	void apply_operator(std::stack<long>& values, std::stack<std::string>& ops) {
 		if (ops.empty() || values.size() < 1) {
+			std::cerr << "Internal compiler error, values doesn't match the ops!" << std::endl;
 			return;
 		}
 
-		char op = ops.top();
-		ops.pop();
+		const std::string& op = ops.top();
+		
+		if (op == "(") {
+			ops.pop();
+			return;
+		}
 
-		if (op == '!') {
+		if (op == "!") {
 			auto value = values.top();
 			values.pop();
 			values.push(!value);
@@ -203,38 +210,40 @@ private:
 			auto left = values.top();
 			values.pop();
 
-			if (op == '&') {
+			if (op == "&&") {
 				values.push(left && right);
-			} else if (op == '|') {
+			} else if (op == "||") {
 				values.push(left || right);
-			} else if (op == '<') {
+			} else if (op == "<") {
 				values.push(left < right);
-			} else if (op == '>') {
+			} else if (op == ">") {
 				values.push(left > right);
-			} else if (op == '=') {
+			} else if (op == "=") {
 				values.push(left == right);
-			} else if (op == '!') {
+			} else if (op == "!=") {
 				values.push(left != right);
-			} else if (op == '<' && ops.top() == '=') {
-				ops.pop();
+			} else if (op == "<=") {
 				values.push(left <= right);
-			} else if (op == '>' && ops.top() == '=') {
-				ops.pop();
+			} else if (op == ">=") {
 				values.push(left >= right);
 			}
 		}
+		
+		ops.pop();
 	}
 
 	long evaluate_expression(std::istringstream& iss) {
 		std::stack<long> values;
-		std::stack<char> ops;
-		
-		auto precedence = [](char op) {
-			if (op == '&') return 1;
-			if (op == '|') return 0;
-			if (op == '>' || op == '<' || op == '=' || op == '!') return 2;
+		std::stack<std::string> ops;
+
+		auto precedence = [](const std::string& op) {
+			if (op == "&&" || op == "||") return 1;
+			if (op == ">" || op == "<" || op == "=" || op == "!=") return 2;
+			if (op == "!") return 3;
 			return -1;
 		};
+
+		std::string op;
 
 		while (iss) {
 			char c = iss.peek();
@@ -245,20 +254,28 @@ private:
 				values.push(value);
 			}
 			else if (c == '(' || c == ')' || c == '!' || c == '&' || c == '|' || c == '>' || c == '<' || c == '=' || c == '!') {
-				iss.get(); // Consume the operator
-				if (c == ')') {
-					while (!ops.empty() && ops.top() != '(') {
+				op = iss.get(); // Consume the operator
+				
+				// Handle multi-character operators
+				if ((op == "&" || op == "|" || op == "<" || op == ">" || op == "!") && (iss.peek() == '=' || (op != "!" && iss.peek() == op[0]))) {
+					op += iss.get();
+				}
+				
+				if (c == '(') {
+					ops.push(std::move(op));
+				} else if (c == ')') {
+					while (!ops.empty() && ops.top() != "(") {
 						apply_operator(values, ops);
 					}
-					if (!ops.empty() && ops.top() == '(') {
+					if (!ops.empty() && ops.top() == "(") {
 						ops.pop(); // Remove the '(' from the stack
 					}
 				}
 				else {
-					while (!ops.empty() && precedence(c) <= precedence(ops.top())) {
+					while (!ops.empty() && op != "!" && precedence(op) <= precedence(ops.top())) {
 						apply_operator(values, ops);
 					}
-					ops.push(c);
+					ops.push(std::move(op));
 				}
 			} else if (isalpha(c) or c == '_') {
 				std::string keyword;
@@ -289,6 +306,11 @@ private:
 
 		while (!ops.empty()) {
 			apply_operator(values, ops);
+		}
+		
+		if (values.size() == 0) {
+			std::cerr << "Internal compiler error, mismatched operator in file " << filestack_.top().file_name << ":" << filestack_.top().line_number;
+			return 0;
 		}
 
 		return values.top();
@@ -367,9 +389,26 @@ private:
 		defines_["__cplusplus"] = { "__cplusplus", {}, { "201703L" } };
 		defines_["_LIBCPP_LITTLE_ENDIAN"] = { "_LIBCPP_LITTLE_ENDIAN" };
 	}
+	
+	struct CurrentFile {
+		std::string_view file_name;
+		long line_number = 0;
+	};
+						  
+	struct ScopedFileStack {
+		ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file) : filestack_(filestack) {
+			filestack_.push({ file });
+		}
+		~ScopedFileStack() {
+			filestack_.pop();
+		}
+		
+		std::stack<CurrentFile>& filestack_;
+	};
 
     const CompileContext& settings_;
     FileTree& tree_;
     std::unordered_map<std::string, DefineDirective> defines_;
 	std::unordered_set<std::string> proccessedHeaders_;
+	std::stack<CurrentFile> filestack_;
 };
