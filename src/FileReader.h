@@ -15,6 +15,45 @@ struct DefineDirective {
 	std::vector<std::string> body;
 };
 
+enum class Operator {
+	And,
+	Or,
+	Greater,
+	Less,
+	Equals,
+	NotEquals,
+	LessEquals,
+	GreaterEquals,
+	Not,
+	OpenParen,
+};
+
+static std::unordered_map<Operator, int> precedence_table = {
+	{Operator::And, 1},
+	{Operator::Or, 1},
+	{Operator::Greater, 2},
+	{Operator::Less, 2},
+	{Operator::Equals, 2},
+	{Operator::NotEquals, 2},
+	{Operator::LessEquals, 2},
+	{Operator::GreaterEquals, 2},
+	{Operator::Not, 3},
+};
+
+static Operator string_to_operator(const std::string& op) {
+	if (op == "&&") return Operator::And;
+	if (op == "||") return Operator::Or;
+	if (op == ">") return Operator::Greater;
+	if (op == "<") return Operator::Less;
+	if (op == "=") return Operator::Equals;
+	if (op == "!=") return Operator::NotEquals;
+	if (op == "<=") return Operator::LessEquals;
+	if (op == ">=") return Operator::GreaterEquals;
+	if (op == "!") return Operator::Not;
+	if (op == "(") return Operator::OpenParen;
+	throw std::invalid_argument("Invalid operator: " + op);
+}
+
 class FileReader {
 public:
     FileReader(const CompileContext& settings, FileTree& tree) : settings_(settings), tree_(tree) {
@@ -188,20 +227,19 @@ public:
 	}
 
 private:
-	void apply_operator(std::stack<long>& values, std::stack<std::string>& ops) {
+	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops) {
 		if (ops.empty() || values.size() < 1) {
-			std::cerr << "Internal compiler error, values doesn't match the ops!" << std::endl;
+			std::cerr << "Internal compiler error, values don't match the ops!" << std::endl;
 			return;
 		}
 
-		const std::string& op = ops.top();
-		
-		if (op == "(") {
+		Operator op = ops.top();
+		if (op == Operator::OpenParen) {
 			ops.pop();
 			return;
 		}
 
-		if (op == "!") {
+		if (op == Operator::Not) {
 			auto value = values.top();
 			values.pop();
 			values.push(!value);
@@ -211,40 +249,45 @@ private:
 			auto left = values.top();
 			values.pop();
 
-			if (op == "&&") {
-				values.push(left && right);
-			} else if (op == "||") {
-				values.push(left || right);
-			} else if (op == "<") {
-				values.push(left < right);
-			} else if (op == ">") {
-				values.push(left > right);
-			} else if (op == "=") {
-				values.push(left == right);
-			} else if (op == "!=") {
-				values.push(left != right);
-			} else if (op == "<=") {
-				values.push(left <= right);
-			} else if (op == ">=") {
-				values.push(left >= right);
+			switch (op) {
+				case Operator::And:
+					values.push(left && right);
+					break;
+				case Operator::Or:
+					values.push(left || right);
+					break;
+				case Operator::Less:
+					values.push(left < right);
+					break;
+				case Operator::Greater:
+					values.push(left > right);
+					break;
+				case Operator::Equals:
+					values.push(left == right);
+					break;
+				case Operator::NotEquals:
+					values.push(left != right);
+					break;
+				case Operator::LessEquals:
+					values.push(left <= right);
+					break;
+				case Operator::GreaterEquals:
+					values.push(left >= right);
+					break;
+				default:
+					std::cerr << "Internal compiler error, unknown operator!" << std::endl;
+					break;
 			}
 		}
-		
+
 		ops.pop();
 	}
 
 	long evaluate_expression(std::istringstream& iss) {
 		std::stack<long> values;
-		std::stack<std::string> ops;
+		std::stack<Operator> ops;
 
-		auto precedence = [](const std::string& op) {
-			if (op == "&&" || op == "||") return 1;
-			if (op == ">" || op == "<" || op == "=" || op == "!=") return 2;
-			if (op == "!") return 3;
-			return -1;
-		};
-
-		std::string op;
+		std::string op_str;
 
 		while (iss) {
 			char c = iss.peek();
@@ -255,28 +298,30 @@ private:
 				values.push(value);
 			}
 			else if (c == '(' || c == ')' || c == '!' || c == '&' || c == '|' || c == '>' || c == '<' || c == '=' || c == '!') {
-				op = iss.get(); // Consume the operator
+				op_str = iss.get(); // Consume the operator
 				
 				// Handle multi-character operators
-				if ((op == "&" || op == "|" || op == "<" || op == ">" || op == "!") && (iss.peek() == '=' || (op != "!" && iss.peek() == op[0]))) {
-					op += iss.get();
+				if ((op_str == "&" || op_str == "|" || op_str == "<" || op_str == ">" || op_str == "!") && (iss.peek() == '=' || (op_str != "!" && iss.peek() == op_str[0]))) {
+					op_str += iss.get();
 				}
 				
+				const Operator op = string_to_operator(op_str);
+				
 				if (c == '(') {
-					ops.push(std::move(op));
+					ops.push(op);
 				} else if (c == ')') {
-					while (!ops.empty() && ops.top() != "(") {
+					while (!ops.empty() && ops.top() != Operator::OpenParen) {
 						apply_operator(values, ops);
 					}
-					if (!ops.empty() && ops.top() == "(") {
+					if (!ops.empty() && ops.top() == Operator::OpenParen) {
 						ops.pop(); // Remove the '(' from the stack
 					}
 				}
 				else {
-					while (!ops.empty() && op != "!" && precedence(op) <= precedence(ops.top())) {
+					while (!ops.empty() && op != Operator::Not && precedence_table[op] <= precedence_table[ops.top()]) {
 						apply_operator(values, ops);
 					}
-					ops.push(std::move(op));
+					ops.push(op);
 				}
 			} else if (isalpha(c) or c == '_') {
 				std::string keyword;
