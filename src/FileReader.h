@@ -33,13 +33,14 @@ public:
 		if (proccessedHeaders_.find(std::string(file)) != proccessedHeaders_.end())
 			return true;
 		
-		std::cout << "readFile " << file << std::endl;
+		if (settings_.isVerboseMode()) {
+			std::cout << "readFile " << file << std::endl;
+		}
 		
 		ScopedFileStack filestack(filestack_, file);
 		
 		std::ifstream stream(file.data());
 		if (!stream.is_open()) {
-			std::cerr << "Failed to open file: " << file << std::endl;
 			return false;
 		}
 
@@ -292,11 +293,15 @@ private:
 						long value = stol(body[0]);
 						values.push(value);
 					} else {
-						std::cout << "Cheking unknown keyword value in #if directive: " << keyword << std::endl;
+						if (settings_.isVerboseMode()) {
+							std::cout << "Cheking unknown keyword value in #if directive: " << keyword << std::endl;
+						}
 						values.push(0);
 					}
 				} else {
-					std::cout << "Cheking unknown keyword in #if directive: " << keyword << std::endl;
+					if (settings_.isVerboseMode()) {
+						std::cout << "Cheking unknown keyword in #if directive: " << keyword << std::endl;
+					}
 					values.push(0);
 				}
 			} else {
@@ -353,7 +358,9 @@ private:
 			return;
 		}
 
-		std::cout << "Adding #define " << name << std::endl;
+		if (settings_.isVerboseMode()) {
+			std::cout << "Adding #define " << name << std::endl;
+		}
 
 		DefineDirective directive;
 		directive.name = name;
