@@ -5,7 +5,7 @@
 
 class CompileContext {
 public:
-	const std::optional<std::string_view>& getInputFile() const {
+	const std::optional<std::string>& getInputFile() const {
 		return inputFile_;
 	}
 
@@ -29,12 +29,12 @@ public:
 		verboseMode_ = verboseMode;
 	}
 
-	const std::vector<std::string_view>& getIncludeDirs() const {
+	const std::vector<std::string>& getIncludeDirs() const {
 		return includeDirs_;
 	}
 
 	void addIncludeDir(std::string_view includeDir) {
-		includeDirs_.push_back(includeDir);
+		includeDirs_.emplace_back(includeDir);
 	}
 
 	const std::vector<std::string>& getDependencies() const {
@@ -45,10 +45,20 @@ public:
 		dependencies_.push_back(dependency);
 	}
 
+	// Getter and setter for the -E preprocessor option
+	bool isPreprocessorOnlyMode() const {
+		return preprocessorOnlyMode_;
+	}
+
+	void setPreprocessorOnlyMode(bool preprocessorOnlyMode) {
+		preprocessorOnlyMode_ = preprocessorOnlyMode;
+	}
+
 private:
-	std::vector<std::string_view> includeDirs_;
-	std::optional<std::string_view> inputFile_;
+	std::vector<std::string> includeDirs_;
+	std::optional<std::string> inputFile_;
 	std::string_view outputFile_;
 	bool verboseMode_ = false;
+	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
 	std::vector<std::string> dependencies_;
 };

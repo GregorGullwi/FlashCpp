@@ -93,7 +93,7 @@ public:
 		if (settings_.isVerboseMode()) {
 			std::cout << "readFile " << file << std::endl;
 		}
-		
+
 		ScopedFileStack filestack(filestack_, file);
 		
 		std::ifstream stream(file.data());
@@ -109,8 +109,19 @@ public:
 		skipping_stack.push(false); // Initial state: not skipping
 
 		long& line_number = filestack_.top().line_number;
+		long prev_line_number = -1;
+		const bool isPreprocessorOnlyMode = settings_.isPreprocessorOnlyMode();
 		while (std::getline(stream, line)) {
 			++line_number;
+
+			if (isPreprocessorOnlyMode && prev_line_number != line_number - 1) {
+				std::cout << "# " << line_number << " \"" << file << "\"\n";
+				prev_line_number = line_number;
+			}
+			else {
+				++prev_line_number;
+			}
+
 			if (in_comment) {
 				size_t end_comment_pos = line.find("*/");
 				if (end_comment_pos != std::string::npos) {
@@ -192,6 +203,8 @@ public:
 				if (!processIncludeDirective(line, file)) {
 					return false;
 				}
+				// Reset prev_line_number so we print the next row
+				prev_line_number = 0;
 			}
 			else if (line.find("#define", 0) == 0) {
 				std::istringstream iss(line.substr(7)); // Skip the "#define"
@@ -237,6 +250,8 @@ public:
 				proccessedHeaders_.insert(std::string(file));
 			}
 			else {
+				std::cout << line << "\n";
+
 				// Handle other directives
 			}
 		}

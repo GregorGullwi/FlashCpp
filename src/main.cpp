@@ -5,6 +5,8 @@
 #include <variant>
 #include <map>
 #include <vector>
+#include <filesystem>
+
 #include "FileTree.h"
 #include "FileReader.h"
 #include "CompileContext.h"
@@ -25,9 +27,8 @@ int main(int argc, char *argv[]) {
             context.setOutputFile(std::get<std::string_view>(output_file));
     }
 
-    if (parser.hasFlag("v") || parser.hasFlag("verbose")) {
-        context.setVerboseMode(true);
-    }
+    context.setVerboseMode(parser.hasFlag("v") || parser.hasFlag("verbose"));
+    context.setPreprocessorOnlyMode(parser.hasFlag("E"));
 
 	// Process input file arguments here...
 	const auto& inputFileArgs = parser.inputFileArgs();
@@ -35,7 +36,13 @@ int main(int argc, char *argv[]) {
 		std::cerr << "No input file specified" << std::endl;
 		return 1;
 	}
-    context.setInputFile(inputFileArgs.front());
+	std::filesystem::path inputFilePath(inputFileArgs.front());
+	inputFilePath = std::filesystem::absolute(inputFilePath);
+    context.setInputFile(inputFilePath.string());
+
+	// Add the directory of the input source file as an implicit include directory
+	std::filesystem::path inputDirPath = inputFilePath.parent_path();
+	context.addIncludeDir(inputDirPath.string());
 
     FileTree file_tree;
     FileReader file_reader(context, file_tree);
@@ -44,12 +51,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Use context and file_tree to perform the desired operation
-    std::cout << "Output file: " << context.getOutputFile() << std::endl;
-    std::cout << "Verbose mode: " << (context.isVerboseMode() ? "enabled" : "disabled") << std::endl;
-    std::cout << "Input file: " << context.getInputFile().value() << std::endl;
-    std::cout << "Dependencies:" << std::endl;
-    for (const auto& dep : context.getDependencies()) {
-        std::cout << "- " << dep << std::endl;
+    if (context.isVerboseMode() && !context.isPreprocessorOnlyMode()) {
+        // Use context and file_tree to perform the desired operation
+        std::cout << "Output file: " << context.getOutputFile() << std::endl;
+        std::cout << "Verbose mode: " << (context.isVerboseMode() ? "enabled" : "disabled") << std::endl;
+        std::cout << "Input file: " << context.getInputFile().value() << std::endl;
+        std::cout << "Dependencies:" << std::endl;
+        for (const auto& dep : context.getDependencies()) {
+            std::cout << "- " << dep << std::endl;
+        }
     }
 }
