@@ -3,6 +3,7 @@
 #include <vector>
 #include <sstream>
 #include <unordered_map>
+#include <stack>
 
 #include "CompileContext.h"
 #include "FileTree.h"
@@ -341,7 +342,7 @@ private:
 					}
 					ops.push(op);
 				}
-			} else if (isalpha(c) or c == '_') {
+			} else if (isalpha(c) || c == '_') {
 				std::string keyword;
 				iss >> keyword;
 				if (keyword.find("defined(") == 0) {
