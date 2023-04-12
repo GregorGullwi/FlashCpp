@@ -27,6 +27,7 @@ enum class Operator {
 	GreaterEquals,
 	Not,
 	OpenParen,
+	CloseParen,
 };
 
 static std::unordered_map<Operator, int> precedence_table = {
@@ -52,6 +53,7 @@ static Operator string_to_operator(const std::string& op) {
 	if (op == ">=") return Operator::GreaterEquals;
 	if (op == "!") return Operator::Not;
 	if (op == "(") return Operator::OpenParen;
+	if (op == ")") return Operator::CloseParen;
 	throw std::invalid_argument("Invalid operator: " + op);
 }
 
@@ -179,6 +181,8 @@ public:
 				} else if (line.find("#if", 0) == 0) {
 					// Nesting, push a new skipping state
 					skipping_stack.push(true);
+				} else if (line.find("#else", 0) == 0) {
+					skipping_stack.top() = !skipping_stack.top();
 				}
 				continue;
 			}
@@ -245,6 +249,12 @@ public:
 					std::cerr << "Unmatched #endif directive" << std::endl;
 					return false;
 				}
+			}
+			else if (line.find("#undef") == 0) {
+				std::istringstream iss(line.substr(7));
+				std::string symbol;
+				iss >> symbol;
+				defines_.erase(symbol);
 			}
 			else if (line.find("#pragma once", 0) == 0) {
 				proccessedHeaders_.insert(std::string(file));
@@ -360,10 +370,32 @@ private:
 			} else if (isalpha(c) || c == '_') {
 				std::string keyword;
 				iss >> keyword;
-				if (keyword.find("defined(") == 0) {
-					keyword = keyword.substr(8);
-					keyword.erase(keyword.end()-1);
-					const bool value = defines_.count(keyword) > 0;
+				if (keyword.find("defined") == 0) {
+					std::string symbol;
+					bool has_parenthesis = false;
+
+					if (keyword == "defined") {
+						if (iss.peek() == '(') {
+							iss.ignore(); // Consume the '('
+							has_parenthesis = true;
+						}
+						iss >> symbol;
+					}
+					else { // "defined(" is part of the keyword string
+						has_parenthesis = true;
+						using namespace std::string_view_literals;
+						if (keyword.size() > "defined("sv.length())
+							symbol = keyword.substr(8);
+						else
+							iss >> symbol;
+					}
+
+					if (has_parenthesis) {
+						iss.ignore(std::numeric_limits<std::streamsize>::max(), ')'); // Ignore characters until the ')'
+						symbol.erase(std::remove(symbol.begin(), symbol.end(), ')'), symbol.end());
+					}
+
+					const bool value = defines_.count(symbol) > 0;
 					values.push(value);
 				} else if (auto it = defines_.find(keyword); it != defines_.end()) {
 					// convert the value to an int
@@ -373,13 +405,13 @@ private:
 						values.push(value);
 					} else {
 						if (settings_.isVerboseMode()) {
-							std::cout << "Cheking unknown keyword value in #if directive: " << keyword << std::endl;
+							std::cout << "Checking unknown keyword value in #if directive: " << keyword << std::endl;
 						}
 						values.push(0);
 					}
 				} else {
 					if (settings_.isVerboseMode()) {
-						std::cout << "Cheking unknown keyword in #if directive: " << keyword << std::endl;
+						std::cout << "Checking unknown keyword in #if directive: " << keyword << std::endl;
 					}
 					values.push(0);
 				}
