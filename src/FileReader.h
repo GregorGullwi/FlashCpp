@@ -13,7 +13,7 @@
 struct DefineDirective {
 	std::string name;
 	std::vector<std::string> args;
-	std::vector<std::string> body;
+	std::string body;
 };
 
 enum class Operator {
@@ -401,7 +401,7 @@ private:
 					// convert the value to an int
 					const auto& body = it->second.body;
 					if (body.size() == 1) {
-						long value = stol(body[0]);
+						long value = stol(body);
 						values.push(value);
 					} else {
 						if (settings_.isVerboseMode()) {
@@ -463,44 +463,57 @@ private:
 	}
 	
 	void handleDefine(std::istringstream& iss) {
-		std::string name;
-		iss >> name;
-		if (name.empty()) {
-			return;
+		DefineDirective define;
+
+		// Parse the name
+		iss >> define.name;
+
+		// Check for the presence of a macro argument list
+		std::string rest_of_line;
+		iss.ignore(100, ' ');
+		std::getline(iss, rest_of_line);
+		size_t open_paren = define.name.find("(");
+
+		if (open_paren != std::string::npos) {
+			rest_of_line = define.name.substr(open_paren) + rest_of_line;
+			define.name = define.name.substr(0, open_paren);
 		}
 
-		if (settings_.isVerboseMode()) {
-			std::cout << "Adding #define " << name << std::endl;
-		}
+		if (!rest_of_line.empty()) {
+			open_paren = rest_of_line.find("(");
+			if (open_paren != std::string::npos) {
+				size_t close_paren = rest_of_line.find(")", open_paren);
 
-		DefineDirective directive;
-		directive.name = name;
-
-		if (iss.peek() == '(') {
-			std::string arg;
-			while (std::getline(iss, arg, ',')) {
-				iss.get(); // Consume the comma or opening parenthesis
-				directive.args.push_back(arg);
-				if (iss.peek() == ')') {
-					iss.get(); // Consume the closing parenthesis
-					break;
+				if (close_paren == std::string::npos) {
+					std::cerr << "Missing closing parenthesis in macro argument list for " << define.name << std::endl;
+					return;
 				}
+
+				std::string arg_list = rest_of_line.substr(open_paren + 1, close_paren - open_paren - 1);
+
+				// Tokenize the argument list
+				std::istringstream arg_stream(arg_list);
+				std::string token;
+				while (std::getline(arg_stream, token, ',')) {
+					// Remove leading and trailing whitespace
+					auto start = std::find_if_not(token.begin(), token.end(), [](unsigned char c) { return std::isspace(c); });
+					auto end = std::find_if_not(token.rbegin(), token.rend(), [](unsigned char c) { return std::isspace(c); }).base();
+
+					define.args.push_back(std::string(start, end));
+				}
+
+				// Save the macro body after the closing parenthesis
+				rest_of_line = rest_of_line.substr(close_paren + 1);
 			}
 		}
 
-		std::string line;
-		while (std::getline(iss, line)) {
-			if (line.rfind("\\", 0) == 0) {
-				directive.body.push_back(line.substr(0, line.size() - 1));
-			}
-			else {
-				directive.body.push_back(line);
-				break;
-			}
-		}
+		define.body = std::move(rest_of_line);
 
-		defines_[directive.name] = directive;
+		// Add the parsed define to the map
+		defines_[define.name] = define;
 	}
+
+
 	
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
