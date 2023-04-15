@@ -275,12 +275,15 @@ public:
 				proccessedHeaders_.insert(std::string(filestack_.top().file_name));
 			}
 			else {
+				if (line.size() > 0 && (line.find_last_of(' ') != line.size() - 1))
+					line = expandMacros(line);
+
 				std::cout << line << "\n";
 
-				result_.append(line);
+				result_.append(line).append("\n");
 			}
 		}
-
+		
 		return true;
 	}
 
@@ -289,6 +292,97 @@ public:
 	}
 
 private:
+	std::string expandMacros(const std::string& input) {
+		std::string output = input;
+		bool expanded = true;
+		size_t last_expanded_pos = 0;
+		while (expanded) {
+			expanded = false;
+			for (const auto& [pattern, directive] : defines_) {
+				size_t pos = output.find(pattern, last_expanded_pos);
+				if (pos != std::string::npos) {
+					size_t pattern_end = pos + pattern.size();
+					std::string replace_str = directive.body;
+					if (!directive.args.empty()) {
+						std::vector<std::string> args = splitArgs(output.substr(pos + pattern.size()));
+						if (args.size() != directive.args.size()) {
+							continue;
+						}
+						for (size_t i = 0; i < args.size(); ++i) {
+							replaceAll(replace_str, directive.args[i], args[i]);
+						}
+						pattern_end = output.find(')', pattern_end) + 1;
+					}
+					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
+					expanded = true;
+					last_expanded_pos = pos;
+					break;
+				}
+			}
+		}
+		return output;
+	}
+
+	void replaceAll(std::string& str, const std::string& from, const std::string& to) {
+		size_t pos = 0;
+		while ((pos = str.find(from, pos)) != std::string::npos) {
+			str.replace(pos, from.length(), to);
+			pos += to.length();
+		}
+	}
+
+	std::vector<std::string> splitArgs(const std::string& argsStr) {
+		std::vector<std::string> args;
+		std::string arg;
+		size_t i = 0;
+		while (i < argsStr.size()) {
+			char c = argsStr[i];
+			if (c == ',' && arg.size() > 0) {
+				args.push_back(arg);
+				arg.clear();
+			}
+			else if (c == '(') {
+				size_t closingPos = findMatchingClosingParen(argsStr, i);
+				if (closingPos == std::string::npos) {
+					throw std::runtime_error("Unmatched opening parenthesis in macro argument list");
+				}
+				arg += argsStr.substr(i + 1, closingPos - i - 1);
+				i = closingPos + 1;
+			}
+			else if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ';') {
+				i++;
+			}
+			else {
+				arg += c;
+				i++;
+			}
+		}
+		if (arg.size() > 0) {
+			args.push_back(arg);
+		}
+		return args;
+	}
+
+	size_t findMatchingClosingParen(const std::string& str, size_t opening_pos) {
+		int nesting = 1;
+		size_t pos = opening_pos + 1;
+		while (pos < str.size() && nesting > 0) {
+			if (str[pos] == '(') {
+				nesting++;
+			}
+			else if (str[pos] == ')') {
+				nesting--;
+			}
+			pos++;
+		}
+		if (nesting == 0) {
+			return pos - 1;
+		}
+		else {
+			return std::string::npos;
+		}
+	}
+
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops) {
 		if (ops.empty() || values.size() < 1) {
 			std::cerr << "Internal compiler error, values don't match the ops!" << std::endl;
