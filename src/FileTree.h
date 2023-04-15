@@ -1,8 +1,8 @@
+#pragma once
+
 #include <string_view>
 #include <unordered_set>
 #include <unordered_map>
-
-#pragma once
 
 class FileTree {
 public:
@@ -20,6 +20,12 @@ public:
 
     void addDependency(std::string_view file, std::string_view dependency) {
         dependencies_[file].insert(dependency);
+    }
+
+    FileTree& reset() {
+        files_.clear();
+        dependencies_.clear();
+        return *this;
     }
 
 private:

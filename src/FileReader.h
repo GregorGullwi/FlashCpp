@@ -1,14 +1,16 @@
+#pragma once
+
 #include <fstream>
 #include <string>
 #include <vector>
 #include <sstream>
 #include <unordered_map>
 #include <stack>
+#include <iostream>
+#include <algorithm>
 
 #include "CompileContext.h"
 #include "FileTree.h"
-
-#pragma once
 
 struct DefineDirective {
 	std::string name;
@@ -91,13 +93,13 @@ public:
 	bool readFile(std::string_view file) {
 		if (proccessedHeaders_.find(std::string(file)) != proccessedHeaders_.end())
 			return true;
-		
+
 		if (settings_.isVerboseMode()) {
 			std::cout << "readFile " << file << std::endl;
 		}
 
 		ScopedFileStack filestack(filestack_, file);
-		
+
 		std::ifstream stream(file.data());
 		if (!stream.is_open()) {
 			return false;
@@ -105,19 +107,31 @@ public:
 
 		tree_.addFile(file);
 
+		stream.seekg(0, std::ios::end);
+		std::streampos file_size = stream.tellg();
+		stream.seekg(0, std::ios::beg);
+		std::string file_content(file_size, '\0');
+		stream.read(file_content.data(), file_size);
+
+		return processFileContent(file_content);
+	}
+
+	bool processFileContent(const std::string& file_content) {
+		std::istringstream stream(file_content);
 		std::string line;
 		bool in_comment = false;
 		std::stack<bool> skipping_stack;
 		skipping_stack.push(false); // Initial state: not skipping
 
-		long& line_number = filestack_.top().line_number;
+		long line_number_fallback = 1;
+		long& line_number = !filestack_.empty() ? filestack_.top().line_number : line_number_fallback;
 		long prev_line_number = -1;
 		const bool isPreprocessorOnlyMode = settings_.isPreprocessorOnlyMode();
 		while (std::getline(stream, line)) {
 			++line_number;
 
 			if (isPreprocessorOnlyMode && prev_line_number != line_number - 1) {
-				std::cout << "# " << line_number << " \"" << file << "\"\n";
+				std::cout << "# " << line_number << " \"" << filestack_.top().file_name << "\"\n";
 				prev_line_number = line_number;
 			}
 			else {
@@ -144,20 +158,21 @@ public:
 					continue;
 				}
 			}
-			
-			if (line.size() == 0) {
-				continue;
-			}
-			
+						
 			if (skipping_stack.size() == 0) {
-				std::cerr << "Internal compiler error in file " << file << ":" << line_number << std::endl;
+				std::cerr << "Internal compiler error in file " << filestack_.top().file_name << ":" << line_number << std::endl;
 				return false;
 			}
 			const bool skipping = skipping_stack.top();
-			
+		
 			// Find the position of the '#' character
 			size_t directive_pos = line.find('#');
 			if (directive_pos != std::string::npos) {
+				size_t first_non_space = line.find_first_not_of(' ', 0);
+				if (first_non_space > 0) {
+					line.erase(0, first_non_space);
+					directive_pos -= first_non_space;
+				}
 				// Find the position of the first non-whitespace character after the '#'
 				size_t next_pos = find_first_non_whitespace_after_hash(line);
 				if (next_pos != std::string::npos && (next_pos != directive_pos + 1)) {
@@ -196,7 +211,7 @@ public:
 			}
 			
 			if (size_t filePos = line.find("__FILE__"); filePos != std::string::npos) {
-				line.replace(filePos, 8, "\"" + std::string(file) + "\"");
+				line.replace(filePos, 8, "\"" + std::string(filestack_.top().file_name) + "\"");
 			}
 			if (line.find("__LINE__") != std::string::npos) {
 				size_t line_num = std::count(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>(), '\n') + 1;
@@ -204,7 +219,7 @@ public:
 			}
 
 			if (line.find("#include", 0) == 0) {
-				if (!processIncludeDirective(line, file)) {
+				if (!processIncludeDirective(line, filestack_.top().file_name)) {
 					return false;
 				}
 				// Reset prev_line_number so we print the next row
@@ -257,16 +272,20 @@ public:
 				defines_.erase(symbol);
 			}
 			else if (line.find("#pragma once", 0) == 0) {
-				proccessedHeaders_.insert(std::string(file));
+				proccessedHeaders_.insert(std::string(filestack_.top().file_name));
 			}
 			else {
 				std::cout << line << "\n";
 
-				// Handle other directives
+				result_.append(line);
 			}
 		}
 
 		return true;
+	}
+
+	const std::string& get_result() const {
+		return result_;
 	}
 
 private:
@@ -542,4 +561,5 @@ private:
     std::unordered_map<std::string, DefineDirective> defines_;
 	std::unordered_set<std::string> proccessedHeaders_;
 	std::stack<CurrentFile> filestack_;
+	std::string result_;
 };
