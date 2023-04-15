@@ -75,6 +75,65 @@ static std::unordered_map<char, CharInfo> char_info_table = {
 	{'=', {Operator::Equals, true}},
 };
 
+static size_t findMatchingClosingParen(const std::string& str, size_t opening_pos) {
+	int nesting = 1;
+	size_t pos = opening_pos + 1;
+	while (pos < str.size() && nesting > 0) {
+		if (str[pos] == '(') {
+			nesting++;
+		}
+		else if (str[pos] == ')') {
+			nesting--;
+		}
+		pos++;
+	}
+	if (nesting == 0) {
+		return pos - 1;
+	}
+	else {
+		return std::string::npos;
+	}
+}
+
+static std::vector<std::string> splitArgs(const std::string& argsStr) {
+	std::vector<std::string> args;
+	std::string arg;
+	size_t i = 0;
+	while (i < argsStr.size()) {
+		char c = argsStr[i];
+		if (c == ',' && arg.size() > 0) {
+			args.push_back(arg);
+			arg.clear();
+		}
+		else if (c == '(') {
+			size_t closingPos = findMatchingClosingParen(argsStr, i);
+			if (closingPos == std::string::npos) {
+				throw std::runtime_error("Unmatched opening parenthesis in macro argument list");
+			}
+			arg += argsStr.substr(i + 1, closingPos - i - 1);
+			i = closingPos + 1;
+		}
+		else if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ';') {
+			i++;
+		}
+		else {
+			arg += c;
+			i++;
+		}
+	}
+	if (arg.size() > 0) {
+		args.push_back(arg);
+	}
+	return args;
+}
+
+static void replaceAll(std::string& str, const std::string& from, const std::string& to) {
+	size_t pos = 0;
+	while ((pos = str.find(from, pos)) != std::string::npos) {
+		str.replace(pos, from.length(), to);
+		pos += to.length();
+	}
+}
 
 class FileReader {
 public:
@@ -292,7 +351,7 @@ public:
 	}
 
 private:
-	std::string expandMacros(const std::string& input) {
+	std::string expandMacros(const std::string& input) const {
 		std::string output = input;
 		bool expanded = true;
 		size_t last_expanded_pos = 0;
@@ -321,66 +380,6 @@ private:
 			}
 		}
 		return output;
-	}
-
-	void replaceAll(std::string& str, const std::string& from, const std::string& to) {
-		size_t pos = 0;
-		while ((pos = str.find(from, pos)) != std::string::npos) {
-			str.replace(pos, from.length(), to);
-			pos += to.length();
-		}
-	}
-
-	std::vector<std::string> splitArgs(const std::string& argsStr) {
-		std::vector<std::string> args;
-		std::string arg;
-		size_t i = 0;
-		while (i < argsStr.size()) {
-			char c = argsStr[i];
-			if (c == ',' && arg.size() > 0) {
-				args.push_back(arg);
-				arg.clear();
-			}
-			else if (c == '(') {
-				size_t closingPos = findMatchingClosingParen(argsStr, i);
-				if (closingPos == std::string::npos) {
-					throw std::runtime_error("Unmatched opening parenthesis in macro argument list");
-				}
-				arg += argsStr.substr(i + 1, closingPos - i - 1);
-				i = closingPos + 1;
-			}
-			else if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ';') {
-				i++;
-			}
-			else {
-				arg += c;
-				i++;
-			}
-		}
-		if (arg.size() > 0) {
-			args.push_back(arg);
-		}
-		return args;
-	}
-
-	size_t findMatchingClosingParen(const std::string& str, size_t opening_pos) {
-		int nesting = 1;
-		size_t pos = opening_pos + 1;
-		while (pos < str.size() && nesting > 0) {
-			if (str[pos] == '(') {
-				nesting++;
-			}
-			else if (str[pos] == ')') {
-				nesting--;
-			}
-			pos++;
-		}
-		if (nesting == 0) {
-			return pos - 1;
-		}
-		else {
-			return std::string::npos;
-		}
 	}
 
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops) {
