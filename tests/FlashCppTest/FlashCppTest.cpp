@@ -53,6 +53,22 @@ TEST_CASE("NestedReplacement", "[preprocessor]") {
 	run_test_case(input, expected_output);
 }
 
+#define SQUARE(x) ((x) * (x))
+#define DOUBLE(x) ((x) * 2)
+const int num = DOUBLE(SQUARE(3));
+
+TEST_CASE("NestedMacros", "[preprocessor]") {
+	const std::string input = R"(
+    #define SQUARE(x) ((x) * (x))
+    #define DOUBLE(x) ((x) * 2)
+    const int num = DOUBLE(SQUARE(3));
+  )";
+	const std::string expected_output = R"(
+    const int num = ((((3) * (3))) * 2);
+  )";
+    run_test_case(input, expected_output);
+}
+
 TEST_CASE("ConditionalCompilation", "[preprocessor]") {
 	const std::string input = R"(
     #define DEBUG
@@ -91,4 +107,25 @@ TEST_CASE("Concatenation", "[preprocessor]") {
     const int num = 34;
   )";
 	run_test_case(input, expected_output);
+}
+
+TEST_CASE("__has_include", "[preprocessor]") {
+	const std::string input = R"(
+    #if __has_include(<iostream>)
+      #include <iostream>
+      const bool has_iostream = true;
+    #else
+      const bool has_iostream = false;
+    #endif
+  )";
+	const std::string expected_output = R"(
+    #if 1
+      #include <iostream>
+      const bool has_iostream = true;
+    #else
+      const bool has_iostream = false;
+    #endif
+  )";
+    compile_context.addIncludeDir(R"(C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\include)"sv);
+    run_test_case(input, expected_output);
 }

@@ -8,9 +8,12 @@
 #include <stack>
 #include <iostream>
 #include <algorithm>
+#include <filesystem>
 
 #include "CompileContext.h"
 #include "FileTree.h"
+
+using namespace std::string_view_literals;
 
 struct DefineDirective {
 	std::string name;
@@ -112,7 +115,7 @@ static std::vector<std::string> splitArgs(const std::string& argsStr) {
 		if (c == ',' && arg.size() > 0) {
 			args.push_back(arg);
 			arg.clear();
-			i = argsStr.find_first_not_of(' ', second_arg_start + 1);
+			i = argsStr.find_first_not_of(' ', i + 1);
 		}
 		else if (c == '(') {
 			size_t closingPos = findMatchingClosingParen(argsStr, i);
@@ -297,11 +300,13 @@ public:
 				prev_line_number = 0;
 			}
 			else if (line.find("#define", 0) == 0) {
-				std::istringstream iss(line.substr(7)); // Skip the "#define"
+				std::istringstream iss(line);
+				iss.seekg("#define"sv.length());
 				handleDefine(iss);
 			}
 			else if (line.find("#ifdef", 0) == 0) {
-				std::istringstream iss(line.substr(6));
+				std::istringstream iss(line);
+				iss.seekg("#ifdef"sv.length());
 				std::string symbol;
 				iss >> symbol;
 				if (defines_.count(symbol)) {
@@ -311,7 +316,8 @@ public:
 				}
 			}
 			else if (line.find("#ifndef", 0) == 0) {
-				std::istringstream iss(line.substr(7));
+				std::istringstream iss(line);
+				iss.seekg("#ifndef"sv.length());
 				std::string symbol;
 				iss >> symbol;
 				if (defines_.count(symbol)) {
@@ -321,7 +327,8 @@ public:
 				}
 			}
 			else if (line.find("#if", 0) == 0) {
-				std::istringstream iss(line.substr(3));
+				std::istringstream iss(line);
+				iss.seekg("#if"sv.length());
 				long expression_result = evaluate_expression(iss);
 				skipping_stack.push(expression_result == 0);
 			}
@@ -363,20 +370,30 @@ public:
 	}
 
 private:
+	static bool is_seperator_character(char c) {
+		return ((c == ' ') | (c == ',') | (c == '#') | (c == ')') | (c == '(')) != 0;
+	}
 	std::string expandMacros(const std::string& input) const {
 		std::string output = input;
 		bool expanded = true;
 		size_t last_expanded_pos = 0;
 		while (expanded) {
 			expanded = false;
+			size_t last_char_index = output.size() - 1;
 			for (const auto& [pattern, directive] : defines_) {
 				size_t pos = output.find(pattern, last_expanded_pos);
 				if (pos != std::string::npos) {
+					if (pos > 0 && !is_seperator_character(output[pos - 1])) {
+						continue;
+					}
 					size_t pattern_end = pos + pattern.size();
+					if (pattern_end < last_char_index && !is_seperator_character(output[pattern_end])) {
+						continue;
+					}
 					std::string replace_str = directive.body;
 					if (!directive.args.empty()) {
-						size_t args_start = output.find_first_of('(');
-						size_t args_end = output.find_first_of(')', args_start);
+						size_t args_start = output.find_first_of('(', pos);
+						size_t args_end = findMatchingClosingParen(output, args_start);
 						std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
 						if (args.size() != directive.args.size()) {
 							continue;
@@ -405,13 +422,14 @@ private:
 							replace_str = replace_str.substr(0, ws_before) + replace_str.substr(ws_after);
 						}
 
-						pattern_end = output.find(')', pattern_end) + 1;
+						pattern_end = args_end + 1;
 					}
 
 					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
+					last_char_index = output.size() - 1;
 					expanded = true;
 					last_expanded_pos = pos;
-					break;
+					//break;
 				}
 			}
 		}
@@ -518,7 +536,23 @@ private:
 			} else if (isalpha(c) || c == '_') {
 				std::string keyword;
 				iss >> keyword;
-				if (keyword.find("defined") == 0) {
+				if (keyword.find("__") == 0) {	// __ is reserved for the compiler
+					if (keyword.find("__has_include") == 0) {
+						long exists = 0;
+						std::string_view include_name(keyword.data() + "__has_include(<"sv.length());
+						include_name.remove_suffix(2); // Remove trailing >)
+						for (const auto& include_dir : settings_.getIncludeDirs()) {
+							std::string include_file(include_dir);
+							include_file.append("/");
+							include_file.append(include_name);
+							if (std::filesystem::exists(include_file)) {
+								exists = 1;
+								break;
+							}
+						}
+						values.push(exists);
+					}
+				} else if (keyword.find("defined") == 0) {
 					std::string symbol;
 					bool has_parenthesis = false;
 
@@ -531,7 +565,6 @@ private:
 					}
 					else { // "defined(" is part of the keyword string
 						has_parenthesis = true;
-						using namespace std::string_view_literals;
 						if (keyword.size() > "defined("sv.length())
 							symbol = keyword.substr(8);
 						else
@@ -629,7 +662,7 @@ private:
 
 		if (!rest_of_line.empty()) {
 			open_paren = rest_of_line.find("(");
-			if (open_paren != std::string::npos) {
+			if (open_paren != std::string::npos && rest_of_line.find_first_not_of(' ') == open_paren) {
 				size_t close_paren = rest_of_line.find(")", open_paren);
 
 				if (close_paren == std::string::npos) {
@@ -651,7 +684,9 @@ private:
 				}
 
 				// Save the macro body after the closing parenthesis
-				rest_of_line = rest_of_line.substr(rest_of_line.find_first_not_of(' ', close_paren + 1));
+				rest_of_line.erase(0, rest_of_line.find_first_not_of(' ', close_paren + 1));
+			} else {
+				rest_of_line.erase(0, rest_of_line.find_first_not_of(' '));
 			}
 		}
 
