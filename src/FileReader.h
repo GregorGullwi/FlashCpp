@@ -97,13 +97,22 @@ static size_t findMatchingClosingParen(const std::string& str, size_t opening_po
 
 static std::vector<std::string> splitArgs(const std::string& argsStr) {
 	std::vector<std::string> args;
+	const std::size_t second_arg_start = argsStr.find(',');
+	if (second_arg_start == std::string::npos) {
+		args.push_back(argsStr);
+		return args;
+	}
+
+	args.push_back(argsStr.substr(0, second_arg_start));
 	std::string arg;
-	size_t i = 0;
-	while (i < argsStr.size()) {
+	size_t i = argsStr.find_first_not_of(' ', second_arg_start + 1);
+	const size_t argsSize = argsStr.size();
+	while (i < argsSize) {
 		char c = argsStr[i];
 		if (c == ',' && arg.size() > 0) {
 			args.push_back(arg);
 			arg.clear();
+			i = argsStr.find_first_not_of(' ', second_arg_start + 1);
 		}
 		else if (c == '(') {
 			size_t closingPos = findMatchingClosingParen(argsStr, i);
@@ -113,8 +122,11 @@ static std::vector<std::string> splitArgs(const std::string& argsStr) {
 			arg += argsStr.substr(i + 1, closingPos - i - 1);
 			i = closingPos + 1;
 		}
-		else if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ';') {
+		else if (arg.size() == 0 && (c == ' ' || c == '\t')) {
 			i++;
+		}
+		else if (c == ')') {
+			break;
 		}
 		else {
 			arg += c;
@@ -363,15 +375,39 @@ private:
 					size_t pattern_end = pos + pattern.size();
 					std::string replace_str = directive.body;
 					if (!directive.args.empty()) {
-						std::vector<std::string> args = splitArgs(output.substr(pos + pattern.size()));
+						size_t args_start = output.find_first_of('(');
+						size_t args_end = output.find_first_of(')', args_start);
+						std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
 						if (args.size() != directive.args.size()) {
 							continue;
 						}
 						for (size_t i = 0; i < args.size(); ++i) {
+							// Handle string concatenation macro token (#)
+							replaceAll(replace_str, "#" + directive.args[i], "\"" + args[i] + "\"");
+							// Replace macro arguments
 							replaceAll(replace_str, directive.args[i], args[i]);
+
 						}
+						// Handle token-pasting operator (##) after replacing all the arguments
+						size_t paste_pos;
+						while ((paste_pos = replace_str.find("##")) != std::string::npos) {
+							// Find whitespaces before ##
+							size_t ws_before = paste_pos;
+							while (ws_before > 0 && std::isspace(replace_str[ws_before - 1])) {
+								--ws_before;
+							}
+
+							// Find whitespaces after ##
+							size_t ws_after = paste_pos + 2;
+							ws_after = replace_str.find_first_not_of(' ', ws_after);
+
+							// Concatenate the string without whitespaces and ##
+							replace_str = replace_str.substr(0, ws_before) + replace_str.substr(ws_after);
+						}
+
 						pattern_end = output.find(')', pattern_end) + 1;
 					}
+
 					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
 					expanded = true;
 					last_expanded_pos = pos;
@@ -615,7 +651,7 @@ private:
 				}
 
 				// Save the macro body after the closing parenthesis
-				rest_of_line = rest_of_line.substr(close_paren + 1);
+				rest_of_line = rest_of_line.substr(rest_of_line.find_first_not_of(' ', close_paren + 1));
 			}
 		}
 

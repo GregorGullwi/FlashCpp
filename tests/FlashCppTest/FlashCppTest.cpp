@@ -19,6 +19,12 @@ static bool compare_strings_ignore_whitespace(const std::string& str1, const std
 	return remove_whitespace(str1) == remove_whitespace(str2);
 }
 
+static void run_test_case(const std::string& input, const std::string& expected_output) {
+	FileReader file_reader(compile_context, file_tree.reset());
+	REQUIRE(file_reader.processFileContent(input));
+	const std::string& actual_output = file_reader.get_result();
+	REQUIRE(compare_strings_ignore_whitespace(actual_output, expected_output));
+}
 
 TEST_CASE("SimpleReplacement", "[preprocessor]") {
 	const std::string input = R"(
@@ -30,10 +36,7 @@ TEST_CASE("SimpleReplacement", "[preprocessor]") {
     const double radius = 1.0;
     const double circumference = 2 * 3.14159 * radius;
   )";
-	FileReader file_reader(compile_context, file_tree.reset());
-    REQUIRE(file_reader.processFileContent(input));
-	const std::string& actual_output = file_reader.get_result();
-	REQUIRE(compare_strings_ignore_whitespace(actual_output, expected_output));
+	run_test_case(input, expected_output);
 }
 
 TEST_CASE("NestedReplacement", "[preprocessor]") {
@@ -47,10 +50,7 @@ TEST_CASE("NestedReplacement", "[preprocessor]") {
     const double radius = 1.0;
     const double area = (3.14159 * (radius) * (radius));
   )";
-	FileReader file_reader(compile_context, file_tree.reset());
-	REQUIRE(file_reader.processFileContent(input));
-	const std::string& actual_output = file_reader.get_result();
-	REQUIRE(compare_strings_ignore_whitespace(actual_output, expected_output));
+	run_test_case(input, expected_output);
 }
 
 TEST_CASE("ConditionalCompilation", "[preprocessor]") {
@@ -65,8 +65,30 @@ TEST_CASE("ConditionalCompilation", "[preprocessor]") {
 	const std::string expected_output = R"(
     const int x = 1;
   )";
-	FileReader file_reader(compile_context, file_tree.reset());
-	REQUIRE(file_reader.processFileContent(input));
-	const std::string& actual_output = file_reader.get_result();
-	REQUIRE(compare_strings_ignore_whitespace(actual_output, expected_output));
+	run_test_case(input, expected_output);
+}
+
+#define STR(x) #x
+const char* str = STR(hello world);
+
+TEST_CASE("Stringification", "[preprocessor]") {
+	const std::string input = R"(
+    #define STR(x) #x
+    const char* str = STR(hello world);
+  )";
+	const std::string expected_output = R"(
+    const char* str = "hello world";
+  )";
+	run_test_case(input, expected_output);
+}
+
+TEST_CASE("Concatenation", "[preprocessor]") {
+	const std::string input = R"(
+    #define CONCAT(a, b) a ## b
+    const int num = CONCAT(3, 4);
+  )";
+	const std::string expected_output = R"(
+    const int num = 34;
+  )";
+	run_test_case(input, expected_output);
 }
