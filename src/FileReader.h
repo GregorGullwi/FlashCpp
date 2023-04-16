@@ -16,9 +16,8 @@
 using namespace std::string_view_literals;
 
 struct DefineDirective {
-	std::string name;
-	std::vector<std::string> args;
 	std::string body;
+	std::vector<std::string> args;
 };
 
 struct CurrentFile {
@@ -656,17 +655,18 @@ private:
 		DefineDirective define;
 
 		// Parse the name
-		iss >> define.name;
+		std::string name;
+		iss >> name;
 
 		// Check for the presence of a macro argument list
 		std::string rest_of_line;
 		iss.ignore(100, ' ');
 		std::getline(iss, rest_of_line);
-		size_t open_paren = define.name.find("(");
+		size_t open_paren = name.find("(");
 
 		if (open_paren != std::string::npos) {
-			rest_of_line = define.name.substr(open_paren) + rest_of_line;
-			define.name = define.name.substr(0, open_paren);
+			rest_of_line.insert(0, std::string_view(name.data() + open_paren));
+			name.erase(open_paren);
 		}
 
 		if (!rest_of_line.empty()) {
@@ -675,7 +675,7 @@ private:
 				size_t close_paren = rest_of_line.find(")", open_paren);
 
 				if (close_paren == std::string::npos) {
-					std::cerr << "Missing closing parenthesis in macro argument list for " << define.name << std::endl;
+					std::cerr << "Missing closing parenthesis in macro argument list for " << name << std::endl;
 					return;
 				}
 
@@ -702,13 +702,13 @@ private:
 		define.body = std::move(rest_of_line);
 
 		// Add the parsed define to the map
-		defines_[define.name] = define;
+		defines_[name] = std::move(define);
 	}
 	
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
-		defines_["__cplusplus"] = { "__cplusplus", {}, { "201703L" } };
-		defines_["_LIBCPP_LITTLE_ENDIAN"] = { "_LIBCPP_LITTLE_ENDIAN" };
+		defines_["__cplusplus"] = { "201703L" };
+		defines_["_LIBCPP_LITTLE_ENDIAN"] = {};
 	}
 							  
 	struct ScopedFileStack {
