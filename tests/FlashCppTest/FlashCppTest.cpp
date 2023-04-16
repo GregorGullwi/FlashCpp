@@ -21,6 +21,7 @@ static bool compare_strings_ignore_whitespace(const std::string& str1, const std
 
 static void run_test_case(const std::string& input, const std::string& expected_output) {
 	FileReader file_reader(compile_context, file_tree.reset());
+    file_reader.push_file_to_stack({ __FILE__, __LINE__ });
 	REQUIRE(file_reader.processFileContent(input));
 	const std::string& actual_output = file_reader.get_result();
 	REQUIRE(compare_strings_ignore_whitespace(actual_output, expected_output));

@@ -21,6 +21,11 @@ struct DefineDirective {
 	std::string body;
 };
 
+struct CurrentFile {
+	std::string_view file_name;
+	long line_number = 0;
+};
+
 enum class Operator {
 	And,
 	Or,
@@ -365,6 +370,10 @@ public:
 		return true;
 	}
 
+	void push_file_to_stack(const CurrentFile& current_file) {
+		filestack_.emplace(current_file);
+	}
+
 	const std::string& get_result() const {
 		return result_;
 	}
@@ -695,20 +704,13 @@ private:
 		// Add the parsed define to the map
 		defines_[define.name] = define;
 	}
-
-
 	
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
 		defines_["__cplusplus"] = { "__cplusplus", {}, { "201703L" } };
 		defines_["_LIBCPP_LITTLE_ENDIAN"] = { "_LIBCPP_LITTLE_ENDIAN" };
 	}
-	
-	struct CurrentFile {
-		std::string_view file_name;
-		long line_number = 0;
-	};
-						  
+							  
 	struct ScopedFileStack {
 		ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file) : filestack_(filestack) {
 			filestack_.push({ file });
