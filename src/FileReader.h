@@ -391,7 +391,8 @@ private:
 		std::string output = input;
 		bool expanded = true;
 		size_t last_expanded_pos = 0;
-		while (expanded) {
+		size_t loop_guard = 100'000'000;
+		while (expanded && loop_guard-- > 0) {
 			expanded = false;
 			size_t last_char_index = output.size() - 1;
 			for (const auto& [pattern, directive] : defines_) {
@@ -404,21 +405,39 @@ private:
 					if (pattern_end < last_char_index && !is_seperator_character(output[pattern_end])) {
 						continue;
 					}
+
 					std::string replace_str = directive.body;
-					if (!directive.args.empty()) {
-						size_t args_start = output.find_first_of('(', pos);
+
+					size_t args_start = output.find_first_of('(', pattern_end);
+					if (args_start != std::string::npos && output.find_first_not_of(' ', pattern_end) == args_start) {
 						size_t args_end = findMatchingClosingParen(output, args_start);
 						std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
-						if (args.size() != directive.args.size()) {
-							continue;
-						}
-						for (size_t i = 0; i < args.size(); ++i) {
-							// Handle string concatenation macro token (#)
-							replaceAll(replace_str, "#" + directive.args[i], "\"" + args[i] + "\"");
-							// Replace macro arguments
-							replaceAll(replace_str, directive.args[i], args[i]);
 
+						// Handling the __VA_ARGS__ macro
+						size_t va_args_pos = replace_str.find("__VA_ARGS__");
+						if (va_args_pos != std::string::npos) {
+							std::string va_args_str;
+							for (size_t i = directive.args.size(); i < args.size(); ++i) {
+								va_args_str += args[i];
+								if (i < args.size() - 1) {
+									va_args_str += ", ";
+								}
+							}
+							replace_str.replace(va_args_pos, 11, va_args_str);
 						}
+
+						if (!directive.args.empty()) {
+							if (args.size() < directive.args.size()) {
+								continue;
+							}
+							for (size_t i = 0; i < directive.args.size(); ++i) {
+								// Handle string concatenation macro token (#)
+								replaceAll(replace_str, "#" + directive.args[i], "\"" + args[i] + "\"");
+								// Replace macro arguments
+								replaceAll(replace_str, directive.args[i], args[i]);
+							}
+						}
+
 						// Handle token-pasting operator (##) after replacing all the arguments
 						size_t paste_pos;
 						while ((paste_pos = replace_str.find("##")) != std::string::npos) {
@@ -443,7 +462,6 @@ private:
 					last_char_index = output.size() - 1;
 					expanded = true;
 					last_expanded_pos = pos;
-					//break;
 				}
 			}
 		}
@@ -666,8 +684,7 @@ private:
 
 		// Check for the presence of a macro argument list
 		std::string rest_of_line;
-		iss.ignore(100, ' ');
-		std::getline(iss, rest_of_line);
+		std::getline(iss.ignore(100, ' '), rest_of_line);
 		size_t open_paren = name.find("(");
 
 		if (open_paren != std::string::npos) {
@@ -690,12 +707,23 @@ private:
 				// Tokenize the argument list
 				std::istringstream arg_stream(arg_list);
 				std::string token;
+				bool found_variadic_args = false;
 				while (std::getline(arg_stream, token, ',')) {
 					// Remove leading and trailing whitespace
 					auto start = std::find_if_not(token.begin(), token.end(), [](unsigned char c) { return std::isspace(c); });
 					auto end = std::find_if_not(token.rbegin(), token.rend(), [](unsigned char c) { return std::isspace(c); }).base();
+					token = std::string(start, end);
 
-					define.args.push_back(std::string(start, end));
+					if (token == "..." && !found_variadic_args) {
+						found_variadic_args = true;
+					}
+					else if (token == "..." && found_variadic_args) {
+						std::cerr << "Duplicate variadic arguments '...' detected in macro argument list for " << name << std::endl;
+						return;
+					}
+					else {
+						define.args.push_back(std::move(token));
+					}
 				}
 
 				// Save the macro body after the closing parenthesis

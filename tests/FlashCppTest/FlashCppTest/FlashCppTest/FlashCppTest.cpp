@@ -43,7 +43,7 @@ TEST_CASE("SimpleReplacement", "[preprocessor]") {
 TEST_CASE("NestedReplacement", "[preprocessor]") {
 	const std::string input = R"(
     #define PI 3.14159
-    #define CIRCLE_AREA(radius) (PI * (radius) * (radius))
+    #define CIRCLE_AREA(r) (PI * (r) * (r))
     const double radius = 1.0;
     const double area = CIRCLE_AREA(radius);
   )";
@@ -61,7 +61,7 @@ const int num = DOUBLE(SQUARE(3));
 TEST_CASE("NestedMacros", "[preprocessor]") {
 	const std::string input = R"(
     #define SQUARE(x) ((x) * (x))
-    #define DOUBLE(x) ((x) * 2)
+    #define DOUBLE(n) ((n) * 2)
     const int num = DOUBLE(SQUARE(3));
   )";
 	const std::string expected_output = R"(
@@ -143,4 +143,19 @@ TEST_CASE("__COUNTER__", "[preprocessor]") {
   )";
   const std::string actual_output = preprocess(input);
   REQUIRE(actual_output == expected_output);
+}
+
+TEST_CASE("__VA_ARGS__", "[preprocessor]") {
+	const std::string input = R"(
+    #define SUM(initial, ...) sum(initial, __VA_ARGS__)
+    int sum(int x, int y, int z) { return x + y + z; }
+    const int a = 1, b = 2, c = 3;
+    const int total = SUM(4, a, b, c);
+  )";
+	const std::string expected_output = R"(
+    int sum(int x, int y, int z) { return x + y + z; }
+    const int a = 1, b = 2, c = 3;
+    const int total = sum(4, a, b, c);
+  )";
+    run_test_case(input, expected_output);
 }
