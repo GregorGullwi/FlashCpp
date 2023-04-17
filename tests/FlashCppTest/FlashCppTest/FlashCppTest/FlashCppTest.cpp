@@ -130,3 +130,17 @@ TEST_CASE("__has_include", "[preprocessor]") {
     compile_context.addIncludeDir(R"(C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\include)"sv);
     run_test_case(input, expected_output);
 }
+
+TEST_CASE("__COUNTER__", "[preprocessor]") {
+  const std::string input = R"(
+    #define NAME(x) var_ ## x ## _ ## __COUNTER__
+    const int NAME(foo) = 42;
+    const int NAME(bar) = 84;
+  )";
+  const std::string expected_output = R"(
+    const int var_foo_0 = 42;
+    const int var_bar_1 = 84;
+  )";
+  const std::string actual_output = preprocess(input);
+  REQUIRE(actual_output == expected_output);
+}

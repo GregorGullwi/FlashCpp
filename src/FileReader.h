@@ -288,12 +288,18 @@ public:
 				line = line.substr(0, comment_pos);
 			}
 			
-			if (size_t filePos = line.find("__FILE__"); filePos != std::string::npos) {
-				line.replace(filePos, 8, "\"" + std::string(filestack_.top().file_name) + "\"");
+			size_t filePos = filePos = line.find("__FILE__");
+			while (filePos != std::string::npos) {
+				line.replace(filePos, "__FILE__"sv.length(), "\"" + std::string(filestack_.top().file_name) + "\"");
 			}
-			if (line.find("__LINE__") != std::string::npos) {
-				size_t line_num = std::count(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>(), '\n') + 1;
-					line.replace(line.find("__LINE__"), 7, std::to_string(line_num));
+			size_t linePos = line.find("__LINE__");
+			while (linePos != std::string::npos) {
+				line.replace(linePos, "__LINE__"sv.length(), std::to_string(line_number));
+			}
+			size_t counterPos = line.find("__COUNTER__");
+			while (counterPos != std::string::npos) {
+				line.replace(counterPos, "__COUNTER__"sv.length(), std::to_string(counter_value_));
+				++counter_value_;
 			}
 
 			if (line.find("#include", 0) == 0) {
@@ -728,4 +734,5 @@ private:
 	std::unordered_set<std::string> proccessedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
+	unsigned long long counter_value_ = 0;
 };
