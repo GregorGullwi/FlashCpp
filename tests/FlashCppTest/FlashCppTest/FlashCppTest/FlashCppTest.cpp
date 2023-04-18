@@ -156,3 +156,19 @@ TEST_CASE("__VA_ARGS__", "[preprocessor]") {
   )";
     run_test_case(input, expected_output);
 }
+
+TEST_CASE("#undef", "[preprocessor]") {
+	const std::string input = R"(
+    #define FOO 42
+    #undef FOO
+    #ifndef FOO
+      const bool has_foo = false;
+    #else
+      const bool has_foo = true;
+    #endif
+  )";
+	const std::string expected_output = R"(
+    const bool has_foo = false;
+  )";
+	run_test_case(input, expected_output);
+}

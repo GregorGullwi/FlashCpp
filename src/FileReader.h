@@ -82,14 +82,14 @@ static std::unordered_map<char, CharInfo> char_info_table = {
 	{'=', {Operator::Equals, true}},
 };
 
-static size_t findMatchingClosingParen(const std::string& str, size_t opening_pos) {
+static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
 	int nesting = 1;
 	size_t pos = opening_pos + 1;
-	while (pos < str.size() && nesting > 0) {
-		if (str[pos] == '(') {
+	while (pos < sv.size() && nesting > 0) {
+		if (sv[pos] == '(') {
 			nesting++;
 		}
-		else if (str[pos] == ')') {
+		else if (sv[pos] == ')') {
 			nesting--;
 		}
 		pos++;
@@ -102,23 +102,23 @@ static size_t findMatchingClosingParen(const std::string& str, size_t opening_po
 	}
 }
 
-static std::vector<std::string> splitArgs(const std::string& argsStr) {
+static std::vector<std::string> splitArgs(std::string&& argsStr) {
 	std::vector<std::string> args;
 	const std::size_t second_arg_start = argsStr.find(',');
 	if (second_arg_start == std::string::npos) {
-		args.push_back(argsStr);
+		args.emplace_back(std::move(argsStr));
 		return args;
 	}
 
-	args.push_back(argsStr.substr(0, second_arg_start));
+	args.emplace_back(argsStr.substr(0, second_arg_start));
 	std::string arg;
 	size_t i = argsStr.find_first_not_of(' ', second_arg_start + 1);
 	const size_t argsSize = argsStr.size();
 	while (i < argsSize) {
 		char c = argsStr[i];
 		if (c == ',' && arg.size() > 0) {
-			args.push_back(arg);
-			arg.clear();
+			args.emplace_back(std::move(arg));
+			arg = std::string();	// it's undefined behavior to start using a moved from string
 			i = argsStr.find_first_not_of(' ', i + 1);
 		}
 		else if (c == '(') {
@@ -141,7 +141,7 @@ static std::vector<std::string> splitArgs(const std::string& argsStr) {
 		}
 	}
 	if (arg.size() > 0) {
-		args.push_back(arg);
+		args.emplace_back(std::move(arg));
 	}
 	return args;
 }
@@ -340,7 +340,8 @@ public:
 				}
 			}
 			else if (line.find("#undef") == 0) {
-				std::istringstream iss(line.substr(7));
+				std::istringstream iss(line);
+				iss.seekg("#undef"sv.length());
 				std::string symbol;
 				iss >> symbol;
 				defines_.erase(symbol);
@@ -374,7 +375,7 @@ private:
 		return ((c == ' ') | (c == ',') | (c == '#') | (c == ')') | (c == '(')) != 0;
 	}
 	std::string expandMacros(const std::string& input) {
-		std::string output = input;		
+		std::string output = input;
 
 		bool expanded = true;
 		size_t last_expanded_pos = 0;
@@ -728,6 +729,7 @@ private:
 					}
 					else {
 						define.args.push_back(std::move(token));
+						token = std::string();	// it's undefined behavior to move a string and then use it again
 					}
 				}
 
