@@ -113,22 +113,20 @@ TEST_CASE("Concatenation", "[preprocessor]") {
 TEST_CASE("__has_include", "[preprocessor]") {
 	const std::string input = R"(
     #if __has_include(<iostream>)
-      #include <iostream>
       const bool has_iostream = true;
     #else
       const bool has_iostream = false;
     #endif
   )";
-	const std::string expected_output = R"(
-    #if 1
-      #include <iostream>
-      const bool has_iostream = true;
-    #else
+	const std::string expected_output_false = R"(
       const bool has_iostream = false;
-    #endif
   )";
-    compile_context.addIncludeDir(R"(C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\include)"sv);
-    run_test_case(input, expected_output);
+	const std::string expected_output_true = R"(
+      const bool has_iostream = true;
+  )";
+	run_test_case(input, expected_output_false);
+	compile_context.addIncludeDir(R"(C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\include)"sv);
+    run_test_case(input, expected_output_true);
 }
 
 TEST_CASE("__COUNTER__", "[preprocessor]") {
