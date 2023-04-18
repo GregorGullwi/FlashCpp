@@ -141,8 +141,7 @@ TEST_CASE("__COUNTER__", "[preprocessor]") {
     const int var_foo_0 = 42;
     const int var_bar_1 = 84;
   )";
-  const std::string actual_output = preprocess(input);
-  REQUIRE(actual_output == expected_output);
+  run_test_case(input, expected_output);
 }
 
 TEST_CASE("__VA_ARGS__", "[preprocessor]") {

@@ -286,21 +286,7 @@ public:
 					continue;
 				}
 				line = line.substr(0, comment_pos);
-			}
-			
-			size_t filePos = filePos = line.find("__FILE__");
-			while (filePos != std::string::npos) {
-				line.replace(filePos, "__FILE__"sv.length(), "\"" + std::string(filestack_.top().file_name) + "\"");
-			}
-			size_t linePos = line.find("__LINE__");
-			while (linePos != std::string::npos) {
-				line.replace(linePos, "__LINE__"sv.length(), std::to_string(line_number));
-			}
-			size_t counterPos = line.find("__COUNTER__");
-			while (counterPos != std::string::npos) {
-				line.replace(counterPos, "__COUNTER__"sv.length(), std::to_string(counter_value_));
-				++counter_value_;
-			}
+			}			
 
 			if (line.find("#include", 0) == 0) {
 				if (!processIncludeDirective(line, filestack_.top().file_name)) {
@@ -387,8 +373,9 @@ private:
 	static bool is_seperator_character(char c) {
 		return ((c == ' ') | (c == ',') | (c == '#') | (c == ')') | (c == '(')) != 0;
 	}
-	std::string expandMacros(const std::string& input) const {
-		std::string output = input;
+	std::string expandMacros(const std::string& input) {
+		std::string output = input;		
+
 		bool expanded = true;
 		size_t last_expanded_pos = 0;
 		size_t loop_guard = 100'000'000;
@@ -465,6 +452,24 @@ private:
 				}
 			}
 		}
+
+		size_t filePos = filePos = output.find("__FILE__");
+		while (filePos != std::string::npos) {
+			output.replace(filePos, "__FILE__"sv.length(), "\"" + std::string(filestack_.top().file_name) + "\"");
+			filePos = filePos = output.find("__FILE__");
+		}
+		size_t linePos = input.find("__LINE__");
+		while (linePos != std::string::npos) {
+			output.replace(linePos, "__LINE__"sv.length(), std::to_string(filestack_.top().line_number));
+			linePos = output.find("__LINE__");
+		}
+		size_t counterPos = output.find("__COUNTER__");
+		while (counterPos != std::string::npos) {
+			output.replace(counterPos, "__COUNTER__"sv.length(), std::to_string(counter_value_));
+			++counter_value_;
+			counterPos = output.find("__COUNTER__");
+		}
+
 		return output;
 	}
 
