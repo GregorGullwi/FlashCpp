@@ -10,16 +10,18 @@ It's been developed in heavy cooperation with ChatGPT to speed up development.
    - [x] Implement the `#include` directive to allow including header files (2023-04-15)
    - [x] Implement the `#define` directive to allow defining macros (2023-04-07)
       - [x] Implement string concatenation in macro definitions (2023-04-15)
-      - [x] Implement token pasting
-      - [ ] Implement variadic macros
+      - [x] Implement token pasting (2023-04-15)
+      - [x] Implement variadic macros (2023-04-18)
+      - [ ] Implement variadic optional macros
       - [x] Implement macro function-like syntax (2023-04-15)
-      - [ ] Implement conditional expressions within macro definitions
+      - [x] Implement conditional expressions within macro definitions (2023-04-12)
       - [ ] Implement support for built-in defines from clang
       - [x] Implement support for __has_include() (2023-04-15)
-   - [x] Implement undefining macros with `#undef`
+   - [x] Implement undefining macros with `#undef` (2023-04-12)
    - [x] Implement the `#ifdef` and `#ifndef` directives to allow conditional compilation (2023-04-08)
-   - [x] Implement the `#if` directive to allow conditional compilation
+   - [x] Implement the `#if` directive to allow conditional compilation (2023-04-12)
    - [ ] Implement the `#error` directive to allow generating error messages
+   - [ ] Conform to the C++ standard phases
    - Optimize the preprocessor for speed and memory usage (on-going)
 
 ## 2. Lexer
