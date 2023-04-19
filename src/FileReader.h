@@ -9,6 +9,8 @@
 #include <iostream>
 #include <algorithm>
 #include <filesystem>
+#include <functional>
+#include <variant>
 
 #include "CompileContext.h"
 #include "FileTree.h"
@@ -19,6 +21,66 @@ struct DefineDirective {
 	std::string body;
 	std::vector<std::string> args;
 };
+
+struct FunctionDirective {
+	std::function<std::string()> getBody;
+};
+
+struct Directive {
+	std::variant<DefineDirective, FunctionDirective> directive_;
+
+	Directive() = default;
+	Directive(const Directive& other) = default;
+	Directive(Directive&& other) = default;
+	Directive(DefineDirective&& define_directive) : directive_(std::move(define_directive)) {}
+	Directive(FunctionDirective&& function_directive) : directive_(std::move(function_directive)) {}
+	Directive(std::function<std::string()> func) : directive_(FunctionDirective{ func }) {}
+	
+	Directive& operator=(const Directive& other) {
+		if (this != &other) {
+			directive_ = other.directive_;
+		}
+		return *this;
+	}
+	
+	Directive& operator=(Directive&& other) noexcept {
+		if (this != &other) {
+			directive_ = std::move(other.directive_);
+		}
+		return *this;
+	}
+
+	std::string getBody() {
+		return std::visit([](auto&& arg) {
+			using T = std::decay_t<decltype(arg)>;
+			if constexpr (std::is_same_v<T, DefineDirective>) {
+				return arg.body;
+			}
+			else if constexpr (std::is_same_v<T, FunctionDirective>) {
+				return arg.getBody();
+			}
+			else {
+				static_assert(always_false<T>::value, "non-exhaustive visitor!");
+			}
+		}, directive_);
+	}
+
+	// Template function to get the specific type from content
+	template <typename T>
+	T* get_if() {
+		return std::get_if<T>(&directive_);
+	}
+
+	template <typename T>
+	const T* get_if() const {
+		return std::get_if<T>(&directive_);
+	}
+
+private:
+	template <typename T>
+	struct always_false : std::false_type {};
+};
+
 
 struct CurrentFile {
 	std::string_view file_name;
@@ -394,57 +456,46 @@ private:
 						continue;
 					}
 
-					std::string replace_str = directive.body;
+					std::string replace_str;
+					if (auto* defineDirective = directive.get_if<DefineDirective>()) {
+						replace_str = defineDirective->body;
 
-					size_t args_start = output.find_first_of('(', pattern_end);
-					if (args_start != std::string::npos && output.find_first_not_of(' ', pattern_end) == args_start) {
-						size_t args_end = findMatchingClosingParen(output, args_start);
-						std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
+						size_t args_start = output.find_first_of('(', pattern_end);
+						if (args_start != std::string::npos && output.find_first_not_of(' ', pattern_end) == args_start) {
+							size_t args_end = findMatchingClosingParen(output, args_start);
+							std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
 
-						// Handling the __VA_ARGS__ macro
-						size_t va_args_pos = replace_str.find("__VA_ARGS__");
-						if (va_args_pos != std::string::npos) {
-							std::string va_args_str;
-							for (size_t i = directive.args.size(); i < args.size(); ++i) {
-								va_args_str += args[i];
-								if (i < args.size() - 1) {
-									va_args_str += ", ";
+							// Handling the __VA_ARGS__ macro
+							size_t va_args_pos = replace_str.find("__VA_ARGS__");
+							if (va_args_pos != std::string::npos) {
+								std::string va_args_str;
+								for (size_t i = defineDirective->args.size(); i < args.size(); ++i) {
+									va_args_str += args[i];
+									if (i < args.size() - 1) {
+										va_args_str += ", ";
+									}
+								}
+								replace_str.replace(va_args_pos, 11, va_args_str);
+							}
+
+							if (!defineDirective->args.empty()) {
+								if (args.size() < defineDirective->args.size()) {
+									continue;
+								}
+								for (size_t i = 0; i < defineDirective->args.size(); ++i) {
+									// Handle string concatenation macro token (#)
+									replaceAll(replace_str, "#" + defineDirective->args[i], "\"" + args[i] + "\"");
+									// Replace macro arguments
+									replaceAll(replace_str, defineDirective->args[i], args[i]);
 								}
 							}
-							replace_str.replace(va_args_pos, 11, va_args_str);
+
+							pattern_end = args_end + 1;
 						}
-
-						if (!directive.args.empty()) {
-							if (args.size() < directive.args.size()) {
-								continue;
-							}
-							for (size_t i = 0; i < directive.args.size(); ++i) {
-								// Handle string concatenation macro token (#)
-								replaceAll(replace_str, "#" + directive.args[i], "\"" + args[i] + "\"");
-								// Replace macro arguments
-								replaceAll(replace_str, directive.args[i], args[i]);
-							}
-						}
-
-						// Handle token-pasting operator (##) after replacing all the arguments
-						size_t paste_pos;
-						while ((paste_pos = replace_str.find("##")) != std::string::npos) {
-							// Find whitespaces before ##
-							size_t ws_before = paste_pos;
-							while (ws_before > 0 && std::isspace(replace_str[ws_before - 1])) {
-								--ws_before;
-							}
-
-							// Find whitespaces after ##
-							size_t ws_after = paste_pos + 2;
-							ws_after = replace_str.find_first_not_of(' ', ws_after);
-
-							// Concatenate the string without whitespaces and ##
-							replace_str = replace_str.substr(0, ws_before) + replace_str.substr(ws_after);
-						}
-
-						pattern_end = args_end + 1;
 					}
+					else if (auto* function_directive = directive.get_if<FunctionDirective>()) {
+						replace_str = function_directive->getBody();
+					}					
 
 					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
 					last_char_index = output.size() - 1;
@@ -454,21 +505,21 @@ private:
 			}
 		}
 
-		size_t filePos = filePos = output.find("__FILE__");
-		while (filePos != std::string::npos) {
-			output.replace(filePos, "__FILE__"sv.length(), "\"" + std::string(filestack_.top().file_name) + "\"");
-			filePos = filePos = output.find("__FILE__");
-		}
-		size_t linePos = input.find("__LINE__");
-		while (linePos != std::string::npos) {
-			output.replace(linePos, "__LINE__"sv.length(), std::to_string(filestack_.top().line_number));
-			linePos = output.find("__LINE__");
-		}
-		size_t counterPos = output.find("__COUNTER__");
-		while (counterPos != std::string::npos) {
-			output.replace(counterPos, "__COUNTER__"sv.length(), std::to_string(counter_value_));
-			++counter_value_;
-			counterPos = output.find("__COUNTER__");
+		// Handle token-pasting operator (##) after replacing all the arguments
+		size_t paste_pos;
+		while ((paste_pos = output.find("##")) != std::string::npos) {
+			// Find whitespaces before ##
+			size_t ws_before = paste_pos;
+			while (ws_before > 0 && std::isspace(output[ws_before - 1])) {
+				--ws_before;
+			}
+
+			// Find whitespaces after ##
+			size_t ws_after = paste_pos + 2;
+			ws_after = output.find_first_not_of(' ', ws_after);
+
+			// Concatenate the string without whitespaces and ##
+			output = output.substr(0, ws_before) + output.substr(ws_after);
 		}
 
 		return output;
@@ -618,7 +669,7 @@ private:
 					values.push(value);
 				} else if (auto it = defines_.find(keyword); it != defines_.end()) {
 					// convert the value to an int
-					const auto& body = it->second.body;
+					const auto& body = it->second.getBody();
 					if (body.size() == 1) {
 						long value = stol(body);
 						values.push(value);
@@ -748,8 +799,12 @@ private:
 	
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
-		defines_["__cplusplus"] = { "201703L" };
-		defines_["_LIBCPP_LITTLE_ENDIAN"] = {};
+		defines_["__cplusplus"] = DefineDirective{ "201703L" };
+		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
+
+		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string { return std::string(filestack_.top().file_name); } };
+		defines_["__LINE__"] = FunctionDirective{ [this]() -> std::string { return std::to_string(filestack_.top().line_number); } };
+		defines_["__COUNTER__"] = FunctionDirective{[this]() -> std::string { return std::to_string(counter_value_++); } };
 	}
 							  
 	struct ScopedFileStack {
@@ -765,7 +820,7 @@ private:
 
     const CompileContext& settings_;
     FileTree& tree_;
-    std::unordered_map<std::string, DefineDirective> defines_;
+    std::unordered_map<std::string, Directive> defines_;
 	std::unordered_set<std::string> proccessedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
