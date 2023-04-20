@@ -515,6 +515,7 @@ private:
 					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
 					last_char_index = output.size() - 1;
 					expanded = true;
+					break;
 				}
 			}
 		}
