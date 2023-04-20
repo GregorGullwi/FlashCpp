@@ -11,6 +11,10 @@
 #include <filesystem>
 #include <functional>
 #include <variant>
+#include <chrono>
+#include <cstddef> // for std::max_align_t and std::size_t
+#include <cstdio> // for std::snprintf
+#include <time.h>
 
 #include "CompileContext.h"
 #include "FileTree.h"
@@ -216,10 +220,22 @@ static void replaceAll(std::string& str, const std::string& from, const std::str
 	}
 }
 
+static std::tm localtime_safely(const std::time_t* time) {
+	std::tm tm_now;
+#ifdef _WIN32
+	localtime_s(&tm_now, time);
+#else
+	localtime_r(time, &tm_now);
+#endif
+	return tm_now;
+}
+
 class FileReader {
 public:
+	static constexpr size_t default_result_size = 1024 * 1024;
     FileReader(const CompileContext& settings, FileTree& tree) : settings_(settings), tree_(tree) {
 		addBuiltinDefines();
+		result_.reserve(default_result_size);
 	}
 	
 	size_t find_first_non_whitespace_after_hash(const std::string& str) {
@@ -440,13 +456,12 @@ private:
 		std::string output = input;
 
 		bool expanded = true;
-		size_t last_expanded_pos = 0;
 		size_t loop_guard = 100'000'000;
 		while (expanded && loop_guard-- > 0) {
 			expanded = false;
 			size_t last_char_index = output.size() - 1;
 			for (const auto& [pattern, directive] : defines_) {
-				size_t pos = output.find(pattern, last_expanded_pos);
+				size_t pos = output.find(pattern, 0);
 				if (pos != std::string::npos) {
 					if (pos > 0 && !is_seperator_character(output[pos - 1])) {
 						continue;
@@ -500,7 +515,6 @@ private:
 					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
 					last_char_index = output.size() - 1;
 					expanded = true;
-					last_expanded_pos = pos;
 				}
 			}
 		}
@@ -800,11 +814,37 @@ private:
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
 		defines_["__cplusplus"] = DefineDirective{ "201703L" };
-		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
+		defines_["__STDC_HOSTED__"] = DefineDirective{ "1" };
+		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};		
 
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string { return std::string(filestack_.top().file_name); } };
 		defines_["__LINE__"] = FunctionDirective{ [this]() -> std::string { return std::to_string(filestack_.top().line_number); } };
 		defines_["__COUNTER__"] = FunctionDirective{[this]() -> std::string { return std::to_string(counter_value_++); } };
+		   
+		defines_["__DATE__"] = FunctionDirective{[] {
+			auto now = std::chrono::system_clock::now();
+			auto time_t_now = std::chrono::system_clock::to_time_t(now);
+			std::tm tm_now = localtime_safely(&time_t_now);
+			char buffer[12];
+			std::strftime(buffer, sizeof(buffer), "\"%b %d %Y\"", &tm_now);
+			return std::string(buffer);
+		} };
+
+		defines_["__TIME__"] = FunctionDirective{[]{
+			auto now = std::chrono::system_clock::now();
+			auto time_t_now = std::chrono::system_clock::to_time_t(now);
+			std::tm tm_now = localtime_safely(&time_t_now);
+			char buffer[10];
+			std::strftime(buffer, sizeof(buffer), "\"%H:%M:%S\"", &tm_now);
+			return std::string(buffer);
+	    } };
+		
+		defines_["__STDCPP_DEFAULT_NEW_ALIGNMENT__"] = FunctionDirective{[] {
+			constexpr std::size_t default_new_alignment = alignof(std::max_align_t);
+			char buffer[32];
+			std::snprintf(buffer, sizeof(buffer), "%zuU", default_new_alignment);
+			return std::string(buffer);
+		} };
 	}
 							  
 	struct ScopedFileStack {

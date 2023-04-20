@@ -172,3 +172,17 @@ TEST_CASE("#undef", "[preprocessor]") {
   )";
 	run_test_case(input, expected_output);
 }
+
+TEST_CASE("__STDCPP_DEFAULT_NEW_ALIGNMENT__", "[preprocessor]") {
+	const std::string input = R"(
+    const std::size_t alignment = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
+    const std::size_t size = 1024;
+    void* ptr = ::operator new(size, std::align_val_t(alignment));
+  )";
+	const std::string expected_output = R"(
+    const std::size_t alignment = 8U;
+    const std::size_t size = 1024;
+    void* ptr = ::operator new(size, std::align_val_t(alignment));
+  )";
+    run_test_case(input, expected_output);
+}
