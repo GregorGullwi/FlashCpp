@@ -11,6 +11,7 @@
 #include "FileReader.h"
 #include "CompileContext.h"
 #include "CommandLineParser.h"
+#include "Lexer.h"
 
 int main(int argc, char *argv[]) {
 	CompileContext context;
