@@ -1,6 +1,8 @@
 #include "CompileContext.h"
 #include "FileTree.h"
 #include "FileReader.h"
+#include "Lexer.h"
+#include "Token.h"
 #include <string>
 #include <algorithm>
 #include <cctype>
@@ -185,4 +187,48 @@ TEST_CASE("__STDCPP_DEFAULT_NEW_ALIGNMENT__", "[preprocessor]") {
     void* ptr = ::operator new(size, std::align_val_t(alignment));
   )";
     run_test_case(input, expected_output);
+}
+
+///
+/// Lexer
+///
+TEST_CASE("Simple C++17 program", "[lexer]") {
+	const std::string input = R"(
+    void foo();
+
+    int main() {
+      foo();
+      return 0;
+    }
+  )";
+
+	Lexer lexer(input);
+	std::vector<std::pair<Token::Type, std::string>> expected_tokens{
+	  {Token::Type::Keyword, "void"},
+	  {Token::Type::Identifier, "foo"},
+	  {Token::Type::Punctuator, "("},
+	  {Token::Type::Punctuator, ")"},
+	  {Token::Type::Punctuator, ";"},
+	  {Token::Type::Keyword, "int"},
+	  {Token::Type::Identifier, "main"},
+	  {Token::Type::Punctuator, "("},
+	  {Token::Type::Punctuator, ")"},
+	  {Token::Type::Punctuator, "{"},
+	  {Token::Type::Identifier, "foo"},
+	  {Token::Type::Punctuator, "("},
+	  {Token::Type::Punctuator, ")"},
+	  {Token::Type::Punctuator, ";"},
+	  {Token::Type::Keyword, "return"},
+	  {Token::Type::Literal, "0"},
+	  {Token::Type::Punctuator, ";"},
+	  {Token::Type::Punctuator, "}"},
+	};
+
+	for (const auto& expected_token : expected_tokens) {
+		Token token = lexer.next_token();
+		REQUIRE(token.type() == expected_token.first);
+		REQUIRE(token.value() == expected_token.second);
+	}
+
+	REQUIRE(lexer.next_token().type() == Token::Type::EndOfFile);
 }

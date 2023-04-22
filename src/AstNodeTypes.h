@@ -159,3 +159,41 @@ private:
 	size_t iteration_;
 	size_t body_;
 };
+
+class ASTNode {
+public:
+	using NodeType = std::variant<
+		DeclarationNode,
+		ExpressionNode,
+		IdentifierNode,
+		StringLiteralNode,
+		BinaryOperatorNode,
+		FunctionCallNode,
+		IfStatementNode,
+		LoopStatementNode,
+		WhileLoopNode,
+		DoWhileLoopNode,
+		ForLoopNode
+	>;
+
+	template <typename T>
+	explicit ASTNode(T&& node) : node_(std::forward<T>(node)) {}
+
+	template <typename T>
+	bool is() const {
+		return std::holds_alternative<T>(node_);
+	}
+
+	template <typename T>
+	T& as() {
+		return std::get<T>(node_);
+	}
+
+	template <typename T>
+	const T& as() const {
+		return std::get<T>(node_);
+	}
+
+private:
+	NodeType node_;
+};
