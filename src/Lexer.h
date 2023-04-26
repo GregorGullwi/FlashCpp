@@ -67,6 +67,7 @@ public:
 		current_file_index_ = token_position.current_file_index_;
 	}
 
+	std::string_view get_source() const { return source_; }
 
 private:
 	std::string_view source_;

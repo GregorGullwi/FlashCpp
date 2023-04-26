@@ -85,17 +85,15 @@ private:
 
 class FunctionDeclarationNode {
 public:
-	FunctionDeclarationNode(Token declaration_token, Token return_token)
-		: declaration_token_(std::move(declaration_token)), return_token_(std::move(return_token)) {}
+	FunctionDeclarationNode(DeclarationNode declaration_node)
+		: declaration_node_(std::move(declaration_node)) {}
 
-	const Token& declaration_token() const { return declaration_token_; }
-	const Token& return_token() const { return return_token_; }
+	const DeclarationNode& declaration_node() const { return declaration_node_; }
 	const std::vector<size_t>& parameter_indices() const { return parameter_indices_; }
 	void add_parameter_ast_index(size_t parameter_index) { parameter_indices_.push_back(parameter_index); }
 
 private:
-	Token declaration_token_;
-	Token return_token_;
+	DeclarationNode declaration_node_;
 	std::vector<size_t> parameter_indices_;
 };
 
@@ -221,7 +219,7 @@ class ASTNode {
 public:
 	using NodeType = std::variant<
 		std::monostate,
-		DeclarationNode,
+		DeclarationNode,	
 		ExpressionNode,
 		TypeSpecifierNode,
 		IdentifierNode,

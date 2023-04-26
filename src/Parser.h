@@ -67,11 +67,15 @@ public:
 	}
 
 	const std::vector<ASTNode>& get_nodes() { return ast_nodes_; }
+	const ASTNode& get_inner_node(size_t inner_index) const { return inner_nodes_; }
+	bool is_valid_inner_index(size_t inner_index) const { return inner_index < inner_nodes_.size(); }
 
 private:
 	Lexer& lexer_;
 	std::optional<Token> current_token_;
 	std::vector<ASTNode> ast_nodes_;
+	// ASTNodes might have pointers into this array
+	std::vector<ASTNode> inner_nodes_;	// This should probably not be the same type, but it works for now
 	
 	class ScopedTokenPosition {
 	public:
@@ -85,14 +89,14 @@ private:
 
 		ParseResult success() {
 			discarded_ = true;
-			parser_.discard_token_position(saved_position_);
+			parser_.discard_saved_token(saved_position_);
 			return ParseResult::success();
 		}
 		
 		ParseResult error(std::string_view error_message) {
 			discarded_ = true;
-			parser_.discard_token_position(saved_position_);
-			return ParseResult::error(error_message, *parser_.peek_token());
+			parser_.discard_saved_token(saved_position_);
+			return ParseResult::error(std::string(error_message), *parser_.peek_token());
 		}
 
 	private:
@@ -135,11 +139,12 @@ private:
 
 	// Parsing functions for different constructs
 	ParseResult parse_top_level_node();
+	std::pair<Token, std::optional<Token>> parse_type_and_name();
 	ParseResult parse_namespace();
 	ParseResult parse_type_specifier();
 	ParseResult parse_declaration_or_function_definition();
-	ParseResult parse_declaration(std::string_view expected_end_of_declaration = ";");
-	ParseResult parse_function_definition_or_declaration();
+	ParseResult parse_declaration(Token type_specifier, Token identifier_token, std::string_view expected_end_of_declaration);
+	ParseResult parse_function_definition_or_declaration(Token return_type, Token function_name_token);
 	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();
 	ParseResult parse_return_statement();
@@ -186,26 +191,47 @@ ParseResult Parser::parse_top_level_node() {
 
 	// If we failed to parse any top-level construct, restore the token position
 	// and report an error
-	return saved_position::error("Failed to parse top-level construct");
+	return saved_position.error("Failed to parse top-level construct");
+}
+
+std::pair<Token, std::optional<Token>> Parser::parse_type_and_name() {
+	// Parse the type specifier (can be a keyword, identifier, or complex type)
+	auto type_specifier = current_token_.value_or(Token{});
+	auto type_specifier_result = parse_type_specifier();
+	if (type_specifier_result.is_error()) {
+		return {type_specifier, std::nullopt};
+	}
+
+	// Parse the identifier (name)
+	auto identifier_token = consume_token();
+	if (!identifier_token || identifier_token->type() != Token::Type::Identifier) {
+		return {type_specifier, std::nullopt};
+	}
+
+	return {type_specifier, identifier_token};
 }
 
 ParseResult Parser::parse_declaration_or_function_definition() {
 	// Save the current token's position to restore later in case of a parsing error
 	TokenPosition saved_position = save_token_position();
 
+	// Parse the type specifier and identifier (name)
+	auto[type_specifier, identifier_token] = parse_type_and_name();
+
 	// Attempt to parse a function definition
-	Token function_token = *peek_token();
-	auto function_definition_result = parse_function_definition_or_declaration();
-	if (!function_definition_result.is_error()) {
-		discard_saved_token(saved_position);
-		return ParseResult::success();
+	if (peek_token()->value() == "(") {
+		auto function_definition_result = parse_function_definition_or_declaration(type_specifier, *identifier_token);
+		if (!function_definition_result.is_error()) {
+			discard_saved_token(saved_position);
+			return ParseResult::success();
+		}
+
+		// If parsing a function definition failed, restore the token position
+		restore_token_position(saved_position);
 	}
 
-	// If parsing a function definition failed, restore the token position
-	restore_token_position(saved_position);
-
 	// Attempt to parse a simple declaration (variable or typedef)
-	auto declaration_result = parse_declaration();
+	auto declaration_result = parse_declaration(type_specifier, *identifier_token, ";");
 	if (!declaration_result.is_error()) {
 		discard_saved_token(saved_position);
 		return ParseResult::success();
@@ -216,34 +242,10 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	return declaration_result;
 }
 
-ParseResult Parser::parse_declaration(std::string_view expected_end_of_declaration) {
-	// Parse the type specifier (can be a keyword, identifier, or complex type)
-	auto type_specifier = current_token_.value_or(Token{});
-	auto type_specifier_result = parse_type_specifier();
-	if (type_specifier_result.is_error()) {
-		return type_specifier_result;
-	}
-
-	// Parse the identifier (variable name)
-	auto identifier_token = consume_token();
-	if (!identifier_token || identifier_token->type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected identifier in declaration", current_token_.value_or(Token{}));
-	}
-
-	// Check if the declaration has an initializer (optional)
-	/*ExpressionNode initializer;
-	if (consume_punctuator("=")) {
-		auto initializer_result = parse_expression();
-		if (initializer_result.is_error()) {
-			return initializer_result;
-		}
-		initializer = initializer_result.get_node();
-	}*/
-
+ParseResult Parser::parse_declaration(Token type_specifier, Token identifier_token, std::string_view expected_end_of_declaration) {
 	// Create the DeclarationNode
-	DeclarationNode declaration(type_specifier, *identifier_token); //, std::move(initializer));
+	DeclarationNode declaration(type_specifier, identifier_token);
 	ast_nodes_.emplace_back(declaration);
-	size_t declaration_index = ast_nodes_.size() - 1;
 
 	// Expect a semicolon at the end of the declaration
 	if (!consume_punctuator(expected_end_of_declaration)) {
@@ -255,7 +257,6 @@ ParseResult Parser::parse_declaration(std::string_view expected_end_of_declarati
 
 	return ParseResult::success();
 }
-
 
 ParseResult Parser::parse_type_specifier() {
 	auto current_token_opt = peek_token();
@@ -290,21 +291,15 @@ ParseResult Parser::parse_type_specifier() {
 	return ParseResult::error("Unexpected token in type specifier", current_token_opt.value_or(Token()));
 }
 
-ParseResult Parser::parse_function_definition_or_declaration() {
-	// Parse return type
-	if (peek_token()->type() != Token::Type::Keyword) {
-		return ParseResult::error("Expected return type for function definition", *current_token_);
-	}
-	auto return_type = consume_token();
-
-	// Parse function name (identifier)
-	auto function_name_token = consume_token(); // Store the function name token
-	if (!function_name_token || function_name_token->type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected function name (identifier)", *current_token_);
-	}
-
+ParseResult Parser::parse_function_definition_or_declaration(Token return_type, Token function_name_token) {
 	// Create the function declaration
-	auto& func_node = ast_nodes_.emplace_back(FunctionDeclarationNode(*function_name_token, *return_type));
+	DeclarationNode func_declaration(return_type, function_name_token);
+	auto& func_node = ast_nodes_.emplace_back(FunctionDeclarationNode(func_declaration));
+
+	// Parse parameters
+	if (!consume_punctuator("(")) {
+		return ParseResult::error("Expected '(' for function parameter list", *current_token_);
+	}
 
 	// Parse parameters
 	if (!consume_punctuator("(")) {
@@ -313,16 +308,9 @@ ParseResult Parser::parse_function_definition_or_declaration() {
 
 	std::vector<size_t> parameter_indices;
 	while (!consume_punctuator(")")) {
-		// Parse parameter type
-		if (current_token_->type() != Token::Type::Keyword) {
-			return ParseResult::error("Expected parameter type", *current_token_);
-		}
-		Token parameter_type = *current_token_;
-		consume_token(); // consume parameter type
-
-		// Parse parameter name (identifier)
-		auto parameter_name_token = consume_token(); // Store the parameter name token
-		if (!parameter_name_token || parameter_name_token->type() != Token::Type::Identifier) {
+		// Parse parameter type and name (identifier)
+		auto[parameter_type, parameter_name_token] = parse_type_and_name();
+		if (!parameter_name_token) {
 			return ParseResult::error("Expected parameter name (identifier)", *current_token_);
 		}
 
@@ -337,7 +325,7 @@ ParseResult Parser::parse_function_definition_or_declaration() {
 
 			// Parse the default value expression
 			auto default_value = parse_expression(0);
-			// Set the default value for the parameter_declaration if needed
+			// Set the default value
 		}
 
 		if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
