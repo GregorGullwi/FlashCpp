@@ -7,6 +7,7 @@
 
 class DeclarationNode {
 public:
+	DeclarationNode() = default;
 	DeclarationNode(Token type, Token identifier, bool is_const = false, bool is_static = false)
 		: type_(std::move(type)), identifier_(std::move(identifier)), is_const_(is_const), is_static_(is_static) {}
 
@@ -39,10 +40,31 @@ public:
 private:
 };
 
+enum class TypeQualifier {
+	None,
+	Signed,
+	Unsigned,
+};
+
+enum class Type {
+	Void,
+	Bool,
+	Char,
+	Int,
+	Float,
+	UserDefined
+};
+
 class TypeSpecifierNode {
 public:
-	explicit TypeSpecifierNode(Token token)
-		: token_(std::move(token)) {}
+	TypeSpecifierNode() = default;
+	TypeSpecifierNode(Type type, TypeQualifier qualifier, size_t size, const Token& token = {})
+		: type_(type), qualifier_(qualifier), size_(size), token_(token) {}
+
+private:
+	Type type_;
+	size_t size_;
+	TypeQualifier qualifier_;
 	Token token_;
 };
 
@@ -85,6 +107,7 @@ private:
 
 class FunctionDeclarationNode {
 public:
+	FunctionDeclarationNode() = default;
 	FunctionDeclarationNode(DeclarationNode declaration_node)
 		: declaration_node_(std::move(declaration_node)) {}
 
@@ -219,7 +242,7 @@ class ASTNode {
 public:
 	using NodeType = std::variant<
 		std::monostate,
-		DeclarationNode,	
+		DeclarationNode,
 		ExpressionNode,
 		TypeSpecifierNode,
 		IdentifierNode,
