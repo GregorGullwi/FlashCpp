@@ -13,6 +13,7 @@ public:
 		EndOfFile
 	};
 
+	Token() = default;
 	Token(Type type, std::string_view value, size_t line, size_t column, size_t file_index)
 		: type_(type), value_(value), line_(line), column_(column), file_index_(file_index) {}
 
@@ -25,7 +26,7 @@ public:
 private:
 	Type type_;
 	std::string_view value_;
-	size_t line_;
-	size_t column_;
-	size_t file_index_;
+	size_t line_ = 0;
+	size_t column_ = 0;
+	size_t file_index_ = 0;
 };

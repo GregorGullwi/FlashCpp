@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cctype>
 #include <string_view>
 #include <unordered_set>
@@ -5,6 +7,13 @@
 #include <vector>
 
 #include "Token.h"
+
+struct TokenPosition {
+	size_t cursor_;
+	size_t line_;
+	size_t column_;
+	size_t current_file_index_;
+};
 
 class Lexer {
 public:
@@ -47,6 +56,17 @@ public:
 	const std::vector<std::string>& file_paths() const {
 		return file_paths_;
 	}
+
+	TokenPosition save_token_position() {
+		return { cursor_, line_, column_, current_file_index_ };
+	}
+	void restore_token_position(const TokenPosition& token_position) {
+		cursor_ = token_position.cursor_;
+		line_ = token_position.line_;
+		column_ = token_position.column_;
+		current_file_index_ = token_position.current_file_index_;
+	}
+
 
 private:
 	std::string_view source_;
