@@ -72,6 +72,34 @@ private:
 	Lexer& lexer_;
 	std::optional<Token> current_token_;
 	std::vector<ASTNode> ast_nodes_;
+	
+	class ScopedTokenPosition {
+	public:
+		explicit ScopedTokenPosition(class Parser& parser) : parser_(parser), saved_position_(parser.save_token_position()) {}
+
+		~ScopedTokenPosition() {
+			if (!discarded_) {
+				parser_.restore_token_position(saved_position_);
+			}
+		}
+
+		ParseResult success() {
+			discarded_ = true;
+			parser_.discard_token_position(saved_position_);
+			return ParseResult::success();
+		}
+		
+		ParseResult error(std::string_view error_message) {
+			discarded_ = true;
+			parser_.discard_token_position(saved_position_);
+			return ParseResult::error(error_message, *parser_.peek_token());
+		}
+
+	private:
+		class Parser& parser_;
+		TokenPosition saved_position_;
+		bool discarded_ = false;
+	};
 
 	struct SavedToken {
 		//Token current_token_;
@@ -136,7 +164,7 @@ private:
 
 ParseResult Parser::parse_top_level_node() {
 	// Save the current token's position to restore later in case of a parsing error
-	TokenPosition saved_position = save_token_position();
+	ScopedTokenPosition saved_position(*this);
 
 	// Check if it's a namespace declaration
 	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "namespace") {
@@ -153,14 +181,12 @@ ParseResult Parser::parse_top_level_node() {
 	// Attempt to parse a function definition, variable declaration, or typedef
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
-		discard_saved_token(saved_position);
-		return result;
+		return saved_position.success();
 	}
 
 	// If we failed to parse any top-level construct, restore the token position
 	// and report an error
-	restore_token_position(saved_position);
-	return ParseResult::error("Failed to parse top-level construct", *peek_token());
+	return saved_position::error("Failed to parse top-level construct");
 }
 
 ParseResult Parser::parse_declaration_or_function_definition() {
