@@ -72,3 +72,6 @@ It's been developed in heavy cooperation with ChatGPT to speed up development.
 ## 11. Documentation
 - [ ] Create documentation for the compiler, including usage instructions and API reference
 - [ ] Optimize the documentation for clarity and completeness
+
+
+[![Run on Repl.it](https://replit.com/badge/github/GregorGullwi/FlashCpp)](https://replit.com/new/github/GregorGullwi/FlashCpp)
