@@ -127,8 +127,10 @@ TEST_CASE("__has_include", "[preprocessor]") {
       const bool has_iostream = true;
   )";
 	run_test_case(input, expected_output_false);
+#ifdef _WIN32
 	compile_context.addIncludeDir(R"(C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\include)"sv);
     run_test_case(input, expected_output_true);
+#endif
 }
 
 TEST_CASE("__COUNTER__", "[preprocessor]") {
@@ -186,7 +188,9 @@ TEST_CASE("__STDCPP_DEFAULT_NEW_ALIGNMENT__", "[preprocessor]") {
     const std::size_t size = 1024;
     void* ptr = ::operator new(size, std::align_val_t(alignment));
   )";
+#if (__STDCPP_DEFAULT_NEW_ALIGNMENT__ == 8)
     run_test_case(input, expected_output);
+#endif
 }
 
 ///
