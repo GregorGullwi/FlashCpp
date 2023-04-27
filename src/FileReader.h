@@ -284,6 +284,10 @@ public:
 		long prev_line_number = -1;
 		const bool isPreprocessorOnlyMode = settings_.isPreprocessorOnlyMode();
 		while (std::getline(stream, line)) {
+			size_t first_none_tab = line.find_first_not_of('\t');
+			if (first_none_tab != std::string::npos && first_none_tab != 0)
+				line.erase(line.begin(), line.begin() + first_none_tab);
+
 			++line_number;
 
 			if (isPreprocessorOnlyMode && prev_line_number != line_number - 1) {
