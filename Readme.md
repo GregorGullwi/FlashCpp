@@ -25,14 +25,37 @@ It's been developed in heavy cooperation with ChatGPT to speed up development.
    - Optimize the preprocessor for speed and memory usage (on-going)
 
 ## 2. Lexer
-- [ ] Define the set of valid tokens for the language
-- [ ] Implement a state machine to recognize each token
+- [x] Define the set of valid tokens for the language
+- [x] Implement a state machine to recognize each token
 - [ ] Implement error handling to report invalid tokens and their location
 - [ ] Optimize the lexer for speed and memory usage
 
 ## 3. Parser
-- [ ] Define the grammar of the language
-- [ ] Implement a parser to build an abstract syntax tree (AST)
+- [x] Implement a parser to build an abstract syntax tree (AST)
+
+- [ ] Define the different node types: Define the different types of nodes that may be required to represent the various syntactic constructs in the C++ language. These node types will be used to construct the parse tree and will include, but not be limited to, the following:
+
+    - [ ] Literal nodes: Nodes that represent literals such as integers, floating-point numbers, and strings.
+
+    - [ ] Identifier nodes: Nodes that represent identifiers such as variable names, function names, and class names.
+
+    - [ ] Operator nodes: Nodes that represent operators such as arithmetic operators, bitwise operators, and logical operators.
+
+    - [ ] Expression nodes: Nodes that represent expressions such as arithmetic expressions, logical expressions, and function calls.
+
+    - [ ] Statement nodes: Nodes that represent statements such as if statements, for loops, while loops, and switch statements.
+
+    - [ ] Function definition nodes: Nodes that represent function definitions, including the function signature and body.
+    
+	- [ ] Declaration nodes: Nodes that represent variables or function declarations.
+
+    - [ ] Class definition nodes: Nodes that represent class definitions, including the class name, member variables, and member functions.
+
+    - [ ] Namespace nodes: Nodes that represent namespaces, including the namespace name and the nested declarations within the namespace.
+
+    - [ ] Template nodes: Nodes that represent template definitions, including the template parameters and the template body.
+
+    - [ ] Type nodes: Nodes that represent types, including primitive types such as int, float, and bool, as well as complex types such as arrays, pointers, and user-defined types.
 - [ ] Implement error handling to report syntax errors and their location
 - [ ] Optimize the parser for speed and memory usage
 
