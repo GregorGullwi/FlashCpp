@@ -60,17 +60,12 @@ It's been developed in heavy cooperation with ChatGPT to speed up development.
 - [ ] Optimize the parser for speed and memory usage
 
 ## 4. Semantic analysis
-- [ ] Define the semantics of the language
-- [ ] Implement type checking to ensure type safety
-- [ ] Implement name resolution to resolve identifiers to their declarations
 - [ ] Implement control flow analysis to detect unreachable code
 - [ ] Implement error handling to report semantic errors and their location
 - [ ] Optimize semantic analysis for speed and memory usage
 
 ## 5. IR generation
-- [ ] Design an intermediate representation (IR) for the language
-- [ ] Implement code generation from the AST to the IR
-- [ ] Optimize the IR for speed and memory usage
+- [ ] Implement code generation from the AST to Clang IR
 
 ## 6. Optimization techniques
 - [ ] Implement optimization passes on the IR to improve runtime performance
