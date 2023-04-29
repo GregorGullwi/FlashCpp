@@ -5,41 +5,6 @@
 #include <cstddef>
 #include <variant>
 
-class DeclarationNode {
-public:
-	DeclarationNode() = default;
-	DeclarationNode(Token type, Token identifier, bool is_const = false, bool is_static = false)
-		: type_(std::move(type)), identifier_(std::move(identifier)), is_const_(is_const), is_static_(is_static) {}
-
-	const Token& type_token() const { return type_; }
-	const Token& identifier_token() const { return identifier_; }
-	bool is_const() const { return is_const_; }
-	bool is_static() const { return is_static_; }
-
-private:
-	Token type_;
-	Token identifier_;
-	bool is_const_;
-	bool is_static_;
-};
-
-class ExpressionNode {
-public:
-	explicit ExpressionNode(Token token)
-		: token_(std::move(token)) {}
-	Token token_;
-};
-
-class IdentifierNode : public ExpressionNode {
-public:
-	explicit IdentifierNode(Token token)
-		: ExpressionNode(token) {}
-
-	std::string_view name() const { return token_.value(); }
-
-private:
-};
-
 enum class TypeQualifier {
 	None,
 	Signed,
@@ -66,6 +31,23 @@ private:
 	size_t size_;
 	TypeQualifier qualifier_;
 	Token token_;
+};
+
+class ExpressionNode {
+public:
+	explicit ExpressionNode(Token token)
+		: token_(std::move(token)) {}
+	Token token_;
+};
+
+class IdentifierNode : public ExpressionNode {
+public:
+	explicit IdentifierNode(Token token)
+		: ExpressionNode(token) {}
+
+	std::string_view name() const { return token_.value(); }
+
+private:
 };
 
 class StringLiteralNode : public ExpressionNode {
@@ -108,15 +90,15 @@ private:
 class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = default;
-	FunctionDeclarationNode(DeclarationNode declaration_node)
-		: declaration_node_(std::move(declaration_node)) {}
+	FunctionDeclarationNode(TypeSpecifierNode return_specifier_node)
+		: return_specifier_node_(std::move(return_specifier_node)) {}
 
-	const DeclarationNode& declaration_node() const { return declaration_node_; }
+	const TypeSpecifierNode& return_specifier_node() const { return return_specifier_node_; }
 	const std::vector<size_t>& parameter_indices() const { return parameter_indices_; }
 	void add_parameter_ast_index(size_t parameter_index) { parameter_indices_.push_back(parameter_index); }
 
 private:
-	DeclarationNode declaration_node_;
+	TypeSpecifierNode return_specifier_node_;
 	std::vector<size_t> parameter_indices_;
 };
 
@@ -242,9 +224,8 @@ class ASTNode {
 public:
 	using NodeType = std::variant<
 		std::monostate,
-		DeclarationNode,
-		ExpressionNode,
 		TypeSpecifierNode,
+		ExpressionNode,
 		IdentifierNode,
 		StringLiteralNode,
 		BinaryOperatorNode,

@@ -312,14 +312,9 @@ ParseResult Parser::parse_type_specifier() {
 
 ParseResult Parser::parse_function_definition_or_declaration() {
 	// Create the function declaration
-	DeclarationNode func_declaration = inner_nodes_.back().as<DeclarationNode>();
+	TypeSpecifierNode func_declaration = inner_nodes_.back().as<TypeSpecifierNode>();
 	inner_nodes_.erase(inner_nodes_.end() - 1);
 	auto& func_node = ast_nodes_.emplace_back(FunctionDeclarationNode(func_declaration));
-
-	// Parse parameters
-	if (!consume_punctuator("(")) {
-		return ParseResult::error("Expected '(' for function parameter list", *current_token_);
-	}
 
 	// Parse parameters
 	if (!consume_punctuator("(")) {
@@ -381,7 +376,7 @@ ParseResult Parser::parse_block() {
 			return parse_result;
 	}
 
-	block_node.as<BlockNode>().set_num_statements(ast_nodes_.size() - start_index);
+	ast_nodes_[start_index].as<BlockNode>().set_num_statements(ast_nodes_.size() - start_index);
 
 	return ParseResult::success();
 }
