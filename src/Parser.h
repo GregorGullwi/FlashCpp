@@ -37,27 +37,41 @@ static std::string_view get_parser_error_string(ParserError e)
 	}
 }
 
+using ASTNodeHandle = size_t;
+
 class ParseResult {
 public:
-	ParseResult() : is_error_(false) {}
-	ParseResult(std::string error_message, Token token) : is_error_(true), error_message_(std::move(error_message)), token_(std::move(token)) {}
+	ParseResult() = default;
+	ParseResult(ASTNodeHandle node_ref) : value_or_error_(node_ref) {}
+	ParseResult(std::string error_message, Token token) : value_or_error_(Error{ std::move(error_message), std::move(token) }) {}
 
-	bool is_error() const { return is_error_; }
-	const std::string& error_message() const { return error_message_; }
+	bool is_error() const { return std::holds_alternative<Error>(value_or_error_); }
+	ASTNodeHandle node_handle() const { return std::get<ASTNodeHandle>(value_or_error_); }
+	const std::string& error_message() const { return std::get<Error>(value_or_error_).error_message_; }
 
 	static ParseResult success() { return ParseResult(); }
+	static ParseResult success(ASTNodeHandle node_ref_) { return ParseResult(node_ref_); }
 	static ParseResult error(const std::string& error_message, Token token) { return ParseResult(error_message, std::move(token)); }
 	static ParseResult error(ParserError e, Token token) { return ParseResult(std::string(get_parser_error_string(e)), std::move(token)); }
 
+	struct Error
+	{
+		std::string error_message_;
+		Token token_;
+	};
+
 private:
-	bool is_error_;
-	std::string error_message_;
-	Token token_;
+	std::variant<std::monostate, ASTNodeHandle, Error> value_or_error_;
 };
 
 class Parser {
 public:
-	explicit Parser(Lexer& lexer) : lexer_(lexer), current_token_(lexer_.next_token()) {}
+	static constexpr size_t default_ast_tree_size_ = 256 * 1024;
+
+	explicit Parser(Lexer& lexer) : lexer_(lexer), current_token_(lexer_.next_token()) {
+		ast_nodes_.reserve(default_ast_tree_size_);
+		allocated_nodes_.reserve(default_ast_tree_size_);
+	}
 
 	ParseResult parse() {
 		ParseResult parseResult;
@@ -67,16 +81,37 @@ public:
 		return parseResult;
 	}
 
-	const std::vector<ASTNode>& get_nodes() { return ast_nodes_; }
-	const ASTNode& get_inner_node(size_t inner_index) const { return inner_nodes_.at(inner_index); }
-	bool is_valid_inner_index(size_t inner_index) const { return inner_index < inner_nodes_.size(); }
+	const auto& get_nodes() { return ast_nodes_; }
+	const ASTNode& get_inner_node(size_t inner_index) const { return allocated_nodes_.at(inner_index); }
+	bool is_valid_inner_index(size_t inner_index) const { return inner_index < allocated_nodes_.size(); }
+
+	template <typename T>
+	bool is(ASTNodeHandle node_handle) const {
+		return allocated_nodes_[node_handle].is<T>();
+	}
+
+	template <typename T>
+	T& as(ASTNodeHandle node_handle) {
+		return allocated_nodes_[node_handle].as<T>();
+	}
+
+	template <typename T>
+	const T& as(ASTNodeHandle node_handle) const {
+		return allocated_nodes_[node_handle].as<T>();
+	}
 
 private:
 	Lexer& lexer_;
 	std::optional<Token> current_token_;
-	std::vector<ASTNode> ast_nodes_;
-	// ASTNodes might have pointers into this array
-	std::vector<ASTNode> inner_nodes_;	// This should probably not be the same type, but it works for now
+	std::vector<ASTNodeHandle> ast_nodes_;	
+	std::vector<ASTNode> allocated_nodes_; // ASTNodes have pointers into this array
+
+	template <typename T>
+	ASTNodeHandle create_node(T&& node) {
+		std::size_t index = allocated_nodes_.size();
+		allocated_nodes_.emplace_back(std::forward<T>(node));
+		return ASTNodeHandle(index);
+	}
 	
 	class ScopedTokenPosition {
 	public:
@@ -207,7 +242,7 @@ ParseResult Parser::parse_type_and_name() {
 		return ParseResult::error("Expected identifier token", *identifier_token);
 	}
 
-	return ParseResult::success();
+	return ParseResult::success(create_node(DeclarationNode(type_specifier_result.node_handle(), *identifier_token)));
 }
 
 ParseResult Parser::parse_declaration_or_function_definition() {
@@ -296,25 +331,23 @@ ParseResult Parser::parse_type_specifier() {
 		}
 
 		consume_token();
-		inner_nodes_.emplace_back(TypeSpecifierNode(type, qualifier, type_size, current_token_opt.value()));
+		return ParseResult::success(create_node(TypeSpecifierNode(type, qualifier, type_size, current_token_opt.value())));
 	} else if (current_token_opt->type() == Token::Type::Identifier) {
 		// Handle user-defined type
 		// You can customize how to store user-defined types and their sizes
-		inner_nodes_.emplace_back(TypeSpecifierNode(type, qualifier, type_size, current_token_opt.value()));
 		consume_token();
-	} else {
-		return ParseResult::error("Unexpected token in type specifier", current_token_opt.value_or(Token()));
+		return ParseResult::success(create_node(TypeSpecifierNode(type, qualifier, type_size, current_token_opt.value())));
 	}
 
-	return ParseResult::success();
+	return ParseResult::error("Unexpected token in type specifier", current_token_opt.value_or(Token()));
 }
 
 
 ParseResult Parser::parse_function_definition_or_declaration() {
 	// Create the function declaration
-	TypeSpecifierNode func_declaration = inner_nodes_.back().as<TypeSpecifierNode>();
-	inner_nodes_.erase(inner_nodes_.end() - 1);
-	auto& func_node = ast_nodes_.emplace_back(FunctionDeclarationNode(func_declaration));
+	TypeSpecifierNode func_declaration = allocated_nodes_.back().as<TypeSpecifierNode>();
+	allocated_nodes_.erase(allocated_nodes_.end() - 1);
+	auto func_node = create_node(FunctionDeclarationNode(func_declaration));
 
 	// Parse parameters
 	if (!consume_punctuator("(")) {
@@ -322,7 +355,7 @@ ParseResult Parser::parse_function_definition_or_declaration() {
 	}
 
 	while (!consume_punctuator(")")) {
-		size_t parameter_index = inner_nodes_.size();
+		size_t parameter_index = allocated_nodes_.size();
 
 		// Parse parameter type and name (identifier)
 		ParseResult type_and_name_result = parse_type_and_name();
@@ -330,7 +363,7 @@ ParseResult Parser::parse_function_definition_or_declaration() {
 			return type_and_name_result;
 		}
 
-		func_node.as<FunctionDeclarationNode>().add_parameter_ast_index(parameter_index);
+		as<FunctionDeclarationNode>(func_node).add_parameter_ast_index(parameter_index);
 
 		// Parse default parameter value (if present)
 		if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "=") {
@@ -367,7 +400,7 @@ ParseResult Parser::parse_block() {
 	}
 
 	size_t start_index = ast_nodes_.size();
-	auto& block_node = ast_nodes_.emplace_back(BlockNode(start_index));
+	auto block_node = create_node(BlockNode(start_index));
 
 	while (!consume_punctuator("}")) {
 		// Parse statements or declarations
@@ -376,7 +409,7 @@ ParseResult Parser::parse_block() {
 			return parse_result;
 	}
 
-	ast_nodes_[start_index].as<BlockNode>().set_num_statements(ast_nodes_.size() - start_index);
+	as<BlockNode>(block_node).set_num_statements(ast_nodes_.size() - start_index);
 
 	return ParseResult::success();
 }
@@ -445,8 +478,7 @@ ParseResult Parser::parse_return_statement() {
 		return ParseResult::error(ParserError::MissingSemicolon, peek_token().value_or(Token()));
 	}
 
-	ast_nodes_.emplace_back(ReturnStatementNode(return_expr_index));
-	return ParseResult::success();
+	return ParseResult::success(create_node(ReturnStatementNode(return_expr_index)));
 }
 
 ParseResult Parser::parse_expression(int precedence) {
@@ -483,21 +515,22 @@ ParseResult Parser::parse_expression(int precedence) {
 		// Create a BinaryOperatorNode and add it to ast_nodes_
 		size_t lhs_index = ast_nodes_.size() - 2;  // The left-hand side expression was already added
 		size_t rhs_index = ast_nodes_.size() - 1;  // The right-hand side expression was just added
-		ast_nodes_.emplace_back(BinaryOperatorNode(operator_token, lhs_index, rhs_index));
+		return create_node(BinaryOperatorNode(operator_token, lhs_index, rhs_index));
 	}
 
 	return ParseResult::success();
 }
 
 ParseResult Parser::parse_primary_expression() {
+	std::optional<ASTNodeHandle> result;
 	if (current_token_->type() == Token::Type::Identifier) {
 		// Parse identifier
-		ast_nodes_.emplace_back(IdentifierNode(*current_token_));
+		result = create_node(IdentifierNode(*current_token_));
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::Literal) {
 		// Parse literal
-		ast_nodes_.emplace_back(StringLiteralNode(*current_token_));
+		result = create_node(StringLiteralNode(*current_token_));
 		consume_token();
 	}
 	else if (consume_punctuator("(")) {
@@ -513,6 +546,9 @@ ParseResult Parser::parse_primary_expression() {
 	else {
 		return ParseResult::error("Expected primary expression", *current_token_);
 	}
+
+	if (result.has_value())
+		return ParseResult::success(*result);
 
 	return ParseResult::success();
 }

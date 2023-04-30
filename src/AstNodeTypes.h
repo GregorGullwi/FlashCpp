@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <variant>
 
+using ASTNodeHandle = size_t;
+
 enum class TypeQualifier {
 	None,
 	Signed,
@@ -31,6 +33,20 @@ private:
 	size_t size_;
 	TypeQualifier qualifier_;
 	Token token_;
+};
+
+class DeclarationNode {
+public:
+	DeclarationNode() = default;
+	DeclarationNode(ASTNodeHandle type_handle, Token identifier)
+		: type_handle_(type_handle), identifier_(std::move(identifier)) {}
+
+	ASTNodeHandle type_handle() const { return type_handle_; }
+	const Token& identifier_token() const { return identifier_; }
+
+private:
+	ASTNodeHandle type_handle_;
+	Token identifier_;
 };
 
 class ExpressionNode {
@@ -225,6 +241,7 @@ public:
 	using NodeType = std::variant<
 		std::monostate,
 		TypeSpecifierNode,
+		DeclarationNode,
 		ExpressionNode,
 		IdentifierNode,
 		StringLiteralNode,
