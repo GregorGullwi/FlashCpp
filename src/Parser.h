@@ -75,14 +75,14 @@ public:
 
 	ParseResult parse() {
 		ParseResult parseResult;
-		while (peek_token().has_value() && !parseResult.is_error()) {
+		while (peek_token().has_value() && !parseResult.is_error() && peek_token()->type() != Token::Type::EndOfFile) {
 			parseResult = parse_top_level_node();
 		}
 		return parseResult;
 	}
 
 	const auto& get_nodes() { return ast_nodes_; }
-	const ASTNode& get_inner_node(size_t inner_index) const { return allocated_nodes_.at(inner_index); }
+	const ASTNode& get_inner_node(ASTNodeHandle node_handle) const { return allocated_nodes_.at(node_handle); }
 	bool is_valid_inner_index(size_t inner_index) const { return inner_index < allocated_nodes_.size(); }
 
 	template <typename T>
@@ -179,7 +179,7 @@ private:
 	ParseResult parse_namespace();
 	ParseResult parse_type_specifier();
 	ParseResult parse_declaration_or_function_definition();
-	ParseResult parse_function_definition_or_declaration();
+	ParseResult parse_function_definition_or_declaration(ASTNodeHandle declaration_node_handle);
 	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();
 	ParseResult parse_return_statement();
@@ -256,7 +256,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 	// Attempt to parse a function definition
 	if (peek_token()->value() == "(") {
-		auto function_definition_result = parse_function_definition_or_declaration();
+		auto function_definition_result = parse_function_definition_or_declaration(type_and_name_result.node_handle());
 		if (!function_definition_result.is_error()) {
 			discard_saved_token(saved_position);
 			return ParseResult::success();
@@ -343,16 +343,15 @@ ParseResult Parser::parse_type_specifier() {
 }
 
 
-ParseResult Parser::parse_function_definition_or_declaration() {
-	// Create the function declaration
-	TypeSpecifierNode func_declaration = allocated_nodes_.back().as<TypeSpecifierNode>();
-	allocated_nodes_.erase(allocated_nodes_.end() - 1);
-	auto func_node = create_node(FunctionDeclarationNode(func_declaration));
+ParseResult Parser::parse_function_definition_or_declaration(ASTNodeHandle declaration_node_handle) {
 
 	// Parse parameters
 	if (!consume_punctuator("(")) {
 		return ParseResult::error("Expected '(' for function parameter list", *current_token_);
 	}
+
+	// Create the function declaration
+	auto func_node = create_node(FunctionDeclarationNode(declaration_node_handle));
 
 	while (!consume_punctuator(")")) {
 		size_t parameter_index = allocated_nodes_.size();
@@ -363,7 +362,7 @@ ParseResult Parser::parse_function_definition_or_declaration() {
 			return type_and_name_result;
 		}
 
-		as<FunctionDeclarationNode>(func_node).add_parameter_ast_index(parameter_index);
+		as<FunctionDeclarationNode>(func_node).add_parameter_node_handle(type_and_name_result.node_handle());
 
 		// Parse default parameter value (if present)
 		if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "=") {
@@ -385,6 +384,8 @@ ParseResult Parser::parse_function_definition_or_declaration() {
 		}
 	}
 
+	ast_nodes_.push_back(func_node);
+
 	// Is only function declaration
 	if (consume_punctuator(";")) {
 		return ParseResult::success();
@@ -401,12 +402,15 @@ ParseResult Parser::parse_block() {
 
 	size_t start_index = ast_nodes_.size();
 	auto block_node = create_node(BlockNode(start_index));
+	ast_nodes_.push_back(block_node);
 
 	while (!consume_punctuator("}")) {
 		// Parse statements or declarations
 		ParseResult parse_result = parse_statement_or_declaration();
 		if (parse_result.is_error())
 			return parse_result;
+
+		ast_nodes_.push_back(parse_result.node_handle());
 	}
 
 	as<BlockNode>(block_node).set_num_statements(ast_nodes_.size() - start_index);
@@ -463,13 +467,12 @@ ParseResult Parser::parse_return_statement() {
 	consume_token(); // Consume the 'return' keyword
 
 	// Parse the return expression (if any)
-	std::optional<size_t> return_expr_index;
+	ParseResult return_expr_result;
 	auto next_token_opt = peek_token();
 	if (!next_token_opt.has_value() || (next_token_opt.value().type() != Token::Type::Punctuator || next_token_opt.value().value() != ";")) {
-		return_expr_index = ast_nodes_.size();
-		auto expr_error = parse_expression(0);
-		if (expr_error.is_error()) {
-			return expr_error;
+		return_expr_result = parse_expression(0);
+		if (return_expr_result.is_error()) {
+			return return_expr_result;
 		}
 	}
 
@@ -478,7 +481,7 @@ ParseResult Parser::parse_return_statement() {
 		return ParseResult::error(ParserError::MissingSemicolon, peek_token().value_or(Token()));
 	}
 
-	return ParseResult::success(create_node(ReturnStatementNode(return_expr_index)));
+	return ParseResult::success(create_node(ReturnStatementNode(return_expr_result.node_handle())));
 }
 
 ParseResult Parser::parse_expression(int precedence) {
@@ -518,7 +521,7 @@ ParseResult Parser::parse_expression(int precedence) {
 		return create_node(BinaryOperatorNode(operator_token, lhs_index, rhs_index));
 	}
 
-	return ParseResult::success();
+	return result;
 }
 
 ParseResult Parser::parse_primary_expression() {

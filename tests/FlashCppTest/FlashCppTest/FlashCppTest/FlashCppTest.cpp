@@ -1,8 +1,9 @@
 #include "CompileContext.h"
 #include "FileTree.h"
 #include "FileReader.h"
-#include "Lexer.h"
 #include "Token.h"
+#include "Lexer.h"
+#include "Parser.h"
 #include <string>
 #include <algorithm>
 #include <cctype>
@@ -247,6 +248,39 @@ TEST_SUITE("Lexer") {
 			REQUIRE(token.value() == expected_token.second);
 		}
 
-		REQUIRE(lexer.next_token().type() == Token::Type::EndOfFile);
+		CHECK(lexer.next_token().type() == Token::Type::EndOfFile);
+	}
+}
+
+///
+/// Parser
+///
+
+// Helper function to check if parsed ASTNode is a specific node type
+template <typename T>
+bool is_ast_node_type(const ASTNode& node) {
+	return std::holds_alternative<T>(node);
+}
+
+TEST_SUITE("Parser") {
+	TEST_CASE("Empty main() C++17 source string") {
+		std::string_view code = R"(
+			int main() {
+				return 0;
+			})";
+
+		Lexer lexer(code);
+		Parser parser(lexer);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+
+		for (auto node_handle : ast)
+		{
+			std::visit([](const auto& val) {
+				std::cout << "Type: " << typeid(val).name() << "\n";
+			}, parser.get_inner_node(node_handle).node());
+		}
 	}
 }

@@ -106,16 +106,16 @@ private:
 class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = default;
-	FunctionDeclarationNode(TypeSpecifierNode return_specifier_node)
+	FunctionDeclarationNode(ASTNodeHandle return_specifier_node)
 		: return_specifier_node_(std::move(return_specifier_node)) {}
 
-	const TypeSpecifierNode& return_specifier_node() const { return return_specifier_node_; }
-	const std::vector<size_t>& parameter_indices() const { return parameter_indices_; }
-	void add_parameter_ast_index(size_t parameter_index) { parameter_indices_.push_back(parameter_index); }
+	ASTNodeHandle return_specifier_node_handle() const { return return_specifier_node_; }
+	const std::vector<ASTNodeHandle>& parameter_handles() const { return parameter_handles_; }
+	void add_parameter_node_handle(ASTNodeHandle parameter_handle) { parameter_handles_.push_back(parameter_handle); }
 
 private:
-	TypeSpecifierNode return_specifier_node_;
-	std::vector<size_t> parameter_indices_;
+	ASTNodeHandle return_specifier_node_;
+	std::vector<ASTNodeHandle> parameter_handles_;
 };
 
 /*class FunctionDefinitionNode {
@@ -227,13 +227,13 @@ private:
 
 class ReturnStatementNode {
 public:
-	explicit ReturnStatementNode(std::optional<size_t> expression = std::nullopt)
+	explicit ReturnStatementNode(std::optional<ASTNodeHandle> expression = std::nullopt)
 		: expression_(expression) {}
 
-	std::optional<size_t> expression() const { return expression_; }
+	std::optional<ASTNodeHandle> expression() const { return expression_; }
 
 private:
-	std::optional<size_t> expression_; // Optional, as a return statement may not have an expression
+	std::optional<ASTNodeHandle> expression_; // Optional, as a return statement may not have an expression
 };
 
 class ASTNode {
@@ -275,6 +275,10 @@ public:
 	template <typename T>
 	const T& as() const {
 		return std::get<T>(node_);
+	}
+
+	const NodeType& node() const {
+		return node_;
 	}
 
 private:
