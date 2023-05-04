@@ -18,12 +18,12 @@ struct TokenPosition {
 class Lexer {
 public:
 	explicit Lexer(std::string_view source)
-		: source_(source), cursor_(0), line_(1), column_(1), current_file_index_(0) {
+		: source_(source), source_size_(source.size()), cursor_(0), line_(1), column_(1), current_file_index_(0) {
 		file_paths_.push_back("<unknown>");
 	}
 
 	Token next_token() {
-		while (cursor_ < source_.size()) {
+		while (cursor_ < source_size_) {
 			char c = source_[cursor_];
 
 			if (std::isspace(c)) {
@@ -71,6 +71,7 @@ public:
 
 private:
 	std::string_view source_;
+	size_t source_size_;
 	size_t cursor_;
 	size_t line_;
 	size_t column_;
@@ -78,7 +79,7 @@ private:
 	std::vector<std::string> file_paths_;
 
 	void consume_whitespace() {
-		while (cursor_ < source_.size() && std::isspace(source_[cursor_])) {
+		while (cursor_ < source_size_ && std::isspace(source_[cursor_])) {
 			if (source_[cursor_] == '\n') {
 				++line_;
 				column_ = 1;
@@ -95,18 +96,18 @@ private:
 		++column_;
 
 		size_t line_number = 0;
-		while (cursor_ < source_.size() && std::isdigit(source_[cursor_])) {
+		while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
 			line_number = line_number * 10 + (source_[cursor_] - '0');
 			++cursor_;
 			++column_;
 		}
 
-		if (cursor_ < source_.size() && std::isspace(source_[cursor_])) {
+		if (cursor_ < source_size_ && std::isspace(source_[cursor_])) {
 			consume_whitespace();
 		}
 
 		size_t start = cursor_;
-		while (cursor_ < source_.size() && source_[cursor_] != '\n') {
+		while (cursor_ < source_size_ && source_[cursor_] != '\n') {
 			++cursor_;
 			++column_;
 		}
@@ -129,7 +130,7 @@ private:
 		++cursor_;
 		++column_;
 
-		while (cursor_ < source_.size() && (std::isalnum(source_[cursor_]) || source_[cursor_] == '_')) {
+		while (cursor_ < source_size_ && (std::isalnum(source_[cursor_]) || source_[cursor_] == '_')) {
 			++cursor_;
 			++column_;
 		}
@@ -148,7 +149,7 @@ private:
 		++cursor_;
 		++column_;
 
-		while (cursor_ < source_.size() && std::isdigit(source_[cursor_])) {
+		while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
 			++cursor_;
 			++column_;
 		}
@@ -186,9 +187,16 @@ private:
 		++cursor_;
 		++column_;
 
-		while (cursor_ < source_.size() && is_operator(source_[cursor_])) {
+		// Handle the '->' token
+		if (source_[start] == '-' && cursor_ < source_size_ && source_[cursor_] == '>') {
 			++cursor_;
 			++column_;
+		}
+		else {
+			while (cursor_ < source_size_ && is_operator(source_[cursor_])) {
+				++cursor_;
+				++column_;
+			}
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);

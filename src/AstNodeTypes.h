@@ -19,7 +19,8 @@ enum class Type {
 	Char,
 	Int,
 	Float,
-	UserDefined
+	UserDefined,
+	Auto,
 };
 
 class TypeSpecifierNode {
@@ -27,6 +28,8 @@ public:
 	TypeSpecifierNode() = default;
 	TypeSpecifierNode(Type type, TypeQualifier qualifier, size_t size, const Token& token = {})
 		: type_(type), qualifier_(qualifier), size_(size), token_(token) {}
+
+	Type type() const { return type_; }
 
 private:
 	Type type_;

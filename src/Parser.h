@@ -100,6 +100,11 @@ public:
 		return allocated_nodes_[node_handle].as<T>();
 	}
 
+	template <typename T>
+	T& as(ParseResult parse_result) {
+		return allocated_nodes_[parse_result.node_handle()].as<T>();
+	}
+
 private:
 	Lexer& lexer_;
 	std::optional<Token> current_token_;
@@ -148,25 +153,13 @@ private:
 	std::unordered_map<size_t, SavedToken> saved_tokens_;
 
 	std::optional<Token> consume_token() {
-		/*if (current_token_.type() == Token::Type::EndOfFile)
-			return current_token_;
-
-		Token consumed_token = current_token_;
-		current_token_ = lexer_.next_token();
-		return consumed_token;*/
 		std::optional<Token> token = peek_token();
 		current_token_.reset();
 		return token;
 	}
 
 	std::optional<Token> peek_token() {
-		// Create a copy of the lexer to avoid consuming the next token
-		/*auto saved_pos = lexer_.save_token_position();
-		Token peeked_token = lexer_.next_token();
-		lexer_.restore_token_position(saved_pos);
-		return peeked_token.type() == Token::Type::EndOfFile ? std::nullopt : std::make_optional(peeked_token);*/
-		if (!current_token_.has_value())
-		{
+		if (!current_token_.has_value()) {
 			current_token_.emplace(lexer_.next_token());
 		}
 
@@ -179,7 +172,7 @@ private:
 	ParseResult parse_namespace();
 	ParseResult parse_type_specifier();
 	ParseResult parse_declaration_or_function_definition();
-	ParseResult parse_function_definition_or_declaration(ASTNodeHandle declaration_node_handle);
+	ParseResult parse_function_declaration(ASTNodeHandle declaration_node_handle);
 	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();
 	ParseResult parse_return_statement();
@@ -255,17 +248,37 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		return type_and_name_result;
 
 	// Attempt to parse a function definition
-	if (peek_token()->value() == "(") {
-		auto function_definition_result = parse_function_definition_or_declaration(type_and_name_result.node_handle());
-		if (!function_definition_result.is_error()) {
-			discard_saved_token(saved_position);
+	const bool is_probably_function = (peek_token()->value() == "(");
+	if (is_probably_function) {
+		auto function_definition_result = parse_function_declaration(type_and_name_result.node_handle());
+		if (function_definition_result.is_error()) {
+			return function_definition_result;
+		}
+	}
+
+	TypeSpecifierNode& type_specifier = as<TypeSpecifierNode>(as<DeclarationNode>(type_and_name_result).type_handle());
+	if (type_specifier.type() == Type::Auto) {
+		const bool is_trailing_return_type = (peek_token()->value() == "->");
+		if (is_trailing_return_type) {
+			consume_token();
+			
+			ParseResult trailing_type_specifier = parse_type_specifier();
+			if (trailing_type_specifier.is_error())
+				return trailing_type_specifier;
+
+			type_specifier = as<TypeSpecifierNode>(trailing_type_specifier);
+		}
+	}
+
+	if (is_probably_function) {
+		// Is only function declaration
+		if (consume_punctuator(";")) {
 			return ParseResult::success();
 		}
 
-		// If parsing a function definition failed, restore the token position
-		restore_token_position(saved_position);
+		// Parse function body
+		return parse_block();
 	}
-
 	// Attempt to parse a simple declaration (variable or typedef)
 	if (!consume_punctuator(";")) {
 		discard_saved_token(saved_position);
@@ -313,6 +326,7 @@ ParseResult Parser::parse_type_specifier() {
 		{"long", {Type::Int, std::numeric_limits<unsigned long>::digits}},
 		{"float", {Type::Float, std::numeric_limits<float>::digits}},
 		{"double", {Type::Float, std::numeric_limits<double>::digits}},
+		{"auto", {Type::Auto, 0}},
 	};
 
 	Type type = Type::UserDefined;
@@ -343,7 +357,7 @@ ParseResult Parser::parse_type_specifier() {
 }
 
 
-ParseResult Parser::parse_function_definition_or_declaration(ASTNodeHandle declaration_node_handle) {
+ParseResult Parser::parse_function_declaration(ASTNodeHandle declaration_node_handle) {
 
 	// Parse parameters
 	if (!consume_punctuator("(")) {
@@ -386,13 +400,7 @@ ParseResult Parser::parse_function_definition_or_declaration(ASTNodeHandle decla
 
 	ast_nodes_.push_back(func_node);
 
-	// Is only function declaration
-	if (consume_punctuator(";")) {
-		return ParseResult::success();
-	}
-
-	// Parse function body
-	return parse_block();
+	return func_node;
 }
 
 ParseResult Parser::parse_block() {

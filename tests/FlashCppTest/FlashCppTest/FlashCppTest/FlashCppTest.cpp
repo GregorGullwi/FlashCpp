@@ -7,6 +7,7 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <typeindex>
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -281,6 +282,40 @@ TEST_SUITE("Parser") {
 			std::visit([](const auto& val) {
 				std::cout << "Type: " << typeid(val).name() << "\n";
 			}, parser.get_inner_node(node_handle).node());
+		}
+	}
+}
+
+TEST_SUITE("Parser") {
+	TEST_CASE("Trailing return type for functions") {
+		std::string_view code_with_return_type = R"(
+			int main() {
+				return 0;
+			})";
+
+		std::string_view code_with_auto_return_type = R"(
+			auto main() -> int {
+				return 0;
+			})";
+
+		// Test with function return type
+		Lexer lexer1(code_with_return_type);
+		Parser parser1(lexer1);
+		auto parse_result1 = parser1.parse();
+		CHECK(!parse_result1.is_error());
+		const auto& ast1 = parser1.get_nodes();
+
+		// Test with auto and trailing return type
+		Lexer lexer2(code_with_auto_return_type);
+		Parser parser2(lexer2);
+		auto parse_result2 = parser2.parse();
+		CHECK(!parse_result2.is_error());
+		const auto& ast2 = parser2.get_nodes();
+
+		// Compare AST nodes
+		CHECK(ast1.size() == ast2.size());
+		for (std::size_t i = 0; i < ast1.size(); ++i) {
+			CHECK(typeid(parser1.get_inner_node(ast1[i]).node()) == typeid(parser2.get_inner_node(ast2[i]).node()));
 		}
 	}
 }
