@@ -140,7 +140,7 @@ private:
 
 class BlockNode {
 public:
-	explicit BlockNode(size_t start_index) : start_index_(start_index_) {}
+	explicit BlockNode(size_t start_index) : start_index_(start_index) {}
 
 	size_t start_index() const { return start_index_; }
 	void set_num_statements(size_t num_statements) { num_statements_ = num_statements; }

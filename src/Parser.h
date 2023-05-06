@@ -118,6 +118,13 @@ private:
 		return ASTNodeHandle(index);
 	}
 	
+	template <typename T>
+	std::pair<ASTNodeHandle, T&> create_node_ref(T&& node) {
+		std::size_t index = allocated_nodes_.size();
+		ASTNode& ast_node = allocated_nodes_.emplace_back(std::forward<T>(node));
+		return { ASTNodeHandle(index), ast_node.as<T>() };
+	}
+	
 	class ScopedTokenPosition {
 	public:
 		explicit ScopedTokenPosition(class Parser& parser) : parser_(parser), saved_position_(parser.save_token_position()) {}
@@ -365,21 +372,20 @@ ParseResult Parser::parse_function_declaration(ASTNodeHandle declaration_node_ha
 	}
 
 	// Create the function declaration
-	auto func_node = create_node(FunctionDeclarationNode(declaration_node_handle));
-
+	auto [func_node, func_ref] = create_node_ref(FunctionDeclarationNode(declaration_node_handle));
+	ast_nodes_.push_back(func_node);
+	
 	while (!consume_punctuator(")")) {
-		size_t parameter_index = allocated_nodes_.size();
-
 		// Parse parameter type and name (identifier)
 		ParseResult type_and_name_result = parse_type_and_name();
 		if (type_and_name_result.is_error()) {
 			return type_and_name_result;
 		}
 
-		as<FunctionDeclarationNode>(func_node).add_parameter_node_handle(type_and_name_result.node_handle());
+		func_ref.add_parameter_node_handle(type_and_name_result.node_handle());
 
 		// Parse default parameter value (if present)
-		if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "=") {
+		if (current_token_->value() == "=") {
 			consume_token(); // consume '='
 
 			// Parse the default value expression
@@ -387,18 +393,16 @@ ParseResult Parser::parse_function_declaration(ASTNodeHandle declaration_node_ha
 			// Set the default value
 		}
 
-		if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+		if (current_token_->value() == ",") {
 			consume_token(); // consume ','
 		}
-		else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ")") {
+		else if (current_token_->value() == ")") {
 			break;
 		}
 		else {
 			return ParseResult::error("Expected ',' or ')' in function parameter list", *current_token_);
 		}
 	}
-
-	ast_nodes_.push_back(func_node);
 
 	return func_node;
 }
@@ -409,7 +413,7 @@ ParseResult Parser::parse_block() {
 	}
 
 	size_t start_index = ast_nodes_.size();
-	auto block_node = create_node(BlockNode(start_index));
+	auto [block_node, block_ref] = create_node_ref(BlockNode(start_index));
 	ast_nodes_.push_back(block_node);
 
 	while (!consume_punctuator("}")) {
@@ -421,7 +425,7 @@ ParseResult Parser::parse_block() {
 		ast_nodes_.push_back(parse_result.node_handle());
 	}
 
-	as<BlockNode>(block_node).set_num_statements(ast_nodes_.size() - start_index);
+	block_ref.set_num_statements(ast_nodes_.size() - start_index);
 
 	return ParseResult::success();
 }
