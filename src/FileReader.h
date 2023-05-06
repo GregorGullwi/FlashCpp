@@ -818,9 +818,9 @@ private:
 	
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
-		defines_["__cplusplus"] = DefineDirective{ "201703L" };
-		defines_["__STDC_HOSTED__"] = DefineDirective{ "1" };
-		defines_["__STDCPP_THREADS__"] = DefineDirective{ "1" };
+		defines_["__cplusplus"] = DefineDirective{ "201703L", {} };
+		defines_["__STDC_HOSTED__"] = DefineDirective{ "1", {} };
+		defines_["__STDCPP_THREADS__"] = DefineDirective{ "1", {} };
 		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};		
 
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string { return std::string(filestack_.top().file_name); } };

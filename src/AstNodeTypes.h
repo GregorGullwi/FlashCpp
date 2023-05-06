@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstddef>
 #include <variant>
+#include <climits>
 
 using ASTNodeHandle = size_t;
 
@@ -27,7 +28,7 @@ class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
 	TypeSpecifierNode(Type type, TypeQualifier qualifier, size_t size, const Token& token = {})
-		: type_(type), qualifier_(qualifier), size_(size), token_(token) {}
+		: type_(type), size_(size), qualifier_(qualifier), token_(token) {}
 
 	Type type() const { return type_; }
 
