@@ -1,6 +1,7 @@
 { pkgs }: {
 	deps = [
-		pkgs.nasm
+  pkgs.lld_12
+  pkgs.nasm
   pkgs.clang_12
 		pkgs.ccls
 		pkgs.gdb
