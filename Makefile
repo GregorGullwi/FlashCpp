@@ -4,7 +4,7 @@ CXXFLAGS=-std=c++17 -Wall -Wextra -pedantic
 SRCDIR=src
 BINDIR=x64
 TESTDIR=tests
-TESTINCLUDES=-I $(TESTDIR)/external/doctest/ -I $(SRCDIR)
+TESTINCLUDES=-I $(TESTDIR)/external/doctest/ -I $(SRCDIR) -I external
 
 $(BINDIR)/main: $(wildcard $(SRCDIR)/*.cpp)
 	mkdir -p $(BINDIR)
@@ -12,7 +12,7 @@ $(BINDIR)/main: $(wildcard $(SRCDIR)/*.cpp)
 
 $(BINDIR)/test: $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
 	mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -o $@ $^
+	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O0 -g -o $@ $^
 
 $(BINDIR)/main-debug: $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
 	mkdir -p $(BINDIR)
