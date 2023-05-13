@@ -530,7 +530,7 @@ ParseResult Parser::parse_expression(int precedence) {
 		// Create a BinaryOperatorNode and add it to ast_nodes_
 		size_t lhs_index = ast_nodes_.size() - 2;  // The left-hand side expression was already added
 		size_t rhs_index = ast_nodes_.size() - 1;  // The right-hand side expression was just added
-		return create_node(BinaryOperatorNode(operator_token, lhs_index, rhs_index));
+		return create_node(ExpressionNode{BinaryOperatorNode(operator_token, lhs_index, rhs_index)});
 	}
 
 	return result;
@@ -540,12 +540,12 @@ ParseResult Parser::parse_primary_expression() {
 	std::optional<ASTNodeHandle> result;
 	if (current_token_->type() == Token::Type::Identifier) {
 		// Parse identifier
-		result = create_node(IdentifierNode(*current_token_));
+		result = create_node(ExpressionNode{IdentifierNode(*current_token_)});
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::Literal) {
 		// Parse literal
-		result = create_node(StringLiteralNode(*current_token_));
+		result = create_node(ExpressionNode{StringLiteralNode(*current_token_)});
 		consume_token();
 	}
 	else if (consume_punctuator("(")) {
