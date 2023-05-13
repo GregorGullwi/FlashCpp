@@ -20,7 +20,7 @@ static bool compare_lexers_ignore_whitespace(Lexer& lexer1, Lexer& lexer2) {
 	Token token1, token2;
 
 	while (true) {
-		token1 = lexer1.next_token();
+		token1 = lexer1.next_token();;
 		token2 = lexer2.next_token();
 
 		// If both tokens are EndOfFile, the token sequences are identical
