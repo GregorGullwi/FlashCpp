@@ -12,7 +12,7 @@ enum class IrOpcode {
   Function,
 };
 
-using IrOperand = std::variant<int, double, bool, char, std::string>;
+using IrOperand = std::variant<int, double, bool, char, std::string_view>;
 
 class IrInstruction {
 public:

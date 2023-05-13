@@ -207,8 +207,6 @@ private:
   ParseResult parse_parenthesized_expression();
 
   // Utility functions
-  std::optional<std::string_view> consume_identifier();
-  std::optional<std::string_view> consume_literal();
   bool consume_punctuator(const std::string_view &value);
   bool consume_keyword(const std::string_view &value);
   int get_operator_precedence(const std::string_view &op);
@@ -612,24 +610,6 @@ ParseResult Parser::parse_primary_expression() {
 }
 
 // Utility functions
-std::optional<std::string_view> Parser::consume_identifier() {
-  if (peek_token()->type() == Token::Type::Identifier) {
-    std::string_view identifier = current_token_->value();
-    consume_token(); // consume identifier
-    return identifier;
-  }
-  return std::nullopt;
-}
-
-std::optional<std::string_view> Parser::consume_literal() {
-  if (peek_token()->type() == Token::Type::Literal) {
-    std::string_view value = current_token_->value();
-    consume_token(); // consume literal
-    return value;
-  }
-  return std::nullopt;
-}
-
 bool Parser::consume_punctuator(const std::string_view &value) {
   if (peek_token()->type() == Token::Type::Punctuator &&
       peek_token()->value() == value) {

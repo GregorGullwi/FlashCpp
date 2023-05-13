@@ -73,17 +73,17 @@ private:
         exprNode);
   }
 
-  IrOperand generateIdentifierIr(const IdentifierNode & /*identifierNode*/) {
+  IrOperand generateIdentifierIr(const IdentifierNode &identifierNode) {
     // Generate IR for identifier and return appropriate operand
     // ...
-    return {""};
+    return { identifierNode.name() };
   }
 
   IrOperand
-  generateStringLiteralIr(const StringLiteralNode & /*stringLiteralNode*/) {
+  generateStringLiteralIr(const StringLiteralNode &stringLiteralNode) {
     // Generate IR for string literal and return appropriate operand
     // ...
-    return {""};
+    return { stringLiteralNode.value() };
   }
 
   IrOperand
