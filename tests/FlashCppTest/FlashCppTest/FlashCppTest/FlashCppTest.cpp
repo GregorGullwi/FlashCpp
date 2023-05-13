@@ -4,6 +4,7 @@
 #include "Token.h"
 #include "Lexer.h"
 #include "Parser.h"
+#include "CodeGen.h"
 #include <string>
 #include <algorithm>
 #include <cctype>
@@ -74,7 +75,7 @@ TEST_CASE("preprocessor") {
 
 #define SQUARE(x) ((x) * (x))
 #define DOUBLE(x) ((x) * 2)
-	const int num = DOUBLE(SQUARE(3));
+	[[maybe_unused]] const int num = DOUBLE(SQUARE(3));
 
 	SUBCASE("NestedMacros") {
 		const std::string input = R"(
@@ -104,7 +105,7 @@ TEST_CASE("preprocessor") {
 	}
 
 #define STR(x) #x
-	const char* str = STR(hello world);
+	[[maybe_unused]] const char* str = STR(hello world);
 
 	SUBCASE("Stringification") {
 		const std::string input = R"(
@@ -284,9 +285,7 @@ TEST_SUITE("Parser") {
 			}, parser.get_inner_node(node_handle).node());
 		}
 	}
-}
 
-TEST_SUITE("Parser") {
 	TEST_CASE("Trailing return type for functions") {
 		std::string_view code_with_return_type = R"(
 			int main() {
@@ -318,4 +317,46 @@ TEST_SUITE("Parser") {
 			CHECK(typeid(parser1.get_inner_node(ast1[i]).node()) == typeid(parser2.get_inner_node(ast2[i]).node()));
 		}
 	}
+}
+
+TEST_SUITE("Code gen") {
+    TEST_CASE("Empty main() C++17 source string") {
+        std::string_view code = R"(
+            int main() {
+                return 0;
+            })";
+
+        Lexer lexer(code);
+        Parser parser(lexer);
+        auto parse_result = parser.parse();
+        CHECK(!parse_result.is_error());
+
+        const auto& ast = parser.get_nodes();
+
+        AstToIr converter(parser);
+        for (auto node_handle : ast)
+        {
+            std::visit([&converter](const auto& val) {
+                converter.visit(val);
+            }, parser.get_inner_node(node_handle).node());
+        }
+
+        // Now converter.ir should contain the IR for the code.
+        const auto& ir = converter.getIr();
+
+        // Let's just print the IR for now.
+        for (const auto& instruction : ir.getInstructions()) {
+            std::cout << "Opcode: " << static_cast<int>(instruction.getOpcode()) << "\n";
+            if (instruction.getFirstOperand()) {
+                std::visit([](const auto& operand) {
+                    std::cout << "First Operand: " << operand << "\n";
+                }, *instruction.getFirstOperand());
+            }
+            if (instruction.getSecondOperand()) {
+                std::visit([](const auto& operand) {
+                    std::cout << "Second Operand: " << operand << "\n";
+                }, *instruction.getSecondOperand());
+            }
+        }
+    }
 }

@@ -53,59 +53,58 @@ private:
 	Token identifier_;
 };
 
-class ExpressionNode {
+class IdentifierNode {
 public:
-	explicit ExpressionNode(Token token)
-		: token_(std::move(token)) {}
-	Token token_;
-};
+	explicit IdentifierNode(Token identifier)
+		: identifier_(identifier) {}
 
-class IdentifierNode : public ExpressionNode {
-public:
-	explicit IdentifierNode(Token token)
-		: ExpressionNode(token) {}
-
-	std::string_view name() const { return token_.value(); }
+	std::string_view name() const { return identifier_.value(); }
 
 private:
+	Token identifier_;
 };
 
-class StringLiteralNode : public ExpressionNode {
+class StringLiteralNode {
 public:
-	explicit StringLiteralNode(Token token)
-		: ExpressionNode(token) {}
+	explicit StringLiteralNode(Token identifier)
+		: identifier_(identifier) {}
 
-	std::string_view value() const { return token_.value(); }
+	std::string_view value() const { return identifier_.value(); }
 
 private:
+	Token identifier_;
 };
 
-class BinaryOperatorNode : public ExpressionNode {
+class BinaryOperatorNode {
 public:
-	explicit BinaryOperatorNode(Token token, size_t lhs_index, size_t rhs_index)
-		: ExpressionNode(token), lhs_index_(lhs_index), rhs_index_(rhs_index) {}
+	explicit BinaryOperatorNode(Token identifier, size_t lhs_index, size_t rhs_index)
+		: identifier_(identifier), lhs_index_(lhs_index), rhs_index_(rhs_index) {}
 
-	std::string_view op() const { return token_.value(); }
+	std::string_view op() const { return identifier_.value(); }
 	size_t get_lhs_index() const { return lhs_index_; }
 	size_t get_rhs_index() const { return rhs_index_; }
 
 private:
+	Token identifier_;
 	size_t lhs_index_;
 	size_t rhs_index_;
 };
 
-class FunctionCallNode : public ExpressionNode {
+class FunctionCallNode {
 public:
-	explicit FunctionCallNode(Token token, size_t function, std::vector<size_t> arguments)
-		: ExpressionNode(token), function_(function), arguments_(std::move(arguments)) {}
+	explicit FunctionCallNode(Token identifier, size_t function, std::vector<size_t> arguments)
+		: identifier_(identifier), function_(function), arguments_(std::move(arguments)) {}
 
 	size_t function() const { return function_; }
 	const std::vector<size_t>& arguments() const { return arguments_; }
 
 private:
+	Token identifier_;
 	size_t function_;
 	std::vector<size_t> arguments_;
 };
+
+using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, BinaryOperatorNode, FunctionCallNode>;
 
 class FunctionDeclarationNode {
 public:
