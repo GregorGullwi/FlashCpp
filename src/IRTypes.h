@@ -4,6 +4,7 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include <any>
 
 enum class IrOpcode {
   Add,
@@ -12,22 +13,23 @@ enum class IrOpcode {
   Function,
 };
 
-using IrOperand = std::variant<int, double, bool, char, std::string_view>;
+using IrOperand = std::variant<int, double, bool, char, std::string, std::string_view>;
 
 class IrInstruction {
 public:
-  IrInstruction(IrOpcode opcode, std::optional<IrOperand> op1 = std::nullopt,
-                std::optional<IrOperand> op2 = std::nullopt)
-      : opcode_(opcode), operand1_(std::move(op1)), operand2_(std::move(op2)) {}
+  IrInstruction(IrOpcode opcode, std::vector<IrOperand>&& operands)
+      : opcode_(opcode), operands_(std::move(operands)) {}
 
   IrOpcode getOpcode() const { return opcode_; }
-  const std::optional<IrOperand> &getFirstOperand() const { return operand1_; }
-  const std::optional<IrOperand> &getSecondOperand() const { return operand2_; }
+	size_t getOperandCount() const { return operands_.size(); }
+	
+  std::optional<IrOperand> getOperand(size_t index) const {
+	  return index < operands_.size() ? std::optional<IrOperand>{ operands_[index] } : std::optional<IrOperand>{};
+  }
 
 private:
   IrOpcode opcode_;
-  std::optional<IrOperand> operand1_;
-  std::optional<IrOperand> operand2_;
+  std::vector<IrOperand> operands_;
 };
 
 class Ir {
@@ -36,9 +38,8 @@ public:
     instructions.push_back(instruction);
   }
   void addInstruction(IrOpcode &&opcode,
-                      std::optional<IrOperand> &&op1 = std::nullopt,
-                      std::optional<IrOperand> &&op2 = std::nullopt) {
-    instructions.emplace_back(opcode, op1, op2);
+					  std::vector<IrOperand>&& operands = {}) {
+    instructions.emplace_back(opcode, std::move(operands));
   }
   const std::vector<IrInstruction> &getInstructions() const {
     return instructions;

@@ -41,63 +41,69 @@ private:
     if (node.expression()) {
       const ASTNode &expressionNode =
           parser_.get_inner_node(*node.expression());
-      auto operand = generateExpressionIr(expressionNode.as<ExpressionNode>());
-      ir_.addInstruction(IrOpcode::Return, operand);
+      auto operands = generateExpressionIr(expressionNode.as<ExpressionNode>());
+      ir_.addInstruction(IrOpcode::Return, std::move(operands));
     } else {
       ir_.addInstruction(IrOpcode::Return);
     }
   }
 
-  IrOperand generateExpressionIr(const ExpressionNode &exprNode) {
-    return std::visit(
-        [&](const auto &expr) -> IrOperand {
-          if constexpr (std::is_same_v<decltype(expr), IdentifierNode>) {
-            // Handle IdentifierNode
-            return generateIdentifierIr(expr);
-          } else if constexpr (std::is_same_v<decltype(expr),
-                                              StringLiteralNode>) {
-            // Handle StringLiteralNode
-            return generateStringLiteralIr(expr);
-          } else if constexpr (std::is_same_v<decltype(expr),
-                                              BinaryOperatorNode>) {
-            // Handle BinaryOperatorNode
-            return generateBinaryOperatorIr(expr);
-          } else if constexpr (std::is_same_v<decltype(expr),
-                                              FunctionCallNode>) {
-            // Handle FunctionCallNode
-            return generateFunctionCallIr(expr);
-          }
+  std::vector<IrOperand> generateExpressionIr(const ExpressionNode &exprNode) {
+	  if (std::holds_alternative<IdentifierNode>(exprNode)) {
+		  const auto& expr = std::get<IdentifierNode>(exprNode);
+		  return generateIdentifierIr(expr);
+		} else if (std::holds_alternative<NumericLiteralNode>(exprNode)) {
+		  const auto& expr = std::get<NumericLiteralNode>(exprNode);
+		  return generateNumericLiteralIr(expr);
+		} else if (std::holds_alternative<StringLiteralNode>(exprNode)) {
+		  const auto& expr = std::get<StringLiteralNode>(exprNode);
+		  return generateStringLiteralIr(expr);
+		} else if (std::holds_alternative<BinaryOperatorNode>(exprNode)) {
+		  const auto& expr = std::get<BinaryOperatorNode>(exprNode);
+		  return generateBinaryOperatorIr(expr);
+		} else if (std::holds_alternative<FunctionCallNode>(exprNode)) {
+		  const auto& expr = std::get<FunctionCallNode>(exprNode);
+		  return generateFunctionCallIr(expr);
+		}
 
-          return {""};
-        },
-        exprNode);
+	  return {};
   }
 
-  IrOperand generateIdentifierIr(const IdentifierNode &identifierNode) {
+  std::vector<IrOperand> generateIdentifierIr(const IdentifierNode &identifierNode) {
     // Generate IR for identifier and return appropriate operand
     // ...
     return { identifierNode.name() };
   }
 
-  IrOperand
+  std::vector<IrOperand>
+  generateNumericLiteralIr(const NumericLiteralNode &numericLiteralNode) {
+    // Generate IR for numeric literal and return appropriate operand
+    // ...
+	// only supports ints for now
+	  std::ostringstream oss;
+	  oss << "i" << static_cast<int>(numericLiteralNode.sizeInBits()) << " " << std::get<unsigned long long>(numericLiteralNode.value());
+    return { oss.str() };
+  }
+
+  std::vector<IrOperand>
   generateStringLiteralIr(const StringLiteralNode &stringLiteralNode) {
     // Generate IR for string literal and return appropriate operand
     // ...
     return { stringLiteralNode.value() };
   }
 
-  IrOperand
+  std::vector<IrOperand>
   generateBinaryOperatorIr(const BinaryOperatorNode & /*binaryOperatorNode*/) {
     // Generate IR for binary operator expression and return appropriate operand
     // ...
-    return IrOperand();
+	return {};
   }
 
-  IrOperand
+  std::vector<IrOperand>
   generateFunctionCallIr(const FunctionCallNode & /*functionCallNode*/) {
     // Generate IR for function call expression and return appropriate operand
     // ...
-    return IrOperand();
+	return {};
   }
 
   Ir ir_;

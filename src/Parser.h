@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
+#include <charconv>
+#include <cstdlib>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
@@ -577,6 +579,74 @@ ParseResult Parser::parse_expression(int precedence) {
   return result;
 }
 
+struct TypedNumeric {
+	Type type = Type::Int;
+	TypeQualifier typeQualifier = TypeQualifier::None;
+	unsigned char sizeInBits = 0;
+	NumericLiteralValue value = 0ULL;
+};
+
+// only handles unsigned integer types for now
+static std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
+	// Convert the text to lowercase
+	std::string lowerText(text);
+	std::transform(lowerText.begin(), lowerText.end(), lowerText.begin(), ::tolower);
+
+	TypedNumeric typeInfo;
+	
+	// Check for prefixes
+	if (lowerText.find("0x") == 0) {
+		// Hexadecimal literal
+		typeInfo.sizeInBits = std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8; // Round to the nearest 8-bit boundary
+		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), nullptr, 16); // Parse hexadecimal
+	}
+	else if (lowerText.find("0b") == 0) {
+		// Binary literal
+		typeInfo.sizeInBits = std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8; // Round to the nearest 8-bit boundary
+		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), nullptr, 2); // Parse binary
+	}
+	else if (lowerText.find("0") == 0) {
+		// Octal literal
+		typeInfo.sizeInBits = std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8; // Round to the nearest 8-bit boundary
+		typeInfo.value = std::strtoull(lowerText.substr(1).c_str(), nullptr, 8); // Parse octal
+	}
+	else {
+		typeInfo.sizeInBits = sizeof(int) * 8;
+		typeInfo.value = std::strtoull(lowerText.c_str(), nullptr, 10); // Parse integer
+	}
+
+	// Check for valid suffixes
+	static const std::string_view suffixCharacters = "ul";
+
+	std::string_view suffix;
+	size_t suffixStart = lowerText.find_last_of(suffixCharacters);
+	if (suffixStart != std::string_view::npos) {
+		suffix = lowerText.substr(suffixStart);
+	}
+
+	if (!suffix.empty() && suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {
+		typeInfo.typeQualifier = static_cast<TypeQualifier>(static_cast<int>(TypeQualifier::Signed) + (suffix.find('u') != std::string_view::npos) * 1);
+
+		// Extract the size information from the suffix
+		std::string_view sizeText = suffix;
+		sizeText.remove_prefix(suffix.find_first_of(suffixCharacters) + 1);
+
+		if (sizeText.empty()) {
+			typeInfo.sizeInBits = sizeof(int) * 8;
+		} else {
+			// Determine the size based on the suffix
+			unsigned long long specifiedSize = 0;
+			std::from_chars(sizeText.begin(), sizeText.end(), specifiedSize);
+
+			// Round the specified size to the nearest 8, 16, 32, or 64-bit boundary
+			typeInfo.sizeInBits = std::round(specifiedSize / 8.0) * 8;
+		}
+	}
+	
+	return typeInfo;
+}
+
+
 ParseResult Parser::parse_primary_expression() {
   std::optional<ASTNodeHandle> result;
   if (current_token_->type() == Token::Type::Identifier) {
@@ -584,9 +654,13 @@ ParseResult Parser::parse_primary_expression() {
     result = create_node(ExpressionNode{IdentifierNode(*current_token_)});
     consume_token();
   } else if (current_token_->type() == Token::Type::Literal) {
-    result = create_node(ExpressionNode{NumberLiteralNode(*current_token_)});
+    auto literal_type = get_numeric_literal_type(current_token_->value());
+    if (!literal_type) {
+      return ParseResult::error("Expected numeric literal", *current_token_);
+    }
+    result = create_node(ExpressionNode{NumericLiteralNode(*current_token_, literal_type->value, literal_type->type, literal_type->typeQualifier, literal_type->sizeInBits)});
+	consume_token();
   } else if (current_token_->type() == Token::Type::StringLiteral) {
-    // Parse literal
     result = create_node(ExpressionNode{StringLiteralNode(*current_token_)});
     consume_token();
   } else if (consume_punctuator("(")) {

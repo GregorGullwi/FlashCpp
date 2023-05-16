@@ -140,20 +140,57 @@ private:
     }
   }
 
-  Token consume_literal() {
-    size_t start = cursor_;
-    ++cursor_;
-    ++column_;
+	Token consume_literal() {
+		size_t start = cursor_;
+		++cursor_;
+		++column_;
+		
+		if (cursor_ >= source_size_) {
+			return Token();	// Todo: error handling
+		}
 
-    while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
-      ++cursor_;
-      ++column_;
-    }
+		// Check for prefix (hex, octal, binary)
+		if (source_[cursor_] == 'x') {
+			// Hexadecimal literal
+			++cursor_;
+			++column_;
 
-    std::string_view value = source_.substr(start, cursor_ - start);
-    return Token(Token::Type::Literal, value, line_, column_,
-                 current_file_index_);
-  }
+			while (cursor_ < source_size_ && (std::isxdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
+				++cursor_;
+				++column_;
+			}
+		} else if (source_[cursor_] == '0') {
+			// Octal or binary literal
+			++cursor_;
+			++column_;
+
+			if (cursor_ < source_size_ && (source_[cursor_] == 'b' || source_[cursor_] == 'B')) {
+				// Binary literal
+				++cursor_;
+				++column_;
+
+				while (cursor_ < source_size_ && (source_[cursor_] == '0' || source_[cursor_] == '1' || source_[cursor_] == '\'')) {
+					++cursor_;
+					++column_;
+				}
+			} else {
+				// Octal literal
+				while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
+					++cursor_;
+					++column_;
+				}
+			}
+		} else {
+			// Decimal literal
+			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
+				++cursor_;
+				++column_;
+			}
+		}
+
+		std::string_view value = source_.substr(start, cursor_ - start);
+		return Token(Token::Type::Literal, value, line_, column_, current_file_index_);
+	}
 
   Token consume_string_literal() {
     size_t start = cursor_;

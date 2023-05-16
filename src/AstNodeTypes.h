@@ -24,10 +24,49 @@ enum class Type {
   Auto,
 };
 
+using TypeIndex = size_t;
+
+struct TypeInfo
+{
+	TypeInfo() = default;
+	TypeInfo(std::string name, Type type, TypeIndex idx) : name_(std::move(name)), type_(type), type_index_(idx) {}
+	
+	std::string name_;
+	Type type_;
+	TypeIndex type_index_;
+	
+	const char* name() { return name_.c_str(); };
+};
+
+std::deque<TypeInfo> gTypeInfo =
+{
+	{ "void", 	Type::Void,		0 },
+	{ "bool",	Type::Bool,		1 },
+	{ "char", 	Type::Char,		2 },
+	{ "int",	Type::Int,		3 },
+	{ "float",	Type::Float,	4 },
+};
+
+std::unordered_map<std::string, const TypeInfo*> gTypesByName
+{
+	{ "void", &gTypeInfo[0] },
+	{ "bool", &gTypeInfo[1] },
+	{ "char", &gTypeInfo[2] },
+	{ "int", &gTypeInfo[3] },
+	{ "float", &gTypeInfo[4] },
+};
+
+const TypeInfo& add_user_type(std::string name)
+{
+	const auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size());
+	gTypesByName.emplace(type_info.name_, &type_info);
+	return type_info;
+}
+
 class TypeSpecifierNode {
 public:
   TypeSpecifierNode() = default;
-  TypeSpecifierNode(Type type, TypeQualifier qualifier, size_t size,
+  TypeSpecifierNode(Type type, TypeQualifier qualifier, unsigned char size,
                     const Token &token = {})
       : type_(type), size_(size), qualifier_(qualifier), token_(token) {}
 
@@ -35,7 +74,7 @@ public:
 
 private:
   Type type_;
-  size_t size_;
+  unsigned char size_;
   TypeQualifier qualifier_;
   Token token_;
 };
@@ -64,13 +103,23 @@ private:
   Token identifier_;
 };
 
-class NumberLiteralNode {
+using NumericLiteralValue = std::variant<unsigned long long, double>;
+
+class NumericLiteralNode {
 public:
-  explicit NumberLiteralNode(Token identifier) : identifier_(identifier) {}
+  explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, Type type, TypeQualifier qualifier, unsigned char size) : value_(value), type_(type), size_(size), qualifier_(qualifier), identifier_(identifier) {}
 
-  std::string_view value() const { return identifier_.value(); }
-
+  std::string_view token() const { return identifier_.value(); }
+  NumericLiteralValue value() const { return value_; }
+  Type type() const { return type_; }
+  unsigned char sizeInBits() const { return size_; }
+  TypeQualifier qualifier() const { return qualifier_; }
+	
 private:
+  NumericLiteralValue value_;
+  Type type_;
+  unsigned char size_;	// Size in bits
+  TypeQualifier qualifier_;
   Token identifier_;
 };
 
@@ -116,7 +165,7 @@ private:
   std::vector<size_t> arguments_;
 };
 
-using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumberLiteralNode,
+using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
                                     BinaryOperatorNode, FunctionCallNode>;
 
 class FunctionDeclarationNode {
@@ -272,7 +321,7 @@ class ASTNode {
 public:
   using NodeType =
       std::variant<std::monostate, TypeSpecifierNode, DeclarationNode,
-                   ExpressionNode, IdentifierNode, NumberLiteralNode,
+                   ExpressionNode, IdentifierNode, NumericLiteralNode,
                    StringLiteralNode, BinaryOperatorNode, FunctionCallNode,
                    FunctionDeclarationNode, BlockNode, IfStatementNode,
                    LoopStatementNode, WhileLoopNode, DoWhileLoopNode,
