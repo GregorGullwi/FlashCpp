@@ -29,10 +29,16 @@ public:
   const Ir &getIr() const { return ir_; }
 
 private:
-  void visitFunctionDeclarationNode(const FunctionDeclarationNode & /*node*/) {
-    /*ir_.addInstruction(
-        IrInstruction{IrOpcode::Function, node.getName()});
-    for (const auto &statement : node.getStatements()) {
+  void visitFunctionDeclarationNode(const FunctionDeclarationNode &node) {
+	  const DeclarationNode& func_decl =
+	  parser_.as<DeclarationNode>(node.return_type_handle());
+	  const TypeSpecifierNode& ret_type = parser_.as<TypeSpecifierNode>(func_decl.type_handle());
+    ir_.addInstruction(
+					   IrInstruction(IrOpcode::FunctionDecl,
+									 { ret_type.type(),
+									   static_cast<int>(ret_type.size_in_bits()),
+									   func_decl.identifier_token().value() }));
+    /*for (const auto &statement : node.getStatements()) {
       visit(statement);
     }*/
   }

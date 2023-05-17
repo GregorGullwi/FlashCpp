@@ -5,15 +5,16 @@
 #include <variant>
 #include <vector>
 #include <any>
+#include "AstNodeTypes.h"
 
 enum class IrOpcode {
   Add,
   Sub,
   Return,
-  Function,
+  FunctionDecl,
 };
 
-using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view>;
+using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type>;
 
 class IrInstruction {
 public:
@@ -32,10 +33,23 @@ public:
 		
 		switch (opcode_) {
 			case IrOpcode::Return:
+			{
 				oss << "ret ";
-				oss << "i" << std::get<int>(*getOperand(0)) << " ";
+				oss << "int" << std::get<int>(*getOperand(0)) << " ";
 				oss << std::get<unsigned long long>(*getOperand(1));
-				break;
+			}
+			break;
+				
+			case IrOpcode::FunctionDecl:
+			{
+				// [Type][SizeInBits] [Name]
+				Type type = std::get<Type>(*getOperand(0));
+				auto type_info = gNativeTypes.find(type);
+				oss << "define ";
+				oss << type_info->second->name_ << std::get<int>(*getOperand(1)) << " ";
+				oss << std::get<std::string_view>(*getOperand(2));
+			}
+			break;
 				
 			default:
 				break;

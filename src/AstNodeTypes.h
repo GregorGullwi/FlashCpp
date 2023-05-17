@@ -56,6 +56,15 @@ std::unordered_map<std::string, const TypeInfo*> gTypesByName
 	{ "float", &gTypeInfo[4] },
 };
 
+std::unordered_map<Type, const TypeInfo*> gNativeTypes
+{
+	{ Type::Void, &gTypeInfo[0] },
+	{ Type::Bool, &gTypeInfo[1] },
+	{ Type::Char, &gTypeInfo[2] },
+	{ Type::Int,  &gTypeInfo[3] },
+	{ Type::Float,&gTypeInfo[4] },
+};
+
 const TypeInfo& add_user_type(std::string name)
 {
 	const auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size());
@@ -66,11 +75,13 @@ const TypeInfo& add_user_type(std::string name)
 class TypeSpecifierNode {
 public:
   TypeSpecifierNode() = default;
-  TypeSpecifierNode(Type type, TypeQualifier qualifier, unsigned char size,
+  TypeSpecifierNode(Type type, TypeQualifier qualifier, unsigned char sizeInBits,
                     const Token &token = {})
-      : type_(type), size_(size), qualifier_(qualifier), token_(token) {}
+      : type_(type), size_(sizeInBits), qualifier_(qualifier), token_(token) {}
 
-  Type type() const { return type_; }
+  auto type() const { return type_; }
+  auto size_in_bits() const { return size_; }
+  auto qualifier() const { return qualifier_; }
 
 private:
   Type type_;
@@ -86,7 +97,7 @@ public:
       : type_handle_(type_handle), identifier_(std::move(identifier)) {}
 
   ASTNodeHandle type_handle() const { return type_handle_; }
-  const Token &identifier_token() const { return identifier_; }
+  const Token& identifier_token() const { return identifier_; }
 
 private:
   ASTNodeHandle type_handle_;
@@ -174,7 +185,7 @@ public:
   FunctionDeclarationNode(ASTNodeHandle return_specifier_node)
       : return_specifier_node_(std::move(return_specifier_node)) {}
 
-  ASTNodeHandle return_specifier_node_handle() const {
+  ASTNodeHandle return_type_handle() const {
     return return_specifier_node_;
   }
   const std::vector<ASTNodeHandle> &parameter_handles() const {
