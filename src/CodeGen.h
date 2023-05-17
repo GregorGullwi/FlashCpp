@@ -80,9 +80,7 @@ private:
     // Generate IR for numeric literal and return appropriate operand
     // ...
 	// only supports ints for now
-	  std::ostringstream oss;
-	  oss << "i" << static_cast<int>(numericLiteralNode.sizeInBits()) << " " << std::get<unsigned long long>(numericLiteralNode.value());
-    return { oss.str() };
+    return { static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
   }
 
   std::vector<IrOperand>
