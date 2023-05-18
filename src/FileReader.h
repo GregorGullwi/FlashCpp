@@ -39,14 +39,14 @@ struct Directive {
 	Directive(DefineDirective&& define_directive) : directive_(std::move(define_directive)) {}
 	Directive(FunctionDirective&& function_directive) : directive_(std::move(function_directive)) {}
 	Directive(std::function<std::string()> func) : directive_(FunctionDirective{ func }) {}
-	
+
 	Directive& operator=(const Directive& other) {
 		if (this != &other) {
 			directive_ = other.directive_;
 		}
 		return *this;
 	}
-	
+
 	Directive& operator=(Directive&& other) noexcept {
 		if (this != &other) {
 			directive_ = std::move(other.directive_);
@@ -233,11 +233,11 @@ static std::tm localtime_safely(const std::time_t* time) {
 class FileReader {
 public:
 	static constexpr size_t default_result_size = 1024 * 1024;
-    FileReader(const CompileContext& settings, FileTree& tree) : settings_(settings), tree_(tree) {
+	FileReader(const CompileContext& settings, FileTree& tree) : settings_(settings), tree_(tree) {
 		addBuiltinDefines();
 		result_.reserve(default_result_size);
 	}
-	
+
 	size_t find_first_non_whitespace_after_hash(const std::string& str) {
 		size_t pos = str.find('#');
 		if (pos == std::string::npos) {
@@ -303,28 +303,30 @@ public:
 				if (end_comment_pos != std::string::npos) {
 					in_comment = false;
 					line = line.substr(end_comment_pos + 2);
-				} else {
+				}
+				else {
 					continue;
 				}
 			}
-			
+
 			size_t start_comment_pos = line.find("/*");
 			if (start_comment_pos != std::string::npos) {
 				size_t end_comment_pos = line.find("*/", start_comment_pos);
 				if (end_comment_pos != std::string::npos) {
 					line.erase(start_comment_pos, end_comment_pos - start_comment_pos + 2);
-				} else {
+				}
+				else {
 					in_comment = true;
 					continue;
 				}
 			}
-						
+
 			if (skipping_stack.size() == 0) {
 				std::cerr << "Internal compiler error in file " << filestack_.top().file_name << ":" << line_number << std::endl;
 				return false;
 			}
 			const bool skipping = skipping_stack.top();
-		
+
 			// Find the position of the '#' character
 			size_t directive_pos = line.find('#');
 			if (directive_pos != std::string::npos) {
@@ -339,7 +341,7 @@ public:
 					// Remove whitespaces between '#' and the directive
 					line = line.substr(0, directive_pos + 1) + line.substr(next_pos);
 				}
-				
+
 				size_t i;
 				while ((i = line.rfind('\\')) && (i == line.size() - 1)) {
 					std::string next_line;
@@ -353,10 +355,12 @@ public:
 			if (skipping) {
 				if (line.find("#endif", 0) == 0) {
 					skipping_stack.pop();
-				} else if (line.find("#if", 0) == 0) {
+				}
+				else if (line.find("#if", 0) == 0) {
 					// Nesting, push a new skipping state
 					skipping_stack.push(true);
-				} else if (line.find("#else", 0) == 0) {
+				}
+				else if (line.find("#else", 0) == 0) {
 					skipping_stack.top() = !skipping_stack.top();
 				}
 				continue;
@@ -368,7 +372,7 @@ public:
 					continue;
 				}
 				line = line.substr(0, comment_pos);
-			}			
+			}
 
 			if (line.find("#include", 0) == 0) {
 				if (!processIncludeDirective(line, filestack_.top().file_name)) {
@@ -389,7 +393,8 @@ public:
 				iss >> symbol;
 				if (defines_.count(symbol)) {
 					skipping_stack.push(false);
-				} else {
+				}
+				else {
 					skipping_stack.push(true);
 				}
 			}
@@ -400,7 +405,8 @@ public:
 				iss >> symbol;
 				if (defines_.count(symbol)) {
 					skipping_stack.push(true);
-				} else {
+				}
+				else {
 					skipping_stack.push(false);
 				}
 			}
@@ -416,7 +422,8 @@ public:
 			else if (line.find("#endif", 0) == 0) {
 				if (!skipping_stack.empty()) {
 					skipping_stack.pop();
-				} else {
+				}
+				else {
 					std::cerr << "Unmatched #endif directive" << std::endl;
 					return false;
 				}
@@ -440,7 +447,7 @@ public:
 				result_.append(line).append("\n");
 			}
 		}
-		
+
 		return true;
 	}
 
@@ -514,7 +521,7 @@ private:
 					}
 					else if (auto* function_directive = directive.get_if<FunctionDirective>()) {
 						replace_str = function_directive->getBody();
-					}					
+					}
 
 					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
 					last_char_index = output.size() - 1;
@@ -560,40 +567,41 @@ private:
 			auto value = values.top();
 			values.pop();
 			values.push(!value);
-		} else if (values.size() >= 2) {
+		}
+		else if (values.size() >= 2) {
 			auto right = values.top();
 			values.pop();
 			auto left = values.top();
 			values.pop();
 
 			switch (op) {
-				case Operator::And:
-					values.push(left && right);
-					break;
-				case Operator::Or:
-					values.push(left || right);
-					break;
-				case Operator::Less:
-					values.push(left < right);
-					break;
-				case Operator::Greater:
-					values.push(left > right);
-					break;
-				case Operator::Equals:
-					values.push(left == right);
-					break;
-				case Operator::NotEquals:
-					values.push(left != right);
-					break;
-				case Operator::LessEquals:
-					values.push(left <= right);
-					break;
-				case Operator::GreaterEquals:
-					values.push(left >= right);
-					break;
-				default:
-					std::cerr << "Internal compiler error, unknown operator!" << std::endl;
-					break;
+			case Operator::And:
+				values.push(left && right);
+				break;
+			case Operator::Or:
+				values.push(left || right);
+				break;
+			case Operator::Less:
+				values.push(left < right);
+				break;
+			case Operator::Greater:
+				values.push(left > right);
+				break;
+			case Operator::Equals:
+				values.push(left == right);
+				break;
+			case Operator::NotEquals:
+				values.push(left != right);
+				break;
+			case Operator::LessEquals:
+				values.push(left <= right);
+				break;
+			case Operator::GreaterEquals:
+				values.push(left >= right);
+				break;
+			default:
+				std::cerr << "Internal compiler error, unknown operator!" << std::endl;
+				break;
 			}
 		}
 
@@ -624,10 +632,11 @@ private:
 				}
 
 				const Operator op = string_to_operator(op_str);
-				
+
 				if (c == '(') {
 					ops.push(op);
-				} else if (c == ')') {
+				}
+				else if (c == ')') {
 					while (!ops.empty() && ops.top() != Operator::OpenParen) {
 						apply_operator(values, ops);
 					}
@@ -641,7 +650,8 @@ private:
 					}
 					ops.push(op);
 				}
-			} else if (isalpha(c) || c == '_') {
+			}
+			else if (isalpha(c) || c == '_') {
 				std::string keyword;
 				iss >> keyword;
 				if (keyword.find("__") == 0) {	// __ is reserved for the compiler
@@ -660,7 +670,8 @@ private:
 						}
 						values.push(exists);
 					}
-				} else if (keyword.find("defined") == 0) {
+				}
+				else if (keyword.find("defined") == 0) {
 					std::string symbol;
 					bool has_parenthesis = false;
 
@@ -686,25 +697,29 @@ private:
 
 					const bool value = defines_.count(symbol) > 0;
 					values.push(value);
-				} else if (auto it = defines_.find(keyword); it != defines_.end()) {
+				}
+				else if (auto it = defines_.find(keyword); it != defines_.end()) {
 					// convert the value to an int
 					const auto& body = it->second.getBody();
 					if (body.size() == 1) {
 						long value = stol(body);
 						values.push(value);
-					} else {
+					}
+					else {
 						if (settings_.isVerboseMode()) {
 							std::cout << "Checking unknown keyword value in #if directive: " << keyword << std::endl;
 						}
 						values.push(0);
 					}
-				} else {
+				}
+				else {
 					if (settings_.isVerboseMode()) {
 						std::cout << "Checking unknown keyword in #if directive: " << keyword << std::endl;
 					}
 					values.push(0);
 				}
-			} else {
+			}
+			else {
 				c = iss.get();
 			}
 		}
@@ -712,7 +727,7 @@ private:
 		while (!ops.empty()) {
 			apply_operator(values, ops);
 		}
-		
+
 		if (values.size() == 0) {
 			std::cerr << "Internal compiler error, mismatched operator in file " << filestack_.top().file_name << ":" << filestack_.top().line_number;
 			return 0;
@@ -750,7 +765,7 @@ private:
 		}
 		return true;
 	}
-	
+
 	void handleDefine(std::istringstream& iss) {
 		DefineDirective define;
 
@@ -805,7 +820,8 @@ private:
 
 				// Save the macro body after the closing parenthesis
 				rest_of_line.erase(0, rest_of_line.find_first_not_of(' ', close_paren + 1));
-			} else {
+			}
+			else {
 				rest_of_line.erase(0, rest_of_line.find_first_not_of(' '));
 			}
 		}
@@ -815,19 +831,19 @@ private:
 		// Add the parsed define to the map
 		defines_[name] = std::move(define);
 	}
-	
+
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
 		defines_["__cplusplus"] = DefineDirective{ "201703L", {} };
 		defines_["__STDC_HOSTED__"] = DefineDirective{ "1", {} };
 		defines_["__STDCPP_THREADS__"] = DefineDirective{ "1", {} };
-		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};		
+		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
 
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string { return std::string(filestack_.top().file_name); } };
 		defines_["__LINE__"] = FunctionDirective{ [this]() -> std::string { return std::to_string(filestack_.top().line_number); } };
-		defines_["__COUNTER__"] = FunctionDirective{[this]() -> std::string { return std::to_string(counter_value_++); } };
-		   
-		defines_["__DATE__"] = FunctionDirective{[] {
+		defines_["__COUNTER__"] = FunctionDirective{ [this]() -> std::string { return std::to_string(counter_value_++); } };
+
+		defines_["__DATE__"] = FunctionDirective{ [] {
 			auto now = std::chrono::system_clock::now();
 			auto time_t_now = std::chrono::system_clock::to_time_t(now);
 			std::tm tm_now = localtime_safely(&time_t_now);
@@ -836,23 +852,23 @@ private:
 			return std::string(buffer);
 		} };
 
-		defines_["__TIME__"] = FunctionDirective{[]{
+		defines_["__TIME__"] = FunctionDirective{ [] {
 			auto now = std::chrono::system_clock::now();
 			auto time_t_now = std::chrono::system_clock::to_time_t(now);
 			std::tm tm_now = localtime_safely(&time_t_now);
 			char buffer[10];
 			std::strftime(buffer, sizeof(buffer), "\"%H:%M:%S\"", &tm_now);
 			return std::string(buffer);
-	    } };
-		
-		defines_["__STDCPP_DEFAULT_NEW_ALIGNMENT__"] = FunctionDirective{[] {
+		} };
+
+		defines_["__STDCPP_DEFAULT_NEW_ALIGNMENT__"] = FunctionDirective{ [] {
 			constexpr std::size_t default_new_alignment = alignof(std::max_align_t);
 			char buffer[32];
 			std::snprintf(buffer, sizeof(buffer), "%zuU", default_new_alignment);
 			return std::string(buffer);
 		} };
 	}
-							  
+
 	struct ScopedFileStack {
 		ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file) : filestack_(filestack) {
 			filestack_.push({ file });
@@ -860,13 +876,13 @@ private:
 		~ScopedFileStack() {
 			filestack_.pop();
 		}
-		
+
 		std::stack<CurrentFile>& filestack_;
 	};
 
-    const CompileContext& settings_;
-    FileTree& tree_;
-    std::unordered_map<std::string, Directive> defines_;
+	const CompileContext& settings_;
+	FileTree& tree_;
+	std::unordered_map<std::string, Directive> defines_;
 	std::unordered_set<std::string> proccessedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
