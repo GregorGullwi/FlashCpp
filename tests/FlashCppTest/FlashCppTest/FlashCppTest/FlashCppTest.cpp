@@ -5,6 +5,7 @@
 #include "Lexer.h"
 #include "Parser.h"
 #include "CodeGen.h"
+#include "IRConverter.h"
 #include <string>
 #include <algorithm>
 #include <cctype>
@@ -348,5 +349,8 @@ TEST_SUITE("Code gen") {
 		for (const auto& instruction : ir.getInstructions()) {
 			std::cout << instruction.getReadableString() << "\n";
 		}
+
+		IrToObjConverter irConverter;
+		irConverter.convert(ir, "return1.obj");
 	}
 }

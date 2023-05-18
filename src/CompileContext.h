@@ -1,9 +1,9 @@
+#pragma once
+
 #include <string>
 #include <string_view>
 #include <vector>
 #include <optional>
-
-#pragma once
 
 class CompileContext {
 public:
