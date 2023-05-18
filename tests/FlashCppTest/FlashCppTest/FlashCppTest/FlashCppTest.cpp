@@ -323,7 +323,7 @@ TEST_SUITE("Code gen") {
 	TEST_CASE("Empty main() C++17 source string") {
 		std::string_view code = R"(
             int main() {
-                return 1;
+                return 1l;
             })";
 
 		Lexer lexer(code);

@@ -24,6 +24,7 @@ public:
 	}
 
 	Token next_token() {
+		size_t num_characters_left = source_size_ - cursor_;
 		while (cursor_ < source_size_) {
 			char c = source_[cursor_];
 
@@ -37,7 +38,10 @@ public:
 				return consume_identifier_or_keyword();
 			}
 			else if (std::isdigit(c)) {
-				return consume_literal();
+				return consume_literal();	// Positive number
+			}
+			else if (c == '-' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
+				return consume_literal();	// Negative number
 			}
 			else if (c == '\"') {
 				return consume_string_literal();
@@ -154,11 +158,7 @@ private:
 		size_t start = cursor_;
 		++cursor_;
 		++column_;
-
-		if (cursor_ >= source_size_) {
-			return Token();	// Todo: error handling
-		}
-
+		
 		// Check for prefix (hex, octal, binary)
 		if (source_[cursor_] == 'x') {
 			// Hexadecimal literal
@@ -199,6 +199,12 @@ private:
 				++cursor_;
 				++column_;
 			}
+		}
+
+		static constexpr std::string_view suffixCharacters = "ul";
+		while (cursor_ < source_size_ && suffixCharacters.find(source_[cursor_]) != std::string::npos) {
+			++cursor_;
+			++column_;
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);

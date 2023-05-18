@@ -8,6 +8,7 @@
 #include <vector>
 #include <charconv>
 #include <cstdlib>
+#include <algorithm>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
@@ -603,55 +604,38 @@ static std::optional<TypedNumeric> get_numeric_literal_type(std::string_view tex
 	std::transform(lowerText.begin(), lowerText.end(), lowerText.begin(), ::tolower);
 
 	TypedNumeric typeInfo;
-
+	char* end_ptr = nullptr;
 	// Check for prefixes
 	if (lowerText.find("0x") == 0) {
 		// Hexadecimal literal
 		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8); // Round to the nearest 8-bit boundary
-		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), nullptr, 16); // Parse hexadecimal
+		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 16); // Parse hexadecimal
 	}
 	else if (lowerText.find("0b") == 0) {
 		// Binary literal
 		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8); // Round to the nearest 8-bit boundary
-		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), nullptr, 2); // Parse binary
+		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 2); // Parse binary
 	}
 	else if (lowerText.find("0") == 0) {
 		// Octal literal
 		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8); // Round to the nearest 8-bit boundary
-		typeInfo.value = std::strtoull(lowerText.substr(1).c_str(), nullptr, 8); // Parse octal
+		typeInfo.value = std::strtoull(lowerText.substr(1).c_str(), &end_ptr, 8); // Parse octal
 	}
 	else {
 		typeInfo.sizeInBits = static_cast<unsigned char>(sizeof(int) * 8);
-		typeInfo.value = std::strtoull(lowerText.c_str(), nullptr, 10); // Parse integer
+		typeInfo.value = std::strtoull(lowerText.c_str(), &end_ptr, 10); // Parse integer
 	}
 
 	// Check for valid suffixes
-	static const std::string_view suffixCharacters = "ul";
-
-	std::string_view suffix;
-	size_t suffixStart = lowerText.find_last_of(suffixCharacters);
-	if (suffixStart != std::string_view::npos) {
-		suffix = lowerText.substr(suffixStart);
-	}
-
+	static constexpr std::string_view suffixCharacters = "ul";
+	std::string_view suffix = end_ptr;
 	if (!suffix.empty() && suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {
 		typeInfo.typeQualifier = static_cast<TypeQualifier>(static_cast<int>(TypeQualifier::Signed) + (suffix.find('u') != std::string_view::npos) * 1);
 
-		// Extract the size information from the suffix
-		std::string_view sizeText = suffix;
-		sizeText.remove_prefix(suffix.find_first_of(suffixCharacters) + 1);
-
-		if (sizeText.empty()) {
-			typeInfo.sizeInBits = sizeof(int) * 8;
-		}
-		else {
-			// Determine the size based on the suffix
-			unsigned long long specifiedSize = 0;
-			std::from_chars(sizeText.data(), sizeText.data() + sizeText.length(), specifiedSize);
-
-			// Round the specified size to the nearest 8, 16, 32, or 64-bit boundary
-			typeInfo.sizeInBits = static_cast<unsigned char>(std::round(specifiedSize / 8.0) * 8);
-		}
+		// Count the number of 'l' characters
+		auto l_count = std::count(suffix.begin(), suffix.end(), 'l');
+		static_assert(sizeof(int) == sizeof(long));
+		typeInfo.sizeInBits = sizeof(long) * static_cast<size_t>(8 + (l_count & 2) * 8);
 	}
 
 	return typeInfo;
