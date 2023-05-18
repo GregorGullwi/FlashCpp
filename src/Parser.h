@@ -366,11 +366,11 @@ ParseResult Parser::parse_type_specifier() {
 	};
 
 	Type type = Type::UserDefined;
-	size_t type_size = 0;
+	unsigned char type_size = 0;
 	const auto& it = type_map.find(current_token_opt->value());
 	if (it != type_map.end()) {
 		type = std::get<0>(it->second);
-		type_size = std::get<1>(it->second);
+		type_size = static_cast<unsigned char>(std::get<1>(it->second));
 
 		if (long_count == 1) {
 			if (type == Type::Float) {
@@ -607,21 +607,21 @@ static std::optional<TypedNumeric> get_numeric_literal_type(std::string_view tex
 	// Check for prefixes
 	if (lowerText.find("0x") == 0) {
 		// Hexadecimal literal
-		typeInfo.sizeInBits = std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8; // Round to the nearest 8-bit boundary
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8); // Round to the nearest 8-bit boundary
 		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), nullptr, 16); // Parse hexadecimal
 	}
 	else if (lowerText.find("0b") == 0) {
 		// Binary literal
-		typeInfo.sizeInBits = std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8; // Round to the nearest 8-bit boundary
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8); // Round to the nearest 8-bit boundary
 		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), nullptr, 2); // Parse binary
 	}
 	else if (lowerText.find("0") == 0) {
 		// Octal literal
-		typeInfo.sizeInBits = std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8; // Round to the nearest 8-bit boundary
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8); // Round to the nearest 8-bit boundary
 		typeInfo.value = std::strtoull(lowerText.substr(1).c_str(), nullptr, 8); // Parse octal
 	}
 	else {
-		typeInfo.sizeInBits = sizeof(int) * 8;
+		typeInfo.sizeInBits = static_cast<unsigned char>(sizeof(int) * 8);
 		typeInfo.value = std::strtoull(lowerText.c_str(), nullptr, 10); // Parse integer
 	}
 
@@ -650,7 +650,7 @@ static std::optional<TypedNumeric> get_numeric_literal_type(std::string_view tex
 			std::from_chars(sizeText.data(), sizeText.data() + sizeText.length(), specifiedSize);
 
 			// Round the specified size to the nearest 8, 16, 32, or 64-bit boundary
-			typeInfo.sizeInBits = std::round(specifiedSize / 8.0) * 8;
+			typeInfo.sizeInBits = static_cast<unsigned char>(std::round(specifiedSize / 8.0) * 8);
 		}
 	}
 

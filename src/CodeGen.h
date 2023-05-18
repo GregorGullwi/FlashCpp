@@ -31,8 +31,7 @@ public:
 
 private:
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
-		const DeclarationNode& func_decl =
-			parser_.as<DeclarationNode>(node.return_type_handle());
+		const DeclarationNode& func_decl = parser_.as<DeclarationNode>(node.return_type_handle());
 		const TypeSpecifierNode& ret_type = parser_.as<TypeSpecifierNode>(func_decl.type_handle());
 		ir_.addInstruction(
 			IrInstruction(IrOpcode::FunctionDecl,
@@ -46,9 +45,7 @@ private:
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
-			const ASTNode& expressionNode =
-				parser_.get_inner_node(*node.expression());
-			auto operands = generateExpressionIr(expressionNode.as<ExpressionNode>());
+			auto operands = generateExpressionIr(parser_.as<ExpressionNode>(*node.expression()));
 			ir_.addInstruction(IrOpcode::Return, std::move(operands));
 		}
 		else {
@@ -92,7 +89,7 @@ private:
 		// Generate IR for numeric literal and return appropriate operand
 		// ...
 		// only supports ints for now
-		return { static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
+		return { Type::Int, static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
 	}
 
 	std::vector<IrOperand>

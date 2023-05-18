@@ -346,7 +346,7 @@ TEST_SUITE("Code gen") {
 
 		// Let's just print the IR for now.
 		for (const auto& instruction : ir.getInstructions()) {
-			std::cout << instruction.getReadableString();
+			std::cout << instruction.getReadableString() << "\n";
 		}
 	}
 }

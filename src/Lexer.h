@@ -100,7 +100,7 @@ private:
 
 		size_t line_number = 0;
 		while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
-			line_number = line_number * 10 + (source_[cursor_] - '0');
+			line_number = line_number * 10 + static_cast<size_t>(source_[cursor_] - '0');
 			++cursor_;
 			++column_;
 		}

@@ -2,9 +2,14 @@
 
 #include <climits>
 #include <cstddef>
+#include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
+#include <deque>
+#include <unordered_map>
+
+#include "Token.h"
 
 using ASTNodeHandle = size_t;
 

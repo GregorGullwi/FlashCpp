@@ -5,6 +5,7 @@
 class Token {
 public:
 	enum class Type {
+		Uninitialized,
 		Identifier,
 		Keyword,
 		Literal,
@@ -27,7 +28,7 @@ public:
 	size_t file_index() const { return file_index_; }
 
 private:
-	Type type_;
+	Type type_ = Type::Uninitialized;
 	std::string_view value_;
 	size_t line_ = 0;
 	size_t column_ = 0;
