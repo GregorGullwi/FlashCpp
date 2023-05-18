@@ -320,43 +320,33 @@ TEST_SUITE("Parser") {
 }
 
 TEST_SUITE("Code gen") {
-    TEST_CASE("Empty main() C++17 source string") {
-        std::string_view code = R"(
+	TEST_CASE("Empty main() C++17 source string") {
+		std::string_view code = R"(
             int main() {
-                return 0;
+                return 1;
             })";
 
-        Lexer lexer(code);
-        Parser parser(lexer);
-        auto parse_result = parser.parse();
-        CHECK(!parse_result.is_error());
+		Lexer lexer(code);
+		Parser parser(lexer);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
 
-        const auto& ast = parser.get_nodes();
+		const auto& ast = parser.get_nodes();
 
-        AstToIr converter(parser);
-        for (auto node_handle : ast)
-        {
-            std::visit([&converter](const auto& val) {
-                converter.visit(val);
-            }, parser.get_inner_node(node_handle).node());
-        }
+		AstToIr converter(parser);
+		for (auto node_handle : ast)
+		{
+			std::visit([&converter](const auto& val) {
+				converter.visit(val);
+			}, parser.get_inner_node(node_handle).node());
+		}
 
-        // Now converter.ir should contain the IR for the code.
-        const auto& ir = converter.getIr();
+		// Now converter.ir should contain the IR for the code.
+		const auto& ir = converter.getIr();
 
-        // Let's just print the IR for now.
-        for (const auto& instruction : ir.getInstructions()) {
-            std::cout << "Opcode: " << static_cast<int>(instruction.getOpcode()) << "\n";
-            if (instruction.getFirstOperand()) {
-                std::visit([](const auto& operand) {
-                    std::cout << "First Operand: " << operand << "\n";
-                }, *instruction.getFirstOperand());
-            }
-            if (instruction.getSecondOperand()) {
-                std::visit([](const auto& operand) {
-                    std::cout << "Second Operand: " << operand << "\n";
-                }, *instruction.getSecondOperand());
-            }
-        }
-    }
+		// Let's just print the IR for now.
+		for (const auto& instruction : ir.getInstructions()) {
+			std::cout << instruction.getReadableString();
+		}
+	}
 }
