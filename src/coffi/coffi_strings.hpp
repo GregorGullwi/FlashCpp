@@ -162,7 +162,7 @@ class coffi_strings : public virtual string_to_name_provider
     //---------------------------------------------------------------------
     void save_strings(std::ostream& stream) const
     {
-        if (strings_ && get_strings_size() > 4) {
+        if (strings_) { //&& get_strings_size() > 4) {
             stream.write(strings_, get_strings_size());
         }
     }
