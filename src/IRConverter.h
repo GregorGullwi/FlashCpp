@@ -35,7 +35,7 @@ public:
 private:
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		std::ostringstream oss;
-		oss << "_" << instruction.getOperandAs<std::string_view>(2);
+		oss << instruction.getOperandAs<std::string_view>(2);
 		writer.add_function_symbol(oss.str());
 	}
 

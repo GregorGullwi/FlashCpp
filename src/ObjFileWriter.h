@@ -3,12 +3,14 @@
 #include "coffi/coffi.hpp"
 #include <string>
 #include <array>
+#include <chrono>
 
 enum class SectionType : unsigned char
 {
 	TEXT,
 	DATA,
 	BSS,
+	DRECTVE,
 
 	Count
 };
@@ -17,19 +19,33 @@ class ObjectFileWriter {
 public:
 	ObjectFileWriter() {
 		coffi_.create(COFFI::COFFI_ARCHITECTURE_PE);
-		coffi_.get_header()->set_flags(IMAGE_FILE_32BIT_MACHINE); // Should this even be here?
-		coffi_.create_optional_header(OH_MAGIC_PE32PLUS);
-		section_text_ = coffi_.add_section(".text");
-		section_text_->set_flags(IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_ALIGN_4BYTES);
-		sections_by_type[static_cast<unsigned char>(SectionType::TEXT)] = section_text_;
+		coffi_.get_header()->set_machine(IMAGE_FILE_MACHINE_AMD64);
+		auto now = std::chrono::system_clock::now();
+		std::time_t current_time_t = std::chrono::system_clock::to_time_t(now);
+		coffi_.get_header()->set_time_data_stamp(static_cast<uint32_t>(current_time_t));
 
-		section_data_ = coffi_.add_section(".data");
-		section_data_->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES);
-		sections_by_type[static_cast<unsigned char>(SectionType::DATA)] = section_data_;
+		auto section_drectve = add_section(".drectve", IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE, SectionType::DRECTVE);
+		section_drectve->append_data(" /DEFAULTLIB:\"LIBCMT\" "); // MSVC also contains '/DEFAULTLIB:\"OLDNAMES\" ', but it doesn't seem to be needed?
+		auto symbol_drectve = coffi_.add_symbol(".drectve");
+		symbol_drectve->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_drectve->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_drectve->set_section_number(section_drectve->get_index() + 1);
 
-		section_bss_ = coffi_.add_section(".bss");
-		section_bss_->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_UNINITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES);
-		sections_by_type[static_cast<unsigned char>(SectionType::BSS)] = section_bss_;
+		auto section_text = add_section(".text$mn", IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_ALIGN_16BYTES, SectionType::TEXT);
+		auto symbol_text = coffi_.add_symbol(".text$mn");
+		symbol_text->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_text->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_text->set_section_number(section_text->get_index() + 1);
+	}
+
+	COFFI::section* add_section(const std::string& section_name, int32_t flags, std::optional<SectionType> section_type) {
+		COFFI::section* section = coffi_.add_section(section_name);
+		section->set_flags(flags);
+		if (section_type.has_value()) {
+			sectiontype_to_index[*section_type] = section->get_index();
+			sectiontype_to_name[*section_type] = section_name;
+		}
+		return section;
 	}
 
 	void write(const std::string& filename) {
@@ -37,22 +53,19 @@ public:
 	}
 
 	void add_function_symbol(const std::string& name) {
+		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 		auto symbol_func = coffi_.add_symbol(name);
-		symbol_func->set_value(0);
-		symbol_func->set_section_number(1);
-		symbol_func->set_type(IMAGE_SYM_TYPE_NULL);
+		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		symbol_func->set_section_number(section_text->get_index() + 1);
 	}
 
 	void add_data(const std::vector<char>& data, SectionType section_type) {
-		sections_by_type[static_cast<unsigned char>(section_type)]->append_data(data.data(), data.size());
+		coffi_.get_sections()[sectiontype_to_index[section_type]]->append_data(data.data(), data.size());
 	}
 
 protected:
 	COFFI::coffi coffi_;
-
-	std::array<COFFI::section*, static_cast<unsigned char>(SectionType::Count)> sections_by_type;
-	COFFI::section* section_text_;	// Code goes in here
-	COFFI::section* section_data_;	// Initialized data
-	COFFI::section* section_bss_;	// Uninitialized data
+	std::unordered_map<SectionType, std::string> sectiontype_to_name;
+	std::unordered_map<SectionType, int32_t> sectiontype_to_index;
 };
