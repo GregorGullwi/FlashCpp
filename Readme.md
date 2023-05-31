@@ -65,7 +65,7 @@ It's been developed in heavy cooperation with ChatGPT to speed up development.
 - [ ] Optimize semantic analysis for speed and memory usage
 
 ## 5. IR generation
-- [ ] Implement code generation from the AST to Clang IR
+- [ ] Implement code generation from the AST to an IR representation
 
 ## 6. Optimization techniques
 - [ ] Implement optimization passes on the IR to improve runtime performance
