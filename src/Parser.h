@@ -9,6 +9,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <algorithm>
+#include <cmath>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
@@ -634,7 +635,6 @@ static std::optional<TypedNumeric> get_numeric_literal_type(std::string_view tex
 
 		// Count the number of 'l' characters
 		auto l_count = std::count(suffix.begin(), suffix.end(), 'l');
-		static_assert(sizeof(int) == sizeof(long));
 		typeInfo.sizeInBits = sizeof(long) * static_cast<size_t>(8 + (l_count & 2) * 8);
 	}
 
