@@ -354,3 +354,42 @@ TEST_SUITE("Code gen") {
 		irConverter.convert(ir, "return1.obj");
 	}
 }
+
+TEST_SUITE("Code gen") {
+	TEST_CASE("Return integer from a function") {
+		std::string_view code = R"(
+            int return2() {
+				return 2;
+            }
+
+            int main() {
+                return return2();
+            })";
+
+		Lexer lexer(code);
+		Parser parser(lexer);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+
+		AstToIr converter(parser);
+		for (auto node_handle : ast)
+		{
+			std::visit([&converter](const auto& val) {
+				converter.visit(val);
+			}, parser.get_inner_node(node_handle).node());
+		}
+
+		// Now converter.ir should contain the IR for the code.
+		const auto& ir = converter.getIr();
+
+		// Let's just print the IR for now.
+		for (const auto& instruction : ir.getInstructions()) {
+			std::cout << instruction.getReadableString() << "\n";
+		}
+
+		IrToObjConverter irConverter;
+		irConverter.convert(ir, "return2func.obj");
+	}
+}
