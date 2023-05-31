@@ -65,14 +65,14 @@ It's been developed in heavy cooperation with ChatGPT to speed up development.
 - [ ] Optimize semantic analysis for speed and memory usage
 
 ## 5. IR generation
-- [ ] Implement code generation from the AST to an IR representation
+- [x] Implement code generation from the AST to an IR representation
 
 ## 6. Optimization techniques
 - [ ] Implement optimization passes on the IR to improve runtime performance
 - [ ] Optimize for code size or runtime speed as appropriate
 
 ## 7. Code generation
-- [ ] Implement code generation from the IR to machine code
+- [x] Implement code generation from the IR to machine code
 - [ ] Optimize the generated code for speed and memory usage
 
 ## 8. Runtime support
