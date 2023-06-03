@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <typeindex>
+#include "ChunkedAnyVector.h"
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -44,6 +45,29 @@ static void run_test_case(const std::string& input, const std::string& expected_
 	Lexer lexer_expected(expected_output);
 	Lexer lexer_actual(actual_output);
 	CHECK(compare_lexers_ignore_whitespace(lexer_expected, lexer_actual));
+}
+
+TEST_CASE("ChunkedVector") {
+	ChunkedAnyVector<> chunked_vector;
+
+	int32_t& p1 = chunked_vector.push_back((int32_t)10);
+	CHECK(p1 == 10);
+
+	std::string& p2 = chunked_vector.push_back(std::string("banana"));
+	CHECK(p2 == "banana");
+
+	int count = 0;
+	chunked_vector.visit([&](void* arg, auto&& type) {
+		if (type == std::type_index(typeid(int32_t))) {
+			if (*reinterpret_cast<const int32_t*>(arg) == 10)
+				++count;
+		}
+		else if (type == std::type_index(typeid(std::string))) {
+			if (*reinterpret_cast<const std::string*>(arg) == "banana")
+				++count;
+		}
+	});
+	CHECK(count == 2);
 }
 
 TEST_CASE("preprocessor") {
