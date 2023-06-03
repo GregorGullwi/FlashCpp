@@ -64,8 +64,49 @@ public:
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
 		data(&memory_resource) {}
 
+	ChunkedVector(std::initializer_list<T> init)
+		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
+		data(&memory_resource) {
+		for (const auto& value : init) {
+			push_back(value);
+		}
+	}
+
+	ChunkedVector(const ChunkedVector& other)
+		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
+		data(&memory_resource) {
+		for (size_t i = 0, e = other.size(); i < e; ++i) {
+			push_back(other[i]);
+		}
+	}
+
+	ChunkedVector(ChunkedVector&& other) noexcept
+		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
+		data(std::move(other.data), &memory_resource) {}
+
+	ChunkedVector& operator=(const ChunkedVector& other) {
+		if (this != &other) {
+			data.clear();
+			for (size_t i = 0, e = other.size(); i < e; ++i) {
+				push_back(other[i]);
+			}
+		}
+		return *this;
+	}
+
+	ChunkedVector& operator=(ChunkedVector&& other) noexcept {
+		if (this != &other) {
+			data = std::move(other.data);
+		}
+		return *this;
+	}
+
 	T& push_back(T&& value) {
-		return emplace_back(std::forward<T>(value));
+		return emplace_back(std::move(value));
+	}
+
+	T& push_back(const T& value) {
+		return emplace_back(value);
 	}
 
 	template<typename... Args>
@@ -96,6 +137,11 @@ public:
 			index -= chunk.size();
 		}
 		throw std::out_of_range("Index out of range");
+	}
+
+	size_t size() const {
+		if (data.size() == 0) return 0;
+		return (data.size() - 1) * ChunkSize + data.back().size();
 	}
 
 private:

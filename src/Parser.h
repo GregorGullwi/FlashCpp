@@ -44,7 +44,7 @@ static std::string_view get_parser_error_string(ParserError e) {
 class ParseResult {
 public:
 	ParseResult() = default;
-	ParseResult(ASTNode node_ref) : value_or_error_(node_ref) {}
+	ParseResult(ASTNode node) : value_or_error_(node) {}
 	ParseResult(std::string error_message, Token token)
 		: value_or_error_(Error{ std::move(error_message), std::move(token) }) {}
 
@@ -59,8 +59,8 @@ public:
 	}
 
 	static ParseResult success() { return ParseResult(); }
-	static ParseResult success(ASTNode node_ref_) {
-		return ParseResult(node_ref_);
+	static ParseResult success(ASTNode node) {
+		return ParseResult(node);
 	}
 	static ParseResult error(const std::string& error_message, Token token) {
 		return ParseResult(error_message, std::move(token));
@@ -232,6 +232,7 @@ ParseResult Parser::parse_top_level_node() {
 	// Attempt to parse a function definition, variable declaration, or typedef
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
+		ast_nodes_.push_back(result.node());
 		return saved_position.success();
 	}
 
@@ -269,9 +270,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 	// Attempt to parse a function definition
 	const bool is_probably_function = (peek_token()->value() == "(");
+	auto function_definition_result = ParseResult();
 	if (is_probably_function) {
-		auto function_definition_result =
-			parse_function_declaration(type_and_name_result.node());
+		function_definition_result = parse_function_declaration(type_and_name_result.node());
 		if (function_definition_result.is_error()) {
 			return function_definition_result;
 		}
@@ -298,7 +299,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		}
 
 		// Parse function body
-		return parse_block();
+		auto block_result = parse_block();
+		if (block_result.is_error())
+			return block_result;
+
+		auto& func_decl = function_definition_result.node().as<FunctionDeclarationNode>();
+		func_decl.set_definition(block_result.node().as<BlockNode>());
+		return ParseResult::success(function_definition_result.node());
 	}
 	// Attempt to parse a simple declaration (variable or typedef)
 	if (!consume_punctuator(";")) {
@@ -399,7 +406,6 @@ Parser::parse_function_declaration(ASTNode declaration_node_handle) {
 	// Create the function declaration
 	auto [func_node, func_ref] =
 		create_node_ref(FunctionDeclarationNode(declaration_node_handle));
-	ast_nodes_.push_back(func_node);
 
 	while (!consume_punctuator(")")) {
 		// Parse parameter type and name (identifier)
@@ -439,9 +445,7 @@ ParseResult Parser::parse_block() {
 		return ParseResult::error("Expected '{' for block", *current_token_);
 	}
 
-	size_t start_index = ast_nodes_.size();
-	auto [block_node, block_ref] = create_node_ref(BlockNode(start_index));
-	ast_nodes_.push_back(block_node);
+	auto [block_node, block_ref] = create_node_ref(BlockNode());
 
 	while (!consume_punctuator("}")) {
 		// Parse statements or declarations
@@ -449,12 +453,10 @@ ParseResult Parser::parse_block() {
 		if (parse_result.is_error())
 			return parse_result;
 
-		ast_nodes_.push_back(parse_result.node());
+		block_ref.add_statement_node(parse_result.node());
 	}
 
-	block_ref.set_num_statements(ast_nodes_.size() - start_index);
-
-	return ParseResult::success();
+	return ParseResult::success(block_node);
 }
 
 ParseResult Parser::parse_statement_or_declaration() {

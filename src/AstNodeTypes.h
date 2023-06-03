@@ -201,22 +201,34 @@ private:
 
 class FunctionCallNode {
 public:
-	explicit FunctionCallNode(Token identifier, size_t function,
-		std::vector<size_t> arguments)
-		: identifier_(identifier), function_(function),
-		arguments_(std::move(arguments)) {}
+	using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
+		BinaryOperatorNode, FunctionCallNode>;
+
+	explicit FunctionCallNode(Token identifier, size_t function, ChunkedVector<std::any>&& arguments)
+		: identifier_(identifier), function_(function), arguments_(std::move(arguments)) {}
 
 	size_t function() const { return function_; }
-	const std::vector<size_t>& arguments() const { return arguments_; }
+	const auto& arguments() const { return arguments_; }
 
 private:
 	Token identifier_;
 	size_t function_;
-	std::vector<size_t> arguments_;
+	ChunkedVector<std::any> arguments_;
 };
 
 using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, FunctionCallNode>;
+
+class BlockNode {
+public:
+	explicit BlockNode() {}
+
+	const auto& get_statements() const { return statements_; }
+	void add_statement_node(ASTNode node) { statements_.push_back(node); }
+
+private:
+	ChunkedVector<ASTNode, 128, 256> statements_;
+};
 
 class FunctionDeclarationNode {
 public:
@@ -233,11 +245,22 @@ public:
 	void add_parameter_node(ASTNode parameter_node) {
 		parameter_nodes_.push_back(parameter_node);
 	}
+	auto get_definition() const {
+		return definition_block_;
+	}
+	bool set_definition(BlockNode& block_node) {
+		if (definition_block_.has_value())
+			return false;
+
+		definition_block_.emplace(&block_node);
+	}
 
 private:
 	ASTNode return_specifier_node_;
 	std::vector<ASTNode> parameter_nodes_;
+	std::optional<BlockNode*> definition_block_;
 };
+
 
 /*class FunctionDefinitionNode {
 public:
@@ -257,20 +280,6 @@ private:
 		std::vector<size_t> parameter_indices_;
 		size_t body_index_;
 };*/
-
-class BlockNode {
-public:
-	explicit BlockNode(size_t start_index) : start_index_(start_index) {}
-
-	size_t start_index() const { return start_index_; }
-	void set_num_statements(size_t num_statements) {
-		num_statements_ = num_statements;
-	}
-
-private:
-	size_t start_index_ = UINT_MAX;
-	size_t num_statements_ = 0;
-};
 
 class IfStatementNode {
 public:

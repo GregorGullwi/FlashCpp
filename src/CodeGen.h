@@ -32,9 +32,15 @@ private:
 				{ ret_type.type(),
 				  static_cast<int>(ret_type.size_in_bits()),
 				  func_decl.identifier_token().value() }));
-		/*for (const auto &statement : node.getStatements()) {
-		  visit(statement);
-		}*/
+
+		auto definition_block = node.get_definition();
+		if (!definition_block.has_value())
+			return;
+
+		auto statements = (*definition_block)->get_statements();
+		for (size_t i = 0, e = statements.size(); i < e; ++i) {
+		  visit(statements[i]);
+		}
 	}
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
