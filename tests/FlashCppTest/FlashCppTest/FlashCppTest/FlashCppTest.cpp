@@ -356,8 +356,7 @@ TEST_SUITE("Code gen") {
 		const auto& ast = parser.get_nodes();
 
 		AstToIr converter;
-		for (auto& node_handle : ast)
-		{
+		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
 
@@ -393,8 +392,7 @@ TEST_SUITE("Code gen") {
 		const auto& ast = parser.get_nodes();
 
 		AstToIr converter;
-		for (auto& node_handle : ast)
-		{
+		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
 
