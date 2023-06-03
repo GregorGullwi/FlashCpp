@@ -1,3 +1,5 @@
+#pragma once
+
 #include <iostream>
 #include <vector>
 #include <list>
@@ -7,9 +9,10 @@
 #include <unordered_map>
 #include <utility>
 #include <algorithm>
+#include <array>
 #include <assert.h>
 
-template<std::size_t ChunkSize = 1, std::size_t InternalBufferSize = sizeof(std::pmr::list<std::pmr::vector<char>>) + 4 * sizeof(void*)>
+template<std::size_t ChunkSize = 64*1024*1024, std::size_t InternalBufferSize = sizeof(std::pmr::list<std::pmr::vector<char>>) + 4 * sizeof(void*)>
 class ChunkedAnyVector {
 public:
 	ChunkedAnyVector()
@@ -26,7 +29,23 @@ public:
 		auto& chunk = data.back();
 		std::size_t offset = (chunk.size() + alignment - 1) & ~(alignment - 1);
 		chunk.resize(offset + size);
-		T* p = new (&chunk[offset]) T(std::forward<T>(value));
+		std::decay_t<T>* p = new (&chunk[offset]) std::decay_t<T>(std::forward<T>(value));
+		index_to_pointer.emplace(index++, p);
+		pointer_to_type.emplace(p, std::type_index(typeid(T)));
+		return *p;
+	}
+
+	template<typename T, typename... Args>
+	T& emplace_back(Args&&... args) {
+		std::size_t size = sizeof(T);
+		std::size_t alignment = alignof(T);
+		if (data.empty() || data.back().size() + size > ChunkSize) {
+			data.emplace_back().reserve(ChunkSize);
+		}
+		auto& chunk = data.back();
+		std::size_t offset = (chunk.size() + alignment - 1) & ~(alignment - 1);
+		chunk.resize(offset + size);
+		std::decay_t<T>* p = new (&chunk[offset]) std::decay_t<T>(std::forward<Args>(args)...);
 		index_to_pointer.emplace(index++, p);
 		pointer_to_type.emplace(p, std::type_index(typeid(T)));
 		return *p;

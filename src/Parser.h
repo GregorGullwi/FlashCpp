@@ -14,6 +14,7 @@
 #include "AstNodeTypes.h"
 #include "Lexer.h"
 #include "Token.h"
+#include "ChunkedAnyVector.h"
 
 enum class ParserError {
 	None,
@@ -39,8 +40,6 @@ static std::string_view get_parser_error_string(ParserError e) {
 		return "Feature/token type not implemented yet";
 	}
 }
-
-using ASTNodeHandle = size_t;
 
 class ParseResult {
 public:
@@ -101,46 +100,47 @@ public:
 
 	const auto& get_nodes() { return ast_nodes_; }
 	const ASTNode& get_inner_node(ASTNodeHandle node_handle) const {
-		return allocated_nodes_.at(node_handle);
+		return node_handle;
 	}
 	bool is_valid_inner_index(size_t inner_index) const {
 		return inner_index < allocated_nodes_.size();
 	}
 
 	template <typename T> bool is(ASTNodeHandle node_handle) const {
-		return allocated_nodes_[node_handle].is<T>();
+		return node_handle.is<T>();
 	}
 
 	template <typename T> T& as(ASTNodeHandle node_handle) {
-		return allocated_nodes_[node_handle].as<T>();
+		return node_handle.as<T>();
 	}
 
 	template <typename T> const T& as(ASTNodeHandle node_handle) const {
-		return allocated_nodes_[node_handle].as<T>();
+		return node_handle.as<T>();
 	}
 
 	template <typename T> T& as(ParseResult parse_result) {
-		return allocated_nodes_[parse_result.node_handle()].as<T>();
+		return parse_result.node_handle().as<T>();
 	}
 
 private:
 	Lexer& lexer_;
 	std::optional<Token> current_token_;
 	std::vector<ASTNodeHandle> ast_nodes_;
-	std::vector<ASTNode>
-		allocated_nodes_; // ASTNodes have pointers into this array
+
+	std::vector<ASTNode> allocated_nodes_; // ASTNodes have pointers into this array
 
 	template <typename T> ASTNodeHandle create_node(T&& node) {
-		std::size_t index = allocated_nodes_.size();
-		allocated_nodes_.emplace_back(std::forward<T>(node));
-		return ASTNodeHandle(index);
+		return ASTNode::emplace_node<T>(std::forward<T>(node));
 	}
 
 	template <typename T>
 	std::pair<ASTNodeHandle, T&> create_node_ref(T&& node) {
-		std::size_t index = allocated_nodes_.size();
-		ASTNode& ast_node = allocated_nodes_.emplace_back(std::forward<T>(node));
-		return { ASTNodeHandle(index), ast_node.as<T>() };
+		ASTNode ast_node = ASTNode::emplace_node<T>(std::forward<T>(node));
+		return { ast_node, ast_node.as<T>() };
+	}
+
+	template <typename T, typename... Args> ASTNodeHandle emplace_node(Args&&... args) {
+		return ASTNode::emplace_node<T>(std::forward<Args>(args)...);
 	}
 
 	class ScopedTokenPosition {
@@ -264,8 +264,7 @@ ParseResult Parser::parse_type_and_name() {
 		return ParseResult::error("Expected identifier token", *identifier_token);
 	}
 
-	return ParseResult::success(create_node(
-		DeclarationNode(type_specifier_result.node_handle(), *identifier_token)));
+	return ParseResult::success(this->emplace_node<DeclarationNode>(type_specifier_result.node_handle(), *identifier_token));
 }
 
 ParseResult Parser::parse_declaration_or_function_definition() {

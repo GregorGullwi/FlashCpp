@@ -8,10 +8,46 @@
 #include <vector>
 #include <deque>
 #include <unordered_map>
+#include <any>
 
 #include "Token.h"
+#include "ChunkedAnyVector.h"
 
-using ASTNodeHandle = size_t;
+ChunkedAnyVector gChunkedAnyStorage;
+
+class ASTNode {
+public:
+	ASTNode() = default;
+
+	template <typename T> ASTNode(T* node) : node_(node) {}
+
+	template <typename T, typename... Args>
+	static ASTNode emplace_node(Args&&... args) {
+		T& t = gChunkedAnyStorage.emplace_back<T>(std::forward<Args>(args)...);
+		return ASTNode(&t);
+	}
+
+	template <typename T> bool is() const {
+		return node_.type() == typeid(T*);
+	}
+
+	template <typename T> T& as() {
+		return *std::any_cast<T*>(node_);
+	}
+
+	template <typename T> const T& as() const {
+		return *std::any_cast<T*>(node_);
+	}
+
+	auto type_name() const {
+		return node_.type().name();
+	}
+
+private:
+	std::any node_;
+};
+
+using ASTNodeHandle = ASTNode;
 
 enum class TypeQualifier {
 	None,
@@ -331,32 +367,4 @@ public:
 private:
 	std::optional<ASTNodeHandle>
 		expression_; // Optional, as a return statement may not have an expression
-};
-
-class ASTNode {
-public:
-	using NodeType =
-		std::variant<std::monostate, TypeSpecifierNode, DeclarationNode,
-		ExpressionNode, IdentifierNode, NumericLiteralNode,
-		StringLiteralNode, BinaryOperatorNode, FunctionCallNode,
-		FunctionDeclarationNode, BlockNode, IfStatementNode,
-		LoopStatementNode, WhileLoopNode, DoWhileLoopNode,
-		ForLoopNode, ReturnStatementNode>;
-
-	ASTNode() = default;
-
-	template <typename T> ASTNode(T&& node) : node_(std::forward<T>(node)) {}
-
-	template <typename T> bool is() const {
-		return std::holds_alternative<T>(node_);
-	}
-
-	template <typename T> T& as() { return std::get<T>(node_); }
-
-	template <typename T> const T& as() const { return std::get<T>(node_); }
-
-	const NodeType& node() const { return node_; }
-
-private:
-	NodeType node_;
 };

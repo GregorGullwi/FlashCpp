@@ -10,29 +10,23 @@ class Parser;
 
 class AstToIr {
 public:
-	explicit AstToIr(Parser& parser) : parser_(parser) {}
+	AstToIr() {}
 
 	void visit(const ASTNode& node) {
-		std::visit(
-			[&](const auto& val) {
-			using T = std::decay_t<decltype(val)>;
-			if constexpr (std::is_same_v<T, FunctionDeclarationNode>) {
-				visitFunctionDeclarationNode(val);
-			}
-			else if constexpr (std::is_same_v<T, ReturnStatementNode>) {
-				visitReturnStatementNode(val);
-			}
-			// ... add other node types here
-		},
-			node.node());
+		if (node.is<FunctionDeclarationNode>()) {
+			visitFunctionDeclarationNode(node.as<FunctionDeclarationNode>());
+		}
+		else if (node.is<ReturnStatementNode>()) {
+			visitReturnStatementNode(node.as<ReturnStatementNode>());
+		}
 	}
 
 	const Ir& getIr() const { return ir_; }
 
 private:
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
-		const DeclarationNode& func_decl = parser_.as<DeclarationNode>(node.return_type_handle());
-		const TypeSpecifierNode& ret_type = parser_.as<TypeSpecifierNode>(func_decl.type_handle());
+		const DeclarationNode& func_decl = node.return_type_handle().as<DeclarationNode>();
+		const TypeSpecifierNode& ret_type = func_decl.type_handle().as<TypeSpecifierNode>();
 		ir_.addInstruction(
 			IrInstruction(IrOpcode::FunctionDecl,
 				{ ret_type.type(),
@@ -45,7 +39,7 @@ private:
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
-			auto operands = generateExpressionIr(parser_.as<ExpressionNode>(*node.expression()));
+			auto operands = generateExpressionIr(node.expression()->as<ExpressionNode>());
 			ir_.addInstruction(IrOpcode::Return, std::move(operands));
 		}
 		else {
@@ -114,5 +108,4 @@ private:
 	}
 
 	Ir ir_;
-	Parser& parser_;
 };

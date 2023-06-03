@@ -303,11 +303,8 @@ TEST_SUITE("Parser") {
 
 		const auto& ast = parser.get_nodes();
 
-		for (auto node_handle : ast)
-		{
-			std::visit([](const auto& val) {
-				std::cout << "Type: " << typeid(val).name() << "\n";
-			}, parser.get_inner_node(node_handle).node());
+		for (auto& node_handle : ast) {
+			std::cout << "Type: " << node_handle.type_name() << "\n";
 		}
 	}
 
@@ -339,7 +336,7 @@ TEST_SUITE("Parser") {
 		// Compare AST nodes
 		CHECK(ast1.size() == ast2.size());
 		for (std::size_t i = 0; i < ast1.size(); ++i) {
-			CHECK(typeid(parser1.get_inner_node(ast1[i]).node()) == typeid(parser2.get_inner_node(ast2[i]).node()));
+			CHECK(typeid(ast1[i].type_name()) == typeid(ast2[i].type_name()));
 		}
 	}
 }
@@ -358,12 +355,10 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(parser);
-		for (auto node_handle : ast)
+		AstToIr converter;
+		for (auto& node_handle : ast)
 		{
-			std::visit([&converter](const auto& val) {
-				converter.visit(val);
-			}, parser.get_inner_node(node_handle).node());
+			converter.visit(node_handle);
 		}
 
 		// Now converter.ir should contain the IR for the code.
@@ -397,12 +392,10 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(parser);
-		for (auto node_handle : ast)
+		AstToIr converter;
+		for (auto& node_handle : ast)
 		{
-			std::visit([&converter](const auto& val) {
-				converter.visit(val);
-			}, parser.get_inner_node(node_handle).node());
+			converter.visit(node_handle);
 		}
 
 		// Now converter.ir should contain the IR for the code.
