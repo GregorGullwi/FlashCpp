@@ -25,8 +25,8 @@ public:
 
 private:
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
-		const DeclarationNode& func_decl = node.return_type_handle().as<DeclarationNode>();
-		const TypeSpecifierNode& ret_type = func_decl.type_handle().as<TypeSpecifierNode>();
+		const DeclarationNode& func_decl = node.return_type_node().as<DeclarationNode>();
+		const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 		ir_.addInstruction(
 			IrInstruction(IrOpcode::FunctionDecl,
 				{ ret_type.type(),

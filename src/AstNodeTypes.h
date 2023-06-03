@@ -47,8 +47,6 @@ private:
 	std::any node_;
 };
 
-using ASTNodeHandle = ASTNode;
-
 enum class TypeQualifier {
 	None,
 	Signed,
@@ -134,14 +132,14 @@ private:
 class DeclarationNode {
 public:
 	DeclarationNode() = default;
-	DeclarationNode(ASTNodeHandle type_handle, Token identifier)
-		: type_handle_(type_handle), identifier_(std::move(identifier)) {}
+	DeclarationNode(ASTNode type_node, Token identifier)
+		: type_node_(type_node), identifier_(std::move(identifier)) {}
 
-	ASTNodeHandle type_handle() const { return type_handle_; }
+	ASTNode type_node() const { return type_node_; }
 	const Token& identifier_token() const { return identifier_; }
 
 private:
-	ASTNodeHandle type_handle_;
+	ASTNode type_node_;
 	Token identifier_;
 };
 
@@ -223,22 +221,22 @@ using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLi
 class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = default;
-	FunctionDeclarationNode(ASTNodeHandle return_specifier_node)
+	FunctionDeclarationNode(ASTNode return_specifier_node)
 		: return_specifier_node_(std::move(return_specifier_node)) {}
 
-	ASTNodeHandle return_type_handle() const {
+	ASTNode return_type_node() const {
 		return return_specifier_node_;
 	}
-	const std::vector<ASTNodeHandle>& parameter_handles() const {
-		return parameter_handles_;
+	const std::vector<ASTNode>& parameter_nodes() const {
+		return parameter_nodes_;
 	}
-	void add_parameter_node_handle(ASTNodeHandle parameter_handle) {
-		parameter_handles_.push_back(parameter_handle);
+	void add_parameter_node(ASTNode parameter_node) {
+		parameter_nodes_.push_back(parameter_node);
 	}
 
 private:
-	ASTNodeHandle return_specifier_node_;
-	std::vector<ASTNodeHandle> parameter_handles_;
+	ASTNode return_specifier_node_;
+	std::vector<ASTNode> parameter_nodes_;
 };
 
 /*class FunctionDefinitionNode {
@@ -359,12 +357,12 @@ private:
 class ReturnStatementNode {
 public:
 	explicit ReturnStatementNode(
-		std::optional<ASTNodeHandle> expression = std::nullopt)
+		std::optional<ASTNode> expression = std::nullopt)
 		: expression_(expression) {}
 
-	std::optional<ASTNodeHandle> expression() const { return expression_; }
+	std::optional<ASTNode> expression() const { return expression_; }
 
 private:
-	std::optional<ASTNodeHandle>
+	std::optional<ASTNode>
 		expression_; // Optional, as a return statement may not have an expression
 };
