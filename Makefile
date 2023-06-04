@@ -12,7 +12,7 @@ $(BINDIR)/main: $(wildcard $(SRCDIR)/*.cpp)
 
 $(BINDIR)/test: $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
 	mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O0 -g -o $@ $^
+	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $^
 
 $(BINDIR)/main-debug: $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
 	mkdir -p $(BINDIR)
