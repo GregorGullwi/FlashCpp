@@ -3,7 +3,6 @@
 #include <iostream>
 #include <vector>
 #include <list>
-#include <memory_resource>
 #include <typeinfo>
 #include <typeindex>
 #include <unordered_map>
@@ -12,12 +11,30 @@
 #include <array>
 #include <assert.h>
 
-template<std::size_t ChunkSize = 64 * 1024 * 1024, std::size_t InternalBufferSize = sizeof(std::pmr::list<std::pmr::vector<char>>) + 4 * sizeof(void*)>
+#ifdef __has_include
+#if __has_include(<memory_resource>)
+#define HAS_MEMORY_RESOURCE 1
+#endif
+#endif
+
+#ifdef HAS_MEMORY_RESOURCE
+#include <memory_resource>
+#define LIST_SIZE_ANY sizeof(std::pmr::list<std::pmr::vector<char>>)
+#define LIST_SIZE_T sizeof(std::pmr::list<std::pmr::vector<T>>)
+#else
+#define LIST_SIZE_ANY sizeof(std::list<std::vector<char>>)
+#define LIST_SIZE_T sizeof(std::list<std::vector<T>>)
+#endif
+
+template<std::size_t ChunkSize = 64 * 1024 * 1024, std::size_t InternalBufferSize = LIST_SIZE_ANY + 4 * sizeof(void*)>
 class ChunkedAnyVector {
 public:
 	ChunkedAnyVector()
-		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(&memory_resource) {}
+#ifdef HAS_MEMORY_RESOURCE
+    : memory_resource(internal_buffer.data(), internal_buffer.max_size()),
+    data(&memory_resource)
+#endif
+    {}
 
 	template<typename T>
 	T& push_back(T&& value) {
@@ -51,38 +68,56 @@ public:
 
 private:
 	std::array<char, InternalBufferSize> internal_buffer;
-	std::pmr::monotonic_buffer_resource memory_resource;
-	std::pmr::list<std::pmr::vector<char>> data;
+#ifdef HAS_MEMORY_RESOURCE
+    std::pmr::monotonic_buffer_resource memory_resource;
+    std::pmr::list<std::pmr::vector<char>> data;
+#else
+    std::list<std::vector<char>> data;
+#endif
 	std::vector<void*> index_to_pointer;
 	std::vector<std::type_index> index_to_type;
 };
 
-template<typename T, std::size_t ChunkSize = sizeof(T) * 4, std::size_t InternalBufferSize = sizeof(std::pmr::list<std::pmr::vector<T>>) + ChunkSize>
+template<typename T, std::size_t ChunkSize = sizeof(T) * 4, std::size_t InternalBufferSize = LIST_SIZE_T + ChunkSize>
 class ChunkedVector {
 public:
 	ChunkedVector()
+#ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(&memory_resource) {}
+		data(&memory_resource)
+#endif
+    {}
 
 	ChunkedVector(std::initializer_list<T> init)
+#ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(&memory_resource) {
+		data(&memory_resource)
+#endif
+    {
 		for (const auto& value : init) {
 			push_back(value);
 		}
 	}
 
 	ChunkedVector(const ChunkedVector& other)
+#ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(&memory_resource) {
+		data(&memory_resource)
+#endif
+    {
 		for (size_t i = 0, e = other.size(); i < e; ++i) {
 			push_back(other[i]);
 		}
 	}
 
 	ChunkedVector(ChunkedVector&& other) noexcept
+#ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(std::move(other.data), &memory_resource) {}
+		data(std::move(other.data), &memory_resource)
+#else
+        : data(std::move(other.data))
+#endif
+    {}
 
 	ChunkedVector& operator=(const ChunkedVector& other) {
 		if (this != &other) {
@@ -146,6 +181,10 @@ public:
 
 private:
 	std::array<char, InternalBufferSize> internal_buffer;
+#ifdef HAS_MEMORY_RESOURCE
 	std::pmr::monotonic_buffer_resource memory_resource;
 	std::pmr::list<std::pmr::vector<T>> data;
+#else
+    std::list<std::vector<T>> data;
+#endif
 };
