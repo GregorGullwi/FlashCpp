@@ -11,8 +11,8 @@
 struct TokenPosition {
 	size_t cursor_;
 	size_t line_;
-	size_t column_;
-	size_t current_file_index_;
+	int32_t column_;
+	int32_t current_file_index_;
 };
 
 class Lexer {
@@ -81,8 +81,8 @@ private:
 	size_t source_size_;
 	size_t cursor_;
 	size_t line_;
-	size_t column_;
-	size_t current_file_index_;
+	int32_t current_file_index_;
+	int32_t column_;
 	std::vector<std::string> file_paths_;
 
 	void consume_whitespace() {

@@ -16,10 +16,10 @@ public:
 	};
 
 	Token() = default;
-	Token(Type type, std::string_view value, size_t line, size_t column,
-		size_t file_index)
-		: type_(type), value_(value), line_(line), column_(column),
-		file_index_(file_index) {}
+	Token(Type type, std::string_view value, size_t line, int32_t column,
+		int32_t file_index)
+		: value_(value.data()), line_(line), column_(column),
+		file_index_(file_index), value_len_(static_cast<int16_t>(value.length())), type_(type) {}
 
 	Type type() const { return type_; }
 	std::string_view value() const { return value_; }
@@ -28,9 +28,10 @@ public:
 	size_t file_index() const { return file_index_; }
 
 private:
-	Type type_ = Type::Uninitialized;
-	std::string_view value_;
+	const char* value_ = nullptr;
 	size_t line_ = 0;
-	size_t column_ = 0;
-	size_t file_index_ = 0;
+	int32_t column_ = 0;
+	int32_t file_index_ = 0;
+	int16_t value_len_ = 0;
+	Type type_ = Type::Uninitialized;
 };
