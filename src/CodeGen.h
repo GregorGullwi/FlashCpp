@@ -49,7 +49,6 @@ private:
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
-			auto prev_var_counter = var_counter;
 			auto operands = generateExpressionIr(node.expression()->as<ExpressionNode>());
 
 			ir_.addInstruction(IrOpcode::Return, std::move(operands));

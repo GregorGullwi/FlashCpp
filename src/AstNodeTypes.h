@@ -112,7 +112,7 @@ TypeInfo& add_user_type(std::string name)
 	return type_info;
 }
 
-TypeInfo& add_function_type(std::string name, Type return_type)
+TypeInfo& add_function_type(std::string name, Type /*return_type*/)
 {
 	auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size());
 	gTypesByName.emplace(type_info.name_, &type_info);
