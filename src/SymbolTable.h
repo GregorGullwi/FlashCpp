@@ -8,20 +8,20 @@
 
 class SymbolTable {
 public:
-	bool insert(std::string_view identifier, const TypeInfo* type_info) {
+	bool insert(std::string_view identifier, ASTNode node) {
 		auto existing_type = lookup(identifier);
-		if (existing_type && existing_type != type_info)
+		if (existing_type && existing_type->type_name() != node.type_name())
 			return false;
 
-		symbol_table_stack_.back().emplace(identifier, type_info);
+		symbol_table_stack_.back().emplace(identifier, node);
 		return true;
 	}
 
 	bool contains(std::string_view identifier) const {
-		return lookup(identifier) != nullptr;
+		return lookup(identifier).has_value();
 	}
 
-	const TypeInfo* lookup(std::string_view identifier) const {
+	std::optional<ASTNode> lookup(std::string_view identifier) const {
 		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 			auto symbolIt = scope.find(identifier);
@@ -30,7 +30,7 @@ public:
 			}
 		}
 
-		return nullptr;
+		return {};
 	}
 
 	void enter_scope() {
@@ -42,8 +42,8 @@ public:
 	}
 
 private:
-	using Scope = std::unordered_map<std::string_view, const TypeInfo*>;
-	std::vector<Scope> symbol_table_stack_;
+	using Scope = std::unordered_map<std::string_view, ASTNode>;
+	std::vector<Scope> symbol_table_stack_ = { Scope() };
 };
 
 static inline SymbolTable gSymbolTable;

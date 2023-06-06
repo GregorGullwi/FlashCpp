@@ -14,9 +14,19 @@ enum class IrOpcode {
 	Sub,
 	Return,
 	FunctionDecl,
+	FunctionCall,
+	Assignment,
 };
 
-using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type>;
+struct TempVar
+{
+	TempVar next() {
+		return { ++index };
+	}
+	size_t index;
+};
+
+using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type, TempVar>;
 
 class IrInstruction {
 public:
@@ -51,25 +61,57 @@ public:
 		return type_info->second->name_;
 	}
 
+	template<class TClass>
+	bool isOperandType(size_t index) const {
+		return std::holds_alternative<TClass>(operands_[index]);
+	}
+
 	std::string getReadableString() const {
 		std::ostringstream oss{};
 
 		switch (opcode_) {
 		case IrOpcode::Return:
 		{
-			// [Type][SizeInBits] [Value]
+			// ret [Type][SizeInBits] [Value]
 			oss << "ret ";
-			oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
-			oss << getOperandAs<unsigned long long>(2);
+
+			if (getOperandCount() == 3) {
+				oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+
+				if (isOperandType<unsigned long long>(2))
+					oss << getOperandAs<unsigned long long>(2);
+				else if (isOperandType<TempVar>(2))
+					oss << '%' << getOperandAs<TempVar>(2).index;
+			}
 		}
 		break;
 
 		case IrOpcode::FunctionDecl:
 		{
-			// [Type][SizeInBits] [Name]
-			oss << "define ";
-			oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
-			oss << getOperandAs<std::string_view>(2);
+			// define [Type][SizeInBits] [Name]
+			oss << "define "
+				<< getOperandAsTypeString(0) << getOperandAs<int>(1) << " "
+				<< getOperandAs<std::string_view>(2);
+		}
+		break;
+
+		case IrOpcode::FunctionCall:
+		{
+			// % = call [Type][SizeInBits] @[FuncName]()
+			oss << '%';
+			if (isOperandType<TempVar>(0))
+				oss << getOperandAs<TempVar>(0).index;
+			else if (isOperandType<std::string_view>(0))
+				oss << getOperandAs<std::string_view>(0);
+
+			oss << " = call ";
+			oss << "@" << getOperandAs<std::string_view>(1) << "()";
+
+			const size_t funcSymbolIndex = getOperandCount() - 1;
+			for (size_t i = 2; i < funcSymbolIndex; i += 2) {
+				oss << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
+			}
+
 		}
 		break;
 

@@ -61,13 +61,14 @@ enum class Type {
 	Float,
 	UserDefined,
 	Auto,
+	Function,
 };
 
 using TypeIndex = size_t;
 
 struct TypeInfo
 {
-	TypeInfo() = default;
+	TypeInfo() : type_(Type::Void), type_index_(0) {}
 	TypeInfo(std::string name, Type type, TypeIndex idx) : name_(std::move(name)), type_(type), type_index_(idx) {}
 
 	std::string name_;
@@ -88,7 +89,7 @@ std::deque<TypeInfo> gTypeInfo =
 
 std::unordered_map<std::string, const TypeInfo*> gTypesByName
 {
-	{ "void", &gTypeInfo[0] },
+	{ "void", & gTypeInfo[0] },
 	{ "bool", &gTypeInfo[1] },
 	{ "char", &gTypeInfo[2] },
 	{ "int", &gTypeInfo[3] },
@@ -97,16 +98,23 @@ std::unordered_map<std::string, const TypeInfo*> gTypesByName
 
 std::unordered_map<Type, const TypeInfo*> gNativeTypes
 {
-	{ Type::Void, &gTypeInfo[0] },
+	{ Type::Void, & gTypeInfo[0] },
 	{ Type::Bool, &gTypeInfo[1] },
 	{ Type::Char, &gTypeInfo[2] },
 	{ Type::Int,  &gTypeInfo[3] },
 	{ Type::Float,&gTypeInfo[4] },
 };
 
-const TypeInfo& add_user_type(std::string name)
+TypeInfo& add_user_type(std::string name)
 {
-	const auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size());
+	auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size());
+	gTypesByName.emplace(type_info.name_, &type_info);
+	return type_info;
+}
+
+TypeInfo& add_function_type(std::string name, Type return_type)
+{
+	auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size());
 	gTypesByName.emplace(type_info.name_, &type_info);
 	return type_info;
 }
@@ -199,26 +207,6 @@ private:
 	size_t rhs_index_;
 };
 
-class FunctionCallNode {
-public:
-	using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
-		BinaryOperatorNode, FunctionCallNode>;
-
-	explicit FunctionCallNode(Token identifier, size_t function, ChunkedVector<std::any>&& arguments)
-		: identifier_(identifier), function_(function), arguments_(std::move(arguments)) {}
-
-	size_t function() const { return function_; }
-	const auto& arguments() const { return arguments_; }
-
-private:
-	Token identifier_;
-	size_t function_;
-	ChunkedVector<std::any> arguments_;
-};
-
-using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
-	BinaryOperatorNode, FunctionCallNode>;
-
 class BlockNode {
 public:
 	explicit BlockNode() {}
@@ -233,11 +221,11 @@ private:
 class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = default;
-	FunctionDeclarationNode(ASTNode return_specifier_node)
-		: return_specifier_node_(std::move(return_specifier_node)) {}
+	FunctionDeclarationNode(DeclarationNode& decl_node)
+		: decl_node_(decl_node) {}
 
-	ASTNode return_type_node() const {
-		return return_specifier_node_;
+	const DeclarationNode& decl_node() const {
+		return decl_node_;
 	}
 	const std::vector<ASTNode>& parameter_nodes() const {
 		return parameter_nodes_;
@@ -253,14 +241,32 @@ public:
 			return false;
 
 		definition_block_.emplace(&block_node);
+		return true;
 	}
 
 private:
-	ASTNode return_specifier_node_;
+	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<BlockNode*> definition_block_;
 };
 
+class FunctionCallNode {
+public:
+	explicit FunctionCallNode(DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments)
+		: func_decl_(func_decl), arguments_(std::move(arguments)) {}
+
+	const auto& arguments() const { return arguments_; }
+	const auto& function_declaration() const { return func_decl_; }
+
+	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
+
+private:
+	DeclarationNode& func_decl_;
+	ChunkedVector<ASTNode> arguments_;
+};
+
+using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
+	BinaryOperatorNode, FunctionCallNode>;
 
 /*class FunctionDefinitionNode {
 public:

@@ -9,17 +9,17 @@
 #include <charconv>
 #include <cstdlib>
 #include <algorithm>
-#include <cmath>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
 #include "Token.h"
-#include "ChunkedAnyVector.h"
+#include "SymbolTable.h"
 
 enum class ParserError {
 	None,
 	UnexpectedToken,
 	MissingSemicolon,
+	RedefinedSymbolWithDifferentValue,
 
 	NotImplemented
 };
@@ -35,6 +35,9 @@ static std::string_view get_parser_error_string(ParserError e) {
 
 	case ParserError::MissingSemicolon:
 		return "Missing semicolon(;)";
+
+	case ParserError::RedefinedSymbolWithDifferentValue:
+		return "Redefined symbol with different value";
 
 	case ParserError::NotImplemented:
 		return "Feature/token type not implemented yet";
@@ -94,6 +97,7 @@ public:
 			peek_token()->type() != Token::Type::EndOfFile) {
 			parseResult = parse_top_level_node();
 		}
+
 		return parseResult;
 	}
 
@@ -125,7 +129,12 @@ private:
 
 	template <typename T>
 	std::pair<ASTNode, T&> create_node_ref(T&& node) {
-		ASTNode ast_node = ASTNode::emplace_node<T>(std::forward<T>(node));
+		return emplace_node_ref<T>(node);
+	}
+
+	template <typename T, typename... Args>
+	std::pair<ASTNode, T&> emplace_node_ref(Args&&... args) {
+		ASTNode ast_node = ASTNode::emplace_node<T>(std::forward<Args>(args)...);
 		return { ast_node, ast_node.as<T>() };
 	}
 
@@ -189,7 +198,7 @@ private:
 	ParseResult parse_namespace();
 	ParseResult parse_type_specifier();
 	ParseResult parse_declaration_or_function_definition();
-	ParseResult parse_function_declaration(ASTNode declaration_node_handle);
+	ParseResult parse_function_declaration(DeclarationNode& declaration_node);
 	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();
 	ParseResult parse_return_statement();
@@ -255,7 +264,7 @@ ParseResult Parser::parse_type_and_name() {
 		return ParseResult::error("Expected identifier token", *identifier_token);
 	}
 
-	return ParseResult::success(this->emplace_node<DeclarationNode>(type_specifier_result.node(), *identifier_token));
+	return ParseResult::success(emplace_node<DeclarationNode>(type_specifier_result.node(), *identifier_token));
 }
 
 ParseResult Parser::parse_declaration_or_function_definition() {
@@ -269,16 +278,17 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		return type_and_name_result;
 
 	// Attempt to parse a function definition
+	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
 	const bool is_probably_function = (peek_token()->value() == "(");
 	auto function_definition_result = ParseResult();
 	if (is_probably_function) {
-		function_definition_result = parse_function_declaration(type_and_name_result.node());
+		function_definition_result = parse_function_declaration(decl_node);
 		if (function_definition_result.is_error()) {
 			return function_definition_result;
 		}
 	}
 
-	TypeSpecifierNode& type_specifier = as<DeclarationNode>(type_and_name_result).type_node().as<TypeSpecifierNode>();
+	TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
 	if (type_specifier.type() == Type::Auto) {
 		const bool is_trailing_return_type = (peek_token()->value() == "->");
 		if (is_trailing_return_type) {
@@ -293,6 +303,10 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	}
 
 	if (is_probably_function) {
+		const Token& identifier_token = decl_node.identifier_token();
+		if (!gSymbolTable.insert(identifier_token.value(), type_and_name_result.node()))
+			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+
 		// Is only function declaration
 		if (consume_punctuator(";")) {
 			return ParseResult::success();
@@ -395,7 +409,7 @@ ParseResult Parser::parse_type_specifier() {
 }
 
 ParseResult
-Parser::parse_function_declaration(ASTNode declaration_node_handle) {
+Parser::parse_function_declaration(DeclarationNode& declaration_node) {
 
 	// Parse parameters
 	if (!consume_punctuator("(")) {
@@ -405,7 +419,7 @@ Parser::parse_function_declaration(ASTNode declaration_node_handle) {
 
 	// Create the function declaration
 	auto [func_node, func_ref] =
-		create_node_ref(FunctionDeclarationNode(declaration_node_handle));
+		create_node_ref<FunctionDeclarationNode>(declaration_node);
 
 	while (!consume_punctuator(")")) {
 		// Parse parameter type and name (identifier)
@@ -446,6 +460,7 @@ ParseResult Parser::parse_block() {
 	}
 
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
+	gSymbolTable.enter_scope();
 
 	while (!consume_punctuator("}")) {
 		// Parse statements or declarations
@@ -456,6 +471,7 @@ ParseResult Parser::parse_block() {
 		block_ref.add_statement_node(parse_result.node());
 	}
 
+	gSymbolTable.exit_scope();
 	return ParseResult::success(block_node);
 }
 
@@ -635,9 +651,58 @@ static std::optional<TypedNumeric> get_numeric_literal_type(std::string_view tex
 ParseResult Parser::parse_primary_expression() {
 	std::optional<ASTNode> result;
 	if (current_token_->type() == Token::Type::Identifier) {
-		// Parse identifier
-		result = emplace_node<ExpressionNode>(IdentifierNode(*current_token_));
-		consume_token();
+		Token idenfifier_token = *current_token_;
+
+		// Get the identifier's type information from the symbol table
+		auto identifierType = gSymbolTable.lookup(idenfifier_token.value());
+		if (!identifierType) {
+			return ParseResult::error("Missing identifier", *current_token_);
+		}
+		else if (!identifierType->is<DeclarationNode>()) {
+			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
+		}
+		else {
+			consume_token();
+
+			if (consume_punctuator("(")) {
+				if (!peek_token().has_value())
+					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
+
+				ChunkedVector<ASTNode> args;
+				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+					ParseResult argResult = parse_expression(0);
+					if (argResult.is_error()) {
+						return argResult;
+					}
+
+					args.push_back(argResult.node());
+
+					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+						consume_token(); // Consume comma
+					}
+					else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+						return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
+					}
+
+					if (!peek_token().has_value())
+						return ParseResult::error(ParserError::NotImplemented, Token());
+				}
+
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				}
+
+				// Additional type checking and verification logic can be performed here using identifierType
+
+				result = emplace_node<ExpressionNode>(FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args)));
+			}
+			else {
+				// Regular identifier
+				// Additional type checking and verification logic can be performed here using identifierType
+
+				result = emplace_node<ExpressionNode>(IdentifierNode(*current_token_));
+			}
+		}
 	}
 	else if (current_token_->type() == Token::Type::Literal) {
 		auto literal_type = get_numeric_literal_type(current_token_->value());

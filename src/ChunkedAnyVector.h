@@ -16,7 +16,7 @@ template<std::size_t ChunkSize = 64 * 1024 * 1024, std::size_t InternalBufferSiz
 class ChunkedAnyVector {
 public:
 	ChunkedAnyVector()
-		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
+    : memory_resource(internal_buffer.data(), internal_buffer.max_size()),
 		data(&memory_resource) {}
 
 	template<typename T>
@@ -51,8 +51,8 @@ public:
 
 private:
 	std::array<char, InternalBufferSize> internal_buffer;
-	std::pmr::monotonic_buffer_resource memory_resource;
-	std::pmr::list<std::pmr::vector<char>> data;
+    std::pmr::monotonic_buffer_resource memory_resource;
+    std::pmr::list<std::pmr::vector<char>> data;
 	std::vector<void*> index_to_pointer;
 	std::vector<std::type_index> index_to_type;
 };
@@ -142,6 +142,24 @@ public:
 	size_t size() const {
 		if (data.size() == 0) return 0;
 		return (data.size() - 1) * ChunkSize + data.back().size();
+	}
+
+	template<typename Visitor>
+	void visit(Visitor&& visitor) {
+		for (const auto& chunk : data) {
+			for (const auto& element : chunk) {
+				visitor(element);
+			}
+		}
+	}
+
+	template<typename Visitor>
+	void visit(Visitor&& visitor) const {
+		for (const auto& chunk : data) {
+			for (const auto& element : chunk) {
+				visitor(element);
+			}
+		}
 	}
 
 private:

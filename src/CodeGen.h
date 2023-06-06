@@ -2,9 +2,11 @@
 
 #include "AstNodeTypes.h"
 #include "IRTypes.h"
+#include "SymbolTable.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
+#include <assert.h>
 
 class Parser;
 
@@ -19,13 +21,16 @@ public:
 		else if (node.is<ReturnStatementNode>()) {
 			visitReturnStatementNode(node.as<ReturnStatementNode>());
 		}
+		else if (node.is<FunctionCallNode>()) {
+			generateFunctionCallIr(node.as<FunctionCallNode>());
+		}
 	}
 
 	const Ir& getIr() const { return ir_; }
 
 private:
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
-		const DeclarationNode& func_decl = node.return_type_node().as<DeclarationNode>();
+		const DeclarationNode& func_decl = node.decl_node();
 		const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 		ir_.addInstruction(
 			IrInstruction(IrOpcode::FunctionDecl,
@@ -37,15 +42,16 @@ private:
 		if (!definition_block.has_value())
 			return;
 
-		auto statements = (*definition_block)->get_statements();
-		for (size_t i = 0, e = statements.size(); i < e; ++i) {
-		  visit(statements[i]);
-		}
+		(*definition_block)->get_statements().visit([&](ASTNode statement) {
+			visit(statement);
+		});
 	}
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
+			auto prev_var_counter = var_counter;
 			auto operands = generateExpressionIr(node.expression()->as<ExpressionNode>());
+
 			ir_.addInstruction(IrOpcode::Return, std::move(operands));
 		}
 		else {
@@ -72,7 +78,18 @@ private:
 		}
 		else if (std::holds_alternative<FunctionCallNode>(exprNode)) {
 			const auto& expr = std::get<FunctionCallNode>(exprNode);
-			return generateFunctionCallIr(expr);
+			auto operands = generateFunctionCallIr(expr);
+			
+			std::vector<IrOperand> return_operands{ operands.end() - 3, operands.end() };
+			operands.erase(operands.end() - 3, operands.end());
+
+			ir_.addInstruction(
+				IrInstruction(IrOpcode::FunctionCall, std::move(operands)));
+
+			return return_operands;
+		}
+		else {
+			assert(false && "Not implemented yet");
 		}
 
 		return {};
@@ -107,11 +124,33 @@ private:
 	}
 
 	std::vector<IrOperand>
-		generateFunctionCallIr(const FunctionCallNode& /*functionCallNode*/) {
-		// Generate IR for function call expression and return appropriate operand
-		// ...
-		return {};
+		generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
+		std::vector<IrOperand> irOperands;
+
+		const auto& decl_node = functionCallNode.function_declaration();
+		auto type = gSymbolTable.lookup(decl_node.identifier_token().value());
+		if (!type.has_value())
+			return irOperands;	// TODO: Error?
+
+		TempVar ret_var = var_counter.next();
+		irOperands.emplace_back(ret_var);
+		irOperands.emplace_back(decl_node.identifier_token().value());
+
+		// Generate IR for function arguments
+		functionCallNode.arguments().visit([&](ASTNode argument) {
+			auto argumentIrOperands = generateExpressionIr(argument.as<ExpressionNode>());
+			irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+		});
+
+		// Generate IR for the return type
+		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		irOperands.emplace_back(return_type.type());
+		irOperands.emplace_back(static_cast<int>(return_type.size_in_bits()));
+		irOperands.emplace_back(ret_var);
+
+		return irOperands;
 	}
 
 	Ir ir_;
+	TempVar var_counter{ 0 };
 };

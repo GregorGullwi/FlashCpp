@@ -6,6 +6,7 @@
 #include <array>
 #include <variant>
 #include <string_view>
+#include <assert.h>
 
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
@@ -25,6 +26,7 @@ public:
 				handleReturn(instruction);
 				break;
 			default:
+				assert(false && "Not implemented yet");
 				break;
 			}
 		}
