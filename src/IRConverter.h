@@ -25,6 +25,8 @@ public:
 			case IrOpcode::Return:
 				handleReturn(instruction);
 				break;
+			case IrOpcode::FunctionCall:
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -42,24 +44,30 @@ private:
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
-		unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
-		if (returnValue > std::numeric_limits<uint32_t>::max()) {
-			throw std::runtime_error("Return value exceeds 32-bit limit");
+		if (instruction.isOperandType<unsigned long long>(2)) {
+			unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
+			if (returnValue > std::numeric_limits<uint32_t>::max()) {
+				throw std::runtime_error("Return value exceeds 32-bit limit");
+			}
+
+			// mov eax, immediate instruction has a fixed size of 5 bytes
+			std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
+
+			// Fill in the return value
+			for (size_t i = 0; i < 4; ++i) {
+				movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+			}
+
+			textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 		}
-
-		// mov eax, immediate instruction has a fixed size of 5 bytes
-		std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
-
-		// Fill in the return value
-		for (size_t i = 0; i < 4; ++i) {
-			movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+		else if (instruction.isOperandType<TempVar>(2)) {
+			// ?
 		}
 
 		// ret instruction is a single byte
 		std::array<uint8_t, 1> retInst = { 0xC3 };
 
 		// Add instructions to the .text section
-		textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 		textSectionData.insert(textSectionData.end(), retInst.begin(), retInst.end());
 	}
 
