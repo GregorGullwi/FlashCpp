@@ -102,7 +102,7 @@ public:
 	}
 
 	const auto& get_nodes() { return ast_nodes_; }
-	const ASTNode& get_inner_node(ASTNode node) const {
+	ASTNode get_inner_node(ASTNode node) const {
 		return node;
 	}
 

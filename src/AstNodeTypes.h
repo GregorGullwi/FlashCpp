@@ -220,7 +220,7 @@ private:
 
 class FunctionDeclarationNode {
 public:
-	FunctionDeclarationNode() = default;
+	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
 		: decl_node_(decl_node) {}
 
