@@ -31,8 +31,8 @@ THE SOFTWARE.
 
 #include <cstring>
 
-#include <coffi/coffi_utils.hpp>
-#include <coffi/coffi_headers.hpp>
+#include "coffi_utils.hpp"
+#include "coffi_headers.hpp"
 
 namespace COFFI {
 //-------------------------------------------------------------------------

@@ -30,7 +30,7 @@ THE SOFTWARE.
 #define COFFI_UTILS_HPP
 
 #include <stdexcept>
-#include <coffi/coffi_types.hpp>
+#include "coffi_types.hpp"
 
 #define STRINGIFY(NAME) #NAME
 

@@ -44,13 +44,13 @@ THE SOFTWARE.
 #include <cstring>
 #include <vector>
 
-#include <coffi/coffi_types.hpp>
-#include <coffi/coffi_utils.hpp>
-#include <coffi/coffi_section.hpp>
-#include <coffi/coffi_headers.hpp>
-#include <coffi/coffi_strings.hpp>
-#include <coffi/coffi_symbols.hpp>
-#include <coffi/coffi_directory.hpp>
+#include "coffi_types.hpp"
+#include "coffi_utils.hpp"
+#include "coffi_section.hpp"
+#include "coffi_headers.hpp"
+#include "coffi_strings.hpp"
+#include "coffi_symbols.hpp"
+#include "coffi_directory.hpp"
 
 #if defined(__has_include) && __has_include(<gsl/narrow>)
 #include <gsl/narrow>

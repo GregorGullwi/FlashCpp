@@ -32,7 +32,7 @@ THE SOFTWARE.
 #include <string>
 #include <iostream>
 
-#include <coffi/coffi_utils.hpp>
+#include "coffi_utils.hpp"
 
 #if defined(__has_include) && __has_include(<gsl/narrow>)
 #include <gsl/narrow>
@@ -521,7 +521,7 @@ template <class T> class win_header_impl : public win_header
     }
 
     //------------------------------------------------------------------------------
-    void save(std::ostream& stream)
+    void save(std::ostream& stream) override
     {
         stream.write(reinterpret_cast<char*>(&header), sizeof(header));
     }

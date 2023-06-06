@@ -32,8 +32,8 @@ THE SOFTWARE.
 #include <string>
 #include <iostream>
 
-#include <coffi/coffi_utils.hpp>
-#include <coffi/coffi_relocation.hpp>
+#include "coffi_utils.hpp"
+#include "coffi_relocation.hpp"
 
 #if defined(__has_include) && __has_include(<gsl/narrow>)
 #include <gsl/narrow>

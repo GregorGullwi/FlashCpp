@@ -31,8 +31,8 @@ THE SOFTWARE.
 
 #include <vector>
 
-#include <coffi/coffi_utils.hpp>
-#include <coffi/coffi_headers.hpp>
+#include "coffi_utils.hpp"
+#include "coffi_headers.hpp"
 
 #if defined(__has_include) && __has_include(<gsl/narrow>)
 #include <gsl/narrow>
