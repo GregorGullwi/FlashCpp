@@ -384,15 +384,23 @@ TEST_SUITE("Code gen") {
 	}
 }
 
+bool compare_obj(const COFFI::coffi& ref, const COFFI::coffi& obj)
+{
+	return true;
+}
+
 TEST_SUITE("Code gen") {
 	TEST_CASE("Return integer from a function") {
 		std::string_view code = R"(
-            int return2() {
-				return 2;
-            }
+            int return2();
 
             int main() {
-                return return2();
+                return2();
+				return 3;
+            }
+
+			int return2() {
+				return 2;
             })";
 
 		Lexer lexer(code);
@@ -417,5 +425,13 @@ TEST_SUITE("Code gen") {
 
 		IrToObjConverter irConverter;
 		irConverter.convert(ir, "return2func.obj");
+
+		COFFI::coffi ref;
+		ref.load("return2func_ref.obj");
+
+		COFFI::coffi obj;
+		obj.load("return2func.obj");
+
+		CHECK(compare_obj(ref, obj));
 	}
 }

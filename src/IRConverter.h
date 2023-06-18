@@ -7,6 +7,7 @@
 #include <variant>
 #include <string_view>
 #include <assert.h>
+#include <unordered_map>
 
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
@@ -26,6 +27,7 @@ public:
 				handleReturn(instruction);
 				break;
 			case IrOpcode::FunctionCall:
+				handleFunctionCall(instruction);
 				break;
 			default:
 				assert(false && "Not implemented yet");
@@ -37,10 +39,30 @@ public:
 	}
 
 private:
+	void handleFunctionCall(const IrInstruction& instruction) {	
+		// call [function name] instruction is 5 bytes
+		auto function_name = instruction.getOperandAs<std::string_view>(1);
+		std::array<uint32_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+		auto symbol_addr = functionSymbols.find(function_name);
+		if (symbol_addr == functionSymbols.end()) {
+			throw std::runtime_error("Function symbol not found");
+		}
+
+		// Calculate the relative address of the function
+		int64_t relative_addr = symbol_addr->second - textSectionData.size() - callInst.size();
+		for (size_t i = 0; i < 4; ++i) {
+			callInst[i + 1] = (relative_addr >> (8 * i)) & 0xFF;
+		}
+
+		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+
+		writer.add_relocation(textSectionData.size() - 4, function_name);
+	}
+
 	void handleFunctionDecl(const IrInstruction& instruction) {
-		std::ostringstream oss;
-		oss << instruction.getOperandAs<std::string_view>(2);
-		writer.add_function_symbol(oss.str());
+		auto func_name = instruction.getOperandAs<std::string_view>(2);
+		writer.add_function_symbol(std::string(func_name));
+		functionSymbols[func_name] = textSectionData.size();
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
@@ -77,4 +99,5 @@ private:
 
 	TWriterClass writer;
 	std::vector<char> textSectionData;
+	std::unordered_map<std::string_view, uint32_t> functionSymbols;
 };

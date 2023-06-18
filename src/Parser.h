@@ -58,6 +58,9 @@ public:
 	ASTNode node() const {
 		return std::get<ASTNode>(value_or_error_);
 	}
+	bool has_value() const {
+		return std::holds_alternative<ASTNode>(value_or_error_);
+	}
 	const std::string& error_message() const {
 		return std::get<Error>(value_or_error_).error_message_;
 	}
@@ -200,7 +203,7 @@ private:
 	ParseResult parse_type_specifier();
 	ParseResult parse_declaration_or_function_definition();
 	ParseResult parse_function_declaration(DeclarationNode& declaration_node);
-	ParseResult parse_block();
+	ParseResult parse_block(ScopeType scope_type);
 	ParseResult parse_statement_or_declaration();
 	ParseResult parse_return_statement();
 	ParseResult parse_statement();
@@ -242,7 +245,10 @@ ParseResult Parser::parse_top_level_node() {
 	// Attempt to parse a function definition, variable declaration, or typedef
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
-		ast_nodes_.push_back(result.node());
+		if (result.has_value()) {
+			ast_nodes_.push_back(result.node());
+		}
+
 		return saved_position.success();
 	}
 
@@ -314,7 +320,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		}
 
 		// Parse function body
-		auto block_result = parse_block();
+		auto block_result = parse_block(ScopeType::Function);
 		if (block_result.is_error())
 			return block_result;
 
@@ -455,13 +461,13 @@ Parser::parse_function_declaration(DeclarationNode& declaration_node) {
 	return func_node;
 }
 
-ParseResult Parser::parse_block() {
+ParseResult Parser::parse_block(ScopeType scope_type) {
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' for block", *current_token_);
 	}
 
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
-	gSymbolTable.enter_scope();
+	gSymbolTable.enter_scope(scope_type);
 
 	while (!consume_punctuator("}")) {
 		// Parse statements or declarations
@@ -470,6 +476,8 @@ ParseResult Parser::parse_block() {
 			return parse_result;
 
 		block_ref.add_statement_node(parse_result.node());
+		
+		consume_punctuator(";");
 	}
 
 	gSymbolTable.exit_scope();

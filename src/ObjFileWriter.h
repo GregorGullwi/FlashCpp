@@ -64,6 +64,21 @@ public:
 		coffi_.get_sections()[sectiontype_to_index[section_type]]->append_data(data.data(), data.size());
 	}
 
+	void add_relocation(uint64_t offset, std::string_view symbol_name) {
+		auto* symbol = coffi_.get_symbol(std::string(symbol_name));
+		if (!symbol) {
+			throw std::runtime_error("Symbol not found: " + std::string(symbol_name));
+		}
+
+		auto symbol_index = symbol->get_index();
+		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+		COFFI::rel_entry_generic relocation;
+		relocation.virtual_address = offset;
+		relocation.symbol_table_index = symbol_index;
+		relocation.type = IMAGE_REL_AMD64_REL32;
+		section_text->add_relocation_entry(&relocation);
+	}
+
 protected:
 	COFFI::coffi coffi_;
 	std::unordered_map<SectionType, std::string> sectiontype_to_name;
