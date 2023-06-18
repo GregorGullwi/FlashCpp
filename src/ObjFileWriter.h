@@ -52,12 +52,13 @@ public:
 		coffi_.save(filename);
 	}
 
-	void add_function_symbol(const std::string& name) {
+	void add_function_symbol(const std::string& name, uint32_t section_offset) {
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 		auto symbol_func = coffi_.add_symbol(name);
 		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol_func->set_section_number(section_text->get_index() + 1);
+		symbol_func->set_value(section_offset);
 	}
 
 	void add_data(const std::vector<char>& data, SectionType section_type) {

@@ -392,15 +392,13 @@ bool compare_obj(const COFFI::coffi& ref, const COFFI::coffi& obj)
 TEST_SUITE("Code gen") {
 	TEST_CASE("Return integer from a function") {
 		std::string_view code = R"(
-            int return2();
+            int return2() {
+				return 4;
+			}
 
             int main() {
                 return2();
-				return 3;
-            }
-
-			int return2() {
-				return 2;
+				return;
             })";
 
 		Lexer lexer(code);

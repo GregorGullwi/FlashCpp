@@ -558,8 +558,13 @@ ParseResult Parser::parse_return_statement() {
 			peek_token().value_or(Token()));
 	}
 
-	return ParseResult::success(
-		emplace_node<ReturnStatementNode>(return_expr_result.node()));
+	if (return_expr_result.has_value()) {
+		return ParseResult::success(
+			emplace_node<ReturnStatementNode>(return_expr_result.node()));
+	}
+	else {
+		return ParseResult::success(emplace_node<ReturnStatementNode>());
+	}
 }
 
 ParseResult Parser::parse_expression(int precedence) {

@@ -43,16 +43,16 @@ private:
 		// call [function name] instruction is 5 bytes
 		auto function_name = instruction.getOperandAs<std::string_view>(1);
 		std::array<uint32_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
-		auto symbol_addr = functionSymbols.find(function_name);
+		/*auto symbol_addr = functionSymbols.find(function_name);
 		if (symbol_addr == functionSymbols.end()) {
 			throw std::runtime_error("Function symbol not found");
 		}
 
-		// Calculate the relative address of the function
+		// Calculate the relative address of the function - done by the linker
 		int64_t relative_addr = symbol_addr->second - textSectionData.size() - callInst.size();
 		for (size_t i = 0; i < 4; ++i) {
 			callInst[i + 1] = (relative_addr >> (8 * i)) & 0xFF;
-		}
+		}*/
 
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
@@ -61,29 +61,39 @@ private:
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		auto func_name = instruction.getOperandAs<std::string_view>(2);
-		writer.add_function_symbol(std::string(func_name));
-		functionSymbols[func_name] = textSectionData.size();
+		
+		// align the function to 16 bytes
+		static constexpr char nop = 0x90;
+		const uint32_t nop_count = 16 - (textSectionData.size() % 16);
+		if (nop_count < 16)
+			textSectionData.insert(textSectionData.end(), nop_count, nop);
+		uint32_t func_offset = textSectionData.size();
+
+		writer.add_function_symbol(std::string(func_name), func_offset);
+		functionSymbols[func_name] = func_offset;
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
-		if (instruction.isOperandType<unsigned long long>(2)) {
-			unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
-			if (returnValue > std::numeric_limits<uint32_t>::max()) {
-				throw std::runtime_error("Return value exceeds 32-bit limit");
+		if (instruction.getOperandCount() >= 3) {
+			if (instruction.isOperandType<unsigned long long>(2)) {
+				unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
+				if (returnValue > std::numeric_limits<uint32_t>::max()) {
+					throw std::runtime_error("Return value exceeds 32-bit limit");
+				}
+
+				// mov eax, immediate instruction has a fixed size of 5 bytes
+				std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
+
+				// Fill in the return value
+				for (size_t i = 0; i < 4; ++i) {
+					movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+				}
+
+				textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 			}
-
-			// mov eax, immediate instruction has a fixed size of 5 bytes
-			std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
-
-			// Fill in the return value
-			for (size_t i = 0; i < 4; ++i) {
-				movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+			else if (instruction.isOperandType<TempVar>(2)) {
+				// ?
 			}
-
-			textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
-		}
-		else if (instruction.isOperandType<TempVar>(2)) {
-			// ?
 		}
 
 		// ret instruction is a single byte
