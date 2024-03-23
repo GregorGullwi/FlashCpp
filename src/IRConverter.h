@@ -12,7 +12,7 @@
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 
-enum class X64Register {
+enum class X64Register : uint8_t {
 	RAX,
 	RCX,
 	RDX,
@@ -33,10 +33,10 @@ enum class X64Register {
 };
 
 enum class Win64CallingConvention : uint8_t {
-	FirstArgument = X64Register::RCX,
-	SecondArgument = X64Register::RDX,
-	ThirdArgument = X64Register::R8,
-	FourthArgument = X64Register::R9,
+	FirstArgument = static_cast<uint8_t>(X64Register::RCX),
+	SecondArgument = static_cast<uint8_t>(X64Register::RDX),
+	ThirdArgument = static_cast<uint8_t>(X64Register::R8),
+	FourthArgument = static_cast<uint8_t>(X64Register::R9),
 	Count
 };
 
