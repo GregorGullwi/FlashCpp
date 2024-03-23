@@ -12,12 +12,115 @@
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 
+enum class X64Register {
+	RAX,
+	RCX,
+	RDX,
+	RBX,
+	RSP,
+	RBP,
+	RSI,
+	RDI,
+	R8,
+	R9,
+	R10,
+	R11,
+	R12,
+	R13,
+	R14,
+	R15,
+	Count
+};
+
+enum class Win64CallingConvention : uint8_t {
+	FirstArgument = X64Register::RCX,
+	SecondArgument = X64Register::RDX,
+	ThirdArgument = X64Register::R8,
+	FourthArgument = X64Register::R9,
+	Count
+};
+
+struct RegisterAllocator
+{
+	static constexpr uint8_t REGISTER_COUNT = static_cast<uint8_t>(X64Register::Count);
+	struct AllocatedRegister {
+		X64Register reg;
+		bool isAllocated = false;
+	};
+	std::array<AllocatedRegister, REGISTER_COUNT> registers;
+
+	RegisterAllocator() {
+		for (size_t i = 0; i < REGISTER_COUNT; ++i) {
+			registers[i].reg = static_cast<X64Register>(i);
+		}
+		registers[0].isAllocated = true;	// assume RAX is always allocated
+	}
+
+	void reset() {
+		for (auto& reg : registers) {
+			reg.isAllocated = false;
+		}
+	}
+
+	X64Register allocate() {
+		for (auto& reg : registers) {
+			if (!reg.isAllocated) {
+				reg.isAllocated = true;
+				return reg.reg;
+			}
+		}
+		throw std::runtime_error("No registers available");
+	}
+
+	bool is_allocated(X64Register reg) const {
+		return registers[static_cast<size_t>(reg)].isAllocated;
+	}
+
+	void reserve_arguments(size_t count) {
+		for (size_t i = 0; i < count && i < static_cast<size_t>(Win64CallingConvention::Count); ++i) {
+			registers[static_cast<size_t>(Win64CallingConvention::FirstArgument) + i].isAllocated = true;
+		}
+	}
+
+	struct OpCodeWithSize {
+		std::array<uint8_t, 4> op_codes;
+		size_t size_in_bytes = 0;
+	};
+	OpCodeWithSize get_reg_reg_move_op_code(X64Register dst_reg, X64Register src_reg, size_t size_in_bytes) {
+		OpCodeWithSize result;
+		/*if (dst_reg == src_reg) {	// removed for now, since this is an optimization
+			return result;
+		}*/
+
+		assert(size_in_bytes >= 1 && size_in_bytes <= 4);
+
+		static std::array<std::array<uint8_t, 4>, 4> opcodeLookup = {
+			std::array<uint8_t, 4>{0x88, 0x00, 0x00, 0x00}, // MOV byte ptr [RAX], AL
+			{0x89, 0x00, 0x00, 0x00}, // MOV word ptr [RAX], AX
+			{0x89, 0x00, 0x00, 0x00}, // MOV dword ptr [RAX], EAX
+			{0x48, 0x89, 0x00, 0x00}  // MOV qword ptr [RAX], RAX
+		};
+
+		// Find the opcode in the lookup table based on the size
+		auto opcodeIt = opcodeLookup[size_in_bytes - 1];
+		result.op_codes = opcodeIt;
+		result.size_in_bytes = 2 + (size_in_bytes / 64);
+		result.op_codes[result.size_in_bytes - 2] = 0xC0 + static_cast<uint8_t>(dst_reg);
+		result.op_codes[result.size_in_bytes - 1] = 0xC0 + static_cast<uint8_t>(src_reg);
+
+		return result;
+	}
+};
+
 template<class TWriterClass = ObjectFileWriter>
 class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
 
 	void convert(const Ir& ir, const std::string& filename) {
+		// add int 3
+		textSectionData.push_back(0xcc);
+
 		for (const auto& instruction : ir.getInstructions()) {
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
@@ -39,21 +142,10 @@ public:
 	}
 
 private:
-	void handleFunctionCall(const IrInstruction& instruction) {	
+	void handleFunctionCall(const IrInstruction& instruction) {
 		// call [function name] instruction is 5 bytes
 		auto function_name = instruction.getOperandAs<std::string_view>(1);
 		std::array<uint32_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
-		/*auto symbol_addr = functionSymbols.find(function_name);
-		if (symbol_addr == functionSymbols.end()) {
-			throw std::runtime_error("Function symbol not found");
-		}
-
-		// Calculate the relative address of the function - done by the linker
-		int64_t relative_addr = symbol_addr->second - textSectionData.size() - callInst.size();
-		for (size_t i = 0; i < 4; ++i) {
-			callInst[i + 1] = (relative_addr >> (8 * i)) & 0xFF;
-		}*/
-
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		writer.add_relocation(textSectionData.size() - 4, function_name);
@@ -71,6 +163,10 @@ private:
 
 		writer.add_function_symbol(std::string(func_name), func_offset);
 		functionSymbols[func_name] = func_offset;
+
+		// reset function register allocations
+		regAlloc.reset();
+		regAlloc.reserve_arguments(instruction.getOperandCount() - 2);
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
@@ -92,7 +188,18 @@ private:
 				textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 			}
 			else if (instruction.isOperandType<TempVar>(2)) {
-				// ?
+				// Do register allocation
+				auto size_it_bits = instruction.getOperandAs<int>(1);
+				auto return_var = instruction.getOperandAs<TempVar>(2);
+				auto src_reg = regAlloc.allocate();
+				auto dst_reg = X64Register::RAX;	// all return values are stored in RAX
+				if (src_reg != dst_reg) {
+					auto op_codes = regAlloc.get_reg_reg_move_op_code(dst_reg, src_reg, size_it_bits / 8);
+					if (op_codes.size_in_bytes > 0)
+					{
+						textSectionData.insert(textSectionData.end(), op_codes.op_codes.begin(), op_codes.op_codes.begin() + op_codes.size_in_bytes);
+					}
+				}
 			}
 		}
 
@@ -110,4 +217,5 @@ private:
 	TWriterClass writer;
 	std::vector<char> textSectionData;
 	std::unordered_map<std::string_view, uint32_t> functionSymbols;
+	RegisterAllocator regAlloc;	
 };

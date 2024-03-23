@@ -23,7 +23,7 @@ struct TempVar
 	TempVar next() {
 		return { ++index };
 	}
-	size_t index;
+	size_t index = 0;
 };
 
 using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type, TempVar>;

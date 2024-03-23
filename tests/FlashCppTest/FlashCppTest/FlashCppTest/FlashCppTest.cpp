@@ -397,8 +397,7 @@ TEST_SUITE("Code gen") {
 			}
 
             int main() {
-                return2();
-				return;
+                return return2();
             })";
 
 		Lexer lexer(code);

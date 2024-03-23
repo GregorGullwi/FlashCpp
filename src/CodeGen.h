@@ -22,7 +22,7 @@ public:
 			visitReturnStatementNode(node.as<ReturnStatementNode>());
 		}
 		else if (node.is<ExpressionNode>()) {
-			VisitExpressionNode(node.as<ExpressionNode>());
+			visitExpressionNode(node.as<ExpressionNode>());
 		}
 		else {
 			assert(false && "Unhandled AST node type");
@@ -52,7 +52,7 @@ private:
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
-			auto operands = VisitExpressionNode(node.expression()->as<ExpressionNode>());
+			auto operands = visitExpressionNode(node.expression()->as<ExpressionNode>());
 
 			ir_.addInstruction(IrOpcode::Return, std::move(operands));
 		}
@@ -61,7 +61,7 @@ private:
 		}
 	}
 
-	std::vector<IrOperand> VisitExpressionNode(const ExpressionNode& exprNode) {
+	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode) {
 		if (std::holds_alternative<IdentifierNode>(exprNode)) {
 			const auto& expr = std::get<IdentifierNode>(exprNode);
 			return generateIdentifierIr(expr);
@@ -140,7 +140,7 @@ private:
 
 		// Generate IR for function arguments
 		functionCallNode.arguments().visit([&](ASTNode argument) {
-			auto argumentIrOperands = VisitExpressionNode(argument.as<ExpressionNode>());
+			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 			irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
 		});
 
