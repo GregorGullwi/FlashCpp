@@ -432,3 +432,50 @@ TEST_SUITE("Code gen") {
 		CHECK(compare_obj(ref, obj));
 	}
 }
+
+TEST_SUITE("Code gen") {
+	TEST_CASE("Addition function") {
+		std::string_view code = R"(
+         int add(int a, int b) {
+            return a + b;
+         }
+
+         int main() {
+            return add(3, 5);
+         })";
+
+		Lexer lexer(code);
+		Parser parser(lexer);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+
+		AstToIr converter;
+		for (auto& node_handle : ast) {
+			converter.visit(node_handle);
+		}
+
+		// Now converter.ir should contain the IR for the code.
+		const auto& ir = converter.getIr();
+
+		// Let's just print the IR for now.
+		for (const auto& instruction : ir.getInstructions()) {
+			std::cout << instruction.getReadableString() << "\n";
+		}
+
+		IrToObjConverter irConverter;
+		irConverter.convert(ir, "add_function.obj");
+
+		// Load reference object file
+		COFFI::coffi ref;
+		ref.load("add_function_ref.obj");
+
+		// Load generated object file
+		COFFI::coffi obj;
+		obj.load("add_function.obj");
+
+		// Compare reference and generated object files
+		CHECK(compare_obj(ref, obj));
+	}
+}

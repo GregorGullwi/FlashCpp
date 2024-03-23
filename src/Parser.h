@@ -184,7 +184,7 @@ private:
 
 	std::optional<Token> consume_token() {
 		std::optional<Token> token = peek_token();
-		current_token_.reset();
+		current_token_.emplace(lexer_.next_token());
 		return token;
 	}
 
@@ -203,7 +203,7 @@ private:
 	ParseResult parse_type_specifier();
 	ParseResult parse_declaration_or_function_definition();
 	ParseResult parse_function_declaration(DeclarationNode& declaration_node);
-	ParseResult parse_block(ScopeType scope_type);
+	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();
 	ParseResult parse_return_statement();
 	ParseResult parse_statement();
@@ -319,10 +319,23 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			return ParseResult::success();
 		}
 
+		// Add function parameters to the symbol table within a function scope
+		gSymbolTable.enter_scope(ScopeType::Function);
+		for (const auto& param : function_definition_result.node().as<FunctionDeclarationNode>().parameter_nodes()) {
+			if (param.is<DeclarationNode>())  {
+				const auto& param_decl_node = param.as<DeclarationNode>();
+				const Token& identifier_token = param_decl_node.identifier_token();
+				gSymbolTable.insert(identifier_token.value(), param);
+			}
+		}
+
+		
 		// Parse function body
-		auto block_result = parse_block(ScopeType::Function);
+		auto block_result = parse_block();
 		if (block_result.is_error())
 			return block_result;
+
+		gSymbolTable.exit_scope();
 
 		auto& func_decl = function_definition_result.node().as<FunctionDeclarationNode>();
 		func_decl.set_definition(block_result.node().as<BlockNode>());
@@ -428,7 +441,7 @@ Parser::parse_function_declaration(DeclarationNode& declaration_node) {
 	auto [func_node, func_ref] =
 		create_node_ref<FunctionDeclarationNode>(declaration_node);
 
-	while (!consume_punctuator(")")) {
+	while (!consume_punctuator(")"sv)) {
 		// Parse parameter type and name (identifier)
 		ParseResult type_and_name_result = parse_type_and_name();
 		if (type_and_name_result.is_error()) {
@@ -438,7 +451,7 @@ Parser::parse_function_declaration(DeclarationNode& declaration_node) {
 		func_ref.add_parameter_node(type_and_name_result.node());
 
 		// Parse default parameter value (if present)
-		if (current_token_->value() == "=") {
+		if (consume_punctuator("="sv)) {
 			consume_token(); // consume '='
 
 			// Parse the default value expression
@@ -446,10 +459,10 @@ Parser::parse_function_declaration(DeclarationNode& declaration_node) {
 			// Set the default value
 		}
 
-		if (current_token_->value() == ",") {
-			consume_token(); // consume ','
+		if (consume_punctuator(","sv)) {
+			continue;
 		}
-		else if (current_token_->value() == ")") {
+		else if (consume_punctuator(")"sv)) {
 			break;
 		}
 		else {
@@ -461,13 +474,12 @@ Parser::parse_function_declaration(DeclarationNode& declaration_node) {
 	return func_node;
 }
 
-ParseResult Parser::parse_block(ScopeType scope_type) {
+ParseResult Parser::parse_block() {
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' for block", *current_token_);
 	}
 
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
-	gSymbolTable.enter_scope(scope_type);
 
 	while (!consume_punctuator("}")) {
 		// Parse statements or declarations
@@ -480,7 +492,6 @@ ParseResult Parser::parse_block(ScopeType scope_type) {
 		consume_punctuator(";");
 	}
 
-	gSymbolTable.exit_scope();
 	return ParseResult::success(block_node);
 }
 
@@ -599,13 +610,8 @@ ParseResult Parser::parse_expression(int precedence) {
 			return rhs_result;
 		}
 
-		// Create a BinaryOperatorNode and add it to ast_nodes_
-		size_t lhs_index = ast_nodes_.size() -
-			2; // The left-hand side expression was already added
-		size_t rhs_index =
-			ast_nodes_.size() - 1; // The right-hand side expression was just added
 		return emplace_node<ExpressionNode>(
-			BinaryOperatorNode(operator_token, lhs_index, rhs_index));
+			BinaryOperatorNode(operator_token, result.node(), rhs_result.node()));
 	}
 
 	return result;
@@ -714,7 +720,7 @@ ParseResult Parser::parse_primary_expression() {
 				// Regular identifier
 				// Additional type checking and verification logic can be performed here using identifierType
 
-				result = emplace_node<ExpressionNode>(IdentifierNode(*current_token_));
+				result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 			}
 		}
 	}

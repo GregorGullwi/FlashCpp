@@ -118,15 +118,27 @@ private:
 		return { stringLiteralNode.value() };
 	}
 
-	std::vector<IrOperand>
-		generateBinaryOperatorIr(const BinaryOperatorNode& /*binaryOperatorNode*/) {
-		// Generate IR for binary operator expression and return appropriate operand
-		// ...
+	std::vector<IrOperand> generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
+		std::vector<IrOperand> irOperands;
+
+		// Generate IR for the left-hand side and right-hand side of the operation
+		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
+		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+		// Insert the IR for the lhs and rhs into the irOperands vector
+		irOperands.insert(irOperands.end(), lhsIrOperands.begin(), lhsIrOperands.end());
+		irOperands.insert(irOperands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
+
+		// Generate the IR for the add operation
+		if (binaryOperatorNode.op() == "+") {
+			ir_.addInstruction(
+				IrInstruction(IrOpcode::Add, std::move(irOperands)));
+		}
+
 		return {};
 	}
 
-	std::vector<IrOperand>
-		generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
+	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 
 		const auto& decl_node = functionCallNode.function_declaration();

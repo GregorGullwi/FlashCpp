@@ -193,18 +193,18 @@ private:
 
 class BinaryOperatorNode {
 public:
-	explicit BinaryOperatorNode(Token identifier, size_t lhs_index,
-		size_t rhs_index)
-		: identifier_(identifier), lhs_index_(lhs_index), rhs_index_(rhs_index) {}
+	explicit BinaryOperatorNode(Token identifier, ASTNode lhs_node,
+		ASTNode rhs_node)
+		: identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node) {}
 
 	std::string_view op() const { return identifier_.value(); }
-	size_t get_lhs_index() const { return lhs_index_; }
-	size_t get_rhs_index() const { return rhs_index_; }
+	auto get_lhs() const { return lhs_node_; }
+	auto get_rhs() const { return rhs_node_; }
 
 private:
 	Token identifier_;
-	size_t lhs_index_;
-	size_t rhs_index_;
+	ASTNode lhs_node_;
+	ASTNode rhs_node_;
 };
 
 class BlockNode {

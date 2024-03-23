@@ -70,6 +70,11 @@ public:
 		std::ostringstream oss{};
 
 		switch (opcode_) {
+		case IrOpcode::Add:
+		{
+		}
+		break;
+
 		case IrOpcode::Return:
 		{
 			// ret [Type][SizeInBits] [Value]
