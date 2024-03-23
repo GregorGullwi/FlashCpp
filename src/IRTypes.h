@@ -16,6 +16,7 @@ enum class IrOpcode {
 	FunctionDecl,
 	FunctionCall,
 	Assignment,
+	StackAlloc,
 };
 
 struct TempVar
@@ -53,7 +54,7 @@ public:
 		if (index >= operands_.size())
 			return "";
 
-		const Type type = getOperandAs<Type>(0);
+		const Type type = getOperandAs<Type>(index);
 		auto type_info = gNativeTypes.find(type);
 		if (type_info == gNativeTypes.end())
 			return "";
@@ -87,6 +88,8 @@ public:
 					oss << getOperandAs<unsigned long long>(2);
 				else if (isOperandType<TempVar>(2))
 					oss << '%' << getOperandAs<TempVar>(2).index;
+				else if (isOperandType<std::string_view>(2))
+					oss << '%' << getOperandAs<std::string_view>(2);
 			}
 		}
 		break;
@@ -110,13 +113,32 @@ public:
 				oss << getOperandAs<std::string_view>(0);
 
 			oss << " = call ";
-			oss << "@" << getOperandAs<std::string_view>(1) << "()";
+			oss << "@" << getOperandAs<std::string_view>(1) << "(";
 
 			const size_t funcSymbolIndex = getOperandCount() - 1;
-			for (size_t i = 2; i < funcSymbolIndex; i += 2) {
+			for (size_t i = 2; i < funcSymbolIndex; i += 3) {
 				oss << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
+				
+				if (isOperandType<unsigned long long>(i + 2))
+					oss << getOperandAs<unsigned long long>(i + 2);
+				else if (isOperandType<TempVar>(i + 2))
+					oss << '%' << getOperandAs<TempVar>(i + 2).index;
+				else if (isOperandType<std::string_view>(i + 2))
+					oss << '%' << getOperandAs<std::string_view>(i + 2);
 			}
 
+			oss << ")";
+
+		}
+		break;
+
+		case IrOpcode::StackAlloc:
+		{
+			// %name = alloca [Type][SizeInBits]
+			oss << '%';
+			oss << getOperandAs<std::string_view>(2);
+			oss << " = alloca ";
+			oss << getOperandAsTypeString(0) << getOperandAs<int>(1);
 		}
 		break;
 

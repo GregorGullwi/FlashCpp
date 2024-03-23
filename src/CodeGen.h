@@ -45,9 +45,28 @@ private:
 		if (!definition_block.has_value())
 			return;
 
+		symbol_table.enter_scope(ScopeType::Function);
+		int stack_offset = 0;
+		for (const auto& param : node.parameter_nodes())
+		{
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			ir_.addInstruction(
+				IrInstruction(IrOpcode::StackAlloc,
+					{ param_type.type(),
+					  static_cast<int>(param_type.size_in_bits()),
+					  param_decl.identifier_token().value() }));
+
+			stack_offset += param_type.size_in_bits() / 8; // assuming 8 bits per byte
+
+			symbol_table.insert(param_decl.identifier_token().value(), param);
+		}
+
 		(*definition_block)->get_statements().visit([&](ASTNode statement) {
 			visit(statement);
 		});
+
+		symbol_table.exit_scope();
 	}
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
@@ -98,9 +117,10 @@ private:
 	}
 
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
-		// Generate IR for identifier and return appropriate operand
-		// ...
-		return { identifierNode.name() };
+		const std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
+		const auto& decl_node = symbol->as<DeclarationNode>();
+		const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+		return { type_node.type(), static_cast<int>(type_node.size_in_bits()), identifierNode.name() };
 	}
 
 	std::vector<IrOperand>
@@ -167,4 +187,5 @@ private:
 
 	Ir ir_;
 	TempVar var_counter{ 0 };
+	SymbolTable symbol_table;
 };
