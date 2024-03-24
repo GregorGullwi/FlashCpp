@@ -384,7 +384,7 @@ TEST_SUITE("Code gen") {
 	}
 }
 
-bool compare_obj(const COFFI::coffi& ref, const COFFI::coffi& obj)
+bool compare_obj(const COFFI::coffi& /*ref*/, const COFFI::coffi& /*obj*/)
 {
 	return true;
 }

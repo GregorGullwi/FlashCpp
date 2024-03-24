@@ -195,7 +195,7 @@ private:
 			else if (instruction.isOperandType<TempVar>(2)) {
 				// Do register allocation
 				auto size_it_bits = instruction.getOperandAs<int>(1);
-				auto return_var = instruction.getOperandAs<TempVar>(2);
+				//auto return_var = instruction.getOperandAs<TempVar>(2);
 				auto src_reg = regAlloc.allocate();
 				auto dst_reg = X64Register::RAX;	// all return values are stored in RAX
 				if (src_reg != dst_reg) {
