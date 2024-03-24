@@ -119,7 +119,7 @@ public:
 
 	void convert(const Ir& ir, const std::string& filename) {
 		// add int 3
-		textSectionData.push_back(0xcc);
+		textSectionData.push_back(static_cast<char>(0xcc));
 
 		for (const auto& instruction : ir.getInstructions()) {
 			switch (instruction.getOpcode()) {
@@ -131,6 +131,9 @@ public:
 				break;
 			case IrOpcode::FunctionCall:
 				handleFunctionCall(instruction);
+				break;
+			case IrOpcode::StackAlloc:
+				handleStackAlloc(instruction);
 				break;
 			default:
 				assert(false && "Not implemented yet");
@@ -155,11 +158,11 @@ private:
 		auto func_name = instruction.getOperandAs<std::string_view>(2);
 		
 		// align the function to 16 bytes
-		static constexpr char nop = 0x90;
+		static constexpr char nop = static_cast<char>(0x90);
 		const uint32_t nop_count = 16 - (textSectionData.size() % 16);
 		if (nop_count < 16)
 			textSectionData.insert(textSectionData.end(), nop_count, nop);
-		uint32_t func_offset = textSectionData.size();
+		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
 
 		writer.add_function_symbol(std::string(func_name), func_offset);
 		functionSymbols[func_name] = func_offset;
@@ -167,6 +170,8 @@ private:
 		// reset function register allocations
 		regAlloc.reset();
 		regAlloc.reserve_arguments(instruction.getOperandCount() - 2);
+
+		variable_scopes.emplace_back();
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
@@ -201,6 +206,12 @@ private:
 					}
 				}
 			}
+			else if (instruction.isOperandType<std::string_view>(2)) {
+				assert(false && "not implemented yet");
+			}
+			else {
+				assert(false && "unhandled case");
+			}
 		}
 
 		// ret instruction is a single byte
@@ -208,6 +219,28 @@ private:
 
 		// Add instructions to the .text section
 		textSectionData.insert(textSectionData.end(), retInst.begin(), retInst.end());
+
+		variable_scopes.pop_back();
+	}
+
+	void handleStackAlloc(const IrInstruction& instruction) {
+		// Get the size of the allocation
+		auto sizeInBytes = instruction.getOperandAs<int>(1) / 8;
+
+		// Ensure the stack remains aligned to 16 bytes
+		sizeInBytes = (sizeInBytes + 15) & -16;
+
+		// Generate the opcode for `sub rsp, imm32`
+		std::array<uint8_t, 7> subRspInst = { 0x48, 0x81, 0xEC };
+		std::memcpy(subRspInst.data() + 3, &sizeInBytes, sizeof(sizeInBytes));
+
+		// Add the instruction to the .text section
+		textSectionData.insert(textSectionData.end(), subRspInst.begin(), subRspInst.end());
+
+		// Add the identifier and its stack offset to the current scope
+		StackVariableScope& current_scope = variable_scopes.back();
+		current_scope.identifier_offset[instruction.getOperandAs<std::string_view>(2)] = current_scope.current_stack_offset;
+		current_scope.current_stack_offset += sizeInBytes;
 	}
 
 	void finalizeSections() {
@@ -217,5 +250,12 @@ private:
 	TWriterClass writer;
 	std::vector<char> textSectionData;
 	std::unordered_map<std::string_view, uint32_t> functionSymbols;
-	RegisterAllocator regAlloc;	
+	RegisterAllocator regAlloc;
+
+	struct StackVariableScope
+	{
+		int current_stack_offset = 0;
+		std::unordered_map<std::string_view, int> identifier_offset;
+	};
+	std::vector<StackVariableScope> variable_scopes;
 };

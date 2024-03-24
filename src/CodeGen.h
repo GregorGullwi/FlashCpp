@@ -33,20 +33,21 @@ public:
 
 private:
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
+		auto definition_block = node.get_definition();
+		if (!definition_block.has_value())
+			return;
+
 		const DeclarationNode& func_decl = node.decl_node();
 		const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
+
 		ir_.addInstruction(
 			IrInstruction(IrOpcode::FunctionDecl,
 				{ ret_type.type(),
 				  static_cast<int>(ret_type.size_in_bits()),
 				  func_decl.identifier_token().value() }));
 
-		auto definition_block = node.get_definition();
-		if (!definition_block.has_value())
-			return;
-
 		symbol_table.enter_scope(ScopeType::Function);
-		int stack_offset = 0;
+
 		for (const auto& param : node.parameter_nodes())
 		{
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
@@ -56,8 +57,6 @@ private:
 					{ param_type.type(),
 					  static_cast<int>(param_type.size_in_bits()),
 					  param_decl.identifier_token().value() }));
-
-			stack_offset += param_type.size_in_bits() / 8; // assuming 8 bits per byte
 
 			symbol_table.insert(param_decl.identifier_token().value(), param);
 		}
