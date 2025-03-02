@@ -13,38 +13,39 @@
 #include "CommandLineParser.h"
 #include "Lexer.h"
 #include "Parser.h"
+#include "LibClangIRGenerator.h"
 
 int main(int argc, char *argv[]) {
-	CompileContext context;
-    CommandLineParser parser(argc, argv, context);
+    CompileContext context;
+    CommandLineParser argsparser(argc, argv, context);
 
-    if (parser.hasOption("h") || parser.hasOption("help")) {
+    if (argsparser.hasOption("h") || argsparser.hasOption("help")) {
         std::cout << "Help message" << std::endl;
         return 0;
     }
 
-    if (parser.hasOption("o")) {
-        auto output_file = parser.optionValue("o");
+    if (argsparser.hasOption("o")) {
+        auto output_file = argsparser.optionValue("o");
         if (std::holds_alternative<std::string_view>(output_file))
             context.setOutputFile(std::get<std::string_view>(output_file));
     }
 
-    context.setVerboseMode(parser.hasFlag("v") || parser.hasFlag("verbose"));
-    context.setPreprocessorOnlyMode(parser.hasFlag("E"));
+    context.setVerboseMode(argsparser.hasFlag("v") || argsparser.hasFlag("verbose"));
+    context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
 
-	// Process input file arguments here...
-	const auto& inputFileArgs = parser.inputFileArgs();
-	if (inputFileArgs.empty()) {
-		std::cerr << "No input file specified" << std::endl;
-		return 1;
-	}
-	std::filesystem::path inputFilePath(inputFileArgs.front());
-	inputFilePath = std::filesystem::absolute(inputFilePath);
+    // Process input file arguments here...
+    const auto& inputFileArgs = argsparser.inputFileArgs();
+    if (inputFileArgs.empty()) {
+            std::cerr << "No input file specified" << std::endl;
+            return 1;
+    }
+    std::filesystem::path inputFilePath(inputFileArgs.front());
+    inputFilePath = std::filesystem::absolute(inputFilePath);
     context.setInputFile(inputFilePath.string());
 
-	// Add the directory of the input source file as an implicit include directory
-	std::filesystem::path inputDirPath = inputFilePath.parent_path();
-	context.addIncludeDir(inputDirPath.string());
+    // Add the directory of the input source file as an implicit include directory
+    std::filesystem::path inputDirPath = inputFilePath.parent_path();
+    context.addIncludeDir(inputDirPath.string());
 
     FileTree file_tree;
     FileReader file_reader(context, file_tree);
@@ -52,6 +53,10 @@ int main(int argc, char *argv[]) {
         std::cerr << "Failed to read input file: " << context.getInputFile().value() << std::endl;
         return 1;
     }
+    Lexer lexer(file_reader.get_result());
+    Parser parser(lexer);
+    parser.parse();
+    parser.generate_coff("output.o");
 
     if (context.isVerboseMode() && !context.isPreprocessorOnlyMode()) {
         // Use context and file_tree to perform the desired operation
