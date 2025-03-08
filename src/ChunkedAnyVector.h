@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <array>
 #include <assert.h>
+#include <deque>
+#include <string>
 
 #ifdef __has_include
 #if __has_include(<memory_resource>)
@@ -206,3 +208,5 @@ private:
     std::list<std::vector<T>> data;
 #endif
 };
+
+extern ChunkedAnyVector<> gChunkedAnyStorage;

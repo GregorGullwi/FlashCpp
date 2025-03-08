@@ -18,6 +18,10 @@ $(BINDIR)/main-debug: $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCpp
 	mkdir -p $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O0 -g -o $@ $^
 
+$(BINDIR)/benchmark: $(SRCDIR)/benchmark.cpp
+	mkdir -p $(BINDIR)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LLVM_LIBS)
+
 .PHONY: clean
 
 clean:

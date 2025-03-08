@@ -9,11 +9,10 @@
 #include <deque>
 #include <unordered_map>
 #include <any>
+#include <optional>
 
 #include "Token.h"
 #include "ChunkedAnyVector.h"
-
-ChunkedAnyVector gChunkedAnyStorage;
 
 class ASTNode {
 public:
@@ -78,46 +77,15 @@ struct TypeInfo
 	const char* name() { return name_.c_str(); };
 };
 
-std::deque<TypeInfo> gTypeInfo =
-{
-	{ "void", 	Type::Void,		0 },
-	{ "bool",	Type::Bool,		1 },
-	{ "char", 	Type::Char,		2 },
-	{ "int",	Type::Int,		3 },
-	{ "float",	Type::Float,	4 },
-};
+extern std::deque<TypeInfo> gTypeInfo;
 
-std::unordered_map<std::string, const TypeInfo*> gTypesByName
-{
-	{ "void", & gTypeInfo[0] },
-	{ "bool", &gTypeInfo[1] },
-	{ "char", &gTypeInfo[2] },
-	{ "int", &gTypeInfo[3] },
-	{ "float", &gTypeInfo[4] },
-};
+extern std::unordered_map<std::string, const TypeInfo*> gTypesByName;
 
-std::unordered_map<Type, const TypeInfo*> gNativeTypes
-{
-	{ Type::Void, & gTypeInfo[0] },
-	{ Type::Bool, &gTypeInfo[1] },
-	{ Type::Char, &gTypeInfo[2] },
-	{ Type::Int,  &gTypeInfo[3] },
-	{ Type::Float,&gTypeInfo[4] },
-};
+extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(std::string name)
-{
-	auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size());
-	gTypesByName.emplace(type_info.name_, &type_info);
-	return type_info;
-}
+TypeInfo& add_user_type(std::string name);
 
-TypeInfo& add_function_type(std::string name, Type /*return_type*/)
-{
-	auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size());
-	gTypesByName.emplace(type_info.name_, &type_info);
-	return type_info;
-}
+TypeInfo& add_function_type(std::string name, Type /*return_type*/);
 
 class TypeSpecifierNode {
 public:
