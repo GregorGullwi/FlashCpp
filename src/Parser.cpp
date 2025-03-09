@@ -88,10 +88,9 @@ ParseResult Parser::parse_top_level_node()
 	// Attempt to parse a function definition, variable declaration, or typedef
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
-		if (result.has_value()) {
-			ast_nodes_.push_back(result.node());
+		if (auto node = result.node()) {
+			ast_nodes_.push_back(*node);
 		}
-
 		return saved_position.success();
 	}
 
@@ -100,22 +99,25 @@ ParseResult Parser::parse_top_level_node()
 	return saved_position.error("Failed to parse top-level construct");
 }
 
-ParseResult Parser::parse_type_and_name()
-{
-	// Parse the type specifier (can be a keyword, identifier, or complex type)
-	auto type_specifier_result = parse_type_specifier();
-	if (type_specifier_result.is_error()) {
-		return type_specifier_result;
-	}
+ParseResult Parser::parse_type_and_name() {
+    // Parse the type specifier
+    auto type_specifier_result = parse_type_specifier();
+    if (type_specifier_result.is_error()) {
+        return type_specifier_result;
+    }
 
-	// Parse the identifier (name)
-	auto identifier_token = consume_token();
-	if (!identifier_token ||
-		identifier_token->type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected identifier token", *identifier_token);
-	}
+    // Parse the identifier (name)
+    auto identifier_token = consume_token();
+    if (!identifier_token ||
+        identifier_token->type() != Token::Type::Identifier) {
+        return ParseResult::error("Expected identifier token", *identifier_token);
+    }
 
-	return ParseResult::success(emplace_node<DeclarationNode>(type_specifier_result.node(), *identifier_token));
+    // Unwrap the optional ASTNode before passing it to emplace_node
+    if (auto node = type_specifier_result.node()) {
+        return ParseResult::success(emplace_node<DeclarationNode>(*node, *identifier_token));
+    }
+    return ParseResult::error("Invalid type specifier node", *identifier_token);
 }
 
 ParseResult Parser::parse_declaration_or_function_definition()
@@ -156,8 +158,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	if (is_probably_function) {
 		const Token& identifier_token = decl_node.identifier_token();
-		if (!gSymbolTable.insert(identifier_token.value(), type_and_name_result.node()))
-			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+		if (auto node = type_and_name_result.node()) {
+			if (!gSymbolTable.insert(identifier_token.value(), *node))
+				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+		}
 
 		// Is only function declaration
 		if (consume_punctuator(";")) {
@@ -166,25 +170,30 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 		// Add function parameters to the symbol table within a function scope
 		gSymbolTable.enter_scope(ScopeType::Function);
-		for (const auto& param : function_definition_result.node().as<FunctionDeclarationNode>().parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& param_decl_node = param.as<DeclarationNode>();
-				const Token& identifier_token = param_decl_node.identifier_token();
-				gSymbolTable.insert(identifier_token.value(), param);
+		if (auto funcNode = function_definition_result.node()) {
+			const auto& func_decl = funcNode->as<FunctionDeclarationNode>();
+			for (const auto& param : func_decl.parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					const auto& param_decl_node = param.as<DeclarationNode>();
+					const Token& param_token = param_decl_node.identifier_token();
+					gSymbolTable.insert(param_token.value(), param);
+				}
+			}
+
+			// Parse function body
+			auto block_result = parse_block();
+			if (block_result.is_error())
+				return block_result;
+
+			gSymbolTable.exit_scope();
+
+			if (auto node = function_definition_result.node()) {
+				if (auto block = block_result.node()) {
+					node->as<FunctionDeclarationNode>().set_definition(block->as<BlockNode>());
+					return ParseResult::success(*node);
+				}
 			}
 		}
-
-
-		// Parse function body
-		auto block_result = parse_block();
-		if (block_result.is_error())
-			return block_result;
-
-		gSymbolTable.exit_scope();
-
-		auto& func_decl = function_definition_result.node().as<FunctionDeclarationNode>();
-		func_decl.set_definition(block_result.node().as<BlockNode>());
-		return ParseResult::success(function_definition_result.node());
 	}
 	// Attempt to parse a simple declaration (variable or typedef)
 	if (!consume_punctuator(";")) {
@@ -293,7 +302,9 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 			return type_and_name_result;
 		}
 
-		func_ref.add_parameter_node(type_and_name_result.node());
+		if (auto node = type_and_name_result.node()) {
+			func_ref.add_parameter_node(*node);
+		}
 
 		// Parse default parameter value (if present)
 		if (consume_punctuator("="sv)) {
@@ -333,7 +344,9 @@ ParseResult Parser::parse_block()
 		if (parse_result.is_error())
 			return parse_result;
 
-		block_ref.add_statement_node(parse_result.node());
+		if (auto node = parse_result.node()) {
+			block_ref.add_statement_node(*node);  // Unwrap optional before passing
+		}
 
 		consume_punctuator(";");
 	}
@@ -459,8 +472,13 @@ ParseResult Parser::parse_expression(int precedence)
 			return rhs_result;
 		}
 
-		return emplace_node<ExpressionNode>(
-			BinaryOperatorNode(operator_token, result.node(), rhs_result.node()));
+		if (auto leftNode = result.node()) {
+			if (auto rightNode = rhs_result.node()) {
+				return ParseResult::success(emplace_node<ExpressionNode>(
+					BinaryOperatorNode(operator_token, *leftNode, *rightNode)));
+			}
+		}
+		return result;
 	}
 
 	return result;
@@ -575,7 +593,9 @@ ParseResult Parser::parse_primary_expression()
 						return argResult;
 					}
 
-					args.push_back(argResult.node());
+					if (auto node = argResult.node()) {
+						args.push_back(*node);
+					}
 
 					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
 						consume_token(); // Consume comma

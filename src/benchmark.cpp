@@ -130,13 +130,22 @@ TimingResults compileWithLibClang(const std::string& sourceFile) {
     // Initialize LibClang
     CXIndex index = clang_createIndex(0, 0);
     
-    // Add required compilation flags for Windows
+    // Add required compilation flags for Windows including system includes
     const char* args[] = {
         "-c",
         "-D_WINDOWS",
         "-D_CONSOLE",
         "-DWIN32",
-        "-D_WINDLL"
+        "-D_WINDLL",
+        // MSVC includes in order of preference (newest to oldest)
+        "-IC:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.38.33130/include",
+        "-IC:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.42.34433/include",
+        "-IC:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.36.32532/include",
+        "-IC:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.33.31629/include",
+        // Windows SDK includes
+        "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/ucrt",
+        "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/um",
+        "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.22621.0/shared"
     };
     
     // Parse the translation unit (includes lexing)

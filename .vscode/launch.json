@@ -17,7 +17,7 @@
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/x64/Benchmark/benchmark.exe",
-            "args": ["C:/Projects/FlashCpp/tests/Reference/reference.cpp"],
+            "args": ["${workspaceFolder}/tests/benchmark/simple.cpp"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

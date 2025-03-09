@@ -50,7 +50,7 @@ static std::string_view get_parser_error_string(ParserError e) {
 
 class ParseResult {
 public:
-        ParseResult() = default;
+        ParseResult() : value_or_error_(Error{"No result", Token()}) {}
         ParseResult(ASTNode node) : value_or_error_(node) {}
         ParseResult(std::string error_message, Token token)
                 : value_or_error_(Error{ std::move(error_message), std::move(token) }) {}
@@ -58,18 +58,24 @@ public:
         bool is_error() const {
                 return std::holds_alternative<Error>(value_or_error_);
         }
-        ASTNode node() const {
+        
+        std::optional<ASTNode> node() const {
+                if (is_error()) {
+                    return std::nullopt;
+                }
                 return std::get<ASTNode>(value_or_error_);
         }
+        
         bool has_value() const {
                 return std::holds_alternative<ASTNode>(value_or_error_);
         }
+        
         const std::string& error_message() const {
-                return std::get<Error>(value_or_error_).error_message_;
+                static const std::string empty;
+                return is_error() ? std::get<Error>(value_or_error_).error_message_ : empty;
         }
 
-        static ParseResult success() { return ParseResult(); }
-        static ParseResult success(ASTNode node) {
+        static ParseResult success(ASTNode node = ASTNode{}) {
                 return ParseResult(node);
         }
         static ParseResult error(const std::string& error_message, Token token) {
@@ -86,7 +92,7 @@ public:
         };
 
 private:
-        std::variant<std::monostate, ASTNode, Error> value_or_error_;
+        std::variant<ASTNode, Error> value_or_error_;
 };
 
 class Parser {
@@ -123,7 +129,8 @@ public:
         }
 
         template <typename T> T& as(ParseResult parse_result) {
-                return parse_result.node().as<T>();
+                auto node = parse_result.node();
+                return node ? node->as<T>() : ASTNode{}.as<T>();
         }
 
         bool generate_coff(const std::string& outputFilename);
