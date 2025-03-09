@@ -192,6 +192,7 @@ private:
         ParseResult parse_function_declaration(DeclarationNode& declaration_node);
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
+        ParseResult parse_for_loop();  // Add this line
         ParseResult parse_return_statement();
         ParseResult parse_statement();
         ParseResult parse_expression(int precedence);

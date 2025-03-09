@@ -3,6 +3,7 @@
 #include <string_view> // Include string_view header
 
 bool Parser::generate_coff(const std::string& outputFilename) {
+    // Currently returns not implemented
     return FlashCpp::GenerateCOFF(ast_nodes_, outputFilename);
 }
 
@@ -370,7 +371,7 @@ ParseResult Parser::parse_statement_or_declaration()
 		static const std::unordered_map<std::string_view, ParsingFunction>
 			keyword_parsing_functions = {
 			//{"if", &Parser::parse_if_statement},
-			//{"for", &Parser::parse_for_loop},
+			{"for", &Parser::parse_for_loop},  // Add this line
 			//{"while", &Parser::parse_while_loop},
 			//{"do", &Parser::parse_do_while_loop},
 			{"return", &Parser::parse_return_statement},
@@ -655,4 +656,71 @@ ParseResult Parser::parse_primary_expression()
 		return ParseResult::success(*result);
 
 	return ParseResult::success();
+}
+
+ParseResult Parser::parse_for_loop() {
+    auto saved_pos = save_token_position();
+    
+    if (!consume_keyword("for")) {
+        return ParseResult::error("Expected 'for' keyword", *current_token_);
+    }
+    
+    if (!consume_punctuator("(")) {
+        return ParseResult::error("Expected '(' after 'for'", *current_token_);
+    }
+
+    // Parse initialization (can be declaration or expression)
+    ParseResult init;
+    if (peek_token()->type() == Token::Type::Keyword) {
+        // Handle variable declaration
+        init = parse_type_and_name();
+    } else {
+        // Handle expression
+        init = parse_expression(0);
+    }
+    if (init.is_error()) {
+        return init;
+    }
+    if (!consume_punctuator(";")) {
+        return ParseResult::error("Expected ';' after for loop initialization", *current_token_);
+    }
+
+    // Parse condition
+    auto condition = parse_expression(0);
+    if (condition.is_error()) {
+        return condition;
+    }
+    if (!consume_punctuator(";")) {
+        return ParseResult::error("Expected ';' after for loop condition", *current_token_);
+    }
+
+    // Parse increment
+    auto increment = parse_expression(0);
+    if (increment.is_error()) {
+        return increment;
+    }
+    if (!consume_punctuator(")")) {
+        return ParseResult::error("Expected ')' after for loop increment", *current_token_);
+    }
+
+    // Parse body
+    auto body = parse_block();
+    if (body.is_error()) {
+        return body;
+    }
+
+    // Create for loop node
+    if (auto init_node = init.node()) {
+        if (auto cond_node = condition.node()) {
+            if (auto inc_node = increment.node()) {
+                if (auto body_node = body.node()) {
+                    return ParseResult::success(emplace_node<ForLoopNode>(
+                        *init_node, *cond_node, *inc_node, *body_node
+                    ));
+                }
+            }
+        }
+    }
+
+    return ParseResult::error("Invalid for loop construction", *current_token_);
 }

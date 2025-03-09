@@ -73,15 +73,15 @@
     <LinkIncremental>true</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
+    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\build\tools\clang\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
     <LibraryPath>D:\Github\llvm-project\build\Release\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
+    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\build\tools\clang\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
     <LibraryPath>D:\Github\llvm-project\build\Release\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Benchmark|x64'">
-    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
+    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\build\tools\clang\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
     <LibraryPath>D:\Github\llvm-project\build\Release\lib;$(LibraryPath)</LibraryPath>
     <TargetName>benchmark</TargetName>
   </PropertyGroup>
@@ -203,6 +203,8 @@
         $(LLVMInstallDir)\include;
         D:\Github\llvm-project\llvm\include;
         D:\Github\llvm-project\clang\include;
+        D:\Github\llvm-project\build\include;
+        D:\Github\llvm-project\build\tools\clang\include;
         %(AdditionalIncludeDirectories)
       </AdditionalIncludeDirectories>
       <PreprocessorDefinitions>
@@ -288,6 +290,17 @@
         clangRewriteFrontend.lib;
         clangSema.lib;
         clangSerialization.lib;
+        LLVMLTO.lib;
+        LLVMObjCopy.lib;
+        LLVMOption.lib;
+        clangASTMatchers.lib;
+        clangToolingCore.lib;
+        LLVMCoverage.lib;
+        LLVMWindowsDriver.lib;
+        LLVMWindowsManifest.lib;
+        LLVMFileCheck.lib;
+        clangAPINotes.lib;
+        version.lib;
         %(AdditionalDependencies)
       </AdditionalDependencies>
     </Link>

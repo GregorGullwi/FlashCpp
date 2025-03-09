@@ -316,25 +316,24 @@ private:
 	size_t body_;
 };
 
-class ForLoopNode : public LoopStatementNode {
+class ForLoopNode {
 public:
-	explicit ForLoopNode(size_t start_pos, size_t end_pos, size_t init,
-		size_t condition, size_t iteration, size_t body)
-		: init_(init), condition_(condition), iteration_(iteration), body_(body) {
-		this->start_pos = start_pos;
-		this->end_pos = end_pos;
-	}
+    ForLoopNode(ASTNode init, ASTNode condition, ASTNode increment, ASTNode body)
+        : init_(std::move(init))
+        , condition_(std::move(condition))
+        , increment_(std::move(increment))
+        , body_(std::move(body)) {}
 
-	size_t init() const { return init_; }
-	size_t condition() const { return condition_; }
-	size_t iteration() const { return iteration_; }
-	size_t body() const { return body_; }
+    const ASTNode& init() const { return init_; }
+    const ASTNode& condition() const { return condition_; }
+    const ASTNode& increment() const { return increment_; }
+    const ASTNode& body() const { return body_; }
 
 private:
-	size_t init_;
-	size_t condition_;
-	size_t iteration_;
-	size_t body_;
+    ASTNode init_;
+    ASTNode condition_;
+    ASTNode increment_;
+    ASTNode body_;
 };
 
 class ReturnStatementNode {
