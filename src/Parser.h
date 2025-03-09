@@ -126,11 +126,14 @@ public:
                 return parse_result.node().as<T>();
         }
 
-bool generate_coff(const std::string& outputFilename);
+        bool generate_coff(const std::string& outputFilename);
+        std::string get_last_error() const { return last_error_; }
+
 private:
         Lexer& lexer_;
         std::optional<Token> current_token_;
         std::vector<ASTNode> ast_nodes_;
+        std::string last_error_ = "this feature has not been implemented yet";
 
         template <typename T>
         std::pair<ASTNode, T&> create_node_ref(T&& node) {

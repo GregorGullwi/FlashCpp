@@ -2,6 +2,17 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Run Tests",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/x64/test",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false
+        },
+        {
             "name": "Launch Benchmark",
             "type": "cppvsdbg",
             "request": "launch",
@@ -12,14 +23,6 @@
             "environment": [],
             "externalConsole": false,
             "preLaunchTask": "",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ],
-            "miDebuggerPath": "C:/path/to/gdb.exe",
             "logging": {
                 "moduleLoad": false,
                 "trace": false,
