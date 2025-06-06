@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 #include <assert.h>
+#include "IRConverter.h"
 
 class Parser;
 
@@ -48,6 +49,7 @@ private:
 
 		symbol_table.enter_scope(ScopeType::Function);
 
+		// First allocate space for all parameters
 		for (const auto& param : node.parameter_nodes())
 		{
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
@@ -59,6 +61,36 @@ private:
 					  param_decl.identifier_token().value() }));
 
 			symbol_table.insert(param_decl.identifier_token().value(), param);
+		}
+
+		// Then store the parameter values into their allocated space
+		size_t paramIndex = 0;
+		for (const auto& param : node.parameter_nodes())
+		{
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			
+			// Create a store instruction to move the parameter from its register to the stack
+			std::vector<IrOperand> storeOperands;
+			storeOperands.emplace_back(param_type.type());
+			storeOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
+			storeOperands.emplace_back(param_decl.identifier_token().value());
+			
+			// Add the parameter register as the source
+			X64Register paramReg;
+			switch (paramIndex) {
+			case 0: paramReg = X64Register::RCX; break;
+			case 1: paramReg = X64Register::RDX; break;
+			case 2: paramReg = X64Register::R8; break;
+			case 3: paramReg = X64Register::R9; break;
+			default:
+				assert(false && "Too many parameters");
+				return;
+			}
+			storeOperands.emplace_back(static_cast<int>(paramReg));
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::Store, std::move(storeOperands)));
+			paramIndex++;
 		}
 
 		(*definition_block)->get_statements().visit([&](ASTNode statement) {

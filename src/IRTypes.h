@@ -17,6 +17,27 @@ enum class IrOpcode {
 	FunctionCall,
 	Assignment,
 	StackAlloc,
+	Store,
+};
+
+enum class X64Register : uint8_t {
+	RAX,
+	RCX,
+	RDX,
+	RBX,
+	RSP,
+	RBP,
+	RSI,
+	RDI,
+	R8,
+	R9,
+	R10,
+	R11,
+	R12,
+	R13,
+	R14,
+	R15,
+	Count
 };
 
 struct TempVar
@@ -143,6 +164,26 @@ public:
 			oss << getOperandAs<std::string_view>(2);
 			oss << " = alloca ";
 			oss << getOperandAsTypeString(0) << getOperandAs<int>(1);
+		}
+		break;
+
+		case IrOpcode::Store:
+		{
+			// store [Type][SizeInBits] [Value] to [Dest]
+			oss << "store ";
+			oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+			
+			// Source register
+			X64Register srcReg = static_cast<X64Register>(getOperandAs<int>(3));
+			switch (srcReg) {
+			case X64Register::RCX: oss << "RCX"; break;
+			case X64Register::RDX: oss << "RDX"; break;
+			case X64Register::R8: oss << "R8"; break;
+			case X64Register::R9: oss << "R9"; break;
+			default: oss << "R" << static_cast<int>(srcReg); break;
+			}
+			
+			oss << " to %" << getOperandAs<std::string_view>(2);
 		}
 		break;
 

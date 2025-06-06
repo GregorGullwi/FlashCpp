@@ -12,26 +12,6 @@
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 
-enum class X64Register : uint8_t {
-	RAX,
-	RCX,
-	RDX,
-	RBX,
-	RSP,
-	RBP,
-	RSI,
-	RDI,
-	R8,
-	R9,
-	R10,
-	R11,
-	R12,
-	R13,
-	R14,
-	R15,
-	Count
-};
-
 enum class Win64CallingConvention : uint8_t {
 	FirstArgument = static_cast<uint8_t>(X64Register::RCX),
 	SecondArgument = static_cast<uint8_t>(X64Register::RDX),
@@ -135,6 +115,9 @@ public:
 			case IrOpcode::StackAlloc:
 				handleStackAlloc(instruction);
 				break;
+			case IrOpcode::Store:
+				handleStore(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -146,7 +129,72 @@ public:
 
 private:
 	void handleFunctionCall(const IrInstruction& instruction) {
-		assert (instruction.getOperandCount() == 2);
+		// Function call should have at least 2 operands (return var and function name)
+		assert(instruction.getOperandCount() >= 2);
+
+		// First, handle any arguments by moving them to the correct registers
+		// In x64 calling convention, first 4 args go to RCX, RDX, R8, R9
+		size_t argIndex = 2;  // Start after return var and function name
+		while (argIndex < instruction.getOperandCount()) {
+			X64Register argReg;
+			switch (argIndex - 2) {
+			case 0: argReg = X64Register::RCX; break;
+			case 1: argReg = X64Register::RDX; break;
+			case 2: argReg = X64Register::R8; break;
+			case 3: argReg = X64Register::R9; break;
+			default:
+				assert(false && "Too many arguments");
+				return;
+			}
+
+			// Get the argument value
+			if (instruction.isOperandType<Type>(argIndex)) {
+				Type type = instruction.getOperandAs<Type>(argIndex);
+				int size = instruction.getOperandAs<int>(argIndex + 1);
+				unsigned long long value = instruction.getOperandAs<unsigned long long>(argIndex + 2);
+
+				// Handle type operand
+				switch (type) {
+				case Type::Int:
+					// For int type, we expect a 32-bit value
+					if (size != 32) {
+						assert(false && "Int type must be 32 bits");
+						return;
+					}
+					{
+						// mov reg, immediate
+						std::array<uint8_t, 5> movInst = { 0xB8, 0, 0, 0, 0 };
+						movInst[0] = 0xB8 + static_cast<uint8_t>(argReg);  // Adjust opcode for target register
+						for (size_t i = 0; i < 4; ++i) {
+							movInst[i + 1] = (value >> (8 * i)) & 0xFF;
+						}
+						textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+					}
+					break;
+				case Type::Char:
+					// For char type, we expect an 8-bit value
+					if (size != 8) {
+						assert(false && "Char type must be 8 bits");
+						return;
+					}
+					{
+						// mov reg, immediate (8-bit)
+						std::array<uint8_t, 3> movInst = { 0xB0, 0, 0 };
+						movInst[0] = 0xB0 + static_cast<uint8_t>(argReg);  // Adjust opcode for target register
+						movInst[1] = value & 0xFF;  // Only use lowest byte
+						textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.begin() + 2);
+					}
+					break;
+				case Type::Void:
+					assert(false && "Void type not allowed as argument");
+					return;
+				default:
+					assert(false && "Unsupported type");
+					return;
+				}
+			}
+			argIndex += 3;  // Skip type, size, and value operands
+		}
 
 		// call [function name] instruction is 5 bytes
 		auto function_name = instruction.getOperandAs<std::string_view>(1);
@@ -217,10 +265,20 @@ private:
 			}
 		}
 		else if (instruction.isOperandType<std::string_view>(2)) {
-			assert(false && "not implemented yet");
-		}
-		else {
-			assert(false && "unhandled case");
+			// Handle local variable access
+			auto var_name = instruction.getOperandAs<std::string_view>(2);
+			auto size_in_bits = instruction.getOperandAs<int>(1);
+			
+			// Find the variable's stack offset
+			const StackVariableScope& current_scope = variable_scopes.back();
+			auto it = current_scope.identifier_offset.find(var_name);
+			if (it != current_scope.identifier_offset.end()) {
+				// mov eax, [rbp + offset]
+				std::array<uint8_t, 7> movInst = { 0x48, 0x8B, 0x85, 0, 0, 0, 0 };
+				int32_t offset = it->second;
+				std::memcpy(movInst.data() + 3, &offset, sizeof(offset));
+				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+			}
 		}
 
 		// ret instruction is a single byte
@@ -250,6 +308,26 @@ private:
 		StackVariableScope& current_scope = variable_scopes.back();
 		current_scope.identifier_offset[instruction.getOperandAs<std::string_view>(2)] = current_scope.current_stack_offset;
 		current_scope.current_stack_offset += sizeInBytes;
+	}
+
+	void handleStore(const IrInstruction& instruction) {
+		assert(instruction.getOperandCount() >= 4);  // type, size, dest, src
+
+		auto var_name = instruction.getOperandAs<std::string_view>(2);
+		auto src_reg = static_cast<X64Register>(instruction.getOperandAs<int>(3));
+
+		// Find the variable's stack offset
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.identifier_offset.find(var_name);
+		if (it != current_scope.identifier_offset.end()) {
+			// mov [rbp + offset], reg
+			std::array<uint8_t, 7> movInst = { 0x48, 0x89, 0x85, 0, 0, 0, 0 };
+			int32_t offset = it->second;
+			std::memcpy(movInst.data() + 3, &offset, sizeof(offset));
+			movInst[1] = 0x89;  // mov [mem], reg
+			movInst[2] = 0x85;  // [rbp + disp32]
+			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		}
 	}
 
 	void finalizeSections() {
