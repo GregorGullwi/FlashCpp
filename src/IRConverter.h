@@ -12,12 +12,21 @@
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 
+// Define the calling convention for x64 Windows
 enum class Win64CallingConvention : uint8_t {
-	FirstArgument = static_cast<uint8_t>(X64Register::RCX),
-	SecondArgument = static_cast<uint8_t>(X64Register::RDX),
-	ThirdArgument = static_cast<uint8_t>(X64Register::R8),
-	FourthArgument = static_cast<uint8_t>(X64Register::R9),
-	Count
+    RCX = static_cast<uint8_t>(X64Register::RCX),  // First integer/pointer argument
+    RDX = static_cast<uint8_t>(X64Register::RDX),  // Second integer/pointer argument
+    R8 = static_cast<uint8_t>(X64Register::R8),    // Third integer/pointer argument
+    R9 = static_cast<uint8_t>(X64Register::R9),    // Fourth integer/pointer argument
+    XMM0 = static_cast<uint8_t>(X64Register::XMM0), // First floating point argument
+    XMM1 = static_cast<uint8_t>(X64Register::XMM1), // Second floating point argument
+    XMM2 = static_cast<uint8_t>(X64Register::XMM2), // Third floating point argument
+    XMM3 = static_cast<uint8_t>(X64Register::XMM3), // Fourth floating point argument
+    FirstArgument = RCX,
+    SecondArgument = RDX,
+    ThirdArgument = R8,
+    FourthArgument = R9,
+    Count = 8
 };
 
 struct RegisterAllocator
@@ -213,15 +222,35 @@ private:
 		if (nop_count < 16)
 			textSectionData.insert(textSectionData.end(), nop_count, nop);
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
-
+	
 		writer.add_function_symbol(std::string(func_name), func_offset);
 		functionSymbols[func_name] = func_offset;
-
+	
 		// reset function register allocations
 		regAlloc.reset();
 		regAlloc.reserve_arguments(instruction.getOperandCount() - 2);
-
+	
+		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, 0x20 (32 bytes shadow space)
+		textSectionData.push_back(0x55); // push rbp
+		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
+		textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xEC); textSectionData.push_back(0x20); // sub rsp, 0x20
+	
 		variable_scopes.emplace_back();
+		
+		// Handle parameters
+		size_t paramIndex = 3;  // Start after return type, size, and function name
+		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
+			auto param_type = instruction.getOperandAs<Type>(paramIndex);
+			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
+			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
+			
+			// Store parameter at [rsp+8] for first parameter, [rsp+16] for second, etc.
+			int offset = 8 + (paramIndex - 3) * 8;
+			textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(0x4C); textSectionData.push_back(0x24); textSectionData.push_back(offset); // mov [rsp+offset], rcx
+			
+			variable_scopes.back().identifier_offset[param_name] = offset;
+			paramIndex += 3;  // Skip type, size, and name
+		}
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
@@ -268,24 +297,28 @@ private:
 			// Handle local variable access
 			auto var_name = instruction.getOperandAs<std::string_view>(2);
 			auto size_in_bits = instruction.getOperandAs<int>(1);
-			
+
 			// Find the variable's stack offset
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.identifier_offset.find(var_name);
 			if (it != current_scope.identifier_offset.end()) {
-				// mov eax, [rbp + offset]
-				std::array<uint8_t, 7> movInst = { 0x48, 0x8B, 0x85, 0, 0, 0, 0 };
-				int32_t offset = it->second;
-				std::memcpy(movInst.data() + 3, &offset, sizeof(offset));
+				// mov eax, [rsp+8]
+				std::array<uint8_t, 5> movInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
 				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 			}
 		}
 
-		// ret instruction is a single byte
-		std::array<uint8_t, 1> retInst = { 0xC3 };
+		// Function epilogue
+		// mov rsp, rbp (restore stack pointer)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(0xEC);
 
-		// Add instructions to the .text section
-		textSectionData.insert(textSectionData.end(), retInst.begin(), retInst.end());
+		// pop rbp (restore caller's base pointer)
+		textSectionData.push_back(0x5D);
+
+		// ret (return to caller)
+		textSectionData.push_back(0xC3);
 
 		variable_scopes.pop_back();
 	}

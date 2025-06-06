@@ -28,22 +28,26 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <ClangToolsetVersion>19</ClangToolsetVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <ClangToolsetVersion>19</ClangToolsetVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Benchmark|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <ClangToolsetVersion>19</ClangToolsetVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <ClangToolsetVersion>19</ClangToolsetVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -63,7 +67,7 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros">
-    <LLVMInstallDir>D:\LLVM</LLVMInstallDir>
+    <LLVMInstallDir>C:\Program Files\LLVM</LLVMInstallDir>
     <BenchmarkOutputFile>$(OutDir)benchmark.exe</BenchmarkOutputFile>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -73,21 +77,21 @@
     <LinkIncremental>true</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\build\tools\clang\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
-    <LibraryPath>D:\Github\llvm-project\build\Release\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\build\tools\clang\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
-    <LibraryPath>D:\Github\llvm-project\build\Release\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Benchmark|x64'">
-    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\build\tools\clang\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
-    <LibraryPath>D:\Github\llvm-project\build\Release\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
     <TargetName>benchmark</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'">
-    <IncludePath>D:\Github\llvm-project\clang\include;D:\Github\llvm-project\build\include;D:\Github\llvm-project\llvm\include;$(IncludePath)</IncludePath>
-    <LibraryPath>D:\Github\llvm-project\build\Release\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
     <TargetName>test</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -122,15 +126,27 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>-fms-compatibility -fms-extensions -fdelayed-template-parsing %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>-fms-compatibility -fms-extensions -fdelayed-template-parsing %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Benchmark|x64'">
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>-fms-compatibility -fms-extensions -fdelayed-template-parsing %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <OutputFile>$(BenchmarkOutputFile)</OutputFile>
@@ -139,18 +155,23 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'">
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>-fms-compatibility -fms-extensions -fdelayed-template-parsing %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <OutputFile>$(OutDir)test.exe</OutputFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="D:\Github\llvm-project\llvm\lib\CodeGen\LowLevelType.cpp" />
     <ClCompile Include="src\AstNodeTypes.cpp" />
     <ClCompile Include="src\ChunkedAnyVector.cpp" />
-    <ClCompile Include="src\LibClangIRGenerator.cpp" />
+    <ClCompile Include="src\LibClangIRGenerator.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'=='Benchmark' Or '$(Configuration)'=='Test'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Benchmark'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\Parser.cpp" />
     <!-- Main file - exclude from Test and Benchmark -->
     <ClCompile Include="src\main.cpp">
@@ -200,11 +221,9 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>
-        $(LLVMInstallDir)\include;
-        D:\Github\llvm-project\llvm\include;
-        D:\Github\llvm-project\clang\include;
-        D:\Github\llvm-project\build\include;
-        D:\Github\llvm-project\build\tools\clang\include;
+        $(LLVMInstallDir)\llvm\include;
+        $(LLVMInstallDir)\clang\include;
+        $(LLVMInstallDir)\build\include;
         %(AdditionalIncludeDirectories)
       </AdditionalIncludeDirectories>
       <PreprocessorDefinitions>
@@ -213,96 +232,93 @@
         %(PreprocessorDefinitions)
       </PreprocessorDefinitions>
       <LanguageStandard Condition="'$(Configuration)|$(Platform)'=='Release|x64'">stdcpp20</LanguageStandard>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Test|x64'">Disabled</Optimization>
     </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalLibraryDirectories>
-        $(LLVMInstallDir)\lib;
-        %(AdditionalLibraryDirectories)
-      </AdditionalLibraryDirectories>
       <AdditionalDependencies>
         ws2_32.lib;
         libclang.lib;
         LLVMCore.lib;
         LLVMSupport.lib;
-        LLVMIRReader.lib;
-        LLVMX86CodeGen.lib;
-        LLVMCodeGen.lib;
-        LLVMAnalysis.lib;
         LLVMTarget.lib;
-        LLVMMC.lib;
         LLVMTargetParser.lib;
-        LLVMipo.lib;
-        LLVMBitReader.lib;
-        LLVMBitWriter.lib;
-        LLVMAsmParser.lib;
+        LLVMCodeGen.lib;
+        LLVMGlobalISel.lib;
+        LLVMSelectionDAG.lib;
         LLVMAsmPrinter.lib;
+        LLVMMC.lib;
+        LLVMMCParser.lib;
+        LLVMBitWriter.lib;
+        LLVMBitReader.lib;
+        LLVMTransformUtils.lib;
+        LLVMAnalysis.lib;
+        LLVMIRReader.lib;
+        LLVMObject.lib;
+        LLVMScalarOpts.lib;
+        LLVMInstCombine.lib;
+        LLVMInstrumentation.lib;
+        LLVMProfileData.lib;
+        LLVMCoroutines.lib;
+        LLVMDebugInfoDWARF.lib;
+        LLVMDebugInfoMSF.lib;
+        LLVMDebugInfoCodeView.lib;
+        LLVMDebugInfoPDB.lib;
+        LLVMRemarks.lib;
+        LLVMDemangle.lib;
+        LLVMX86CodeGen.lib;
         LLVMX86AsmParser.lib;
         LLVMX86Desc.lib;
         LLVMX86Info.lib;
-        LLVMDebugInfoDWARF.lib;
-        LLVMMCParser.lib;
-        LLVMObject.lib;
-        LLVMRemarks.lib;
-        LLVMBinaryFormat.lib;
-        LLVMBitstreamReader.lib;
-        LLVMDemangle.lib;
-        LLVMProfileData.lib;
-        LLVMTextAPI.lib;
-        LLVMDebugInfoCodeView.lib;
-        LLVMDebugInfoMSF.lib;
-        LLVMGlobalISel.lib;
-        LLVMSelectionDAG.lib;
-        LLVMMCDisassembler.lib;
-        LLVMInstrumentation.lib;
-        LLVMScalarOpts.lib;
-        LLVMTransformUtils.lib;
-        LLVMCFGuard.lib;
-        LLVMAggressiveInstCombine.lib;
-        LLVMInstCombine.lib;
-        LLVMVectorize.lib;
-        LLVMPasses.lib;
-        LLVMObjCARCOpts.lib;
-        LLVMCoroutines.lib;
-        LLVMLinker.lib;
-        LLVMFrontendOpenMP.lib;
-        LLVMCodeGen.lib;
-        LLVMGlobalISel.lib;
-        LLVMTarget.lib;
-        LLVMAnalysis.lib;
-        LLVMRemarks.lib;
-        LLVMTargetParser.lib;
-        LLVMBinaryFormat.lib;
-        LLVMBitstreamReader.lib;
-        LLVMCore.lib;
-        LLVMSupport.lib;
-        LLVMDemangle.lib;
-        LLVMIRPrinter.lib;
-        clangCodeGen.lib;
-        clangBasic.lib;
-        clangAST.lib;
-        clangAnalysis.lib;
-        clangDriver.lib;
-        clangEdit.lib;
-        clangFrontend.lib;
-        clangLex.lib;
-        clangParse.lib;
-        clangRewrite.lib;
-        clangRewriteFrontend.lib;
-        clangSema.lib;
-        clangSerialization.lib;
-        LLVMLTO.lib;
-        LLVMObjCopy.lib;
-        LLVMOption.lib;
-        clangASTMatchers.lib;
-        clangToolingCore.lib;
-        LLVMCoverage.lib;
-        LLVMWindowsDriver.lib;
-        LLVMWindowsManifest.lib;
-        LLVMFileCheck.lib;
-        clangAPINotes.lib;
-        version.lib;
+        LLVMX86Disassembler.lib;
+        LLVMX86TargetMCA.lib;
         %(AdditionalDependencies)
       </AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Link>
+      <AdditionalDependencies>
+        ws2_32.lib;
+        libclang.lib;
+        LLVMCore.lib;
+        LLVMSupport.lib;
+        LLVMTarget.lib;
+        LLVMTargetParser.lib;
+        LLVMCodeGen.lib;
+        LLVMGlobalISel.lib;
+        LLVMSelectionDAG.lib;
+        LLVMAsmPrinter.lib;
+        LLVMMC.lib;
+        LLVMMCParser.lib;
+        LLVMBitWriter.lib;
+        LLVMBitReader.lib;
+        LLVMTransformUtils.lib;
+        LLVMAnalysis.lib;
+        LLVMIRReader.lib;
+        LLVMObject.lib;
+        LLVMScalarOpts.lib;
+        LLVMInstCombine.lib;
+        LLVMInstrumentation.lib;
+        LLVMProfileData.lib;
+        LLVMCoroutines.lib;
+        LLVMDebugInfoDWARF.lib;
+        LLVMDebugInfoMSF.lib;
+        LLVMDebugInfoCodeView.lib;
+        LLVMDebugInfoPDB.lib;
+        LLVMRemarks.lib;
+        LLVMDemangle.lib;
+        LLVMX86CodeGen.lib;
+        LLVMX86AsmParser.lib;
+        LLVMX86Desc.lib;
+        LLVMX86Info.lib;
+        LLVMX86Disassembler.lib;
+        LLVMX86TargetMCA.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
 </Project>

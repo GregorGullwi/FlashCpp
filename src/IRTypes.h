@@ -37,6 +37,10 @@ enum class X64Register : uint8_t {
 	R13,
 	R14,
 	R15,
+	XMM0,
+	XMM1,
+	XMM2,
+	XMM3,
 	Count
 };
 

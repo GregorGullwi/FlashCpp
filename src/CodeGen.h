@@ -41,55 +41,38 @@ private:
 		const DeclarationNode& func_decl = node.decl_node();
 		const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 
-		ir_.addInstruction(
-			IrInstruction(IrOpcode::FunctionDecl,
-				{ ret_type.type(),
-				  static_cast<int>(ret_type.size_in_bits()),
-				  func_decl.identifier_token().value() }));
+		// Create function declaration with return type and name
+		std::vector<IrOperand> funcDeclOperands;
+		funcDeclOperands.emplace_back(ret_type.type());
+		funcDeclOperands.emplace_back(static_cast<int>(ret_type.size_in_bits()));
+		funcDeclOperands.emplace_back(func_decl.identifier_token().value());
+
+		// Add parameter types to function declaration
+		size_t paramCount = 0;
+		for (const auto& param : node.parameter_nodes()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			
+			// Add parameter type and size to function declaration
+			funcDeclOperands.emplace_back(param_type.type());
+			funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
+			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
+			
+			paramCount++;
+		}
+
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands)));
 
 		symbol_table.enter_scope(ScopeType::Function);
 
-		// First allocate space for all parameters
-		for (const auto& param : node.parameter_nodes())
-		{
+		// Allocate stack space for local variables and parameters
+		// Parameters are already in their registers, we just need to allocate space for them
+		size_t paramIndex = 0;
+		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			ir_.addInstruction(
-				IrInstruction(IrOpcode::StackAlloc,
-					{ param_type.type(),
-					  static_cast<int>(param_type.size_in_bits()),
-					  param_decl.identifier_token().value() }));
 
 			symbol_table.insert(param_decl.identifier_token().value(), param);
-		}
-
-		// Then store the parameter values into their allocated space
-		size_t paramIndex = 0;
-		for (const auto& param : node.parameter_nodes())
-		{
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			
-			// Create a store instruction to move the parameter from its register to the stack
-			std::vector<IrOperand> storeOperands;
-			storeOperands.emplace_back(param_type.type());
-			storeOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
-			storeOperands.emplace_back(param_decl.identifier_token().value());
-			
-			// Add the parameter register as the source
-			X64Register paramReg;
-			switch (paramIndex) {
-			case 0: paramReg = X64Register::RCX; break;
-			case 1: paramReg = X64Register::RDX; break;
-			case 2: paramReg = X64Register::R8; break;
-			case 3: paramReg = X64Register::R9; break;
-			default:
-				assert(false && "Too many parameters");
-				return;
-			}
-			storeOperands.emplace_back(static_cast<int>(paramReg));
-			
-			ir_.addInstruction(IrInstruction(IrOpcode::Store, std::move(storeOperands)));
 			paramIndex++;
 		}
 

@@ -30,13 +30,16 @@
     <ClCompile Include="src\benchmark.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="D:\Github\llvm-project\llvm\lib\CodeGen\LowLevelType.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\AstNodeTypes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\ChunkedAnyVector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
