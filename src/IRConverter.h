@@ -146,6 +146,8 @@ public:
 
 private:
 	void handleFunctionCall(const IrInstruction& instruction) {
+		assert (instruction.getOperandCount() == 2);
+
 		// call [function name] instruction is 5 bytes
 		auto function_name = instruction.getOperandAs<std::string_view>(1);
 		std::array<uint32_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
@@ -175,27 +177,34 @@ private:
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
-		if (instruction.getOperandCount() >= 3) {
-			if (instruction.isOperandType<unsigned long long>(2)) {
-				unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
-				if (returnValue > std::numeric_limits<uint32_t>::max()) {
-					throw std::runtime_error("Return value exceeds 32-bit limit");
-				}
-
-				// mov eax, immediate instruction has a fixed size of 5 bytes
-				std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
-
-				// Fill in the return value
-				for (size_t i = 0; i < 4; ++i) {
-					movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
-				}
-
-				textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
+		assert(instruction.getOperandCount() >= 3);
+		if (instruction.isOperandType<unsigned long long>(2)) {
+			unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
+			if (returnValue > std::numeric_limits<uint32_t>::max()) {
+				throw std::runtime_error("Return value exceeds 32-bit limit");
 			}
-			else if (instruction.isOperandType<TempVar>(2)) {
-				// Do register allocation
-				auto size_it_bits = instruction.getOperandAs<int>(1);
-				//auto return_var = instruction.getOperandAs<TempVar>(2);
+
+			// mov eax, immediate instruction has a fixed size of 5 bytes
+			std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
+
+			// Fill in the return value
+			for (size_t i = 0; i < 4; ++i) {
+				movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+			}
+
+			textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
+		}
+		else if (instruction.isOperandType<TempVar>(2)) {
+			// Do register allocation
+			auto size_it_bits = instruction.getOperandAs<int>(1);
+			auto return_var = instruction.getOperandAs<TempVar>(2);
+			
+			// For function call results, we need to move from the result register to RAX
+			if (return_var.index > 0) {  // If this is a function call result
+				// mov eax, eax (no-op since function result is already in eax)
+				// We don't need to do anything since the function call result is already in eax
+			} else {
+				// For other cases, allocate a register and move the value
 				auto src_reg = regAlloc.allocate();
 				auto dst_reg = X64Register::RAX;	// all return values are stored in RAX
 				if (src_reg != dst_reg) {
@@ -206,12 +215,12 @@ private:
 					}
 				}
 			}
-			else if (instruction.isOperandType<std::string_view>(2)) {
-				assert(false && "not implemented yet");
-			}
-			else {
-				assert(false && "unhandled case");
-			}
+		}
+		else if (instruction.isOperandType<std::string_view>(2)) {
+			assert(false && "not implemented yet");
+		}
+		else {
+			assert(false && "unhandled case");
 		}
 
 		// ret instruction is a single byte

@@ -50,7 +50,7 @@ static std::string_view get_parser_error_string(ParserError e) {
 
 class ParseResult {
 public:
-        ParseResult() : value_or_error_(Error{"No result", Token()}) {}
+        ParseResult() : value_or_error_(std::monostate{}) {}
         ParseResult(ASTNode node) : value_or_error_(node) {}
         ParseResult(std::string error_message, Token token)
                 : value_or_error_(Error{ std::move(error_message), std::move(token) }) {}
@@ -59,8 +59,12 @@ public:
                 return std::holds_alternative<Error>(value_or_error_);
         }
         
+        bool is_null() const {
+                return std::holds_alternative<std::monostate>(value_or_error_);
+        }
+        
         std::optional<ASTNode> node() const {
-                if (is_error()) {
+                if (is_error() || is_null()) {
                     return std::nullopt;
                 }
                 return std::get<ASTNode>(value_or_error_);
@@ -85,6 +89,9 @@ public:
                 return ParseResult(std::string(get_parser_error_string(e)),
                         std::move(token));
         }
+        static ParseResult null() {
+                return ParseResult();
+        }
 
         struct Error {
                 std::string error_message_;
@@ -92,7 +99,7 @@ public:
         };
 
 private:
-        std::variant<ASTNode, Error> value_or_error_;
+        std::variant<std::monostate, ASTNode, Error> value_or_error_;
 };
 
 class Parser {

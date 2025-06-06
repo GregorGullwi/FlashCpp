@@ -106,29 +106,33 @@ public:
 		case IrOpcode::FunctionCall:
 		{
 			// % = call [Type][SizeInBits] @[FuncName]()
-			oss << '%';
-			if (isOperandType<TempVar>(0))
-				oss << getOperandAs<TempVar>(0).index;
-			else if (isOperandType<std::string_view>(0))
-				oss << getOperandAs<std::string_view>(0);
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
 
-			oss << " = call ";
-			oss << "@" << getOperandAs<std::string_view>(1) << "(";
+				oss << " = call ";
+				if (getOperandCount() > 1) {
+					oss << "@" << getOperandAs<std::string_view>(1) << "(";
 
-			const size_t funcSymbolIndex = getOperandCount() - 1;
-			for (size_t i = 2; i < funcSymbolIndex; i += 3) {
-				oss << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
-				
-				if (isOperandType<unsigned long long>(i + 2))
-					oss << getOperandAs<unsigned long long>(i + 2);
-				else if (isOperandType<TempVar>(i + 2))
-					oss << '%' << getOperandAs<TempVar>(i + 2).index;
-				else if (isOperandType<std::string_view>(i + 2))
-					oss << '%' << getOperandAs<std::string_view>(i + 2);
+					const size_t funcSymbolIndex = getOperandCount() - 1;
+					for (size_t i = 2; i < funcSymbolIndex; i += 3) {
+						if (i > 2) oss << ", ";
+						oss << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
+						
+						if (isOperandType<unsigned long long>(i + 2))
+							oss << getOperandAs<unsigned long long>(i + 2);
+						else if (isOperandType<TempVar>(i + 2))
+							oss << '%' << getOperandAs<TempVar>(i + 2).index;
+						else if (isOperandType<std::string_view>(i + 2))
+							oss << '%' << getOperandAs<std::string_view>(i + 2);
+					}
+
+					oss << ")";
+				}
 			}
-
-			oss << ")";
-
 		}
 		break;
 

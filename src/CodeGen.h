@@ -100,13 +100,19 @@ private:
 			const auto& expr = std::get<FunctionCallNode>(exprNode);
 			auto operands = generateFunctionCallIr(expr);
 			
-			std::vector<IrOperand> return_operands{ operands.end() - 3, operands.end() };
-			operands.erase(operands.end() - 3, operands.end());
+			// Check if we have enough operands for a function call
+			if (operands.size() >= 3) {
+				std::vector<IrOperand> return_operands{ operands.end() - 3, operands.end() };
+				operands.erase(operands.end() - 3, operands.end());
 
-			ir_.addInstruction(
-				IrInstruction(IrOpcode::FunctionCall, std::move(operands)));
+				ir_.addInstruction(
+					IrInstruction(IrOpcode::FunctionCall, std::move(operands)));
 
-			return return_operands;
+				return return_operands;
+			} else {
+				// Handle error case - function call with insufficient operands
+				return {};
+			}
 		}
 		else {
 			assert(false && "Not implemented yet");
@@ -162,9 +168,8 @@ private:
 
 		const auto& decl_node = functionCallNode.function_declaration();
 		auto type = gSymbolTable.lookup(decl_node.identifier_token().value());
-		if (!type.has_value())
-			return irOperands;	// TODO: Error?
 
+		// Always add the return variable and function name
 		TempVar ret_var = var_counter.next();
 		irOperands.emplace_back(ret_var);
 		irOperands.emplace_back(decl_node.identifier_token().value());
@@ -175,7 +180,7 @@ private:
 			irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
 		});
 
-		// Generate IR for the return type
+		// Always add the return type information
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		irOperands.emplace_back(return_type.type());
 		irOperands.emplace_back(static_cast<int>(return_type.size_in_bits()));

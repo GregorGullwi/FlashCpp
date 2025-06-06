@@ -1,10 +1,15 @@
 #include "Parser.h"
+#ifdef USE_LLVM
 #include "LibClangIRGenerator.h"
+#endif
 #include <string_view> // Include string_view header
 
 bool Parser::generate_coff(const std::string& outputFilename) {
-    // Currently returns not implemented
+#ifdef USE_LLVM
     return FlashCpp::GenerateCOFF(ast_nodes_, outputFilename);
+#else
+    return false; // Not implemented in this configuration
+#endif
 }
 
 Parser::Parser(Lexer& lexer)

@@ -181,7 +181,7 @@ TEST_CASE("preprocessor") {
 		  )";
 		run_test_case(input, expected_output_false);
 #ifdef _WIN32
-		compile_context.addIncludeDir(R"(C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.36.32532\include)"sv);
+		compile_context.addIncludeDir(R"(C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.38.33130\include)"sv);
 		run_test_case(input, expected_output_true);
 #endif
 	}
