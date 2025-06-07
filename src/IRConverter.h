@@ -12,17 +12,19 @@
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 
-// Define the calling convention for x64 Windows
-enum class Win64CallingConvention : uint8_t {
-	RCX = static_cast<uint8_t>(X64Register::RCX),  // First integer/pointer argument
-	RDX = static_cast<uint8_t>(X64Register::RDX),  // Second integer/pointer argument
-	R8 = static_cast<uint8_t>(X64Register::R8),    // Third integer/pointer argument
-	R9 = static_cast<uint8_t>(X64Register::R9),    // Fourth integer/pointer argument
-	XMM0 = static_cast<uint8_t>(X64Register::XMM0), // First floating point argument
-	XMM1 = static_cast<uint8_t>(X64Register::XMM1), // Second floating point argument
-	XMM2 = static_cast<uint8_t>(X64Register::XMM2), // Third floating point argument
-	XMM3 = static_cast<uint8_t>(X64Register::XMM3), // Fourth floating point argument
-	Count = 8
+// Win64 calling convention register mapping
+constexpr std::array<X64Register, 4> INT_PARAM_REGS = {
+	X64Register::RCX,  // First integer/pointer argument
+	X64Register::RDX,  // Second integer/pointer argument
+	X64Register::R8,   // Third integer/pointer argument
+	X64Register::R9    // Fourth integer/pointer argument
+};
+
+constexpr std::array<X64Register, 4> FLOAT_PARAM_REGS = {
+	X64Register::XMM0, // First floating point argument
+	X64Register::XMM1, // Second floating point argument
+	X64Register::XMM2, // Third floating point argument
+	X64Register::XMM3  // Fourth floating point argument
 };
 
 struct RegisterAllocator
@@ -62,8 +64,8 @@ struct RegisterAllocator
 	}
 
 	void reserve_arguments(size_t count) {
-		for (size_t i = 0; i < count && i < static_cast<size_t>(Win64CallingConvention::Count); ++i) {
-			registers[i].isAllocated = true;
+		for (size_t i = 0; i < count && i < INT_PARAM_REGS.size(); ++i) {
+			registers[static_cast<int>(INT_PARAM_REGS[i])].isAllocated = true;
 		}
 	}
 
@@ -77,21 +79,34 @@ struct RegisterAllocator
 			return result;
 		}*/
 
-		assert(size_in_bytes >= 1 && size_in_bytes <= 4);
+		assert(size_in_bytes >= 1 && size_in_bytes <= 8);
 
-		static std::array<std::array<uint8_t, 4>, 4> opcodeLookup = {
-			std::array<uint8_t, 4>{0x88, 0x00, 0x00, 0x00}, // MOV byte ptr [RAX], AL
-			{0x89, 0x00, 0x00, 0x00}, // MOV word ptr [RAX], AX
-			{0x89, 0x00, 0x00, 0x00}, // MOV dword ptr [RAX], EAX
-			{0x48, 0x89, 0x00, 0x00}  // MOV qword ptr [RAX], RAX
-		};
-
-		// Find the opcode in the lookup table based on the size
-		auto opcodeIt = opcodeLookup[size_in_bytes - 1];
-		result.op_codes = opcodeIt;
-		result.size_in_bytes = 2 + (size_in_bytes / 64);
-		result.op_codes[result.size_in_bytes - 2] = 0xC0 + static_cast<uint8_t>(dst_reg);
-		result.op_codes[result.size_in_bytes - 1] = 0xC0 + static_cast<uint8_t>(src_reg);
+		// For 64-bit moves, we need the REX prefix (0x48)
+		if (size_in_bytes == 8) {
+			result.op_codes[0] = 0x48;
+			result.op_codes[1] = 0x89;  // MOV r64, r64
+			result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(dst_reg) << 3) + static_cast<uint8_t>(src_reg);
+			result.size_in_bytes = 3;
+		}
+		// For 32-bit moves, we don't need REX prefix
+		else if (size_in_bytes == 4) {
+			result.op_codes[0] = 0x89;  // MOV r32, r32
+			result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(dst_reg) << 3) + static_cast<uint8_t>(src_reg);
+			result.size_in_bytes = 2;
+		}
+		// For 16-bit moves, we need the 66 prefix
+		else if (size_in_bytes == 2) {
+			result.op_codes[0] = 0x66;
+			result.op_codes[1] = 0x89;  // MOV r16, r16
+			result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(dst_reg) << 3) + static_cast<uint8_t>(src_reg);
+			result.size_in_bytes = 3;
+		}
+		// For 8-bit moves, we need special handling for high registers
+		else if (size_in_bytes == 1) {
+			result.op_codes[0] = 0x88;  // MOV r8, r8
+			result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(dst_reg) << 3) + static_cast<uint8_t>(src_reg);
+			result.size_in_bytes = 2;
+		}
 
 		return result;
 	}
@@ -140,6 +155,15 @@ public:
 			case IrOpcode::Add:
 				handleAdd(instruction);
 				break;
+			case IrOpcode::Subtract:
+				handleSubtract(instruction);
+				break;
+			case IrOpcode::Multiply:
+				handleMultiply(instruction);
+				break;
+			case IrOpcode::Divide:
+				handleDivide(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -160,63 +184,73 @@ private:
 		const size_t arg_stride = 3; // type, size, value
 		const size_t num_args = (instruction.getOperandCount() - first_arg_index) / arg_stride;
 		for (size_t i = 0; i < num_args; ++i) {
-			X64Register argReg;
-			switch (i) {
-				case 0: argReg = X64Register::RCX; break;
-				case 1: argReg = X64Register::RDX; break;
-				case 2: argReg = X64Register::R8; break;
-				case 3: argReg = X64Register::R9; break;
-				default:
-					assert(false && "Too many arguments");
-					return;
-			}
+			X64Register argReg = INT_PARAM_REGS[i];
 
 			size_t argIndex = first_arg_index + i * arg_stride;
 			if (instruction.isOperandType<Type>(argIndex)) {
 				Type type = instruction.getOperandAs<Type>(argIndex);
 				int size = instruction.getOperandAs<int>(argIndex + 1);
-				unsigned long long value = instruction.getOperandAs<unsigned long long>(argIndex + 2);
 
-				switch (type) {
-					case Type::Int:
-						if (size != 32) {
-							assert(false && "Int type must be 32 bits");
-							return;
-						}
-						{
-							std::array<uint8_t, 5> movInst = { 0xB8, 0, 0, 0, 0 };
-							movInst[0] = 0xB8 + static_cast<uint8_t>(argReg);
-							for (size_t j = 0; j < 4; ++j) {
-								movInst[j + 1] = (value >> (8 * j)) & 0xFF;
+				// Handle immediate values
+				if (instruction.isOperandType<unsigned long long>(argIndex + 2)) {
+					unsigned long long value = instruction.getOperandAs<unsigned long long>(argIndex + 2);
+
+					switch (type) {
+						case Type::Int:
+							if (size != 32) {
+								assert(false && "Int type must be 32 bits");
+								return;
 							}
-							textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-						}
-						break;
-					case Type::Char:
-						if (size != 8) {
-							assert(false && "Char type must be 8 bits");
+							{
+								std::array<uint8_t, 5> movInst = { 0xB8, 0, 0, 0, 0 };
+								movInst[0] = 0xB8 + static_cast<uint8_t>(argReg);
+								for (size_t j = 0; j < 4; ++j) {
+									movInst[j + 1] = (value >> (8 * j)) & 0xFF;
+								}
+								textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+							}
+							break;
+						case Type::Char:
+							if (size != 8) {
+								assert(false && "Char type must be 8 bits");
+								return;
+							}
+							{
+								std::array<uint8_t, 3> movInst = { 0xB0, 0, 0 };
+								movInst[0] = 0xB0 + static_cast<uint8_t>(argReg);
+								movInst[1] = value & 0xFF;
+								textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.begin() + 2);
+							}
+							break;
+						case Type::Void:
+							assert(false && "Void type not allowed as argument");
 							return;
-						}
-						{
-							std::array<uint8_t, 3> movInst = { 0xB0, 0, 0 };
-							movInst[0] = 0xB0 + static_cast<uint8_t>(argReg);
-							movInst[1] = value & 0xFF;
-							textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.begin() + 2);
-						}
-						break;
-					case Type::Void:
-						assert(false && "Void type not allowed as argument");
-						return;
-					default:
-						assert(false && "Unsupported type");
-						return;
+						default:
+							assert(false && "Unsupported type");
+							return;
+					}
+				}
+				// Handle local variables
+				else if (instruction.isOperandType<std::string_view>(argIndex + 2)) {
+					auto var_name = instruction.getOperandAs<std::string_view>(argIndex + 2);
+					
+					// Find the variable's stack offset
+					const StackVariableScope& current_scope = variable_scopes.back();
+					auto it = current_scope.identifier_offset.find(var_name);
+					if (it != current_scope.identifier_offset.end()) {
+						// mov reg, [rsp+offset]
+						std::array<uint8_t, 5> movInst = { 0x48, 0x8B, 0x44, 0x24, 0x00 };
+						movInst[2] = 0x84 + static_cast<uint8_t>(argReg);
+						movInst[4] = static_cast<uint8_t>(it->second);
+						textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+					}
 				}
 			}
 		}
 
 		// call [function name] instruction is 5 bytes
 		auto function_name = instruction.getOperandAs<std::string_view>(1);
-		std::array<uint32_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		writer.add_relocation(textSectionData.size() - 4, function_name);
@@ -238,32 +272,33 @@ private:
 		// Create a new function scope
 		regAlloc.reset();
 		regAlloc.reserve_arguments(instruction.getOperandCount() - 2);
-	
+
 		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, 0x20 (32 bytes shadow space)
 		textSectionData.push_back(0x55); // push rbp
 		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
 		textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xEC); textSectionData.push_back(0x20); // sub rsp, 0x20
-	
+
 		variable_scopes.emplace_back();
-		
+
 		// Handle parameters
-		size_t paramIndex = 3;  // Start after return type, size, and function name
-		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
-			auto param_type = instruction.getOperandAs<Type>(paramIndex);
-			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
-			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
-			
+		constexpr int numOperandsPerArg = 3;
+		size_t operandIndex = 3;  // Start after return type, size, and function name
+		while (operandIndex + numOperandsPerArg <= instruction.getOperandCount()) {  // Need at least type, size, and name
+			auto param_type = instruction.getOperandAs<Type>(operandIndex);
+			auto param_size = instruction.getOperandAs<int>(operandIndex + 1);
+			auto param_name = instruction.getOperandAs<std::string_view>(operandIndex + 2);
+
 			// Store parameter at [rsp+8] for first parameter, [rsp+16] for second, etc.
-			int paramNumber = paramIndex / 3 - 1;
-			int offset = 8 + (paramNumber * 8);
+			int paramNumber = (operandIndex / numOperandsPerArg) - 1;
+			int offset = (paramNumber + 1) * 8;
 			if (paramNumber <= 4) {
 				// Get the register for this parameter based on Win64 calling convention
 				uint8_t reg_code = getWin64RegCode(paramNumber);
 				textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(reg_code); textSectionData.push_back(0x24); textSectionData.push_back(offset);
 			}
-			
+
 			variable_scopes.back().identifier_offset[param_name] = offset;
-			paramIndex += 3;  // Skip type, size, and name
+			operandIndex += numOperandsPerArg;  // Skip type, size, and name
 		}
 	}
 
@@ -378,11 +413,11 @@ private:
 	}
 
 	void handleAdd(const IrInstruction& instruction) {
-		assert(instruction.getOperandCount() == 6 && "Add instruction must have exactly 6 operands: LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+		assert(instruction.getOperandCount() == 7 && "Add instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
 
 		// Get type and size (from LHS)
-		auto type = instruction.getOperandAs<Type>(0);
-		auto size = instruction.getOperandAs<int>(1);
+		auto type = instruction.getOperandAs<Type>(1);
+		auto size = instruction.getOperandAs<int>(2);
 
 		// For now, we only support integer addition
 		if (type != Type::Int) {
@@ -390,18 +425,189 @@ private:
 			return;
 		}
 
+		// Get source and destination from IR
+		auto result_var = instruction.getOperand(0);
+		auto lhs_val = instruction.getOperandAs<std::string_view>(3);
+		auto rhs_val = instruction.getOperandAs<std::string_view>(6);
+
+		// Get offsets for variables
+		int result_offset;
+		bool is_register = std::holds_alternative<TempVar>(result_var);
+		if (is_register) {
+			// It's a register index
+			result_offset = std::get<TempVar>(result_var).index;
+		} else {
+			// It's a variable name
+			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
+		}
+
+		// Load LHS into rcx from [rsp+8]
+		std::array<uint8_t, 5> loadLhsInst = { 0x48, 0x8B, 0x4C, 0x24, 0x08 };  // mov rcx, [rsp+8]
+		textSectionData.insert(textSectionData.end(), loadLhsInst.begin(), loadLhsInst.end());
+
+		// Load RHS into rdx from [rsp+16]
+		std::array<uint8_t, 5> loadRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };  // mov rdx, [rsp+16]
+		textSectionData.insert(textSectionData.end(), loadRhsInst.begin(), loadRhsInst.end());
+
+		// Add rcx and rdx, store in rcx
+		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xD1 };  // add rcx, rdx
+		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
+
+		if (is_register) {
+			// Move result to the correct register
+			X64Register reg = static_cast<X64Register>(result_offset);
+			std::array<uint8_t, 3> movRegInst = { 0x48, 0x89, 0xC0 };  // mov rax, rcx
+			movRegInst[2] = 0xC0 + (static_cast<uint8_t>(reg) << 3);  // Set destination register
+			textSectionData.insert(textSectionData.end(), movRegInst.begin(), movRegInst.end());
+		} else {
+			// Store result in memory
+			std::array<uint8_t, 7> storeResultInst = { 0x48, 0x89, 0x8D, 0x00, 0x00, 0x00, 0x00 };  // mov [rbp+offset], rcx
+			storeResultInst[3] = static_cast<uint8_t>(result_offset & 0xFF);
+			storeResultInst[4] = static_cast<uint8_t>((result_offset >> 8) & 0xFF);
+			storeResultInst[5] = static_cast<uint8_t>((result_offset >> 16) & 0xFF);
+			storeResultInst[6] = static_cast<uint8_t>((result_offset >> 24) & 0xFF);
+			textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+		}
+	}
+
+	void handleSubtract(const IrInstruction& instruction) {
+		assert(instruction.getOperandCount() == 7 && "Subtract instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+
+		// Get type and size (from LHS)
+		auto type = instruction.getOperandAs<Type>(1);
+		auto sizeInBits = instruction.getOperandAs<int>(2);
+
+		// For now, we only support integer subtraction
+		if (type != Type::Int) {
+			assert(false && "Only integer subtraction is supported");
+			return;
+		}
+
+		// Allocate registers for operands and result
+		auto result_reg = regAlloc.allocate();
+		auto lhs_reg = regAlloc.allocate();
+		auto rhs_reg = regAlloc.allocate();
+
 		// Load parameters into registers
-		// mov rax, [rsp+8] for first parameter
+		// mov lhs_reg, [rsp+8] for first parameter
 		std::array<uint8_t, 5> movLhsInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
+		movLhsInst[2] = 0x84 + static_cast<uint8_t>(lhs_reg);
 		textSectionData.insert(textSectionData.end(), movLhsInst.begin(), movLhsInst.end());
 
-		// mov rdx, [rsp+16] for second parameter
+		// mov rhs_reg, [rsp+16] for second parameter
 		std::array<uint8_t, 5> movRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };
+		movRhsInst[2] = 0x84 + static_cast<uint8_t>(rhs_reg);
 		textSectionData.insert(textSectionData.end(), movRhsInst.begin(), movRhsInst.end());
 
-		// add rax, rdx
-		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xD0 };
-		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
+		// mov result_reg, lhs_reg
+		auto movResultLhs = regAlloc.get_reg_reg_move_op_code(result_reg, lhs_reg, sizeInBits / 8);
+		textSectionData.insert(textSectionData.end(), movResultLhs.op_codes.begin(), movResultLhs.op_codes.begin() + movResultLhs.size_in_bytes);
+
+		// sub result_reg, rhs_reg
+		std::array<uint8_t, 3> subInst = { 0x48, 0x29, 0xC0 };
+		subInst[2] = 0xC0 + (static_cast<uint8_t>(result_reg) << 3) + static_cast<uint8_t>(rhs_reg);
+		textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
+
+		// Store result in shadow space
+		std::array<uint8_t, 5> storeResultInst = { 0x48, 0x89, 0x44, 0x24, 0x08 };
+		storeResultInst[2] = 0x84 + static_cast<uint8_t>(result_reg);
+		textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+	}
+
+	void handleMultiply(const IrInstruction& instruction) {
+		assert(instruction.getOperandCount() == 7 && "Multiply instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+
+		// Get type and size (from LHS)
+		auto type = instruction.getOperandAs<Type>(1);
+		auto sizeInBits = instruction.getOperandAs<int>(2);
+
+		// For now, we only support integer multiplication
+		if (type != Type::Int) {
+			assert(false && "Only integer multiplication is supported");
+			return;
+		}
+
+		// Allocate registers for operands and result
+		auto result_reg = regAlloc.allocate();
+		auto lhs_reg = regAlloc.allocate();
+		auto rhs_reg = regAlloc.allocate();
+
+		// Load parameters into registers
+		// mov lhs_reg, [rsp+8] for first parameter
+		std::array<uint8_t, 5> movLhsInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
+		movLhsInst[2] = 0x84 + static_cast<uint8_t>(lhs_reg);
+		textSectionData.insert(textSectionData.end(), movLhsInst.begin(), movLhsInst.end());
+
+		// mov rhs_reg, [rsp+16] for second parameter
+		std::array<uint8_t, 5> movRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };
+		movRhsInst[2] = 0x84 + static_cast<uint8_t>(rhs_reg);
+		textSectionData.insert(textSectionData.end(), movRhsInst.begin(), movRhsInst.end());
+
+		// mov result_reg, lhs_reg
+		auto movResultLhs = regAlloc.get_reg_reg_move_op_code(result_reg, lhs_reg, sizeInBits / 8);
+		textSectionData.insert(textSectionData.end(), movResultLhs.op_codes.begin(), movResultLhs.op_codes.begin() + movResultLhs.size_in_bytes);
+
+		// imul result_reg, rhs_reg
+		std::array<uint8_t, 3> mulInst = { 0x48, 0x0F, 0xAF };
+		mulInst[2] = 0xC0 + (static_cast<uint8_t>(result_reg) << 3) + static_cast<uint8_t>(rhs_reg);
+		textSectionData.insert(textSectionData.end(), mulInst.begin(), mulInst.end());
+
+		// Store result in shadow space
+		std::array<uint8_t, 5> storeResultInst = { 0x48, 0x89, 0x44, 0x24, 0x08 };
+		storeResultInst[2] = 0x84 + static_cast<uint8_t>(result_reg);
+		textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+	}
+
+	void handleDivide(const IrInstruction& instruction) {
+		assert(instruction.getOperandCount() == 7 && "Divide instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+
+		// Get type and size (from LHS)
+		auto type = instruction.getOperandAs<Type>(1);
+		auto sizeInBits = instruction.getOperandAs<int>(2);
+
+		// For now, we only support integer division
+		if (type != Type::Int) {
+			assert(false && "Only integer division is supported");
+			return;
+		}
+
+		// Allocate registers for operands and result
+		auto result_reg = regAlloc.allocate();
+		auto lhs_reg = regAlloc.allocate();
+		auto rhs_reg = regAlloc.allocate();
+
+		// Load parameters into registers
+		// mov lhs_reg, [rsp+8] for first parameter (dividend)
+		std::array<uint8_t, 5> movLhsInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
+		movLhsInst[2] = 0x84 + static_cast<uint8_t>(lhs_reg);
+		textSectionData.insert(textSectionData.end(), movLhsInst.begin(), movLhsInst.end());
+
+		// mov rhs_reg, [rsp+16] for second parameter (divisor)
+		std::array<uint8_t, 5> movRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };
+		movRhsInst[2] = 0x84 + static_cast<uint8_t>(rhs_reg);
+		textSectionData.insert(textSectionData.end(), movRhsInst.begin(), movRhsInst.end());
+
+		// mov rax, lhs_reg (dividend must be in rax)
+		auto movRaxLhs = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, lhs_reg, sizeInBits / 8);
+		textSectionData.insert(textSectionData.end(), movRaxLhs.op_codes.begin(), movRaxLhs.op_codes.begin() + movRaxLhs.size_in_bytes);
+
+		// cdq - sign extend eax into edx:eax
+		std::array<uint8_t, 1> cdqInst = { 0x99 };
+		textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
+
+		// idiv rhs_reg
+		std::array<uint8_t, 2> divInst = { 0x48, 0xF7 };
+		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
+		textSectionData.push_back(0xF8 + static_cast<uint8_t>(rhs_reg));
+
+		// mov result_reg, rax (quotient is in rax)
+		auto movResultRax = regAlloc.get_reg_reg_move_op_code(result_reg, X64Register::RAX, 8);
+		textSectionData.insert(textSectionData.end(), movResultRax.op_codes.begin(), movResultRax.op_codes.begin() + movResultRax.size_in_bytes);
+
+		// Store result in shadow space
+		std::array<uint8_t, 5> storeResultInst = { 0x48, 0x89, 0x44, 0x24, 0x08 };
+		storeResultInst[2] = 0x84 + static_cast<uint8_t>(result_reg);
+		textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
 	}
 
 	void finalizeSections() {

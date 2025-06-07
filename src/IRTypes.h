@@ -12,7 +12,9 @@
 
 enum class IrOpcode {
 	Add,
-	Sub,
+	Subtract,
+	Multiply,
+	Divide,
 	Return,
 	FunctionDecl,
 	FunctionCall,
@@ -26,8 +28,8 @@ enum class X64Register : uint8_t {
 	RCX,
 	RDX,
 	RBX,
-	RSP,
-	RBP,
+	//RSP,
+	//RBP,
 	RSI,
 	RDI,
 	R8,
@@ -99,28 +101,141 @@ public:
 		switch (opcode_) {
 		case IrOpcode::Add:
 		{
-			// add [Type][SizeInBits] [LHS], [RHS]
-			assert(getOperandCount() == 6 && "Add instruction must have exactly 6 operands: LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
-			oss << "add ";
-			oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+			// % = add [Type][SizeInBits] %[LHS], %[RHS]
+			assert(getOperandCount() == 7 && "Add instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
 
-			// LHS operand
-			if (isOperandType<unsigned long long>(2))
-				oss << getOperandAs<unsigned long long>(2);
-			else if (isOperandType<TempVar>(2))
-				oss << '%' << getOperandAs<TempVar>(2).index;
-			else if (isOperandType<std::string_view>(2))
-				oss << '%' << getOperandAs<std::string_view>(2);
+				oss << " = add ";
+				if (getOperandCount() > 1) {
+					oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+					
+					if (isOperandType<unsigned long long>(3))
+						oss << getOperandAs<unsigned long long>(3);
+					else if (isOperandType<TempVar>(3))
+						oss << '%' << getOperandAs<TempVar>(3).index;
+					else if (isOperandType<std::string_view>(3))
+						oss << '%' << getOperandAs<std::string_view>(3);
 
-			oss << ", ";
-			
-			// RHS operand
-			if (isOperandType<unsigned long long>(5))
-				oss << getOperandAs<unsigned long long>(5);
-			else if (isOperandType<TempVar>(5))
-				oss << '%' << getOperandAs<TempVar>(5).index;
-			else if (isOperandType<std::string_view>(5))
-				oss << '%' << getOperandAs<std::string_view>(5);
+					oss << ", ";
+
+					if (isOperandType<unsigned long long>(6))
+						oss << getOperandAs<unsigned long long>(6);
+					else if (isOperandType<TempVar>(6))
+						oss << '%' << getOperandAs<TempVar>(6).index;
+					else if (isOperandType<std::string_view>(6))
+						oss << '%' << getOperandAs<std::string_view>(6);
+				}
+			}
+		}
+		break;
+
+		case IrOpcode::Subtract:
+		{
+			// % = sub [Type][SizeInBits] %[LHS], %[RHS]
+			assert(getOperandCount() == 7 && "Subtract instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = sub ";
+				if (getOperandCount() > 1) {
+					oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+					
+					if (isOperandType<unsigned long long>(3))
+						oss << getOperandAs<unsigned long long>(3);
+					else if (isOperandType<TempVar>(3))
+						oss << '%' << getOperandAs<TempVar>(3).index;
+					else if (isOperandType<std::string_view>(3))
+						oss << '%' << getOperandAs<std::string_view>(3);
+
+					oss << ", ";
+
+					if (isOperandType<unsigned long long>(6))
+						oss << getOperandAs<unsigned long long>(6);
+					else if (isOperandType<TempVar>(6))
+						oss << '%' << getOperandAs<TempVar>(6).index;
+					else if (isOperandType<std::string_view>(6))
+						oss << '%' << getOperandAs<std::string_view>(6);
+				}
+			}
+		}
+		break;
+
+		case IrOpcode::Multiply:
+		{
+			// % = mul [Type][SizeInBits] %[LHS], %[RHS]
+			assert(getOperandCount() == 7 && "Multiply instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = mul ";
+				if (getOperandCount() > 1) {
+					oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+					
+					if (isOperandType<unsigned long long>(3))
+						oss << getOperandAs<unsigned long long>(3);
+					else if (isOperandType<TempVar>(3))
+						oss << '%' << getOperandAs<TempVar>(3).index;
+					else if (isOperandType<std::string_view>(3))
+						oss << '%' << getOperandAs<std::string_view>(3);
+
+					oss << ", ";
+
+					if (isOperandType<unsigned long long>(6))
+						oss << getOperandAs<unsigned long long>(6);
+					else if (isOperandType<TempVar>(6))
+						oss << '%' << getOperandAs<TempVar>(6).index;
+					else if (isOperandType<std::string_view>(6))
+						oss << '%' << getOperandAs<std::string_view>(6);
+				}
+			}
+		}
+		break;
+
+		case IrOpcode::Divide:
+		{
+			// % = div [Type][SizeInBits] %[LHS], %[RHS]
+			assert(getOperandCount() == 7 && "Divide instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = div ";
+				if (getOperandCount() > 1) {
+					oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+					
+					if (isOperandType<unsigned long long>(3))
+						oss << getOperandAs<unsigned long long>(3);
+					else if (isOperandType<TempVar>(3))
+						oss << '%' << getOperandAs<TempVar>(3).index;
+					else if (isOperandType<std::string_view>(3))
+						oss << '%' << getOperandAs<std::string_view>(3);
+
+					oss << ", ";
+
+					if (isOperandType<unsigned long long>(6))
+						oss << getOperandAs<unsigned long long>(6);
+					else if (isOperandType<TempVar>(6))
+						oss << '%' << getOperandAs<TempVar>(6).index;
+					else if (isOperandType<std::string_view>(6))
+						oss << '%' << getOperandAs<std::string_view>(6);
+				}
+			}
 		}
 		break;
 

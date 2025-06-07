@@ -38,6 +38,9 @@ private:
 		if (!definition_block.has_value())
 			return;
 
+		// Reset the temporary variable counter for each new function
+		var_counter = TempVar();
+
 		const DeclarationNode& func_decl = node.decl_node();
 		const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 
@@ -87,7 +90,7 @@ private:
 		if (node.expression()) {
 			auto operands = visitExpressionNode(node.expression()->as<ExpressionNode>());
 			// Add the return value's type and size information
-			ir_.addInstruction(IrOpcode::Return, std::move(operands));
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(operands)));
 		}
 		else {
 			// For void returns, we don't need any operands
@@ -114,21 +117,7 @@ private:
 		}
 		else if (std::holds_alternative<FunctionCallNode>(exprNode)) {
 			const auto& expr = std::get<FunctionCallNode>(exprNode);
-			auto operands = generateFunctionCallIr(expr);
-			
-			// Check if we have enough operands for a function call
-			if (operands.size() >= 3) {
-				std::vector<IrOperand> return_operands{ operands.end() - 3, operands.end() };
-				operands.erase(operands.end() - 3, operands.end());
-
-				ir_.addInstruction(
-					IrInstruction(IrOpcode::FunctionCall, std::move(operands)));
-
-				return return_operands;
-			} else {
-				// Handle error case - function call with insufficient operands
-				return {};
-			}
+			return generateFunctionCallIr(expr);
 		}
 		else {
 			assert(false && "Not implemented yet");
@@ -166,24 +155,38 @@ private:
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
-		// Insert the IR for the lhs and rhs into the irOperands vector
+		// Create a temporary variable for the result
+		TempVar result_var = var_counter.next();
+
+		// Add the result variable first
+		irOperands.emplace_back(result_var);
+
+		// Add the left-hand side operands
 		irOperands.insert(irOperands.end(), lhsIrOperands.begin(), lhsIrOperands.end());
+
+		// Add the right-hand side operands
 		irOperands.insert(irOperands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
 
-		// Generate the IR for the add operation
+		// Generate the IR for the operation based on the operator
 		if (binaryOperatorNode.op() == "+") {
-			// Create a temporary variable for the result
-			TempVar result_var = var_counter.next();
-			
-			// Add the instruction
-			ir_.addInstruction(
-				IrInstruction(IrOpcode::Add, std::move(irOperands)));
-
-			// Return the result variable with its type and size
-			return { lhsIrOperands[0], lhsIrOperands[1], result_var };
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "-") {
+			ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "*") {
+			ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "/") {
+			ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(irOperands)));
+		}
+		else {
+			assert(false && "Unsupported binary operator");
+			return {};
 		}
 
-		return {};
+		// Return the result variable with its type and size
+		return { lhsIrOperands[0], lhsIrOperands[1], result_var };
 	}
 
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
@@ -200,16 +203,27 @@ private:
 		// Generate IR for function arguments
 		functionCallNode.arguments().visit([&](ASTNode argument) {
 			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-			irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+			// For variables, we need to add the type and size
+			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+				const auto& decl_node = symbol->as<DeclarationNode>();
+				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+				irOperands.emplace_back(type_node.type());
+				irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+				irOperands.emplace_back(identifier.name());
+			}
+			else {
+				irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+			}
 		});
 
-		// Always add the return type information
-		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
-		irOperands.emplace_back(return_type.type());
-		irOperands.emplace_back(static_cast<int>(return_type.size_in_bits()));
-		irOperands.emplace_back(ret_var);
+		// Add the function call instruction
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands)));
 
-		return irOperands;
+		// Return the result variable with its type and size
+		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var };
 	}
 
 	Ir ir_;
