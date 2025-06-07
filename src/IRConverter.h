@@ -14,19 +14,15 @@
 
 // Define the calling convention for x64 Windows
 enum class Win64CallingConvention : uint8_t {
-    RCX = static_cast<uint8_t>(X64Register::RCX),  // First integer/pointer argument
-    RDX = static_cast<uint8_t>(X64Register::RDX),  // Second integer/pointer argument
-    R8 = static_cast<uint8_t>(X64Register::R8),    // Third integer/pointer argument
-    R9 = static_cast<uint8_t>(X64Register::R9),    // Fourth integer/pointer argument
-    XMM0 = static_cast<uint8_t>(X64Register::XMM0), // First floating point argument
-    XMM1 = static_cast<uint8_t>(X64Register::XMM1), // Second floating point argument
-    XMM2 = static_cast<uint8_t>(X64Register::XMM2), // Third floating point argument
-    XMM3 = static_cast<uint8_t>(X64Register::XMM3), // Fourth floating point argument
-    FirstArgument = RCX,
-    SecondArgument = RDX,
-    ThirdArgument = R8,
-    FourthArgument = R9,
-    Count = 8
+	RCX = static_cast<uint8_t>(X64Register::RCX),  // First integer/pointer argument
+	RDX = static_cast<uint8_t>(X64Register::RDX),  // Second integer/pointer argument
+	R8 = static_cast<uint8_t>(X64Register::R8),    // Third integer/pointer argument
+	R9 = static_cast<uint8_t>(X64Register::R9),    // Fourth integer/pointer argument
+	XMM0 = static_cast<uint8_t>(X64Register::XMM0), // First floating point argument
+	XMM1 = static_cast<uint8_t>(X64Register::XMM1), // Second floating point argument
+	XMM2 = static_cast<uint8_t>(X64Register::XMM2), // Third floating point argument
+	XMM3 = static_cast<uint8_t>(X64Register::XMM3), // Fourth floating point argument
+	Count = 8
 };
 
 struct RegisterAllocator
@@ -67,7 +63,7 @@ struct RegisterAllocator
 
 	void reserve_arguments(size_t count) {
 		for (size_t i = 0; i < count && i < static_cast<size_t>(Win64CallingConvention::Count); ++i) {
-			registers[static_cast<size_t>(Win64CallingConvention::FirstArgument) + i].isAllocated = true;
+			registers[i].isAllocated = true;
 		}
 	}
 
@@ -101,14 +97,28 @@ struct RegisterAllocator
 	}
 };
 
+// Helper function to get register code for Win64 calling convention
+static uint8_t getWin64RegCode(int paramIndex) {
+	switch (paramIndex) {
+		case 0:
+			return 0x4C;  // RCX
+		case 1:
+			return 0x54;  // RDX
+		case 2:
+			return 0x44;  // R8
+		case 3:
+			return 0x4C;  // R9
+		default:
+			return 0x4C;  // Default to RCX for safety
+	}
+}
+
 template<class TWriterClass = ObjectFileWriter>
 class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
 
-	void convert(const Ir& ir, const std::string& filename) {
-		// add int 3
-		textSectionData.push_back(static_cast<char>(0xcc));
+	void convert(const Ir& ir, const char* filename) {
 
 		for (const auto& instruction : ir.getInstructions()) {
 			switch (instruction.getOpcode()) {
@@ -127,6 +137,9 @@ public:
 			case IrOpcode::Store:
 				handleStore(instruction);
 				break;
+			case IrOpcode::Add:
+				handleAdd(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -143,66 +156,62 @@ private:
 
 		// First, handle any arguments by moving them to the correct registers
 		// In x64 calling convention, first 4 args go to RCX, RDX, R8, R9
-		size_t argIndex = 2;  // Start after return var and function name
-		while (argIndex < instruction.getOperandCount()) {
+		const size_t first_arg_index = 2; // Start after return var and function name
+		const size_t arg_stride = 3; // type, size, value
+		const size_t num_args = (instruction.getOperandCount() - first_arg_index) / arg_stride;
+		for (size_t i = 0; i < num_args; ++i) {
 			X64Register argReg;
-			switch (argIndex - 2) {
-			case 0: argReg = X64Register::RCX; break;
-			case 1: argReg = X64Register::RDX; break;
-			case 2: argReg = X64Register::R8; break;
-			case 3: argReg = X64Register::R9; break;
-			default:
-				assert(false && "Too many arguments");
-				return;
+			switch (i) {
+				case 0: argReg = X64Register::RCX; break;
+				case 1: argReg = X64Register::RDX; break;
+				case 2: argReg = X64Register::R8; break;
+				case 3: argReg = X64Register::R9; break;
+				default:
+					assert(false && "Too many arguments");
+					return;
 			}
 
-			// Get the argument value
+			size_t argIndex = first_arg_index + i * arg_stride;
 			if (instruction.isOperandType<Type>(argIndex)) {
 				Type type = instruction.getOperandAs<Type>(argIndex);
 				int size = instruction.getOperandAs<int>(argIndex + 1);
 				unsigned long long value = instruction.getOperandAs<unsigned long long>(argIndex + 2);
 
-				// Handle type operand
 				switch (type) {
-				case Type::Int:
-					// For int type, we expect a 32-bit value
-					if (size != 32) {
-						assert(false && "Int type must be 32 bits");
-						return;
-					}
-					{
-						// mov reg, immediate
-						std::array<uint8_t, 5> movInst = { 0xB8, 0, 0, 0, 0 };
-						movInst[0] = 0xB8 + static_cast<uint8_t>(argReg);  // Adjust opcode for target register
-						for (size_t i = 0; i < 4; ++i) {
-							movInst[i + 1] = (value >> (8 * i)) & 0xFF;
+					case Type::Int:
+						if (size != 32) {
+							assert(false && "Int type must be 32 bits");
+							return;
 						}
-						textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-					}
-					break;
-				case Type::Char:
-					// For char type, we expect an 8-bit value
-					if (size != 8) {
-						assert(false && "Char type must be 8 bits");
+						{
+							std::array<uint8_t, 5> movInst = { 0xB8, 0, 0, 0, 0 };
+							movInst[0] = 0xB8 + static_cast<uint8_t>(argReg);
+							for (size_t j = 0; j < 4; ++j) {
+								movInst[j + 1] = (value >> (8 * j)) & 0xFF;
+							}
+							textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+						}
+						break;
+					case Type::Char:
+						if (size != 8) {
+							assert(false && "Char type must be 8 bits");
+							return;
+						}
+						{
+							std::array<uint8_t, 3> movInst = { 0xB0, 0, 0 };
+							movInst[0] = 0xB0 + static_cast<uint8_t>(argReg);
+							movInst[1] = value & 0xFF;
+							textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.begin() + 2);
+						}
+						break;
+					case Type::Void:
+						assert(false && "Void type not allowed as argument");
 						return;
-					}
-					{
-						// mov reg, immediate (8-bit)
-						std::array<uint8_t, 3> movInst = { 0xB0, 0, 0 };
-						movInst[0] = 0xB0 + static_cast<uint8_t>(argReg);  // Adjust opcode for target register
-						movInst[1] = value & 0xFF;  // Only use lowest byte
-						textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.begin() + 2);
-					}
-					break;
-				case Type::Void:
-					assert(false && "Void type not allowed as argument");
-					return;
-				default:
-					assert(false && "Unsupported type");
-					return;
+					default:
+						assert(false && "Unsupported type");
+						return;
 				}
 			}
-			argIndex += 3;  // Skip type, size, and value operands
 		}
 
 		// call [function name] instruction is 5 bytes
@@ -222,11 +231,11 @@ private:
 		if (nop_count < 16)
 			textSectionData.insert(textSectionData.end(), nop_count, nop);
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
-	
+
 		writer.add_function_symbol(std::string(func_name), func_offset);
 		functionSymbols[func_name] = func_offset;
-	
-		// reset function register allocations
+
+		// Create a new function scope
 		regAlloc.reset();
 		regAlloc.reserve_arguments(instruction.getOperandCount() - 2);
 	
@@ -245,8 +254,13 @@ private:
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
 			
 			// Store parameter at [rsp+8] for first parameter, [rsp+16] for second, etc.
-			int offset = 8 + (paramIndex - 3) * 8;
-			textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(0x4C); textSectionData.push_back(0x24); textSectionData.push_back(offset); // mov [rsp+offset], rcx
+			int paramNumber = paramIndex / 3 - 1;
+			int offset = 8 + (paramNumber * 8);
+			if (paramNumber <= 4) {
+				// Get the register for this parameter based on Win64 calling convention
+				uint8_t reg_code = getWin64RegCode(paramNumber);
+				textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(reg_code); textSectionData.push_back(0x24); textSectionData.push_back(offset);
+			}
 			
 			variable_scopes.back().identifier_offset[param_name] = offset;
 			paramIndex += 3;  // Skip type, size, and name
@@ -361,6 +375,33 @@ private:
 			movInst[2] = 0x85;  // [rbp + disp32]
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
+	}
+
+	void handleAdd(const IrInstruction& instruction) {
+		assert(instruction.getOperandCount() == 6 && "Add instruction must have exactly 6 operands: LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+
+		// Get type and size (from LHS)
+		auto type = instruction.getOperandAs<Type>(0);
+		auto size = instruction.getOperandAs<int>(1);
+
+		// For now, we only support integer addition
+		if (type != Type::Int) {
+			assert(false && "Only integer addition is supported");
+			return;
+		}
+
+		// Load parameters into registers
+		// mov rax, [rsp+8] for first parameter
+		std::array<uint8_t, 5> movLhsInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
+		textSectionData.insert(textSectionData.end(), movLhsInst.begin(), movLhsInst.end());
+
+		// mov rdx, [rsp+16] for second parameter
+		std::array<uint8_t, 5> movRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };
+		textSectionData.insert(textSectionData.end(), movRhsInst.begin(), movRhsInst.end());
+
+		// add rax, rdx
+		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xD0 };
+		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
 	}
 
 	void finalizeSections() {

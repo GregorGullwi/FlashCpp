@@ -6,6 +6,7 @@
 #include <vector>
 #include <any>
 #include <sstream>
+#include <cassert>
 
 #include "AstNodeTypes.h"
 
@@ -98,16 +99,37 @@ public:
 		switch (opcode_) {
 		case IrOpcode::Add:
 		{
+			// add [Type][SizeInBits] [LHS], [RHS]
+			assert(getOperandCount() == 6 && "Add instruction must have exactly 6 operands: LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+			oss << "add ";
+			oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+
+			// LHS operand
+			if (isOperandType<unsigned long long>(2))
+				oss << getOperandAs<unsigned long long>(2);
+			else if (isOperandType<TempVar>(2))
+				oss << '%' << getOperandAs<TempVar>(2).index;
+			else if (isOperandType<std::string_view>(2))
+				oss << '%' << getOperandAs<std::string_view>(2);
+
+			oss << ", ";
+			
+			// RHS operand
+			if (isOperandType<unsigned long long>(5))
+				oss << getOperandAs<unsigned long long>(5);
+			else if (isOperandType<TempVar>(5))
+				oss << '%' << getOperandAs<TempVar>(5).index;
+			else if (isOperandType<std::string_view>(5))
+				oss << '%' << getOperandAs<std::string_view>(5);
 		}
 		break;
 
 		case IrOpcode::Return:
 		{
 			// ret [Type][SizeInBits] [Value]
-			oss << "ret ";
-
-			if (getOperandCount() == 3) {
-				oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+			oss << "ret";
+			if (getOperandCount() >= 3) {
+				oss << " " << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
 
 				if (isOperandType<unsigned long long>(2))
 					oss << getOperandAs<unsigned long long>(2);

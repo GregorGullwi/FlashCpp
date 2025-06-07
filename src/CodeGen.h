@@ -86,10 +86,11 @@ private:
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
 			auto operands = visitExpressionNode(node.expression()->as<ExpressionNode>());
-
+			// Add the return value's type and size information
 			ir_.addInstruction(IrOpcode::Return, std::move(operands));
 		}
 		else {
+			// For void returns, we don't need any operands
 			ir_.addInstruction(IrOpcode::Return);
 		}
 	}
@@ -171,8 +172,15 @@ private:
 
 		// Generate the IR for the add operation
 		if (binaryOperatorNode.op() == "+") {
+			// Create a temporary variable for the result
+			TempVar result_var = var_counter.next();
+			
+			// Add the instruction
 			ir_.addInstruction(
 				IrInstruction(IrOpcode::Add, std::move(irOperands)));
+
+			// Return the result variable with its type and size
+			return { lhsIrOperands[0], lhsIrOperands[1], result_var };
 		}
 
 		return {};
