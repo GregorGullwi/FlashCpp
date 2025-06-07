@@ -34,6 +34,20 @@ public:
 			else if (c == '#') {
 				consume_file_info();
 			}
+			else if (c == '/' && num_characters_left >= 2) {
+				if (source_[cursor_ + 1] == '/') {
+					consume_single_line_comment();
+					continue;
+				}
+				else if (source_[cursor_ + 1] == '*') {
+					consume_multi_line_comment();
+					continue;
+				}
+				else {
+					// Handle division operator
+					return consume_operator();
+				}
+			}
 			else if (std::isalpha(c) || c == '_') {
 				return consume_identifier_or_keyword();
 			}
@@ -84,6 +98,41 @@ private:
 	size_t column_;
 	size_t current_file_index_;
 	std::vector<std::string> file_paths_;
+
+	void consume_single_line_comment() {
+		// Skip the '//'
+		cursor_ += 2;
+		column_ += 2;
+
+		// Consume until end of line or end of file
+		while (cursor_ < source_size_ && source_[cursor_] != '\n') {
+			++cursor_;
+			++column_;
+		}
+	}
+
+	void consume_multi_line_comment() {
+		// Skip the '/*'
+		cursor_ += 2;
+		column_ += 2;
+
+		// Consume until '*/' or end of file
+		while (cursor_ < source_size_) {
+			if (source_[cursor_] == '\n') {
+				++line_;
+				column_ = 1;
+			}
+			else if (source_[cursor_] == '*' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '/') {
+				cursor_ += 2;  // Skip the '*/'
+				column_ += 2;
+				return;
+			}
+			else {
+				++column_;
+			}
+			++cursor_;
+		}
+	}
 
 	void consume_whitespace() {
 		while (cursor_ < source_size_ && std::isspace(source_[cursor_])) {
