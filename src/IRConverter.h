@@ -112,19 +112,18 @@ struct RegisterAllocator
 	}
 };
 
-// Helper function to get register code for Win64 calling convention
-static uint8_t getWin64RegCode(int paramIndex) {
-	switch (paramIndex) {
-		case 0:
-			return 0x4C;  // RCX
-		case 1:
-			return 0x54;  // RDX
-		case 2:
-			return 0x44;  // R8
-		case 3:
-			return 0x4C;  // R9
-		default:
-			return 0x4C;  // Default to RCX for safety
+struct RegCode {
+	uint8_t code;
+	bool use_rex;
+};
+
+RegCode getWin64RegCode(int paramNumber) {
+	switch (paramNumber) {
+		case 0: return {0x4C, false};  // RCX
+		case 1: return {0x54, false};  // RDX
+		case 2: return {0x44, true};   // R8
+		case 3: return {0x4C, true};   // R9
+		default: return {0, false};
 	}
 }
 
@@ -175,76 +174,76 @@ public:
 
 private:
 	void handleFunctionCall(const IrInstruction& instruction) {
-		// Function call should have at least 2 operands (return var and function name)
-		assert(instruction.getOperandCount() >= 2);
+		assert(instruction.getOperandCount() >= 2 && "Function call must have at least 2 operands (result, function name)");
 
-		// First, handle any arguments by moving them to the correct registers
-		// In x64 calling convention, first 4 args go to RCX, RDX, R8, R9
-		const size_t first_arg_index = 2; // Start after return var and function name
+		// Get result variable and function name
+		auto result_var = instruction.getOperand(0);
+		auto funcName = instruction.getOperandAs<std::string_view>(1);
+
+		// Get result offset
+		int result_offset = 0;
+		if (std::holds_alternative<TempVar>(result_var)) {
+			result_offset = std::get<TempVar>(result_var).index;
+		} else {
+			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
+		}
+
+		// Process arguments (if any)
+		const size_t first_arg_index = 2; // Start after result and function name
 		const size_t arg_stride = 3; // type, size, value
 		const size_t num_args = (instruction.getOperandCount() - first_arg_index) / arg_stride;
 		for (size_t i = 0; i < num_args; ++i) {
-			X64Register argReg = INT_PARAM_REGS[i];
-
 			size_t argIndex = first_arg_index + i * arg_stride;
-			if (instruction.isOperandType<Type>(argIndex)) {
-				Type type = instruction.getOperandAs<Type>(argIndex);
-				int size = instruction.getOperandAs<int>(argIndex + 1);
+			Type argType = instruction.getOperandAs<Type>(argIndex);
+			// int argSize = instruction.getOperandAs<int>(argIndex + 1); // unused for now
+			auto argValue = instruction.getOperand(argIndex + 2); // could be immediate or variable
 
-				// Handle immediate values
-				if (instruction.isOperandType<unsigned long long>(argIndex + 2)) {
-					unsigned long long value = instruction.getOperandAs<unsigned long long>(argIndex + 2);
+			if (argType != Type::Int) {
+				assert(false && "Only integer arguments are supported");
+				return;
+			}
 
-					switch (type) {
-						case Type::Int:
-							if (size != 32) {
-								assert(false && "Int type must be 32 bits");
-								return;
-							}
-							{
-								std::array<uint8_t, 5> movInst = { 0xB8, 0, 0, 0, 0 };
-								movInst[0] = 0xB8 + static_cast<uint8_t>(argReg);
-								for (size_t j = 0; j < 4; ++j) {
-									movInst[j + 1] = (value >> (8 * j)) & 0xFF;
-								}
-								textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-							}
-							break;
-						case Type::Char:
-							if (size != 8) {
-								assert(false && "Char type must be 8 bits");
-								return;
-							}
-							{
-								std::array<uint8_t, 3> movInst = { 0xB0, 0, 0 };
-								movInst[0] = 0xB0 + static_cast<uint8_t>(argReg);
-								movInst[1] = value & 0xFF;
-								textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.begin() + 2);
-							}
-							break;
-						case Type::Void:
-							assert(false && "Void type not allowed as argument");
-							return;
-						default:
-							assert(false && "Unsupported type");
-							return;
-					}
+			auto reg_code = getWin64RegCode(i);
+			if (reg_code.use_rex) {
+				textSectionData.push_back(0x40);  // REX.B prefix
+			}
+			textSectionData.push_back(0x48);  // REX.W prefix
+
+			if (std::holds_alternative<unsigned long long>(argValue)) {
+				// Immediate value
+				uint8_t opcode;
+				switch (i) {
+					case 0: opcode = 0xB9; break;  // RCX
+					case 1: opcode = 0xBA; break;  // RDX
+					case 2: opcode = 0xB8; break;  // R8
+					case 3: opcode = 0xB9; break;  // R9
+					default: opcode = 0xB8; break; // Default to RAX
 				}
-				// Handle local variables
-				else if (instruction.isOperandType<std::string_view>(argIndex + 2)) {
-					auto var_name = instruction.getOperandAs<std::string_view>(argIndex + 2);
-					
-					// Find the variable's stack offset
-					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.identifier_offset.find(var_name);
-					if (it != current_scope.identifier_offset.end()) {
-						// mov reg, [rsp+offset]
-						std::array<uint8_t, 5> movInst = { 0x48, 0x8B, 0x44, 0x24, 0x00 };
-						movInst[2] = 0x84 + static_cast<uint8_t>(argReg);
-						movInst[4] = static_cast<uint8_t>(it->second);
-						textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-					}
+				textSectionData.push_back(opcode);  // MOV r64, imm64
+				unsigned long long value = std::get<unsigned long long>(argValue);
+				for (size_t j = 0; j < 8; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
+					value >>= 8;
 				}
+			} else if (std::holds_alternative<std::string_view>(argValue)) {
+				// Local variable
+				std::string_view var_name = std::get<std::string_view>(argValue);
+				int var_offset = variable_scopes.back().identifier_offset[var_name];
+				// Load from stack: MOV r64, [rbp+offset]
+				textSectionData.push_back(0x8B);  // MOV r64, r/m64
+				textSectionData.push_back(0x85 + (reg_code.code & 0x07));  // [rbp+disp32]
+				textSectionData.push_back(static_cast<uint8_t>(var_offset & 0xFF));
+				textSectionData.push_back(static_cast<uint8_t>((var_offset >> 8) & 0xFF));
+				textSectionData.push_back(static_cast<uint8_t>((var_offset >> 16) & 0xFF));
+				textSectionData.push_back(static_cast<uint8_t>((var_offset >> 24) & 0xFF));
+			} else if (std::holds_alternative<TempVar>(argValue)) {
+				// Register value
+				auto src_reg = std::get<TempVar>(argValue);
+				// MOV r64, r64
+				textSectionData.push_back(0x89);  // MOV r/m64, r64
+				textSectionData.push_back(0xC0 + (reg_code.code & 0x07) + (src_reg.index << 3));  // ModR/M byte
+			} else {
+				assert(false && "Unsupported argument value type");
 			}
 		}
 
@@ -281,24 +280,26 @@ private:
 		variable_scopes.emplace_back();
 
 		// Handle parameters
-		constexpr int numOperandsPerArg = 3;
-		size_t operandIndex = 3;  // Start after return type, size, and function name
-		while (operandIndex + numOperandsPerArg <= instruction.getOperandCount()) {  // Need at least type, size, and name
-			auto param_type = instruction.getOperandAs<Type>(operandIndex);
-			auto param_size = instruction.getOperandAs<int>(operandIndex + 1);
-			auto param_name = instruction.getOperandAs<std::string_view>(operandIndex + 2);
+		size_t paramIndex = 3;  // Start after return type, size, and function name
+		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
+			auto param_type = instruction.getOperandAs<Type>(paramIndex);
+			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
+			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
 
 			// Store parameter at [rsp+8] for first parameter, [rsp+16] for second, etc.
-			int paramNumber = (operandIndex / numOperandsPerArg) - 1;
-			int offset = (paramNumber + 1) * 8;
+			int paramNumber = paramIndex / 3 - 1;
+			int offset = 8 + (paramNumber * 8);
 			if (paramNumber <= 4) {
 				// Get the register for this parameter based on Win64 calling convention
-				uint8_t reg_code = getWin64RegCode(paramNumber);
-				textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(reg_code); textSectionData.push_back(0x24); textSectionData.push_back(offset);
+				auto reg_code = getWin64RegCode(paramNumber);
+				if (reg_code.use_rex) {
+					textSectionData.push_back(0x40);  // REX.B prefix
+				}
+				textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(reg_code.code); textSectionData.push_back(0x24); textSectionData.push_back(offset);
 			}
 
 			variable_scopes.back().identifier_offset[param_name] = offset;
-			operandIndex += numOperandsPerArg;  // Skip type, size, and name
+			paramIndex += 3;  // Skip type, size, and name
 		}
 	}
 
