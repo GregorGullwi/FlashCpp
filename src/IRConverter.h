@@ -204,22 +204,25 @@ private:
 			}
 
 			auto reg_code = getWin64RegCode(i);
+			// REX.W prefix is always needed for 64-bit operands
 			if (reg_code.use_rex) {
-				textSectionData.push_back(0x40);  // REX.B prefix
+				textSectionData.push_back(0x49);  // REX.W + REX.B for R8/R9
+			} else {
+				textSectionData.push_back(0x48);  // REX.W for RCX/RDX
 			}
-			textSectionData.push_back(0x48);  // REX.W prefix
 
 			if (std::holds_alternative<unsigned long long>(argValue)) {
 				// Immediate value
+				// MOV r64, imm64 with appropriate register encoding
 				uint8_t opcode;
 				switch (i) {
 					case 0: opcode = 0xB9; break;  // RCX
 					case 1: opcode = 0xBA; break;  // RDX
 					case 2: opcode = 0xB8; break;  // R8
 					case 3: opcode = 0xB9; break;  // R9
-					default: opcode = 0xB8; break; // Default to RAX
+					default: opcode = 0xB8; break;
 				}
-				textSectionData.push_back(opcode);  // MOV r64, imm64
+				textSectionData.push_back(opcode);
 				unsigned long long value = std::get<unsigned long long>(argValue);
 				for (size_t j = 0; j < 8; ++j) {
 					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
