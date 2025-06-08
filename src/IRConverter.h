@@ -190,12 +190,26 @@ constexpr std::array<X64Register, 4> FLOAT_PARAM_REGS = {
 	X64Register::XMM3  // Fourth floating point argument
 };
 
+std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
+	if (stackVariableOffset < 0) {
+		return TempVar{ .index = static_cast<size_t>(stackVariableOffset / -8) };
+	}
+
+	return std::nullopt;
+}
+
+int32_t getStackOffsetFromTempVar(TempVar tempVar) {
+	return tempVar.index * -8;
+}
+
 struct RegisterAllocator
 {
 	static constexpr uint8_t REGISTER_COUNT = static_cast<uint8_t>(X64Register::Count);
 	struct AllocatedRegister {
-		X64Register reg;
+		X64Register reg = X64Register::Count;
 		bool isAllocated = false;
+		bool isDirty = false;	// Does the stack variable need to be updated on a flush
+		int32_t stackVariableOffset = INT_MIN;
 	};
 	std::array<AllocatedRegister, REGISTER_COUNT> registers;
 
@@ -209,37 +223,71 @@ struct RegisterAllocator
 
 	void reset() {
 		for (auto& reg : registers) {
-			reg.isAllocated = false;
+			reg = AllocatedRegister{ .reg = reg.reg };
+		}
+		registers[static_cast<int>(X64Register::RSP)].isAllocated = true;	// assume RSP is always allocated
+		registers[static_cast<int>(X64Register::RBP)].isAllocated = true;	// assume RBP is always allocated
+	}
+
+	template<typename Func>
+	void flushAllDirtyRegisters(Func func) {
+		for (auto& reg : registers) {
+			if (reg.isDirty) {
+				func(reg.reg, reg.stackVariableOffset);
+				reg.isDirty = false;
+			}
 		}
 	}
 
-	X64Register allocate() {
+	const AllocatedRegister& allocate() {
 		for (auto& reg : registers) {
 			if (!reg.isAllocated) {
 				reg.isAllocated = true;
-				return reg.reg;
+				return reg;
 			}
 		}
 		throw std::runtime_error("No registers available");
 	}
 
-	void allocateSpecific(X64Register reg) {
+	void allocateSpecific(X64Register reg, int32_t stackVariableOffset) {
 		assert(!registers[static_cast<int>(reg)].isAllocated);
 		registers[static_cast<int>(reg)].isAllocated = true;
+		set_stack_variable_offset(reg, stackVariableOffset);
 	}
 
 	void release(X64Register reg) {
-		registers[static_cast<int>(reg)].isAllocated = false;
+		registers[static_cast<int>(reg)] = AllocatedRegister{};
 	}
 
 	bool is_allocated(X64Register reg) const {
 		return registers[static_cast<size_t>(reg)].isAllocated;
 	}
 
+	void mark_reg_dirty(X64Register reg) {
+		assert(registers[static_cast<int>(reg)].isAllocated);
+		registers[static_cast<int>(reg)].isDirty = true;
+	}
+
 	void reserve_arguments(size_t count) {
 		for (size_t i = 0; i < count && i < INT_PARAM_REGS.size(); ++i) {
 			registers[static_cast<int>(INT_PARAM_REGS[i])].isAllocated = true;
+			registers[static_cast<int>(INT_PARAM_REGS[i])].stackVariableOffset = 0x10 + i * 8;	// First argument is stored at RBP+10h, seconds RBP+18h, etc...
 		}
+	}
+
+	std::optional<X64Register> tryGetStackVariableRegister(int32_t stackVariableOffset) const {
+		for (auto& reg : registers) {
+			if (reg.stackVariableOffset == stackVariableOffset) {
+				return reg.reg;
+			}
+		}
+		return std::nullopt;
+	}
+
+	void set_stack_variable_offset(X64Register reg, int32_t stackVariableOffset) {
+		assert(registers[static_cast<int>(reg)].isAllocated);
+		registers[static_cast<int>(reg)].stackVariableOffset = stackVariableOffset;
+		registers[static_cast<int>(reg)].isDirty = true;
 	}
 
 	OpCodeWithSize get_reg_reg_move_op_code(X64Register dst_reg, X64Register src_reg, size_t size_in_bytes) {
@@ -351,8 +399,8 @@ private:
 		Type type = Type::Void;
 		int size_in_bits{};
 		const IrOperand& result_operand;
-		X64Register result_physical_reg = X64Register::Count;
-		X64Register rhs_physical_reg = X64Register::Count;
+		X64Register result_physical_reg;
+		X64Register rhs_physical_reg;
 	};
 
 	// Setup and load operands for arithmetic operations - validates operands, extracts common data, and loads into registers
@@ -372,17 +420,54 @@ private:
 			assert(false && (std::string("Only integer ") + operation_name + " is supported").c_str());
 		}
 
-		// Allocate physical registers for operands. The result will be stored in result_physical_reg
-		ctx.result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
-		ctx.rhs_physical_reg = regAlloc.allocate();
+		ctx.result_physical_reg = X64Register::Count;
+		if (instruction.isOperandType<std::string_view>(3)) {
+			auto lhs_var_op = instruction.getOperandAs<std::string_view>(3);
+			auto lhs_var_id = variable_scopes.back().identifier_offset.find(lhs_var_op);
+			if (lhs_var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto var_reg = regAlloc.tryGetStackVariableRegister(lhs_var_id->second); var_reg.has_value()) {
+					ctx.result_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
+				}
+				else {
+					assert(variable_scopes.back().current_stack_offset < lhs_var_id->second);
 
-		// Load LHS into result_physical_reg from [rbp+16] (first parameter)
-		auto lhs_opcodes = generateMovFromFrame(ctx.result_physical_reg, 16);
-		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
+					ctx.result_physical_reg = regAlloc.allocate().reg;
+					auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				}
+			}
+			else {
+				assert(false && "Missing variable name"); // TODO: Error handling
+			}
+		}
 
-		// Load RHS into rhs_physical_reg from [rbp+24] (second parameter)
-		auto rhs_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, 24);
-		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
+		ctx.rhs_physical_reg = X64Register::Count;
+		if (instruction.isOperandType<std::string_view>(6)) {
+			auto rhs_var_op = instruction.getOperandAs<std::string_view>(6);
+			auto rhs_var_id = variable_scopes.back().identifier_offset.find(rhs_var_op);
+			if (rhs_var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto var_reg = regAlloc.tryGetStackVariableRegister(rhs_var_id->second); var_reg.has_value()) {
+					ctx.rhs_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
+				}
+				else {
+					assert(variable_scopes.back().current_stack_offset < rhs_var_id->second);
+
+					ctx.rhs_physical_reg = regAlloc.allocate().reg;
+					auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				}
+			}
+			else {
+				assert(false && "Missing variable name"); // TODO: Error handling
+			}
+		}
+
+		if (std::holds_alternative<TempVar>(ctx.result_operand)) {
+			const TempVar temp_var = std::get<TempVar>(ctx.result_operand);
+			const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
+			variable_scopes.back().identifier_offset[temp_var.name()] = stack_offset;
+			regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset);
+		}
 
 		return ctx;
 	}
@@ -393,20 +478,7 @@ private:
 		X64Register actual_source_reg = (source_reg == X64Register::Count) ? ctx.result_physical_reg : source_reg;
 
 		// Determine the final destination of the result (register or memory)
-		bool is_final_destination_register = std::holds_alternative<TempVar>(ctx.result_operand);
-
-		if (is_final_destination_register) {
-			// If the result is a temporary variable, store it to a stack slot
-			auto temp_var = std::get<TempVar>(ctx.result_operand);
-			std::string temp_var_name = "temp_" + std::to_string(temp_var.index);
-
-			// Allocate a stack slot for this temporary variable if not already allocated
-			int stack_offset = allocateStackSlotForTempVar(temp_var_name);
-
-			// Store the computed result from actual_source_reg to stack
-			auto store_opcodes = generateMovToFrame(actual_source_reg, stack_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		} else {
+		if (std::holds_alternative<std::string_view>(ctx.result_operand)) {
 			// If the result is a named variable, find its stack offset
 			int final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ctx.result_operand)];
 
@@ -421,8 +493,9 @@ private:
 	}
 
 	// Helper function to allocate stack space for a temporary variable
-	int allocateStackSlotForTempVar(const std::string& temp_var_name) {
+	int allocateStackSlotForTempVar(int32_t index) {
 		StackVariableScope& current_scope = variable_scopes.back();
+		auto temp_var_name = TempVar(index).name();	// TODO: rework this so it doesn't require strings
 		auto it = current_scope.identifier_offset.find(temp_var_name);
 		if (it != current_scope.identifier_offset.end()) {
 			return it->second; // Already allocated
@@ -448,6 +521,20 @@ private:
 	void handleFunctionCall(const IrInstruction& instruction) {
 		assert(instruction.getOperandCount() >= 2 && "Function call must have at least 2 operands (result, function name)");
 
+		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset)
+		{
+			auto tempVarIndex = getTempVarFromOffset(stackVariableOffset);
+				
+			if (tempVarIndex.has_value()) {
+				// Allocate a stack slot for this temporary variable if not already allocated
+				int stack_offset = allocateStackSlotForTempVar(tempVarIndex.value().index);
+
+				// Store the computed result from actual_source_reg to stack
+				auto store_opcodes = generateMovToFrame(reg, stack_offset);
+				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			}
+		});
+
 		// Get result variable and function name
 		auto result_var = instruction.getOperand(0);
 		auto funcName = instruction.getOperandAs<std::string_view>(1);
@@ -455,7 +542,9 @@ private:
 		// Get result offset
 		int result_offset = 0;
 		if (std::holds_alternative<TempVar>(result_var)) {
-			result_offset = std::get<TempVar>(result_var).index;
+			const TempVar temp_var = std::get<TempVar>(result_var);
+			result_offset = getStackOffsetFromTempVar(temp_var);
+			variable_scopes.back().identifier_offset[temp_var.name()] = result_offset;
 		} else {
 			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
 		}
@@ -511,7 +600,7 @@ private:
 			} else if (std::holds_alternative<TempVar>(argValue)) {
 				// Temporary variable value (stored on stack)
 				auto src_reg_temp = std::get<TempVar>(argValue);
-				std::string temp_var_name = "temp_" + std::to_string(src_reg_temp.index);
+				const std::string_view temp_var_name = src_reg_temp.name();
 
 				// Find the stack offset for this temporary variable
 				const StackVariableScope& current_scope = variable_scopes.back();
@@ -527,7 +616,7 @@ private:
 					// the value is currently in RAX (from the most recent operation).
 
 					// Allocate stack slot for this TempVar
-					int stack_offset = allocateStackSlotForTempVar(temp_var_name);
+					int stack_offset = allocateStackSlotForTempVar(src_reg_temp.index);
 
 					// Store RAX to the newly allocated stack slot first
 					auto store_opcodes = generateMovToFrame(X64Register::RAX, stack_offset);
@@ -549,27 +638,18 @@ private:
 
 		writer.add_relocation(textSectionData.size() - 4, function_name);
 
+		regAlloc.allocateSpecific(X64Register::RAX, result_offset);
+
 		// After the call, the return value is in RAX. We need to store it to the destination.
-		if (std::holds_alternative<TempVar>(result_var)) {
-			// For function call results, we always store to a stack slot to avoid register clobbering
-			auto temp_var = std::get<TempVar>(result_var);
-
-			// Allocate a stack slot for this temporary variable if not already allocated
-			std::string temp_var_name = "temp_" + std::to_string(temp_var.index);
-			int stack_offset = allocateStackSlotForTempVar(temp_var_name);
-
-			// Store RAX to stack using RBP-relative addressing
-			auto store_opcodes = generateMovToFrame(X64Register::RAX, stack_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		} else {
-			// Result goes to a named variable (memory location)
-			std::string_view var_name = std::get<std::string_view>(result_var);
-			int var_offset = variable_scopes.back().identifier_offset[var_name];
-
-			// Store RAX to memory using RBP-relative addressing
-			auto store_opcodes = generateMovToFrame(X64Register::RAX, var_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		}
+// 		if (std::holds_alternative<std::string_view>(result_var)) {
+// 			// Result goes to a named variable (memory location)
+// 			std::string_view var_name = std::get<std::string_view>(result_var);
+// 			int var_offset = variable_scopes.back().identifier_offset[var_name];
+// 
+// 			// Store RAX to memory using RBP-relative addressing
+// 			auto store_opcodes = generateMovToFrame(X64Register::RAX, var_offset);
+// 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+// 		}
 	}
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
@@ -587,7 +667,6 @@ private:
 
 		// Create a new function scope
 		regAlloc.reset();
-		regAlloc.reserve_arguments(instruction.getOperandCount() - 2);
 
 		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, 0x20 (32 bytes shadow space)
 		textSectionData.push_back(0x55); // push rbp
@@ -601,21 +680,23 @@ private:
 		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
-			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
-
-			// Store parameter at [rbp+16] for first parameter, [rbp+24] for second, etc.
+			
+			// Store parameter at [rbp+10h] for first parameter, [rbp+18h] for second, etc.
 			int paramNumber = paramIndex / 3 - 1;
 			int offset = 16 + (paramNumber * 8);
 
+			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
+			variable_scopes.back().identifier_offset[param_name] = offset;
+
 			if (paramNumber < INT_PARAM_REGS.size()) {
 				X64Register src_reg = INT_PARAM_REGS[paramNumber];
+				regAlloc.allocateSpecific(src_reg, offset);
 
 				// Generate the MOV [rbp+offset], reg instruction
 				auto mov_opcodes = generateMovToFrame(src_reg, offset);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			}
 
-			variable_scopes.back().identifier_offset[param_name] = offset;
 			paramIndex += 3;  // Skip type, size, and name
 		}
 	}
@@ -644,14 +725,23 @@ private:
 			auto return_var = instruction.getOperandAs<TempVar>(2);
 
 			// Load the temporary variable from stack to RAX
-			std::string temp_var_name = "temp_" + std::to_string(return_var.index);
+			auto temp_var_name = return_var.name();
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.identifier_offset.find(temp_var_name);
 			if (it != current_scope.identifier_offset.end()) {
 				int var_offset = it->second;
-				// Load from stack using RBP-relative addressing
-				auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+					if (reg_var.value() != X64Register::RAX) {
+						auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), 4);	// TODO: reg size
+						textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+					}
+				}
+				else {
+					assert(variable_scopes.back().current_stack_offset < var_offset);
+					// Load from stack using RBP-relative addressing
+					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
 			} else {
 				// Temporary variable not found in stack. This can happen in a few scenarios:
 				// 1. Function call result is immediately returned (value still in RAX)
@@ -676,9 +766,17 @@ private:
 			auto it = current_scope.identifier_offset.find(var_name);
 			if (it != current_scope.identifier_offset.end()) {
 				int var_offset = it->second;
-				// Load from stack using RBP-relative addressing
-				auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				if (auto stackRegister = regAlloc.tryGetStackVariableRegister(var_offset); stackRegister.has_value()) {
+					if (stackRegister.value() != X64Register::RAX) {	// Value is already in register, move if it's not in RAX already
+						regAlloc.get_reg_reg_move_op_code(X64Register::RAX, stackRegister.value(), 4);	// TODO: What size should we use here?
+					}
+				}
+				else {
+					assert(current_scope.current_stack_offset > var_offset);
+					// Load from stack using RBP-relative addressing
+					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
 			}
 		}
 
@@ -777,7 +875,7 @@ private:
 	}
 
 	void handleDivide(const IrInstruction& instruction) {
-		regAlloc.allocateSpecific(X64Register::RAX);
+		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "division");
