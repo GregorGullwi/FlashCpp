@@ -123,9 +123,9 @@ OpCodeWithSize generateMovToStack(X64Register sourceRegister, int32_t offset) {
 	// --- REX Prefix (0x40 | W | R | X | B) ---
 	uint8_t rex_prefix = 0x48; // Base: REX.W = 0100_1000b
 
-	// If source register is R8-R15 (enum values >= 8), set REX.B bit.
+	// If source register (Reg field) is R8-R15, set REX.R bit.
 	if (static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8)) {
-		rex_prefix |= (1 << 0); // Set B bit (0b0001)
+		rex_prefix |= (1 << 2); // Set R bit (0b0100)
 	}
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
