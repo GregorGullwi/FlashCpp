@@ -47,10 +47,62 @@ enum class X64Register : uint8_t {
 	Count
 };
 
+template <size_t N>
+constexpr auto make_temp_string() {
+	// Max: "temp_" + 3-digit number + '\0'
+	std::array<char, 10> buf{};
+	buf[0] = 't'; buf[1] = 'e'; buf[2] = 'm'; buf[3] = 'p'; buf[4] = '_';
+
+	size_t i = 5;
+	size_t n = N;
+
+	char digits[4];
+	int d = 0;
+	do {
+		digits[d++] = '0' + (n % 10);
+		n /= 10;
+	} while (n > 0);
+
+	for (int j = d - 1; j >= 0; --j) {
+		buf[i++] = digits[j];
+	}
+	buf[i] = '\0'; // null terminate for safety
+	return buf;
+}
+
+template <size_t... Is>
+constexpr auto make_temp_array(std::index_sequence<Is...>) {
+	return std::array<std::array<char, 10>, sizeof...(Is)>{
+		make_temp_string<Is>()...
+	};
+}
+
+template <size_t N>
+constexpr auto make_temp_array() {
+	return make_temp_array(std::make_index_sequence<N>{});
+}
+
+constexpr auto raw_temp_names = make_temp_array<64>();
+
+// Create string_view version from raw names
+constexpr auto make_view_array() {
+	std::array<std::string_view, raw_temp_names.size()> result{};
+	for (size_t i = 0; i < raw_temp_names.size(); ++i) {
+		// Views into raw array
+		result[i] = std::string_view{ raw_temp_names[i].data() };
+	}
+	return result;
+}
+
+constexpr auto temp_name_array = make_view_array();
+
 struct TempVar
 {
 	TempVar next() {
 		return { ++index };
+	}
+	std::string_view name() const {
+		return temp_name_array[index];
 	}
 	size_t index = 0;
 };
