@@ -100,6 +100,81 @@ OpCodeWithSize generateMovFromStack(X64Register destinationRegister, int32_t off
 	return result;
 }
 
+/**
+ * @brief Generates x86-64 binary opcodes for 'mov [rsp + offset], source_register'.
+ *
+ * This function creates the byte sequence for moving a 64-bit value from a
+ * general-purpose 64-bit register to a stack-relative address (RSP + offset).
+ * It handles REX prefixes, ModR/M, SIB, and 8-bit/32-bit displacements.
+ * The generated opcodes are placed into a stack-allocated `std::array` within
+ * the returned `OpCodeWithSize` struct.
+ *
+ * @param sourceRegister The source register (e.g., RAX, RCX, R8).
+ * @param offset The signed byte offset from RSP. Can be 0, 8-bit, or 32-bit.
+ * @return An `OpCodeWithSize` struct containing a stack-allocated `std::array`
+ *         of `uint8_t` and the actual number of bytes generated.
+ */
+OpCodeWithSize generateMovToStack(X64Register sourceRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// --- REX Prefix (0x40 | W | R | X | B) ---
+	uint8_t rex_prefix = 0x48; // Base: REX.W = 0100_1000b
+
+	// If source register is R8-R15 (enum values >= 8), set REX.B bit.
+	if (static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+		rex_prefix |= (1 << 0); // Set B bit (0b0001)
+	}
+	*current_byte_ptr++ = rex_prefix;
+	result.size_in_bytes++;
+
+	// --- Opcode for MOV r/m64, r64 ---
+	*current_byte_ptr++ = 0x89;
+	result.size_in_bytes++;
+
+	// --- ModR/M byte (Mod | Reg | R/M) ---
+	uint8_t modrm_byte;
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
+
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x00; // Mod = 00b (no displacement)
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // Mod = 01b (8-bit displacement)
+	} else {
+		mod_field = 0x02; // Mod = 10b (32-bit displacement)
+	}
+
+	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x04; // 0x04 for R/M indicates SIB
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// --- SIB byte (Scale | Index | Base) ---
+	uint8_t sib_byte = 0x24; // 00_100_100b (Scale=0, Index=RSP(4), Base=RSP(4))
+	*current_byte_ptr++ = sib_byte;
+	result.size_in_bytes++;
+
+	// --- Displacement ---
+	if (offset != 0) {
+		if (offset >= -128 && offset <= 127) {
+			// 8-bit signed displacement
+			*current_byte_ptr++ = static_cast<uint8_t>(offset);
+			result.size_in_bytes++;
+		} else {
+			// 32-bit signed displacement (little-endian format)
+			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+			result.size_in_bytes += 4;
+		}
+	}
+
+	return result;
+}
+
 // Win64 calling convention register mapping
 constexpr std::array<X64Register, 4> INT_PARAM_REGS = {
 	X64Register::RCX,  // First integer/pointer argument
@@ -128,7 +203,7 @@ struct RegisterAllocator
 		for (size_t i = 0; i < REGISTER_COUNT; ++i) {
 			registers[i].reg = static_cast<X64Register>(i);
 		}
-		registers[static_cast<int>(X64Register::RSI)].isAllocated = true;	// assume RSI is always allocated
+		registers[static_cast<int>(X64Register::RSP)].isAllocated = true;	// assume RSP is always allocated
 		registers[static_cast<int>(X64Register::RBP)].isAllocated = true;	// assume RBP is always allocated
 	}
 
@@ -296,26 +371,26 @@ private:
 				return;
 			}
 
-			auto reg_code = getWin64RegCode(i);
-			// REX.W prefix is always needed for 64-bit operands
-			if (reg_code.use_rex) {
-				textSectionData.push_back(0x49);  // REX.W + REX.B for R8/R9
-			} else {
-				textSectionData.push_back(0x48);  // REX.W for RCX/RDX
+			// Determine the target register for the argument
+			X64Register target_reg = INT_PARAM_REGS[i];
+
+			// Construct the REX prefix based on target_reg for destination (Reg field).
+			// REX.W is always needed for 64-bit operations (0x48).
+			// REX.R (bit 2) is set if the target_reg is R8-R15 (as it appears in the Reg field of ModR/M or is directly encoded).
+			uint8_t rex_prefix = 0x48;
+			if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+				rex_prefix |= (1 << 2); // Set REX.R
 			}
+			// Push the REX prefix. It might be modified later for REX.B or REX.X if needed.
+			textSectionData.push_back(rex_prefix);
 
 			if (std::holds_alternative<unsigned long long>(argValue)) {
 				// Immediate value
-				// MOV r64, imm64 with appropriate register encoding
-				uint8_t opcode;
-				switch (i) {
-					case 0: opcode = 0xB9; break;  // RCX
-					case 1: opcode = 0xBA; break;  // RDX
-					case 2: opcode = 0xB8; break;  // R8
-					case 3: opcode = 0xB9; break;  // R9
-					default: opcode = 0xB8; break;
+				// MOV r64, imm64 (REX.W/B + Opcode B8+rd)
+				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					textSectionData.back() |= (1 << 0); // Set REX.B bit on the already pushed REX prefix (for rd in opcode)
 				}
-				textSectionData.push_back(opcode);
+				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(target_reg) & 0x07)); // Opcode B8 + lower 3 bits of target_reg
 				unsigned long long value = std::get<unsigned long long>(argValue);
 				for (size_t j = 0; j < 8; ++j) {
 					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
@@ -325,19 +400,27 @@ private:
 				// Local variable
 				std::string_view var_name = std::get<std::string_view>(argValue);
 				int var_offset = variable_scopes.back().identifier_offset[var_name];
-				// Load from stack: MOV r64, [rbp+offset]
+				// Load from stack: MOV r64, [rbp+offset] (REX.W/R + Opcode 8B + ModR/M + disp32)
 				textSectionData.push_back(0x8B);  // MOV r64, r/m64
-				textSectionData.push_back(0x85 + (reg_code.code & 0x07));  // [rbp+disp32]
-				textSectionData.push_back(static_cast<uint8_t>(var_offset & 0xFF));
-				textSectionData.push_back(static_cast<uint8_t>((var_offset >> 8) & 0xFF));
-				textSectionData.push_back(static_cast<uint8_t>((var_offset >> 16) & 0xFF));
-				textSectionData.push_back(static_cast<uint8_t>((var_offset >> 24) & 0xFF));
+				// ModR/M: Mod=10 (disp32), Reg=target_reg_encoding, R/M=101 (RBP)
+				textSectionData.push_back((0x02 << 6) | ((static_cast<uint8_t>(target_reg) & 0x07) << 3) | 0x05);
+				
+				// Displacement (32-bit)
+				for (size_t j = 0; j < 4; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>((var_offset >> (8 * j)) & 0xFF));
+				}
 			} else if (std::holds_alternative<TempVar>(argValue)) {
 				// Register value
-				auto src_reg = std::get<TempVar>(argValue);
-				// MOV r64, r64
-				textSectionData.push_back(0x89);  // MOV r/m64, r64
-				textSectionData.push_back(0xC0 + (reg_code.code & 0x07) + (src_reg.index << 3));  // ModR/M byte
+				auto src_reg_temp = std::get<TempVar>(argValue);
+				X64Register src_physical_reg = static_cast<X64Register>(src_reg_temp.index);
+
+				// MOV r64, r64 (REX.W/R/B + Opcode 89 + ModR/M)
+				if (static_cast<uint8_t>(src_physical_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					textSectionData.back() |= (1 << 0); // Set REX.B bit on the already pushed REX prefix (for R/M field)
+				}
+				textSectionData.push_back(0x89);  // MOV r/m64, r64 (Reg to R/M)
+				// ModR/M: Mod=11 (reg-to-reg), Reg=target_reg_encoding, R/M=src_physical_reg_encoding
+				textSectionData.push_back((0x03 << 6) | ((static_cast<uint8_t>(target_reg) & 0x07) << 3) | (static_cast<uint8_t>(src_physical_reg) & 0x07));
 			} else {
 				assert(false && "Unsupported argument value type");
 			}
@@ -385,13 +468,13 @@ private:
 			// Store parameter at [rsp+8] for first parameter, [rsp+16] for second, etc.
 			int paramNumber = paramIndex / 3 - 1;
 			int offset = 8 + (paramNumber * 8);
-			if (paramNumber <= 4) {
-				// Get the register for this parameter based on Win64 calling convention
-				auto reg_code = getWin64RegCode(paramNumber);
-				if (reg_code.use_rex) {
-					textSectionData.push_back(0x40);  // REX.B prefix
-				}
-				textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(reg_code.code); textSectionData.push_back(0x24); textSectionData.push_back(offset);
+
+			if (paramNumber < INT_PARAM_REGS.size()) {
+				X64Register src_reg = INT_PARAM_REGS[paramNumber];
+
+				// Generate the MOV [rsp+offset], reg instruction
+				auto mov_opcodes = generateMovToStack(src_reg, offset);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			}
 
 			variable_scopes.back().identifier_offset[param_name] = offset;
@@ -591,22 +674,17 @@ private:
 		// Retrieve the original result operand from the IR instruction
 		auto ir_result_operand = instruction.getOperand(0);
 
-		// Allocate physical registers for operands and the temporary result
-		X64Register lhs_physical_reg = regAlloc.allocate();
+		// Allocate physical registers for operands. The result will be stored in lhs_physical_reg
+		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
 		X64Register rhs_physical_reg = regAlloc.allocate();
-		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold the computed result
 
-		// Load LHS into lhs_physical_reg from [rsp+8] (first parameter)
-		auto lhs_opcodes = generateMovFromStack(lhs_physical_reg, 8);
+		// Load LHS into result_physical_reg from [rsp+8] (first parameter)
+		auto lhs_opcodes = generateMovFromStack(result_physical_reg, 8);
 		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
 
 		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
 		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
 		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
-
-		// Move LHS into result_physical_reg to start the computation
-		auto movLhsToResult = regAlloc.get_reg_reg_move_op_code(result_physical_reg, lhs_physical_reg, sizeInBits / 8);
-		textSectionData.insert(textSectionData.end(), movLhsToResult.op_codes.begin(), movLhsToResult.op_codes.begin() + movLhsToResult.size_in_bytes);
 
 		// Subtract rhs_physical_reg from result_physical_reg
 		std::array<uint8_t, 3> subInst = { 0x48, 0x29, 0xC0 }; // sub r/m64, r64. 0x29 is opcode, 0xC0 is ModR/M for reg, reg
@@ -642,7 +720,6 @@ private:
 		}
 		
 		// Release the allocated registers
-		regAlloc.release(lhs_physical_reg);
 		regAlloc.release(rhs_physical_reg);
 		regAlloc.release(result_physical_reg);
 	}
@@ -660,33 +737,58 @@ private:
 			return;
 		}
 
-		// Allocate registers for operands and result
-		auto result_reg = regAlloc.allocate();
-		auto lhs_reg = regAlloc.allocate();
-		auto rhs_reg = regAlloc.allocate();
+		// Retrieve the original result operand from the IR instruction
+		auto ir_result_operand = instruction.getOperand(0);
 
-		// Load parameters into registers
-		// mov lhs_reg, [rsp+8] for first parameter
-		auto lhs_opcodes = generateMovFromStack(lhs_reg, 8);
+		// Allocate physical registers for operands. The result will be stored in lhs_physical_reg
+		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
+		X64Register rhs_physical_reg = regAlloc.allocate();
+
+		// Load LHS into result_physical_reg from [rsp+8] (first parameter)
+		auto lhs_opcodes = generateMovFromStack(result_physical_reg, 8);
 		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
 
-		// mov rhs_reg, [rsp+16] for second parameter
-		auto rhs_opcodes = generateMovFromStack(rhs_reg, 16);
+		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
+		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
 		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
 
-		// mov result_reg, lhs_reg
-		auto movResultLhs = regAlloc.get_reg_reg_move_op_code(result_reg, lhs_reg, sizeInBits / 8);
-		textSectionData.insert(textSectionData.end(), movResultLhs.op_codes.begin(), movResultLhs.op_codes.begin() + movResultLhs.size_in_bytes);
-
-		// imul result_reg, rhs_reg
-		std::array<uint8_t, 3> mulInst = { 0x48, 0x0F, 0xAF };
-		mulInst[2] = 0xC0 + (static_cast<uint8_t>(result_reg) << 3) + static_cast<uint8_t>(rhs_reg);
+		// Multiply result_physical_reg by rhs_physical_reg
+		std::array<uint8_t, 4> mulInst = { 0x48, 0x0F, 0xAF, 0x00 }; // REX.W (0x48) + Opcode (0x0F 0xAF) + ModR/M (initially 0x00)
+		// ModR/M: Mod=11 (register-to-register), Reg=result_physical_reg, R/M=rhs_physical_reg
+		mulInst[3] = 0xC0 + (static_cast<uint8_t>(result_physical_reg) << 3) + static_cast<uint8_t>(rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), mulInst.begin(), mulInst.end());
 
-		// Store result in shadow space
-		std::array<uint8_t, 5> storeResultInst = { 0x48, 0x89, 0x44, 0x24, 0x08 };
-		storeResultInst[2] = 0x84 + static_cast<uint8_t>(result_reg);
-		textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+		// Determine the final destination of the result (register or memory)
+		int final_result_offset;
+		bool is_final_destination_register = std::holds_alternative<TempVar>(ir_result_operand);
+
+		if (is_final_destination_register) {
+			// If the result is a temporary variable, its index is the target register
+			final_result_offset = std::get<TempVar>(ir_result_operand).index;
+			X64Register target_reg = static_cast<X64Register>(final_result_offset);
+
+			// Move the computed result from result_physical_reg to the target register
+			auto movResultToTarget = regAlloc.get_reg_reg_move_op_code(target_reg, result_physical_reg, sizeInBits / 8);
+			if (movResultToTarget.size_in_bytes > 0) { // Only insert if a move is actually needed
+				textSectionData.insert(textSectionData.end(), movResultToTarget.op_codes.begin(), movResultToTarget.op_codes.begin() + movResultToTarget.size_in_bytes);
+			}
+		} else {
+			// If the result is a named variable, find its stack offset
+			final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ir_result_operand)];
+
+			// Store the computed result from result_physical_reg to memory
+			// mov [rbp + offset], result_physical_reg
+			std::array<uint8_t, 7> storeResultInst = { 0x48, 0x89, 0x00, 0, 0, 0, 0 }; // 0x48 for REX.W, 0x89 for mov r/m64, r64
+			// ModR/M byte: Mod=10 (disp32), Reg=result_physical_reg, R/M=101 (RBP)
+			storeResultInst[2] = (0x02 << 6) | (static_cast<uint8_t>(result_physical_reg) << 3) | 0x05;
+			
+			std::memcpy(storeResultInst.data() + 3, &final_result_offset, sizeof(final_result_offset));
+			textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+		}
+		
+		// Release the allocated registers
+		regAlloc.release(rhs_physical_reg);
+		regAlloc.release(result_physical_reg);
 	}
 
 	void handleDivide(const IrInstruction& instruction) {
@@ -702,41 +804,72 @@ private:
 			return;
 		}
 
-		// Allocate registers for operands and result
-		auto result_reg = regAlloc.allocate();
-		auto lhs_reg = regAlloc.allocate();
-		auto rhs_reg = regAlloc.allocate();
+		// Retrieve the original result operand from the IR instruction
+		auto ir_result_operand = instruction.getOperand(0);
 
-		// Load parameters into registers
-		// mov lhs_reg, [rsp+8] for first parameter (dividend)
-		auto lhs_opcodes = generateMovFromStack(lhs_reg, 8);
+		// Allocate physical registers for operands. The result will be stored in lhs_physical_reg
+		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
+		X64Register rhs_physical_reg = regAlloc.allocate();
+
+		// Load LHS into result_physical_reg from [rsp+8] (first parameter)
+		auto lhs_opcodes = generateMovFromStack(result_physical_reg, 8);
 		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
 
-		// mov rhs_reg, [rsp+16] for second parameter (divisor)
-		auto rhs_opcodes = generateMovFromStack(rhs_reg, 16);
+		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
+		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
 		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
 
-		// mov rax, lhs_reg (dividend must be in rax)
-		auto movRaxLhs = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, lhs_reg, sizeInBits / 8);
-		textSectionData.insert(textSectionData.end(), movRaxLhs.op_codes.begin(), movRaxLhs.op_codes.begin() + movRaxLhs.size_in_bytes);
+		// Move result_physical_reg to RAX (dividend must be in RAX for idiv)
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, result_physical_reg, sizeInBits / 8);
+		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
 		// cdq - sign extend eax into edx:eax
 		std::array<uint8_t, 1> cdqInst = { 0x99 };
 		textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
 
-		// idiv rhs_reg
-		std::array<uint8_t, 2> divInst = { 0x48, 0xF7 };
+		// idiv rhs_physical_reg
+		std::array<uint8_t, 3> divInst = { 0x48, 0xF7, 0x00 }; // REX.W (0x48) + Opcode (0xF7) + ModR/M (initially 0x00)
+		// ModR/M: Mod=11 (register-to-register), Reg=7 (opcode extension for idiv), R/M=rhs_physical_reg
+		divInst[2] = 0xC0 + (0x07 << 3) + static_cast<uint8_t>(rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
-		textSectionData.push_back(0xF8 + static_cast<uint8_t>(rhs_reg));
 
-		// mov result_reg, rax (quotient is in rax)
-		auto movResultRax = regAlloc.get_reg_reg_move_op_code(result_reg, X64Register::RAX, 8);
-		textSectionData.insert(textSectionData.end(), movResultRax.op_codes.begin(), movResultRax.op_codes.begin() + movResultRax.size_in_bytes);
+		// Determine the final destination of the result (register or memory)
+		int final_result_offset;
+		bool is_final_destination_register = std::holds_alternative<TempVar>(ir_result_operand);
 
-		// Store result in shadow space
-		std::array<uint8_t, 5> storeResultInst = { 0x48, 0x89, 0x44, 0x24, 0x08 };
-		storeResultInst[2] = 0x84 + static_cast<uint8_t>(result_reg);
-		textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+		if (is_final_destination_register) {
+			// If the result is a temporary variable, its index is the target register
+			final_result_offset = std::get<TempVar>(ir_result_operand).index;
+			X64Register target_reg = static_cast<X64Register>(final_result_offset);
+
+			// Move the quotient from RAX to the target register (if not already RAX)
+			if (target_reg != X64Register::RAX) {
+				auto movResultToTarget = regAlloc.get_reg_reg_move_op_code(target_reg, X64Register::RAX, sizeInBits / 8);
+				if (movResultToTarget.size_in_bytes > 0) {
+					textSectionData.insert(textSectionData.end(), movResultToTarget.op_codes.begin(), movResultToTarget.op_codes.begin() + movResultToTarget.size_in_bytes);
+				}
+			}
+		} else {
+			// If the result is a named variable, find its stack offset
+			final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ir_result_operand)];
+
+			// Store the computed quotient from RAX to memory
+			// mov [rbp + offset], RAX
+			std::array<uint8_t, 7> storeResultInst = { 0x48, 0x89, 0x00, 0, 0, 0, 0 }; // 0x48 for REX.W, 0x89 for mov r/m64, r64
+			// ModR/M byte: Mod=10 (disp32), Reg=RAX, R/M=101 (RBP)
+			storeResultInst[2] = (0x02 << 6) | (static_cast<uint8_t>(X64Register::RAX) << 3) | 0x05;
+			
+			std::memcpy(storeResultInst.data() + 3, &final_result_offset, sizeof(final_result_offset));
+			textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+		}
+		
+		// Release the allocated registers
+		regAlloc.release(rhs_physical_reg);
+		// RAX (result_physical_reg initially) is not released here if it's the target reg or return value.
+		// Only release if it's a temporary that's not the final destination.
+		if (!is_final_destination_register || (is_final_destination_register && static_cast<X64Register>(final_result_offset) != X64Register::RAX)) {
+			regAlloc.release(result_physical_reg);
+		}
 	}
 
 	void finalizeSections() {
