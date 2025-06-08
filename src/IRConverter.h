@@ -12,7 +12,19 @@
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 
-// Maximum possible size for 'mov destination_register, [rsp + offset]' instruction:
+/*
+	+ ---------------- +
+	| Parameter 2	| [rbp + 24] < -Positive offsets
+	| Parameter 1	| [rbp + 16] < -Positive offsets
+	| Return Address| [rbp + 8]
+	| Saved RBP		| [rbp + 0] < -RBP points here
+	| Local Var 1	| [rbp - 8] < -Negative offsets
+	| Local Var 2	| [rbp - 16] < -Negative offsets
+	| Temp Var 1	| [rbp - 24] < -Negative offsets
+	+ ---------------- +
+*/
+
+// Maximum possible size for 'mov destination_register, [rbp + offset]' instruction:
 // REX (1 byte) + Opcode (1 byte) + ModR/M (1 byte) + SIB (1 byte) + Disp32 (4 bytes) = 8 bytes
 constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 8;
 
@@ -22,20 +34,20 @@ struct OpCodeWithSize {
 };
 
 /**
- * @brief Generates x86-64 binary opcodes for 'mov destination_register, [rsp + offset]'.
+ * @brief Generates x86-64 binary opcodes for 'mov destination_register, [rbp + offset]'.
  *
  * This function creates the byte sequence for moving a 64-bit value from a
- * stack-relative address (RSP + offset) into a general-purpose 64-bit register.
- * It handles REX prefixes, ModR/M, SIB, and 8-bit/32-bit displacements.
+ * frame-relative address (RBP + offset) into a general-purpose 64-bit register.
+ * It handles REX prefixes, ModR/M, and 8-bit/32-bit displacements.
  * The generated opcodes are placed into a stack-allocated `std::array` within
  * the returned `OpCodeWithSize` struct.
  *
  * @param destinationRegister The target register (e.g., RAX, RCX, R8).
- * @param offset The signed byte offset from RSP. Can be 0, 8-bit, or 32-bit.
+ * @param offset The signed byte offset from RBP. Negative for locals, positive for parameters.
  * @return An `OpCodeWithSize` struct containing a stack-allocated `std::array`
  *         of `uint8_t` and the actual number of bytes generated.
  */
-OpCodeWithSize generateMovFromStack(X64Register destinationRegister, int32_t offset) {
+OpCodeWithSize generateMovFromFrame(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0; // Initialize count to 0
 
@@ -62,7 +74,7 @@ OpCodeWithSize generateMovFromStack(X64Register destinationRegister, int32_t off
 
 	uint8_t mod_field;
 	if (offset == 0) {
-		mod_field = 0x00; // Mod = 00b (no displacement)
+		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
 	}
 	else if (offset >= -128 && offset <= 127) {
 		mod_field = 0x01; // Mod = 01b (8-bit displacement)
@@ -71,50 +83,44 @@ OpCodeWithSize generateMovFromStack(X64Register destinationRegister, int32_t off
 		mod_field = 0x02; // Mod = 10b (32-bit displacement)
 	}
 
-	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x04; // 0x04 for R/M indicates SIB
+	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
+	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- SIB byte (Scale | Index | Base) ---
-	uint8_t sib_byte = 0x24; // 00_100_100b
-	*current_byte_ptr++ = sib_byte;
-	result.size_in_bytes++;
-
 	// --- Displacement ---
-	if (offset != 0) {
-		if (offset >= -128 && offset <= 127) {
-			// 8-bit signed displacement
-			*current_byte_ptr++ = static_cast<uint8_t>(offset);
-			result.size_in_bytes++;
-		}
-		else {
-			// 32-bit signed displacement (little-endian format)
-			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-			result.size_in_bytes += 4;
-		}
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		// 8-bit signed displacement (even for offset 0 with RBP)
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	}
+	else {
+		// 32-bit signed displacement (little-endian format)
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
 	}
 
 	return result;
 }
 
 /**
- * @brief Generates x86-64 binary opcodes for 'mov [rsp + offset], source_register'.
+ * @brief Generates x86-64 binary opcodes for 'mov [rbp + offset], source_register'.
  *
  * This function creates the byte sequence for moving a 64-bit value from a
- * general-purpose 64-bit register to a stack-relative address (RSP + offset).
- * It handles REX prefixes, ModR/M, SIB, and 8-bit/32-bit displacements.
+ * general-purpose 64-bit register to a frame-relative address (RBP + offset).
+ * It handles REX prefixes, ModR/M, and 8-bit/32-bit displacements.
  * The generated opcodes are placed into a stack-allocated `std::array` within
  * the returned `OpCodeWithSize` struct.
  *
  * @param sourceRegister The source register (e.g., RAX, RCX, R8).
- * @param offset The signed byte offset from RSP. Can be 0, 8-bit, or 32-bit.
+ * @param offset The signed byte offset from RBP. Negative for locals, positive for parameters.
  * @return An `OpCodeWithSize` struct containing a stack-allocated `std::array`
  *         of `uint8_t` and the actual number of bytes generated.
  */
-OpCodeWithSize generateMovToStack(X64Register sourceRegister, int32_t offset) {
+OpCodeWithSize generateMovToFrame(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
@@ -140,36 +146,30 @@ OpCodeWithSize generateMovToStack(X64Register sourceRegister, int32_t offset) {
 
 	uint8_t mod_field;
 	if (offset == 0) {
-		mod_field = 0x00; // Mod = 00b (no displacement)
+		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
 	} else if (offset >= -128 && offset <= 127) {
 		mod_field = 0x01; // Mod = 01b (8-bit displacement)
 	} else {
 		mod_field = 0x02; // Mod = 10b (32-bit displacement)
 	}
 
-	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x04; // 0x04 for R/M indicates SIB
+	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
+	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- SIB byte (Scale | Index | Base) ---
-	uint8_t sib_byte = 0x24; // 00_100_100b (Scale=0, Index=RSP(4), Base=RSP(4))
-	*current_byte_ptr++ = sib_byte;
-	result.size_in_bytes++;
-
 	// --- Displacement ---
-	if (offset != 0) {
-		if (offset >= -128 && offset <= 127) {
-			// 8-bit signed displacement
-			*current_byte_ptr++ = static_cast<uint8_t>(offset);
-			result.size_in_bytes++;
-		} else {
-			// 32-bit signed displacement (little-endian format)
-			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
-			result.size_in_bytes += 4;
-		}
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		// 8-bit signed displacement (even for offset 0 with RBP)
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	} else {
+		// 32-bit signed displacement (little-endian format)
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
 	}
 
 	return result;
@@ -221,6 +221,11 @@ struct RegisterAllocator
 			}
 		}
 		throw std::runtime_error("No registers available");
+	}
+
+	void allocateSpecific(X64Register reg) {
+		assert(!registers[static_cast<int>(reg)].isAllocated);
+		registers[static_cast<int>(reg)].isAllocated = true;
 	}
 
 	void release(X64Register reg) {
@@ -341,6 +346,80 @@ public:
 	}
 
 private:
+	// Shared arithmetic operation context
+	struct ArithmeticOperationContext {
+		Type type = Type::Void;
+		int size_in_bits{};
+		const IrOperand& result_operand;
+		X64Register result_physical_reg = X64Register::Count;
+		X64Register rhs_physical_reg = X64Register::Count;
+	};
+
+	// Setup and load operands for arithmetic operations - validates operands, extracts common data, and loads into registers
+	ArithmeticOperationContext setupAndLoadArithmeticOperation(const IrInstruction& instruction, const char* operation_name) {
+		assert(instruction.getOperandCount() == 7 &&
+			   (std::string(operation_name) + " instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val").c_str());
+
+		// Get type and size (from LHS)
+		ArithmeticOperationContext ctx = {
+			.type = instruction.getOperandAs<Type>(1),
+			.size_in_bits = instruction.getOperandAs<int>(2),
+			.result_operand = instruction.getOperand(0),
+		};
+
+		// For now, we only support integer operations
+		if (ctx.type != Type::Int) {
+			assert(false && (std::string("Only integer ") + operation_name + " is supported").c_str());
+		}
+
+		// Allocate physical registers for operands. The result will be stored in result_physical_reg
+		ctx.result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
+		ctx.rhs_physical_reg = regAlloc.allocate();
+
+		// Load LHS into result_physical_reg from [rbp+16] (first parameter)
+		auto lhs_opcodes = generateMovFromFrame(ctx.result_physical_reg, 16);
+		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
+
+		// Load RHS into rhs_physical_reg from [rbp+24] (second parameter)
+		auto rhs_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, 24);
+		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
+
+		return ctx;
+	}
+
+	// Store the result of arithmetic operations to the appropriate destination
+	void storeArithmeticResult(const ArithmeticOperationContext& ctx, X64Register source_reg = X64Register::Count) {
+		// Use the result register by default, or the specified source register (e.g., RAX for division)
+		X64Register actual_source_reg = (source_reg == X64Register::Count) ? ctx.result_physical_reg : source_reg;
+
+		// Determine the final destination of the result (register or memory)
+		bool is_final_destination_register = std::holds_alternative<TempVar>(ctx.result_operand);
+
+		if (is_final_destination_register) {
+			// If the result is a temporary variable, store it to a stack slot
+			auto temp_var = std::get<TempVar>(ctx.result_operand);
+			std::string temp_var_name = "temp_" + std::to_string(temp_var.index);
+
+			// Allocate a stack slot for this temporary variable if not already allocated
+			int stack_offset = allocateStackSlotForTempVar(temp_var_name);
+
+			// Store the computed result from actual_source_reg to stack
+			auto store_opcodes = generateMovToFrame(actual_source_reg, stack_offset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		} else {
+			// If the result is a named variable, find its stack offset
+			int final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ctx.result_operand)];
+
+			// Store the computed result from actual_source_reg to memory
+			auto store_opcodes = generateMovToFrame(actual_source_reg, final_result_offset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		}
+
+		if (source_reg != X64Register::Count) {
+			regAlloc.release(source_reg);
+		}
+	}
+
 	// Helper function to allocate stack space for a temporary variable
 	int allocateStackSlotForTempVar(const std::string& temp_var_name) {
 		StackVariableScope& current_scope = variable_scopes.back();
@@ -357,11 +436,11 @@ private:
 		std::memcpy(subRspInst.data() + 3, &aligned_size, sizeof(aligned_size));
 		textSectionData.insert(textSectionData.end(), subRspInst.begin(), subRspInst.end());
 
-		// With RSP-relative addressing, local variables use POSITIVE offsets
-		// The next variable goes at the current stack offset (starts at 0)
+		// With RBP-relative addressing, local variables use NEGATIVE offsets
+		// Move to next slot (going more negative)
+		current_scope.current_stack_offset -= temp_var_size;
 		int stack_offset = current_scope.current_stack_offset;
 		current_scope.identifier_offset[temp_var_name] = stack_offset;
-		current_scope.current_stack_offset += temp_var_size; // Move to next slot
 
 		return stack_offset;
 	}
@@ -422,12 +501,12 @@ private:
 					value >>= 8;
 				}
 			} else if (std::holds_alternative<std::string_view>(argValue)) {
-				// Local variable - use RSP-relative addressing consistently
+				// Local variable - use RBP-relative addressing consistently
 				std::string_view var_name = std::get<std::string_view>(argValue);
 				int var_offset = variable_scopes.back().identifier_offset[var_name];
 
-				// Use the existing generateMovFromStack function for consistency
-				auto mov_opcodes = generateMovFromStack(target_reg, var_offset);
+				// Use the existing generateMovFromFrame function for consistency
+				auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			} else if (std::holds_alternative<TempVar>(argValue)) {
 				// Temporary variable value (stored on stack)
@@ -439,8 +518,8 @@ private:
 				auto it = current_scope.identifier_offset.find(temp_var_name);
 				if (it != current_scope.identifier_offset.end()) {
 					int var_offset = it->second;
-					// Use the existing generateMovFromStack function for consistency
-					auto mov_opcodes = generateMovFromStack(target_reg, var_offset);
+					// Use the existing generateMovFromFrame function for consistency
+					auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 					// Temporary variable not found in stack. This indicates a problem with our
@@ -451,11 +530,11 @@ private:
 					int stack_offset = allocateStackSlotForTempVar(temp_var_name);
 
 					// Store RAX to the newly allocated stack slot first
-					auto store_opcodes = generateMovToStack(X64Register::RAX, stack_offset);
+					auto store_opcodes = generateMovToFrame(X64Register::RAX, stack_offset);
 					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
 					// Now load from stack to target register
-					auto load_opcodes = generateMovFromStack(target_reg, stack_offset);
+					auto load_opcodes = generateMovFromFrame(target_reg, stack_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				}
 			} else {
@@ -479,16 +558,16 @@ private:
 			std::string temp_var_name = "temp_" + std::to_string(temp_var.index);
 			int stack_offset = allocateStackSlotForTempVar(temp_var_name);
 
-			// Store RAX to stack using RSP-relative addressing
-			auto store_opcodes = generateMovToStack(X64Register::RAX, stack_offset);
+			// Store RAX to stack using RBP-relative addressing
+			auto store_opcodes = generateMovToFrame(X64Register::RAX, stack_offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 		} else {
 			// Result goes to a named variable (memory location)
 			std::string_view var_name = std::get<std::string_view>(result_var);
 			int var_offset = variable_scopes.back().identifier_offset[var_name];
 
-			// Store RAX to memory using RSP-relative addressing
-			auto store_opcodes = generateMovToStack(X64Register::RAX, var_offset);
+			// Store RAX to memory using RBP-relative addressing
+			auto store_opcodes = generateMovToFrame(X64Register::RAX, var_offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 		}
 	}
@@ -524,15 +603,15 @@ private:
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
 
-			// Store parameter at [rsp+8] for first parameter, [rsp+16] for second, etc.
+			// Store parameter at [rbp+16] for first parameter, [rbp+24] for second, etc.
 			int paramNumber = paramIndex / 3 - 1;
-			int offset = 8 + (paramNumber * 8);
+			int offset = 16 + (paramNumber * 8);
 
 			if (paramNumber < INT_PARAM_REGS.size()) {
 				X64Register src_reg = INT_PARAM_REGS[paramNumber];
 
-				// Generate the MOV [rsp+offset], reg instruction
-				auto mov_opcodes = generateMovToStack(src_reg, offset);
+				// Generate the MOV [rbp+offset], reg instruction
+				auto mov_opcodes = generateMovToFrame(src_reg, offset);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			}
 
@@ -570,8 +649,8 @@ private:
 			auto it = current_scope.identifier_offset.find(temp_var_name);
 			if (it != current_scope.identifier_offset.end()) {
 				int var_offset = it->second;
-				// Load from stack using RSP-relative addressing
-				auto load_opcodes = generateMovFromStack(X64Register::RAX, var_offset);
+				// Load from stack using RBP-relative addressing
+				auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
 				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			} else {
 				// Temporary variable not found in stack. This can happen in a few scenarios:
@@ -596,9 +675,10 @@ private:
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.identifier_offset.find(var_name);
 			if (it != current_scope.identifier_offset.end()) {
-				// mov eax, [rsp+8]
-				std::array<uint8_t, 5> movInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
-				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+				int var_offset = it->second;
+				// Load from stack using RBP-relative addressing
+				auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			}
 		}
 
@@ -632,11 +712,11 @@ private:
 		textSectionData.insert(textSectionData.end(), subRspInst.begin(), subRspInst.end());
 
 		// Add the identifier and its stack offset to the current scope
-		// With RSP-relative addressing, local variables use POSITIVE offsets
+		// With RBP-relative addressing, local variables use NEGATIVE offsets
 		StackVariableScope& current_scope = variable_scopes.back();
+		current_scope.current_stack_offset -= sizeInBytes;  // Move to next slot (going more negative)
 		int stack_offset = current_scope.current_stack_offset;
 		current_scope.identifier_offset[instruction.getOperandAs<std::string_view>(2)] = stack_offset;
-		current_scope.current_stack_offset += sizeInBytes;  // Move to next slot
 	}
 
 	void handleStore(const IrInstruction& instruction) {
@@ -649,230 +729,62 @@ private:
 		const StackVariableScope& current_scope = variable_scopes.back();
 		auto it = current_scope.identifier_offset.find(var_name);
 		if (it != current_scope.identifier_offset.end()) {
-			// Store to stack using RSP-relative addressing
+			// Store to stack using RBP-relative addressing
 			int32_t offset = it->second;
-			auto store_opcodes = generateMovToStack(src_reg, offset);
+			auto store_opcodes = generateMovToFrame(src_reg, offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 		}
 	}
 
 	void handleAdd(const IrInstruction& instruction) {
-		assert(instruction.getOperandCount() == 7 && "Add instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "addition");
 
-		// Get type and size (from LHS)
-		auto type = instruction.getOperandAs<Type>(1);
-		auto size = instruction.getOperandAs<int>(2);
-
-		// For now, we only support integer addition
-		if (type != Type::Int) {
-			assert(false && "Only integer addition is supported");
-			return;
-		}
-
-		// Retrieve the original result operand from the IR instruction
-		auto ir_result_operand = instruction.getOperand(0);
-
-		// Allocate physical registers for operands. The result will be stored in lhs_physical_reg
-		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
-		X64Register rhs_physical_reg = regAlloc.allocate();
-
-		// Load LHS into result_physical_reg from [rsp+8] (first parameter)
-		auto lhs_opcodes = generateMovFromStack(result_physical_reg, 8);
-		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
-
-		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
-		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
-		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
-
-		// Add rhs_physical_reg to result_physical_reg
+		// Perform the addition operation
 		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xC0 }; // add r/m64, r64. 0x01 is opcode, 0xC0 is ModR/M for reg, reg
-		addInst[2] = 0xC0 + (static_cast<uint8_t>(rhs_physical_reg) << 3) + static_cast<uint8_t>(result_physical_reg);
+		addInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
 
-		// Determine the final destination of the result (register or memory)
-		int final_result_offset;
-		bool is_final_destination_register = std::holds_alternative<TempVar>(ir_result_operand);
-
-		if (is_final_destination_register) {
-			// If the result is a temporary variable, store it to a stack slot
-			auto temp_var = std::get<TempVar>(ir_result_operand);
-			std::string temp_var_name = "temp_" + std::to_string(temp_var.index);
-
-			// Allocate a stack slot for this temporary variable if not already allocated
-			int stack_offset = allocateStackSlotForTempVar(temp_var_name);
-
-			// Store the computed result from result_physical_reg to stack
-			auto store_opcodes = generateMovToStack(result_physical_reg, stack_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		} else {
-			// If the result is a named variable, find its stack offset
-			final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ir_result_operand)];
-
-			// Store the computed result from result_physical_reg to memory
-			auto store_opcodes = generateMovToStack(result_physical_reg, final_result_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		}
-		
-		// Release the allocated registers
-		regAlloc.release(rhs_physical_reg);
-		regAlloc.release(result_physical_reg);
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
 	}
 
 	void handleSubtract(const IrInstruction& instruction) {
-		assert(instruction.getOperandCount() == 7 && "Subtract instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtraction");
 
-		// Get type and size (from LHS)
-		auto type = instruction.getOperandAs<Type>(1);
-		auto sizeInBits = instruction.getOperandAs<int>(2);
-
-		// For now, we only support integer subtraction
-		if (type != Type::Int) {
-			assert(false && "Only integer subtraction is supported");
-			return;
-		}
-
-		// Retrieve the original result operand from the IR instruction
-		auto ir_result_operand = instruction.getOperand(0);
-
-		// Allocate physical registers for operands. The result will be stored in lhs_physical_reg
-		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
-		X64Register rhs_physical_reg = regAlloc.allocate();
-
-		// Load LHS into result_physical_reg from [rsp+8] (first parameter)
-		auto lhs_opcodes = generateMovFromStack(result_physical_reg, 8);
-		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
-
-		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
-		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
-		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
-
-		// Subtract rhs_physical_reg from result_physical_reg
+		// Perform the subtraction operation
 		std::array<uint8_t, 3> subInst = { 0x48, 0x29, 0xC0 }; // sub r/m64, r64. 0x29 is opcode, 0xC0 is ModR/M for reg, reg
-		subInst[2] = 0xC0 + (static_cast<uint8_t>(rhs_physical_reg) << 3) + static_cast<uint8_t>(result_physical_reg);
+		subInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
 
-		// Determine the final destination of the result (register or memory)
-		int final_result_offset;
-		bool is_final_destination_register = std::holds_alternative<TempVar>(ir_result_operand);
-
-		if (is_final_destination_register) {
-			// If the result is a temporary variable, store it to a stack slot
-			auto temp_var = std::get<TempVar>(ir_result_operand);
-			std::string temp_var_name = "temp_" + std::to_string(temp_var.index);
-
-			// Allocate a stack slot for this temporary variable if not already allocated
-			int stack_offset = allocateStackSlotForTempVar(temp_var_name);
-
-			// Store the computed result from result_physical_reg to stack
-			auto store_opcodes = generateMovToStack(result_physical_reg, stack_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		} else {
-			// If the result is a named variable, find its stack offset
-			final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ir_result_operand)];
-
-			// Store the computed result from result_physical_reg to memory
-			auto store_opcodes = generateMovToStack(result_physical_reg, final_result_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		}
-		
-		// Release the allocated registers
-		regAlloc.release(rhs_physical_reg);
-		regAlloc.release(result_physical_reg);
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
 	}
 
 	void handleMultiply(const IrInstruction& instruction) {
-		assert(instruction.getOperandCount() == 7 && "Multiply instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "multiplication");
 
-		// Get type and size (from LHS)
-		auto type = instruction.getOperandAs<Type>(1);
-		auto sizeInBits = instruction.getOperandAs<int>(2);
-
-		// For now, we only support integer multiplication
-		if (type != Type::Int) {
-			assert(false && "Only integer multiplication is supported");
-			return;
-		}
-
-		// Retrieve the original result operand from the IR instruction
-		auto ir_result_operand = instruction.getOperand(0);
-
-		// Allocate physical registers for operands. The result will be stored in lhs_physical_reg
-		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
-		X64Register rhs_physical_reg = regAlloc.allocate();
-
-		// Load LHS into result_physical_reg from [rsp+8] (first parameter)
-		auto lhs_opcodes = generateMovFromStack(result_physical_reg, 8);
-		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
-
-		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
-		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
-		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
-
-		// Multiply result_physical_reg by rhs_physical_reg
+		// Perform the multiplication operation
 		std::array<uint8_t, 4> mulInst = { 0x48, 0x0F, 0xAF, 0x00 }; // REX.W (0x48) + Opcode (0x0F 0xAF) + ModR/M (initially 0x00)
 		// ModR/M: Mod=11 (register-to-register), Reg=result_physical_reg, R/M=rhs_physical_reg
-		mulInst[3] = 0xC0 + (static_cast<uint8_t>(result_physical_reg) << 3) + static_cast<uint8_t>(rhs_physical_reg);
+		mulInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), mulInst.begin(), mulInst.end());
 
-		// Determine the final destination of the result (register or memory)
-		int final_result_offset;
-		bool is_final_destination_register = std::holds_alternative<TempVar>(ir_result_operand);
-
-		if (is_final_destination_register) {
-			// If the result is a temporary variable, store it to a stack slot
-			auto temp_var = std::get<TempVar>(ir_result_operand);
-			std::string temp_var_name = "temp_" + std::to_string(temp_var.index);
-
-			// Allocate a stack slot for this temporary variable if not already allocated
-			int stack_offset = allocateStackSlotForTempVar(temp_var_name);
-
-			// Store the computed result from result_physical_reg to stack
-			auto store_opcodes = generateMovToStack(result_physical_reg, stack_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		} else {
-			// If the result is a named variable, find its stack offset
-			final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ir_result_operand)];
-
-			// Store the computed result from result_physical_reg to memory
-			auto store_opcodes = generateMovToStack(result_physical_reg, final_result_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		}
-		
-		// Release the allocated registers
-		regAlloc.release(rhs_physical_reg);
-		regAlloc.release(result_physical_reg);
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
 	}
 
 	void handleDivide(const IrInstruction& instruction) {
-		assert(instruction.getOperandCount() == 7 && "Divide instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+		regAlloc.allocateSpecific(X64Register::RAX);
 
-		// Get type and size (from LHS)
-		auto type = instruction.getOperandAs<Type>(1);
-		auto sizeInBits = instruction.getOperandAs<int>(2);
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "division");
 
-		// For now, we only support integer division
-		if (type != Type::Int) {
-			assert(false && "Only integer division is supported");
-			return;
-		}
-
-		// Retrieve the original result operand from the IR instruction
-		auto ir_result_operand = instruction.getOperand(0);
-
-		// Allocate physical registers for operands. The result will be stored in lhs_physical_reg
-		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
-		X64Register rhs_physical_reg = regAlloc.allocate();
-
-		// Load LHS into result_physical_reg from [rsp+8] (first parameter)
-		auto lhs_opcodes = generateMovFromStack(result_physical_reg, 8);
-		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
-
-		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
-		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
-		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
-
+		// Division requires special handling: dividend must be in RAX
 		// Move result_physical_reg to RAX (dividend must be in RAX for idiv)
-		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, result_physical_reg, sizeInBits / 8);
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.size_in_bits / 8);
 		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
 		// cdq - sign extend eax into edx:eax
@@ -882,40 +794,11 @@ private:
 		// idiv rhs_physical_reg
 		std::array<uint8_t, 3> divInst = { 0x48, 0xF7, 0x00 }; // REX.W (0x48) + Opcode (0xF7) + ModR/M (initially 0x00)
 		// ModR/M: Mod=11 (register-to-register), Reg=7 (opcode extension for idiv), R/M=rhs_physical_reg
-		divInst[2] = 0xC0 + (0x07 << 3) + static_cast<uint8_t>(rhs_physical_reg);
+		divInst[2] = 0xC0 + (0x07 << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
 
-		// Determine the final destination of the result (register or memory)
-		int final_result_offset;
-		bool is_final_destination_register = std::holds_alternative<TempVar>(ir_result_operand);
-
-		if (is_final_destination_register) {
-			// If the result is a temporary variable, store it to a stack slot
-			auto temp_var = std::get<TempVar>(ir_result_operand);
-			std::string temp_var_name = "temp_" + std::to_string(temp_var.index);
-
-			// Allocate a stack slot for this temporary variable if not already allocated
-			int stack_offset = allocateStackSlotForTempVar(temp_var_name);
-
-			// Store the quotient from RAX to stack
-			auto store_opcodes = generateMovToStack(X64Register::RAX, stack_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		} else {
-			// If the result is a named variable, find its stack offset
-			final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ir_result_operand)];
-
-			// Store the computed quotient from RAX to memory
-			auto store_opcodes = generateMovToStack(X64Register::RAX, final_result_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		}
-		
-		// Release the allocated registers
-		regAlloc.release(rhs_physical_reg);
-		// RAX (result_physical_reg initially) is not released here if it's the target reg or return value.
-		// Only release if it's a temporary that's not the final destination.
-		if (!is_final_destination_register || (is_final_destination_register && static_cast<X64Register>(final_result_offset) != X64Register::RAX)) {
-			regAlloc.release(result_physical_reg);
-		}
+		// Store the result from RAX (quotient) to the appropriate destination
+		storeArithmeticResult(ctx, X64Register::RAX);
 	}
 
 	void finalizeSections() {
@@ -929,7 +812,7 @@ private:
 
 	struct StackVariableScope
 	{
-		int current_stack_offset = 0;
+		int current_stack_offset = 0; // For RBP-relative: starts at 0, goes negative for locals
 		std::unordered_map<std::string_view, int> identifier_offset;
 	};
 	std::vector<StackVariableScope> variable_scopes;
