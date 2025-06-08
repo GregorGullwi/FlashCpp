@@ -12,6 +12,94 @@
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 
+// Maximum possible size for 'mov destination_register, [rsp + offset]' instruction:
+// REX (1 byte) + Opcode (1 byte) + ModR/M (1 byte) + SIB (1 byte) + Disp32 (4 bytes) = 8 bytes
+constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 8;
+
+struct OpCodeWithSize {
+	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes;
+	size_t size_in_bytes = 0;
+};
+
+/**
+ * @brief Generates x86-64 binary opcodes for 'mov destination_register, [rsp + offset]'.
+ *
+ * This function creates the byte sequence for moving a 64-bit value from a
+ * stack-relative address (RSP + offset) into a general-purpose 64-bit register.
+ * It handles REX prefixes, ModR/M, SIB, and 8-bit/32-bit displacements.
+ * The generated opcodes are placed into a stack-allocated `std::array` within
+ * the returned `OpCodeWithSize` struct.
+ *
+ * @param destinationRegister The target register (e.g., RAX, RCX, R8).
+ * @param offset The signed byte offset from RSP. Can be 0, 8-bit, or 32-bit.
+ * @return An `OpCodeWithSize` struct containing a stack-allocated `std::array`
+ *         of `uint8_t` and the actual number of bytes generated.
+ */
+OpCodeWithSize generateMovFromStack(X64Register destinationRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0; // Initialize count to 0
+
+	// Use a pointer to fill the array sequentially.
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// --- REX Prefix (0x40 | W | R | X | B) ---
+	uint8_t rex_prefix = 0x48; // Base: REX.W = 0100_1000b
+
+	// If destination register is R8-R15 (enum values >= 8), set REX.R bit.
+	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+		rex_prefix |= (1 << 2); // Set R bit (0b0100)
+	}
+	*current_byte_ptr++ = rex_prefix;
+	result.size_in_bytes++;
+
+	// --- Opcode for MOV r64, r/m64 ---
+	*current_byte_ptr++ = 0x8B;
+	result.size_in_bytes++;
+
+	// --- ModR/M byte (Mod | Reg | R/M) ---
+	uint8_t modrm_byte;
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x00; // Mod = 00b (no displacement)
+	}
+	else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // Mod = 01b (8-bit displacement)
+	}
+	else {
+		mod_field = 0x02; // Mod = 10b (32-bit displacement)
+	}
+
+	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x04; // 0x04 for R/M indicates SIB
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// --- SIB byte (Scale | Index | Base) ---
+	uint8_t sib_byte = 0x24; // 00_100_100b
+	*current_byte_ptr++ = sib_byte;
+	result.size_in_bytes++;
+
+	// --- Displacement ---
+	if (offset != 0) {
+		if (offset >= -128 && offset <= 127) {
+			// 8-bit signed displacement
+			*current_byte_ptr++ = static_cast<uint8_t>(offset);
+			result.size_in_bytes++;
+		}
+		else {
+			// 32-bit signed displacement (little-endian format)
+			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+			result.size_in_bytes += 4;
+		}
+	}
+
+	return result;
+}
+
 // Win64 calling convention register mapping
 constexpr std::array<X64Register, 4> INT_PARAM_REGS = {
 	X64Register::RCX,  // First integer/pointer argument
@@ -40,7 +128,8 @@ struct RegisterAllocator
 		for (size_t i = 0; i < REGISTER_COUNT; ++i) {
 			registers[i].reg = static_cast<X64Register>(i);
 		}
-		registers[0].isAllocated = true;	// assume RAX is always allocated
+		registers[static_cast<int>(X64Register::RSI)].isAllocated = true;	// assume RSI is always allocated
+		registers[static_cast<int>(X64Register::RBP)].isAllocated = true;	// assume RBP is always allocated
 	}
 
 	void reset() {
@@ -59,6 +148,10 @@ struct RegisterAllocator
 		throw std::runtime_error("No registers available");
 	}
 
+	void release(X64Register reg) {
+		registers[static_cast<int>(reg)].isAllocated = false;
+	}
+
 	bool is_allocated(X64Register reg) const {
 		return registers[static_cast<size_t>(reg)].isAllocated;
 	}
@@ -69,10 +162,6 @@ struct RegisterAllocator
 		}
 	}
 
-	struct OpCodeWithSize {
-		std::array<uint8_t, 4> op_codes;
-		size_t size_in_bytes = 0;
-	};
 	OpCodeWithSize get_reg_reg_move_op_code(X64Register dst_reg, X64Register src_reg, size_t size_in_bytes) {
 		OpCodeWithSize result;
 		/*if (dst_reg == src_reg) {	// removed for now, since this is an optimization
@@ -85,26 +174,30 @@ struct RegisterAllocator
 		if (size_in_bytes == 8) {
 			result.op_codes[0] = 0x48;
 			result.op_codes[1] = 0x89;  // MOV r64, r64
-			result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(dst_reg) << 3) + static_cast<uint8_t>(src_reg);
+			// ModR/M: Mod=11 (register-to-register), Reg=src_reg, R/M=dst_reg
+			result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
 			result.size_in_bytes = 3;
 		}
 		// For 32-bit moves, we don't need REX prefix
 		else if (size_in_bytes == 4) {
 			result.op_codes[0] = 0x89;  // MOV r32, r32
-			result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(dst_reg) << 3) + static_cast<uint8_t>(src_reg);
+			// ModR/M: Mod=11 (register-to-register), Reg=src_reg, R/M=dst_reg
+			result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
 			result.size_in_bytes = 2;
 		}
 		// For 16-bit moves, we need the 66 prefix
 		else if (size_in_bytes == 2) {
 			result.op_codes[0] = 0x66;
 			result.op_codes[1] = 0x89;  // MOV r16, r16
-			result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(dst_reg) << 3) + static_cast<uint8_t>(src_reg);
+			// ModR/M: Mod=11 (register-to-register), Reg=src_reg, R/M=dst_reg
+			result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
 			result.size_in_bytes = 3;
 		}
 		// For 8-bit moves, we need special handling for high registers
 		else if (size_in_bytes == 1) {
 			result.op_codes[0] = 0x88;  // MOV r8, r8
-			result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(dst_reg) << 3) + static_cast<uint8_t>(src_reg);
+			// ModR/M: Mod=11 (register-to-register), Reg=src_reg, R/M=dst_reg
+			result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
 			result.size_in_bytes = 2;
 		}
 
@@ -429,49 +522,57 @@ private:
 			return;
 		}
 
-		// Get source and destination from IR
-		auto result_var = instruction.getOperand(0);
-		auto lhs_val = instruction.getOperandAs<std::string_view>(3);
-		auto rhs_val = instruction.getOperandAs<std::string_view>(6);
+		// Retrieve the original result operand from the IR instruction
+		auto ir_result_operand = instruction.getOperand(0);
 
-		// Get offsets for variables
-		int result_offset;
-		bool is_register = std::holds_alternative<TempVar>(result_var);
-		if (is_register) {
-			// It's a register index
-			result_offset = std::get<TempVar>(result_var).index;
-		} else {
-			// It's a variable name
-			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
-		}
+		// Allocate physical registers for operands. The result will be stored in lhs_physical_reg
+		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold LHS initially and then the computed result
+		X64Register rhs_physical_reg = regAlloc.allocate();
 
-		// Load LHS into rcx from [rsp+8]
-		std::array<uint8_t, 5> loadLhsInst = { 0x48, 0x8B, 0x4C, 0x24, 0x08 };  // mov rcx, [rsp+8]
-		textSectionData.insert(textSectionData.end(), loadLhsInst.begin(), loadLhsInst.end());
+		// Load LHS into result_physical_reg from [rsp+8] (first parameter)
+		auto lhs_opcodes = generateMovFromStack(result_physical_reg, 8);
+		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
 
-		// Load RHS into rdx from [rsp+16]
-		std::array<uint8_t, 5> loadRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };  // mov rdx, [rsp+16]
-		textSectionData.insert(textSectionData.end(), loadRhsInst.begin(), loadRhsInst.end());
+		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
+		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
+		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
 
-		// Add rcx and rdx, store in rcx
-		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xD1 };  // add rcx, rdx
+		// Add rhs_physical_reg to result_physical_reg
+		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xC0 }; // add r/m64, r64. 0x01 is opcode, 0xC0 is ModR/M for reg, reg
+		addInst[2] = 0xC0 + (static_cast<uint8_t>(rhs_physical_reg) << 3) + static_cast<uint8_t>(result_physical_reg);
 		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
 
-		if (is_register) {
-			// Move result to the correct register
-			X64Register reg = static_cast<X64Register>(result_offset);
-			std::array<uint8_t, 3> movRegInst = { 0x48, 0x89, 0xC0 };  // mov rax, rcx
-			movRegInst[2] = 0xC0 + (static_cast<uint8_t>(reg) << 3);  // Set destination register
-			textSectionData.insert(textSectionData.end(), movRegInst.begin(), movRegInst.end());
+		// Determine the final destination of the result (register or memory)
+		int final_result_offset;
+		bool is_final_destination_register = std::holds_alternative<TempVar>(ir_result_operand);
+
+		if (is_final_destination_register) {
+			// If the result is a temporary variable, its index is the target register
+			final_result_offset = std::get<TempVar>(ir_result_operand).index;
+			X64Register target_reg = static_cast<X64Register>(final_result_offset);
+
+			// Move the computed result from result_physical_reg to the target register
+			auto movResultToTarget = regAlloc.get_reg_reg_move_op_code(target_reg, result_physical_reg, size / 8);
+			if (movResultToTarget.size_in_bytes > 0) { // Only insert if a move is actually needed
+				textSectionData.insert(textSectionData.end(), movResultToTarget.op_codes.begin(), movResultToTarget.op_codes.begin() + movResultToTarget.size_in_bytes);
+			}
 		} else {
-			// Store result in memory
-			std::array<uint8_t, 7> storeResultInst = { 0x48, 0x89, 0x8D, 0x00, 0x00, 0x00, 0x00 };  // mov [rbp+offset], rcx
-			storeResultInst[3] = static_cast<uint8_t>(result_offset & 0xFF);
-			storeResultInst[4] = static_cast<uint8_t>((result_offset >> 8) & 0xFF);
-			storeResultInst[5] = static_cast<uint8_t>((result_offset >> 16) & 0xFF);
-			storeResultInst[6] = static_cast<uint8_t>((result_offset >> 24) & 0xFF);
+			// If the result is a named variable, find its stack offset
+			final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ir_result_operand)];
+
+			// Store the computed result from result_physical_reg to memory
+			// mov [rbp + offset], result_physical_reg
+			std::array<uint8_t, 7> storeResultInst = { 0x48, 0x89, 0x00, 0, 0, 0, 0 }; // 0x48 for REX.W, 0x89 for mov r/m64, r64
+			// ModR/M byte: Mod=10 (disp32), Reg=result_physical_reg, R/M=101 (RBP)
+			storeResultInst[2] = (0x02 << 6) | (static_cast<uint8_t>(result_physical_reg) << 3) | 0x05;
+			
+			std::memcpy(storeResultInst.data() + 3, &final_result_offset, sizeof(final_result_offset));
 			textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
 		}
+		
+		// Release the allocated registers
+		regAlloc.release(rhs_physical_reg);
+		regAlloc.release(result_physical_reg);
 	}
 
 	void handleSubtract(const IrInstruction& instruction) {
@@ -487,35 +588,63 @@ private:
 			return;
 		}
 
-		// Allocate registers for operands and result
-		auto result_reg = regAlloc.allocate();
-		auto lhs_reg = regAlloc.allocate();
-		auto rhs_reg = regAlloc.allocate();
+		// Retrieve the original result operand from the IR instruction
+		auto ir_result_operand = instruction.getOperand(0);
 
-		// Load parameters into registers
-		// mov lhs_reg, [rsp+8] for first parameter
-		std::array<uint8_t, 5> movLhsInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
-		movLhsInst[2] = 0x84 + static_cast<uint8_t>(lhs_reg);
-		textSectionData.insert(textSectionData.end(), movLhsInst.begin(), movLhsInst.end());
+		// Allocate physical registers for operands and the temporary result
+		X64Register lhs_physical_reg = regAlloc.allocate();
+		X64Register rhs_physical_reg = regAlloc.allocate();
+		X64Register result_physical_reg = regAlloc.allocate(); // This register will hold the computed result
 
-		// mov rhs_reg, [rsp+16] for second parameter
-		std::array<uint8_t, 5> movRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };
-		movRhsInst[2] = 0x84 + static_cast<uint8_t>(rhs_reg);
-		textSectionData.insert(textSectionData.end(), movRhsInst.begin(), movRhsInst.end());
+		// Load LHS into lhs_physical_reg from [rsp+8] (first parameter)
+		auto lhs_opcodes = generateMovFromStack(lhs_physical_reg, 8);
+		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
 
-		// mov result_reg, lhs_reg
-		auto movResultLhs = regAlloc.get_reg_reg_move_op_code(result_reg, lhs_reg, sizeInBits / 8);
-		textSectionData.insert(textSectionData.end(), movResultLhs.op_codes.begin(), movResultLhs.op_codes.begin() + movResultLhs.size_in_bytes);
+		// Load RHS into rhs_physical_reg from [rsp+16] (second parameter)
+		auto rhs_opcodes = generateMovFromStack(rhs_physical_reg, 16);
+		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
 
-		// sub result_reg, rhs_reg
-		std::array<uint8_t, 3> subInst = { 0x48, 0x29, 0xC0 };
-		subInst[2] = 0xC0 + (static_cast<uint8_t>(result_reg) << 3) + static_cast<uint8_t>(rhs_reg);
+		// Move LHS into result_physical_reg to start the computation
+		auto movLhsToResult = regAlloc.get_reg_reg_move_op_code(result_physical_reg, lhs_physical_reg, sizeInBits / 8);
+		textSectionData.insert(textSectionData.end(), movLhsToResult.op_codes.begin(), movLhsToResult.op_codes.begin() + movLhsToResult.size_in_bytes);
+
+		// Subtract rhs_physical_reg from result_physical_reg
+		std::array<uint8_t, 3> subInst = { 0x48, 0x29, 0xC0 }; // sub r/m64, r64. 0x29 is opcode, 0xC0 is ModR/M for reg, reg
+		subInst[2] = 0xC0 + (static_cast<uint8_t>(rhs_physical_reg) << 3) + static_cast<uint8_t>(result_physical_reg);
 		textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
 
-		// Store result in shadow space
-		std::array<uint8_t, 5> storeResultInst = { 0x48, 0x89, 0x44, 0x24, 0x08 };
-		storeResultInst[2] = 0x84 + static_cast<uint8_t>(result_reg);
-		textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+		// Determine the final destination of the result (register or memory)
+		int final_result_offset;
+		bool is_final_destination_register = std::holds_alternative<TempVar>(ir_result_operand);
+
+		if (is_final_destination_register) {
+			// If the result is a temporary variable, its index is the target register
+			final_result_offset = std::get<TempVar>(ir_result_operand).index;
+			X64Register target_reg = static_cast<X64Register>(final_result_offset);
+
+			// Move the computed result from result_physical_reg to the target register
+			auto movResultToTarget = regAlloc.get_reg_reg_move_op_code(target_reg, result_physical_reg, sizeInBits / 8);
+			if (movResultToTarget.size_in_bytes > 0) { // Only insert if a move is actually needed
+				textSectionData.insert(textSectionData.end(), movResultToTarget.op_codes.begin(), movResultToTarget.op_codes.begin() + movResultToTarget.size_in_bytes);
+			}
+		} else {
+			// If the result is a named variable, find its stack offset
+			final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ir_result_operand)];
+
+			// Store the computed result from result_physical_reg to memory
+			// mov [rbp + offset], result_physical_reg
+			std::array<uint8_t, 7> storeResultInst = { 0x48, 0x89, 0x00, 0, 0, 0, 0 }; // 0x48 for REX.W, 0x89 for mov r/m64, r64
+			// ModR/M byte: Mod=10 (disp32), Reg=result_physical_reg, R/M=101 (RBP)
+			storeResultInst[2] = (0x02 << 6) | (static_cast<uint8_t>(result_physical_reg) << 3) | 0x05;
+			
+			std::memcpy(storeResultInst.data() + 3, &final_result_offset, sizeof(final_result_offset));
+			textSectionData.insert(textSectionData.end(), storeResultInst.begin(), storeResultInst.end());
+		}
+		
+		// Release the allocated registers
+		regAlloc.release(lhs_physical_reg);
+		regAlloc.release(rhs_physical_reg);
+		regAlloc.release(result_physical_reg);
 	}
 
 	void handleMultiply(const IrInstruction& instruction) {
@@ -538,14 +667,12 @@ private:
 
 		// Load parameters into registers
 		// mov lhs_reg, [rsp+8] for first parameter
-		std::array<uint8_t, 5> movLhsInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
-		movLhsInst[2] = 0x84 + static_cast<uint8_t>(lhs_reg);
-		textSectionData.insert(textSectionData.end(), movLhsInst.begin(), movLhsInst.end());
+		auto lhs_opcodes = generateMovFromStack(lhs_reg, 8);
+		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
 
 		// mov rhs_reg, [rsp+16] for second parameter
-		std::array<uint8_t, 5> movRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };
-		movRhsInst[2] = 0x84 + static_cast<uint8_t>(rhs_reg);
-		textSectionData.insert(textSectionData.end(), movRhsInst.begin(), movRhsInst.end());
+		auto rhs_opcodes = generateMovFromStack(rhs_reg, 16);
+		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
 
 		// mov result_reg, lhs_reg
 		auto movResultLhs = regAlloc.get_reg_reg_move_op_code(result_reg, lhs_reg, sizeInBits / 8);
@@ -582,14 +709,12 @@ private:
 
 		// Load parameters into registers
 		// mov lhs_reg, [rsp+8] for first parameter (dividend)
-		std::array<uint8_t, 5> movLhsInst = { 0x48, 0x8B, 0x44, 0x24, 0x08 };
-		movLhsInst[2] = 0x84 + static_cast<uint8_t>(lhs_reg);
-		textSectionData.insert(textSectionData.end(), movLhsInst.begin(), movLhsInst.end());
+		auto lhs_opcodes = generateMovFromStack(lhs_reg, 8);
+		textSectionData.insert(textSectionData.end(), lhs_opcodes.op_codes.begin(), lhs_opcodes.op_codes.begin() + lhs_opcodes.size_in_bytes);
 
 		// mov rhs_reg, [rsp+16] for second parameter (divisor)
-		std::array<uint8_t, 5> movRhsInst = { 0x48, 0x8B, 0x54, 0x24, 0x10 };
-		movRhsInst[2] = 0x84 + static_cast<uint8_t>(rhs_reg);
-		textSectionData.insert(textSectionData.end(), movRhsInst.begin(), movRhsInst.end());
+		auto rhs_opcodes = generateMovFromStack(rhs_reg, 16);
+		textSectionData.insert(textSectionData.end(), rhs_opcodes.op_codes.begin(), rhs_opcodes.op_codes.begin() + rhs_opcodes.size_in_bytes);
 
 		// mov rax, lhs_reg (dividend must be in rax)
 		auto movRaxLhs = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, lhs_reg, sizeInBits / 8);
