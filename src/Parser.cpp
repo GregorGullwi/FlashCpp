@@ -248,13 +248,13 @@ ParseResult Parser::parse_type_specifier()
 	static const std::unordered_map<std::string_view, std::tuple<Type, size_t>>
 		type_map = {
 				{"void", {Type::Void, 0}},
-				{"bool", {Type::Bool, std::numeric_limits<bool>::digits}},
+				{"bool", {Type::Bool, 1}},
 				{"char", {Type::Char, 8}},
 				{"short", {Type::Short, 16}},
 				{"int", {Type::Int, 32}},
 				{"long", {Type::Long, sizeof(long) * 8}},
-				{"float", {Type::Float, std::numeric_limits<float>::digits}},
-				{"double", {Type::Float, std::numeric_limits<double>::digits}},
+				{"float", {Type::Float, 32}},
+				{"double", {Type::Double, 64}},
 				{"auto", {Type::Auto, 0}},
 	};
 

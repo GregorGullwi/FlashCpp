@@ -200,6 +200,9 @@ private:
 			rhsIrOperands = generateTypeConversion(rhsIrOperands, rhsType, commonType);
 		}
 
+		// Check if we're dealing with floating-point operations
+		bool is_floating_point_op = is_floating_point_type(commonType);
+
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
@@ -214,17 +217,30 @@ private:
 
 		// Generate the IR for the operation based on the operator and operand types
 		if (binaryOperatorNode.op() == "+") {
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(irOperands)));
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatAdd, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(irOperands)));
+			}
 		}
 		else if (binaryOperatorNode.op() == "-") {
-			ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(irOperands)));
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatSubtract, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(irOperands)));
+			}
 		}
 		else if (binaryOperatorNode.op() == "*") {
-			ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(irOperands)));
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatMultiply, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(irOperands)));
+			}
 		}
 		else if (binaryOperatorNode.op() == "/") {
-			// Choose signed or unsigned division based on common type
-			if (is_unsigned_integer_type(commonType)) {
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatDivide, std::move(irOperands)));
+			} else if (is_unsigned_integer_type(commonType)) {
 				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedDivide, std::move(irOperands)));
 			} else {
 				ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(irOperands)));
@@ -254,38 +270,50 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Modulo, std::move(irOperands)));
 		}
 		else if (binaryOperatorNode.op() == "==") {
-			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(irOperands)));
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatEqual, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(irOperands)));
+			}
 		}
 		else if (binaryOperatorNode.op() == "!=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(irOperands)));
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(irOperands)));
+			}
 		}
 		else if (binaryOperatorNode.op() == "<") {
-			// Choose signed or unsigned comparison based on common type
-			if (is_unsigned_integer_type(commonType)) {
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatLessThan, std::move(irOperands)));
+			} else if (is_unsigned_integer_type(commonType)) {
 				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(irOperands)));
 			} else {
 				ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(irOperands)));
 			}
 		}
 		else if (binaryOperatorNode.op() == "<=") {
-			// Choose signed or unsigned comparison based on common type
-			if (is_unsigned_integer_type(commonType)) {
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatLessEqual, std::move(irOperands)));
+			} else if (is_unsigned_integer_type(commonType)) {
 				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessEqual, std::move(irOperands)));
 			} else {
 				ir_.addInstruction(IrInstruction(IrOpcode::LessEqual, std::move(irOperands)));
 			}
 		}
 		else if (binaryOperatorNode.op() == ">") {
-			// Choose signed or unsigned comparison based on common type
-			if (is_unsigned_integer_type(commonType)) {
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterThan, std::move(irOperands)));
+			} else if (is_unsigned_integer_type(commonType)) {
 				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterThan, std::move(irOperands)));
 			} else {
 				ir_.addInstruction(IrInstruction(IrOpcode::GreaterThan, std::move(irOperands)));
 			}
 		}
 		else if (binaryOperatorNode.op() == ">=") {
-			// Choose signed or unsigned comparison based on common type
-			if (is_unsigned_integer_type(commonType)) {
+			if (is_floating_point_op) {
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterEqual, std::move(irOperands)));
+			} else if (is_unsigned_integer_type(commonType)) {
 				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterEqual, std::move(irOperands)));
 			} else {
 				ir_.addInstruction(IrInstruction(IrOpcode::GreaterEqual, std::move(irOperands)));

@@ -62,6 +62,12 @@ void initialize_native_types() {
     auto& float_type = gTypeInfo.emplace_back("float", Type::Float, gTypeInfo.size());
     gNativeTypes[Type::Float] = &float_type;
 
+    auto& double_type = gTypeInfo.emplace_back("double", Type::Double, gTypeInfo.size());
+    gNativeTypes[Type::Double] = &double_type;
+
+    auto& longdouble_type = gTypeInfo.emplace_back("longdouble", Type::LongDouble, gTypeInfo.size());
+    gNativeTypes[Type::LongDouble] = &longdouble_type;
+
     auto& auto_type = gTypeInfo.emplace_back("auto", Type::Auto, gTypeInfo.size());
     gNativeTypes[Type::Auto] = &auto_type;
 }
@@ -86,6 +92,17 @@ bool is_integer_type(Type type) {
 
 bool is_bool_type(Type type) {
     return type == Type::Bool;
+}
+
+bool is_floating_point_type(Type type) {
+    switch (type) {
+        case Type::Float:
+        case Type::Double:
+        case Type::LongDouble:
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool is_signed_integer_type(Type type) {
@@ -137,6 +154,20 @@ int get_integer_rank(Type type) {
     }
 }
 
+int get_floating_point_rank(Type type) {
+    // Floating-point conversion rank (higher rank = larger type)
+    switch (type) {
+        case Type::Float:
+            return 1;
+        case Type::Double:
+            return 2;
+        case Type::LongDouble:
+            return 3;
+        default:
+            return 0;
+    }
+}
+
 int get_type_size_bits(Type type) {
     switch (type) {
         case Type::Char:
@@ -154,6 +185,12 @@ int get_type_size_bits(Type type) {
         case Type::LongLong:
         case Type::UnsignedLongLong:
             return 64;
+        case Type::Float:
+            return 32;
+        case Type::Double:
+            return 64;
+        case Type::LongDouble:
+            return 80;  // x87 extended precision
         default:
             return 0;
     }
@@ -176,15 +213,40 @@ Type promote_integer_type(Type type) {
     }
 }
 
-Type get_common_type(Type left, Type right) {
-    // Apply integer promotions first
-    left = promote_integer_type(left);
-    right = promote_integer_type(right);
+Type promote_floating_point_type(Type type) {
+    // Floating-point promotions: float promotes to double in some contexts
+    // For now, keep types as-is (no automatic promotion)
+    return type;
+}
 
+Type get_common_type(Type left, Type right) {
     // If both types are the same, return that type
     if (left == right) {
         return left;
     }
+
+    // Floating-point types have higher precedence than integer types
+    bool left_is_fp = is_floating_point_type(left);
+    bool right_is_fp = is_floating_point_type(right);
+
+    if (left_is_fp && right_is_fp) {
+        // Both floating-point: higher rank wins
+        int left_fp_rank = get_floating_point_rank(left);
+        int right_fp_rank = get_floating_point_rank(right);
+        return (left_fp_rank > right_fp_rank) ? left : right;
+    }
+
+    if (left_is_fp) {
+        return left;  // Floating-point wins over integer
+    }
+
+    if (right_is_fp) {
+        return right;  // Floating-point wins over integer
+    }
+
+    // Both are integer types: apply integer promotions first
+    left = promote_integer_type(left);
+    right = promote_integer_type(right);
 
     // If one is signed and the other unsigned, and they have the same rank
     int left_rank = get_integer_rank(left);
