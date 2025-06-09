@@ -396,6 +396,15 @@ public:
 			case IrOpcode::UnsignedShiftRight:
 				handleUnsignedShiftRight(instruction);
 				break;
+			case IrOpcode::BitwiseAnd:
+				handleBitwiseAnd(instruction);
+				break;
+			case IrOpcode::BitwiseOr:
+				handleBitwiseOr(instruction);
+				break;
+			case IrOpcode::BitwiseXor:
+				handleBitwiseXor(instruction);
+				break;
 			case IrOpcode::SignExtend:
 				handleSignExtend(instruction);
 				break;
@@ -1000,6 +1009,45 @@ private:
 		// ModR/M: Mod=11 (register-to-register), Reg=5 (opcode extension for shr), R/M=result_physical_reg
 		shrInst[2] = 0xC0 + (0x05 << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), shrInst.begin(), shrInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleBitwiseAnd(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise AND");
+
+		// Perform the bitwise AND operation
+		std::array<uint8_t, 3> andInst = { 0x48, 0x21, 0xC0 }; // and r/m64, r64. 0x21 is opcode, 0xC0 is ModR/M for reg, reg
+		andInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), andInst.begin(), andInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleBitwiseOr(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise OR");
+
+		// Perform the bitwise OR operation
+		std::array<uint8_t, 3> orInst = { 0x48, 0x09, 0xC0 }; // or r/m64, r64. 0x09 is opcode, 0xC0 is ModR/M for reg, reg
+		orInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleBitwiseXor(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise XOR");
+
+		// Perform the bitwise XOR operation
+		std::array<uint8_t, 3> xorInst = { 0x48, 0x31, 0xC0 }; // xor r/m64, r64. 0x31 is opcode, 0xC0 is ModR/M for reg, reg
+		xorInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), xorInst.begin(), xorInst.end());
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);

@@ -19,6 +19,9 @@ enum class IrOpcode {
 	ShiftLeft,
 	ShiftRight,
 	UnsignedShiftRight,
+	BitwiseAnd,
+	BitwiseOr,
+	BitwiseXor,
 	SignExtend,
 	ZeroExtend,
 	Truncate,
@@ -416,6 +419,102 @@ public:
 					oss << '%' << getOperandAs<TempVar>(3).index;
 				else if (isOperandType<std::string_view>(3))
 					oss << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::BitwiseAnd:
+		{
+			// %result = and [Type][Size] %lhs, %rhs
+			assert(getOperandCount() == 7 && "BitwiseAnd instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = and " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::BitwiseOr:
+		{
+			// %result = or [Type][Size] %lhs, %rhs
+			assert(getOperandCount() == 7 && "BitwiseOr instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = or " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::BitwiseXor:
+		{
+			// %result = xor [Type][Size] %lhs, %rhs
+			assert(getOperandCount() == 7 && "BitwiseXor instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = xor " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
 
 				oss << ", ";
 

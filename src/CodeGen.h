@@ -241,6 +241,15 @@ private:
 				ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(irOperands)));
 			}
 		}
+		else if (binaryOperatorNode.op() == "&") {
+			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "|") {
+			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseOr, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "^") {
+			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(irOperands)));
+		}
 		else {
 			assert(false && "Unsupported binary operator");
 			return {};
