@@ -56,7 +56,15 @@ enum class Type {
 	Void,
 	Bool,
 	Char,
+	UnsignedChar,
+	Short,
+	UnsignedShort,
 	Int,
+	UnsignedInt,
+	Long,
+	UnsignedLong,
+	LongLong,
+	UnsignedLongLong,
 	Float,
 	UserDefined,
 	Auto,
@@ -86,6 +94,18 @@ extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 TypeInfo& add_user_type(std::string name);
 
 TypeInfo& add_function_type(std::string name, Type /*return_type*/);
+
+void initialize_native_types();
+
+// Integer promotion and conversion utilities
+bool is_integer_type(Type type);
+bool is_signed_integer_type(Type type);
+bool is_unsigned_integer_type(Type type);
+int get_integer_rank(Type type);
+int get_type_size_bits(Type type);
+Type promote_integer_type(Type type);
+Type get_common_type(Type left, Type right);
+bool requires_conversion(Type from, Type to);
 
 class TypeSpecifierNode {
 public:

@@ -384,11 +384,26 @@ public:
 			case IrOpcode::Divide:
 				handleDivide(instruction);
 				break;
+			case IrOpcode::UnsignedDivide:
+				handleUnsignedDivide(instruction);
+				break;
 			case IrOpcode::ShiftLeft:
 				handleShiftLeft(instruction);
 				break;
 			case IrOpcode::ShiftRight:
 				handleShiftRight(instruction);
+				break;
+			case IrOpcode::UnsignedShiftRight:
+				handleUnsignedShiftRight(instruction);
+				break;
+			case IrOpcode::SignExtend:
+				handleSignExtend(instruction);
+				break;
+			case IrOpcode::ZeroExtend:
+				handleZeroExtend(instruction);
+				break;
+			case IrOpcode::Truncate:
+				handleTruncate(instruction);
 				break;
 			default:
 				assert(false && "Not implemented yet");
@@ -422,7 +437,7 @@ private:
 		};
 
 		// For now, we only support integer operations
-		if (ctx.type != Type::Int) {
+		if (!is_integer_type(ctx.type)) {
 			assert(false && (std::string("Only integer ") + operation_name + " is supported").c_str());
 		}
 
@@ -565,7 +580,7 @@ private:
 			// int argSize = instruction.getOperandAs<int>(argIndex + 1); // unused for now
 			auto argValue = instruction.getOperand(argIndex + 2); // could be immediate or variable
 
-			if (argType != Type::Int) {
+			if (!is_integer_type(argType)) {
 				assert(false && "Only integer arguments are supported");
 				return;
 			}
@@ -942,6 +957,103 @@ private:
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+	}
+
+	void handleUnsignedDivide(const IrInstruction& instruction) {
+		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
+		regAlloc.allocateSpecific(X64Register::RDX, INT_MIN);
+
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned division");
+
+		// Division requires special handling: dividend must be in RAX
+		// Move result_physical_reg to RAX (dividend must be in RAX for div)
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.size_in_bits / 8);
+		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+
+		// xor edx, edx - clear upper 32 bits of dividend for unsigned division
+		std::array<uint8_t, 2> xorEdxInst = { 0x31, 0xD2 };
+		textSectionData.insert(textSectionData.end(), xorEdxInst.begin(), xorEdxInst.end());
+
+		// div rhs_physical_reg (unsigned division)
+		std::array<uint8_t, 3> divInst = { 0x48, 0xF7, 0x00 }; // REX.W (0x48) + Opcode (0xF7) + ModR/M (initially 0x00)
+		// ModR/M: Mod=11 (register-to-register), Reg=6 (opcode extension for div), R/M=rhs_physical_reg
+		divInst[2] = 0xC0 + (0x06 << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
+
+		// Store the result from RAX (quotient) to the appropriate destination
+		storeArithmeticResult(ctx, X64Register::RAX);
+	}
+
+	void handleUnsignedShiftRight(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned shift right");
+
+		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
+		// Move rhs_physical_reg to RCX
+		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.size_in_bits / 8);
+		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+
+		// Perform the unsigned shift right operation: shr r/m64, cl (logical right shift)
+		// Note: Using SHR (logical) instead of SAR (arithmetic) for unsigned integers
+		std::array<uint8_t, 3> shrInst = { 0x48, 0xD3, 0x00 }; // REX.W (0x48) + Opcode (0xD3) + ModR/M (initially 0x00)
+		// ModR/M: Mod=11 (register-to-register), Reg=5 (opcode extension for shr), R/M=result_physical_reg
+		shrInst[2] = 0xC0 + (0x05 << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), shrInst.begin(), shrInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleSignExtend(const IrInstruction& instruction) {
+		// Sign extension: movsx dest, src
+		// For now, implement a simple version that handles common cases
+
+		// Get operands: result_var, from_type, from_size, value, to_size
+		Type fromType = instruction.getOperandAs<Type>(1);
+		int fromSize = instruction.getOperandAs<int>(2);
+		int toSize = instruction.getOperandAs<int>(4);
+
+		// For simplicity, assume we're extending to a register
+		// In a full implementation, we'd need to handle different size combinations
+		// This is a placeholder that would need proper x86-64 movsx instructions
+
+		// TODO: Implement proper sign extension instructions based on sizes
+		// movsx r64, r32 (32->64), movsx r32, r16 (16->32), movsx r32, r8 (8->32), etc.
+	}
+
+	void handleZeroExtend(const IrInstruction& instruction) {
+		// Zero extension: movzx dest, src
+		// For now, implement a simple version that handles common cases
+
+		// Get operands: result_var, from_type, from_size, value, to_size
+		Type fromType = instruction.getOperandAs<Type>(1);
+		int fromSize = instruction.getOperandAs<int>(2);
+		int toSize = instruction.getOperandAs<int>(4);
+
+		// For simplicity, assume we're extending to a register
+		// In a full implementation, we'd need to handle different size combinations
+		// This is a placeholder that would need proper x86-64 movzx instructions
+
+		// TODO: Implement proper zero extension instructions based on sizes
+		// movzx r64, r32 (32->64), movzx r32, r16 (16->32), movzx r32, r8 (8->32), etc.
+	}
+
+	void handleTruncate(const IrInstruction& instruction) {
+		// Truncation: just use the lower bits
+		// For now, implement a simple version that handles common cases
+
+		// Get operands: result_var, from_type, from_size, value, to_size
+		Type fromType = instruction.getOperandAs<Type>(1);
+		int fromSize = instruction.getOperandAs<int>(2);
+		int toSize = instruction.getOperandAs<int>(4);
+
+		// For simplicity, assume we're truncating in a register
+		// In a full implementation, we'd need to handle different size combinations
+		// This is a placeholder that would need proper x86-64 instructions
+
+		// TODO: Implement proper truncation (often just using smaller register names)
+		// e.g., using eax instead of rax for 32-bit, ax for 16-bit, al for 8-bit
 	}
 
 	void finalizeSections() {
