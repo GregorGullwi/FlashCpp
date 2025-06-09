@@ -180,6 +180,12 @@ private:
 		else if (binaryOperatorNode.op() == "/") {
 			ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(irOperands)));
 		}
+		else if (binaryOperatorNode.op() == "<<") {
+			ir_.addInstruction(IrInstruction(IrOpcode::ShiftLeft, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == ">>") {
+			ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(irOperands)));
+		}
 		else {
 			assert(false && "Unsupported binary operator");
 			return {};
