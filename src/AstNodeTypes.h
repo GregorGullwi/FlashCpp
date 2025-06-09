@@ -296,26 +296,7 @@ private:
 		size_t body_index_;
 };*/
 
-class IfStatementNode {
-public:
-	explicit IfStatementNode(size_t start_pos, size_t end_pos, size_t condition,
-		size_t if_body, size_t else_body)
-		: start_pos_(start_pos), end_pos_(end_pos), condition_(condition),
-		if_body_(if_body), else_body_(else_body) {}
 
-	size_t start_pos() const { return start_pos_; }
-	size_t end_pos() const { return end_pos_; }
-	size_t condition() const { return condition_; }
-	size_t if_body() const { return if_body_; }
-	size_t else_body() const { return else_body_; }
-
-private:
-	size_t start_pos_;
-	size_t end_pos_;
-	size_t condition_;
-	size_t if_body_;
-	size_t else_body_;
-};
 
 class LoopStatementNode {
 public:
@@ -388,4 +369,21 @@ public:
 private:
 	std::optional<ASTNode>
 		expression_; // Optional, as a return statement may not have an expression
+};
+
+class IfStatementNode {
+public:
+	explicit IfStatementNode(ASTNode condition, ASTNode then_statement,
+		std::optional<ASTNode> else_statement = std::nullopt)
+		: condition_(condition), then_statement_(then_statement), else_statement_(else_statement) {}
+
+	auto get_condition() const { return condition_; }
+	auto get_then_statement() const { return then_statement_; }
+	auto get_else_statement() const { return else_statement_; }
+	bool has_else() const { return else_statement_.has_value(); }
+
+private:
+	ASTNode condition_;
+	ASTNode then_statement_;
+	std::optional<ASTNode> else_statement_;
 };
