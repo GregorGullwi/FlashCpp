@@ -66,6 +66,8 @@ enum class Type {
 	LongLong,
 	UnsignedLongLong,
 	Float,
+	Double,
+	LongDouble,
 	UserDefined,
 	Auto,
 	Function,
@@ -97,14 +99,17 @@ TypeInfo& add_function_type(std::string name, Type /*return_type*/);
 
 void initialize_native_types();
 
-// Integer promotion and conversion utilities
+// Type utilities
 bool is_integer_type(Type type);
 bool is_signed_integer_type(Type type);
 bool is_unsigned_integer_type(Type type);
 bool is_bool_type(Type type);
+bool is_floating_point_type(Type type);
 int get_integer_rank(Type type);
+int get_floating_point_rank(Type type);
 int get_type_size_bits(Type type);
 Type promote_integer_type(Type type);
+Type promote_floating_point_type(Type type);
 Type get_common_type(Type left, Type right);
 bool requires_conversion(Type from, Type to);
 

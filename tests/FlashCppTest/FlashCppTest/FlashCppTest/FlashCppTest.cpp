@@ -817,3 +817,19 @@ TEST_CASE("Assignment operators") {
 TEST_CASE("Increment and decrement") {
 	run_test_from_file("increment_decrement.cpp", "Increment and decrement", false);
 }
+
+TEST_CASE("Float arithmetic") {
+	run_test_from_file("float_arithmetic.cpp", "Float arithmetic", false);
+}
+
+TEST_CASE("Double arithmetic") {
+	run_test_from_file("double_arithmetic.cpp", "Double arithmetic", false);
+}
+
+TEST_CASE("Float comparisons") {
+	run_test_from_file("float_comparisons.cpp", "Float comparisons", false);
+}
+
+TEST_CASE("Mixed arithmetic") {
+	run_test_from_file("mixed_arithmetic.cpp", "Mixed arithmetic", false);
+}

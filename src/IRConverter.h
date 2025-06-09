@@ -408,6 +408,18 @@ public:
 			case IrOpcode::Modulo:
 				handleModulo(instruction);
 				break;
+			case IrOpcode::FloatAdd:
+				handleFloatAdd(instruction);
+				break;
+			case IrOpcode::FloatSubtract:
+				handleFloatSubtract(instruction);
+				break;
+			case IrOpcode::FloatMultiply:
+				handleFloatMultiply(instruction);
+				break;
+			case IrOpcode::FloatDivide:
+				handleFloatDivide(instruction);
+				break;
 			case IrOpcode::Equal:
 				handleEqual(instruction);
 				break;
@@ -437,6 +449,24 @@ public:
 				break;
 			case IrOpcode::UnsignedGreaterEqual:
 				handleUnsignedGreaterEqual(instruction);
+				break;
+			case IrOpcode::FloatEqual:
+				handleFloatEqual(instruction);
+				break;
+			case IrOpcode::FloatNotEqual:
+				handleFloatNotEqual(instruction);
+				break;
+			case IrOpcode::FloatLessThan:
+				handleFloatLessThan(instruction);
+				break;
+			case IrOpcode::FloatLessEqual:
+				handleFloatLessEqual(instruction);
+				break;
+			case IrOpcode::FloatGreaterThan:
+				handleFloatGreaterThan(instruction);
+				break;
+			case IrOpcode::FloatGreaterEqual:
+				handleFloatGreaterEqual(instruction);
 				break;
 			case IrOpcode::LogicalAnd:
 				handleLogicalAnd(instruction);
@@ -1324,6 +1354,256 @@ private:
 		std::array<uint8_t, 3> orInst = { 0x48, 0x09, 0xC0 }; // or r/m64, r64
 		orInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatAdd(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point addition");
+
+		// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// addss xmm_dst, xmm_src (F3 0F 58 /r)
+			std::array<uint8_t, 4> addssInst = { 0xF3, 0x0F, 0x58, 0xC0 };
+			addssInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), addssInst.begin(), addssInst.end());
+		} else if (type == Type::Double) {
+			// addsd xmm_dst, xmm_src (F2 0F 58 /r)
+			std::array<uint8_t, 4> addsdInst = { 0xF2, 0x0F, 0x58, 0xC0 };
+			addsdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), addsdInst.begin(), addsdInst.end());
+		}
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatSubtract(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point subtraction");
+
+		// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// subss xmm_dst, xmm_src (F3 0F 5C /r)
+			std::array<uint8_t, 4> subssInst = { 0xF3, 0x0F, 0x5C, 0xC0 };
+			subssInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), subssInst.begin(), subssInst.end());
+		} else if (type == Type::Double) {
+			// subsd xmm_dst, xmm_src (F2 0F 5C /r)
+			std::array<uint8_t, 4> subsdInst = { 0xF2, 0x0F, 0x5C, 0xC0 };
+			subsdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), subsdInst.begin(), subsdInst.end());
+		}
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatMultiply(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point multiplication");
+
+		// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// mulss xmm_dst, xmm_src (F3 0F 59 /r)
+			std::array<uint8_t, 4> mulssInst = { 0xF3, 0x0F, 0x59, 0xC0 };
+			mulssInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), mulssInst.begin(), mulssInst.end());
+		} else if (type == Type::Double) {
+			// mulsd xmm_dst, xmm_src (F2 0F 59 /r)
+			std::array<uint8_t, 4> mulsdInst = { 0xF2, 0x0F, 0x59, 0xC0 };
+			mulsdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), mulsdInst.begin(), mulsdInst.end());
+		}
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatDivide(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point division");
+
+		// Use SSE divss (scalar single-precision) or divsd (scalar double-precision)
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// divss xmm_dst, xmm_src (F3 0F 5E /r)
+			std::array<uint8_t, 4> divssInst = { 0xF3, 0x0F, 0x5E, 0xC0 };
+			divssInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), divssInst.begin(), divssInst.end());
+		} else if (type == Type::Double) {
+			// divsd xmm_dst, xmm_src (F2 0F 5E /r)
+			std::array<uint8_t, 4> divsdInst = { 0xF2, 0x0F, 0x5E, 0xC0 };
+			divsdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), divsdInst.begin(), divsdInst.end());
+		}
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point equal comparison");
+
+		// Use SSE comiss/comisd for comparison
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// comiss xmm1, xmm2 (0F 2F /r)
+			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
+			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+		} else if (type == Type::Double) {
+			// comisd xmm1, xmm2 (66 0F 2F /r)
+			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
+			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+		}
+
+		// Set result based on zero flag: sete r8
+		std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, 0xC0 };
+		seteInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatNotEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point not equal comparison");
+
+		// Use SSE comiss/comisd for comparison
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// comiss xmm1, xmm2 (0F 2F /r)
+			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
+			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+		} else if (type == Type::Double) {
+			// comisd xmm1, xmm2 (66 0F 2F /r)
+			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
+			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+		}
+
+		// Set result based on zero flag: setne r8
+		std::array<uint8_t, 3> setneInst = { 0x0F, 0x95, 0xC0 };
+		setneInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setneInst.begin(), setneInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatLessThan(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point less than comparison");
+
+		// Use SSE comiss/comisd for comparison
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// comiss xmm1, xmm2 (0F 2F /r)
+			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
+			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+		} else if (type == Type::Double) {
+			// comisd xmm1, xmm2 (66 0F 2F /r)
+			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
+			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+		}
+
+		// Set result based on carry flag: setb r8 (below = less than for floating-point)
+		std::array<uint8_t, 3> setbInst = { 0x0F, 0x92, 0xC0 };
+		setbInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setbInst.begin(), setbInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatLessEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point less than or equal comparison");
+
+		// Use SSE comiss/comisd for comparison
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// comiss xmm1, xmm2 (0F 2F /r)
+			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
+			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+		} else if (type == Type::Double) {
+			// comisd xmm1, xmm2 (66 0F 2F /r)
+			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
+			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+		}
+
+		// Set result based on flags: setbe r8 (below or equal)
+		std::array<uint8_t, 3> setbeInst = { 0x0F, 0x96, 0xC0 };
+		setbeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setbeInst.begin(), setbeInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatGreaterThan(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point greater than comparison");
+
+		// Use SSE comiss/comisd for comparison
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// comiss xmm1, xmm2 (0F 2F /r)
+			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
+			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+		} else if (type == Type::Double) {
+			// comisd xmm1, xmm2 (66 0F 2F /r)
+			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
+			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+		}
+
+		// Set result based on flags: seta r8 (above = greater than for floating-point)
+		std::array<uint8_t, 3> setaInst = { 0x0F, 0x97, 0xC0 };
+		setaInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setaInst.begin(), setaInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleFloatGreaterEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point greater than or equal comparison");
+
+		// Use SSE comiss/comisd for comparison
+		Type type = instruction.getOperandAs<Type>(1);
+		if (type == Type::Float) {
+			// comiss xmm1, xmm2 (0F 2F /r)
+			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
+			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+		} else if (type == Type::Double) {
+			// comisd xmm1, xmm2 (66 0F 2F /r)
+			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
+			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+		}
+
+		// Set result based on flags: setae r8 (above or equal)
+		std::array<uint8_t, 3> setaeInst = { 0x0F, 0x93, 0xC0 };
+		setaeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setaeInst.begin(), setaeInst.end());
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);

@@ -17,6 +17,11 @@ enum class IrOpcode {
 	Divide,
 	UnsignedDivide,
 	Modulo,
+	// Floating-point arithmetic
+	FloatAdd,
+	FloatSubtract,
+	FloatMultiply,
+	FloatDivide,
 	ShiftLeft,
 	ShiftRight,
 	UnsignedShiftRight,
@@ -35,10 +40,21 @@ enum class IrOpcode {
 	UnsignedLessEqual,
 	UnsignedGreaterThan,
 	UnsignedGreaterEqual,
+	// Floating-point comparisons
+	FloatEqual,
+	FloatNotEqual,
+	FloatLessThan,
+	FloatLessEqual,
+	FloatGreaterThan,
+	FloatGreaterEqual,
 	// Logical operators
 	LogicalAnd,
 	LogicalOr,
 	LogicalNot,
+	// Type conversions
+	IntToFloat,
+	FloatToInt,
+	FloatToFloat,
 	// Assignment operators
 	AddAssign,
 	SubAssign,
@@ -465,6 +481,134 @@ public:
 		}
 		break;
 
+		case IrOpcode::FloatAdd:
+		{
+			// %result = fadd [Type][Size] %lhs, %rhs
+			assert(getOperandCount() == 7 && "FloatAdd instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fadd " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatSubtract:
+		{
+			// %result = fsub [Type][Size] %lhs, %rhs
+			assert(getOperandCount() == 7 && "FloatSubtract instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fsub " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatMultiply:
+		{
+			// %result = fmul [Type][Size] %lhs, %rhs
+			assert(getOperandCount() == 7 && "FloatMultiply instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fmul " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatDivide:
+		{
+			// %result = fdiv [Type][Size] %lhs, %rhs
+			assert(getOperandCount() == 7 && "FloatDivide instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fdiv " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
 		case IrOpcode::BitwiseAnd:
 		{
 			// %result = and [Type][Size] %lhs, %rhs
@@ -822,6 +966,198 @@ public:
 					oss << getOperandAs<std::string_view>(0);
 
 				oss << " = icmp sge " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatEqual:
+		{
+			// %result = fcmp oeq [Type][Size] %lhs, %rhs (ordered equal)
+			assert(getOperandCount() == 7 && "FloatEqual instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fcmp oeq " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatNotEqual:
+		{
+			// %result = fcmp one [Type][Size] %lhs, %rhs (ordered not equal)
+			assert(getOperandCount() == 7 && "FloatNotEqual instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fcmp one " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatLessThan:
+		{
+			// %result = fcmp olt [Type][Size] %lhs, %rhs (ordered less than)
+			assert(getOperandCount() == 7 && "FloatLessThan instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fcmp olt " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatLessEqual:
+		{
+			// %result = fcmp ole [Type][Size] %lhs, %rhs (ordered less than or equal)
+			assert(getOperandCount() == 7 && "FloatLessEqual instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fcmp ole " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatGreaterThan:
+		{
+			// %result = fcmp ogt [Type][Size] %lhs, %rhs (ordered greater than)
+			assert(getOperandCount() == 7 && "FloatGreaterThan instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fcmp ogt " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::FloatGreaterEqual:
+		{
+			// %result = fcmp oge [Type][Size] %lhs, %rhs (ordered greater than or equal)
+			assert(getOperandCount() == 7 && "FloatGreaterEqual instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = fcmp oge " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
 
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
