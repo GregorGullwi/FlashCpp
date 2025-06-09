@@ -1,104 +1,187 @@
 #include "LibClangIRGenerator.h"
+#include "AstNodeTypes.h" // Include your AST node definitions
 #include <clang-c/Index.h>
 #include <iostream>
+#include <sstream>
 #include <llvm-c/Core.h>
 #include <llvm-c/Target.h>
-#include <llvm-c/TargetMachine.h>
+#include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
-#include <fstream>
+#include <llvm-c/TargetMachine.h>
 #include <filesystem>
+#include <cstdlib>
 
 namespace FlashCpp {
 
-// Convert AST nodes to C code
-std::string generateSourceFromAST(const std::vector<ASTNode>& nodes) {
-    std::ostringstream source;
-    
-    // Simple code generation for main function
-    source << "#include <stdio.h>\n\n";
-    source << "int main() {\n";
-    source << "    printf(\"Hello from FlashCpp!\\n\");\n";
-    source << "    return 0;\n";
-    source << "}\n";
-    
-    return source.str();
+namespace {
+    bool g_llvmInitialized = false;
 }
 
-bool GenerateCOFF(const std::vector<ASTNode>& nodes, const std::string& outputFile) {
-    // Generate C source from AST
-    std::string source = generateSourceFromAST(nodes);
+bool LibClangIRGenerator::InitializeLLVM() {
+    if (g_llvmInitialized) return true;
     
-    // Save to temporary file
-    std::filesystem::path tempDir = std::filesystem::temp_directory_path();
-    std::filesystem::path tempFile = tempDir / "temp_source.c";
+    LLVMInitializeAllTargetInfos();
+    LLVMInitializeAllTargets();
+    LLVMInitializeAllTargetMCs();
+    LLVMInitializeAllAsmParsers();
+    LLVMInitializeAllAsmPrinters();
     
-    std::ofstream outFile(tempFile);
-    if (!outFile.is_open()) {
-        std::cerr << "Failed to create temporary source file" << std::endl;
-        return false;
-    }
-    
-    outFile << source;
-    outFile.close();
-    
-    // Use LibClang to parse and compile the C file
-    CXIndex index = clang_createIndex(0, 0);
-    
-    // Command-line arguments for clang
-    const char* args[] = {
-        "-c",                  // Compile only
-        "-o", outputFile.c_str(),  // Output file
-        "-O0"                  // No optimization
-    };
-    
-    // Create translation unit from source file
-    CXTranslationUnit tu = clang_parseTranslationUnit(
-        index,
-        tempFile.string().c_str(),
-        args, 4,             // Args and arg count
-        nullptr, 0,          // No unsaved files
-        CXTranslationUnit_None
-    );
-    
-    if (!tu) {
-        std::cerr << "Failed to parse translation unit" << std::endl;
-        clang_disposeIndex(index);
-        return false;
-    }
-    
-    // Check for errors
-    unsigned numDiags = clang_getNumDiagnostics(tu);
-    bool hasErrors = false;
-    
-    for (unsigned i = 0; i < numDiags; ++i) {
-        CXDiagnostic diag = clang_getDiagnostic(tu, i);
-        CXDiagnosticSeverity severity = clang_getDiagnosticSeverity(diag);
-        
-        if (severity >= CXDiagnostic_Error) {
-            hasErrors = true;
+    g_llvmInitialized = true;
+    return true;
+}
+
+LLVMModuleRef LibClangIRGenerator::CreateModuleFromAST(const std::vector<ASTNode>& astNodes, LLVMContextRef context) {
+    LLVMModuleRef module = LLVMModuleCreateWithName("flash_module");
+    LLVMBuilderRef builder = LLVMCreateBuilderInContext(context);
+
+    // Generate LLVM IR from the AST nodes
+    for (const auto& node : astNodes) {
+        if (node.is<DeclarationNode>()) {
+            const DeclarationNode& decl = node.as<DeclarationNode>();
+            LLVMTypeRef intType = LLVMIntTypeInContext(context, 32);
+            LLVMValueRef globalVariable = LLVMAddGlobal(module, intType, decl.identifier_token().value().data());
+            LLVMSetInitializer(globalVariable, LLVMConstInt(intType, 0, 0));
+        } else if (node.is<NumericLiteralNode>()) {
+            const NumericLiteralNode& literal = node.as<NumericLiteralNode>();
+            LLVMTypeRef intType = LLVMIntTypeInContext(context, 32);
+            LLVMValueRef constant = LLVMConstInt(intType, std::stoll(literal.token().data()), 0);
         }
-        
-        CXString diagStr = clang_formatDiagnostic(diag, clang_defaultDiagnosticDisplayOptions());
-        std::cerr << clang_getCString(diagStr) << std::endl;
-        clang_disposeString(diagStr);
-        
-        clang_disposeDiagnostic(diag);
+        // Add more node type handling here
+    }
+
+    LLVMDisposeBuilder(builder);
+    return module;
+}
+
+bool LibClangIRGenerator::GenerateLLVMIR(const std::vector<ASTNode>& astNodes, const std::string& outputFilename) {
+    LLVMContextRef context = LLVMContextCreate();
+    LLVMModuleRef module = CreateModuleFromAST(astNodes, context);
+
+    // Verify the module
+    char* error = nullptr;
+    if (LLVMVerifyModule(module, LLVMAbortProcessAction, &error)) {
+        std::cerr << "Error: " << error << std::endl;
+        LLVMDisposeMessage(error);
+        LLVMDisposeModule(module);
+        LLVMContextDispose(context);
+        return false;
+    }
+
+    // Write LLVM IR to file
+    if (LLVMPrintModuleToFile(module, outputFilename.c_str(), &error)) {
+        std::cerr << "Error writing LLVM IR: " << error << std::endl;
+        LLVMDisposeMessage(error);
+        LLVMDisposeModule(module);
+        LLVMContextDispose(context);
+        return false;
+    }
+
+    LLVMDisposeModule(module);
+    LLVMContextDispose(context);
+    return true;
+}
+
+bool LibClangIRGenerator::GenerateWithClang(const std::vector<ASTNode>& astNodes, 
+                                          const std::string& outputFilename,
+                                          const std::vector<std::string>& clangArgs) {
+    // First generate LLVM IR to a temporary file
+    std::string tempIRFile = outputFilename + ".ll";
+    if (!GenerateLLVMIR(astNodes, tempIRFile)) {
+        return false;
+    }
+
+    // Build clang command
+    std::stringstream cmd;
+    cmd << "clang ";
+    
+    // Add user-provided arguments
+    for (const auto& arg : clangArgs) {
+        cmd << arg << " ";
     }
     
-    // Compile the code
-    int result = 0;
-    if (!hasErrors) {
-        result = clang_saveTranslationUnit(tu, outputFile.c_str(), CXSaveTranslationUnit_None);
-    }
+    // Add our files
+    cmd << tempIRFile << " -o " << outputFilename;
     
+    // Execute clang
+    int result = std::system(cmd.str().c_str());
+    
+    // Clean up temporary file
+    std::filesystem::remove(tempIRFile);
+    
+    return result == 0;
+}
+
+bool LibClangIRGenerator::GenerateCOFF(const std::vector<ASTNode>& astNodes, const std::string& outputFilename) {
+    if (!InitializeLLVM()) {
+        return false;
+    }
+
+    LLVMContextRef context = LLVMContextCreate();
+    LLVMModuleRef module = CreateModuleFromAST(astNodes, context);
+
+    // Create target machine
+    char* targetTriple = LLVMGetDefaultTargetTriple();
+    LLVMTargetRef target;
+    char* error = nullptr;
+    
+    if (LLVMGetTargetFromTriple(targetTriple, &target, &error)) {
+        std::cerr << "Error: Could not get target from triple." << std::endl;
+        LLVMDisposeMessage(targetTriple);
+        LLVMDisposeModule(module);
+        LLVMContextDispose(context);
+        return false;
+    }
+
+    // Create target machine with minimal options
+    LLVMTargetMachineRef targetMachine = LLVMCreateTargetMachine(
+        target,
+        targetTriple,
+        "generic",
+        "",
+        LLVMCodeGenLevelDefault,
+        LLVMRelocDefault,
+        LLVMCodeModelDefault);
+
+    LLVMDisposeMessage(targetTriple);
+
+    // Set data layout
+    LLVMTargetDataRef dataLayout = LLVMCreateTargetDataLayout(targetMachine);
+    LLVMSetModuleDataLayout(module, dataLayout);
+
+    // Write to file
+    if (LLVMTargetMachineEmitToFile(targetMachine, module, outputFilename.c_str(), LLVMObjectFile, &error)) {
+        std::cerr << "Error: " << error << std::endl;
+        LLVMDisposeMessage(error);
+        LLVMDisposeModule(module);
+        LLVMContextDispose(context);
+        LLVMDisposeTargetMachine(targetMachine);
+        return false;
+    }
+
     // Cleanup
-    clang_disposeTranslationUnit(tu);
-    clang_disposeIndex(index);
-    
-    // Remove temporary file
-    std::filesystem::remove(tempFile);
-    
-    return !hasErrors && result == 0;
+    LLVMDisposeModule(module);
+    LLVMContextDispose(context);
+    LLVMDisposeTargetMachine(targetMachine);
+
+    return true;
+}
+
+// Free function implementations
+bool GenerateCOFF(const std::vector<ASTNode>& astNodes, const std::string& outputFilename) {
+    LibClangIRGenerator generator;
+    return generator.GenerateCOFF(astNodes, outputFilename);
+}
+
+bool GenerateLLVMIR(const std::vector<ASTNode>& astNodes, const std::string& outputFilename) {
+    LibClangIRGenerator generator;
+    return generator.GenerateLLVMIR(astNodes, outputFilename);
+}
+
+bool GenerateWithClang(const std::vector<ASTNode>& astNodes, 
+                      const std::string& outputFilename,
+                      const std::vector<std::string>& clangArgs) {
+    LibClangIRGenerator generator;
+    return generator.GenerateWithClang(astNodes, outputFilename, clangArgs);
 }
 
 } // namespace FlashCpp
