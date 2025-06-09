@@ -837,3 +837,19 @@ TEST_CASE("Mixed arithmetic") {
 TEST_CASE("If statements") {
 	run_test_from_file("if_statements.cpp", "If statements", false);
 }
+
+TEST_CASE("For loops") {
+	run_test_from_file("for_loops.cpp", "For loops", false);
+}
+
+TEST_CASE("While loops") {
+	run_test_from_file("while_loops.cpp", "While loops", false);
+}
+
+TEST_CASE("Do-while loops") {
+	run_test_from_file("do_while_loops.cpp", "Do-while loops", false);
+}
+
+TEST_CASE("Control flow comprehensive") {
+	run_test_from_file("control_flow_comprehensive.cpp", "Control flow comprehensive", false);
+}

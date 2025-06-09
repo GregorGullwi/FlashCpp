@@ -84,6 +84,11 @@ enum class IrOpcode {
 	Branch,
 	ConditionalBranch,
 	Label,
+	// Loop control
+	LoopBegin,
+	LoopEnd,
+	Break,
+	Continue,
 };
 
 enum class X64Register : uint8_t {
@@ -1476,6 +1481,54 @@ public:
 			if (getOperandCount() > 0) {
 				if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0) << ":";
+			}
+		}
+		break;
+
+		case IrOpcode::LoopBegin:
+		{
+			// loop_begin %loop_label
+			assert(getOperandCount() == 1 && "LoopBegin instruction must have exactly 1 operand");
+			if (getOperandCount() > 0) {
+				oss << "loop_begin %";
+				if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+			}
+		}
+		break;
+
+		case IrOpcode::LoopEnd:
+		{
+			// loop_end %loop_label
+			assert(getOperandCount() == 1 && "LoopEnd instruction must have exactly 1 operand");
+			if (getOperandCount() > 0) {
+				oss << "loop_end %";
+				if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+			}
+		}
+		break;
+
+		case IrOpcode::Break:
+		{
+			// br label %break_label
+			assert(getOperandCount() == 1 && "Break instruction must have exactly 1 operand");
+			if (getOperandCount() > 0) {
+				oss << "br label %";
+				if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+			}
+		}
+		break;
+
+		case IrOpcode::Continue:
+		{
+			// br label %continue_label
+			assert(getOperandCount() == 1 && "Continue instruction must have exactly 1 operand");
+			if (getOperandCount() > 0) {
+				oss << "br label %";
+				if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
 			}
 		}
 		break;

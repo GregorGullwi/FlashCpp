@@ -374,16 +374,71 @@ private:
 class IfStatementNode {
 public:
 	explicit IfStatementNode(ASTNode condition, ASTNode then_statement,
-		std::optional<ASTNode> else_statement = std::nullopt)
-		: condition_(condition), then_statement_(then_statement), else_statement_(else_statement) {}
+		std::optional<ASTNode> else_statement = std::nullopt,
+		std::optional<ASTNode> init_statement = std::nullopt)
+		: condition_(condition), then_statement_(then_statement),
+		  else_statement_(else_statement), init_statement_(init_statement) {}
 
 	auto get_condition() const { return condition_; }
 	auto get_then_statement() const { return then_statement_; }
 	auto get_else_statement() const { return else_statement_; }
+	auto get_init_statement() const { return init_statement_; }
 	bool has_else() const { return else_statement_.has_value(); }
+	bool has_init() const { return init_statement_.has_value(); }
 
 private:
 	ASTNode condition_;
 	ASTNode then_statement_;
 	std::optional<ASTNode> else_statement_;
+	std::optional<ASTNode> init_statement_; // C++20 if (init; condition)
+};
+
+class ForStatementNode {
+public:
+	explicit ForStatementNode(std::optional<ASTNode> init_statement,
+		std::optional<ASTNode> condition,
+		std::optional<ASTNode> update_expression,
+		ASTNode body_statement)
+		: init_statement_(init_statement), condition_(condition),
+		  update_expression_(update_expression), body_statement_(body_statement) {}
+
+	auto get_init_statement() const { return init_statement_; }
+	auto get_condition() const { return condition_; }
+	auto get_update_expression() const { return update_expression_; }
+	auto get_body_statement() const { return body_statement_; }
+	bool has_init() const { return init_statement_.has_value(); }
+	bool has_condition() const { return condition_.has_value(); }
+	bool has_update() const { return update_expression_.has_value(); }
+
+private:
+	std::optional<ASTNode> init_statement_;    // for (init; condition; update)
+	std::optional<ASTNode> condition_;
+	std::optional<ASTNode> update_expression_;
+	ASTNode body_statement_;
+};
+
+class WhileStatementNode {
+public:
+	explicit WhileStatementNode(ASTNode condition, ASTNode body_statement)
+		: condition_(condition), body_statement_(body_statement) {}
+
+	auto get_condition() const { return condition_; }
+	auto get_body_statement() const { return body_statement_; }
+
+private:
+	ASTNode condition_;
+	ASTNode body_statement_;
+};
+
+class DoWhileStatementNode {
+public:
+	explicit DoWhileStatementNode(ASTNode body_statement, ASTNode condition)
+		: body_statement_(body_statement), condition_(condition) {}
+
+	auto get_body_statement() const { return body_statement_; }
+	auto get_condition() const { return condition_; }
+
+private:
+	ASTNode body_statement_;
+	ASTNode condition_;
 };
