@@ -101,6 +101,7 @@ void initialize_native_types();
 bool is_integer_type(Type type);
 bool is_signed_integer_type(Type type);
 bool is_unsigned_integer_type(Type type);
+bool is_bool_type(Type type);
 int get_integer_rank(Type type);
 int get_type_size_bits(Type type);
 Type promote_integer_type(Type type);
@@ -195,6 +196,21 @@ private:
 	ASTNode rhs_node_;
 };
 
+class UnaryOperatorNode {
+public:
+	explicit UnaryOperatorNode(Token identifier, ASTNode operand_node, bool is_prefix = true)
+		: identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix) {}
+
+	std::string_view op() const { return identifier_.value(); }
+	auto get_operand() const { return operand_node_; }
+	bool is_prefix() const { return is_prefix_; }
+
+private:
+	Token identifier_;
+	ASTNode operand_node_;
+	bool is_prefix_;
+};
+
 class BlockNode {
 public:
 	explicit BlockNode() {}
@@ -254,7 +270,7 @@ private:
 };
 
 using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
-	BinaryOperatorNode, FunctionCallNode>;
+	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode>;
 
 /*class FunctionDefinitionNode {
 public:

@@ -607,6 +607,10 @@ int Parser::get_operator_precedence(const std::string_view& op)
 			{"<<", 3}, {">>", 3}, {"&", 3},  {"|", 2},  {"^", 2},
 			{"<", 2},  {"<=", 2}, {">", 2},  {">=", 2}, {"==", 1},
 			{"!=", 1}, {"&&", 0}, {"||", -1},
+			// Assignment operators (right-associative, lowest precedence)
+			{"=", -2}, {"+=", -2}, {"-=", -2}, {"*=", -2}, {"/=", -2},
+			{"%=", -2}, {"&=", -2}, {"|=", -2}, {"^=", -2},
+			{"<<=", -2}, {">>=", -2},
 	};
 
 	auto it = precedence_map.find(op);
@@ -707,6 +711,14 @@ ParseResult Parser::parse_primary_expression()
 	}
 	else if (current_token_->type() == Token::Type::StringLiteral) {
 		result = emplace_node<ExpressionNode>(StringLiteralNode(*current_token_));
+		consume_token();
+	}
+	else if (current_token_->type() == Token::Type::Keyword &&
+			 (current_token_->value() == "true" || current_token_->value() == "false")) {
+		// Handle bool literals
+		bool value = (current_token_->value() == "true");
+		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
+			static_cast<unsigned long long>(value), Type::Bool, TypeQualifier::None, 1));
 		consume_token();
 	}
 	else if (consume_punctuator("(")) {
