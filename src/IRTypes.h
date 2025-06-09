@@ -80,6 +80,10 @@ enum class IrOpcode {
 	Assignment,
 	StackAlloc,
 	Store,
+	// Control flow
+	Branch,
+	ConditionalBranch,
+	Label,
 };
 
 enum class X64Register : uint8_t {
@@ -1428,6 +1432,51 @@ public:
 			}
 			
 			oss << " to %" << getOperandAs<std::string_view>(2);
+		}
+		break;
+
+		case IrOpcode::Branch:
+		{
+			// br label %label
+			assert(getOperandCount() == 1 && "Branch instruction must have exactly 1 operand");
+			if (getOperandCount() > 0) {
+				oss << "br label %";
+				if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+			}
+		}
+		break;
+
+		case IrOpcode::ConditionalBranch:
+		{
+			// br i1 %condition, label %true_label, label %false_label
+			assert(getOperandCount() == 3 && "ConditionalBranch instruction must have exactly 3 operands");
+			if (getOperandCount() > 0) {
+				oss << "br i1 ";
+				if (isOperandType<TempVar>(0))
+					oss << '%' << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << '%' << getOperandAs<std::string_view>(0);
+
+				oss << ", label %";
+				if (isOperandType<std::string_view>(1))
+					oss << getOperandAs<std::string_view>(1);
+
+				oss << ", label %";
+				if (isOperandType<std::string_view>(2))
+					oss << getOperandAs<std::string_view>(2);
+			}
+		}
+		break;
+
+		case IrOpcode::Label:
+		{
+			// label_name:
+			assert(getOperandCount() == 1 && "Label instruction must have exactly 1 operand");
+			if (getOperandCount() > 0) {
+				if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0) << ":";
+			}
 		}
 		break;
 

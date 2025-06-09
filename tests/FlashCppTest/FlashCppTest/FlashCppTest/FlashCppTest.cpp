@@ -833,3 +833,7 @@ TEST_CASE("Float comparisons") {
 TEST_CASE("Mixed arithmetic") {
 	run_test_from_file("mixed_arithmetic.cpp", "Mixed arithmetic", false);
 }
+
+TEST_CASE("If statements") {
+	run_test_from_file("if_statements.cpp", "If statements", false);
+}
