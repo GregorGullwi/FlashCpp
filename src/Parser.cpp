@@ -3,6 +3,7 @@
 #include "LibClangIRGenerator.h"
 #endif
 #include <string_view> // Include string_view header
+#include <unordered_set> // Include unordered_set header
 
 bool Parser::generate_coff(const std::string& outputFilename) {
 #ifdef USE_LLVM
@@ -447,9 +448,22 @@ ParseResult Parser::parse_statement_or_declaration()
 			return (this->*(keyword_iter->second))();
 		}
 		else {
-			// If it's not a known keyword, assume it's a type specifier (e.g. int,
-			// float, etc.) and parse a variable declaration
-			// return parse_variable_declaration();
+			// Check if it's a type specifier keyword (int, float, etc.)
+			static const std::unordered_set<std::string_view> type_keywords = {
+				"int", "float", "double", "char", "bool", "void",
+				"short", "long", "signed", "unsigned"
+			};
+
+			if (type_keywords.find(current_token.value()) != type_keywords.end()) {
+				// Parse as variable declaration
+				return parse_type_and_name();
+			}
+			else {
+				// Unknown keyword - consume token to avoid infinite loop and return error
+				consume_token();
+				return ParseResult::error("Unknown keyword: " + std::string(current_token.value()),
+					current_token);
+			}
 		}
 	}
 	else if (current_token.type() == Token::Type::Identifier) {
@@ -458,11 +472,11 @@ ParseResult Parser::parse_statement_or_declaration()
 		return parse_expression(0);
 	}
 	else {
+		// Unknown token type - consume token to avoid infinite loop and return error
+		consume_token();
 		return ParseResult::error("Expected a statement or declaration",
-			*current_token_);
+			current_token);
 	}
-
-	return ParseResult::success();
 }
 
 ParseResult Parser::parse_return_statement()

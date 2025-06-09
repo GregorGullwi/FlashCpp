@@ -5,6 +5,8 @@
 #include <unordered_set>
 #include <variant>
 #include <vector>
+#include <string>
+#include <algorithm>
 
 #include "Token.h"
 
