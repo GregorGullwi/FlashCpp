@@ -42,7 +42,9 @@
 - **Assignment operators**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` (infrastructure)
 - **Increment/decrement**: `++`, `--` prefix/postfix operators (infrastructure)
 - **Function calls**: Complete function declaration and call support
-- **Basic control flow**: `return` statements
+- **Control flow infrastructure**: `if`, `for`, `while`, `do-while` statements (AST + IR ready)
+- **C++20 support**: If-with-initializer syntax foundation
+- **Loop control**: `break`, `continue` statements (infrastructure)
 
 ---
 
@@ -135,14 +137,15 @@ bool test_comparisons(double a, double b) {
 ## 🔮 **Roadmap**
 
 ### **Immediate Goals**
-- **Control flow**: `if` statements and conditional execution
+- **Control flow implementation**: Complete parser, code generation, and assembly for `if`, `for`, `while`, `do-while`
+- **C++20 if-with-initializer**: Complete `if (init; condition)` syntax support
 - **Assignment operators**: Complete IR → assembly pipeline
 - **Increment/decrement**: Finish prefix/postfix implementation
 - **Floating-point literals**: Parse `3.14f`, `2.718`, etc.
-- **Type conversions**: `static_cast`, implicit conversions
 
 ### **Advanced Features**
-- **Extended control flow**: `while`, `for`, `switch` statements
+- **Extended control flow**: `switch` statements, `goto`, labels
+- **Exception handling**: `try`, `catch`, `throw` statements
 - **AVX2 vectorization**: Packed operations for arrays
 - **FMA instructions**: Fused multiply-add optimization
 - **Object-oriented**: Classes, inheritance, virtual functions
@@ -217,33 +220,44 @@ bool test_comparisons(double a, double b) {
 - [x] **Assignment**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` (infrastructure)
 - [x] **Increment/Decrement**: `++`, `--` prefix/postfix (infrastructure)
 
-### **8. Testing Infrastructure** ✅ **COMPLETE**
-- [x] **Comprehensive test suite**: 100+ test cases
+### **8. Control Flow Infrastructure** ✅ **COMPLETE**
+- [x] **If-statement support**: Complete AST node with C++20 if-with-initializer
+- [x] **Loop support**: For, while, do-while AST nodes with all optional components
+- [x] **Control flow IR**: Branch, ConditionalBranch, Label, LoopBegin, LoopEnd, Break, Continue
+- [x] **Comprehensive tests**: All control flow constructs with edge cases
+- [x] **C++20 compatibility**: Foundation for modern C++ control flow
+- [ ] **Implementation**: Parser, code generation, and assembly (next milestone)
+
+### **9. Testing Infrastructure** ✅ **COMPLETE**
+- [x] **Comprehensive test suite**: 150+ test cases
 - [x] **External reference files**: Organized test categories
 - [x] **Operator testing**: All operators thoroughly tested
 - [x] **Type testing**: Integer and floating-point type coverage
+- [x] **Control flow testing**: All control flow constructs with comprehensive scenarios
 - [x] **Integration testing**: End-to-end compilation testing
 - [x] **Performance validation**: Assembly output verification
 
-### **9. Documentation** ✅ **UPDATED**
+### **10. Documentation** ✅ **UPDATED**
 - [x] **README**: Comprehensive feature documentation
 - [x] **Code documentation**: Inline comments and explanations
 - [x] **Test documentation**: Test case organization and coverage
 - [x] **Architecture documentation**: Component descriptions
+- [x] **Control flow documentation**: Complete infrastructure documentation
 
 ---
 
 ## 🎯 **Remaining Work**
 
 ### **High Priority**
-- [ ] **Control flow**: `if` statements and conditional execution
+- [ ] **Control flow implementation**: Complete parser and code generation for `if`, `for`, `while`, `do-while`
+- [ ] **C++20 if-with-initializer**: Complete `if (init; condition)` syntax
 - [ ] **Assignment operators**: Complete IR → assembly implementation
 - [ ] **Increment/decrement**: Finish prefix/postfix semantics
 - [ ] **Floating-point literals**: Parse `3.14f`, `2.718`, scientific notation
-- [ ] **Type conversions**: Implicit and explicit cast operations
 
 ### **Medium Priority**
-- [ ] **Extended control flow**: `while`, `for`, `switch` statements
+- [ ] **Extended control flow**: `switch` statements, `goto`, labels
+- [ ] **Exception handling**: `try`, `catch`, `throw` statements
 - [ ] **Arrays**: Array declarations and subscript operations
 - [ ] **Pointers**: Pointer arithmetic and dereferencing
 - [ ] **Strings**: String operations and concatenation
