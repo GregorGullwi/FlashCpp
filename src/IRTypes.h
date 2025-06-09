@@ -15,6 +15,8 @@ enum class IrOpcode {
 	Subtract,
 	Multiply,
 	Divide,
+	ShiftLeft,
+	ShiftRight,
 	Return,
 	FunctionDecl,
 	FunctionCall,
@@ -56,7 +58,7 @@ constexpr auto make_temp_string() {
 	size_t i = 5;
 	size_t n = N;
 
-	char digits[4];
+	char digits[4] = {};
 	int d = 0;
 	do {
 		digits[d++] = '0' + (n % 10);
@@ -98,8 +100,11 @@ constexpr auto temp_name_array = make_view_array();
 
 struct TempVar
 {
+	TempVar() = default;
+	explicit TempVar(size_t idx) : index(idx) {}
+
 	TempVar next() {
-		return { ++index };
+		return TempVar(++index);
 	}
 	std::string_view name() const {
 		return temp_name_array[index];
@@ -270,7 +275,7 @@ public:
 				oss << " = div ";
 				if (getOperandCount() > 1) {
 					oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
-					
+
 					if (isOperandType<unsigned long long>(3))
 						oss << getOperandAs<unsigned long long>(3);
 					else if (isOperandType<TempVar>(3))
@@ -290,6 +295,70 @@ public:
 			}
 		}
 		break;
+
+			case IrOpcode::ShiftLeft:
+			{
+				// % = shl [Type][SizeInBits] %[LHS], %[RHS]
+				assert(getOperandCount() == 7 && "ShiftLeft instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+				if (getOperandCount() > 0) {
+					oss << '%';
+					if (isOperandType<TempVar>(0))
+						oss << getOperandAs<TempVar>(0).index;
+					else if (isOperandType<std::string_view>(0))
+						oss << getOperandAs<std::string_view>(0);
+
+					oss << " = shl " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+					if (isOperandType<unsigned long long>(3))
+						oss << getOperandAs<unsigned long long>(3);
+					else if (isOperandType<TempVar>(3))
+						oss << '%' << getOperandAs<TempVar>(3).index;
+					else if (isOperandType<std::string_view>(3))
+						oss << getOperandAs<std::string_view>(3);
+
+					oss << ", ";
+
+					if (isOperandType<unsigned long long>(6))
+						oss << getOperandAs<unsigned long long>(6);
+					else if (isOperandType<TempVar>(6))
+						oss << '%' << getOperandAs<TempVar>(6).index;
+					else if (isOperandType<std::string_view>(6))
+						oss << '%' << getOperandAs<std::string_view>(6);
+				}
+			}
+			break;
+
+			case IrOpcode::ShiftRight:
+			{
+				// % = shr [Type][SizeInBits] %[LHS], %[RHS]
+				assert(getOperandCount() == 7 && "ShiftRight instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+				if (getOperandCount() > 0) {
+					oss << '%';
+					if (isOperandType<TempVar>(0))
+						oss << getOperandAs<TempVar>(0).index;
+					else if (isOperandType<std::string_view>(0))
+						oss << getOperandAs<std::string_view>(0);
+
+					oss << " = shr " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+					if (isOperandType<unsigned long long>(3))
+						oss << getOperandAs<unsigned long long>(3);
+					else if (isOperandType<TempVar>(3))
+						oss << '%' << getOperandAs<TempVar>(3).index;
+					else if (isOperandType<std::string_view>(3))
+						oss << getOperandAs<std::string_view>(3);
+
+					oss << ", ";
+
+					if (isOperandType<unsigned long long>(6))
+						oss << getOperandAs<unsigned long long>(6);
+					else if (isOperandType<TempVar>(6))
+						oss << '%' << getOperandAs<TempVar>(6).index;
+					else if (isOperandType<std::string_view>(6))
+						oss << '%' << getOperandAs<std::string_view>(6);
+				}
+			}
+			break;
 
 		case IrOpcode::Return:
 		{

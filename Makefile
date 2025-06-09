@@ -10,7 +10,7 @@ $(BINDIR)/main: $(wildcard $(SRCDIR)/*.cpp)
 	mkdir -p $(BINDIR)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(BINDIR)/test: $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
+$(BINDIR)/test: $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(filter-out $(SRCDIR)/LibClangIRGenerator.cpp $(SRCDIR)/benchmark.cpp $(SRCDIR)/main.cpp, $(wildcard $(SRCDIR)/*.cpp))
 	mkdir -p $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $^
 

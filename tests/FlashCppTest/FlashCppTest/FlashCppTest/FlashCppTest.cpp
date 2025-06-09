@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <typeindex>
-#include <format>
+#include <sstream>
 #include <cstdio>
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
@@ -317,7 +317,7 @@ TEST_SUITE("Parser") {
 		const auto& ast = parser.get_nodes();
 
 		for (auto& node_handle : ast) {
-			std::puts(std::format("Type: {}\n", node_handle.type_name()).c_str());
+			std::printf("Type: %s\n", node_handle.type_name());
 		}
 	}
 
@@ -380,7 +380,7 @@ TEST_SUITE("Code gen") {
 
 		// Let's just print the IR for now.
 		for (const auto& instruction : ir.getInstructions()) {
-			std::puts(std::format("{}", instruction.getReadableString()).c_str());
+			std::puts(instruction.getReadableString().c_str());
 		}
 
 		IrToObjConverter irConverter;
@@ -427,7 +427,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1) {
 		const std::string& name = sym1.get_name();
 		auto it = symbols2_by_name.find(name);
 		if (it == symbols2_by_name.end()) {
-			std::puts(std::format("Symbol {} not found in second file\n", name).c_str());
+			std::printf("Symbol %s not found in second file\n", name.c_str());
 			all_symbols_found = false;
 			continue;
 		}
@@ -435,11 +435,11 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1) {
 
 		// Compare symbol types and storage classes
 		if (sym1.get_type() != sym2.get_type()) {
-			std::puts(std::format("Symbol {} has different types: {} vs {}\n", name, sym1.get_type(), sym2.get_type()).c_str());
+			std::printf("Symbol %s has different types: %d vs %d\n", name.c_str(), sym1.get_type(), sym2.get_type());
 			all_symbols_found = false;
 		}
 		if (sym1.get_storage_class() != sym2.get_storage_class()) {
-			std::puts(std::format("Symbol {} has different storage classes: {} vs {}\n", name, sym1.get_storage_class(), sym2.get_storage_class()).c_str());
+			std::printf("Symbol %s has different storage classes: %d vs %d\n", name.c_str(), sym1.get_storage_class(), sym2.get_storage_class());
 			all_symbols_found = false;
 		}
 	}
@@ -461,7 +461,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1) {
 		const auto& relocs1 = text_section1->get_relocations();
 		const auto& relocs2 = text_section2->get_relocations();
 		if (relocs1.size() != relocs2.size()) {
-			std::puts(std::format("Different number of relocations in .text$mn: {} vs {}\n", relocs1.size(), relocs2.size()).c_str());
+			std::printf("Different number of relocations in .text$mn: %zu vs %zu\n", relocs1.size(), relocs2.size());
 			return false;
 		}
 
@@ -471,7 +471,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1) {
 
 			// Compare relocation types and addresses
 			if (reloc1.get_type() != reloc2.get_type()) {
-				std::puts(std::format("Relocation {} has different types: {} vs {}\n", i, reloc1.get_type(), reloc2.get_type()).c_str());
+				std::printf("Relocation %zu has different types: %d vs %d\n", i, reloc1.get_type(), reloc2.get_type());
 				return false;
 			}
 		}
@@ -490,17 +490,17 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1) {
 			std::puts("First file: ");
 			for (size_t i = 0; i < size1; i++) {
 				if (data1[i] >= 32 && data1[i] <= 126) {
-					std::puts(std::format("{}\n", data1[i]).c_str());
+					std::printf("%c\n", data1[i]);
 				} else {
-					std::puts(std::format("\\x{:02x}\n", (unsigned char)data1[i]).c_str());
+					std::printf("\\x%02x\n", (unsigned char)data1[i]);
 				}
 			}
 			std::puts("Second file: ");
 			for (size_t i = 0; i < size2; i++) {
 				if (data2[i] >= 32 && data2[i] <= 126) {
-					std::puts(std::format("{}\n", data2[i]).c_str());
+					std::printf("%c\n", data2[i]);
 				} else {
-					std::puts(std::format("\\x{:02x}\n", (unsigned char)data2[i]).c_str());
+					std::printf("\\x%02x\n", (unsigned char)data2[i]);
 				}
 			}
 			return false;
@@ -538,7 +538,7 @@ TEST_SUITE("Code gen") {
 		std::puts("\n=== Test: Return integer from a function ===");
 
 		for (const auto& instruction : ir.getInstructions()) {
-			std::puts(std::format("{}", instruction.getReadableString()).c_str());
+			std::puts(instruction.getReadableString().c_str());
 		}
 
 		IrToObjConverter irConverter;
@@ -582,7 +582,7 @@ TEST_SUITE("Code gen") {
 		std::puts("\n=== Test: Returning parameter from a function ===");
 
 		for (const auto& instruction : ir.getInstructions()) {
-			std::puts(std::format("{}", instruction.getReadableString()).c_str());
+			std::puts(instruction.getReadableString().c_str());
 		}
 
 		IrToObjConverter irConverter;
@@ -715,4 +715,42 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 
 	// Compare reference and generated object files
 	//CHECK(compare_obj(ref, obj));
+}
+
+TEST_CASE("Shift operations") {
+	std::string_view code = R"(
+     int shift_left(int a, int b) {
+        return a << b;
+     }
+
+     int shift_right(int a, int b) {
+        return a >> b;
+     }
+
+     int main() {
+        return shift_left(8, 2) + shift_right(32, 2);
+     })";
+
+	Lexer lexer(code);
+	Parser parser(lexer);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+
+	const auto& ast = parser.get_nodes();
+
+	AstToIr converter;
+	for (auto& node_handle : ast) {
+		converter.visit(node_handle);
+	}
+
+	const auto& ir = converter.getIr();
+
+	std::puts("\n=== Test: Shift operations ===");
+
+	for (const auto& instruction : ir.getInstructions()) {
+		std::puts(instruction.getReadableString().c_str());
+	}
+
+	IrToObjConverter irConverter;
+	irConverter.convert(ir, "shift_test.obj");
 }

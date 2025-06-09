@@ -192,7 +192,7 @@ constexpr std::array<X64Register, 4> FLOAT_PARAM_REGS = {
 
 std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
 	if (stackVariableOffset < 0) {
-		return TempVar{ .index = static_cast<size_t>(stackVariableOffset / -8) };
+		return TempVar(static_cast<size_t>(stackVariableOffset / -8));
 	}
 
 	return std::nullopt;
@@ -383,6 +383,12 @@ public:
 				break;
 			case IrOpcode::Divide:
 				handleDivide(instruction);
+				break;
+			case IrOpcode::ShiftLeft:
+				handleShiftLeft(instruction);
+				break;
+			case IrOpcode::ShiftRight:
+				handleShiftRight(instruction);
 				break;
 			default:
 				assert(false && "Not implemented yet");
@@ -897,6 +903,45 @@ private:
 
 		// Store the result from RAX (quotient) to the appropriate destination
 		storeArithmeticResult(ctx, X64Register::RAX);
+	}
+
+	void handleShiftLeft(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left");
+
+		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
+		// Move rhs_physical_reg to RCX
+		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.size_in_bits / 8);
+		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+
+		// Perform the shift left operation: shl r/m64, cl
+		std::array<uint8_t, 3> shlInst = { 0x48, 0xD3, 0x00 }; // REX.W (0x48) + Opcode (0xD3) + ModR/M (initially 0x00)
+		// ModR/M: Mod=11 (register-to-register), Reg=4 (opcode extension for shl), R/M=result_physical_reg
+		shlInst[2] = 0xC0 + (0x04 << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), shlInst.begin(), shlInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleShiftRight(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right");
+
+		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
+		// Move rhs_physical_reg to RCX
+		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.size_in_bits / 8);
+		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+
+		// Perform the shift right operation: sar r/m64, cl (arithmetic right shift)
+		// Note: Using SAR (arithmetic) instead of SHR (logical) to preserve sign for signed integers
+		std::array<uint8_t, 3> sarInst = { 0x48, 0xD3, 0x00 }; // REX.W (0x48) + Opcode (0xD3) + ModR/M (initially 0x00)
+		// ModR/M: Mod=11 (register-to-register), Reg=7 (opcode extension for sar), R/M=result_physical_reg
+		sarInst[2] = 0xC0 + (0x07 << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), sarInst.begin(), sarInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
 	}
 
 	void finalizeSections() {
