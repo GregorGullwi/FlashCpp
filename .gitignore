@@ -3,3 +3,4 @@ Debug/
 .vs/
 .ccls-cache/
 *.obj
+core.*
