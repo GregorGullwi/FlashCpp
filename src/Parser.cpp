@@ -604,8 +604,9 @@ int Parser::get_operator_precedence(const std::string_view& op)
 {
 	static const std::unordered_map<std::string_view, int> precedence_map = {
 			{"*", 5},  {"/", 5},  {"%", 5},  {"+", 4},  {"-", 4},
-			{"<<", 3}, {">>", 3}, {"<", 2},  {"<=", 2}, {">", 2},
-			{">=", 2}, {"==", 1}, {"!=", 1}, {"&&", 0}, {"||", -1},
+			{"<<", 3}, {">>", 3}, {"&", 3},  {"|", 2},  {"^", 2},
+			{"<", 2},  {"<=", 2}, {">", 2},  {">=", 2}, {"==", 1},
+			{"!=", 1}, {"&&", 0}, {"||", -1},
 	};
 
 	auto it = precedence_map.find(op);
