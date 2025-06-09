@@ -204,7 +204,7 @@ int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 
 struct RegisterAllocator
 {
-	static constexpr uint8_t REGISTER_COUNT = static_cast<uint8_t>(X64Register::Count);
+	static constexpr uint8_t REGISTER_COUNT = static_cast<uint8_t>(X64Register::Count) - 1;
 	struct AllocatedRegister {
 		X64Register reg = X64Register::Count;
 		bool isAllocated = false;
@@ -252,11 +252,11 @@ struct RegisterAllocator
 	void allocateSpecific(X64Register reg, int32_t stackVariableOffset) {
 		assert(!registers[static_cast<int>(reg)].isAllocated);
 		registers[static_cast<int>(reg)].isAllocated = true;
-		set_stack_variable_offset(reg, stackVariableOffset);
+		registers[static_cast<int>(reg)].stackVariableOffset = stackVariableOffset;
 	}
 
 	void release(X64Register reg) {
-		registers[static_cast<int>(reg)] = AllocatedRegister{};
+		registers[static_cast<int>(reg)] = AllocatedRegister{ .reg = reg };
 	}
 
 	bool is_allocated(X64Register reg) const {
@@ -266,13 +266,6 @@ struct RegisterAllocator
 	void mark_reg_dirty(X64Register reg) {
 		assert(registers[static_cast<int>(reg)].isAllocated);
 		registers[static_cast<int>(reg)].isDirty = true;
-	}
-
-	void reserve_arguments(size_t count) {
-		for (size_t i = 0; i < count && i < INT_PARAM_REGS.size(); ++i) {
-			registers[static_cast<int>(INT_PARAM_REGS[i])].isAllocated = true;
-			registers[static_cast<int>(INT_PARAM_REGS[i])].stackVariableOffset = 0x10 + i * 8;	// First argument is stored at RBP+10h, seconds RBP+18h, etc...
-		}
 	}
 
 	std::optional<X64Register> tryGetStackVariableRegister(int32_t stackVariableOffset) const {
@@ -519,18 +512,32 @@ private:
 	}
 
 	void handleFunctionCall(const IrInstruction& instruction) {
-		assert(instruction.getOperandCount() >= 2 && "Function call must have at least 2 operands (result, function name)");
+		assert(instruction.getOperandCount() >= 2 && "Function call must have at least 2 ope rands (result, function name)");
 
 		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset)
 		{
 			auto tempVarIndex = getTempVarFromOffset(stackVariableOffset);
 				
 			if (tempVarIndex.has_value()) {
-				// Allocate a stack slot for this temporary variable if not already allocated
-				int stack_offset = allocateStackSlotForTempVar(tempVarIndex.value().index);
+				if (variable_scopes.back().current_stack_offset > stackVariableOffset) {
+					// Get the size of the allocation
+					auto sizeInBytes = variable_scopes.back().current_stack_offset - stackVariableOffset;
+
+					// Ensure the stack remains aligned to 16 bytes
+					sizeInBytes = (sizeInBytes + 15) & -16;
+
+					// Generate the opcode for `sub rsp, imm32`
+					std::array<uint8_t, 7> subRspInst = { 0x48, 0x81, 0xEC };
+					std::memcpy(subRspInst.data() + 3, &sizeInBytes, sizeof(sizeInBytes));
+
+					// Add the instruction to the .text section
+					textSectionData.insert(textSectionData.end(), subRspInst.begin(), subRspInst.end());
+					
+					variable_scopes.back().current_stack_offset -= sizeInBytes;
+				}
 
 				// Store the computed result from actual_source_reg to stack
-				auto store_opcodes = generateMovToFrame(reg, stack_offset);
+				auto store_opcodes = generateMovToFrame(reg, stackVariableOffset);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 			}
 		});
@@ -637,8 +644,14 @@ private:
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		writer.add_relocation(textSectionData.size() - 4, function_name);
-
-		regAlloc.allocateSpecific(X64Register::RAX, result_offset);
+		
+		if (!regAlloc.is_allocated(X64Register::RAX)) {
+			regAlloc.allocateSpecific(X64Register::RAX, result_offset);
+		}
+		else {
+			regAlloc.set_stack_variable_offset(X64Register::RAX, result_offset);	// just stomp the existing value
+		}
+		regAlloc.mark_reg_dirty(X64Register::RAX);
 
 		// After the call, the return value is in RAX. We need to store it to the destination.
 // 		if (std::holds_alternative<std::string_view>(result_var)) {
@@ -876,6 +889,7 @@ private:
 
 	void handleDivide(const IrInstruction& instruction) {
 		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
+		regAlloc.mark_reg_dirty(X64Register::RAX);
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "division");

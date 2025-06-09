@@ -8,8 +8,9 @@ set TEST_ERRORLEVEL=%ERRORLEVEL%
 
 REM Disassemble the executable
 rem "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx86\x64\dumpbin.exe" /DISASM mytest.exe
-"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.38.33130\bin\Hostx64\x64\dumpbin.exe" /disasm add_function.obj
+"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.38.33130\bin\Hostx64\x64\dumpbin.exe" /disasm add_function.obj 
 
 REM Print the saved errorlevel
 echo.
 echo mytest.exe exited with errorlevel %TEST_ERRORLEVEL%
+pause
