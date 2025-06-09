@@ -42,37 +42,19 @@
 - **Assignment operators**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` (infrastructure)
 - **Increment/decrement**: `++`, `--` prefix/postfix operators (infrastructure)
 - **Function calls**: Complete function declaration and call support
-- **Control flow**: `for` loops, `return` statements
+- **Basic control flow**: `return` statements
 
 ---
 
 ## 🧪 **Test Results**
 
-### **Integer Operations**
-```llvm
-define int32 test_add
-%1 = add int32 %a, %b              // Integer addition
-ret int32 %1
-
-define bool1 test_comparison
-%1 = icmp slt int32 %a, %b         // Signed less than
-ret int32 %1
-```
-
-### **Floating-Point Operations**
-```llvm
-define float32 test_float_add
-%1 = fadd float32 %a, %b           // Float addition → addss
-ret float32 %1
-
-define double64 test_double_multiply
-%1 = fmul double64 %a, %b          // Double multiplication → mulsd
-ret double64 %1
-
-define bool1 test_float_comparison
-%1 = fcmp oeq float32 %a, %b       // Ordered equal → comiss + sete
-ret float32 %1
-```
+### **Supported Operations**
+- **Integer arithmetic**: Addition, subtraction, multiplication, division, modulo
+- **Floating-point arithmetic**: All basic operations with SSE optimization
+- **Comparisons**: All comparison operators for integers and floating-point
+- **Bitwise operations**: AND, OR, XOR, shift operations
+- **Logical operations**: Boolean AND, OR, NOT
+- **Type conversions**: Automatic type promotion and conversions
 
 ### **Assembly Generation**
 - **Integer**: `add`, `sub`, `imul`, `idiv`, `and`, `or`, `xor`, `shl`, `sar`, `shr`
@@ -153,15 +135,16 @@ bool test_comparisons(double a, double b) {
 ## 🔮 **Roadmap**
 
 ### **Immediate Goals**
+- **Control flow**: `if` statements and conditional execution
 - **Assignment operators**: Complete IR → assembly pipeline
 - **Increment/decrement**: Finish prefix/postfix implementation
 - **Floating-point literals**: Parse `3.14f`, `2.718`, etc.
 - **Type conversions**: `static_cast`, implicit conversions
 
 ### **Advanced Features**
+- **Extended control flow**: `while`, `for`, `switch` statements
 - **AVX2 vectorization**: Packed operations for arrays
 - **FMA instructions**: Fused multiply-add optimization
-- **Control flow**: `if`, `while`, `switch` statements
 - **Object-oriented**: Classes, inheritance, virtual functions
 - **Templates**: Generic programming support
 
@@ -253,13 +236,14 @@ bool test_comparisons(double a, double b) {
 ## 🎯 **Remaining Work**
 
 ### **High Priority**
+- [ ] **Control flow**: `if` statements and conditional execution
 - [ ] **Assignment operators**: Complete IR → assembly implementation
 - [ ] **Increment/decrement**: Finish prefix/postfix semantics
 - [ ] **Floating-point literals**: Parse `3.14f`, `2.718`, scientific notation
 - [ ] **Type conversions**: Implicit and explicit cast operations
 
 ### **Medium Priority**
-- [ ] **Control flow**: `if`, `while`, `switch` statements
+- [ ] **Extended control flow**: `while`, `for`, `switch` statements
 - [ ] **Arrays**: Array declarations and subscript operations
 - [ ] **Pointers**: Pointer arithmetic and dereferencing
 - [ ] **Strings**: String operations and concatenation
