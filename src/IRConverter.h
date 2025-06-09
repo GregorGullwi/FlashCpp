@@ -398,6 +398,45 @@ public:
 			case IrOpcode::BitwiseXor:
 				handleBitwiseXor(instruction);
 				break;
+			case IrOpcode::Modulo:
+				handleModulo(instruction);
+				break;
+			case IrOpcode::Equal:
+				handleEqual(instruction);
+				break;
+			case IrOpcode::NotEqual:
+				handleNotEqual(instruction);
+				break;
+			case IrOpcode::LessThan:
+				handleLessThan(instruction);
+				break;
+			case IrOpcode::LessEqual:
+				handleLessEqual(instruction);
+				break;
+			case IrOpcode::GreaterThan:
+				handleGreaterThan(instruction);
+				break;
+			case IrOpcode::GreaterEqual:
+				handleGreaterEqual(instruction);
+				break;
+			case IrOpcode::UnsignedLessThan:
+				handleUnsignedLessThan(instruction);
+				break;
+			case IrOpcode::UnsignedLessEqual:
+				handleUnsignedLessEqual(instruction);
+				break;
+			case IrOpcode::UnsignedGreaterThan:
+				handleUnsignedGreaterThan(instruction);
+				break;
+			case IrOpcode::UnsignedGreaterEqual:
+				handleUnsignedGreaterEqual(instruction);
+				break;
+			case IrOpcode::LogicalAnd:
+				handleLogicalAnd(instruction);
+				break;
+			case IrOpcode::LogicalOr:
+				handleLogicalOr(instruction);
+				break;
 			case IrOpcode::SignExtend:
 				handleSignExtend(instruction);
 				break;
@@ -1062,6 +1101,243 @@ private:
 		std::array<uint8_t, 3> xorInst = { 0x48, 0x31, 0xC0 }; // xor r/m64, r64. 0x31 is opcode, 0xC0 is ModR/M for reg, reg
 		xorInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), xorInst.begin(), xorInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleModulo(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo");
+
+		// For x86-64, modulo is implemented using division
+		// idiv instruction computes both quotient (RAX) and remainder (RDX)
+		// We need the remainder in RDX
+
+		// Move dividend to RAX, divisor to a register
+		// Sign extend RAX to RDX:RAX for signed division
+		std::array<uint8_t, 3> cqoInst = { 0x48, 0x99, 0x00 }; // cqo (sign extend RAX to RDX:RAX)
+		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end() - 1);
+
+		// Perform signed division: idiv r/m64
+		std::array<uint8_t, 3> idivInst = { 0x48, 0xF7, 0xF8 }; // idiv r64
+		idivInst[2] = 0xF8 + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		textSectionData.insert(textSectionData.end(), idivInst.begin(), idivInst.end());
+
+		// Move remainder from RDX to result register
+		if (ctx.result_physical_reg != X64Register::RDX) {
+			std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xD0 }; // mov r64, rdx
+			movInst[2] = 0xD0 + static_cast<uint8_t>(ctx.result_physical_reg);
+			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		}
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "equal comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on zero flag: sete r8
+		std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, 0xC0 }; // sete r8
+		seteInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleNotEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "not equal comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on zero flag: setne r8
+		std::array<uint8_t, 3> setneInst = { 0x0F, 0x95, 0xC0 }; // setne r8
+		setneInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setneInst.begin(), setneInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleLessThan(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "less than comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on sign flag: setl r8 (signed less than)
+		std::array<uint8_t, 3> setlInst = { 0x0F, 0x9C, 0xC0 }; // setl r8
+		setlInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setlInst.begin(), setlInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleLessEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "less than or equal comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on flags: setle r8 (signed less than or equal)
+		std::array<uint8_t, 3> setleInst = { 0x0F, 0x9E, 0xC0 }; // setle r8
+		setleInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setleInst.begin(), setleInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleGreaterThan(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "greater than comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on flags: setg r8 (signed greater than)
+		std::array<uint8_t, 3> setgInst = { 0x0F, 0x9F, 0xC0 }; // setg r8
+		setgInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setgInst.begin(), setgInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleGreaterEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "greater than or equal comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on flags: setge r8 (signed greater than or equal)
+		std::array<uint8_t, 3> setgeInst = { 0x0F, 0x9D, 0xC0 }; // setge r8
+		setgeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setgeInst.begin(), setgeInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleUnsignedLessThan(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned less than comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on carry flag: setb r8 (unsigned less than)
+		std::array<uint8_t, 3> setbInst = { 0x0F, 0x92, 0xC0 }; // setb r8
+		setbInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setbInst.begin(), setbInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleUnsignedLessEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned less than or equal comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on flags: setbe r8 (unsigned less than or equal)
+		std::array<uint8_t, 3> setbeInst = { 0x0F, 0x96, 0xC0 }; // setbe r8
+		setbeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setbeInst.begin(), setbeInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleUnsignedGreaterThan(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned greater than comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on flags: seta r8 (unsigned greater than)
+		std::array<uint8_t, 3> setaInst = { 0x0F, 0x97, 0xC0 }; // seta r8
+		setaInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setaInst.begin(), setaInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleUnsignedGreaterEqual(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned greater than or equal comparison");
+
+		// Compare operands: cmp r/m64, r64
+		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
+		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on flags: setae r8 (unsigned greater than or equal)
+		std::array<uint8_t, 3> setaeInst = { 0x0F, 0x93, 0xC0 }; // setae r8
+		setaeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), setaeInst.begin(), setaeInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleLogicalAnd(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "logical AND");
+
+		// For logical AND, we need to implement short-circuit evaluation
+		// For now, implement as bitwise AND on boolean values
+		std::array<uint8_t, 3> andInst = { 0x48, 0x21, 0xC0 }; // and r/m64, r64
+		andInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), andInst.begin(), andInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
+	void handleLogicalOr(const IrInstruction& instruction) {
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "logical OR");
+
+		// For logical OR, we need to implement short-circuit evaluation
+		// For now, implement as bitwise OR on boolean values
+		std::array<uint8_t, 3> orInst = { 0x48, 0x09, 0xC0 }; // or r/m64, r64
+		orInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);

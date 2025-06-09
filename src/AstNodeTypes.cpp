@@ -84,6 +84,10 @@ bool is_integer_type(Type type) {
     }
 }
 
+bool is_bool_type(Type type) {
+    return type == Type::Bool;
+}
+
 bool is_signed_integer_type(Type type) {
     switch (type) {
         case Type::Char:  // char is signed by default in most implementations

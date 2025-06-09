@@ -793,3 +793,27 @@ TEST_CASE("Bitwise operations") {
 TEST_CASE("Comprehensive operators") {
 	run_test_from_file("comprehensive_operators.cpp", "Comprehensive operators", false);
 }
+
+TEST_CASE("Comparison operators") {
+	run_test_from_file("comparison_operators.cpp", "Comparison operators", false);
+}
+
+TEST_CASE("Logical operators") {
+	run_test_from_file("logical_operators.cpp", "Logical operators", false);
+}
+
+TEST_CASE("Bool support") {
+	run_test_from_file("bool_support.cpp", "Bool support", false);
+}
+
+TEST_CASE("Modulo operator") {
+	run_test_from_file("modulo_operator.cpp", "Modulo operator", false);
+}
+
+TEST_CASE("Assignment operators") {
+	run_test_from_file("assignment_operators.cpp", "Assignment operators", false);
+}
+
+TEST_CASE("Increment and decrement") {
+	run_test_from_file("increment_decrement.cpp", "Increment and decrement", false);
+}

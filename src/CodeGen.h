@@ -250,6 +250,53 @@ private:
 		else if (binaryOperatorNode.op() == "^") {
 			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(irOperands)));
 		}
+		else if (binaryOperatorNode.op() == "%") {
+			ir_.addInstruction(IrInstruction(IrOpcode::Modulo, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "==") {
+			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "!=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "<") {
+			// Choose signed or unsigned comparison based on common type
+			if (is_unsigned_integer_type(commonType)) {
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(irOperands)));
+			}
+		}
+		else if (binaryOperatorNode.op() == "<=") {
+			// Choose signed or unsigned comparison based on common type
+			if (is_unsigned_integer_type(commonType)) {
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessEqual, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::LessEqual, std::move(irOperands)));
+			}
+		}
+		else if (binaryOperatorNode.op() == ">") {
+			// Choose signed or unsigned comparison based on common type
+			if (is_unsigned_integer_type(commonType)) {
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterThan, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::GreaterThan, std::move(irOperands)));
+			}
+		}
+		else if (binaryOperatorNode.op() == ">=") {
+			// Choose signed or unsigned comparison based on common type
+			if (is_unsigned_integer_type(commonType)) {
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterEqual, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::GreaterEqual, std::move(irOperands)));
+			}
+		}
+		else if (binaryOperatorNode.op() == "&&") {
+			ir_.addInstruction(IrInstruction(IrOpcode::LogicalAnd, std::move(irOperands)));
+		}
+		else if (binaryOperatorNode.op() == "||") {
+			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(irOperands)));
+		}
 		else {
 			assert(false && "Unsupported binary operator");
 			return {};
