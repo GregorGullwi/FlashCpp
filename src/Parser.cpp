@@ -14,6 +14,7 @@ bool Parser::generate_coff(const std::string& outputFilename) {
 
 Parser::Parser(Lexer& lexer)
     : lexer_(lexer), current_token_(lexer_.next_token()) {
+    initialize_native_types();
     ast_nodes_.reserve(default_ast_tree_size_);
 }
 
@@ -248,10 +249,10 @@ ParseResult Parser::parse_type_specifier()
 		type_map = {
 				{"void", {Type::Void, 0}},
 				{"bool", {Type::Bool, std::numeric_limits<bool>::digits}},
-				{"char", {Type::Char, std::numeric_limits<unsigned char>::digits}},
-				{"int", {Type::Int, std::numeric_limits<unsigned int>::digits}},
-				{"short", {Type::Int, std::numeric_limits<unsigned short>::digits}},
-				{"long", {Type::Int, std::numeric_limits<unsigned long>::digits}},
+				{"char", {Type::Char, 8}},
+				{"short", {Type::Short, 16}},
+				{"int", {Type::Int, 32}},
+				{"long", {Type::Long, sizeof(long) * 8}},
 				{"float", {Type::Float, std::numeric_limits<float>::digits}},
 				{"double", {Type::Float, std::numeric_limits<double>::digits}},
 				{"auto", {Type::Auto, 0}},
@@ -264,12 +265,59 @@ ParseResult Parser::parse_type_specifier()
 		type = std::get<0>(it->second);
 		type_size = static_cast<unsigned char>(std::get<1>(it->second));
 
+		// Apply signed/unsigned qualifier to integer types
+		if (qualifier == TypeQualifier::Unsigned) {
+			switch (type) {
+				case Type::Char:
+					type = Type::UnsignedChar;
+					type_size = 8;
+					break;
+				case Type::Short:
+					type = Type::UnsignedShort;
+					type_size = 16;
+					break;
+				case Type::Int:
+					type = Type::UnsignedInt;
+					type_size = 32;
+					break;
+				case Type::Long:
+					type = Type::UnsignedLong;
+					type_size = sizeof(unsigned long) * 8;
+					break;
+				default:
+					break;
+			}
+		} else if (qualifier == TypeQualifier::Signed) {
+			// Explicitly signed types keep their current type but ensure correct size
+			switch (type) {
+				case Type::Char:
+					type_size = 8;
+					break;
+				case Type::Short:
+					type_size = 16;
+					break;
+				case Type::Int:
+					type_size = 32;
+					break;
+				case Type::Long:
+					type_size = sizeof(long) * 8;
+					break;
+				default:
+					break;
+			}
+		}
+
 		if (long_count == 1) {
 			if (type == Type::Float) {
 				type_size = sizeof(long double);
 			}
-			else if (type == Type::Int) {
-				type_size = sizeof(long long);
+			else if (type == Type::Long) {
+				type = Type::LongLong;
+				type_size = 64;
+			}
+			else if (type == Type::UnsignedLong) {
+				type = Type::UnsignedLongLong;
+				type_size = 64;
 			}
 		}
 
@@ -283,6 +331,16 @@ ParseResult Parser::parse_type_specifier()
 		consume_token();
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			type, qualifier, type_size, current_token_opt.value()));
+	}
+	else if (qualifier != TypeQualifier::None) {
+		// Handle cases like "unsigned" or "signed" without explicit type (defaults to int)
+		type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedInt : Type::Int;
+		type_size = (qualifier == TypeQualifier::Unsigned) ?
+			std::numeric_limits<unsigned int>::digits :
+			std::numeric_limits<int>::digits;
+
+		return ParseResult::success(emplace_node<TypeSpecifierNode>(
+			type, qualifier, type_size, Token()));
 	}
 
 	return ParseResult::error("Unexpected token in type specifier",
@@ -523,11 +581,19 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	static constexpr std::string_view suffixCharacters = "ul";
 	std::string_view suffix = end_ptr;
 	if (!suffix.empty() && suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {
-		typeInfo.typeQualifier = static_cast<TypeQualifier>(static_cast<int>(TypeQualifier::Signed) + (suffix.find('u') != std::string_view::npos) * 1);
+		bool hasUnsigned = suffix.find('u') != std::string_view::npos;
+		typeInfo.typeQualifier = hasUnsigned ? TypeQualifier::Unsigned : TypeQualifier::Signed;
+		typeInfo.type = hasUnsigned ? Type::UnsignedInt : Type::Int;
 
 		// Count the number of 'l' characters
 		auto l_count = std::count(suffix.begin(), suffix.end(), 'l');
-		typeInfo.sizeInBits = sizeof(long) * static_cast<size_t>(8 + (l_count & 2) * 8);
+		if (l_count > 0) {
+			typeInfo.sizeInBits = sizeof(long) * static_cast<size_t>(8 + (l_count & 2) * 8);
+		}
+	} else {
+		// Default for literals without suffix: signed int
+		typeInfo.typeQualifier = TypeQualifier::Signed;
+		typeInfo.type = Type::Int;
 	}
 
 	return typeInfo;

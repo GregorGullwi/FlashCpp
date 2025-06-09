@@ -135,10 +135,40 @@ private:
 
 	std::vector<IrOperand>
 		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
-		// Generate IR for numeric literal and return appropriate operand
-		// ...
-		// only supports ints for now
-		return { Type::Int, static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
+		// Generate IR for numeric literal using the actual type from the literal
+		return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
+	}
+
+	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType) {
+		if (fromType == toType) {
+			return operands; // No conversion needed
+		}
+
+		int fromSize = get_type_size_bits(fromType);
+		int toSize = get_type_size_bits(toType);
+
+		TempVar resultVar = var_counter.next();
+		std::vector<IrOperand> conversionOperands;
+		conversionOperands.push_back(resultVar);
+		conversionOperands.push_back(fromType);
+		conversionOperands.push_back(fromSize);
+		conversionOperands.insert(conversionOperands.end(), operands.begin() + 2, operands.end()); // Skip type and size, add value
+		conversionOperands.push_back(toSize);
+
+		if (fromSize < toSize) {
+			// Extension needed
+			if (is_signed_integer_type(fromType)) {
+				ir_.addInstruction(IrInstruction(IrOpcode::SignExtend, std::move(conversionOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::ZeroExtend, std::move(conversionOperands)));
+			}
+		} else if (fromSize > toSize) {
+			// Truncation needed
+			ir_.addInstruction(IrInstruction(IrOpcode::Truncate, std::move(conversionOperands)));
+		}
+
+		// Return the converted operands
+		return { toType, toSize, resultVar };
 	}
 
 	std::vector<IrOperand>
@@ -155,6 +185,21 @@ private:
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
+		// Get the types of the operands
+		Type lhsType = std::get<Type>(lhsIrOperands[0]);
+		Type rhsType = std::get<Type>(rhsIrOperands[0]);
+
+		// Apply integer promotions and find common type
+		Type commonType = get_common_type(lhsType, rhsType);
+
+		// Generate conversions if needed
+		if (lhsType != commonType) {
+			lhsIrOperands = generateTypeConversion(lhsIrOperands, lhsType, commonType);
+		}
+		if (rhsType != commonType) {
+			rhsIrOperands = generateTypeConversion(rhsIrOperands, rhsType, commonType);
+		}
+
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
@@ -167,7 +212,7 @@ private:
 		// Add the right-hand side operands
 		irOperands.insert(irOperands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
 
-		// Generate the IR for the operation based on the operator
+		// Generate the IR for the operation based on the operator and operand types
 		if (binaryOperatorNode.op() == "+") {
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(irOperands)));
 		}
@@ -178,13 +223,23 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(irOperands)));
 		}
 		else if (binaryOperatorNode.op() == "/") {
-			ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(irOperands)));
+			// Choose signed or unsigned division based on common type
+			if (is_unsigned_integer_type(commonType)) {
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedDivide, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(irOperands)));
+			}
 		}
 		else if (binaryOperatorNode.op() == "<<") {
 			ir_.addInstruction(IrInstruction(IrOpcode::ShiftLeft, std::move(irOperands)));
 		}
 		else if (binaryOperatorNode.op() == ">>") {
-			ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(irOperands)));
+			// Choose signed or unsigned right shift based on left operand type (after promotion)
+			if (is_unsigned_integer_type(commonType)) {
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedShiftRight, std::move(irOperands)));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(irOperands)));
+			}
 		}
 		else {
 			assert(false && "Unsupported binary operator");

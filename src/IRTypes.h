@@ -15,8 +15,13 @@ enum class IrOpcode {
 	Subtract,
 	Multiply,
 	Divide,
+	UnsignedDivide,
 	ShiftLeft,
 	ShiftRight,
+	UnsignedShiftRight,
+	SignExtend,
+	ZeroExtend,
+	Truncate,
 	Return,
 	FunctionDecl,
 	FunctionCall,
@@ -359,6 +364,145 @@ public:
 				}
 			}
 			break;
+
+		case IrOpcode::UnsignedDivide:
+		{
+			// % = udiv [Type][SizeInBits] %[LHS], %[RHS]
+			assert(getOperandCount() == 7 && "UnsignedDivide instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = udiv " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::UnsignedShiftRight:
+		{
+			// % = lshr [Type][SizeInBits] %[LHS], %[RHS]
+			assert(getOperandCount() == 7 && "UnsignedShiftRight instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = lshr " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::SignExtend:
+		{
+			// % = sext [FromType][FromSize] %[Value] to [ToType][ToSize]
+			assert(getOperandCount() == 5 && "SignExtend instruction must have exactly 5 operands: result_var, from_type, from_size, value, to_size");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = sext " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << " to " << getOperandAsTypeString(1) << getOperandAs<int>(4);
+			}
+		}
+		break;
+
+		case IrOpcode::ZeroExtend:
+		{
+			// % = zext [FromType][FromSize] %[Value] to [ToType][ToSize]
+			assert(getOperandCount() == 5 && "ZeroExtend instruction must have exactly 5 operands: result_var, from_type, from_size, value, to_size");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = zext " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << " to " << getOperandAsTypeString(1) << getOperandAs<int>(4);
+			}
+		}
+		break;
+
+		case IrOpcode::Truncate:
+		{
+			// % = trunc [FromType][FromSize] %[Value] to [ToType][ToSize]
+			assert(getOperandCount() == 5 && "Truncate instruction must have exactly 5 operands: result_var, from_type, from_size, value, to_size");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = trunc " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << " to " << getOperandAsTypeString(1) << getOperandAs<int>(4);
+			}
+		}
+		break;
 
 		case IrOpcode::Return:
 		{
