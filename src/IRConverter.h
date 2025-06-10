@@ -532,6 +532,20 @@ private:
 				assert(false && "Missing variable name"); // TODO: Error handling
 			}
 		}
+		else if (instruction.isOperandType<TempVar>(3)) {
+			auto lhs_var_op = instruction.getOperandAs<TempVar>(3);
+			auto lhs_stack_var_addr = getStackOffsetFromTempVar(lhs_var_op);
+			if (auto lhs_reg = regAlloc.tryGetStackVariableRegister(lhs_stack_var_addr); lhs_reg.has_value()) {
+				ctx.result_physical_reg = lhs_reg.value();
+			}
+			else {
+				assert(variable_scopes.back().current_stack_offset < lhs_stack_var_addr);
+
+				ctx.result_physical_reg = regAlloc.allocate().reg;
+				auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+			}
+		}
 
 		ctx.rhs_physical_reg = X64Register::Count;
 		if (instruction.isOperandType<std::string_view>(6)) {
@@ -553,7 +567,20 @@ private:
 				assert(false && "Missing variable name"); // TODO: Error handling
 			}
 		}
+		else if (instruction.isOperandType<TempVar>(6)) {
+			auto rhs_var_op = instruction.getOperandAs<TempVar>(6);
+			auto rhs_stack_var_addr = getStackOffsetFromTempVar(rhs_var_op);
+			if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_stack_var_addr); rhs_reg.has_value()) {
+				ctx.rhs_physical_reg = rhs_reg.value();
+			}
+			else {
+				assert(variable_scopes.back().current_stack_offset < rhs_stack_var_addr);
 
+				ctx.rhs_physical_reg = regAlloc.allocate().reg;
+				auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+			}
+		}
 		if (std::holds_alternative<TempVar>(ctx.result_operand)) {
 			const TempVar temp_var = std::get<TempVar>(ctx.result_operand);
 			const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
@@ -673,6 +700,7 @@ private:
 			// Determine the target register for the argument
 			X64Register target_reg = INT_PARAM_REGS[i];
 
+			if (std::holds_alternative<unsigned long long>(argValue)) {
 			// Construct the REX prefix based on target_reg for destination (Reg field).
 			// REX.W is always needed for 64-bit operations (0x48).
 			// REX.R (bit 2) is set if the target_reg is R8-R15 (as it appears in the Reg field of ModR/M or is directly encoded).
@@ -683,7 +711,6 @@ private:
 			// Push the REX prefix. It might be modified later for REX.B or REX.X if needed.
 			textSectionData.push_back(rex_prefix);
 
-			if (std::holds_alternative<unsigned long long>(argValue)) {
 				// Immediate value
 				// MOV r64, imm64 (REX.W/B + Opcode B8+rd)
 				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
