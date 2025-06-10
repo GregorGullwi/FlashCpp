@@ -771,7 +771,7 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 }
 
 TEST_CASE("Shift operations") {
-	run_test_from_file("shift_operations.cpp", "Shift operations");
+	run_test_from_file("shift_operations.cpp", "Shift operations", false);
 }
 
 TEST_CASE("Signed vs Unsigned support") {

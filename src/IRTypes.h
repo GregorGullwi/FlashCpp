@@ -380,7 +380,7 @@ public:
 					else if (isOperandType<TempVar>(3))
 						oss << '%' << getOperandAs<TempVar>(3).index;
 					else if (isOperandType<std::string_view>(3))
-						oss << getOperandAs<std::string_view>(3);
+						oss << '%' << getOperandAs<std::string_view>(3);
 
 					oss << ", ";
 
@@ -412,7 +412,7 @@ public:
 					else if (isOperandType<TempVar>(3))
 						oss << '%' << getOperandAs<TempVar>(3).index;
 					else if (isOperandType<std::string_view>(3))
-						oss << getOperandAs<std::string_view>(3);
+						oss << '%' << getOperandAs<std::string_view>(3);
 
 					oss << ", ";
 
@@ -444,7 +444,7 @@ public:
 				else if (isOperandType<TempVar>(3))
 					oss << '%' << getOperandAs<TempVar>(3).index;
 				else if (isOperandType<std::string_view>(3))
-					oss << getOperandAs<std::string_view>(3);
+					oss << '%' << getOperandAs<std::string_view>(3);
 
 				oss << ", ";
 
@@ -476,7 +476,7 @@ public:
 				else if (isOperandType<TempVar>(3))
 					oss << '%' << getOperandAs<TempVar>(3).index;
 				else if (isOperandType<std::string_view>(3))
-					oss << getOperandAs<std::string_view>(3);
+					oss << '%' << getOperandAs<std::string_view>(3);
 
 				oss << ", ";
 
