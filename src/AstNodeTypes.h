@@ -71,9 +71,57 @@ enum class Type {
 	UserDefined,
 	Auto,
 	Function,
+	Struct,
 };
 
 using TypeIndex = size_t;
+
+// Struct member information
+struct StructMember {
+	std::string name;
+	Type type;
+	size_t offset;      // Offset in bytes from start of struct
+	size_t size;        // Size in bytes
+	size_t alignment;   // Alignment requirement
+
+	StructMember(std::string n, Type t, size_t off, size_t sz, size_t align)
+		: name(std::move(n)), type(t), offset(off), size(sz), alignment(align) {}
+};
+
+// Struct type information
+struct StructTypeInfo {
+	std::string name;
+	std::vector<StructMember> members;
+	size_t total_size = 0;      // Total size of struct in bytes
+	size_t alignment = 1;       // Alignment requirement of struct
+
+	StructTypeInfo(std::string n) : name(std::move(n)) {}
+
+	void addMember(const std::string& member_name, Type member_type, size_t member_size, size_t member_alignment) {
+		// Calculate offset with proper alignment
+		size_t offset = (total_size + member_alignment - 1) & ~(member_alignment - 1);
+
+		members.emplace_back(member_name, member_type, offset, member_size, member_alignment);
+
+		// Update struct size and alignment
+		total_size = offset + member_size;
+		alignment = std::max(alignment, member_alignment);
+	}
+
+	void finalize() {
+		// Pad struct to its alignment
+		total_size = (total_size + alignment - 1) & ~(alignment - 1);
+	}
+
+	const StructMember* findMember(const std::string& name) const {
+		for (const auto& member : members) {
+			if (member.name == name) {
+				return &member;
+			}
+		}
+		return nullptr;
+	}
+};
 
 struct TypeInfo
 {
@@ -84,7 +132,19 @@ struct TypeInfo
 	Type type_;
 	TypeIndex type_index_;
 
+	// For struct types, store additional information
+	std::unique_ptr<StructTypeInfo> struct_info_;
+
 	const char* name() { return name_.c_str(); };
+
+	// Helper methods for struct types
+	bool isStruct() const { return type_ == Type::Struct; }
+	const StructTypeInfo* getStructInfo() const { return struct_info_.get(); }
+	StructTypeInfo* getStructInfo() { return struct_info_.get(); }
+
+	void setStructInfo(std::unique_ptr<StructTypeInfo> info) {
+		struct_info_ = std::move(info);
+	}
 };
 
 extern std::deque<TypeInfo> gTypeInfo;
@@ -96,6 +156,8 @@ extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 TypeInfo& add_user_type(std::string name);
 
 TypeInfo& add_function_type(std::string name, Type /*return_type*/);
+
+TypeInfo& add_struct_type(std::string name);
 
 void initialize_native_types();
 
@@ -274,8 +336,35 @@ private:
 	ChunkedVector<ASTNode> arguments_;
 };
 
+class StructDeclarationNode {
+public:
+	explicit StructDeclarationNode(std::string name) : name_(std::move(name)) {}
+
+	const std::string& name() const { return name_; }
+	const std::vector<ASTNode>& members() const { return members_; }
+
+	void add_member(ASTNode member) { members_.push_back(member); }
+
+private:
+	std::string name_;
+	std::vector<ASTNode> members_;
+};
+
+class MemberAccessNode {
+public:
+	explicit MemberAccessNode(ASTNode object, Token member_name)
+		: object_(object), member_name_(member_name) {}
+
+	ASTNode object() const { return object_; }
+	std::string_view member_name() const { return member_name_.value(); }
+
+private:
+	ASTNode object_;
+	Token member_name_;
+};
+
 using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
-	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode>;
+	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode>;
 
 /*class FunctionDefinitionNode {
 public:
