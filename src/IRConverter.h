@@ -581,6 +581,7 @@ private:
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			}
 		}
+
 		if (std::holds_alternative<TempVar>(ctx.result_operand)) {
 			const TempVar temp_var = std::get<TempVar>(ctx.result_operand);
 			const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
@@ -604,6 +605,26 @@ private:
 			// Store the computed result from actual_source_reg to memory
 			auto store_opcodes = generateMovToFrame(actual_source_reg, final_result_offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		}
+		else if (std::holds_alternative<TempVar>(ctx.result_operand)) {
+			auto res_var_op = std::get<TempVar>(ctx.result_operand);
+			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op);
+			if (auto res_reg = regAlloc.tryGetStackVariableRegister(res_stack_var_addr); res_reg.has_value()) {
+				if (res_reg != actual_source_reg) {
+					auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.size_in_bits / 8);
+					textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
+				}
+			}
+			else {
+				assert(variable_scopes.back().current_stack_offset < res_stack_var_addr);
+
+				auto mov_opcodes = generateMovFromFrame(actual_source_reg, res_stack_var_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+			}
+
+		}
+		else {
+			assert(false && "Unhandled destination type");
 		}
 
 		if (source_reg != X64Register::Count) {
@@ -701,15 +722,15 @@ private:
 			X64Register target_reg = INT_PARAM_REGS[i];
 
 			if (std::holds_alternative<unsigned long long>(argValue)) {
-			// Construct the REX prefix based on target_reg for destination (Reg field).
-			// REX.W is always needed for 64-bit operations (0x48).
-			// REX.R (bit 2) is set if the target_reg is R8-R15 (as it appears in the Reg field of ModR/M or is directly encoded).
-			uint8_t rex_prefix = 0x48;
-			if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-				rex_prefix |= (1 << 2); // Set REX.R
-			}
-			// Push the REX prefix. It might be modified later for REX.B or REX.X if needed.
-			textSectionData.push_back(rex_prefix);
+				// Construct the REX prefix based on target_reg for destination (Reg field).
+				// REX.W is always needed for 64-bit operations (0x48).
+				// REX.R (bit 2) is set if the target_reg is R8-R15 (as it appears in the Reg field of ModR/M or is directly encoded).
+				uint8_t rex_prefix = 0x48;
+				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					rex_prefix |= (1 << 2); // Set REX.R
+				}
+				// Push the REX prefix. It might be modified later for REX.B or REX.X if needed.
+				textSectionData.push_back(rex_prefix);
 
 				// Immediate value
 				// MOV r64, imm64 (REX.W/B + Opcode B8+rd)
@@ -1025,14 +1046,30 @@ private:
 		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.size_in_bits / 8);
 		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
-		// cdq - sign extend eax into edx:eax
-		std::array<uint8_t, 1> cdqInst = { 0x99 };
-		textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
+		// Sign extend RAX into RDX:RAX (CQO for 64-bit)
+		if (ctx.size_in_bits == 64) {
+			// CQO - sign extend RAX into RDX:RAX
+			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 }; // REX.W + CQO
+			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+		} else {
+			// CDQ - sign extend EAX into EDX:EAX (for 32-bit)
+			std::array<uint8_t, 1> cdqInst = { 0x99 };
+			textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
+		}
 
-		// idiv rhs_physical_reg
-		std::array<uint8_t, 3> divInst = { 0x48, 0xF7, 0x00 }; // REX.W (0x48) + Opcode (0xF7) + ModR/M (initially 0x00)
-		// ModR/M: Mod=11 (register-to-register), Reg=7 (opcode extension for idiv), R/M=rhs_physical_reg
-		divInst[2] = 0xC0 + (0x07 << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+	    // idiv rhs_physical_reg
+		uint8_t rex = 0x48; // REX.W for 64-bit operation
+		if (ctx.size_in_bits == 64) {
+			rex |= 0x48; // Ensure REX.W is set for 64-bit
+		} else {
+			rex = 0x40;  // Clear REX.W for 32-bit
+		}
+		
+		std::array<uint8_t, 3> divInst = { 
+			rex, 
+			0xF7,  // Opcode
+			static_cast<uint8_t>(0xF8 + static_cast<uint8_t>(ctx.rhs_physical_reg))  // ModR/M: 11 111 reg
+		};
 		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
 
 		// Store the result from RAX (quotient) to the appropriate destination
