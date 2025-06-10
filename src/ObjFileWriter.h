@@ -1,6 +1,7 @@
 #pragma once
 
 #include "coffi/coffi.hpp"
+#include "CodeViewDebug.h"
 #include <string>
 #include <array>
 #include <chrono>
@@ -11,6 +12,8 @@ enum class SectionType : unsigned char
 	DATA,
 	BSS,
 	DRECTVE,
+	DEBUG_S,
+	DEBUG_T,
 
 	Count
 };
@@ -36,6 +39,19 @@ public:
 		symbol_text->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 		symbol_text->set_storage_class(IMAGE_SYM_CLASS_STATIC);
 		symbol_text->set_section_number(section_text->get_index() + 1);
+
+		// Add debug sections for CodeView debug information
+		auto section_debug_s = add_section(".debug$S", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES, SectionType::DEBUG_S);
+		auto symbol_debug_s = coffi_.add_symbol(".debug$S");
+		symbol_debug_s->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_debug_s->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_debug_s->set_section_number(section_debug_s->get_index() + 1);
+
+		auto section_debug_t = add_section(".debug$T", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES, SectionType::DEBUG_T);
+		auto symbol_debug_t = coffi_.add_symbol(".debug$T");
+		symbol_debug_t->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_debug_t->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_debug_t->set_section_number(section_debug_t->get_index() + 1);
 	}
 
 	COFFI::section* add_section(const std::string& section_name, int32_t flags, std::optional<SectionType> section_type) {
@@ -80,8 +96,32 @@ public:
 		section_text->add_relocation_entry(&relocation);
 	}
 
+	// Debug information methods
+	void add_source_file(const std::string& filename) {
+		debug_builder_.addSourceFile(filename);
+	}
+
+	void add_function_debug_info(const std::string& name, uint32_t code_offset, uint32_t code_length) {
+		debug_builder_.addFunction(name, code_offset, code_length);
+	}
+
+	void finalize_debug_info() {
+		// Generate debug sections
+		auto debug_s_data = debug_builder_.generateDebugS();
+		auto debug_t_data = debug_builder_.generateDebugT();
+
+		// Add debug data to sections
+		if (!debug_s_data.empty()) {
+			add_data(std::vector<char>(debug_s_data.begin(), debug_s_data.end()), SectionType::DEBUG_S);
+		}
+		if (!debug_t_data.empty()) {
+			add_data(std::vector<char>(debug_t_data.begin(), debug_t_data.end()), SectionType::DEBUG_T);
+		}
+	}
+
 protected:
 	COFFI::coffi coffi_;
 	std::unordered_map<SectionType, std::string> sectiontype_to_name;
 	std::unordered_map<SectionType, int32_t> sectiontype_to_index;
+	CodeView::DebugInfoBuilder debug_builder_;
 };

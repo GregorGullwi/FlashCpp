@@ -859,6 +859,10 @@ private:
 		writer.add_function_symbol(std::string(func_name), func_offset);
 		functionSymbols[func_name] = func_offset;
 
+		// Track function for debug information
+		current_function_name_ = std::string(func_name);
+		current_function_offset_ = func_offset;
+
 		// Create a new function scope
 		regAlloc.reset();
 
@@ -1007,6 +1011,14 @@ private:
 
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
+
+		// Add debug information for the completed function
+		if (!current_function_name_.empty()) {
+			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			writer.add_function_debug_info(current_function_name_, current_function_offset_, function_length);
+			current_function_name_.clear();
+			current_function_offset_ = 0;
+		}
 
 		variable_scopes.pop_back();
 	}
@@ -1806,6 +1818,12 @@ private:
 
 	void finalizeSections() {
 		writer.add_data(textSectionData, SectionType::TEXT);
+
+		// Add a default source file for debug information
+		writer.add_source_file("main.cpp");
+
+		// Finalize debug information
+		writer.finalize_debug_info();
 	}
 
 	TWriterClass writer;
@@ -1813,6 +1831,10 @@ private:
 	std::unordered_map<std::string_view, uint32_t> functionSymbols;
 	std::unordered_map<std::string_view, std::vector<IrInstruction>> function_instructions;
 	RegisterAllocator regAlloc;
+
+	// Debug information tracking
+	std::string current_function_name_;
+	uint32_t current_function_offset_ = 0;
 
 	struct StackVariableScope
 	{
