@@ -191,15 +191,20 @@ constexpr std::array<X64Register, 4> FLOAT_PARAM_REGS = {
 };
 
 std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
-	if (stackVariableOffset < 0) {
-		return TempVar(static_cast<size_t>(stackVariableOffset / -8));
+	// For RBP-relative addressing, temporary variables have negative offsets
+	// TempVar 0 is at offset -8, TempVar 1 is at offset -16, etc.
+	if (stackVariableOffset < 0 && (stackVariableOffset % 8) == 0) {
+		size_t index = static_cast<size_t>((-stackVariableOffset / 8) - 1);
+		return TempVar(index);
 	}
 
 	return std::nullopt;
 }
 
 int32_t getStackOffsetFromTempVar(TempVar tempVar) {
-	return tempVar.index * -8;
+	// For RBP-relative addressing, temporary variables use negative offsets
+	// TempVar 0 is at [rbp-8], TempVar 1 is at [rbp-16], etc.
+	return -static_cast<int32_t>((tempVar.index + 1) * 8);
 }
 
 struct RegisterAllocator
@@ -347,6 +352,8 @@ public:
 	IrToObjConverter() = default;
 
 	void convert(const Ir& ir, const char* filename) {
+		// Group instructions by function for stack space calculation
+		groupInstructionsByFunction(ir);
 
 		for (const auto& instruction : ir.getInstructions()) {
 			switch (instruction.getOpcode()) {
@@ -521,7 +528,7 @@ private:
 					ctx.result_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
 				}
 				else {
-					assert(variable_scopes.back().current_stack_offset < lhs_var_id->second);
+					assert(variable_scopes.back().current_stack_offset <= lhs_var_id->second);
 
 					ctx.result_physical_reg = regAlloc.allocate().reg;
 					auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
@@ -539,7 +546,7 @@ private:
 				ctx.result_physical_reg = lhs_reg.value();
 			}
 			else {
-				assert(variable_scopes.back().current_stack_offset < lhs_stack_var_addr);
+				assert(variable_scopes.back().current_stack_offset <= lhs_stack_var_addr);
 
 				ctx.result_physical_reg = regAlloc.allocate().reg;
 				auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
@@ -556,7 +563,7 @@ private:
 					ctx.rhs_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
 				}
 				else {
-					assert(variable_scopes.back().current_stack_offset < rhs_var_id->second);
+					assert(variable_scopes.back().current_stack_offset <= rhs_var_id->second);
 
 					ctx.rhs_physical_reg = regAlloc.allocate().reg;
 					auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
@@ -574,7 +581,7 @@ private:
 				ctx.rhs_physical_reg = rhs_reg.value();
 			}
 			else {
-				assert(variable_scopes.back().current_stack_offset < rhs_stack_var_addr);
+				assert(variable_scopes.back().current_stack_offset <= rhs_stack_var_addr);
 
 				ctx.rhs_physical_reg = regAlloc.allocate().reg;
 				auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
@@ -618,7 +625,7 @@ private:
 			else {
 				assert(variable_scopes.back().current_stack_offset < res_stack_var_addr);
 
-				auto mov_opcodes = generateMovFromFrame(actual_source_reg, res_stack_var_addr);
+				auto mov_opcodes = generateMovToFrame(actual_source_reg, res_stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			}
 
@@ -632,6 +639,54 @@ private:
 		}
 	}
 
+	// Group IR instructions by function for analysis
+	void groupInstructionsByFunction(const Ir& ir) {
+		function_instructions.clear();
+		std::string_view current_func_name;
+
+		for (const auto& instruction : ir.getInstructions()) {
+			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
+				current_func_name = instruction.getOperandAs<std::string_view>(2);
+				function_instructions[current_func_name] = std::vector<IrInstruction>();
+			} else if (!current_func_name.empty()) {
+				function_instructions[current_func_name].push_back(instruction);
+			}
+		}
+	}
+
+	// Calculate the total stack space needed for a function by analyzing its IR instructions
+	int32_t calculateFunctionStackSpace(std::string_view func_name) {
+		auto it = function_instructions.find(func_name);
+		if (it == function_instructions.end()) {
+			return 0; // No instructions found for this function
+		}
+
+		// Find the maximum TempVar index used in this function
+		int32_t max_temp_var_index = -1;
+		int32_t shadow_stack_space = 0;
+
+		for (const auto& instruction : it->second) {
+			// Look for TempVar operands in the instruction
+			shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall));
+
+			for (size_t i = 0; i < instruction.getOperandCount(); ++i) {
+				if (instruction.isOperandType<TempVar>(i)) {
+					auto temp_var = instruction.getOperandAs<TempVar>(i);
+					max_temp_var_index = std::max(max_temp_var_index, static_cast<int32_t>(temp_var.index));
+				}
+			}
+		}
+
+		// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
+		//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
+			//return 0;
+		//}
+
+		// Calculate space needed: (max_index + 1) * 8 bytes per variable
+		int32_t local_space = (max_temp_var_index + 1) * 8;
+		return local_space + shadow_stack_space; // for now, always assume that we need to allocate stack space for a function call
+	}
+
 	// Helper function to allocate stack space for a temporary variable
 	int allocateStackSlotForTempVar(int32_t index) {
 		StackVariableScope& current_scope = variable_scopes.back();
@@ -642,12 +697,6 @@ private:
 		}
 
 		constexpr int temp_var_size = 8; // 8 bytes for 64-bit value
-		int aligned_size = (temp_var_size + 15) & -16; // Align to 16 bytes
-
-		// Generate the opcode for `sub rsp, aligned_size`
-		std::array<uint8_t, 7> subRspInst = { 0x48, 0x81, 0xEC };
-		std::memcpy(subRspInst.data() + 3, &aligned_size, sizeof(aligned_size));
-		textSectionData.insert(textSectionData.end(), subRspInst.begin(), subRspInst.end());
 
 		// With RBP-relative addressing, local variables use NEGATIVE offsets
 		// Move to next slot (going more negative)
@@ -658,36 +707,32 @@ private:
 		return stack_offset;
 	}
 
+	void flushAllDirtyRegisters()
+	{
+		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset)
+			{
+				auto tempVarIndex = getTempVarFromOffset(stackVariableOffset);
+
+				if (tempVarIndex.has_value()) {
+					// For RBP-relative addressing with negative offsets, we need to ensure
+					// the stack space has been allocated. Since we're using negative offsets,
+					// we check if current_stack_offset is greater than (less negative than) stackVariableOffset
+					if (variable_scopes.back().current_stack_offset > stackVariableOffset) {
+						// Update current_stack_offset to reflect the actual stack usage
+						variable_scopes.back().current_stack_offset = stackVariableOffset;
+					}
+
+					// Store the computed result from register to stack
+					auto store_opcodes = generateMovToFrame(reg, stackVariableOffset);
+					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				}
+			});
+	}
+
 	void handleFunctionCall(const IrInstruction& instruction) {
 		assert(instruction.getOperandCount() >= 2 && "Function call must have at least 2 ope rands (result, function name)");
 
-		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset)
-		{
-			auto tempVarIndex = getTempVarFromOffset(stackVariableOffset);
-				
-			if (tempVarIndex.has_value()) {
-				if (variable_scopes.back().current_stack_offset > stackVariableOffset) {
-					// Get the size of the allocation
-					auto sizeInBytes = variable_scopes.back().current_stack_offset - stackVariableOffset;
-
-					// Ensure the stack remains aligned to 16 bytes
-					sizeInBytes = (sizeInBytes + 15) & -16;
-
-					// Generate the opcode for `sub rsp, imm32`
-					std::array<uint8_t, 7> subRspInst = { 0x48, 0x81, 0xEC };
-					std::memcpy(subRspInst.data() + 3, &sizeInBytes, sizeof(sizeInBytes));
-
-					// Add the instruction to the .text section
-					textSectionData.insert(textSectionData.end(), subRspInst.begin(), subRspInst.end());
-					
-					variable_scopes.back().current_stack_offset -= sizeInBytes;
-				}
-
-				// Store the computed result from actual_source_reg to stack
-				auto store_opcodes = generateMovToFrame(reg, stackVariableOffset);
-				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-			}
-		});
+		flushAllDirtyRegisters();
 
 		// Get result variable and function name
 		auto result_var = instruction.getOperand(0);
@@ -799,22 +844,11 @@ private:
 			regAlloc.set_stack_variable_offset(X64Register::RAX, result_offset);	// just stomp the existing value
 		}
 		regAlloc.mark_reg_dirty(X64Register::RAX);
-
-		// After the call, the return value is in RAX. We need to store it to the destination.
-// 		if (std::holds_alternative<std::string_view>(result_var)) {
-// 			// Result goes to a named variable (memory location)
-// 			std::string_view var_name = std::get<std::string_view>(result_var);
-// 			int var_offset = variable_scopes.back().identifier_offset[var_name];
-// 
-// 			// Store RAX to memory using RBP-relative addressing
-// 			auto store_opcodes = generateMovToFrame(X64Register::RAX, var_offset);
-// 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-// 		}
 	}
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		auto func_name = instruction.getOperandAs<std::string_view>(2);
-		
+
 		// align the function to 16 bytes
 		static constexpr char nop = static_cast<char>(0x90);
 		const uint32_t nop_count = 16 - (textSectionData.size() % 16);
@@ -828,12 +862,34 @@ private:
 		// Create a new function scope
 		regAlloc.reset();
 
-		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, 0x20 (32 bytes shadow space)
-		textSectionData.push_back(0x55); // push rbp
-		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
-		textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xEC); textSectionData.push_back(0x20); // sub rsp, 0x20
+		int32_t total_stack_space = calculateFunctionStackSpace(func_name);
+
+		if (total_stack_space > 0)
+		{
+			// Ensure stack alignment to 16 bytes
+			total_stack_space = (total_stack_space + 15) & -16;
+
+			// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
+			textSectionData.push_back(0x55); // push rbp
+			textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
+
+			// Generate stack allocation instruction
+			if (total_stack_space <= 127) {
+				// Use 8-bit immediate: sub rsp, imm8
+				textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xEC);
+				textSectionData.push_back(static_cast<uint8_t>(total_stack_space));
+			} else {
+				// Use 32-bit immediate: sub rsp, imm32
+				textSectionData.push_back(0x48); textSectionData.push_back(0x81); textSectionData.push_back(0xEC);
+				for (int i = 0; i < 4; ++i) {
+					textSectionData.push_back(static_cast<uint8_t>((total_stack_space >> (8 * i)) & 0xFF));
+				}
+			}
+		}
 
 		variable_scopes.emplace_back();
+		// For RBP-relative addressing, we start with negative offset after total allocated space
+		variable_scopes.back().current_stack_offset = -total_stack_space;
 
 		// Handle parameters
 		size_t paramIndex = 3;  // Start after return type, size, and function name
@@ -897,7 +953,7 @@ private:
 					}
 				}
 				else {
-					assert(variable_scopes.back().current_stack_offset < var_offset);
+					assert(variable_scopes.back().current_stack_offset > var_offset);
 					// Load from stack using RBP-relative addressing
 					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
@@ -932,7 +988,7 @@ private:
 					}
 				}
 				else {
-					assert(current_scope.current_stack_offset > var_offset);
+					assert(current_scope.current_stack_offset < var_offset);
 					// Load from stack using RBP-relative addressing
 					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
@@ -1035,8 +1091,13 @@ private:
 	}
 
 	void handleDivide(const IrInstruction& instruction) {
+		flushAllDirtyRegisters();	// we do this so that RDX is free to use
+
+		regAlloc.release(X64Register::RAX);
 		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
-		regAlloc.mark_reg_dirty(X64Register::RAX);
+
+		regAlloc.release(X64Register::RDX);
+		regAlloc.allocateSpecific(X64Register::RDX, INT_MIN);
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "division");
@@ -1048,7 +1109,7 @@ private:
 
 		// Sign extend RAX into RDX:RAX (CQO for 64-bit)
 		if (ctx.size_in_bits == 64) {
-			// CQO - sign extend RAX into RDX:RAX
+			// CQO - sign extend RAX into RDX:RAX (fills RDX with 0 or -1)
 			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 }; // REX.W + CQO
 			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
 		} else {
@@ -1058,22 +1119,27 @@ private:
 		}
 
 	    // idiv rhs_physical_reg
-		uint8_t rex = 0x48; // REX.W for 64-bit operation
+		uint8_t rex = 0x40; // Base REX prefix
 		if (ctx.size_in_bits == 64) {
-			rex |= 0x48; // Ensure REX.W is set for 64-bit
-		} else {
-			rex = 0x40;  // Clear REX.W for 32-bit
+			rex |= 0x08; // Set REX.W for 64-bit operation
 		}
-		
-		std::array<uint8_t, 3> divInst = { 
-			rex, 
-			0xF7,  // Opcode
-			static_cast<uint8_t>(0xF8 + static_cast<uint8_t>(ctx.rhs_physical_reg))  // ModR/M: 11 111 reg
+
+		// Check if we need REX.B for the divisor register
+		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex |= 0x01; // Set REX.B
+		}
+
+		std::array<uint8_t, 3> divInst = {
+			rex,
+			0xF7,  // Opcode for IDIV
+			static_cast<uint8_t>(0xF8 + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07))  // ModR/M: 11 111 reg (opcode extension 7 for IDIV)
 		};
 		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
 
 		// Store the result from RAX (quotient) to the appropriate destination
 		storeArithmeticResult(ctx, X64Register::RAX);
+
+		regAlloc.release(X64Register::RDX);
 	}
 
 	void handleShiftLeft(const IrInstruction& instruction) {
@@ -1745,6 +1811,7 @@ private:
 	TWriterClass writer;
 	std::vector<char> textSectionData;
 	std::unordered_map<std::string_view, uint32_t> functionSymbols;
+	std::unordered_map<std::string_view, std::vector<IrInstruction>> function_instructions;
 	RegisterAllocator regAlloc;
 
 	struct StackVariableScope
