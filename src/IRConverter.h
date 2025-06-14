@@ -244,6 +244,10 @@ struct RegisterAllocator
 		}
 	}
 
+	void flushSingleDirtyRegister(X64Register reg) {
+		registers[static_cast<int>(reg)].isDirty = false;
+	}
+
 	const AllocatedRegister& allocate() {
 		for (auto& reg : registers) {
 			if (!reg.isAllocated) {
@@ -549,6 +553,7 @@ private:
 					ctx.result_physical_reg = regAlloc.allocate().reg;
 					auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 				}
 			}
 			else {
@@ -567,6 +572,7 @@ private:
 				ctx.result_physical_reg = regAlloc.allocate().reg;
 				auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 			}
 		}
 
@@ -584,6 +590,7 @@ private:
 					ctx.rhs_physical_reg = regAlloc.allocate().reg;
 					auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 				}
 			}
 			else {
@@ -602,6 +609,7 @@ private:
 				ctx.rhs_physical_reg = regAlloc.allocate().reg;
 				auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 			}
 		}
 
@@ -820,6 +828,7 @@ private:
 					// Load from stack using RBP-relative addressing
 					auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(target_reg);
 				}
 			} else if (std::holds_alternative<TempVar>(argValue)) {
 				// Temporary variable value (stored on stack)
@@ -831,9 +840,19 @@ private:
 				auto it = current_scope.identifier_offset.find(temp_var_name);
 				if (it != current_scope.identifier_offset.end()) {
 					int var_offset = it->second;
+
+					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+						if (reg_var.value() != target_reg) {
+							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 4);	// TODO: reg size
+							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+						}
+					}
+					else {
 					// Use the existing generateMovFromFrame function for consistency
 					auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+						regAlloc.flushSingleDirtyRegister(target_reg);
+					}
 				} else {
 					// Temporary variable not found in stack. This indicates a problem with our
 					// TempVar management. Let's allocate a stack slot for it now and assume
@@ -849,6 +868,7 @@ private:
 					// Now load from stack to target register
 					auto load_opcodes = generateMovFromFrame(target_reg, stack_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(target_reg);
 				}
 			} else {
 				assert(false && "Unsupported argument value type");
@@ -1032,6 +1052,7 @@ private:
 					// Load from stack using RBP-relative addressing
 					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 				}
 			} else {
 				// Temporary variable not found in stack. This can happen in a few scenarios:
@@ -1067,6 +1088,7 @@ private:
 					// Load from stack using RBP-relative addressing
 					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 				}
 			}
 		}
