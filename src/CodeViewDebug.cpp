@@ -441,7 +441,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
         // Line info header
         LineInfoHeader line_header;
         line_header.code_offset = func.code_offset;
-        line_header.segment = text_section_number_; // Dynamic text section number
+        line_header.segment = 0; // Use section 0 to match MSVC/clang reference
         line_header.flags = 0;   // No special flags
         line_header.code_length = func.code_length;
 
@@ -519,7 +519,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     // Line info header for this function
     LineInfoHeader line_header;
     line_header.code_offset = func.code_offset;
-    line_header.segment = text_section_number_; // Dynamic text section number
+    line_header.segment = 0; // Use section 0 to match MSVC/clang reference
     line_header.flags = 0;   // No special flags
     line_header.code_length = func.code_length;
 
@@ -661,11 +661,17 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         // Function offset and segment
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&func.code_offset),
                         reinterpret_cast<const uint8_t*>(&func.code_offset) + sizeof(func.code_offset));
-        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&text_section_number_),
-                        reinterpret_cast<const uint8_t*>(&text_section_number_) + sizeof(text_section_number_));
 
-        // Flags (1 byte)
-        uint8_t proc_flags = 0x00; // No special flags
+        // Use section 0 to match MSVC/clang reference (not the actual section number)
+        uint16_t section_number = 0;
+        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&section_number),
+                        reinterpret_cast<const uint8_t*>(&section_number) + sizeof(section_number));
+
+        // Flags (1 byte) - Try to match "Do Not Inline, Optimized Debug Info"
+        // Let's try some common values:
+        // 0x00 = No flags, 0x40 = optimized, 0x80 = no inline
+        // Based on common patterns, try 0x40 | 0x80 = 0xC0
+        uint8_t proc_flags = 0x40 | 0x80; // Try 0xC0 for optimized + no inline
         proc_data.push_back(proc_flags);
 
         std::cerr << "DEBUG: Function ID written: 0x" << std::hex << function_id << std::dec << " (4 bytes)" << std::endl;
@@ -744,7 +750,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
             // Address range where parameter is valid (entire function)
             LocalVariableAddrRange addr_range;
             addr_range.offset_start = func.code_offset;
-            addr_range.section_start = text_section_number_; // Text section
+            addr_range.section_start = 0; // Use section 0 to match MSVC/clang reference
             addr_range.length = static_cast<uint16_t>(func.code_length);
 
             defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&addr_range),
@@ -784,7 +790,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
             // Address range where variable is valid
             LocalVariableAddrRange addr_range;
             addr_range.offset_start = var.start_offset;
-            addr_range.section_start = 1; // .text section
+            addr_range.section_start = 0; // Use section 0 to match MSVC/clang reference
             addr_range.length = static_cast<uint16_t>(var.end_offset - var.start_offset);
 
             defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&addr_range),
@@ -808,11 +814,15 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         writeSubsection(debug_s_data, DebugSubsectionKind::FileChecksums, checksum_data);
     }
 
-    // Skip line information for now - focus on string table
-    std::cerr << "DEBUG: Skipping line information generation for now" << std::endl;
-
-    // Let's try creating a minimal debug section to test file writing
-    std::cerr << "DEBUG: Creating minimal debug section for testing" << std::endl;
+    // Generate and write line information subsection
+    std::cerr << "DEBUG: Generating line information..." << std::endl;
+    auto line_data = generateLineInfo();
+    if (!line_data.empty()) {
+        writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_data);
+        std::cerr << "DEBUG: Added " << line_data.size() << " bytes of line information" << std::endl;
+    } else {
+        std::cerr << "DEBUG: No line information to add" << std::endl;
+    }
 
     // Generate string table subsection
     std::cerr << "DEBUG: String table size: " << string_table_.size() << " bytes" << std::endl;
