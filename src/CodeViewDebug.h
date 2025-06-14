@@ -10,10 +10,10 @@
 
 namespace CodeView {
 
-// CodeView signature for .debug$S sections
+// CodeView signature for .debug$S sections (CV_SIGNATURE_C13)
 constexpr uint32_t DEBUG_S_SIGNATURE = 0x4;
 
-// CodeView signature for .debug$T sections  
+// CodeView signature for .debug$T sections
 constexpr uint32_t DEBUG_T_SIGNATURE = 0x4;
 
 // Debug subsection types for .debug$S
@@ -118,12 +118,14 @@ struct TypeRecordHeader {
 };
 
 // File checksum entry
+#pragma pack(push, 1)
 struct FileChecksumEntry {
     uint32_t file_name_offset;  // Offset into string table
     uint8_t checksum_size;
     uint8_t checksum_kind;      // 0 = None, 1 = MD5, 2 = SHA1, 3 = SHA256
     // Followed by checksum bytes
 };
+#pragma pack(pop)
 
 // Line number entry
 struct LineNumberEntry {
@@ -210,6 +212,9 @@ public:
     // Add a local variable to the current function
     void addLocalVariable(const std::string& name, uint32_t type_index,
                          uint32_t stack_offset, uint32_t start_offset, uint32_t end_offset);
+
+    // Finalize the current function (should be called before generating debug sections)
+    void finalizeCurrentFunction();
 
     // Generate .debug$S section data
     std::vector<uint8_t> generateDebugS();

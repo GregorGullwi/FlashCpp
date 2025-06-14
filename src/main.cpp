@@ -89,5 +89,5 @@ int main(int argc, char *argv[]) {
 
     const auto& ir = converter.getIr();
     IrToObjConverter irConverter;
-    irConverter.convert(ir, context.getOutputFile());
+    irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value());
 }

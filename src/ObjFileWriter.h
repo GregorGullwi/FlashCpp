@@ -45,6 +45,17 @@ public:
 		sectiontype_to_index[SectionType::TEXT] = section_text->get_index();
 		sectiontype_to_name[SectionType::TEXT] = ".text$mn";
 
+		// Add debug sections
+		auto section_debug_s = coffi_.add_section(".debug$S");
+		section_debug_s->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_MEM_DISCARDABLE);
+		sectiontype_to_index[SectionType::DEBUG_S] = section_debug_s->get_index();
+		sectiontype_to_name[SectionType::DEBUG_S] = ".debug$S";
+
+		auto section_debug_t = coffi_.add_section(".debug$T");
+		section_debug_t->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_MEM_DISCARDABLE);
+		sectiontype_to_index[SectionType::DEBUG_T] = section_debug_t->get_index();
+		sectiontype_to_name[SectionType::DEBUG_T] = ".debug$T";
+
 		auto symbol_text = coffi_.add_symbol(".text$mn");
 		symbol_text->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 		symbol_text->set_storage_class(IMAGE_SYM_CLASS_STATIC);
@@ -167,6 +178,7 @@ public:
 	}
 
 	void add_function_debug_info(const std::string& name, uint32_t code_offset, uint32_t code_length) {
+		// Add function without line information - line mappings should be added separately via addLineMapping
 		debug_builder_.addFunction(name, code_offset, code_length);
 	}
 
@@ -181,6 +193,10 @@ public:
 	void add_local_variable(const std::string& name, uint32_t type_index,
 	                       uint32_t stack_offset, uint32_t start_offset, uint32_t end_offset) {
 		debug_builder_.addLocalVariable(name, type_index, stack_offset, start_offset, end_offset);
+	}
+
+	void finalize_current_function() {
+		debug_builder_.finalizeCurrentFunction();
 	}
 
 	void add_function_exception_info(const std::string& function_name, uint32_t function_start, uint32_t function_size) {
@@ -214,9 +230,10 @@ public:
 	}
 
 	void finalize_debug_info() {
-		// Temporarily disable debug info generation to test if that's the issue
-		std::cerr << "finalize_debug_info: Skipping debug info generation for testing" << std::endl;
-		return;
+		std::cerr << "finalize_debug_info: Generating debug information..." << std::endl;
+
+		// Finalize the current function before generating debug sections
+		debug_builder_.finalizeCurrentFunction();
 
 		// Generate debug sections
 		auto debug_s_data = debug_builder_.generateDebugS();
@@ -225,9 +242,11 @@ public:
 		// Add debug data to sections
 		if (!debug_s_data.empty()) {
 			add_data(std::vector<char>(debug_s_data.begin(), debug_s_data.end()), SectionType::DEBUG_S);
+			std::cerr << "Added " << debug_s_data.size() << " bytes of .debug$S data" << std::endl;
 		}
 		if (!debug_t_data.empty()) {
 			add_data(std::vector<char>(debug_t_data.begin(), debug_t_data.end()), SectionType::DEBUG_T);
+			std::cerr << "Added " << debug_t_data.size() << " bytes of .debug$T data" << std::endl;
 		}
 	}
 

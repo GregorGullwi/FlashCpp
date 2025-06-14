@@ -66,7 +66,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
     if (generate_obj) {
         IrToObjConverter irConverter;
         std::string obj_filename = filename.substr(0, filename.find_last_of('.')) + ".obj";
-        irConverter.convert(ir, obj_filename.c_str());
+        irConverter.convert(ir, obj_filename.c_str(), filename);
     }
 
     // For now, don't fail tests due to parsing issues while we're developing
@@ -437,7 +437,7 @@ TEST_SUITE("Code gen") {
 		}
 
 		IrToObjConverter irConverter;
-		irConverter.convert(ir, "return1.obj");
+		irConverter.convert(ir, "return1.obj", "return1.cpp");
 
 		COFFI::coffi ref;
 		ref.load("tests/reference/return1_ref.obj");

@@ -351,7 +351,7 @@ class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
 
-	void convert(const Ir& ir, const std::string_view filename) {
+	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "") {
 		// Group instructions by function for stack space calculation
 		groupInstructionsByFunction(ir);
 
@@ -496,8 +496,11 @@ public:
 				break;
 			}
 		}
-		
-		writer.add_source_file("test_debug.cpp");
+
+		// Use the provided source filename, or fall back to a default if not provided
+		std::string actual_source_file = source_filename.empty() ? "test_debug.cpp" : std::string(source_filename);
+		std::cerr << "Adding source file to debug info: '" << actual_source_file << "'" << std::endl;
+		writer.add_source_file(actual_source_file);
 
 		finalizeSections();
 		writer.write(std::string(filename));
