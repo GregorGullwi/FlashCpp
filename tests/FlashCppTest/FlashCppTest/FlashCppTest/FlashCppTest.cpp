@@ -635,12 +635,12 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 							}
 							std::printf(": %s", name.c_str());
 						}
-					} else if (record_kind == 0x1110) { // S_GPROC32_ID
+					} else if (record_kind == 0x1147) { // S_GPROC32_ID
 						std::printf(" (S_GPROC32_ID)");
 						if (ptr + 32 < subsection_end) {
-							uint32_t offset = *reinterpret_cast<const uint32_t*>(ptr + 20);
-							uint16_t segment = *reinterpret_cast<const uint16_t*>(ptr + 24);
-							const uint8_t* name_ptr = ptr + 27; // Skip to name
+							uint32_t offset = *reinterpret_cast<const uint32_t*>(ptr + 28);
+							uint16_t segment = *reinterpret_cast<const uint16_t*>(ptr + 32);
+							const uint8_t* name_ptr = ptr + 35; // Skip to name
 							// Read null-terminated string without advancing main ptr
 							std::string name;
 							while (name_ptr < subsection_end && *name_ptr != 0) {
@@ -648,6 +648,35 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 							}
 							std::printf(": [%04x:%08x] %s", segment, offset, name.c_str());
 						}
+					} else if (record_kind == 0x1012) { // S_FRAMEPROC
+						std::printf(" (S_FRAMEPROC)");
+					} else if (record_kind == 0x114F) { // S_PROC_ID_END
+						std::printf(" (S_PROC_ID_END)");
+					} else if (record_kind == 0x1111) { // S_REGREL32
+						std::printf(" (S_REGREL32)");
+						if (ptr + 10 < subsection_end) {
+							uint32_t offset = *reinterpret_cast<const uint32_t*>(ptr);
+							uint32_t type_index = *reinterpret_cast<const uint32_t*>(ptr + 4);
+							uint16_t register_id = *reinterpret_cast<const uint16_t*>(ptr + 8);
+							const uint8_t* name_ptr = ptr + 10;
+							// Read null-terminated string without advancing main ptr
+							std::string name;
+							while (name_ptr < subsection_end && *name_ptr != 0) {
+								name += static_cast<char>(*name_ptr++);
+							}
+							std::printf(": offset=0x%08x, type=0x%08x, reg=0x%04x, name=%s",
+								offset, type_index, register_id, name.c_str());
+						}
+					} else if (record_kind == 0x113C) { // S_COMPILE3
+						std::printf(" (S_COMPILE3)");
+					} else if (record_kind == 0x1124) { // S_UNAMESPACE
+						std::printf(" (S_UNAMESPACE)");
+					} else if (record_kind == 0x114C) { // S_BUILDINFO
+						std::printf(" (S_BUILDINFO)");
+					} else if (record_kind == 0x113E) { // S_LOCAL
+						std::printf(" (S_LOCAL)");
+					} else if (record_kind == 0x1142) { // S_DEFRANGE_FRAMEPOINTER_REL
+						std::printf(" (S_DEFRANGE_FRAMEPOINTER_REL)");
 					} else {
 						// Skip unknown record
 						std::printf(" (Unknown record type)");

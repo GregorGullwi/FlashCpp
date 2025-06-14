@@ -154,6 +154,7 @@ struct LineInfoHeader {
     uint16_t segment;           // Segment of function
     uint16_t flags;             // Line flags
     uint32_t code_length;       // Length of function
+    // REMOVED: reserved field - LineInfoHeader should be 12 bytes, not 16
 };
 #pragma pack(pop)
 
@@ -285,6 +286,9 @@ private:
 
     // Generate line information subsection
     std::vector<uint8_t> generateLineInfo();
+
+    // Generate line information for a single function
+    std::vector<uint8_t> generateLineInfoForFunction(const FunctionInfo& func);
 };
 
 } // namespace CodeView

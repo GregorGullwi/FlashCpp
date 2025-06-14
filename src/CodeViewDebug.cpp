@@ -413,6 +413,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
         line_header.flags = 0;   // No special flags
         line_header.code_length = func.code_length;
 
+
         // Write line info header
         func_line_data.insert(func_line_data.end(),
                              reinterpret_cast<const uint8_t*>(&line_header),
@@ -423,9 +424,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
         file_header.file_id = func.file_id;
         file_header.num_lines = static_cast<uint32_t>(func.line_offsets.size());
 
-        // Calculate block size: file header + line entries
-        uint32_t block_size = sizeof(FileBlockHeader) +
-                             (func.line_offsets.size() * sizeof(LineNumberEntry));
+        std::cerr << "DEBUG: Line info for function " << func.name
+                  << " - file_id=" << func.file_id
+                  << ", num_lines=" << file_header.num_lines << std::endl;
+
+        // DEBUG: Dump the line info header bytes
+        std::cerr << "DEBUG: LineInfoHeader bytes: ";
+        const uint8_t* header_bytes = reinterpret_cast<const uint8_t*>(&line_header);
+        for (size_t i = 0; i < sizeof(line_header); ++i) {
+            std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)header_bytes[i] << " ";
+        }
+        std::cerr << std::dec << std::endl;
+
+        // Calculate block size: ONLY line entries (NOT including FileBlockHeader itself)
+        // According to Microsoft spec, block_size is the size of data following the header
+        uint32_t block_size = func.line_offsets.size() * sizeof(LineNumberEntry);
         file_header.block_size = block_size;
 
         // Write file block header
@@ -446,11 +459,58 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
                                  reinterpret_cast<const uint8_t*>(&line_entry) + sizeof(line_entry));
         }
 
-        // Align function line data to 4-byte boundary
-        alignTo4Bytes(func_line_data);
+        // DO NOT align individual function line data - this causes parsing issues
+        // Only the entire subsection should be aligned
 
         // Add this function's line data to the overall line data
         line_data.insert(line_data.end(), func_line_data.begin(), func_line_data.end());
+    }
+
+    return line_data;
+}
+
+std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const FunctionInfo& func) {
+    std::vector<uint8_t> line_data;
+
+    if (func.line_offsets.empty()) {
+        return line_data;
+    }
+
+    // Line info header for this function
+    LineInfoHeader line_header;
+    line_header.code_offset = func.code_offset;
+    line_header.segment = text_section_number_; // Dynamic text section number
+    line_header.flags = 0;   // No special flags
+    line_header.code_length = func.code_length;
+
+    line_data.insert(line_data.end(),
+                     reinterpret_cast<const uint8_t*>(&line_header),
+                     reinterpret_cast<const uint8_t*>(&line_header) + sizeof(line_header));
+
+    // File block header
+    FileBlockHeader file_header;
+    file_header.file_id = func.file_id;
+    file_header.num_lines = static_cast<uint32_t>(func.line_offsets.size());
+
+    // Calculate block size: ONLY line entries (NOT including FileBlockHeader itself)
+    uint32_t block_size = func.line_offsets.size() * sizeof(LineNumberEntry);
+    file_header.block_size = block_size;
+
+    line_data.insert(line_data.end(),
+                     reinterpret_cast<const uint8_t*>(&file_header),
+                     reinterpret_cast<const uint8_t*>(&file_header) + sizeof(file_header));
+
+    // Write line number entries
+    for (const auto& line_offset : func.line_offsets) {
+        LineNumberEntry line_entry;
+        line_entry.offset = line_offset.first;  // Code offset relative to function start
+        line_entry.line_start = line_offset.second; // Line number
+        line_entry.delta_line_end = 0; // Single line statement
+        line_entry.is_statement = 1;   // This is a statement
+
+        line_data.insert(line_data.end(),
+                         reinterpret_cast<const uint8_t*>(&line_entry),
+                         reinterpret_cast<const uint8_t*>(&line_entry) + sizeof(line_entry));
     }
 
     return line_data;
@@ -563,7 +623,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         uint32_t callee_save_size = 0x00000000; // Size of callee save registers
         uint32_t exception_handler_offset = 0x00000000; // Exception handler offset
         uint16_t exception_handler_section = 0x0000;    // Exception handler section
-        uint32_t flags = 0x00114200; // Function info flags (asynceh invalid_pgo_counts opt_for_speed Local=rsp Param=rsp)
+        uint32_t flags = 0x0002A000; // Function info flags (safebuffers invalid_pgo_counts Local=ebp Param=ebp)
 
         frameproc_data.insert(frameproc_data.end(), reinterpret_cast<const uint8_t*>(&frame_size),
                              reinterpret_cast<const uint8_t*>(&frame_size) + sizeof(frame_size));
@@ -582,31 +642,47 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
         writeSymbolRecord(symbols_data, SymbolKind::S_FRAMEPROC, frameproc_data);
 
-        // Add S_REGREL32 records for function parameters
+        // Add S_LOCAL + S_DEFRANGE_FRAMEPOINTER_REL records for function parameters (modern approach)
         for (const auto& param : func.parameters) {
-            std::vector<uint8_t> regrel_data;
-
-            // Stack offset (positive for parameters, relative to RSP)
-            regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&param.stack_offset),
-                              reinterpret_cast<const uint8_t*>(&param.stack_offset) + sizeof(param.stack_offset));
+            // S_LOCAL record
+            std::vector<uint8_t> local_data;
 
             // Type index (T_INT4 = 0x74)
             uint32_t type_index = 0x74; // T_INT4 for int parameters
-            regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
-                              reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
+            local_data.insert(local_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
+                             reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
 
-            // Register (RSP = 335 for x64)
-            uint16_t register_id = 335; // RSP register
-            regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&register_id),
-                              reinterpret_cast<const uint8_t*>(&register_id) + sizeof(register_id));
+            // Flags (0x0001 = parameter flag)
+            uint16_t flags = 0x0001; // Parameter flag
+            local_data.insert(local_data.end(), reinterpret_cast<const uint8_t*>(&flags),
+                             reinterpret_cast<const uint8_t*>(&flags) + sizeof(flags));
 
             // Parameter name (null-terminated string)
             for (char c : param.name) {
-                regrel_data.push_back(static_cast<uint8_t>(c));
+                local_data.push_back(static_cast<uint8_t>(c));
             }
-            regrel_data.push_back(0); // Null terminator
+            local_data.push_back(0); // Null terminator
 
-            writeSymbolRecord(symbols_data, SymbolKind::S_REGREL32, regrel_data);
+            writeSymbolRecord(symbols_data, SymbolKind::S_LOCAL, local_data);
+
+            // S_DEFRANGE_FRAMEPOINTER_REL record
+            std::vector<uint8_t> defrange_data;
+
+            // Frame offset (positive for parameters above frame pointer)
+            int32_t frame_offset = static_cast<int32_t>(param.stack_offset);
+            defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&frame_offset),
+                                reinterpret_cast<const uint8_t*>(&frame_offset) + sizeof(frame_offset));
+
+            // Address range where parameter is valid (entire function)
+            LocalVariableAddrRange addr_range;
+            addr_range.offset_start = func.code_offset;
+            addr_range.section_start = text_section_number_; // Text section
+            addr_range.length = static_cast<uint16_t>(func.code_length);
+
+            defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&addr_range),
+                                reinterpret_cast<const uint8_t*>(&addr_range) + sizeof(addr_range));
+
+            writeSymbolRecord(symbols_data, SymbolKind::S_DEFRANGE_FRAMEPOINTER_REL, defrange_data);
         }
 
         // Add local variable symbols for this function
@@ -664,10 +740,14 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         writeSubsection(debug_s_data, DebugSubsectionKind::FileChecksums, checksum_data);
     }
 
-    // Generate and write line information subsection
-    auto line_info_data = generateLineInfo();
-    if (!line_info_data.empty()) {
-        writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_info_data);
+    // Generate and write separate line information subsection for each function
+    for (const auto& func : functions_) {
+        if (!func.line_offsets.empty()) {
+            auto line_info_data = generateLineInfoForFunction(func);
+            if (!line_info_data.empty()) {
+                writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_info_data);
+            }
+        }
     }
 
     // Generate string table subsection

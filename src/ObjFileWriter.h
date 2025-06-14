@@ -140,6 +140,12 @@ public:
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol_func->set_section_number(section_text->get_index() + 1);
 		symbol_func->set_value(section_offset);
+
+		// Add function to debug info with length 0 - length will be calculated later
+		std::cerr << "DEBUG: Adding function to debug builder: " << name << " at offset " << section_offset << std::endl;
+		debug_builder_.addFunction(name, section_offset, 0);
+		std::cerr << "DEBUG: Function added to debug builder" << std::endl;
+
 		std::cerr << "Function symbol added successfully" << std::endl;
 	}
 

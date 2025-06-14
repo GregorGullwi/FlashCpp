@@ -647,7 +647,7 @@ private:
 				}
 			}
 			else {
-				assert(variable_scopes.back().current_stack_offset <= res_stack_var_addr);
+				assert(variable_scopes.back().current_stack_offset < res_stack_var_addr);
 
 				auto mov_opcodes = generateMovToFrame(actual_source_reg, res_stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
@@ -847,12 +847,10 @@ private:
 							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 						}
 					}
-					else {
-						// Use the existing generateMovFromFrame function for consistency
-						auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
-						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-						regAlloc.flushSingleDirtyRegister(target_reg);
-					}
+					// Use the existing generateMovFromFrame function for consistency
+					auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(target_reg);
 				} else {
 					// Temporary variable not found in stack. This indicates a problem with our
 					// TempVar management. Let's allocate a stack slot for it now and assume
@@ -941,6 +939,9 @@ private:
 		// Set up debug information for this function
 		// For now, use file ID 0 (first source file)
 		writer.set_current_function_for_debug(std::string(func_name), 0);
+
+		// Function debug info is now added in add_function_symbol() with length 0
+		// Length will be updated later in handleReturn()
 
 		// Create a new function scope
 		regAlloc.reset();
@@ -1108,10 +1109,12 @@ private:
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
 
-		// Add debug information for the completed function
+		// Update debug information for the completed function
 		if (!current_function_name_.empty()) {
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-			writer.add_function_debug_info(current_function_name_, current_function_offset_, function_length);
+
+			// Function was already added in handleFunctionDecl(), now update its length
+			writer.update_function_length(current_function_name_, function_length);
 
 			// Temporarily disable exception handling information to test if that's the issue
 			// writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
