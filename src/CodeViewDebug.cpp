@@ -129,16 +129,19 @@ uint32_t DebugInfoBuilder::addString(const std::string& str) {
 
 void DebugInfoBuilder::writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data) {
     SymbolRecordHeader header;
+    // Length should be the size of the record excluding the length field itself
+    // According to CodeView spec: "each record begins with a 16-bit record size and a 16-bit record kind"
+    // So length = sizeof(kind) + record_data.size() (excluding the length field itself)
     header.length = static_cast<uint16_t>(sizeof(SymbolKind) + record_data.size());
     header.kind = kind;
-    
+
     // Write header
-    data.insert(data.end(), reinterpret_cast<const uint8_t*>(&header), 
+    data.insert(data.end(), reinterpret_cast<const uint8_t*>(&header),
                 reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
-    
+
     // Write record data
     data.insert(data.end(), record_data.begin(), record_data.end());
-    
+
     // Align to 4-byte boundary
     alignTo4Bytes(data);
 }
@@ -338,7 +341,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
                         reinterpret_cast<const uint8_t*>(&segment) + sizeof(segment));
         proc_data.push_back(flags);
         
-        // Function name
+        // Function name (null-terminated for C13 format)
         for (char c : func.name) {
             proc_data.push_back(static_cast<uint8_t>(c));
         }
@@ -359,7 +362,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
             local_data.insert(local_data.end(), reinterpret_cast<const uint8_t*>(&var.flags),
                              reinterpret_cast<const uint8_t*>(&var.flags) + sizeof(var.flags));
 
-            // Variable name
+            // Variable name (null-terminated for C13 format)
             for (char c : var.name) {
                 local_data.push_back(static_cast<uint8_t>(c));
             }

@@ -1065,6 +1065,10 @@ private:
 		if (!current_function_name_.empty()) {
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			writer.add_function_debug_info(current_function_name_, current_function_offset_, function_length);
+
+			// Temporarily disable exception handling information to test if that's the issue
+			// writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
+
 			current_function_name_.clear();
 			current_function_offset_ = 0;
 		}
