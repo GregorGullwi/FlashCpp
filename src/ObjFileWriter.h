@@ -279,25 +279,39 @@ protected:
 	bool save_manually(const std::string& filename) {
 		try {
 			std::cerr << "Using manual COFF implementation..." << std::endl;
+			std::cerr << "DEBUG: Attempting to save to filename: '" << filename << "'" << std::endl;
 
-			// Get the text section data
+			// Get section data
 			auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+			auto debug_s_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_S]];
+			auto debug_t_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_T]];
+
 			auto text_data_size = text_section->get_data_size();
 			auto text_data_ptr = text_section->get_data();
+			auto debug_s_data_size = debug_s_section->get_data_size();
+			auto debug_s_data_ptr = debug_s_section->get_data();
+			auto debug_t_data_size = debug_t_section->get_data_size();
+			auto debug_t_data_ptr = debug_t_section->get_data();
 
-			// Create a simple COFF file manually using our proven working approach
+			std::cerr << "Manual save: text=" << text_data_size << " bytes, debug_s=" << debug_s_data_size << " bytes, debug_t=" << debug_t_data_size << " bytes" << std::endl;
+
+			// Create a simple COFF file manually with debug sections
 			std::ofstream file(filename, std::ios::binary);
 			if (!file) {
 				std::cerr << "Failed to open file for writing: " << filename << std::endl;
 				return false;
 			}
 
+			// Get function information dynamically
+			const auto& functions = debug_builder_.getFunctions();
+			std::cerr << "DEBUG: Manual save found " << functions.size() << " functions" << std::endl;
+
 			// COFF Header (20 bytes)
 			uint16_t machine = 0x8664;  // IMAGE_FILE_MACHINE_AMD64
-			uint16_t numberOfSections = 1;
+			uint16_t numberOfSections = 3;  // .debug$S, .debug$T, .text$mn
 			uint32_t timeDateStamp = static_cast<uint32_t>(1718360000);
-			uint32_t pointerToSymbolTable = 20 + 40;  // After header + section header
-			uint32_t numberOfSymbols = 4;  // .text$mn, @feat.00, add, main
+			uint32_t pointerToSymbolTable = 20 + (3 * 40);  // After header + 3 section headers
+			uint32_t numberOfSymbols = 2 + static_cast<uint32_t>(functions.size());  // .text$mn, @feat.00, + function symbols
 			uint16_t sizeOfOptionalHeader = 0;
 			uint16_t characteristics = 0x0004;  // IMAGE_FILE_LARGE_ADDRESS_AWARE
 
@@ -309,34 +323,63 @@ protected:
 			file.write(reinterpret_cast<const char*>(&sizeOfOptionalHeader), 2);
 			file.write(reinterpret_cast<const char*>(&characteristics), 2);
 
-			// Section Header for .text$mn (40 bytes)
-			char sectionName[8] = {'.', 't', 'e', 'x', 't', '$', 'm', 'n'};
-			uint32_t virtualSize = 0;
-			uint32_t virtualAddress = 0;
-			uint32_t sizeOfRawData = static_cast<uint32_t>(text_data_size);
-			uint32_t pointerToRawData = 20 + 40 + numberOfSymbols * 18 + 4;  // After headers + symbol table + string table size
-			uint32_t pointerToRelocations = 0;
-			uint32_t pointerToLinenumbers = 0;
-			uint16_t numberOfRelocations = 0;
-			uint16_t numberOfLinenumbers = 0;
-			uint32_t characteristics_section = 0x60500020;  // CODE | EXECUTE | READ | ALIGN_16BYTES
+			// Calculate data pointers
+			uint32_t symbolTableSize = numberOfSymbols * 18 + 4;  // symbols + string table size
+			uint32_t dataStart = 20 + (3 * 40) + symbolTableSize;  // After headers + symbol table
 
-			file.write(sectionName, 8);
-			file.write(reinterpret_cast<const char*>(&virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&pointerToRawData), 4);
-			file.write(reinterpret_cast<const char*>(&pointerToRelocations), 4);
-			file.write(reinterpret_cast<const char*>(&pointerToLinenumbers), 4);
-			file.write(reinterpret_cast<const char*>(&numberOfRelocations), 2);
-			file.write(reinterpret_cast<const char*>(&numberOfLinenumbers), 2);
-			file.write(reinterpret_cast<const char*>(&characteristics_section), 4);
+			// Section Header 1: .debug$S (40 bytes)
+			char debugSName[8] = {'.', 'd', 'e', 'b', 'u', 'g', '$', 'S'};
+			uint32_t debugS_virtualSize = 0;
+			uint32_t debugS_virtualAddress = 0;
+			uint32_t debugS_sizeOfRawData = static_cast<uint32_t>(debug_s_data_size);
+			uint32_t debugS_pointerToRawData = dataStart;
+			uint32_t debugS_characteristics = 0x42100040;  // INITIALIZED_DATA | READ | DISCARDABLE | ALIGN_1BYTES
+
+			file.write(debugSName, 8);
+			file.write(reinterpret_cast<const char*>(&debugS_virtualSize), 4);
+			file.write(reinterpret_cast<const char*>(&debugS_virtualAddress), 4);
+			file.write(reinterpret_cast<const char*>(&debugS_sizeOfRawData), 4);
+			file.write(reinterpret_cast<const char*>(&debugS_pointerToRawData), 4);
+			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
+			file.write(reinterpret_cast<const char*>(&debugS_characteristics), 4);
+
+			// Section Header 2: .debug$T (40 bytes)
+			char debugTName[8] = {'.', 'd', 'e', 'b', 'u', 'g', '$', 'T'};
+			uint32_t debugT_virtualSize = 0;
+			uint32_t debugT_virtualAddress = 0;
+			uint32_t debugT_sizeOfRawData = static_cast<uint32_t>(debug_t_data_size);
+			uint32_t debugT_pointerToRawData = dataStart + debug_s_data_size;
+			uint32_t debugT_characteristics = 0x42100040;  // INITIALIZED_DATA | READ | DISCARDABLE | ALIGN_1BYTES
+
+			file.write(debugTName, 8);
+			file.write(reinterpret_cast<const char*>(&debugT_virtualSize), 4);
+			file.write(reinterpret_cast<const char*>(&debugT_virtualAddress), 4);
+			file.write(reinterpret_cast<const char*>(&debugT_sizeOfRawData), 4);
+			file.write(reinterpret_cast<const char*>(&debugT_pointerToRawData), 4);
+			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
+			file.write(reinterpret_cast<const char*>(&debugT_characteristics), 4);
+
+			// Section Header 3: .text$mn (40 bytes)
+			char textName[8] = {'.', 't', 'e', 'x', 't', '$', 'm', 'n'};
+			uint32_t text_virtualSize = 0;
+			uint32_t text_virtualAddress = 0;
+			uint32_t text_sizeOfRawData = static_cast<uint32_t>(text_data_size);
+			uint32_t text_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size;
+			uint32_t text_characteristics = 0x60500020;  // CODE | EXECUTE | READ | ALIGN_16BYTES
+
+			file.write(textName, 8);
+			file.write(reinterpret_cast<const char*>(&text_virtualSize), 4);
+			file.write(reinterpret_cast<const char*>(&text_virtualAddress), 4);
+			file.write(reinterpret_cast<const char*>(&text_sizeOfRawData), 4);
+			file.write(reinterpret_cast<const char*>(&text_pointerToRawData), 4);
+			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
+			file.write(reinterpret_cast<const char*>(&text_characteristics), 4);
 
 			// Symbol Table (4 symbols * 18 bytes each = 72 bytes)
 			// Symbol 1: .text$mn (section symbol)
 			char symbol1_name[8] = {'.', 't', 'e', 'x', 't', '$', 'm', 'n'};
 			uint32_t symbol1_value = 0;
-			uint16_t symbol1_section = 1;
+			uint16_t symbol1_section = 3;  // .text$mn is section 3 (1-based)
 			uint16_t symbol1_type = 0;
 			uint8_t symbol1_class = 3;  // IMAGE_SYM_CLASS_STATIC
 			uint8_t symbol1_aux = 0;
@@ -364,42 +407,44 @@ protected:
 			file.write(reinterpret_cast<const char*>(&symbol2_class), 1);
 			file.write(reinterpret_cast<const char*>(&symbol2_aux), 1);
 
-			// Symbol 3: add
-			char symbol3_name[8] = {'a', 'd', 'd', '\0', '\0', '\0', '\0', '\0'};
-			uint32_t symbol3_value = 0;
-			uint16_t symbol3_section = 1;
-			uint16_t symbol3_type = 0x20;  // IMAGE_SYM_TYPE_FUNCTION
-			uint8_t symbol3_class = 2;  // IMAGE_SYM_CLASS_EXTERNAL
-			uint8_t symbol3_aux = 0;
+			// Dynamic function symbols
+			for (const auto& func : functions) {
+				std::cerr << "DEBUG: Writing symbol for function '" << func.name
+						  << "' at offset " << func.code_offset << std::endl;
 
-			file.write(symbol3_name, 8);
-			file.write(reinterpret_cast<const char*>(&symbol3_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol3_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol3_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol3_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol3_aux), 1);
+				// Function symbol
+				char symbol_name[8] = {'\0'};
+				// Copy function name (truncate if longer than 8 characters)
+				size_t name_len = std::min(func.name.length(), size_t(8));
+				std::memcpy(symbol_name, func.name.c_str(), name_len);
 
-			// Symbol 4: main
-			char symbol4_name[8] = {'m', 'a', 'i', 'n', '\0', '\0', '\0', '\0'};
-			uint32_t symbol4_value = 32;  // Offset of main function
-			uint16_t symbol4_section = 1;
-			uint16_t symbol4_type = 0x20;  // IMAGE_SYM_TYPE_FUNCTION
-			uint8_t symbol4_class = 2;  // IMAGE_SYM_CLASS_EXTERNAL
-			uint8_t symbol4_aux = 0;
+				uint32_t symbol_value = func.code_offset;
+				uint16_t symbol_section = 3;  // .text$mn is section 3 (1-based)
+				uint16_t symbol_type = 0x20;  // IMAGE_SYM_TYPE_FUNCTION
+				uint8_t symbol_class = 2;  // IMAGE_SYM_CLASS_EXTERNAL
+				uint8_t symbol_aux = 0;
 
-			file.write(symbol4_name, 8);
-			file.write(reinterpret_cast<const char*>(&symbol4_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol4_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol4_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol4_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol4_aux), 1);
+				file.write(symbol_name, 8);
+				file.write(reinterpret_cast<const char*>(&symbol_value), 4);
+				file.write(reinterpret_cast<const char*>(&symbol_section), 2);
+				file.write(reinterpret_cast<const char*>(&symbol_type), 2);
+				file.write(reinterpret_cast<const char*>(&symbol_class), 1);
+				file.write(reinterpret_cast<const char*>(&symbol_aux), 1);
+			}
 
 			// String Table
 			uint32_t stringTableSize = 12;  // 4 bytes for size + "@feat.00\0"
 			file.write(reinterpret_cast<const char*>(&stringTableSize), 4);
 			file.write("@feat.00\0", 9);
 
-			// Section Data (.text$mn)
+			// Section Data
+			// Write .debug$S data
+			file.write(debug_s_data_ptr, debug_s_data_size);
+
+			// Write .debug$T data
+			file.write(debug_t_data_ptr, debug_t_data_size);
+
+			// Write .text$mn data
 			file.write(text_data_ptr, text_data_size);
 
 			file.close();

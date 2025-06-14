@@ -201,6 +201,17 @@ struct ParameterInfo {
     uint32_t stack_offset;  // Offset from frame pointer (positive for parameters)
 };
 
+// Function information structure (moved to public for access from ObjFileWriter)
+struct FunctionInfo {
+    std::string name;
+    uint32_t code_offset;
+    uint32_t code_length;
+    uint32_t file_id;
+    std::vector<std::pair<uint32_t, uint32_t>> line_offsets; // offset, line
+    std::vector<LocalVariableInfo> local_variables;
+    std::vector<ParameterInfo> parameters;
+};
+
 class DebugInfoBuilder {
 public:
     DebugInfoBuilder();
@@ -248,22 +259,15 @@ public:
 
     // Generate .debug$T section data
     std::vector<uint8_t> generateDebugT();
-    
+
+    // Get function information for dynamic symbol generation
+    const std::vector<FunctionInfo>& getFunctions() const { return functions_; }
+
 private:
     std::vector<std::string> source_files_;
     std::unordered_map<std::string, uint32_t> file_name_to_id_;
     std::vector<uint8_t> string_table_;
     std::unordered_map<std::string, uint32_t> string_offsets_;
-
-    struct FunctionInfo {
-        std::string name;
-        uint32_t code_offset;
-        uint32_t code_length;
-        uint32_t file_id;
-        std::vector<std::pair<uint32_t, uint32_t>> line_offsets; // offset, line
-        std::vector<LocalVariableInfo> local_variables;
-        std::vector<ParameterInfo> parameters;
-    };
 
     std::vector<FunctionInfo> functions_;
 
@@ -288,8 +292,11 @@ private:
     // Generate file checksums subsection
     std::vector<uint8_t> generateFileChecksums();
 
-    // Generate line information subsection
+    // Generate line information subsection (combined - old approach)
     std::vector<uint8_t> generateLineInfo();
+
+    // Generate line information for a single function
+    std::vector<uint8_t> generateLineInfoForFunction(const FunctionInfo& func);
 };
 
 } // namespace CodeView

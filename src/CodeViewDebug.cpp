@@ -317,15 +317,13 @@ uint32_t DebugInfoBuilder::addString(const std::string& str) {
 
 void DebugInfoBuilder::initializeFunctionIdMap() {
     // Dynamically generate function ID mapping based on actual functions
-    // Type indices start at 0x1000 and follow this pattern for each function:
-    // 0x1000 + (func_index * 3) + 0: LF_ARGLIST
-    // 0x1000 + (func_index * 3) + 1: LF_PROCEDURE
-    // 0x1000 + (func_index * 3) + 2: LF_FUNC_ID
+    // For simplified type generation, we only generate LF_FUNC_ID records
+    // Type indices start at 0x1000 and increment by 1 for each function
 
     function_id_map_.clear();
 
     for (size_t i = 0; i < functions_.size(); ++i) {
-        uint32_t func_id_index = 0x1000 + static_cast<uint32_t>(i * 3) + 2; // LF_FUNC_ID index
+        uint32_t func_id_index = 0x1000 + static_cast<uint32_t>(i); // Simple increment
         function_id_map_[functions_[i].name] = func_id_index;
     }
 
@@ -529,6 +527,88 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
     return line_data;
 }
 
+std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const FunctionInfo& func) {
+    std::vector<uint8_t> line_data;
+
+    if (func.line_offsets.empty()) {
+        return line_data;
+    }
+
+    // Generate the line header for this specific function
+    struct LineInfoHeader {
+        uint32_t code_offset;       // Offset of function in code section
+        uint16_t segment;           // Segment of function
+        uint16_t flags;             // Line flags
+        uint32_t code_length;       // Length of function
+    };
+
+    LineInfoHeader line_header;
+    line_header.code_offset = func.code_offset;
+    line_header.segment = 0; // Use section 0 to match MSVC/clang reference
+    line_header.flags = 0;   // No special flags
+    line_header.code_length = func.code_length;
+
+    std::cerr << "DEBUG: Function line header - offCon=" << line_header.code_offset
+              << ", segCon=" << line_header.segment
+              << ", cbCon=" << line_header.code_length << std::endl;
+
+    line_data.insert(line_data.end(),
+                     reinterpret_cast<const uint8_t*>(&line_header),
+                     reinterpret_cast<const uint8_t*>(&line_header) + sizeof(line_header));
+
+    // Generate file block header for this function
+    struct FileBlockHeader {
+        uint32_t file_id;           // Index into file checksum table
+        uint32_t num_lines;         // Number of line entries
+        uint32_t block_size;        // Size of this block
+    };
+
+    FileBlockHeader file_block;
+    file_block.file_id = func.file_id;
+    file_block.num_lines = static_cast<uint32_t>(func.line_offsets.size());
+    file_block.block_size = sizeof(FileBlockHeader) + (func.line_offsets.size() * sizeof(LineNumberEntry));
+
+    std::cerr << "DEBUG: Function line info for function " << func.name
+              << " - file_id=" << file_block.file_id
+              << ", num_lines=" << file_block.num_lines << std::endl;
+
+    // DEBUG: Dump file block header bytes
+    std::cerr << "DEBUG: FileBlockHeader bytes: ";
+    const uint8_t* header_bytes = reinterpret_cast<const uint8_t*>(&file_block);
+    for (size_t i = 0; i < sizeof(file_block); ++i) {
+        std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)header_bytes[i] << " ";
+    }
+    std::cerr << std::dec << std::endl;
+
+    line_data.insert(line_data.end(),
+                     reinterpret_cast<const uint8_t*>(&file_block),
+                     reinterpret_cast<const uint8_t*>(&file_block) + sizeof(file_block));
+
+    // Write line number entries for this function
+    for (const auto& line_offset : func.line_offsets) {
+        LineNumberEntry line_entry;
+        line_entry.offset = line_offset.first;  // Code offset relative to function start
+        line_entry.line_start = line_offset.second; // Line number
+        line_entry.delta_line_end = 0; // Single line statement
+        line_entry.is_statement = 1;   // This is a statement
+
+        // DEBUG: Dump line entry bytes
+        std::cerr << "DEBUG: LineNumberEntry for offset=" << line_entry.offset
+                  << ", line=" << line_entry.line_start << " bytes: ";
+        const uint8_t* entry_bytes = reinterpret_cast<const uint8_t*>(&line_entry);
+        for (size_t i = 0; i < sizeof(line_entry); ++i) {
+            std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)entry_bytes[i] << " ";
+        }
+        std::cerr << std::dec << std::endl;
+
+        line_data.insert(line_data.end(),
+                         reinterpret_cast<const uint8_t*>(&line_entry),
+                         reinterpret_cast<const uint8_t*>(&line_entry) + sizeof(line_entry));
+    }
+
+    return line_data;
+}
+
 
 
 std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
@@ -576,6 +656,11 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         writeSymbolRecord(symbols_data, SymbolKind::S_OBJNAME, objname_data);
         std::cerr << "DEBUG: S_OBJNAME symbol written, symbols_data size: " << symbols_data.size() << std::endl;
     }
+
+    // Write symbols subsection
+    std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
+    writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
+    symbols_data.clear();
 
     // Add function symbols (S_OBJNAME duplication issue is now fixed)
     std::cerr << "DEBUG: Number of functions: " << functions_.size() << std::endl;
@@ -754,26 +839,29 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         // Add S_PROC_ID_END symbol for function
         std::vector<uint8_t> end_data; // Empty for S_PROC_ID_END
         writeSymbolRecord(symbols_data, SymbolKind::S_PROC_ID_END, end_data);
+
+        // Generate separate line information subsections for each function
+        std::cerr << "DEBUG: Generating separate line information subsections for function..." << std::endl;
+        if (!func.line_offsets.empty()) {
+            auto line_data = generateLineInfoForFunction(func);
+            if (!line_data.empty()) {
+                writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_data);
+                std::cerr << "DEBUG: Added " << line_data.size() << " bytes of line information for function " << func.name << std::endl;
+            }
+        }
+        else {
+            std::cerr << "DEBUG: No line information for function " << func.name << std::endl;
+        }
+
+        std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
+        writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
+        symbols_data.clear();
     }
-    
-    // Write symbols subsection
-    std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
-    writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
 
     // Generate and write file checksums subsection
     auto checksum_data = generateFileChecksums();
     if (!checksum_data.empty()) {
         writeSubsection(debug_s_data, DebugSubsectionKind::FileChecksums, checksum_data);
-    }
-
-    // Generate and write line information subsection
-    std::cerr << "DEBUG: Generating line information..." << std::endl;
-    auto line_data = generateLineInfo();
-    if (!line_data.empty()) {
-        writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_data);
-        std::cerr << "DEBUG: Added " << line_data.size() << " bytes of line information" << std::endl;
-    } else {
-        std::cerr << "DEBUG: No line information to add" << std::endl;
     }
 
     // Generate string table subsection
@@ -805,15 +893,24 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
 
     std::cerr << "DEBUG: Generating dynamic type information for " << functions_.size() << " functions..." << std::endl;
 
+    // DEBUG: List all functions in the vector
+    for (size_t i = 0; i < functions_.size(); ++i) {
+        std::cerr << "DEBUG: Function " << i << ": '" << functions_[i].name
+                  << "' at offset " << functions_[i].code_offset
+                  << " length " << functions_[i].code_length << std::endl;
+    }
+
     // Generate type records dynamically for each function
+    // For now, generate only LF_FUNC_ID records to avoid the duplicate issue
     for (size_t func_index = 0; func_index < functions_.size(); ++func_index) {
         const auto& func = functions_[func_index];
-        uint32_t base_type_index = 0x1000 + static_cast<uint32_t>(func_index * 3);
+        uint32_t base_type_index = 0x1000 + static_cast<uint32_t>(func_index);
 
-        std::cerr << "DEBUG: Generating types for function '" << func.name
+        std::cerr << "DEBUG: Generating simplified types for function '" << func.name
                   << "' with " << func.parameters.size() << " parameters" << std::endl;
 
-        // Generate LF_ARGLIST (base_type_index + 0)
+        // TEMPORARILY DISABLED: Generate LF_ARGLIST (base_type_index + 0)
+        /*
         {
             std::vector<uint8_t> arglist_data;
 
@@ -836,13 +933,16 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                                reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
             debug_t_data.insert(debug_t_data.end(), arglist_data.begin(), arglist_data.end());
+            // Always align LF_ARGLIST records since they're not the last
             alignTo4Bytes(debug_t_data);
 
             std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << base_type_index << std::dec
                       << " (" << arg_count << " args for " << func.name << ")" << std::endl;
         }
+        */
 
-        // Generate LF_PROCEDURE (base_type_index + 1)
+        // TEMPORARILY DISABLED: Generate LF_PROCEDURE (base_type_index + 1)
+        /*
         {
             std::vector<uint8_t> proc_data;
 
@@ -876,18 +976,20 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                                reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
             debug_t_data.insert(debug_t_data.end(), proc_data.begin(), proc_data.end());
+            // Always align LF_PROCEDURE records since they're not the last
             alignTo4Bytes(debug_t_data);
 
             std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << (base_type_index + 1) << std::dec
                       << " (" << func.name << " function)" << std::endl;
         }
+        */
 
-        // Generate LF_FUNC_ID (base_type_index + 2)
+        // Generate LF_FUNC_ID (base_type_index)
         {
             std::vector<uint8_t> func_id_data;
 
-            // Type index (points to LF_PROCEDURE base_type_index + 1)
-            uint32_t type_index = base_type_index + 1;
+            // Type index (use T_NOTYPE since we're not generating LF_PROCEDURE)
+            uint32_t type_index = 0; // T_NOTYPE
             func_id_data.insert(func_id_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
                                reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
 
@@ -906,15 +1008,35 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             header.length = static_cast<uint16_t>(func_id_data.size() + sizeof(TypeRecordKind));
             header.kind = TypeRecordKind::LF_FUNC_ID;
 
+            size_t before_size = debug_t_data.size();
             debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                                reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
             debug_t_data.insert(debug_t_data.end(), func_id_data.begin(), func_id_data.end());
-            alignTo4Bytes(debug_t_data);
+            size_t after_data_size = debug_t_data.size();
 
-            std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << (base_type_index + 2) << std::dec
-                      << " (" << func.name << ")" << std::endl;
+            // Only align if this is not the last function
+            if (func_index < functions_.size() - 1) {
+                alignTo4Bytes(debug_t_data);
+            }
+            size_t after_align_size = debug_t_data.size();
+
+            std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << base_type_index << std::dec
+                      << " (" << func.name << ") - length=" << header.length
+                      << ", data_size=" << (after_data_size - before_size)
+                      << ", padded_size=" << (after_align_size - before_size)
+                      << ", offset=" << before_size << std::endl;
         }
     } // End of function loop
+
+    std::cerr << "DEBUG: Final .debug$T section size: " << debug_t_data.size() << " bytes" << std::endl;
+
+    // DEBUG: Dump the last 32 bytes to check for padding issues
+    std::cerr << "DEBUG: Last 32 bytes of .debug$T: ";
+    size_t start_pos = debug_t_data.size() >= 32 ? debug_t_data.size() - 32 : 0;
+    for (size_t i = start_pos; i < debug_t_data.size(); ++i) {
+        std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)debug_t_data[i] << " ";
+    }
+    std::cerr << std::dec << std::endl;
 
     return debug_t_data;
 }

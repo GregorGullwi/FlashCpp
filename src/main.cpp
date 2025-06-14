@@ -49,6 +49,13 @@ int main(int argc, char *argv[]) {
         context.setOutputFile(inputFileArgs[1]);
     }
 
+    // If no output file was specified, generate default output filename
+    if (context.getOutputFile().empty()) {
+        std::filesystem::path outputPath = inputFilePath;
+        outputPath.replace_extension(".obj");
+        context.setOutputFile(outputPath.string());
+    }
+
     // Add the directory of the input source file as an implicit include directory
     std::filesystem::path inputDirPath = inputFilePath.parent_path();
     context.addIncludeDir(inputDirPath.string());
