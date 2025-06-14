@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <any>
 #include <optional>
+#include <memory>
 
 #include "Token.h"
 #include "ChunkedAnyVector.h"
@@ -201,6 +202,7 @@ public:
 
 	ASTNode type_node() const { return type_node_; }
 	const Token& identifier_token() const { return identifier_; }
+	uint32_t line_number() const { return identifier_.line(); }
 
 private:
 	ASTNode type_node_;
@@ -450,14 +452,30 @@ private:
 class ReturnStatementNode {
 public:
 	explicit ReturnStatementNode(
-		std::optional<ASTNode> expression = std::nullopt)
-		: expression_(expression) {}
+		std::optional<ASTNode> expression = std::nullopt, Token return_token = Token())
+		: expression_(expression), return_token_(return_token) {}
 
 	std::optional<ASTNode> expression() const { return expression_; }
+	const Token& return_token() const { return return_token_; }
 
 private:
 	std::optional<ASTNode>
 		expression_; // Optional, as a return statement may not have an expression
+	Token return_token_;
+};
+
+class VariableDeclarationNode {
+public:
+	explicit VariableDeclarationNode(DeclarationNode declaration, std::optional<ASTNode> initializer = std::nullopt)
+		: declaration_(declaration), initializer_(initializer) {}
+
+	const DeclarationNode& declaration() const { return declaration_; }
+	std::optional<ASTNode> initializer() const { return initializer_; }
+	uint32_t line_number() const { return declaration_.line_number(); }
+
+private:
+	DeclarationNode declaration_;
+	std::optional<ASTNode> initializer_;
 };
 
 class IfStatementNode {

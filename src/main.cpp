@@ -13,7 +13,7 @@
 #include "CommandLineParser.h"
 #include "Lexer.h"
 #include "Parser.h"
-#include "LibClangIRGenerator.h"
+// #include "LibClangIRGenerator.h"  // Disabled for now due to LLVM dependency
 #include "CodeGen.h"
 
 int main(int argc, char *argv[]) {

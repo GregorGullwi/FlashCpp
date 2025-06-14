@@ -488,6 +488,7 @@ ParseResult Parser::parse_return_statement()
 		return ParseResult::error(ParserError::UnexpectedToken,
 			current_token_opt.value_or(Token()));
 	}
+	Token return_token = current_token_opt.value();
 	consume_token(); // Consume the 'return' keyword
 
 	// Parse the return expression (if any)
@@ -510,10 +511,10 @@ ParseResult Parser::parse_return_statement()
 
 	if (return_expr_result.has_value()) {
 		return ParseResult::success(
-			emplace_node<ReturnStatementNode>(return_expr_result.node()));
+			emplace_node<ReturnStatementNode>(return_expr_result.node(), return_token));
 	}
 	else {
-		return ParseResult::success(emplace_node<ReturnStatementNode>());
+		return ParseResult::success(emplace_node<ReturnStatementNode>(std::nullopt, return_token));
 	}
 }
 

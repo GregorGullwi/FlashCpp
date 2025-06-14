@@ -356,9 +356,17 @@ public:
 		groupInstructionsByFunction(ir);
 
 		for (const auto& instruction : ir.getInstructions()) {
+			// Add line mapping for debug information if line number is available
+			if (instruction.getLineNumber() > 0) {
+				addLineMapping(instruction.getLineNumber());
+			}
+
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
 				handleFunctionDecl(instruction);
+				break;
+			case IrOpcode::VariableDecl:
+				handleVariableDecl(instruction);
 				break;
 			case IrOpcode::Return:
 				handleReturn(instruction);
@@ -849,6 +857,40 @@ private:
 		regAlloc.mark_reg_dirty(X64Register::RAX);
 	}
 
+	void handleVariableDecl(const IrInstruction& instruction) {
+		auto var_type = instruction.getOperandAs<Type>(0);
+		auto var_size = instruction.getOperandAs<int>(1);
+		auto var_name = instruction.getOperandAs<std::string_view>(2);
+
+		// Allocate space on the stack for the variable
+		// For now, just track the variable in our local variable map
+		// This will be enhanced when we add proper local variable debug info
+
+		// Add debug information for the local variable
+		if (!current_function_name_.empty()) {
+			uint32_t code_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+			// For now, use a simple type index (1 for int, 2 for float, etc.)
+			uint32_t type_index = 1; // Default to int type
+			switch (var_type) {
+				case Type::Int: type_index = 1; break;
+				case Type::Float: type_index = 2; break;
+				case Type::Double: type_index = 3; break;
+				case Type::Char: type_index = 4; break;
+				case Type::Bool: type_index = 5; break;
+				default: type_index = 1; break;
+			}
+
+			// Assume variable is valid for the entire function (simplified)
+			uint32_t stack_offset = 8; // Simplified stack offset
+			uint32_t start_offset = code_offset;
+			uint32_t end_offset = code_offset + 100; // Simplified end offset
+
+			writer.add_local_variable(std::string(var_name), type_index,
+			                         stack_offset, start_offset, end_offset);
+		}
+	}
+
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		auto func_name = instruction.getOperandAs<std::string_view>(2);
 
@@ -865,6 +907,10 @@ private:
 		// Track function for debug information
 		current_function_name_ = std::string(func_name);
 		current_function_offset_ = func_offset;
+
+		// Set up debug information for this function
+		// For now, use file ID 0 (first source file)
+		writer.set_current_function_for_debug(std::string(func_name), 0);
 
 		// Create a new function scope
 		regAlloc.reset();
@@ -1826,10 +1872,19 @@ private:
 		writer.finalize_debug_info();
 	}
 
+	// Debug information tracking
+	void addLineMapping(uint32_t line_number) {
+		if (!current_function_name_.empty()) {
+			uint32_t code_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			writer.add_line_mapping(code_offset, line_number);
+		}
+	}
+
 	TWriterClass writer;
 	std::vector<char> textSectionData;
 	std::unordered_map<std::string_view, uint32_t> functionSymbols;
 	std::unordered_map<std::string_view, std::vector<IrInstruction>> function_instructions;
+
 	RegisterAllocator regAlloc;
 
 	// Debug information tracking

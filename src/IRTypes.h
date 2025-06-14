@@ -76,6 +76,7 @@ enum class IrOpcode {
 	Truncate,
 	Return,
 	FunctionDecl,
+	VariableDecl,
 	FunctionCall,
 	Assignment,
 	StackAlloc,
@@ -183,10 +184,14 @@ using IrOperand = std::variant<int, unsigned long long, double, bool, char, std:
 class IrInstruction {
 public:
 	IrInstruction(IrOpcode opcode, std::vector<IrOperand>&& operands)
-		: opcode_(opcode), operands_(std::move(operands)) {}
+		: opcode_(opcode), operands_(std::move(operands)), line_number_(0) {}
+
+	IrInstruction(IrOpcode opcode, std::vector<IrOperand>&& operands, uint32_t line_number)
+		: opcode_(opcode), operands_(std::move(operands)), line_number_(line_number) {}
 
 	IrOpcode getOpcode() const { return opcode_; }
 	size_t getOperandCount() const { return operands_.size(); }
+	uint32_t getLineNumber() const { return line_number_; }
 
 	std::optional<IrOperand> getOperandSafe(size_t index) const {
 		return index < operands_.size() ? std::optional<IrOperand>{ operands_[index] } : std::optional<IrOperand>{};
@@ -1543,6 +1548,7 @@ public:
 private:
 	IrOpcode opcode_;
 	std::vector<IrOperand> operands_;
+	uint32_t line_number_;
 };
 
 class Ir {
@@ -1553,6 +1559,10 @@ public:
 	void addInstruction(IrOpcode&& opcode,
 		std::vector<IrOperand>&& operands = {}) {
 		instructions.emplace_back(opcode, std::move(operands));
+	}
+	void addInstruction(IrOpcode&& opcode,
+		std::vector<IrOperand>&& operands, uint32_t line_number) {
+		instructions.emplace_back(opcode, std::move(operands), line_number);
 	}
 	const std::vector<IrInstruction>& getInstructions() const {
 		return instructions;

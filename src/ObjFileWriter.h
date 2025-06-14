@@ -105,6 +105,19 @@ public:
 		debug_builder_.addFunction(name, code_offset, code_length);
 	}
 
+	void set_current_function_for_debug(const std::string& name, uint32_t file_id) {
+		debug_builder_.setCurrentFunction(name, file_id);
+	}
+
+	void add_line_mapping(uint32_t code_offset, uint32_t line_number) {
+		debug_builder_.addLineMapping(code_offset, line_number);
+	}
+
+	void add_local_variable(const std::string& name, uint32_t type_index,
+	                       uint32_t stack_offset, uint32_t start_offset, uint32_t end_offset) {
+		debug_builder_.addLocalVariable(name, type_index, stack_offset, start_offset, end_offset);
+	}
+
 	void finalize_debug_info() {
 		// Generate debug sections
 		auto debug_s_data = debug_builder_.generateDebugS();

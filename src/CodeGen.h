@@ -22,6 +22,9 @@ public:
 		else if (node.is<ReturnStatementNode>()) {
 			visitReturnStatementNode(node.as<ReturnStatementNode>());
 		}
+		else if (node.is<VariableDeclarationNode>()) {
+			visitVariableDeclarationNode(node.as<VariableDeclarationNode>());
+		}
 		else if (node.is<ExpressionNode>()) {
 			visitExpressionNode(node.as<ExpressionNode>());
 		}
@@ -64,7 +67,9 @@ private:
 			paramCount++;
 		}
 
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands)));
+		// Extract line number from the function identifier token
+		uint32_t line_number = static_cast<uint32_t>(func_decl.identifier_token().line());
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), line_number));
 
 		symbol_table.enter_scope(ScopeType::Function);
 
@@ -87,15 +92,37 @@ private:
 	}
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
+		uint32_t line_number = static_cast<uint32_t>(node.return_token().line());
+
 		if (node.expression()) {
 			auto operands = visitExpressionNode(node.expression()->as<ExpressionNode>());
 			// Add the return value's type and size information
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(operands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(operands), line_number));
 		}
 		else {
 			// For void returns, we don't need any operands
-			ir_.addInstruction(IrOpcode::Return);
+			ir_.addInstruction(IrOpcode::Return, {}, line_number);
 		}
+	}
+
+	void visitVariableDeclarationNode(const VariableDeclarationNode& node) {
+		const auto& decl = node.declaration();
+		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+		uint32_t line_number = node.line_number();
+
+		// Create variable declaration operands
+		std::vector<IrOperand> operands;
+		operands.emplace_back(type_node.type());
+		operands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+		operands.emplace_back(decl.identifier_token().value());
+
+		// Add initializer if present
+		if (node.initializer()) {
+			auto init_operands = visitExpressionNode(node.initializer()->as<ExpressionNode>());
+			operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+		}
+
+		ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), line_number);
 	}
 
 	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode) {

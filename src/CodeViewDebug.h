@@ -36,9 +36,11 @@ enum class SymbolKind : uint16_t {
     S_OBJNAME = 0x1101,
     S_COMPILE3 = 0x113C,
     S_ENVBLOCK = 0x113D,
+    S_LOCAL = 0x113E,
     S_GPROC32 = 0x1110,
     S_LPROC32 = 0x110F,
     S_REGREL32 = 0x1111,
+    S_DEFRANGE_FRAMEPOINTER_REL = 0x1142,
     S_BUILDINFO = 0x114C,
 };
 
@@ -152,24 +154,66 @@ struct FileBlockHeader {
     uint32_t block_size;        // Size of this block
 };
 
+// Local variable symbol record
+struct LocalVariableSymbol {
+    uint16_t length;
+    uint16_t kind;          // S_LOCAL
+    uint32_t type_index;    // Type index
+    uint16_t flags;         // Variable flags
+    // Variable name follows (null-terminated string)
+};
+
+// Local variable address range
+struct LocalVariableAddrRange {
+    uint32_t offset_start;
+    uint16_t section_start;
+    uint16_t length;
+    // Gap information follows if needed
+};
+
+// Local variable information
+struct LocalVariableInfo {
+    std::string name;
+    uint32_t type_index;
+    uint32_t stack_offset;  // Offset from frame pointer
+    uint32_t start_offset;  // Code offset where variable becomes valid
+    uint32_t end_offset;    // Code offset where variable goes out of scope
+    uint16_t flags;
+};
+
 class DebugInfoBuilder {
 public:
     DebugInfoBuilder();
-    
+
     // Add a source file
     uint32_t addSourceFile(const std::string& filename);
-    
+
     // Add line number information for a function
-    void addLineInfo(const std::string& function_name, uint32_t code_offset, 
-                     uint32_t code_length, uint32_t file_id, 
+    void addLineInfo(const std::string& function_name, uint32_t code_offset,
+                     uint32_t code_length, uint32_t file_id,
                      const std::vector<std::pair<uint32_t, uint32_t>>& line_offsets);
-    
-    // Add a function symbol
+
+    // Add a function symbol with line information
     void addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length);
-    
+
+    // Add a function with detailed line information
+    void addFunctionWithLines(const std::string& name, uint32_t code_offset,
+                             uint32_t code_length, uint32_t file_id,
+                             const std::vector<std::pair<uint32_t, uint32_t>>& line_offsets);
+
+    // Add a line mapping for the current function
+    void addLineMapping(uint32_t code_offset, uint32_t line_number);
+
+    // Set the current function being processed (for line mappings)
+    void setCurrentFunction(const std::string& name, uint32_t file_id);
+
+    // Add a local variable to the current function
+    void addLocalVariable(const std::string& name, uint32_t type_index,
+                         uint32_t stack_offset, uint32_t start_offset, uint32_t end_offset);
+
     // Generate .debug$S section data
     std::vector<uint8_t> generateDebugS();
-    
+
     // Generate .debug$T section data
     std::vector<uint8_t> generateDebugT();
     
@@ -178,22 +222,34 @@ private:
     std::unordered_map<std::string, uint32_t> file_name_to_id_;
     std::vector<uint8_t> string_table_;
     std::unordered_map<std::string, uint32_t> string_offsets_;
-    
+
     struct FunctionInfo {
         std::string name;
         uint32_t code_offset;
         uint32_t code_length;
         uint32_t file_id;
         std::vector<std::pair<uint32_t, uint32_t>> line_offsets; // offset, line
+        std::vector<LocalVariableInfo> local_variables;
     };
-    
+
     std::vector<FunctionInfo> functions_;
-    
+
+    // Current function being processed (for incremental line mapping)
+    std::string current_function_name_;
+    uint32_t current_function_file_id_;
+    std::vector<std::pair<uint32_t, uint32_t>> current_function_lines_;
+
     // Helper methods
     uint32_t addString(const std::string& str);
     void writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data);
     void writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, const std::vector<uint8_t>& subsection_data);
     void alignTo4Bytes(std::vector<uint8_t>& data);
+
+    // Generate file checksums subsection
+    std::vector<uint8_t> generateFileChecksums();
+
+    // Generate line information subsection
+    std::vector<uint8_t> generateLineInfo();
 };
 
 } // namespace CodeView
