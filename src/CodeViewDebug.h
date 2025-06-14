@@ -38,6 +38,7 @@ enum class SymbolKind : uint16_t {
     S_ENVBLOCK = 0x113D,
     S_LOCAL = 0x113E,
     S_GPROC32 = 0x1110,
+    S_GPROC32_ID = 0x1147,
     S_LPROC32 = 0x110F,
     S_REGREL32 = 0x1111,
     S_DEFRANGE_FRAMEPOINTER_REL = 0x1142,
@@ -100,10 +101,12 @@ enum class SimpleTypeKind : uint32_t {
 };
 
 // Structure for debug subsection header
+#pragma pack(push, 1)
 struct DebugSubsectionHeader {
     DebugSubsectionKind kind;
     uint32_t length;
 };
+#pragma pack(pop)
 
 // Structure for symbol record header
 struct SymbolRecordHeader {
@@ -128,12 +131,14 @@ struct FileChecksumEntry {
 #pragma pack(pop)
 
 // Line number entry
+#pragma pack(push, 1)
 struct LineNumberEntry {
     uint32_t offset;            // Offset from start of function
     uint32_t line_start : 24;   // Starting line number
     uint32_t delta_line_end : 7; // Delta to ending line number
     uint32_t is_statement : 1;   // 1 if this is a statement
 };
+#pragma pack(pop)
 
 // Column number entry (optional)
 struct ColumnNumberEntry {
@@ -142,19 +147,23 @@ struct ColumnNumberEntry {
 };
 
 // Line info header
+#pragma pack(push, 1)
 struct LineInfoHeader {
     uint32_t code_offset;       // Offset of function in code section
     uint16_t segment;           // Segment of function
     uint16_t flags;             // Line flags
     uint32_t code_length;       // Length of function
 };
+#pragma pack(pop)
 
 // File block header for line info
+#pragma pack(push, 1)
 struct FileBlockHeader {
     uint32_t file_id;           // Index into file checksum table
     uint32_t num_lines;         // Number of line entries
     uint32_t block_size;        // Size of this block
 };
+#pragma pack(pop)
 
 // Local variable symbol record
 struct LocalVariableSymbol {
@@ -181,6 +190,13 @@ struct LocalVariableInfo {
     uint32_t start_offset;  // Code offset where variable becomes valid
     uint32_t end_offset;    // Code offset where variable goes out of scope
     uint16_t flags;
+};
+
+// Function parameter information
+struct ParameterInfo {
+    std::string name;
+    uint32_t type_index;
+    uint32_t stack_offset;  // Offset from frame pointer (positive for parameters)
 };
 
 class DebugInfoBuilder {
@@ -213,6 +229,9 @@ public:
     void addLocalVariable(const std::string& name, uint32_t type_index,
                          uint32_t stack_offset, uint32_t start_offset, uint32_t end_offset);
 
+    // Add a function parameter to the current function
+    void addFunctionParameter(const std::string& name, uint32_t type_index, uint32_t stack_offset);
+
     // Finalize the current function (should be called before generating debug sections)
     void finalizeCurrentFunction();
 
@@ -235,6 +254,7 @@ private:
         uint32_t file_id;
         std::vector<std::pair<uint32_t, uint32_t>> line_offsets; // offset, line
         std::vector<LocalVariableInfo> local_variables;
+        std::vector<ParameterInfo> parameters;
     };
 
     std::vector<FunctionInfo> functions_;

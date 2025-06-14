@@ -195,6 +195,10 @@ public:
 		debug_builder_.addLocalVariable(name, type_index, stack_offset, start_offset, end_offset);
 	}
 
+	void add_function_parameter(const std::string& name, uint32_t type_index, uint32_t stack_offset) {
+		debug_builder_.addFunctionParameter(name, type_index, stack_offset);
+	}
+
 	void finalize_current_function() {
 		debug_builder_.finalizeCurrentFunction();
 	}

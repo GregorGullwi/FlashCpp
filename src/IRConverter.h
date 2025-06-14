@@ -358,6 +358,8 @@ public:
 		for (const auto& instruction : ir.getInstructions()) {
 			// Add line mapping for debug information if line number is available
 			if (instruction.getLineNumber() > 0) {
+				std::cerr << "DEBUG: Adding line mapping for line " << instruction.getLineNumber()
+				         << " (opcode: " << static_cast<int>(instruction.getOpcode()) << ")" << std::endl;
 				addLineMapping(instruction.getLineNumber());
 			}
 
@@ -952,13 +954,25 @@ private:
 		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
-			
+
 			// Store parameter at [rbp+10h] for first parameter, [rbp+18h] for second, etc.
 			int paramNumber = paramIndex / 3 - 1;
 			int offset = 16 + (paramNumber * 8);
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
 			variable_scopes.back().identifier_offset[param_name] = offset;
+
+			// Add parameter to debug information
+			uint32_t param_type_index = 1; // Default to int type
+			switch (param_type) {
+				case Type::Int: param_type_index = 1; break;
+				case Type::Float: param_type_index = 2; break;
+				case Type::Double: param_type_index = 3; break;
+				case Type::Char: param_type_index = 4; break;
+				case Type::Bool: param_type_index = 5; break;
+				default: param_type_index = 1; break;
+			}
+			writer.add_function_parameter(std::string(param_name), param_type_index, static_cast<uint32_t>(offset));
 
 			if (paramNumber < INT_PARAM_REGS.size()) {
 				X64Register src_reg = INT_PARAM_REGS[paramNumber];
@@ -1883,7 +1897,11 @@ private:
 	void addLineMapping(uint32_t line_number) {
 		if (!current_function_name_.empty()) {
 			uint32_t code_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			std::cerr << "DEBUG: Line mapping added - function: " << current_function_name_
+			         << ", offset: " << code_offset << ", line: " << line_number << std::endl;
 			writer.add_line_mapping(code_offset, line_number);
+		} else {
+			std::cerr << "DEBUG: Line mapping SKIPPED (no current function) - line: " << line_number << std::endl;
 		}
 	}
 
