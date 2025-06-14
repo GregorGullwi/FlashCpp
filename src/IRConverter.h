@@ -639,7 +639,7 @@ private:
 				}
 			}
 			else {
-				assert(variable_scopes.back().current_stack_offset < res_stack_var_addr);
+				assert(variable_scopes.back().current_stack_offset <= res_stack_var_addr);
 
 				auto mov_opcodes = generateMovToFrame(actual_source_reg, res_stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
@@ -809,9 +809,18 @@ private:
 				std::string_view var_name = std::get<std::string_view>(argValue);
 				int var_offset = variable_scopes.back().identifier_offset[var_name];
 
-				// Use the existing generateMovFromFrame function for consistency
-				auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+					if (reg_var.value() != target_reg) {
+						auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 4);	// TODO: reg size
+						textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+					}
+				}
+				else {
+					assert(variable_scopes.back().current_stack_offset <= var_offset);
+					// Load from stack using RBP-relative addressing
+					auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
 			} else if (std::holds_alternative<TempVar>(argValue)) {
 				// Temporary variable value (stored on stack)
 				auto src_reg_temp = std::get<TempVar>(argValue);
@@ -853,12 +862,8 @@ private:
 
 		writer.add_relocation(textSectionData.size() - 4, function_name);
 		
-		if (!regAlloc.is_allocated(X64Register::RAX)) {
-			regAlloc.allocateSpecific(X64Register::RAX, result_offset);
-		}
-		else {
-			regAlloc.set_stack_variable_offset(X64Register::RAX, result_offset);	// just stomp the existing value
-		}
+		regAlloc.reset();
+		regAlloc.allocateSpecific(X64Register::RAX, result_offset);
 		regAlloc.mark_reg_dirty(X64Register::RAX);
 	}
 
@@ -1023,7 +1028,7 @@ private:
 					}
 				}
 				else {
-					assert(variable_scopes.back().current_stack_offset > var_offset);
+					assert(variable_scopes.back().current_stack_offset <= var_offset);
 					// Load from stack using RBP-relative addressing
 					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
