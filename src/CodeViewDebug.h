@@ -43,6 +43,7 @@ enum class SymbolKind : uint16_t {
     S_REGREL32 = 0x1111,
     S_DEFRANGE_FRAMEPOINTER_REL = 0x1142,
     S_BUILDINFO = 0x114C,
+    S_PROC_ID_END = 0x114F,
 };
 
 // Type record types
@@ -232,6 +233,12 @@ public:
     // Add a function parameter to the current function
     void addFunctionParameter(const std::string& name, uint32_t type_index, uint32_t stack_offset);
 
+    // Update function length for a previously added function
+    void updateFunctionLength(const std::string& name, uint32_t code_length);
+
+    // Set the text section number for symbol references
+    void setTextSectionNumber(uint16_t section_number);
+
     // Finalize the current function (should be called before generating debug sections)
     void finalizeCurrentFunction();
 
@@ -263,6 +270,9 @@ private:
     std::string current_function_name_;
     uint32_t current_function_file_id_;
     std::vector<std::pair<uint32_t, uint32_t>> current_function_lines_;
+
+    // Text section number for symbol references
+    uint16_t text_section_number_ = 1; // Default to 1, will be updated by ObjectFileWriter
 
     // Helper methods
     uint32_t addString(const std::string& str);

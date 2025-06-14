@@ -449,7 +449,7 @@ TEST_SUITE("Code gen") {
 	}
 }
 
-bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1) {
+bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const std::string& file1_path = "", const std::string& file2_path = "") {
 	// Compare section characteristics and flags
 	const auto& sections1 = reader1.get_sections();
 	const auto& sections2 = reader2.get_sections();
@@ -558,6 +558,142 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1) {
 			}
 			return false;
 		}
+	}
+
+	// Parse and compare debug information structures
+	std::printf("\n=== Debug Information Comparison ===\n");
+
+	// Helper function to parse and display debug symbols
+	auto parse_debug_symbols = [](const char* data, size_t size, const std::string& file_name) {
+		if (!data || size < 4) {
+			std::printf("%s: No debug data or too small\n", file_name.c_str());
+			return;
+		}
+
+		std::printf("\n--- %s Debug Symbols ---\n", file_name.c_str());
+
+		// Skip 4-byte signature
+		const uint8_t* start = reinterpret_cast<const uint8_t*>(data + 4);
+		const uint8_t* ptr = start;
+		const uint8_t* end = reinterpret_cast<const uint8_t*>(data + size);
+
+		while (ptr < end - 8) { // Need at least 8 bytes for subsection header
+			// Read subsection header
+			uint32_t kind = *reinterpret_cast<const uint32_t*>(ptr);
+			uint32_t length = *reinterpret_cast<const uint32_t*>(ptr + 4);
+
+			std::printf("Subsection Kind: %u, Length: %u\n", kind, length);
+
+			// Sanity check subsection length
+			if (length == 0 || length > (end - ptr - 8)) {
+				std::printf("  Invalid subsection length, stopping parse\n");
+				break;
+			}
+
+			ptr += 8;
+			const uint8_t* subsection_start = ptr;
+
+			if (kind == 241) { // Symbols subsection
+				const uint8_t* subsection_end = ptr + length;
+				size_t symbol_count = 0;
+				while (ptr < subsection_end - 4) {
+					size_t offset_in_subsection = ptr - subsection_start;
+
+					// Read symbol record header
+					uint16_t record_length = *reinterpret_cast<const uint16_t*>(ptr);
+					uint16_t record_kind = *reinterpret_cast<const uint16_t*>(ptr + 2);
+
+					// Show hex bytes for debugging
+					std::printf("  Symbol %zu at offset %zu: Length=%u, Kind=0x%04x [hex: ",
+						symbol_count++, offset_in_subsection, record_length, record_kind);
+					for (int i = 0; i < 8 && ptr + i < subsection_end; i++) {
+						std::printf("%02x ", ptr[i]);
+					}
+					std::printf("]");
+
+					// Sanity check the record length
+					if (record_length == 0 || record_length > 1000) {
+						std::printf(" (INVALID LENGTH - stopping parse)\n");
+						std::printf("    Raw hex around this location: ");
+						for (int i = -8; i < 16 && ptr + i >= subsection_start && ptr + i < subsection_end; i++) {
+							std::printf("%02x ", ptr[i]);
+						}
+						std::printf("\n");
+						break;
+					}
+
+					ptr += 4;
+
+					if (record_kind == 0x1101) { // S_OBJNAME
+						std::printf(" (S_OBJNAME)");
+						if (ptr + 4 < subsection_end) {
+							const uint8_t* name_ptr = ptr + 4; // Skip signature
+							// Read null-terminated string without advancing main ptr
+							std::string name;
+							while (name_ptr < subsection_end && *name_ptr != 0) {
+								name += static_cast<char>(*name_ptr++);
+							}
+							std::printf(": %s", name.c_str());
+						}
+					} else if (record_kind == 0x1110) { // S_GPROC32_ID
+						std::printf(" (S_GPROC32_ID)");
+						if (ptr + 32 < subsection_end) {
+							uint32_t offset = *reinterpret_cast<const uint32_t*>(ptr + 20);
+							uint16_t segment = *reinterpret_cast<const uint16_t*>(ptr + 24);
+							const uint8_t* name_ptr = ptr + 27; // Skip to name
+							// Read null-terminated string without advancing main ptr
+							std::string name;
+							while (name_ptr < subsection_end && *name_ptr != 0) {
+								name += static_cast<char>(*name_ptr++);
+							}
+							std::printf(": [%04x:%08x] %s", segment, offset, name.c_str());
+						}
+					} else {
+						// Skip unknown record
+						std::printf(" (Unknown record type)");
+					}
+					std::printf("\n");
+
+					// Advance to next record: record_length includes the length field itself
+					// So we need to advance by (record_length + 2) total, but we already advanced by 4
+					size_t total_record_size = record_length + 2; // +2 for the length field itself
+					size_t bytes_to_advance = total_record_size - 4; // -4 because we already read length+kind
+
+					if (ptr + bytes_to_advance > subsection_end) {
+						std::printf("  Record extends beyond subsection, stopping parse\n");
+						break;
+					}
+
+					ptr += bytes_to_advance;
+				}
+			} else {
+				// Skip other subsections
+				std::printf("  (Skipping non-symbol subsection)\n");
+			}
+
+			// Always advance to the end of this subsection
+			ptr = subsection_start + length;
+
+			// Align to 4-byte boundary
+			while ((reinterpret_cast<uintptr_t>(ptr) & 3) != 0 && ptr < end) {
+				ptr++;
+			}
+		}
+	};
+
+	auto debug_s1 = find_section(reader1, ".debug$S");
+	auto debug_s2 = find_section(reader2, ".debug$S");
+
+	if (debug_s1) {
+		parse_debug_symbols(debug_s1->get_data(), debug_s1->get_data_size(), "File1");
+	} else {
+		std::printf("File1: No .debug$S section found\n");
+	}
+
+	if (debug_s2) {
+		parse_debug_symbols(debug_s2->get_data(), debug_s2->get_data_size(), "File2");
+	} else {
+		std::printf("File2: No .debug$S section found\n");
 	}
 
 	return true;
@@ -697,7 +833,7 @@ TEST_SUITE("Code gen") {
 		obj.load("add_function.obj");
 
 		// Compare reference and generated object files
-		//CHECK(compare_obj(ref, obj));
+		CHECK(compare_obj(ref, obj));
 	}
 };
 

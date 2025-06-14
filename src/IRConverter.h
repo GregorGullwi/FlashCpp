@@ -848,9 +848,9 @@ private:
 						}
 					}
 					else {
-					// Use the existing generateMovFromFrame function for consistency
-					auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+						// Use the existing generateMovFromFrame function for consistency
+						auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
 				} else {
@@ -988,16 +988,19 @@ private:
 			variable_scopes.back().identifier_offset[param_name] = offset;
 
 			// Add parameter to debug information
-			uint32_t param_type_index = 1; // Default to int type
+			// Convert RBP-relative offset to RSP-relative offset for debug info
+			// RBP+16 becomes RSP+8, RBP+24 becomes RSP+16, etc.
+			uint32_t rsp_offset = static_cast<uint32_t>(offset - 8);
+			uint32_t param_type_index = 0x74; // T_INT4 for int parameters
 			switch (param_type) {
-				case Type::Int: param_type_index = 1; break;
-				case Type::Float: param_type_index = 2; break;
-				case Type::Double: param_type_index = 3; break;
-				case Type::Char: param_type_index = 4; break;
-				case Type::Bool: param_type_index = 5; break;
-				default: param_type_index = 1; break;
+				case Type::Int: param_type_index = 0x74; break;  // T_INT4
+				case Type::Float: param_type_index = 0x40; break; // T_REAL32
+				case Type::Double: param_type_index = 0x41; break; // T_REAL64
+				case Type::Char: param_type_index = 0x10; break;  // T_CHAR
+				case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
+				default: param_type_index = 0x74; break;
 			}
-			writer.add_function_parameter(std::string(param_name), param_type_index, static_cast<uint32_t>(offset));
+			writer.add_function_parameter(std::string(param_name), param_type_index, rsp_offset);
 
 			if (paramNumber < INT_PARAM_REGS.size()) {
 				X64Register src_reg = INT_PARAM_REGS[paramNumber];

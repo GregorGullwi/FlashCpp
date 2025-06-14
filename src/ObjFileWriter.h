@@ -39,13 +39,7 @@ public:
 		std::time_t current_time_t = std::chrono::system_clock::to_time_t(now);
 		coffi_.get_header()->set_time_data_stamp(static_cast<uint32_t>(current_time_t));
 
-		// Use direct COFFI API calls like the working test
-		auto section_text = coffi_.add_section(".text$mn");
-		section_text->set_flags(IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_ALIGN_16BYTES);
-		sectiontype_to_index[SectionType::TEXT] = section_text->get_index();
-		sectiontype_to_name[SectionType::TEXT] = ".text$mn";
-
-		// Add debug sections
+		// Add debug sections first for easier comparison with reference
 		auto section_debug_s = coffi_.add_section(".debug$S");
 		section_debug_s->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_MEM_DISCARDABLE);
 		sectiontype_to_index[SectionType::DEBUG_S] = section_debug_s->get_index();
@@ -55,6 +49,12 @@ public:
 		section_debug_t->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_MEM_DISCARDABLE);
 		sectiontype_to_index[SectionType::DEBUG_T] = section_debug_t->get_index();
 		sectiontype_to_name[SectionType::DEBUG_T] = ".debug$T";
+
+		// Add text section
+		auto section_text = coffi_.add_section(".text$mn");
+		section_text->set_flags(IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_ALIGN_16BYTES);
+		sectiontype_to_index[SectionType::TEXT] = section_text->get_index();
+		sectiontype_to_name[SectionType::TEXT] = ".text$mn";
 
 		auto symbol_text = coffi_.add_symbol(".text$mn");
 		symbol_text->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
@@ -199,6 +199,10 @@ public:
 		debug_builder_.addFunctionParameter(name, type_index, stack_offset);
 	}
 
+	void update_function_length(const std::string& name, uint32_t code_length) {
+		debug_builder_.updateFunctionLength(name, code_length);
+	}
+
 	void finalize_current_function() {
 		debug_builder_.finalizeCurrentFunction();
 	}
@@ -238,6 +242,11 @@ public:
 
 		// Finalize the current function before generating debug sections
 		debug_builder_.finalizeCurrentFunction();
+
+		// Set the correct text section number for symbol references
+		uint16_t text_section_number = static_cast<uint16_t>(sectiontype_to_index[SectionType::TEXT] + 1);
+		debug_builder_.setTextSectionNumber(text_section_number);
+		std::cerr << "DEBUG: Set text section number to " << text_section_number << std::endl;
 
 		// Generate debug sections
 		auto debug_s_data = debug_builder_.generateDebugS();

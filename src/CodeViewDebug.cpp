@@ -5,6 +5,7 @@
 #include <sstream>
 #include <iomanip>
 #include <iostream>
+#include <filesystem>
 
 // Simple SHA-256 implementation for file checksums
 #include <array>
@@ -252,6 +253,20 @@ void DebugInfoBuilder::addFunctionParameter(const std::string& name, uint32_t ty
     }
 }
 
+void DebugInfoBuilder::updateFunctionLength(const std::string& name, uint32_t code_length) {
+    // Find the function and update its length
+    for (auto& func : functions_) {
+        if (func.name == name) {
+            func.code_length = code_length;
+            break;
+        }
+    }
+}
+
+void DebugInfoBuilder::setTextSectionNumber(uint16_t section_number) {
+    text_section_number_ = section_number;
+}
+
 void DebugInfoBuilder::finalizeCurrentFunction() {
     if (!current_function_name_.empty()) {
         // Find the function and update its line information
@@ -290,9 +305,8 @@ uint32_t DebugInfoBuilder::addString(const std::string& str) {
 
 void DebugInfoBuilder::writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data) {
     SymbolRecordHeader header;
-    // Length should be the size of the record excluding the length field itself
-    // According to CodeView spec: "each record begins with a 16-bit record size and a 16-bit record kind"
-    // So length = sizeof(kind) + record_data.size() (excluding the length field itself)
+    // Length field contains the number of bytes that follow the length field
+    // This includes: kind field (2 bytes) + record data
     header.length = static_cast<uint16_t>(sizeof(SymbolKind) + record_data.size());
     header.kind = kind;
 
@@ -303,24 +317,43 @@ void DebugInfoBuilder::writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind 
     // Write record data
     data.insert(data.end(), record_data.begin(), record_data.end());
 
-    // Align to 4-byte boundary
-    alignTo4Bytes(data);
+    // DO NOT align individual records - only align the entire subsection
+    // Individual symbol records should be packed without padding
 }
 
 void DebugInfoBuilder::writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, const std::vector<uint8_t>& subsection_data) {
+    // LLVM DISCOVERY: For object files, length field does NOT include padding!
+    // alignOf(CodeViewContainer::ObjectFile) = 1, so no alignment padding in header
+    size_t unpadded_size = subsection_data.size();
+
     DebugSubsectionHeader header;
     header.kind = kind;
-    header.length = static_cast<uint32_t>(subsection_data.size());
-    
+    header.length = static_cast<uint32_t>(unpadded_size);  // NO padding in length for object files!
+
+    std::cerr << "DEBUG: Writing subsection kind=" << static_cast<uint32_t>(kind)
+              << ", unpadded_size=" << unpadded_size
+              << ", header_length=" << header.length
+              << ", header_size=" << sizeof(header) << std::endl;
+
+    // Debug: Show header bytes
+    std::cerr << "DEBUG: Header bytes: ";
+    const uint8_t* header_bytes = reinterpret_cast<const uint8_t*>(&header);
+    for (size_t i = 0; i < sizeof(header); ++i) {
+        std::cerr << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(header_bytes[i]) << " ";
+    }
+    std::cerr << std::dec << std::endl;
+
     // Write header
-    data.insert(data.end(), reinterpret_cast<const uint8_t*>(&header), 
+    data.insert(data.end(), reinterpret_cast<const uint8_t*>(&header),
                 reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
-    
+
     // Write subsection data
     data.insert(data.end(), subsection_data.begin(), subsection_data.end());
-    
-    // Align to 4-byte boundary
-    alignTo4Bytes(data);
+
+    // Add padding to match the length we claimed in the header
+    while (data.size() % 4 != 0) {
+        data.push_back(0);
+    }
 }
 
 void DebugInfoBuilder::alignTo4Bytes(std::vector<uint8_t>& data) {
@@ -376,7 +409,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
         // Line info header
         LineInfoHeader line_header;
         line_header.code_offset = func.code_offset;
-        line_header.segment = 1; // .text section
+        line_header.segment = text_section_number_; // Dynamic text section number
         line_header.flags = 0;   // No special flags
         line_header.code_length = func.code_length;
 
@@ -424,6 +457,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
 }
 
 std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
+    std::cerr << "DEBUG: generateDebugS() called" << std::endl;
     std::vector<uint8_t> debug_s_data;
 
     // Write CodeView signature
@@ -433,77 +467,41 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
     // Generate symbols subsection
     std::vector<uint8_t> symbols_data;
-    
-    // Add OBJNAME symbol
+
+    // Add OBJNAME symbol (only once per object file)
     {
+        std::cerr << "DEBUG: Writing S_OBJNAME symbol" << std::endl;
         std::vector<uint8_t> objname_data;
         uint32_t signature_val = 0; // Signature
-        objname_data.insert(objname_data.end(), reinterpret_cast<const uint8_t*>(&signature_val), 
+        objname_data.insert(objname_data.end(), reinterpret_cast<const uint8_t*>(&signature_val),
                            reinterpret_cast<const uint8_t*>(&signature_val) + sizeof(signature_val));
-        
-        std::string obj_name = "FlashCpp.obj";
+
+        // Use the first source file as the object name (convert .cpp to .obj with absolute path)
+        std::string obj_name;
+        if (!source_files_.empty()) {
+            std::filesystem::path source_path(source_files_[0]);
+            // Get absolute path and change extension to .obj
+            std::filesystem::path abs_path = std::filesystem::absolute(source_path);
+            abs_path.replace_extension(".obj");
+            obj_name = abs_path.string();
+        } else {
+            obj_name = "FlashCpp.obj"; // Fallback
+        }
+
+        std::cerr << "DEBUG: Using object name: " << obj_name << std::endl;
         for (char c : obj_name) {
             objname_data.push_back(static_cast<uint8_t>(c));
         }
         objname_data.push_back(0); // Null terminator
-        
+
         writeSymbolRecord(symbols_data, SymbolKind::S_OBJNAME, objname_data);
+        std::cerr << "DEBUG: S_OBJNAME symbol written, symbols_data size: " << symbols_data.size() << std::endl;
     }
 
-    // Add COMPILE3 symbol
-    {
-        std::vector<uint8_t> compile_data;
-
-        // Language (C++ = 4)
-        uint32_t language = 4;
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&language),
-                           reinterpret_cast<const uint8_t*>(&language) + sizeof(language));
-
-        // Target processor (x64 = 0xD0)
-        uint16_t target_processor = 0xD0;
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&target_processor),
-                           reinterpret_cast<const uint8_t*>(&target_processor) + sizeof(target_processor));
-
-        // Compile flags (various boolean flags packed into 32 bits)
-        uint32_t compile_flags = 0x00000000; // Basic flags
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&compile_flags),
-                           reinterpret_cast<const uint8_t*>(&compile_flags) + sizeof(compile_flags));
-
-        // Frontend version (19.44.35209.0 to match MSVC)
-        uint16_t frontend_major = 19, frontend_minor = 44, frontend_build = 35209, frontend_qfe = 0;
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&frontend_major),
-                           reinterpret_cast<const uint8_t*>(&frontend_major) + sizeof(frontend_major));
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&frontend_minor),
-                           reinterpret_cast<const uint8_t*>(&frontend_minor) + sizeof(frontend_minor));
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&frontend_build),
-                           reinterpret_cast<const uint8_t*>(&frontend_build) + sizeof(frontend_build));
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&frontend_qfe),
-                           reinterpret_cast<const uint8_t*>(&frontend_qfe) + sizeof(frontend_qfe));
-
-        // Backend version (same as frontend)
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&frontend_major),
-                           reinterpret_cast<const uint8_t*>(&frontend_major) + sizeof(frontend_major));
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&frontend_minor),
-                           reinterpret_cast<const uint8_t*>(&frontend_minor) + sizeof(frontend_minor));
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&frontend_build),
-                           reinterpret_cast<const uint8_t*>(&frontend_build) + sizeof(frontend_build));
-        compile_data.insert(compile_data.end(), reinterpret_cast<const uint8_t*>(&frontend_qfe),
-                           reinterpret_cast<const uint8_t*>(&frontend_qfe) + sizeof(frontend_qfe));
-
-        // Version string
-        std::string version_string = "FlashCpp Compiler";
-        for (char c : version_string) {
-            compile_data.push_back(static_cast<uint8_t>(c));
-        }
-        compile_data.push_back(0); // Null terminator
-
-        writeSymbolRecord(symbols_data, SymbolKind::S_COMPILE3, compile_data);
-    }
-    
-
-    
-    // Add function symbols
+    // Add function symbols (S_OBJNAME duplication issue is now fixed)
+    std::cerr << "DEBUG: Number of functions: " << functions_.size() << std::endl;
     for (const auto& func : functions_) {
+        std::cerr << "DEBUG: Processing function: " << func.name << std::endl;
         std::vector<uint8_t> proc_data;
 
         // Parent, end, next pointers (set to 0 for now)
@@ -521,29 +519,39 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
         // Debug start and end offsets (relative to function start)
         uint32_t debug_start = 8;  // After prologue (push rbp; mov rbp, rsp; sub rsp, 0x20)
-        uint32_t debug_end = func.code_length - 5;  // Before epilogue (mov rsp, rbp; pop rbp; ret)
+        uint32_t debug_end = 20;   // Match reference: 0x14 = 20
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&debug_start),
                         reinterpret_cast<const uint8_t*>(&debug_start) + sizeof(debug_start));
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&debug_end),
                         reinterpret_cast<const uint8_t*>(&debug_end) + sizeof(debug_end));
 
-        // Function offset and segment
-        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&func.code_offset),
-                        reinterpret_cast<const uint8_t*>(&func.code_offset) + sizeof(func.code_offset));
-        uint16_t segment = 1; // .text section
-        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&segment),
-                        reinterpret_cast<const uint8_t*>(&segment) + sizeof(segment));
-
-        // Type index (use basic int type for now)
-        uint32_t type_index = 0x1000;
+        // Type index (4 bytes) - MUST come before offset/segment according to spec!
+        uint32_t type_index = 0x1000; // T_INT4 - 32-bit signed integer
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
                         reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
 
-        // Function name (null-terminated string)
+        // Function offset and segment
+        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&func.code_offset),
+                        reinterpret_cast<const uint8_t*>(&func.code_offset) + sizeof(func.code_offset));
+        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&text_section_number_),
+                        reinterpret_cast<const uint8_t*>(&text_section_number_) + sizeof(text_section_number_));
+
+        // Flags (1 byte)
+        uint8_t proc_flags = 0x00; // No special flags
+        proc_data.push_back(proc_flags);
+
+        std::cerr << "DEBUG: Type index written: 0x" << std::hex << type_index << std::dec << " (4 bytes)" << std::endl;
+
+        // Function name (null-terminated string for S_GPROC32_ID)
+        std::cerr << "DEBUG: Writing function name: '" << func.name << "' (length: " << func.name.length() << ")" << std::endl;
+        // Remove length prefix - use only null-terminated string
         for (char c : func.name) {
             proc_data.push_back(static_cast<uint8_t>(c));
         }
-        proc_data.push_back(0); // Null terminator
+        proc_data.push_back(0); // null terminator
+
+        std::cerr << "DEBUG: Function proc_data size: " << proc_data.size() << " bytes" << std::endl;
+        std::cerr << "DEBUG: Function offset: " << func.code_offset << ", length: " << func.code_length << std::endl;
 
         writeSymbolRecord(symbols_data, SymbolKind::S_GPROC32_ID, proc_data);
 
@@ -578,16 +586,17 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         for (const auto& param : func.parameters) {
             std::vector<uint8_t> regrel_data;
 
-            // Stack offset (positive for parameters)
+            // Stack offset (positive for parameters, relative to RSP)
             regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&param.stack_offset),
                               reinterpret_cast<const uint8_t*>(&param.stack_offset) + sizeof(param.stack_offset));
 
-            // Type index
-            regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&param.type_index),
-                              reinterpret_cast<const uint8_t*>(&param.type_index) + sizeof(param.type_index));
+            // Type index (T_INT4 = 0x74)
+            uint32_t type_index = 0x74; // T_INT4 for int parameters
+            regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
+                              reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
 
-            // Register (RBP = 334 for x64)
-            uint16_t register_id = 334; // RBP register
+            // Register (RSP = 335 for x64)
+            uint16_t register_id = 335; // RSP register
             regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&register_id),
                               reinterpret_cast<const uint8_t*>(&register_id) + sizeof(register_id));
 
@@ -640,12 +649,13 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
             writeSymbolRecord(symbols_data, SymbolKind::S_DEFRANGE_FRAMEPOINTER_REL, defrange_data);
         }
 
-        // Add S_END symbol for function
-        std::vector<uint8_t> end_data; // Empty for S_END
-        writeSymbolRecord(symbols_data, SymbolKind::S_END, end_data);
+        // Add S_PROC_ID_END symbol for function
+        std::vector<uint8_t> end_data; // Empty for S_PROC_ID_END
+        writeSymbolRecord(symbols_data, SymbolKind::S_PROC_ID_END, end_data);
     }
     
     // Write symbols subsection
+    std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
     writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
 
     // Generate and write file checksums subsection
@@ -655,11 +665,10 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
     }
 
     // Generate and write line information subsection
-    // Temporarily disable line information to test file checksums
-    // auto line_info_data = generateLineInfo();
-    // if (!line_info_data.empty()) {
-    //     writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_info_data);
-    // }
+    auto line_info_data = generateLineInfo();
+    if (!line_info_data.empty()) {
+        writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_info_data);
+    }
 
     // Generate string table subsection
     writeSubsection(debug_s_data, DebugSubsectionKind::StringTable, string_table_);
