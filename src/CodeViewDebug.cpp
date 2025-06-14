@@ -193,17 +193,22 @@ void DebugInfoBuilder::addFunctionWithLines(const std::string& name, uint32_t co
 void DebugInfoBuilder::setCurrentFunction(const std::string& name, uint32_t file_id) {
     // Finalize previous function if any
     if (!current_function_name_.empty()) {
+        std::cerr << "DEBUG: Finalizing previous function: " << current_function_name_
+                  << " with file_id=" << current_function_file_id_
+                  << " and " << current_function_lines_.size() << " lines" << std::endl;
         // Find the function and update its line information
         for (auto& func : functions_) {
             if (func.name == current_function_name_) {
                 func.line_offsets = current_function_lines_;
                 func.file_id = current_function_file_id_;
+                std::cerr << "DEBUG: Updated function " << func.name << " with file_id=" << func.file_id << std::endl;
                 break;
             }
         }
     }
 
     // Set up new current function
+    std::cerr << "DEBUG: Setting current function: " << name << " with file_id=" << file_id << std::endl;
     current_function_name_ = name;
     current_function_file_id_ = file_id;
     current_function_lines_.clear();
@@ -269,11 +274,15 @@ void DebugInfoBuilder::setTextSectionNumber(uint16_t section_number) {
 
 void DebugInfoBuilder::finalizeCurrentFunction() {
     if (!current_function_name_.empty()) {
+        std::cerr << "DEBUG: finalizeCurrentFunction: " << current_function_name_
+                  << " with file_id=" << current_function_file_id_
+                  << " and " << current_function_lines_.size() << " lines" << std::endl;
         // Find the function and update its line information
         for (auto& func : functions_) {
             if (func.name == current_function_name_) {
                 func.line_offsets = current_function_lines_;
                 func.file_id = current_function_file_id_;
+                std::cerr << "DEBUG: finalizeCurrentFunction updated function " << func.name << " with file_id=" << func.file_id << std::endl;
                 break;
             }
         }
@@ -288,19 +297,42 @@ void DebugInfoBuilder::finalizeCurrentFunction() {
 uint32_t DebugInfoBuilder::addString(const std::string& str) {
     auto it = string_offsets_.find(str);
     if (it != string_offsets_.end()) {
+        std::cerr << "DEBUG: String '" << str << "' already exists at offset " << it->second << std::endl;
         return it->second;
     }
-    
+
     uint32_t offset = static_cast<uint32_t>(string_table_.size());
     string_offsets_[str] = offset;
-    
+
+    std::cerr << "DEBUG: Adding string '" << str << "' at offset " << offset << std::endl;
+
     // Add string with null terminator
     for (char c : str) {
         string_table_.push_back(static_cast<uint8_t>(c));
     }
     string_table_.push_back(0);
-    
+
     return offset;
+}
+
+void DebugInfoBuilder::initializeFunctionIdMap() {
+    // Dynamically generate function ID mapping based on actual functions
+    // Type indices start at 0x1000 and follow this pattern for each function:
+    // 0x1000 + (func_index * 3) + 0: LF_ARGLIST
+    // 0x1000 + (func_index * 3) + 1: LF_PROCEDURE
+    // 0x1000 + (func_index * 3) + 2: LF_FUNC_ID
+
+    function_id_map_.clear();
+
+    for (size_t i = 0; i < functions_.size(); ++i) {
+        uint32_t func_id_index = 0x1000 + static_cast<uint32_t>(i * 3) + 2; // LF_FUNC_ID index
+        function_id_map_[functions_[i].name] = func_id_index;
+    }
+
+    std::cerr << "DEBUG: Dynamically initialized function ID map for " << functions_.size() << " functions:" << std::endl;
+    for (const auto& pair : function_id_map_) {
+        std::cerr << "  " << pair.first << " -> 0x" << std::hex << pair.second << std::dec << std::endl;
+    }
 }
 
 void DebugInfoBuilder::writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data) {
@@ -428,6 +460,14 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
                   << " - file_id=" << func.file_id
                   << ", num_lines=" << file_header.num_lines << std::endl;
 
+        // DEBUG: Dump the file header bytes
+        std::cerr << "DEBUG: FileBlockHeader bytes: ";
+        const uint8_t* file_header_bytes = reinterpret_cast<const uint8_t*>(&file_header);
+        for (size_t i = 0; i < sizeof(file_header); ++i) {
+            std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)file_header_bytes[i] << " ";
+        }
+        std::cerr << std::dec << std::endl;
+
         // DEBUG: Dump the line info header bytes
         std::cerr << "DEBUG: LineInfoHeader bytes: ";
         const uint8_t* header_bytes = reinterpret_cast<const uint8_t*>(&line_header);
@@ -492,9 +532,32 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     file_header.file_id = func.file_id;
     file_header.num_lines = static_cast<uint32_t>(func.line_offsets.size());
 
+    std::cerr << "DEBUG: Line info for function " << func.name
+              << " - file_id=" << func.file_id
+              << ", num_lines=" << file_header.num_lines << std::endl;
+
+    // DEBUG: Dump the file header bytes
+    std::cerr << "DEBUG: FileBlockHeader bytes: ";
+    const uint8_t* file_header_bytes = reinterpret_cast<const uint8_t*>(&file_header);
+    for (size_t i = 0; i < sizeof(file_header); ++i) {
+        std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)file_header_bytes[i] << " ";
+    }
+    std::cerr << std::dec << std::endl;
+
     // Calculate block size: ONLY line entries (NOT including FileBlockHeader itself)
     uint32_t block_size = func.line_offsets.size() * sizeof(LineNumberEntry);
     file_header.block_size = block_size;
+
+    std::cerr << "DEBUG: Block size calculation: " << func.line_offsets.size()
+              << " lines * " << sizeof(LineNumberEntry) << " bytes = " << block_size << std::endl;
+
+    // DEBUG: Dump the file header bytes again after setting block_size
+    std::cerr << "DEBUG: FileBlockHeader bytes after block_size set: ";
+    const uint8_t* file_header_bytes2 = reinterpret_cast<const uint8_t*>(&file_header);
+    for (size_t i = 0; i < sizeof(file_header); ++i) {
+        std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)file_header_bytes2[i] << " ";
+    }
+    std::cerr << std::dec << std::endl;
 
     line_data.insert(line_data.end(),
                      reinterpret_cast<const uint8_t*>(&file_header),
@@ -518,6 +581,10 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
 
 std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
     std::cerr << "DEBUG: generateDebugS() called" << std::endl;
+
+    // Initialize function ID mapping before generating symbols
+    initializeFunctionIdMap();
+
     std::vector<uint8_t> debug_s_data;
 
     // Write CodeView signature
@@ -585,10 +652,11 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&debug_end),
                         reinterpret_cast<const uint8_t*>(&debug_end) + sizeof(debug_end));
 
-        // Type index (4 bytes) - MUST come before offset/segment according to spec!
-        uint32_t type_index = 0x1000; // T_INT4 - 32-bit signed integer
-        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
-                        reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
+        // Function ID (4 bytes) - LF_FUNC_ID type index for this function
+        auto it = function_id_map_.find(func.name);
+        uint32_t function_id = (it != function_id_map_.end()) ? it->second : 0x1000; // fallback
+        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&function_id),
+                        reinterpret_cast<const uint8_t*>(&function_id) + sizeof(function_id));
 
         // Function offset and segment
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&func.code_offset),
@@ -600,7 +668,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         uint8_t proc_flags = 0x00; // No special flags
         proc_data.push_back(proc_flags);
 
-        std::cerr << "DEBUG: Type index written: 0x" << std::hex << type_index << std::dec << " (4 bytes)" << std::endl;
+        std::cerr << "DEBUG: Function ID written: 0x" << std::hex << function_id << std::dec << " (4 bytes)" << std::endl;
 
         // Function name (null-terminated string for S_GPROC32_ID)
         std::cerr << "DEBUG: Writing function name: '" << func.name << "' (length: " << func.name.length() << ")" << std::endl;
@@ -740,17 +808,26 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         writeSubsection(debug_s_data, DebugSubsectionKind::FileChecksums, checksum_data);
     }
 
-    // Generate and write separate line information subsection for each function
-    for (const auto& func : functions_) {
-        if (!func.line_offsets.empty()) {
-            auto line_info_data = generateLineInfoForFunction(func);
-            if (!line_info_data.empty()) {
-                writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_info_data);
-            }
-        }
-    }
+    // Skip line information for now - focus on string table
+    std::cerr << "DEBUG: Skipping line information generation for now" << std::endl;
+
+    // Let's try creating a minimal debug section to test file writing
+    std::cerr << "DEBUG: Creating minimal debug section for testing" << std::endl;
 
     // Generate string table subsection
+    std::cerr << "DEBUG: String table size: " << string_table_.size() << " bytes" << std::endl;
+    std::cerr << "DEBUG: String table contents: ";
+    for (size_t i = 0; i < std::min(string_table_.size(), size_t(50)); ++i) {
+        if (string_table_[i] == 0) {
+            std::cerr << "\\0";
+        } else if (string_table_[i] >= 32 && string_table_[i] <= 126) {
+            std::cerr << (char)string_table_[i];
+        } else {
+            std::cerr << "\\x" << std::hex << (int)string_table_[i] << std::dec;
+        }
+    }
+    if (string_table_.size() > 50) std::cerr << "...";
+    std::cerr << std::endl;
     writeSubsection(debug_s_data, DebugSubsectionKind::StringTable, string_table_);
 
     return debug_s_data;
@@ -764,44 +841,118 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
     debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&signature),
                         reinterpret_cast<const uint8_t*>(&signature) + sizeof(signature));
 
-    // Add basic function type record (type index 0x1000)
-    // This is a simple procedure type for functions returning int
-    std::vector<uint8_t> proc_type_data;
+    std::cerr << "DEBUG: Generating dynamic type information for " << functions_.size() << " functions..." << std::endl;
 
-    // Return type (T_INT4 = 0x74)
-    uint32_t return_type = 0x74;
-    proc_type_data.insert(proc_type_data.end(), reinterpret_cast<const uint8_t*>(&return_type),
-                         reinterpret_cast<const uint8_t*>(&return_type) + sizeof(return_type));
+    // Generate type records dynamically for each function
+    for (size_t func_index = 0; func_index < functions_.size(); ++func_index) {
+        const auto& func = functions_[func_index];
+        uint32_t base_type_index = 0x1000 + static_cast<uint32_t>(func_index * 3);
 
-    // Calling convention (0 = near C)
-    uint8_t calling_conv = 0;
-    proc_type_data.push_back(calling_conv);
+        std::cerr << "DEBUG: Generating types for function '" << func.name
+                  << "' with " << func.parameters.size() << " parameters" << std::endl;
 
-    // Function attributes (0 = none)
-    uint8_t func_attrs = 0;
-    proc_type_data.push_back(func_attrs);
+        // Generate LF_ARGLIST (base_type_index + 0)
+        {
+            std::vector<uint8_t> arglist_data;
 
-    // Parameter count (2 for add function)
-    uint16_t param_count = 2;
-    proc_type_data.insert(proc_type_data.end(), reinterpret_cast<const uint8_t*>(&param_count),
-                         reinterpret_cast<const uint8_t*>(&param_count) + sizeof(param_count));
+            // Argument count
+            uint32_t arg_count = static_cast<uint32_t>(func.parameters.size());
+            arglist_data.insert(arglist_data.end(), reinterpret_cast<const uint8_t*>(&arg_count),
+                               reinterpret_cast<const uint8_t*>(&arg_count) + sizeof(arg_count));
 
-    // Argument list type index (0x1001)
-    uint32_t arglist_type = 0x1001;
-    proc_type_data.insert(proc_type_data.end(), reinterpret_cast<const uint8_t*>(&arglist_type),
-                         reinterpret_cast<const uint8_t*>(&arglist_type) + sizeof(arglist_type));
+            // Argument types (assume all T_INT4 for now)
+            for (size_t i = 0; i < func.parameters.size(); ++i) {
+                uint32_t arg_type = 0x74; // T_INT4
+                arglist_data.insert(arglist_data.end(), reinterpret_cast<const uint8_t*>(&arg_type),
+                                   reinterpret_cast<const uint8_t*>(&arg_type) + sizeof(arg_type));
+            }
 
-    // Write procedure type record
-    TypeRecordHeader proc_header;
-    proc_header.length = static_cast<uint16_t>(proc_type_data.size() + sizeof(TypeRecordKind));
-    proc_header.kind = TypeRecordKind::LF_PROCEDURE;
+            TypeRecordHeader header;
+            header.length = static_cast<uint16_t>(arglist_data.size() + sizeof(TypeRecordKind));
+            header.kind = TypeRecordKind::LF_ARGLIST;
 
-    debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&proc_header),
-                       reinterpret_cast<const uint8_t*>(&proc_header) + sizeof(proc_header));
-    debug_t_data.insert(debug_t_data.end(), proc_type_data.begin(), proc_type_data.end());
+            debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                               reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+            debug_t_data.insert(debug_t_data.end(), arglist_data.begin(), arglist_data.end());
+            alignTo4Bytes(debug_t_data);
 
-    // Align to 4-byte boundary
-    alignTo4Bytes(debug_t_data);
+            std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << base_type_index << std::dec
+                      << " (" << arg_count << " args for " << func.name << ")" << std::endl;
+        }
+
+        // Generate LF_PROCEDURE (base_type_index + 1)
+        {
+            std::vector<uint8_t> proc_data;
+
+            // Return type (T_INT4 = 0x74)
+            uint32_t return_type = 0x74;
+            proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&return_type),
+                            reinterpret_cast<const uint8_t*>(&return_type) + sizeof(return_type));
+
+            // Calling convention (0 = C Near, matches clang-cl reference)
+            uint8_t calling_conv = 0;
+            proc_data.push_back(calling_conv);
+
+            // Function attributes (0 = none)
+            uint8_t func_attrs = 0;
+            proc_data.push_back(func_attrs);
+
+            // Parameter count
+            uint16_t param_count = static_cast<uint16_t>(func.parameters.size());
+            proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&param_count),
+                            reinterpret_cast<const uint8_t*>(&param_count) + sizeof(param_count));
+
+            // Argument list type index (base_type_index + 0)
+            uint32_t arglist_type = base_type_index;
+            proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&arglist_type),
+                            reinterpret_cast<const uint8_t*>(&arglist_type) + sizeof(arglist_type));
+
+            TypeRecordHeader header;
+            header.length = static_cast<uint16_t>(proc_data.size() + sizeof(TypeRecordKind));
+            header.kind = TypeRecordKind::LF_PROCEDURE;
+
+            debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                               reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+            debug_t_data.insert(debug_t_data.end(), proc_data.begin(), proc_data.end());
+            alignTo4Bytes(debug_t_data);
+
+            std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << (base_type_index + 1) << std::dec
+                      << " (" << func.name << " function)" << std::endl;
+        }
+
+        // Generate LF_FUNC_ID (base_type_index + 2)
+        {
+            std::vector<uint8_t> func_id_data;
+
+            // Type index (points to LF_PROCEDURE base_type_index + 1)
+            uint32_t type_index = base_type_index + 1;
+            func_id_data.insert(func_id_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
+                               reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
+
+            // Scope (0 = global)
+            uint32_t scope = 0;
+            func_id_data.insert(func_id_data.end(), reinterpret_cast<const uint8_t*>(&scope),
+                               reinterpret_cast<const uint8_t*>(&scope) + sizeof(scope));
+
+            // Function name (dynamic)
+            for (char c : func.name) {
+                func_id_data.push_back(static_cast<uint8_t>(c));
+            }
+            func_id_data.push_back(0); // null terminator
+
+            TypeRecordHeader header;
+            header.length = static_cast<uint16_t>(func_id_data.size() + sizeof(TypeRecordKind));
+            header.kind = TypeRecordKind::LF_FUNC_ID;
+
+            debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                               reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+            debug_t_data.insert(debug_t_data.end(), func_id_data.begin(), func_id_data.end());
+            alignTo4Bytes(debug_t_data);
+
+            std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << (base_type_index + 2) << std::dec
+                      << " (" << func.name << ")" << std::endl;
+        }
+    } // End of function loop
 
     return debug_t_data;
 }

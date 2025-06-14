@@ -275,8 +275,12 @@ private:
     // Text section number for symbol references
     uint16_t text_section_number_ = 1; // Default to 1, will be updated by ObjectFileWriter
 
+    // Function ID mapping - maps function names to their LF_FUNC_ID type indices
+    std::unordered_map<std::string, uint32_t> function_id_map_;
+
     // Helper methods
     uint32_t addString(const std::string& str);
+    void initializeFunctionIdMap();
     void writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data);
     void writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, const std::vector<uint8_t>& subsection_data);
     void alignTo4Bytes(std::vector<uint8_t>& data);
