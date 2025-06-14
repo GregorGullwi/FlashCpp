@@ -909,8 +909,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         std::cerr << "DEBUG: Generating simplified types for function '" << func.name
                   << "' with " << func.parameters.size() << " parameters" << std::endl;
 
-        // TEMPORARILY DISABLED: Generate LF_ARGLIST (base_type_index + 0)
-        /*
+        // Generate LF_ARGLIST (base_type_index + 0)
         {
             std::vector<uint8_t> arglist_data;
 
@@ -939,10 +938,8 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << base_type_index << std::dec
                       << " (" << arg_count << " args for " << func.name << ")" << std::endl;
         }
-        */
 
-        // TEMPORARILY DISABLED: Generate LF_PROCEDURE (base_type_index + 1)
-        /*
+        // Generate LF_PROCEDURE (base_type_index + 1)
         {
             std::vector<uint8_t> proc_data;
 
@@ -982,7 +979,6 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << (base_type_index + 1) << std::dec
                       << " (" << func.name << " function)" << std::endl;
         }
-        */
 
         // Generate LF_FUNC_ID (base_type_index)
         {

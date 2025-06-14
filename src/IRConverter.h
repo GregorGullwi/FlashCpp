@@ -940,6 +940,13 @@ private:
 		// For now, use file ID 0 (first source file)
 		writer.set_current_function_for_debug(std::string(func_name), 0);
 
+		// Add line mapping for function declaration (now that current function is set)
+		if (instruction.getLineNumber() > 0) {
+			// Also add line mapping for function opening brace (next line)
+			std::cerr << "DEBUG: Adding function opening brace line mapping for line " << (instruction.getLineNumber() + 1) << std::endl;
+			addLineMapping(instruction.getLineNumber() + 1);
+		}
+
 		// Function debug info is now added in add_function_symbol() with length 0
 		// Length will be updated later in handleReturn()
 
@@ -1108,6 +1115,12 @@ private:
 
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
+
+		// Add line mapping for function closing brace (after return statement)
+		if (instruction.getLineNumber() > 0) {
+			std::cerr << "DEBUG: Adding function closing brace line mapping for line " << (instruction.getLineNumber() + 1) << std::endl;
+			addLineMapping(instruction.getLineNumber() + 1, -1); // offset by -1, since we will overlow otherwise
+		}
 
 		// Update debug information for the completed function
 		if (!current_function_name_.empty()) {
@@ -1927,9 +1940,9 @@ private:
 	}
 
 	// Debug information tracking
-	void addLineMapping(uint32_t line_number) {
+	void addLineMapping(uint32_t line_number, int32_t manual_offset = 0) {
 		if (!current_function_name_.empty()) {
-			uint32_t code_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			uint32_t code_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_ + manual_offset;
 			std::cerr << "DEBUG: Line mapping added - function: " << current_function_name_
 			         << ", offset: " << code_offset << ", line: " << line_number << std::endl;
 			writer.add_line_mapping(code_offset, line_number);
