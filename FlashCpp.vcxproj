@@ -187,6 +187,7 @@
   <ItemGroup>
     <ClInclude Include="src\ChunkedAnyVector.h" />
     <ClInclude Include="src\CodeGen.h" />
+    <ClInclude Include="src\CodeViewDebug.h" />
     <ClInclude Include="src\coffi\coffi.hpp" />
     <ClInclude Include="src\coffi\coffi_directory.hpp" />
     <ClInclude Include="src\coffi\coffi_headers.hpp" />

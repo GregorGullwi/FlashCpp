@@ -113,6 +113,9 @@
     <ClInclude Include="src\ChunkedAnyVector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\CodeViewDebug.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="LICENSE" />
