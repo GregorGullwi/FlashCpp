@@ -351,7 +351,7 @@ class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
 
-	void convert(const Ir& ir, const char* filename) {
+	void convert(const Ir& ir, const std::string_view filename) {
 		// Group instructions by function for stack space calculation
 		groupInstructionsByFunction(ir);
 
@@ -488,8 +488,11 @@ public:
 				break;
 			}
 		}
+		
+		writer.add_source_file("test_debug.cpp");
+
 		finalizeSections();
-		writer.write(filename);
+		writer.write(std::string(filename));
 	}
 
 private:
@@ -1818,9 +1821,6 @@ private:
 
 	void finalizeSections() {
 		writer.add_data(textSectionData, SectionType::TEXT);
-
-		// Add a default source file for debug information
-		writer.add_source_file("main.cpp");
 
 		// Finalize debug information
 		writer.finalize_debug_info();

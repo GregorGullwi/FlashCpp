@@ -166,9 +166,7 @@
   <ItemGroup>
     <ClCompile Include="src\AstNodeTypes.cpp" />
     <ClCompile Include="src\ChunkedAnyVector.cpp" />
-    <ClCompile Include="src\LibClangIRGenerator.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)'=='Benchmark' Or '$(Configuration)'=='Test'">true</ExcludedFromBuild>
-    </ClCompile>
+    <ClCompile Include="src\CodeViewDebug.cpp" />
     <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Benchmark'">true</ExcludedFromBuild>
     </ClCompile>
@@ -226,57 +224,19 @@
         $(LLVMInstallDir)\build\include;
         %(AdditionalIncludeDirectories)
       </AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>
-        _CRT_SECURE_NO_WARNINGS;
-        _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;
-        %(PreprocessorDefinitions)
-      </PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard Condition="'$(Configuration)|$(Platform)'=='Release|x64'">stdcpp20</LanguageStandard>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Test|x64'">Disabled</Optimization>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalDependencies>
-        ws2_32.lib;
-        libclang.lib;
-        LLVMCore.lib;
-        LLVMSupport.lib;
-        LLVMTarget.lib;
-        LLVMTargetParser.lib;
-        LLVMCodeGen.lib;
-        LLVMGlobalISel.lib;
-        LLVMSelectionDAG.lib;
-        LLVMAsmPrinter.lib;
-        LLVMMC.lib;
-        LLVMMCParser.lib;
-        LLVMBitWriter.lib;
-        LLVMBitReader.lib;
-        LLVMTransformUtils.lib;
-        LLVMAnalysis.lib;
-        LLVMIRReader.lib;
-        LLVMObject.lib;
-        LLVMScalarOpts.lib;
-        LLVMInstCombine.lib;
-        LLVMInstrumentation.lib;
-        LLVMProfileData.lib;
-        LLVMCoroutines.lib;
-        LLVMDebugInfoDWARF.lib;
-        LLVMDebugInfoMSF.lib;
-        LLVMDebugInfoCodeView.lib;
-        LLVMDebugInfoPDB.lib;
-        LLVMRemarks.lib;
-        LLVMDemangle.lib;
-        LLVMX86CodeGen.lib;
-        LLVMX86AsmParser.lib;
-        LLVMX86Desc.lib;
-        LLVMX86Info.lib;
-        LLVMX86Disassembler.lib;
-        LLVMX86TargetMCA.lib;
-        %(AdditionalDependencies)
-      </AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
+    <ClCompile>
+      <UndefinePreprocessorDefinitions>USE_LLVM</UndefinePreprocessorDefinitions>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>

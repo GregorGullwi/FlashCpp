@@ -14,6 +14,7 @@
 #include "Lexer.h"
 #include "Parser.h"
 #include "LibClangIRGenerator.h"
+#include "CodeGen.h"
 
 int main(int argc, char *argv[]) {
     CompileContext context;
@@ -53,10 +54,6 @@ int main(int argc, char *argv[]) {
         std::cerr << "Failed to read input file: " << context.getInputFile().value() << std::endl;
         return 1;
     }
-    Lexer lexer(file_reader.get_result());
-    Parser parser(lexer);
-    parser.parse();
-    parser.generate_coff("output.o");
 
     if (context.isVerboseMode() && !context.isPreprocessorOnlyMode()) {
         // Use context and file_tree to perform the desired operation
@@ -68,4 +65,24 @@ int main(int argc, char *argv[]) {
             std::cout << "- " << dep << std::endl;
         }
     }
+
+    Lexer lexer(file_reader.get_result());
+    Parser parser(lexer);
+    auto parse_result = parser.parse();
+
+    if (parse_result.is_error()) {
+        std::cerr << "Error: " << parse_result.error_message() << std::endl;
+        return 1;
+    }
+
+    const auto& ast = parser.get_nodes();
+
+    AstToIr converter;
+    for (auto& node_handle : ast) {
+        converter.visit(node_handle);
+    }
+
+    const auto& ir = converter.getIr();
+    IrToObjConverter irConverter;
+    irConverter.convert(ir, context.getOutputFile());
 }
