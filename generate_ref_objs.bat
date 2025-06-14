@@ -15,6 +15,6 @@ cl.exe /c /Fo"%REF_DIR%\return2func_ref.obj" "%REF_DIR%\return2func.cpp"
 cl.exe /c /Fo"%REF_DIR%\call_function_with_argument_ref.obj" "%REF_DIR%\call_function_with_argument.cpp"
 cl.exe /c /Fo"%REF_DIR%\add_function_ref.obj" "%REF_DIR%\add_function.cpp"
 cl.exe /c /Fo"%REF_DIR%\arithmetic_test_ref.obj" "%REF_DIR%\arithmetic_test.cpp"
-cl.exe /c /Fo"test_debug_ref.obj" "test_debug.cpp"
+cl.exe /Od /DEBUG:FULL /Zi /c /Fo"test_debug_ref.obj" "test_debug.cpp"
 
 echo Done! 
