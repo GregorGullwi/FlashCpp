@@ -429,36 +429,66 @@ std::vector<uint8_t> DebugInfoBuilder::generateFileChecksums() {
 std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
     std::vector<uint8_t> line_data;
 
-    // Generate separate line information for each function
+    if (functions_.empty()) {
+        return line_data;
+    }
+
+    // Find the range of all functions to create the main header
+    uint32_t min_offset = UINT32_MAX;
+    uint32_t max_offset = 0;
+
+    for (const auto& func : functions_) {
+        if (!func.line_offsets.empty()) {
+            min_offset = std::min(min_offset, func.code_offset);
+            max_offset = std::max(max_offset, func.code_offset + func.code_length);
+        }
+    }
+
+    if (min_offset == UINT32_MAX) {
+        return line_data; // No functions with line information
+    }
+
+    // Generate the main header (as expected by cvdump)
+    struct MainLineHeader {
+        uint32_t offCon;    // Starting offset of the function range
+        uint16_t segCon;    // Segment number
+        uint16_t flags;     // Flags
+        uint32_t cbCon;     // Total code length
+    };
+
+    MainLineHeader main_header;
+    main_header.offCon = min_offset;
+    main_header.segCon = 0; // Use section 0 to match MSVC/clang reference
+    main_header.flags = 0;  // No special flags
+    main_header.cbCon = max_offset - min_offset;
+
+    std::cerr << "DEBUG: Main line header - offCon=" << main_header.offCon
+              << ", segCon=" << main_header.segCon
+              << ", cbCon=" << main_header.cbCon << std::endl;
+
+    // Write main header
+    line_data.insert(line_data.end(),
+                     reinterpret_cast<const uint8_t*>(&main_header),
+                     reinterpret_cast<const uint8_t*>(&main_header) + sizeof(main_header));
+
+    // Generate file blocks for each function
     for (const auto& func : functions_) {
         if (func.line_offsets.empty()) {
             continue; // Skip functions without line information
         }
 
-        // Each function gets its own line information block
-        std::vector<uint8_t> func_line_data;
-
-        // Line info header
-        LineInfoHeader line_header;
-        line_header.code_offset = func.code_offset;
-        line_header.segment = 0; // Use section 0 to match MSVC/clang reference
-        line_header.flags = 0;   // No special flags
-        line_header.code_length = func.code_length;
-
-
-        // Write line info header
-        func_line_data.insert(func_line_data.end(),
-                             reinterpret_cast<const uint8_t*>(&line_header),
-                             reinterpret_cast<const uint8_t*>(&line_header) + sizeof(line_header));
+        std::cerr << "DEBUG: Line info for function " << func.name
+                  << " - file_id=" << func.file_id
+                  << ", num_lines=" << func.line_offsets.size() << std::endl;
 
         // File block header
         FileBlockHeader file_header;
         file_header.file_id = func.file_id;
         file_header.num_lines = static_cast<uint32_t>(func.line_offsets.size());
 
-        std::cerr << "DEBUG: Line info for function " << func.name
-                  << " - file_id=" << func.file_id
-                  << ", num_lines=" << file_header.num_lines << std::endl;
+        // Calculate block size: Total size of file block INCLUDING header
+        uint32_t line_entries_size = func.line_offsets.size() * sizeof(LineNumberEntry);
+        file_header.block_size = sizeof(FileBlockHeader) + line_entries_size;
 
         // DEBUG: Dump the file header bytes
         std::cerr << "DEBUG: FileBlockHeader bytes: ";
@@ -468,23 +498,10 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
         }
         std::cerr << std::dec << std::endl;
 
-        // DEBUG: Dump the line info header bytes
-        std::cerr << "DEBUG: LineInfoHeader bytes: ";
-        const uint8_t* header_bytes = reinterpret_cast<const uint8_t*>(&line_header);
-        for (size_t i = 0; i < sizeof(line_header); ++i) {
-            std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)header_bytes[i] << " ";
-        }
-        std::cerr << std::dec << std::endl;
-
-        // Calculate block size: ONLY line entries (NOT including FileBlockHeader itself)
-        // According to Microsoft spec, block_size is the size of data following the header
-        uint32_t block_size = func.line_offsets.size() * sizeof(LineNumberEntry);
-        file_header.block_size = block_size;
-
         // Write file block header
-        func_line_data.insert(func_line_data.end(),
-                             reinterpret_cast<const uint8_t*>(&file_header),
-                             reinterpret_cast<const uint8_t*>(&file_header) + sizeof(file_header));
+        line_data.insert(line_data.end(),
+                         reinterpret_cast<const uint8_t*>(&file_header),
+                         reinterpret_cast<const uint8_t*>(&file_header) + sizeof(file_header));
 
         // Write line number entries
         for (const auto& line_offset : func.line_offsets) {
@@ -494,90 +511,25 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
             line_entry.delta_line_end = 0; // Single line statement
             line_entry.is_statement = 1;   // This is a statement
 
-            func_line_data.insert(func_line_data.end(),
-                                 reinterpret_cast<const uint8_t*>(&line_entry),
-                                 reinterpret_cast<const uint8_t*>(&line_entry) + sizeof(line_entry));
+            // DEBUG: Dump line entry bytes
+            std::cerr << "DEBUG: LineNumberEntry for offset=" << line_entry.offset
+                      << ", line=" << line_entry.line_start << " bytes: ";
+            const uint8_t* entry_bytes = reinterpret_cast<const uint8_t*>(&line_entry);
+            for (size_t i = 0; i < sizeof(line_entry); ++i) {
+                std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)entry_bytes[i] << " ";
+            }
+            std::cerr << std::dec << std::endl;
+
+            line_data.insert(line_data.end(),
+                             reinterpret_cast<const uint8_t*>(&line_entry),
+                             reinterpret_cast<const uint8_t*>(&line_entry) + sizeof(line_entry));
         }
-
-        // DO NOT align individual function line data - this causes parsing issues
-        // Only the entire subsection should be aligned
-
-        // Add this function's line data to the overall line data
-        line_data.insert(line_data.end(), func_line_data.begin(), func_line_data.end());
     }
 
     return line_data;
 }
 
-std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const FunctionInfo& func) {
-    std::vector<uint8_t> line_data;
 
-    if (func.line_offsets.empty()) {
-        return line_data;
-    }
-
-    // Line info header for this function
-    LineInfoHeader line_header;
-    line_header.code_offset = func.code_offset;
-    line_header.segment = 0; // Use section 0 to match MSVC/clang reference
-    line_header.flags = 0;   // No special flags
-    line_header.code_length = func.code_length;
-
-    line_data.insert(line_data.end(),
-                     reinterpret_cast<const uint8_t*>(&line_header),
-                     reinterpret_cast<const uint8_t*>(&line_header) + sizeof(line_header));
-
-    // File block header
-    FileBlockHeader file_header;
-    file_header.file_id = func.file_id;
-    file_header.num_lines = static_cast<uint32_t>(func.line_offsets.size());
-
-    std::cerr << "DEBUG: Line info for function " << func.name
-              << " - file_id=" << func.file_id
-              << ", num_lines=" << file_header.num_lines << std::endl;
-
-    // DEBUG: Dump the file header bytes
-    std::cerr << "DEBUG: FileBlockHeader bytes: ";
-    const uint8_t* file_header_bytes = reinterpret_cast<const uint8_t*>(&file_header);
-    for (size_t i = 0; i < sizeof(file_header); ++i) {
-        std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)file_header_bytes[i] << " ";
-    }
-    std::cerr << std::dec << std::endl;
-
-    // Calculate block size: ONLY line entries (NOT including FileBlockHeader itself)
-    uint32_t block_size = func.line_offsets.size() * sizeof(LineNumberEntry);
-    file_header.block_size = block_size;
-
-    std::cerr << "DEBUG: Block size calculation: " << func.line_offsets.size()
-              << " lines * " << sizeof(LineNumberEntry) << " bytes = " << block_size << std::endl;
-
-    // DEBUG: Dump the file header bytes again after setting block_size
-    std::cerr << "DEBUG: FileBlockHeader bytes after block_size set: ";
-    const uint8_t* file_header_bytes2 = reinterpret_cast<const uint8_t*>(&file_header);
-    for (size_t i = 0; i < sizeof(file_header); ++i) {
-        std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)file_header_bytes2[i] << " ";
-    }
-    std::cerr << std::dec << std::endl;
-
-    line_data.insert(line_data.end(),
-                     reinterpret_cast<const uint8_t*>(&file_header),
-                     reinterpret_cast<const uint8_t*>(&file_header) + sizeof(file_header));
-
-    // Write line number entries
-    for (const auto& line_offset : func.line_offsets) {
-        LineNumberEntry line_entry;
-        line_entry.offset = line_offset.first;  // Code offset relative to function start
-        line_entry.line_start = line_offset.second; // Line number
-        line_entry.delta_line_end = 0; // Single line statement
-        line_entry.is_statement = 1;   // This is a statement
-
-        line_data.insert(line_data.end(),
-                         reinterpret_cast<const uint8_t*>(&line_entry),
-                         reinterpret_cast<const uint8_t*>(&line_entry) + sizeof(line_entry));
-    }
-
-    return line_data;
-}
 
 std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
     std::cerr << "DEBUG: generateDebugS() called" << std::endl;

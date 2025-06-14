@@ -290,9 +290,6 @@ private:
 
     // Generate line information subsection
     std::vector<uint8_t> generateLineInfo();
-
-    // Generate line information for a single function
-    std::vector<uint8_t> generateLineInfoForFunction(const FunctionInfo& func);
 };
 
 } // namespace CodeView
