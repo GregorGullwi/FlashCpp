@@ -1063,15 +1063,15 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         {
             std::vector<uint8_t> func_id_data;
 
+            // Scope (0 = global)
+            uint32_t scope = 0;
+            writeLittleEndian32(func_id_data, scope);
+
             // Type index (reference to the LF_PROCEDURE type)
             uint32_t type_index = procedure_index; // Reference to LF_PROCEDURE
             std::cerr << "DEBUG: Writing LF_FUNC_ID type_index=0x" << std::hex << type_index << std::dec
                       << " (should reference procedure 0x" << std::hex << procedure_index << std::dec << ")" << std::endl;
             writeLittleEndian32(func_id_data, type_index);
-
-            // Scope (0 = global)
-            uint32_t scope = 0;
-            writeLittleEndian32(func_id_data, scope);
 
             // Function name (dynamic)
             for (char c : func.name) {
