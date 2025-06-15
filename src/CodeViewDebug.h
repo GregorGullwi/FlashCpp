@@ -304,6 +304,12 @@ struct FunctionInfo {
     std::vector<std::pair<uint32_t, uint32_t>> line_offsets; // offset, line
     std::vector<LocalVariableInfo> local_variables;
     std::vector<ParameterInfo> parameters;
+
+    // Debug range information (relative to function start)
+    uint32_t debug_start_offset = 0;  // Offset where debugging starts (after prologue)
+    uint32_t debug_end_offset = 0;    // Offset where debugging ends (before epilogue)
+    uint32_t prologue_size = 0;       // Size of function prologue
+    uint32_t epilogue_size = 0;       // Size of function epilogue
 };
 
 class DebugInfoBuilder {
@@ -341,6 +347,9 @@ public:
 
     // Update function length for a previously added function
     void updateFunctionLength(const std::string& name, uint32_t code_length);
+
+    // Set debug range information for a function
+    void setFunctionDebugRange(const std::string& name, uint32_t prologue_size, uint32_t epilogue_size);
 
     // Set the text section number for symbol references
     void setTextSectionNumber(uint16_t section_number);

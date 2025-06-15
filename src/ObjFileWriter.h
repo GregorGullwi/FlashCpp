@@ -257,6 +257,10 @@ public:
 		debug_builder_.updateFunctionLength(name, code_length);
 	}
 
+	void set_function_debug_range(const std::string& name, uint32_t prologue_size, uint32_t epilogue_size) {
+		debug_builder_.setFunctionDebugRange(name, prologue_size, epilogue_size);
+	}
+
 	void finalize_current_function() {
 		debug_builder_.finalizeCurrentFunction();
 	}

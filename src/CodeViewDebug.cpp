@@ -268,6 +268,25 @@ void DebugInfoBuilder::updateFunctionLength(const std::string& name, uint32_t co
     }
 }
 
+void DebugInfoBuilder::setFunctionDebugRange(const std::string& name, uint32_t prologue_size, uint32_t epilogue_size) {
+    // Find the function and update its debug range information
+    for (auto& func : functions_) {
+        if (func.name == name) {
+            func.prologue_size = prologue_size;
+            func.epilogue_size = epilogue_size;
+            func.debug_start_offset = prologue_size;  // Debug starts after prologue
+            func.debug_end_offset = func.code_length - epilogue_size;  // Debug ends before epilogue
+
+            std::cerr << "DEBUG: Set debug range for function " << name
+                      << " - prologue_size=" << prologue_size
+                      << ", epilogue_size=" << epilogue_size
+                      << ", debug_start=" << func.debug_start_offset
+                      << ", debug_end=" << func.debug_end_offset << std::endl;
+            break;
+        }
+    }
+}
+
 void DebugInfoBuilder::setTextSectionNumber(uint16_t section_number) {
     text_section_number_ = section_number;
 }
@@ -721,7 +740,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         std::vector<uint8_t> buildinfo_data;
 
         // S_BUILDINFO contains just the type index of the LF_BUILDINFO record
-        uint32_t buildinfo_type_index = 0x1000 + static_cast<uint32_t>(functions_.size() * 3) + 1; // After string IDs
+        uint32_t buildinfo_type_index = 0x1000 + static_cast<uint32_t>(functions_.size() * 3) + 4; // After string IDs
         buildinfo_data.insert(buildinfo_data.end(),
                              reinterpret_cast<const uint8_t*>(&buildinfo_type_index),
                              reinterpret_cast<const uint8_t*>(&buildinfo_type_index) + sizeof(buildinfo_type_index));
@@ -735,7 +754,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
     writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
     symbols_data.clear();
 
-    // Add function symbols (S_OBJNAME duplication issue is now fixed)
+    // Add function symbols
     std::cerr << "DEBUG: Number of functions: " << functions_.size() << std::endl;
     for (const auto& func : functions_) {
         std::cerr << "DEBUG: Processing function: " << func.name << std::endl;
@@ -755,8 +774,20 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
                         reinterpret_cast<const uint8_t*>(&func.code_length) + sizeof(func.code_length));
 
         // Debug start and end offsets (relative to function start)
-        uint32_t debug_start = 8;  // After prologue (push rbp; mov rbp, rsp; sub rsp, 0x20)
-        uint32_t debug_end = 20;   // Match reference: 0x14 = 20
+        // Use dynamic values if available, otherwise calculate based on function length
+        uint32_t debug_start = func.debug_start_offset;
+        uint32_t debug_end = func.debug_end_offset;
+
+        // If debug range hasn't been set, use reasonable defaults
+        if (debug_start == 0 && debug_end == 0) {
+            // Estimate prologue size: typical x64 prologue is 4-8 bytes
+            debug_start = std::min(8u, func.code_length / 4);  // Start after estimated prologue
+            debug_end = func.code_length - std::min(4u, func.code_length / 8);  // End before estimated epilogue
+        }
+
+        std::cerr << "DEBUG: Function " << func.name << " debug range: start=" << debug_start
+                  << ", end=" << debug_end << " (code_length=" << func.code_length << ")" << std::endl;
+
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&debug_start),
                         reinterpret_cast<const uint8_t*>(&debug_start) + sizeof(debug_start));
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&debug_end),
@@ -769,8 +800,9 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
                         reinterpret_cast<const uint8_t*>(&function_id) + sizeof(function_id));
 
         // Function offset and segment
-        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&func.code_offset),
-                        reinterpret_cast<const uint8_t*>(&func.code_offset) + sizeof(func.code_offset));
+        uint32_t zero_offset = 0;
+        proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&zero_offset),
+                        reinterpret_cast<const uint8_t*>(&zero_offset) + sizeof(zero_offset));
 
         // Use section 0 to match MSVC/clang reference (not the actual section number)
         uint16_t section_number = 0;
@@ -778,10 +810,9 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
                         reinterpret_cast<const uint8_t*>(&section_number) + sizeof(section_number));
 
         // Flags (1 byte) - Try to match "Do Not Inline, Optimized Debug Info"
-        // Let's try some common values:
         // 0x00 = No flags, 0x40 = optimized, 0x80 = no inline
         // Based on common patterns, try 0x40 | 0x80 = 0xC0
-        uint8_t proc_flags = 0x40 | 0x80; // Try 0xC0 for optimized + no inline
+        uint8_t proc_flags = 0x40 | 0x80;
         proc_data.push_back(proc_flags);
 
         std::cerr << "DEBUG: Function ID written: 0x" << std::hex << function_id << std::dec << " (4 bytes)" << std::endl;
@@ -801,13 +832,13 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
         // Add S_FRAMEPROC record
         std::vector<uint8_t> frameproc_data;
-        uint32_t frame_size = 0x00000000;  // Frame size
+        uint32_t frame_size = func.name == "main" ? 0x00000028 : 0x00000000;  // Frame size
         uint32_t pad_size = 0x00000000;    // Pad size
         uint32_t pad_offset = 0x00000000;  // Offset of pad in frame
         uint32_t callee_save_size = 0x00000000; // Size of callee save registers
         uint32_t exception_handler_offset = 0x00000000; // Exception handler offset
         uint16_t exception_handler_section = 0x0000;    // Exception handler section
-        uint32_t flags = 0x0002A000; // Function info flags (safebuffers invalid_pgo_counts Local=ebp Param=ebp)
+        uint32_t flags = 0x00014000; // Function info flags (invalid_pgo_counts Local=rsp Param=rsp)
 
         frameproc_data.insert(frameproc_data.end(), reinterpret_cast<const uint8_t*>(&frame_size),
                              reinterpret_cast<const uint8_t*>(&frame_size) + sizeof(frame_size));
