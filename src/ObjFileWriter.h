@@ -56,6 +56,13 @@ public:
 		sectiontype_to_index[SectionType::TEXT] = section_text->get_index();
 		sectiontype_to_name[SectionType::TEXT] = ".text$mn";
 
+		auto section_drectve = add_section(".drectve", IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE, SectionType::DRECTVE);
+		section_drectve->append_data(" /DEFAULTLIB:\"LIBCMT\" "); // MSVC also contains '/DEFAULTLIB:\"OLDNAMES\" ', but it doesn't seem to be needed?
+		auto symbol_drectve = coffi_.add_symbol(".drectve");
+		symbol_drectve->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_drectve->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_drectve->set_section_number(section_drectve->get_index() + 1);
+
 		auto symbol_text = coffi_.add_symbol(".text$mn");
 		symbol_text->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 		symbol_text->set_storage_class(IMAGE_SYM_CLASS_STATIC);
