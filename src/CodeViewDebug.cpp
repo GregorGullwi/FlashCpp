@@ -657,6 +657,50 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         std::cerr << "DEBUG: S_OBJNAME symbol written, symbols_data size: " << symbols_data.size() << std::endl;
     }
 
+    // Add S_COMPILE3 symbol
+    {
+        std::vector<uint8_t> compile3_data;
+
+        // Create S_COMPILE3 structure
+        CompileSymbol3 compile3;
+        compile3.language = CV_CFL_CXX;           // C++ (0x01)
+        compile3.flags[0] = 0x00;                 // No special flags
+        compile3.flags[1] = 0x00;                 // No special flags
+        compile3.flags[2] = 0x00;                 // No special flags
+        compile3.machine = CV_CFL_X64;            // x64 target (0xD0)
+        compile3.frontend_major = 1;              // FlashCpp version
+        compile3.frontend_minor = 0;
+        compile3.frontend_build = 0;
+        compile3.frontend_qfe = 0;
+        compile3.backend_major = 1;               // FlashCpp version
+        compile3.backend_minor = 0;
+        compile3.backend_build = 0;
+        compile3.backend_qfe = 0;
+
+        // Debug: Print the structure values
+        std::cerr << "DEBUG: S_COMPILE3 structure:" << std::endl;
+        std::cerr << "  language: 0x" << std::hex << (int)compile3.language << std::dec << std::endl;
+        std::cerr << "  machine: 0x" << std::hex << compile3.machine << std::dec << std::endl;
+        std::cerr << "  frontend version: " << compile3.frontend_major << "." << compile3.frontend_minor
+                  << "." << compile3.frontend_build << "." << compile3.frontend_qfe << std::endl;
+        std::cerr << "  structure size: " << sizeof(compile3) << " bytes" << std::endl;
+
+        // Add structure to data
+        compile3_data.insert(compile3_data.end(),
+                            reinterpret_cast<const uint8_t*>(&compile3),
+                            reinterpret_cast<const uint8_t*>(&compile3) + sizeof(compile3));
+
+        // Add version string
+        const char* version_string = "FlashCpp C++20 Compiler";
+        compile3_data.insert(compile3_data.end(),
+                            reinterpret_cast<const uint8_t*>(version_string),
+                            reinterpret_cast<const uint8_t*>(version_string) + strlen(version_string));
+        compile3_data.push_back(0); // Null terminator
+
+        writeSymbolRecord(symbols_data, SymbolKind::S_COMPILE3, compile3_data);
+        std::cerr << "DEBUG: S_COMPILE3 symbol written, symbols_data size: " << symbols_data.size() << std::endl;
+    }
+
     // Write symbols subsection
     std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
     writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
