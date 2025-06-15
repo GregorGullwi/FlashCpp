@@ -553,11 +553,10 @@ ParseResult Parser::parse_expression(int precedence)
 
 		if (auto leftNode = result.node()) {
 			if (auto rightNode = rhs_result.node()) {
-				return ParseResult::success(emplace_node<ExpressionNode>(
+				result = ParseResult::success(emplace_node<ExpressionNode>(
 					BinaryOperatorNode(operator_token, *leftNode, *rightNode)));
 			}
 		}
-		return result;
 	}
 
 	return result;
@@ -666,7 +665,55 @@ ParseResult Parser::parse_primary_expression()
 		// Get the identifier's type information from the symbol table
 		auto identifierType = gSymbolTable.lookup(idenfifier_token.value());
 		if (!identifierType) {
-			return ParseResult::error("Missing identifier", *current_token_);
+			// Check if this is a function call (forward reference)
+			consume_token();
+			if (consume_punctuator("(")) {
+				// Create a forward declaration for the function
+				// We'll assume it returns int for now (this is a simplification)
+				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+				auto forward_decl = emplace_node<DeclarationNode>(type_node, idenfifier_token);
+
+				// Add to symbol table as a forward declaration
+				gSymbolTable.insert(idenfifier_token.value(), forward_decl);
+				identifierType = forward_decl;
+
+				if (!peek_token().has_value())
+					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
+
+				ChunkedVector<ASTNode> args;
+				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+					ParseResult argResult = parse_expression(0);
+					if (argResult.is_error()) {
+						return argResult;
+					}
+
+					if (auto node = argResult.node()) {
+						args.push_back(*node);
+					}
+
+					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+						consume_token(); // Consume comma
+					}
+					else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+						return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
+					}
+
+					if (!peek_token().has_value())
+						return ParseResult::error(ParserError::NotImplemented, Token());
+				}
+
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				}
+
+				// Additional type checking and verification logic can be performed here using identifierType
+
+				result = emplace_node<ExpressionNode>(FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args)));
+			}
+			else {
+				// Not a function call, but identifier not found - this is an error
+				return ParseResult::error("Missing identifier", idenfifier_token);
+			}
 		}
 		else if (!identifierType->is<DeclarationNode>()) {
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
