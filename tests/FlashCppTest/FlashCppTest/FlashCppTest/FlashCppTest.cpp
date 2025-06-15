@@ -42,8 +42,11 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
     Parser parser(lexer);
     auto parse_result = parser.parse();
 
+	CHECK(!parse_result.is_error());
+
     if (parse_result.is_error()) {
         std::printf("Parse error in %s: %s\n", test_name.c_str(), parse_result.error_message().c_str());
+		return;
     }
 
     const auto& ast = parser.get_nodes();
@@ -65,12 +68,11 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 
     if (generate_obj) {
         IrToObjConverter irConverter;
-        std::string obj_filename = filename.substr(0, filename.find_last_of('.')) + ".obj";
+        std::string obj_filename = "tests/Reference/x64/" + filename.substr(0, filename.find_last_of('.')) + ".obj";
         irConverter.convert(ir, obj_filename.c_str(), filename);
     }
 
     // For now, don't fail tests due to parsing issues while we're developing
-    // CHECK(!parse_result.is_error());
 }
 
 static bool compare_lexers_ignore_whitespace(Lexer& lexer1, Lexer& lexer2) {
@@ -936,7 +938,7 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 }
 
 TEST_CASE("Shift operations") {
-	run_test_from_file("shift_operations.cpp", "Shift operations", false);
+	run_test_from_file("shift_operations.cpp", "Shift operations", true);
 }
 
 TEST_CASE("Signed vs Unsigned support") {
