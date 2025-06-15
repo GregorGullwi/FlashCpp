@@ -19,6 +19,7 @@ enum class SectionType : unsigned char
 	PDATA,
 	DEBUG_S,
 	DEBUG_T,
+	LLVM_ADDRSIG,
 
 	Count
 };
@@ -62,6 +63,46 @@ public:
 		symbol_drectve->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 		symbol_drectve->set_storage_class(IMAGE_SYM_CLASS_STATIC);
 		symbol_drectve->set_section_number(section_drectve->get_index() + 1);
+
+		// Add .data section
+		auto section_data = add_section(".data", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES, SectionType::DATA);
+		auto symbol_data = coffi_.add_symbol(".data");
+		symbol_data->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_data->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_data->set_section_number(section_data->get_index() + 1);
+		symbol_data->set_value(0);
+
+		// Add .bss section
+		auto section_bss = add_section(".bss", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_UNINITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES, SectionType::BSS);
+		auto symbol_bss = coffi_.add_symbol(".bss");
+		symbol_bss->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_bss->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_bss->set_section_number(section_bss->get_index() + 1);
+		symbol_bss->set_value(0);
+
+		// Add .xdata section (exception handling data)
+		auto section_xdata = add_section(".xdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES, SectionType::XDATA);
+		auto symbol_xdata = coffi_.add_symbol(".xdata");
+		symbol_xdata->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_xdata->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_xdata->set_section_number(section_xdata->get_index() + 1);
+		symbol_xdata->set_value(0);
+
+		// Add .pdata section (procedure data for exception handling)
+		auto section_pdata = add_section(".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES, SectionType::PDATA);
+		auto symbol_pdata = coffi_.add_symbol(".pdata");
+		symbol_pdata->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_pdata->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_pdata->set_section_number(section_pdata->get_index() + 1);
+		symbol_pdata->set_value(0);
+
+		// Add .llvm_addrsig section (LLVM address significance table)
+		auto section_llvm_addrsig = add_section(".llvm_addrsig", IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_ALIGN_1BYTES, SectionType::LLVM_ADDRSIG);
+		auto symbol_llvm_addrsig = coffi_.add_symbol(".llvm_addrsig");
+		symbol_llvm_addrsig->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_llvm_addrsig->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_llvm_addrsig->set_section_number(section_llvm_addrsig->get_index() + 1);
+		symbol_llvm_addrsig->set_value(0);
 
 		auto symbol_text = coffi_.add_symbol(".text$mn");
 		symbol_text->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
@@ -292,6 +333,11 @@ protected:
 			auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 			auto debug_s_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_S]];
 			auto debug_t_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_T]];
+			auto data_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DATA]];
+			auto bss_section = coffi_.get_sections()[sectiontype_to_index[SectionType::BSS]];
+			auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+			auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
+			auto llvm_addrsig_section = coffi_.get_sections()[sectiontype_to_index[SectionType::LLVM_ADDRSIG]];
 
 			auto text_data_size = text_section->get_data_size();
 			auto text_data_ptr = text_section->get_data();
@@ -299,8 +345,21 @@ protected:
 			auto debug_s_data_ptr = debug_s_section->get_data();
 			auto debug_t_data_size = debug_t_section->get_data_size();
 			auto debug_t_data_ptr = debug_t_section->get_data();
+			auto data_data_size = data_section->get_data_size();
+			auto data_data_ptr = data_section->get_data();
+			auto bss_data_size = bss_section->get_data_size();
+			auto bss_data_ptr = bss_section->get_data();
+			auto xdata_data_size = xdata_section->get_data_size();
+			auto xdata_data_ptr = xdata_section->get_data();
+			auto pdata_data_size = pdata_section->get_data_size();
+			auto pdata_data_ptr = pdata_section->get_data();
+			auto llvm_addrsig_data_size = llvm_addrsig_section->get_data_size();
+			auto llvm_addrsig_data_ptr = llvm_addrsig_section->get_data();
 
-			std::cerr << "Manual save: text=" << text_data_size << " bytes, debug_s=" << debug_s_data_size << " bytes, debug_t=" << debug_t_data_size << " bytes" << std::endl;
+			std::cerr << "Manual save: text=" << text_data_size << " bytes, debug_s=" << debug_s_data_size
+					  << " bytes, debug_t=" << debug_t_data_size << " bytes, data=" << data_data_size
+					  << " bytes, bss=" << bss_data_size << " bytes, xdata=" << xdata_data_size
+					  << " bytes, pdata=" << pdata_data_size << " bytes, llvm_addrsig=" << llvm_addrsig_data_size << " bytes" << std::endl;
 
 			// Create a simple COFF file manually with debug sections
 			std::ofstream file(filename, std::ios::binary);
@@ -315,10 +374,10 @@ protected:
 
 			// COFF Header (20 bytes)
 			uint16_t machine = 0x8664;  // IMAGE_FILE_MACHINE_AMD64
-			uint16_t numberOfSections = 3;  // .debug$S, .debug$T, .text$mn
+			uint16_t numberOfSections = 8;  // .debug$S, .debug$T, .text$mn, .data, .bss, .xdata, .pdata, .llvm_addrsig
 			uint32_t timeDateStamp = static_cast<uint32_t>(1718360000);
-			uint32_t pointerToSymbolTable = 20 + (3 * 40);  // After header + 3 section headers
-			uint32_t numberOfSymbols = 2 + static_cast<uint32_t>(functions.size());  // .text$mn, @feat.00, + function symbols
+			uint32_t pointerToSymbolTable = 20 + (8 * 40);  // After header + 8 section headers
+			uint32_t numberOfSymbols = 7 + static_cast<uint32_t>(functions.size());  // section symbols + @feat.00 + function symbols
 			uint16_t sizeOfOptionalHeader = 0;
 			uint16_t characteristics = 0x0004;  // IMAGE_FILE_LARGE_ADDRESS_AWARE
 
@@ -332,7 +391,7 @@ protected:
 
 			// Calculate data pointers
 			uint32_t symbolTableSize = numberOfSymbols * 18 + 4;  // symbols + string table size
-			uint32_t dataStart = 20 + (3 * 40) + symbolTableSize;  // After headers + symbol table
+			uint32_t dataStart = 20 + (8 * 40) + symbolTableSize;  // After headers + symbol table
 
 			// Section Header 1: .debug$S (40 bytes)
 			char debugSName[8] = {'.', 'd', 'e', 'b', 'u', 'g', '$', 'S'};
@@ -382,7 +441,87 @@ protected:
 			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
 			file.write(reinterpret_cast<const char*>(&text_characteristics), 4);
 
-			// Symbol Table (4 symbols * 18 bytes each = 72 bytes)
+			// Section Header 4: .data (40 bytes)
+			char dataName[8] = {'.', 'd', 'a', 't', 'a', '\0', '\0', '\0'};
+			uint32_t data_virtualSize = 0;
+			uint32_t data_virtualAddress = 0;
+			uint32_t data_sizeOfRawData = static_cast<uint32_t>(data_data_size);
+			uint32_t data_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size;
+			uint32_t data_characteristics = 0x40300040;  // INITIALIZED_DATA | READ | WRITE | ALIGN_8BYTES
+
+			file.write(dataName, 8);
+			file.write(reinterpret_cast<const char*>(&data_virtualSize), 4);
+			file.write(reinterpret_cast<const char*>(&data_virtualAddress), 4);
+			file.write(reinterpret_cast<const char*>(&data_sizeOfRawData), 4);
+			file.write(reinterpret_cast<const char*>(&data_pointerToRawData), 4);
+			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
+			file.write(reinterpret_cast<const char*>(&data_characteristics), 4);
+
+			// Section Header 5: .bss (40 bytes)
+			char bssName[8] = {'.', 'b', 's', 's', '\0', '\0', '\0', '\0'};
+			uint32_t bss_virtualSize = 0;
+			uint32_t bss_virtualAddress = 0;
+			uint32_t bss_sizeOfRawData = static_cast<uint32_t>(bss_data_size);
+			uint32_t bss_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size;
+			uint32_t bss_characteristics = 0x40300080;  // UNINITIALIZED_DATA | READ | WRITE | ALIGN_8BYTES
+
+			file.write(bssName, 8);
+			file.write(reinterpret_cast<const char*>(&bss_virtualSize), 4);
+			file.write(reinterpret_cast<const char*>(&bss_virtualAddress), 4);
+			file.write(reinterpret_cast<const char*>(&bss_sizeOfRawData), 4);
+			file.write(reinterpret_cast<const char*>(&bss_pointerToRawData), 4);
+			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
+			file.write(reinterpret_cast<const char*>(&bss_characteristics), 4);
+
+			// Section Header 6: .xdata (40 bytes)
+			char xdataName[8] = {'.', 'x', 'd', 'a', 't', 'a', '\0', '\0'};
+			uint32_t xdata_virtualSize = 0;
+			uint32_t xdata_virtualAddress = 0;
+			uint32_t xdata_sizeOfRawData = static_cast<uint32_t>(xdata_data_size);
+			uint32_t xdata_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size + bss_data_size;
+			uint32_t xdata_characteristics = 0x40200040;  // INITIALIZED_DATA | READ | ALIGN_4BYTES
+
+			file.write(xdataName, 8);
+			file.write(reinterpret_cast<const char*>(&xdata_virtualSize), 4);
+			file.write(reinterpret_cast<const char*>(&xdata_virtualAddress), 4);
+			file.write(reinterpret_cast<const char*>(&xdata_sizeOfRawData), 4);
+			file.write(reinterpret_cast<const char*>(&xdata_pointerToRawData), 4);
+			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
+			file.write(reinterpret_cast<const char*>(&xdata_characteristics), 4);
+
+			// Section Header 7: .pdata (40 bytes)
+			char pdataName[8] = {'.', 'p', 'd', 'a', 't', 'a', '\0', '\0'};
+			uint32_t pdata_virtualSize = 0;
+			uint32_t pdata_virtualAddress = 0;
+			uint32_t pdata_sizeOfRawData = static_cast<uint32_t>(pdata_data_size);
+			uint32_t pdata_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size + bss_data_size + xdata_data_size;
+			uint32_t pdata_characteristics = 0x40200040;  // INITIALIZED_DATA | READ | ALIGN_4BYTES
+
+			file.write(pdataName, 8);
+			file.write(reinterpret_cast<const char*>(&pdata_virtualSize), 4);
+			file.write(reinterpret_cast<const char*>(&pdata_virtualAddress), 4);
+			file.write(reinterpret_cast<const char*>(&pdata_sizeOfRawData), 4);
+			file.write(reinterpret_cast<const char*>(&pdata_pointerToRawData), 4);
+			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
+			file.write(reinterpret_cast<const char*>(&pdata_characteristics), 4);
+
+			// Section Header 8: .llvm_addrsig (40 bytes)
+			char llvmAddrsigName[8] = {'.', 'l', 'l', 'v', 'm', '_', 'a', 'd'};
+			uint32_t llvm_addrsig_virtualSize = 0;
+			uint32_t llvm_addrsig_virtualAddress = 0;
+			uint32_t llvm_addrsig_sizeOfRawData = static_cast<uint32_t>(llvm_addrsig_data_size);
+			uint32_t llvm_addrsig_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size + bss_data_size + xdata_data_size + pdata_data_size;
+			uint32_t llvm_addrsig_characteristics = 0x02100040;  // LNK_REMOVE | ALIGN_1BYTES
+
+			file.write(llvmAddrsigName, 8);
+			file.write(reinterpret_cast<const char*>(&llvm_addrsig_virtualSize), 4);
+			file.write(reinterpret_cast<const char*>(&llvm_addrsig_virtualAddress), 4);
+			file.write(reinterpret_cast<const char*>(&llvm_addrsig_sizeOfRawData), 4);
+			file.write(reinterpret_cast<const char*>(&llvm_addrsig_pointerToRawData), 4);
+			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
+			file.write(reinterpret_cast<const char*>(&llvm_addrsig_characteristics), 4);
+
+			// Symbol Table (section symbols + @feat.00 + function symbols)
 			// Symbol 1: .text$mn (section symbol)
 			char symbol1_name[8] = {'.', 't', 'e', 'x', 't', '$', 'm', 'n'};
 			uint32_t symbol1_value = 0;
@@ -398,21 +537,97 @@ protected:
 			file.write(reinterpret_cast<const char*>(&symbol1_class), 1);
 			file.write(reinterpret_cast<const char*>(&symbol1_aux), 1);
 
-			// Symbol 2: @feat.00
-			uint32_t symbol2_name_offset = 4;  // Offset in string table
-			uint32_t symbol2_value = 0x80010190;
-			uint16_t symbol2_section = 0xFFFF;  // IMAGE_SYM_ABSOLUTE
+			// Symbol 2: .data (section symbol)
+			char symbol2_name[8] = {'.', 'd', 'a', 't', 'a', '\0', '\0', '\0'};
+			uint32_t symbol2_value = 0;
+			uint16_t symbol2_section = 4;  // .data is section 4 (1-based)
 			uint16_t symbol2_type = 0;
 			uint8_t symbol2_class = 3;  // IMAGE_SYM_CLASS_STATIC
 			uint8_t symbol2_aux = 0;
 
-			file.write(reinterpret_cast<const char*>(&symbol2_name_offset), 4);
-			file.write("\0\0\0\0", 4);  // Second part of name (unused for long names)
+			file.write(symbol2_name, 8);
 			file.write(reinterpret_cast<const char*>(&symbol2_value), 4);
 			file.write(reinterpret_cast<const char*>(&symbol2_section), 2);
 			file.write(reinterpret_cast<const char*>(&symbol2_type), 2);
 			file.write(reinterpret_cast<const char*>(&symbol2_class), 1);
 			file.write(reinterpret_cast<const char*>(&symbol2_aux), 1);
+
+			// Symbol 3: .bss (section symbol)
+			char symbol3_name[8] = {'.', 'b', 's', 's', '\0', '\0', '\0', '\0'};
+			uint32_t symbol3_value = 0;
+			uint16_t symbol3_section = 5;  // .bss is section 5 (1-based)
+			uint16_t symbol3_type = 0;
+			uint8_t symbol3_class = 3;  // IMAGE_SYM_CLASS_STATIC
+			uint8_t symbol3_aux = 0;
+
+			file.write(symbol3_name, 8);
+			file.write(reinterpret_cast<const char*>(&symbol3_value), 4);
+			file.write(reinterpret_cast<const char*>(&symbol3_section), 2);
+			file.write(reinterpret_cast<const char*>(&symbol3_type), 2);
+			file.write(reinterpret_cast<const char*>(&symbol3_class), 1);
+			file.write(reinterpret_cast<const char*>(&symbol3_aux), 1);
+
+			// Symbol 4: .xdata (section symbol)
+			char symbol4_name[8] = {'.', 'x', 'd', 'a', 't', 'a', '\0', '\0'};
+			uint32_t symbol4_value = 0;
+			uint16_t symbol4_section = 6;  // .xdata is section 6 (1-based)
+			uint16_t symbol4_type = 0;
+			uint8_t symbol4_class = 3;  // IMAGE_SYM_CLASS_STATIC
+			uint8_t symbol4_aux = 0;
+
+			file.write(symbol4_name, 8);
+			file.write(reinterpret_cast<const char*>(&symbol4_value), 4);
+			file.write(reinterpret_cast<const char*>(&symbol4_section), 2);
+			file.write(reinterpret_cast<const char*>(&symbol4_type), 2);
+			file.write(reinterpret_cast<const char*>(&symbol4_class), 1);
+			file.write(reinterpret_cast<const char*>(&symbol4_aux), 1);
+
+			// Symbol 5: .pdata (section symbol)
+			char symbol5_name[8] = {'.', 'p', 'd', 'a', 't', 'a', '\0', '\0'};
+			uint32_t symbol5_value = 0;
+			uint16_t symbol5_section = 7;  // .pdata is section 7 (1-based)
+			uint16_t symbol5_type = 0;
+			uint8_t symbol5_class = 3;  // IMAGE_SYM_CLASS_STATIC
+			uint8_t symbol5_aux = 0;
+
+			file.write(symbol5_name, 8);
+			file.write(reinterpret_cast<const char*>(&symbol5_value), 4);
+			file.write(reinterpret_cast<const char*>(&symbol5_section), 2);
+			file.write(reinterpret_cast<const char*>(&symbol5_type), 2);
+			file.write(reinterpret_cast<const char*>(&symbol5_class), 1);
+			file.write(reinterpret_cast<const char*>(&symbol5_aux), 1);
+
+			// Symbol 6: .llvm_addrsig (section symbol) - use string table for long name
+			uint32_t symbol6_name_offset = 13;  // Offset in string table (after "@feat.00\0")
+			uint32_t symbol6_value = 0;
+			uint16_t symbol6_section = 8;  // .llvm_addrsig is section 8 (1-based)
+			uint16_t symbol6_type = 0;
+			uint8_t symbol6_class = 3;  // IMAGE_SYM_CLASS_STATIC
+			uint8_t symbol6_aux = 0;
+
+			file.write(reinterpret_cast<const char*>(&symbol6_name_offset), 4);
+			file.write("\0\0\0\0", 4);  // Second part of name (unused for long names)
+			file.write(reinterpret_cast<const char*>(&symbol6_value), 4);
+			file.write(reinterpret_cast<const char*>(&symbol6_section), 2);
+			file.write(reinterpret_cast<const char*>(&symbol6_type), 2);
+			file.write(reinterpret_cast<const char*>(&symbol6_class), 1);
+			file.write(reinterpret_cast<const char*>(&symbol6_aux), 1);
+
+			// Symbol 7: @feat.00
+			uint32_t symbol7_name_offset = 4;  // Offset in string table
+			uint32_t symbol7_value = 0x80010190;
+			uint16_t symbol7_section = 0xFFFF;  // IMAGE_SYM_ABSOLUTE
+			uint16_t symbol7_type = 0;
+			uint8_t symbol7_class = 3;  // IMAGE_SYM_CLASS_STATIC
+			uint8_t symbol7_aux = 0;
+
+			file.write(reinterpret_cast<const char*>(&symbol7_name_offset), 4);
+			file.write("\0\0\0\0", 4);  // Second part of name (unused for long names)
+			file.write(reinterpret_cast<const char*>(&symbol7_value), 4);
+			file.write(reinterpret_cast<const char*>(&symbol7_section), 2);
+			file.write(reinterpret_cast<const char*>(&symbol7_type), 2);
+			file.write(reinterpret_cast<const char*>(&symbol7_class), 1);
+			file.write(reinterpret_cast<const char*>(&symbol7_aux), 1);
 
 			// Dynamic function symbols
 			for (const auto& func : functions) {
@@ -440,9 +655,9 @@ protected:
 			}
 
 			// String Table
-			uint32_t stringTableSize = 12;  // 4 bytes for size + "@feat.00\0"
+			uint32_t stringTableSize = 28;  // 4 bytes for size + "@feat.00\0" + ".llvm_addrsig\0"
 			file.write(reinterpret_cast<const char*>(&stringTableSize), 4);
-			file.write("@feat.00\0", 9);
+			file.write("@feat.00\0.llvm_addrsig\0", 24);
 
 			// Section Data
 			// Write .debug$S data
@@ -453,6 +668,31 @@ protected:
 
 			// Write .text$mn data
 			file.write(text_data_ptr, text_data_size);
+
+			// Write .data data
+			if (data_data_size > 0) {
+				file.write(data_data_ptr, data_data_size);
+			}
+
+			// Write .bss data (usually empty for uninitialized data)
+			if (bss_data_size > 0) {
+				file.write(bss_data_ptr, bss_data_size);
+			}
+
+			// Write .xdata data
+			if (xdata_data_size > 0) {
+				file.write(xdata_data_ptr, xdata_data_size);
+			}
+
+			// Write .pdata data
+			if (pdata_data_size > 0) {
+				file.write(pdata_data_ptr, pdata_data_size);
+			}
+
+			// Write .llvm_addrsig data
+			if (llvm_addrsig_data_size > 0) {
+				file.write(llvm_addrsig_data_ptr, llvm_addrsig_data_size);
+			}
 
 			file.close();
 			std::cerr << "Manual COFF file created successfully!" << std::endl;
