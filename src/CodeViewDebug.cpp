@@ -317,13 +317,15 @@ uint32_t DebugInfoBuilder::addString(const std::string& str) {
 
 void DebugInfoBuilder::initializeFunctionIdMap() {
     // Dynamically generate function ID mapping based on actual functions
-    // For simplified type generation, we only generate LF_FUNC_ID records
-    // Type indices start at 0x1000 and increment by 1 for each function
+    // Each function gets 3 type records: LF_ARGLIST, LF_PROCEDURE, LF_FUNC_ID
+    // S_GPROC32_ID should reference the LF_FUNC_ID (third record for each function)
 
     function_id_map_.clear();
 
     for (size_t i = 0; i < functions_.size(); ++i) {
-        uint32_t func_id_index = 0x1000 + static_cast<uint32_t>(i); // Simple increment
+        // Each function gets 3 type indices: arglist, procedure, func_id
+        // func_id is at offset +2 from the base index
+        uint32_t func_id_index = 0x1000 + static_cast<uint32_t>(i * 3) + 2; // LF_FUNC_ID index
         function_id_map_[functions_[i].name] = func_id_index;
     }
 
@@ -390,6 +392,19 @@ void DebugInfoBuilder::alignTo4Bytes(std::vector<uint8_t>& data) {
     while (data.size() % 4 != 0) {
         data.push_back(0);
     }
+}
+
+// Helper function to write little-endian integers
+void DebugInfoBuilder::writeLittleEndian32(std::vector<uint8_t>& data, uint32_t value) {
+    data.push_back(static_cast<uint8_t>(value & 0xFF));
+    data.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    data.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+    data.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+}
+
+void DebugInfoBuilder::writeLittleEndian16(std::vector<uint8_t>& data, uint16_t value) {
+    data.push_back(static_cast<uint8_t>(value & 0xFF));
+    data.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
 }
 
 std::vector<uint8_t> DebugInfoBuilder::generateFileChecksums() {
@@ -701,6 +716,20 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         std::cerr << "DEBUG: S_COMPILE3 symbol written, symbols_data size: " << symbols_data.size() << std::endl;
     }
 
+    // Add S_BUILDINFO symbol
+    {
+        std::vector<uint8_t> buildinfo_data;
+
+        // S_BUILDINFO contains just the type index of the LF_BUILDINFO record
+        uint32_t buildinfo_type_index = 0x1000 + static_cast<uint32_t>(functions_.size() * 3) + 1; // After string IDs
+        buildinfo_data.insert(buildinfo_data.end(),
+                             reinterpret_cast<const uint8_t*>(&buildinfo_type_index),
+                             reinterpret_cast<const uint8_t*>(&buildinfo_type_index) + sizeof(buildinfo_type_index));
+
+        writeSymbolRecord(symbols_data, SymbolKind::S_BUILDINFO, buildinfo_data);
+        std::cerr << "DEBUG: S_BUILDINFO symbol written, symbols_data size: " << symbols_data.size() << std::endl;
+    }
+
     // Write symbols subsection
     std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
     writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
@@ -945,15 +974,22 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
     }
 
     // Generate type records dynamically for each function
-    // For now, generate only LF_FUNC_ID records to avoid the duplicate issue
+    // Each function gets 3 type records: LF_ARGLIST, LF_PROCEDURE, LF_FUNC_ID
+    uint32_t current_type_index = 0x1000;
+
     for (size_t func_index = 0; func_index < functions_.size(); ++func_index) {
         const auto& func = functions_[func_index];
-        uint32_t base_type_index = 0x1000 + static_cast<uint32_t>(func_index);
+        uint32_t arglist_index = current_type_index;
+        uint32_t procedure_index = current_type_index + 1;
+        uint32_t func_id_index = current_type_index + 2;
 
-        std::cerr << "DEBUG: Generating simplified types for function '" << func.name
-                  << "' with " << func.parameters.size() << " parameters" << std::endl;
+        std::cerr << "DEBUG: Generating types for function '" << func.name
+                  << "' - arglist=0x" << std::hex << arglist_index
+                  << ", procedure=0x" << procedure_index
+                  << ", func_id=0x" << func_id_index << std::dec
+                  << " (" << func.parameters.size() << " parameters)" << std::endl;
 
-        // Generate LF_ARGLIST (base_type_index + 0)
+        // Generate LF_ARGLIST
         {
             std::vector<uint8_t> arglist_data;
 
@@ -979,18 +1015,17 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             // Always align LF_ARGLIST records since they're not the last
             alignTo4Bytes(debug_t_data);
 
-            std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << base_type_index << std::dec
+            std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << arglist_index << std::dec
                       << " (" << arg_count << " args for " << func.name << ")" << std::endl;
         }
 
-        // Generate LF_PROCEDURE (base_type_index + 1)
+        // Generate LF_PROCEDURE
         {
             std::vector<uint8_t> proc_data;
 
             // Return type (T_INT4 = 0x74)
             uint32_t return_type = 0x74;
-            proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&return_type),
-                            reinterpret_cast<const uint8_t*>(&return_type) + sizeof(return_type));
+            writeLittleEndian32(proc_data, return_type);
 
             // Calling convention (0 = C Near, matches clang-cl reference)
             uint8_t calling_conv = 0;
@@ -1002,13 +1037,13 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
 
             // Parameter count
             uint16_t param_count = static_cast<uint16_t>(func.parameters.size());
-            proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&param_count),
-                            reinterpret_cast<const uint8_t*>(&param_count) + sizeof(param_count));
+            writeLittleEndian16(proc_data, param_count);
 
-            // Argument list type index (base_type_index + 0)
-            uint32_t arglist_type = base_type_index;
-            proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&arglist_type),
-                            reinterpret_cast<const uint8_t*>(&arglist_type) + sizeof(arglist_type));
+            // Argument list type index
+            uint32_t arglist_type = arglist_index;
+            std::cerr << "DEBUG: Writing LF_PROCEDURE arglist_type=0x" << std::hex << arglist_type << std::dec
+                      << " (should reference arglist 0x" << std::hex << arglist_index << std::dec << ")" << std::endl;
+            writeLittleEndian32(proc_data, arglist_type);
 
             TypeRecordHeader header;
             header.length = static_cast<uint16_t>(proc_data.size() + sizeof(TypeRecordKind));
@@ -1020,23 +1055,23 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             // Always align LF_PROCEDURE records since they're not the last
             alignTo4Bytes(debug_t_data);
 
-            std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << (base_type_index + 1) << std::dec
+            std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << procedure_index << std::dec
                       << " (" << func.name << " function)" << std::endl;
         }
 
-        // Generate LF_FUNC_ID (base_type_index)
+        // Generate LF_FUNC_ID
         {
             std::vector<uint8_t> func_id_data;
 
-            // Type index (use T_NOTYPE since we're not generating LF_PROCEDURE)
-            uint32_t type_index = 0; // T_NOTYPE
-            func_id_data.insert(func_id_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
-                               reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
+            // Type index (reference to the LF_PROCEDURE type)
+            uint32_t type_index = procedure_index; // Reference to LF_PROCEDURE
+            std::cerr << "DEBUG: Writing LF_FUNC_ID type_index=0x" << std::hex << type_index << std::dec
+                      << " (should reference procedure 0x" << std::hex << procedure_index << std::dec << ")" << std::endl;
+            writeLittleEndian32(func_id_data, type_index);
 
             // Scope (0 = global)
             uint32_t scope = 0;
-            func_id_data.insert(func_id_data.end(), reinterpret_cast<const uint8_t*>(&scope),
-                               reinterpret_cast<const uint8_t*>(&scope) + sizeof(scope));
+            writeLittleEndian32(func_id_data, scope);
 
             // Function name (dynamic)
             for (char c : func.name) {
@@ -1060,13 +1095,172 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             }
             size_t after_align_size = debug_t_data.size();
 
-            std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << base_type_index << std::dec
-                      << " (" << func.name << ") - length=" << header.length
+            std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << func_id_index << std::dec
+                      << " (" << func.name << ") referencing procedure 0x" << std::hex << procedure_index << std::dec
+                      << " - length=" << header.length
                       << ", data_size=" << (after_data_size - before_size)
                       << ", padded_size=" << (after_align_size - before_size)
                       << ", offset=" << before_size << std::endl;
         }
+
+        // Move to next set of type indices
+        current_type_index += 3;
     } // End of function loop
+
+    // TODO: Add build information records (temporarily disabled to test LF_FUNC_ID fix)
+    uint32_t next_type_index = current_type_index;
+    uint32_t buildinfo_type_index = next_type_index + 4; // Will be after 4 string IDs
+
+    std::cerr << "DEBUG: Adding build information starting at type index 0x" << std::hex << next_type_index << std::dec << std::endl;
+
+    // LF_STRING_ID for directory
+    {
+        std::vector<uint8_t> string_data;
+        std::string directory;
+        if (!source_files_.empty()) {
+            std::filesystem::path source_path(source_files_[0]);
+            directory = std::filesystem::absolute(source_path).parent_path().string();
+        } else {
+            directory = std::filesystem::current_path().string(); // Fallback to current directory
+        }
+
+        uint32_t sub_string_id = 0; // No sub string
+        string_data.insert(string_data.end(),
+                          reinterpret_cast<const uint8_t*>(&sub_string_id),
+                          reinterpret_cast<const uint8_t*>(&sub_string_id) + sizeof(sub_string_id));
+        string_data.insert(string_data.end(), directory.begin(), directory.end());
+        string_data.push_back(0); // null terminator
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+        //alignTo4Bytes(debug_t_data);
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << next_type_index << std::dec
+                  << " (directory: " << directory << ")" << std::endl;
+        next_type_index++;
+    }
+
+    // LF_STRING_ID for compiler
+    {
+        std::vector<uint8_t> string_data;
+        std::string compiler = "FlashCpp C++20 Compiler";
+        uint32_t sub_string_id = 0; // No sub string
+        string_data.insert(string_data.end(),
+                          reinterpret_cast<const uint8_t*>(&sub_string_id),
+                          reinterpret_cast<const uint8_t*>(&sub_string_id) + sizeof(sub_string_id));
+        string_data.insert(string_data.end(), compiler.begin(), compiler.end());
+        string_data.push_back(0); // null terminator
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << next_type_index << std::dec
+                  << " (compiler)" << std::endl;
+        next_type_index++;
+    }
+
+    // LF_STRING_ID for source file (dynamic based on first source file)
+    {
+        std::vector<uint8_t> string_data;
+        std::string source_file;
+        if (!source_files_.empty()) {
+            std::filesystem::path source_path(source_files_[0]);
+            source_file = source_path.filename().string(); // Just the filename, not full path
+        } else {
+            source_file = "unknown.cpp"; // Fallback
+        }
+
+        uint32_t sub_string_id = 0; // No sub string
+        string_data.insert(string_data.end(),
+                          reinterpret_cast<const uint8_t*>(&sub_string_id),
+                          reinterpret_cast<const uint8_t*>(&sub_string_id) + sizeof(sub_string_id));
+        string_data.insert(string_data.end(), source_file.begin(), source_file.end());
+        string_data.push_back(0); // null terminator
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << next_type_index << std::dec
+                  << " (source file: " << source_file << ")" << std::endl;
+        next_type_index++;
+    }
+
+    // LF_STRING_ID for command line (empty)
+    {
+        std::vector<uint8_t> string_data;
+        std::string cmdline = "";
+        uint32_t sub_string_id = 0; // No sub string
+        string_data.insert(string_data.end(),
+                          reinterpret_cast<const uint8_t*>(&sub_string_id),
+                          reinterpret_cast<const uint8_t*>(&sub_string_id) + sizeof(sub_string_id));
+        string_data.insert(string_data.end(), cmdline.begin(), cmdline.end());
+        string_data.push_back(0); // null terminator
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << next_type_index << std::dec
+                  << " (command line)" << std::endl;
+        next_type_index++;
+    }
+
+    // LF_BUILDINFO
+    {
+        std::vector<uint8_t> buildinfo_data;
+        uint16_t count = 4; // Number of string IDs
+        buildinfo_data.insert(buildinfo_data.end(),
+                             reinterpret_cast<const uint8_t*>(&count),
+                             reinterpret_cast<const uint8_t*>(&count) + sizeof(count));
+
+        // Add string ID references (directory, compiler, source, cmdline)
+        uint32_t dir_id = next_type_index - 4;
+        uint32_t compiler_id = next_type_index - 3;
+        uint32_t source_id = next_type_index - 2;
+        uint32_t cmdline_id = next_type_index - 1;
+
+        buildinfo_data.insert(buildinfo_data.end(),
+                             reinterpret_cast<const uint8_t*>(&dir_id),
+                             reinterpret_cast<const uint8_t*>(&dir_id) + sizeof(dir_id));
+        buildinfo_data.insert(buildinfo_data.end(),
+                             reinterpret_cast<const uint8_t*>(&compiler_id),
+                             reinterpret_cast<const uint8_t*>(&compiler_id) + sizeof(compiler_id));
+        buildinfo_data.insert(buildinfo_data.end(),
+                             reinterpret_cast<const uint8_t*>(&source_id),
+                             reinterpret_cast<const uint8_t*>(&source_id) + sizeof(source_id));
+        buildinfo_data.insert(buildinfo_data.end(),
+                             reinterpret_cast<const uint8_t*>(&cmdline_id),
+                             reinterpret_cast<const uint8_t*>(&cmdline_id) + sizeof(cmdline_id));
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(buildinfo_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_BUILDINFO;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), buildinfo_data.begin(), buildinfo_data.end());
+
+        std::cerr << "DEBUG: Added LF_BUILDINFO 0x" << std::hex << buildinfo_type_index << std::dec << std::endl;
+    }
 
     std::cerr << "DEBUG: Final .debug$T section size: " << debug_t_data.size() << " bytes" << std::endl;
 

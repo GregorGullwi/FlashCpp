@@ -382,6 +382,8 @@ private:
     void writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data);
     void writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, const std::vector<uint8_t>& subsection_data);
     void alignTo4Bytes(std::vector<uint8_t>& data);
+    void writeLittleEndian32(std::vector<uint8_t>& data, uint32_t value);
+    void writeLittleEndian16(std::vector<uint8_t>& data, uint16_t value);
 
     // Generate file checksums subsection
     std::vector<uint8_t> generateFileChecksums();
