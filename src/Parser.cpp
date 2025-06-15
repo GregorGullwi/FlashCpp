@@ -455,8 +455,8 @@ ParseResult Parser::parse_statement_or_declaration()
 			};
 
 			if (type_keywords.find(current_token.value()) != type_keywords.end()) {
-				// Parse as variable declaration
-				return parse_type_and_name();
+				// Parse as variable declaration with optional initialization
+				return parse_variable_declaration();
 			}
 			else {
 				// Unknown keyword - consume token to avoid infinite loop and return error
@@ -477,6 +477,54 @@ ParseResult Parser::parse_statement_or_declaration()
 		return ParseResult::error("Expected a statement or declaration",
 			current_token);
 	}
+}
+
+ParseResult Parser::parse_variable_declaration()
+{
+	// Parse the type specifier and identifier (name)
+	ParseResult type_and_name_result = parse_type_and_name();
+	if (type_and_name_result.is_error()) {
+		return type_and_name_result;
+	}
+
+	// Check for optional initialization
+	if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
+		consume_token(); // consume the '=' operator
+		// Parse the initialization expression
+		ParseResult init_expr_result = parse_expression(0);
+		if (init_expr_result.is_error()) {
+			return init_expr_result;
+		}
+
+		// Create a variable declaration with initialization
+		if (auto decl_node = type_and_name_result.node()) {
+			if (auto init_node = init_expr_result.node()) {
+				DeclarationNode& decl = decl_node->as<DeclarationNode>();
+
+				// Add the variable to the symbol table
+				const Token& identifier_token = decl.identifier_token();
+				gSymbolTable.insert(identifier_token.value(), *decl_node);
+
+				// Create a VariableDeclarationNode with initialization
+				return ParseResult::success(emplace_node<VariableDeclarationNode>(decl, *init_node));
+			}
+		}
+	}
+	else {
+		// Simple declaration without initialization
+		if (auto decl_node = type_and_name_result.node()) {
+			DeclarationNode& decl = decl_node->as<DeclarationNode>();
+
+			// Add the variable to the symbol table
+			const Token& identifier_token = decl.identifier_token();
+			gSymbolTable.insert(identifier_token.value(), *decl_node);
+
+			// Create a VariableDeclarationNode without initialization
+			return ParseResult::success(emplace_node<VariableDeclarationNode>(decl, std::nullopt));
+		}
+	}
+
+	return ParseResult::error("Invalid variable declaration", *current_token_);
 }
 
 ParseResult Parser::parse_return_statement()
@@ -553,8 +601,10 @@ ParseResult Parser::parse_expression(int precedence)
 
 		if (auto leftNode = result.node()) {
 			if (auto rightNode = rhs_result.node()) {
-				result = ParseResult::success(emplace_node<ExpressionNode>(
-					BinaryOperatorNode(operator_token, *leftNode, *rightNode)));
+				// Create the binary operation and update the result
+				auto binary_op = emplace_node<ExpressionNode>(
+					BinaryOperatorNode(operator_token, *leftNode, *rightNode));
+				result = ParseResult::success(binary_op);
 			}
 		}
 	}
