@@ -304,6 +304,12 @@ struct FunctionInfo {
     std::vector<std::pair<uint32_t, uint32_t>> line_offsets; // offset, line
     std::vector<LocalVariableInfo> local_variables;
     std::vector<ParameterInfo> parameters;
+
+    // Debug range information (relative to function start)
+    uint32_t debug_start_offset = 0;  // Offset where debugging starts (after prologue)
+    uint32_t debug_end_offset = 0;    // Offset where debugging ends (before epilogue)
+    uint32_t prologue_size = 0;       // Size of function prologue
+    uint32_t epilogue_size = 0;       // Size of function epilogue
 };
 
 class DebugInfoBuilder {
@@ -341,6 +347,9 @@ public:
 
     // Update function length for a previously added function
     void updateFunctionLength(const std::string& name, uint32_t code_length);
+
+    // Set debug range information for a function
+    void setFunctionDebugRange(const std::string& name, uint32_t prologue_size, uint32_t epilogue_size);
 
     // Set the text section number for symbol references
     void setTextSectionNumber(uint16_t section_number);
@@ -382,6 +391,8 @@ private:
     void writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data);
     void writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, const std::vector<uint8_t>& subsection_data);
     void alignTo4Bytes(std::vector<uint8_t>& data);
+    void writeLittleEndian32(std::vector<uint8_t>& data, uint32_t value);
+    void writeLittleEndian16(std::vector<uint8_t>& data, uint16_t value);
 
     // Generate file checksums subsection
     std::vector<uint8_t> generateFileChecksums();

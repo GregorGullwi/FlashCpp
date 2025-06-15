@@ -9,4 +9,3 @@ set TEST_ERRORLEVEL=%ERRORLEVEL%
 REM Print the saved errorlevel
 echo.
 echo test_debug.exe exited with errorlevel %TEST_ERRORLEVEL%
-pause
