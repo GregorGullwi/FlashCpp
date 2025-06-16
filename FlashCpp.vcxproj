@@ -237,6 +237,7 @@
     </Link>
     <ClCompile>
       <UndefinePreprocessorDefinitions>USE_LLVM</UndefinePreprocessorDefinitions>
+      <Optimization>Disabled</Optimization>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

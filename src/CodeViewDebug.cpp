@@ -556,7 +556,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     };
 
     LineInfoHeader line_header;
-    line_header.code_offset = func.code_offset;
+    line_header.code_offset = 0; // Use code offset 0 to match MSCV/clang reference
     line_header.segment = 0; // Use section 0 to match MSVC/clang reference
     line_header.flags = 0;   // No special flags
     line_header.code_length = func.code_length;
@@ -598,14 +598,12 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
                      reinterpret_cast<const uint8_t*>(&file_block) + sizeof(file_block));
 
     // Write line number entries for this function
-    uint32_t last_line = 0;
     for (const auto& line_offset : func.line_offsets) {
         LineNumberEntry line_entry;
-        line_entry.offset = line_offset.first - func.code_offset;  // Code offset relative to function start
+        line_entry.offset = line_offset.first;  // Code offset relative to function start
         line_entry.line_start = line_offset.second; // Line number
         line_entry.delta_line_end = 0; // Single line statement
         line_entry.is_statement = 1;   // This is a statement
-        last_line = line_entry.line_start;
 
         // DEBUG: Dump line entry bytes
         std::cerr << "DEBUG: LineNumberEntry for offset=" << line_entry.offset
@@ -925,6 +923,9 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         std::vector<uint8_t> end_data; // Empty for S_PROC_ID_END
         writeSymbolRecord(symbols_data, SymbolKind::S_PROC_ID_END, end_data);
 
+        std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
+        writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
+
         // Generate separate line information subsections for each function
         std::cerr << "DEBUG: Generating separate line information subsections for function..." << std::endl;
         if (!func.line_offsets.empty()) {
@@ -938,8 +939,6 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
             std::cerr << "DEBUG: No line information for function " << func.name << std::endl;
         }
 
-        std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
-        writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
         symbols_data.clear();
     }
 
