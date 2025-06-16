@@ -758,7 +758,7 @@ ParseResult Parser::parse_primary_expression()
 
 				// Additional type checking and verification logic can be performed here using identifierType
 
-				result = emplace_node<ExpressionNode>(FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args)));
+				result = emplace_node<ExpressionNode>(FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args), idenfifier_token));
 			}
 			else {
 				// Not a function call, but identifier not found - this is an error
@@ -803,7 +803,7 @@ ParseResult Parser::parse_primary_expression()
 
 				// Additional type checking and verification logic can be performed here using identifierType
 
-				result = emplace_node<ExpressionNode>(FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args)));
+				result = emplace_node<ExpressionNode>(FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args), idenfifier_token));
 			}
 			else {
 				// Regular identifier

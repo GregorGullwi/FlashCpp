@@ -67,9 +67,7 @@ private:
 			paramCount++;
 		}
 
-		// Extract line number from the function identifier token
-		uint32_t line_number = static_cast<uint32_t>(func_decl.identifier_token().line());
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), line_number));
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), func_decl.identifier_token()));
 
 		symbol_table.enter_scope(ScopeType::Function);
 
@@ -92,23 +90,20 @@ private:
 	}
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
-		uint32_t line_number = static_cast<uint32_t>(node.return_token().line());
-
 		if (node.expression()) {
 			auto operands = visitExpressionNode(node.expression()->as<ExpressionNode>());
 			// Add the return value's type and size information
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(operands), line_number));
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(operands), node.return_token()));
 		}
 		else {
 			// For void returns, we don't need any operands
-			ir_.addInstruction(IrOpcode::Return, {}, line_number);
+			ir_.addInstruction(IrOpcode::Return, {}, node.return_token());
 		}
 	}
 
 	void visitVariableDeclarationNode(const VariableDeclarationNode& node) {
 		const auto& decl = node.declaration();
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-		uint32_t line_number = node.line_number();
 
 		// Create variable declaration operands
 		std::vector<IrOperand> operands;
@@ -122,7 +117,7 @@ private:
 			operands.insert(operands.end(), init_operands.begin(), init_operands.end());
 		}
 
-		ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), line_number);
+		ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), node.declaration().identifier_token());
 	}
 
 	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode) {
@@ -166,7 +161,7 @@ private:
 		return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
 	}
 
-	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType) {
+	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
 		if (fromType == toType) {
 			return operands; // No conversion needed
 		}
@@ -185,13 +180,13 @@ private:
 		if (fromSize < toSize) {
 			// Extension needed
 			if (is_signed_integer_type(fromType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::SignExtend, std::move(conversionOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::SignExtend, std::move(conversionOperands), source_token));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::ZeroExtend, std::move(conversionOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::ZeroExtend, std::move(conversionOperands), source_token));
 			}
 		} else if (fromSize > toSize) {
 			// Truncation needed
-			ir_.addInstruction(IrInstruction(IrOpcode::Truncate, std::move(conversionOperands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::Truncate, std::move(conversionOperands), source_token));
 		}
 
 		// Return the converted operands
@@ -221,10 +216,10 @@ private:
 
 		// Generate conversions if needed
 		if (lhsType != commonType) {
-			lhsIrOperands = generateTypeConversion(lhsIrOperands, lhsType, commonType);
+			lhsIrOperands = generateTypeConversion(lhsIrOperands, lhsType, commonType, binaryOperatorNode.get_token());
 		}
 		if (rhsType != commonType) {
-			rhsIrOperands = generateTypeConversion(rhsIrOperands, rhsType, commonType);
+			rhsIrOperands = generateTypeConversion(rhsIrOperands, rhsType, commonType, binaryOperatorNode.get_token());
 		}
 
 		// Check if we're dealing with floating-point operations
@@ -245,112 +240,112 @@ private:
 		// Generate the IR for the operation based on the operator and operand types
 		if (binaryOperatorNode.op() == "+") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatAdd, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatAdd, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "-") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatSubtract, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatSubtract, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "*") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatMultiply, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatMultiply, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "/") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatDivide, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatDivide, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedDivide, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedDivide, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "<<") {
-			ir_.addInstruction(IrInstruction(IrOpcode::ShiftLeft, std::move(irOperands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::ShiftLeft, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 		else if (binaryOperatorNode.op() == ">>") {
 			// Choose signed or unsigned right shift based on left operand type (after promotion)
 			if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedShiftRight, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedShiftRight, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "&") {
-			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(irOperands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 		else if (binaryOperatorNode.op() == "|") {
-			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseOr, std::move(irOperands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseOr, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 		else if (binaryOperatorNode.op() == "^") {
-			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(irOperands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 		else if (binaryOperatorNode.op() == "%") {
-			ir_.addInstruction(IrInstruction(IrOpcode::Modulo, std::move(irOperands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::Modulo, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 		else if (binaryOperatorNode.op() == "==") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "!=") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "<") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatLessThan, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatLessThan, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "<=") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatLessEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatLessEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::LessEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::LessEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == ">") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterThan, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterThan, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterThan, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterThan, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::GreaterThan, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::GreaterThan, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == ">=") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::GreaterEqual, std::move(irOperands)));
+				ir_.addInstruction(IrInstruction(IrOpcode::GreaterEqual, std::move(irOperands), binaryOperatorNode.get_token()));
 			}
 		}
 		else if (binaryOperatorNode.op() == "&&") {
-			ir_.addInstruction(IrInstruction(IrOpcode::LogicalAnd, std::move(irOperands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::LogicalAnd, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 		else if (binaryOperatorNode.op() == "||") {
-			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(irOperands)));
+			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 		else {
 			assert(false && "Unsupported binary operator");
@@ -391,7 +386,7 @@ private:
 		});
 
 		// Add the function call instruction
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands)));
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), functionCallNode.called_from()));
 
 		// Return the result variable with its type and size
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();

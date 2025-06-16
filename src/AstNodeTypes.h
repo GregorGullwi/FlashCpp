@@ -256,11 +256,12 @@ public:
 		: identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node) {}
 
 	std::string_view op() const { return identifier_.value(); }
+	const Token& get_token() const { return identifier_; }
 	auto get_lhs() const { return lhs_node_; }
 	auto get_rhs() const { return rhs_node_; }
 
 private:
-	Token identifier_;
+	class Token identifier_;
 	ASTNode lhs_node_;
 	ASTNode rhs_node_;
 };
@@ -325,17 +326,20 @@ private:
 
 class FunctionCallNode {
 public:
-	explicit FunctionCallNode(DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments)
-		: func_decl_(func_decl), arguments_(std::move(arguments)) {}
+	explicit FunctionCallNode(DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	const auto& arguments() const { return arguments_; }
 	const auto& function_declaration() const { return func_decl_; }
 
 	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
 
+	Token called_from() const { return called_from_; }
+
 private:
 	DeclarationNode& func_decl_;
 	ChunkedVector<ASTNode> arguments_;
+	Token called_from_;
 };
 
 class StructDeclarationNode {
@@ -471,7 +475,6 @@ public:
 
 	const DeclarationNode& declaration() const { return declaration_; }
 	std::optional<ASTNode> initializer() const { return initializer_; }
-	uint32_t line_number() const { return declaration_.line_number(); }
 
 private:
 	DeclarationNode declaration_;

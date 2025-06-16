@@ -361,14 +361,16 @@ public:
 
 		for (const auto& instruction : ir.getInstructions()) {
 			// Add line mapping for debug information if line number is available
-			if (instruction.getLineNumber() > 0) {
+			if (instruction.getOpcode() != IrOpcode::FunctionDecl && instruction.getLineNumber() > 0) {
 				std::cerr << "DEBUG: Adding line mapping for line " << instruction.getLineNumber()
-				         << " (opcode: " << static_cast<int>(instruction.getOpcode()) << ")" << std::endl;
+					<< " (opcode: " << static_cast<int>(instruction.getOpcode()) << ")" << std::endl;
 				addLineMapping(instruction.getLineNumber());
 			}
 
+			std::cerr << "DEBUG: Processing instruction opcode: " << static_cast<int>(instruction.getOpcode()) << std::endl;
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
+				std::cerr << "DEBUG: Found FunctionDecl instruction" << std::endl;
 				handleFunctionDecl(instruction);
 				break;
 			case IrOpcode::VariableDecl:
@@ -922,6 +924,21 @@ private:
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		auto func_name = instruction.getOperandAs<std::string_view>(2);
 
+		std::cerr << "DEBUG: handleFunctionDecl called for function: " << func_name << std::endl;
+
+		// Finalize previous function before starting new one
+		if (!current_function_name_.empty()) {
+			std::cerr << "DEBUG: Finalizing previous function " << current_function_name_ << " before starting " << func_name << std::endl;
+			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+			// Update function length
+			writer.update_function_length(current_function_name_, function_length);
+
+			// Add exception handling information (required for x64) - once per function
+			std::cerr << "DEBUG: Adding exception info for completed function " << current_function_name_ << std::endl;
+			writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
+		}
+
 		// align the function to 16 bytes
 		static constexpr char nop = static_cast<char>(0x90);
 		const uint32_t nop_count = 16 - (textSectionData.size() % 16);
@@ -929,6 +946,7 @@ private:
 			textSectionData.insert(textSectionData.end(), nop_count, nop);
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
 
+		// Function debug info is now added in add_function_symbol() with length 0
 		writer.add_function_symbol(std::string(func_name), func_offset);
 		functionSymbols[func_name] = func_offset;
 
@@ -946,9 +964,6 @@ private:
 			std::cerr << "DEBUG: Adding function opening brace line mapping for line " << (instruction.getLineNumber() + 1) << std::endl;
 			addLineMapping(instruction.getLineNumber() + 1);
 		}
-
-		// Function debug info is now added in add_function_symbol() with length 0
-		// Length will be updated later in handleReturn()
 
 		// Create a new function scope
 		regAlloc.reset();
@@ -1024,6 +1039,7 @@ private:
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
+		std::cerr << "DEBUG: handleReturn called for function: " << current_function_name_ << std::endl;
 		assert(instruction.getOperandCount() >= 3);
 		if (instruction.isOperandType<unsigned long long>(2)) {
 			unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
@@ -1116,25 +1132,9 @@ private:
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
 
-		// Add line mapping for function closing brace (after return statement)
-		if (instruction.getLineNumber() > 0) {
-			std::cerr << "DEBUG: Adding function closing brace line mapping for line " << (instruction.getLineNumber() + 1) << std::endl;
-			addLineMapping(instruction.getLineNumber() + 1, -1); // offset by -1, since we will overlow otherwise
-		}
-
-		// Update debug information for the completed function
-		if (!current_function_name_.empty()) {
-			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-
-			// Function was already added in handleFunctionDecl(), now update its length
-			writer.update_function_length(current_function_name_, function_length);
-
-			// Temporarily disable exception handling information to test if that's the issue
-			// writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
-
-			current_function_name_.clear();
-			current_function_offset_ = 0;
-		}
+		// Note: Function finalization (update_function_length, add_function_exception_info)
+		// is handled in handleFunctionDecl (for previous function) and finalizeSections (for last function)
+		// This ensures each function is finalized exactly once, regardless of number of return statements
 
 		variable_scopes.pop_back();
 	}
@@ -1933,6 +1933,23 @@ private:
 	}
 
 	void finalizeSections() {
+		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
+		if (!current_function_name_.empty()) {
+			std::cerr << "DEBUG: Finalizing last function " << current_function_name_ << " in finalizeSections" << std::endl;
+			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+			// Update function length
+			writer.update_function_length(current_function_name_, function_length);
+
+			// Add exception handling information (required for x64) - once per function
+			std::cerr << "DEBUG: Adding exception info for last function " << current_function_name_ << std::endl;
+			writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
+
+			// Clear the current function state
+			current_function_name_.clear();
+			current_function_offset_ = 0;
+		}
+
 		writer.add_data(textSectionData, SectionType::TEXT);
 
 		// Finalize debug information
@@ -1961,6 +1978,14 @@ private:
 	// Debug information tracking
 	std::string current_function_name_;
 	uint32_t current_function_offset_ = 0;
+
+	// Pending function info for exception handling
+	struct PendingFunctionInfo {
+		std::string name;
+		uint32_t offset;
+		uint32_t length;
+	};
+	std::vector<PendingFunctionInfo> pending_functions_;
 
 	struct StackVariableScope
 	{

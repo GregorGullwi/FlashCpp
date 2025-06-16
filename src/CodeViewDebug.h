@@ -319,18 +319,8 @@ public:
     // Add a source file
     uint32_t addSourceFile(const std::string& filename);
 
-    // Add line number information for a function
-    void addLineInfo(const std::string& function_name, uint32_t code_offset,
-                     uint32_t code_length, uint32_t file_id,
-                     const std::vector<std::pair<uint32_t, uint32_t>>& line_offsets);
-
     // Add a function symbol with line information
     void addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length);
-
-    // Add a function with detailed line information
-    void addFunctionWithLines(const std::string& name, uint32_t code_offset,
-                             uint32_t code_length, uint32_t file_id,
-                             const std::vector<std::pair<uint32_t, uint32_t>>& line_offsets);
 
     // Add a line mapping for the current function
     void addLineMapping(uint32_t code_offset, uint32_t line_number);

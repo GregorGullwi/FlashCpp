@@ -194,6 +194,8 @@ public:
 		debug_builder_.addFunction(name, section_offset, 0);
 		std::cerr << "DEBUG: Function added to debug builder" << std::endl;
 
+		// Exception info is now handled directly in IRConverter finalization logic
+
 		std::cerr << "Function symbol added successfully" << std::endl;
 	}
 
@@ -224,6 +226,47 @@ public:
 		relocation.symbol_table_index = symbol_index;
 		relocation.type = IMAGE_REL_AMD64_REL32;
 		section_text->add_relocation_entry(&relocation);
+	}
+
+	void add_pdata_relocations(uint32_t pdata_offset, const std::string& function_name, uint32_t xdata_offset) {
+		std::cerr << "Adding PDATA relocations for function: " << function_name << " at pdata offset " << pdata_offset << std::endl;
+
+		// Get the function symbol
+		auto* function_symbol = coffi_.get_symbol(function_name);
+		if (!function_symbol) {
+			throw std::runtime_error("Function symbol not found: " + function_name);
+		}
+
+		// Get the .xdata section symbol
+		auto* xdata_symbol = coffi_.get_symbol(".xdata");
+		if (!xdata_symbol) {
+			throw std::runtime_error("XDATA section symbol not found");
+		}
+
+		auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
+
+		// Relocation 1: Function start address (offset 0 in PDATA entry)
+		COFFI::rel_entry_generic reloc1;
+		reloc1.virtual_address = pdata_offset + 0;
+		reloc1.symbol_table_index = function_symbol->get_index();
+		reloc1.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
+		pdata_section->add_relocation_entry(&reloc1);
+
+		// Relocation 2: Function end address (offset 4 in PDATA entry)
+		COFFI::rel_entry_generic reloc2;
+		reloc2.virtual_address = pdata_offset + 4;
+		reloc2.symbol_table_index = function_symbol->get_index();
+		reloc2.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
+		pdata_section->add_relocation_entry(&reloc2);
+
+		// Relocation 3: Unwind info address (offset 8 in PDATA entry)
+		COFFI::rel_entry_generic reloc3;
+		reloc3.virtual_address = pdata_offset + 8;
+		reloc3.symbol_table_index = xdata_symbol->get_index();
+		reloc3.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
+		pdata_section->add_relocation_entry(&reloc3);
+
+		std::cerr << "Added 3 PDATA relocations for function " << function_name << std::endl;
 	}
 
 	// Debug information methods
@@ -266,7 +309,21 @@ public:
 	}
 
 	void add_function_exception_info(const std::string& function_name, uint32_t function_start, uint32_t function_size) {
+		std::cerr << "DEBUG: add_function_exception_info called for: " << function_name << std::endl;
+		std::cerr << "DEBUG: Current added_exception_functions_ size: " << added_exception_functions_.size() << std::endl;
+
+		// Check if exception info has already been added for this function
+		for (const auto& existing : added_exception_functions_) {
+			std::cerr << "DEBUG: Checking against existing function: " << existing << std::endl;
+			if (existing == function_name) {
+				std::cerr << "Exception info already added for function: " << function_name << " - skipping" << std::endl;
+				return;
+			}
+		}
+
 		std::cerr << "Adding exception info for function: " << function_name << " at offset " << function_start << " size " << function_size << std::endl;
+		added_exception_functions_.push_back(function_name);
+		std::cerr << "DEBUG: Added " << function_name << " to added_exception_functions_, new size: " << added_exception_functions_.size() << std::endl;
 
 		// Get current XDATA section size to calculate the offset for this function's unwind info
 		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
@@ -286,17 +343,26 @@ public:
 		};
 		add_data(xdata, SectionType::XDATA);
 
+		// Get current PDATA section size to calculate relocation offsets
+		auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
+		uint32_t pdata_offset = static_cast<uint32_t>(pdata_section->get_data_size());
+
 		// Add PDATA (procedure data) for this specific function
 		// PDATA entry: [function_start, function_end, unwind_info_address]
 		std::vector<char> pdata(12);
-		*reinterpret_cast<uint32_t*>(&pdata[0]) = function_start;      // Function start RVA
-		*reinterpret_cast<uint32_t*>(&pdata[4]) = function_start + function_size; // Function end RVA
-		*reinterpret_cast<uint32_t*>(&pdata[8]) = xdata_offset;        // Unwind info RVA (offset in XDATA section)
+		*reinterpret_cast<uint32_t*>(&pdata[0]) = function_start;      // Function start RVA (will be relocated)
+		*reinterpret_cast<uint32_t*>(&pdata[4]) = function_start + function_size; // Function end RVA (will be relocated)
+		*reinterpret_cast<uint32_t*>(&pdata[8]) = xdata_offset;        // Unwind info RVA (will be relocated)
 		add_data(pdata, SectionType::PDATA);
+
+		// Add relocations for PDATA section
+		// These relocations are critical for the linker to resolve addresses correctly
+		add_pdata_relocations(pdata_offset, function_name, xdata_offset);
 	}
 
 	void finalize_debug_info() {
 		std::cerr << "finalize_debug_info: Generating debug information..." << std::endl;
+		// Exception info is now handled directly in IRConverter finalization logic
 
 		// Finalize the current function before generating debug sections
 		debug_builder_.finalizeCurrentFunction();
@@ -326,6 +392,17 @@ protected:
 	std::unordered_map<SectionType, std::string> sectiontype_to_name;
 	std::unordered_map<SectionType, int32_t> sectiontype_to_index;
 	CodeView::DebugInfoBuilder debug_builder_;
+
+	// Pending function info for exception handling
+	struct PendingFunctionInfo {
+		std::string name;
+		uint32_t offset;
+		uint32_t length;
+	};
+	std::vector<PendingFunctionInfo> pending_functions_;
+
+	// Track functions that already have exception info to avoid duplicates
+	std::vector<std::string> added_exception_functions_;
 
 	// Manual fallback implementation when COFFI fails
 	bool save_manually(const std::string& filename) {

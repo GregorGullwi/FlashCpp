@@ -183,15 +183,12 @@ using IrOperand = std::variant<int, unsigned long long, double, bool, char, std:
 
 class IrInstruction {
 public:
-	IrInstruction(IrOpcode opcode, std::vector<IrOperand>&& operands)
-		: opcode_(opcode), operands_(std::move(operands)), line_number_(0) {}
-
-	IrInstruction(IrOpcode opcode, std::vector<IrOperand>&& operands, uint32_t line_number)
-		: opcode_(opcode), operands_(std::move(operands)), line_number_(line_number) {}
+	IrInstruction(IrOpcode opcode, std::vector<IrOperand>&& operands, Token first_token)
+		: opcode_(opcode), operands_(std::move(operands)), first_token_(first_token) {}
 
 	IrOpcode getOpcode() const { return opcode_; }
 	size_t getOperandCount() const { return operands_.size(); }
-	uint32_t getLineNumber() const { return line_number_; }
+	size_t getLineNumber() const { return first_token_.line(); }
 
 	std::optional<IrOperand> getOperandSafe(size_t index) const {
 		return index < operands_.size() ? std::optional<IrOperand>{ operands_[index] } : std::optional<IrOperand>{};
@@ -1548,7 +1545,7 @@ public:
 private:
 	IrOpcode opcode_;
 	std::vector<IrOperand> operands_;
-	uint32_t line_number_;
+	Token first_token_;
 };
 
 class Ir {
@@ -1557,12 +1554,8 @@ public:
 		instructions.push_back(instruction);
 	}
 	void addInstruction(IrOpcode&& opcode,
-		std::vector<IrOperand>&& operands = {}) {
-		instructions.emplace_back(opcode, std::move(operands));
-	}
-	void addInstruction(IrOpcode&& opcode,
-		std::vector<IrOperand>&& operands, uint32_t line_number) {
-		instructions.emplace_back(opcode, std::move(operands), line_number);
+		std::vector<IrOperand>&& operands, Token first_token) {
+		instructions.emplace_back(opcode, std::move(operands), first_token);
 	}
 	const std::vector<IrInstruction>& getInstructions() const {
 		return instructions;

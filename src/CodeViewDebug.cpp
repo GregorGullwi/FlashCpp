@@ -153,19 +153,6 @@ uint32_t DebugInfoBuilder::addSourceFile(const std::string& filename) {
     return file_id;
 }
 
-void DebugInfoBuilder::addLineInfo(const std::string& function_name, uint32_t code_offset, 
-                                   uint32_t code_length, uint32_t file_id, 
-                                   const std::vector<std::pair<uint32_t, uint32_t>>& line_offsets) {
-    FunctionInfo func_info;
-    func_info.name = function_name;
-    func_info.code_offset = code_offset;
-    func_info.code_length = code_length;
-    func_info.file_id = file_id;
-    func_info.line_offsets = line_offsets;
-    
-    functions_.push_back(func_info);
-}
-
 void DebugInfoBuilder::addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length) {
     // Add basic function info without line numbers
     FunctionInfo func_info;
@@ -173,19 +160,6 @@ void DebugInfoBuilder::addFunction(const std::string& name, uint32_t code_offset
     func_info.code_offset = code_offset;
     func_info.code_length = code_length;
     func_info.file_id = 0; // Default to first file
-
-    functions_.push_back(func_info);
-}
-
-void DebugInfoBuilder::addFunctionWithLines(const std::string& name, uint32_t code_offset,
-                                           uint32_t code_length, uint32_t file_id,
-                                           const std::vector<std::pair<uint32_t, uint32_t>>& line_offsets) {
-    FunctionInfo func_info;
-    func_info.name = name;
-    func_info.code_offset = code_offset;
-    func_info.code_length = code_length;
-    func_info.file_id = file_id;
-    func_info.line_offsets = line_offsets;
 
     functions_.push_back(func_info);
 }
@@ -199,7 +173,7 @@ void DebugInfoBuilder::setCurrentFunction(const std::string& name, uint32_t file
         // Find the function and update its line information
         for (auto& func : functions_) {
             if (func.name == current_function_name_) {
-                func.line_offsets = current_function_lines_;
+                func.line_offsets = std::move(current_function_lines_);
                 func.file_id = current_function_file_id_;
                 std::cerr << "DEBUG: Updated function " << func.name << " with file_id=" << func.file_id << std::endl;
                 break;
@@ -216,7 +190,12 @@ void DebugInfoBuilder::setCurrentFunction(const std::string& name, uint32_t file
 
 void DebugInfoBuilder::addLineMapping(uint32_t code_offset, uint32_t line_number) {
     if (!current_function_name_.empty()) {
-        current_function_lines_.emplace_back(code_offset, line_number);
+        if (current_function_lines_.empty() || current_function_lines_.rbegin()->second != line_number) {
+            current_function_lines_.emplace_back(code_offset, line_number);
+        }
+        else {
+            std::cerr << "DEBUG: Ignoring duplicate line number (for now)" << line_number << " with function=" << current_function_name_ << std::endl;
+        }
     }
 }
 
@@ -299,7 +278,7 @@ void DebugInfoBuilder::finalizeCurrentFunction() {
         // Find the function and update its line information
         for (auto& func : functions_) {
             if (func.name == current_function_name_) {
-                func.line_offsets = current_function_lines_;
+                func.line_offsets = std::move(current_function_lines_);
                 func.file_id = current_function_file_id_;
                 std::cerr << "DEBUG: finalizeCurrentFunction updated function " << func.name << " with file_id=" << func.file_id << std::endl;
                 break;
@@ -538,7 +517,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
         // Write line number entries
         for (const auto& line_offset : func.line_offsets) {
             LineNumberEntry line_entry;
-            line_entry.offset = line_offset.first;  // Code offset relative to function start
+            line_entry.offset = line_offset.first - func.code_offset;  // Code offset relative to function start
             line_entry.line_start = line_offset.second; // Line number
             line_entry.delta_line_end = 0; // Single line statement
             line_entry.is_statement = 1;   // This is a statement
@@ -619,12 +598,14 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
                      reinterpret_cast<const uint8_t*>(&file_block) + sizeof(file_block));
 
     // Write line number entries for this function
+    uint32_t last_line = 0;
     for (const auto& line_offset : func.line_offsets) {
         LineNumberEntry line_entry;
-        line_entry.offset = line_offset.first;  // Code offset relative to function start
+        line_entry.offset = line_offset.first - func.code_offset;  // Code offset relative to function start
         line_entry.line_start = line_offset.second; // Line number
         line_entry.delta_line_end = 0; // Single line statement
         line_entry.is_statement = 1;   // This is a statement
+        last_line = line_entry.line_start;
 
         // DEBUG: Dump line entry bytes
         std::cerr << "DEBUG: LineNumberEntry for offset=" << line_entry.offset
