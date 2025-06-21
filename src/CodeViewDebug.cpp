@@ -321,10 +321,9 @@ void DebugInfoBuilder::initializeFunctionIdMap() {
     function_id_map_.clear();
 
     for (size_t i = 0; i < functions_.size(); ++i) {
-        // Each function gets 3 type indices: arglist, procedure, func_id
-        // func_id is at offset +2 from the base index
-        // CLANG COMPATIBILITY: Functions start at 0x1000 (no basic types)
-        uint32_t func_id_index = 0x1000 + static_cast<uint32_t>(i * 3) + 2; // LF_FUNC_ID index
+        // REFERENCE COMPATIBILITY: Use simple sequential mapping like reference
+        // add = 0x1000, main = 0x1001, etc.
+        uint32_t func_id_index = 0x1000 + static_cast<uint32_t>(i);
         function_id_map_[functions_[i].name] = func_id_index;
     }
 
@@ -601,7 +600,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     };
 
     LineInfoHeader line_header;
-    line_header.code_offset = 0; // Use code offset 0 to match MSCV/clang reference
+    line_header.code_offset = func.code_offset; // Use actual function offset in text section
     line_header.segment = 0; // Use section 0 to match MSVC/clang reference
     line_header.flags = 0;   // No special flags
     line_header.code_length = func.code_length;
@@ -636,6 +635,13 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     std::cerr << "DEBUG: Function line info for function " << func.name
               << " - file_id=" << file_block.file_id
               << ", num_lines=" << file_block.num_lines << std::endl;
+
+    // DEBUG: Print all line mappings for this function
+    std::cerr << "DEBUG: All line mappings for function " << func.name << ":" << std::endl;
+    for (size_t i = 0; i < func.line_offsets.size(); ++i) {
+        std::cerr << "  [" << i << "] offset=" << func.line_offsets[i].first
+                  << ", line=" << func.line_offsets[i].second << std::endl;
+    }
 
     // DEBUG: Dump file block header bytes
     std::cerr << "DEBUG: FileBlockHeader bytes: ";
@@ -779,7 +785,8 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
     // Add function symbols
     std::cerr << "DEBUG: Number of functions: " << functions_.size() << std::endl;
-    for (const auto& func : functions_) {
+    for (size_t func_index = 0; func_index < functions_.size(); ++func_index) {
+        const auto& func = functions_[func_index];
         std::cerr << "DEBUG: Processing function: " << func.name << std::endl;
         std::vector<uint8_t> proc_data;
 
@@ -810,6 +817,8 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
         std::cerr << "DEBUG: Function " << func.name << " debug range: start=" << debug_start
                   << ", end=" << debug_end << " (code_length=" << func.code_length << ")" << std::endl;
+        std::cerr << "DEBUG: Writing debug_start=0x" << std::hex << debug_start
+                  << ", debug_end=0x" << debug_end << std::dec << " to binary" << std::endl;
 
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&debug_start),
                         reinterpret_cast<const uint8_t*>(&debug_start) + sizeof(debug_start));
@@ -817,8 +826,9 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
                         reinterpret_cast<const uint8_t*>(&debug_end) + sizeof(debug_end));
 
         // Function ID (4 bytes) - LF_FUNC_ID type index for this function
-        auto it = function_id_map_.find(func.name);
-        uint32_t function_id = (it != function_id_map_.end()) ? it->second : 0x1000; // fallback
+        // REFERENCE COMPATIBILITY: Function symbols should reference LF_FUNC_ID type indices
+        // add symbol should reference 0x1002 (LF_FUNC_ID), main should reference 0x1005 (LF_FUNC_ID)
+        uint32_t function_id = 0x1000 + static_cast<uint32_t>(func_index * 3) + 2; // LF_FUNC_ID index
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&function_id),
                         reinterpret_cast<const uint8_t*>(&function_id) + sizeof(function_id));
 
@@ -1059,6 +1069,12 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
 
     for (size_t func_index = 0; func_index < functions_.size(); ++func_index) {
         const auto& func = functions_[func_index];
+
+        // REFERENCE COMPATIBILITY: Use simple sequential mapping like reference
+        // add: arglist=0x1000, procedure=0x1001, func_id=0x1002
+        // main: arglist=0x1003, procedure=0x1004, func_id=0x1005
+        // But the function ID map should be: add=0x1000, main=0x1001
+        // So we need to map: add symbol uses 0x1000, main symbol uses 0x1001
         uint32_t arglist_index = current_type_index;
         uint32_t procedure_index = current_type_index + 1;
         uint32_t func_id_index = current_type_index + 2;

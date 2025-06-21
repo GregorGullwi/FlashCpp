@@ -474,11 +474,6 @@ public:
 		debug_builder_.addSourceFile(filename);
 	}
 
-	void add_function_debug_info(const std::string& name, uint32_t code_offset, uint32_t code_length) {
-		// Add function without line information - line mappings should be added separately via addLineMapping
-		debug_builder_.addFunction(name, code_offset, code_length);
-	}
-
 	void set_current_function_for_debug(const std::string& name, uint32_t file_id) {
 		debug_builder_.setCurrentFunction(name, file_id);
 	}
