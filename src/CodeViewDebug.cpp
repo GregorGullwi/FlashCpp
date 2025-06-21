@@ -393,14 +393,47 @@ void DebugInfoBuilder::writeSubsection(std::vector<uint8_t>& data, DebugSubsecti
     data.insert(data.end(), subsection_data.begin(), subsection_data.end());
 
     // Add padding to match the length we claimed in the header
+    // Use CodeView standard padding pattern like Clang: 0xF3, 0xF2, 0xF1
+    static const uint8_t padding_pattern[] = {0xF3, 0xF2, 0xF1};
+    size_t padding_index = 0;
     while (data.size() % 4 != 0) {
-        data.push_back(0);
+        data.push_back(padding_pattern[padding_index]);
+        padding_index = (padding_index + 1) % 3;
     }
 }
 
 void DebugInfoBuilder::alignTo4Bytes(std::vector<uint8_t>& data) {
+    // Use CodeView standard padding pattern like Clang: 0xF3, 0xF2, 0xF1
+    static const uint8_t padding_pattern[] = {0xF3, 0xF2, 0xF1};
+    size_t padding_index = 0;
+
     while (data.size() % 4 != 0) {
-        data.push_back(0);
+        data.push_back(padding_pattern[padding_index]);
+        padding_index = (padding_index + 1) % 3;
+    }
+}
+
+// Helper function to add a type record with proper padding and length calculation
+void DebugInfoBuilder::addTypeRecordWithPadding(std::vector<uint8_t>& debug_t_data, TypeRecordKind kind, const std::vector<uint8_t>& record_data) {
+    // Calculate the total size including header and padding
+    size_t data_size = record_data.size() + sizeof(TypeRecordKind);
+    size_t padded_size = (data_size + 3) & ~3; // Round up to 4-byte boundary
+
+    // Create header with padded length
+    TypeRecordHeader header;
+    header.length = static_cast<uint16_t>(padded_size);
+    header.kind = kind;
+
+    // Add header and data
+    debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                       reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+    debug_t_data.insert(debug_t_data.end(), record_data.begin(), record_data.end());
+
+    // Add padding to reach the padded size
+    size_t current_record_size = sizeof(header) + record_data.size();
+    while (current_record_size < (padded_size + sizeof(header.length))) {
+        debug_t_data.push_back(0x00);
+        current_record_size++;
     }
 }
 
@@ -577,9 +610,16 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
               << ", segCon=" << line_header.segment
               << ", cbCon=" << line_header.code_length << std::endl;
 
+    // Track position for relocations - we need to add relocations for the code_offset and segment fields
+    size_t line_header_start = line_data.size();
+
     line_data.insert(line_data.end(),
                      reinterpret_cast<const uint8_t*>(&line_header),
                      reinterpret_cast<const uint8_t*>(&line_header) + sizeof(line_header));
+
+    // Add relocations for line information (SECREL + SECTION pair for .text section)
+    // Note: These will be calculated relative to the final debug_s_data position when written
+    // For now, we'll add them when the line data is written to the main debug_s_data
 
     // Generate file block header for this function
     struct FileBlockHeader {
@@ -794,8 +834,9 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&zero_offset),
                         reinterpret_cast<const uint8_t*>(&zero_offset) + sizeof(zero_offset));
 
-        // Add debug relocation for function offset
+        // Add debug relocations for function offset (SECREL + SECTION pair)
         addDebugRelocation(function_offset_position, func.name, IMAGE_REL_AMD64_SECREL);
+        addDebugRelocation(function_offset_position + 4, func.name, IMAGE_REL_AMD64_SECTION);
 
         // Use section 0 to match MSVC/clang reference (not the actual section number)
         uint16_t section_number = 0;
@@ -945,6 +986,14 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         if (!func.line_offsets.empty()) {
             auto line_data = generateLineInfoForFunction(func);
             if (!line_data.empty()) {
+                // Calculate position where line data will be written for relocations
+                uint32_t line_subsection_position = static_cast<uint32_t>(debug_s_data.size() + 8); // +8 for subsection header
+
+                // Add relocations for line information (.text section references)
+                // code_offset field is at offset 0 in LineInfoHeader
+                addDebugRelocation(line_subsection_position + 0, ".text", IMAGE_REL_AMD64_SECREL);
+                addDebugRelocation(line_subsection_position + 4, ".text", IMAGE_REL_AMD64_SECTION);
+
                 writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_data);
                 std::cerr << "DEBUG: Added " << line_data.size() << " bytes of line information for function " << func.name << std::endl;
             }
@@ -1036,14 +1085,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
                                    reinterpret_cast<const uint8_t*>(&arg_type) + sizeof(arg_type));
             }
 
+            // Calculate length exactly like Clang: TypeRecordKind + data + padding
+            size_t data_size = arglist_data.size();
+            size_t content_after_length = sizeof(TypeRecordKind) + data_size; // What comes after length field
+            size_t total_record_size = sizeof(uint16_t) + content_after_length; // length field + content
+            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t padding_bytes = aligned_record_size - total_record_size;
+
             TypeRecordHeader header;
-            header.length = static_cast<uint16_t>(arglist_data.size() + sizeof(TypeRecordKind));
+            header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
             header.kind = TypeRecordKind::LF_ARGLIST;
 
             debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                                reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
             debug_t_data.insert(debug_t_data.end(), arglist_data.begin(), arglist_data.end());
-            // NO individual alignment - only at the end!
+            alignTo4Bytes(debug_t_data);
 
             std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << arglist_index << std::dec
                       << " (" << arg_count << " args for " << func.name << ")" << std::endl;
@@ -1075,14 +1131,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
                       << " (should reference arglist 0x" << std::hex << arglist_index << std::dec << ")" << std::endl;
             writeLittleEndian32(proc_data, arglist_type);
 
+            // Calculate length exactly like Clang: TypeRecordKind + data + padding
+            size_t data_size = proc_data.size();
+            size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+            size_t total_record_size = sizeof(uint16_t) + content_after_length;
+            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t padding_bytes = aligned_record_size - total_record_size;
+
             TypeRecordHeader header;
-            header.length = static_cast<uint16_t>(proc_data.size() + sizeof(TypeRecordKind));
+            header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
             header.kind = TypeRecordKind::LF_PROCEDURE;
 
             debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                                reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
             debug_t_data.insert(debug_t_data.end(), proc_data.begin(), proc_data.end());
-            // NO individual alignment - only at the end!
+            alignTo4Bytes(debug_t_data);
 
             std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << procedure_index << std::dec
                       << " (" << func.name << " function)" << std::endl;
@@ -1108,8 +1171,15 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             }
             func_id_data.push_back(0); // null terminator
 
+            // Calculate length exactly like Clang: TypeRecordKind + data + padding
+            size_t data_size = func_id_data.size();
+            size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+            size_t total_record_size = sizeof(uint16_t) + content_after_length;
+            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t padding_bytes = aligned_record_size - total_record_size;
+
             TypeRecordHeader header;
-            header.length = static_cast<uint16_t>(func_id_data.size() + sizeof(TypeRecordKind));
+            header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
             header.kind = TypeRecordKind::LF_FUNC_ID;
 
             size_t before_size = debug_t_data.size();
@@ -1118,7 +1188,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), func_id_data.begin(), func_id_data.end());
             size_t after_data_size = debug_t_data.size();
 
-            // NO individual alignment - only at the end!
+            alignTo4Bytes(debug_t_data);
             size_t after_align_size = debug_t_data.size();
 
             std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << func_id_index << std::dec
@@ -1145,13 +1215,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         string_data.insert(string_data.end(), dir_path.begin(), dir_path.end());
         string_data.push_back(0x00);
 
+        // Calculate length exactly like Clang: TypeRecordKind + data + padding
+        size_t data_size = string_data.size();
+        size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+        size_t total_record_size = sizeof(uint16_t) + content_after_length;
+        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t padding_bytes = aligned_record_size - total_record_size;
+
         TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
         header.kind = TypeRecordKind::LF_STRING_ID;
 
         debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                            reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
         debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+        alignTo4Bytes(debug_t_data);
 
         std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                   << " (directory: " << dir_path << ", length: " << header.length << ")" << std::endl;
@@ -1167,13 +1245,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         string_data.insert(string_data.end(), source_file.begin(), source_file.end());
         string_data.push_back(0x00);
 
+        // Calculate length exactly like Clang: TypeRecordKind + data + padding
+        size_t data_size = string_data.size();
+        size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+        size_t total_record_size = sizeof(uint16_t) + content_after_length;
+        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t padding_bytes = aligned_record_size - total_record_size;
+
         TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
         header.kind = TypeRecordKind::LF_STRING_ID;
 
         debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                            reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
         debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+        alignTo4Bytes(debug_t_data);
 
         std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                   << " (source: " << source_file << ", length: " << header.length << ")" << std::endl;
@@ -1187,13 +1273,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         writeLittleEndian32(string_data, 0x00000000);
         string_data.push_back(0x00); // Just null terminator
 
+        // Calculate length exactly like Clang: TypeRecordKind + data + padding
+        size_t data_size = string_data.size();
+        size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+        size_t total_record_size = sizeof(uint16_t) + content_after_length;
+        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t padding_bytes = aligned_record_size - total_record_size;
+
         TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
         header.kind = TypeRecordKind::LF_STRING_ID;
 
         debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                            reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
         debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+        alignTo4Bytes(debug_t_data);
 
         std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                   << " (empty string, length: " << header.length << ")" << std::endl;
@@ -1209,13 +1303,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         string_data.insert(string_data.end(), compiler_path.begin(), compiler_path.end());
         string_data.push_back(0x00);
 
+        // Calculate length exactly like Clang: TypeRecordKind + data + padding
+        size_t data_size = string_data.size();
+        size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+        size_t total_record_size = sizeof(uint16_t) + content_after_length;
+        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t padding_bytes = aligned_record_size - total_record_size;
+
         TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
         header.kind = TypeRecordKind::LF_STRING_ID;
 
         debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                            reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
         debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+        alignTo4Bytes(debug_t_data);
 
         std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                   << " (compiler path, length: " << header.length << ")" << std::endl;
@@ -1231,13 +1333,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         string_data.insert(string_data.end(), cmdline.begin(), cmdline.end());
         string_data.push_back(0x00);
 
+        // Calculate length exactly like Clang: TypeRecordKind + data + padding
+        size_t data_size = string_data.size();
+        size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+        size_t total_record_size = sizeof(uint16_t) + content_after_length;
+        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t padding_bytes = aligned_record_size - total_record_size;
+
         TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
         header.kind = TypeRecordKind::LF_STRING_ID;
 
         debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                            reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
         debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+        alignTo4Bytes(debug_t_data);
 
         std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                   << " (command line: " << cmdline.length() << " chars, length: " << header.length << ")" << std::endl;
@@ -1265,13 +1375,21 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         writeLittleEndian32(buildinfo_data, empty_id);
         writeLittleEndian32(buildinfo_data, cmdline_id);
 
+        // Calculate length exactly like Clang: TypeRecordKind + data + padding
+        size_t data_size = buildinfo_data.size();
+        size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+        size_t total_record_size = sizeof(uint16_t) + content_after_length;
+        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t padding_bytes = aligned_record_size - total_record_size;
+
         TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(buildinfo_data.size() + sizeof(TypeRecordKind));
+        header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
         header.kind = TypeRecordKind::LF_BUILDINFO;
 
         debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                            reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
         debug_t_data.insert(debug_t_data.end(), buildinfo_data.begin(), buildinfo_data.end());
+        alignTo4Bytes(debug_t_data);
 
         std::cerr << "DEBUG: Added LF_BUILDINFO 0x" << std::hex << current_type_index << std::dec
                   << " (length: " << header.length << ", references: 0x" << std::hex << dir_id << ", 0x" << compiler_id
@@ -1284,8 +1402,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
 
 
 
-    // NO final alignment - padding creates spurious records in cvdump
-    // alignTo4Bytes(debug_t_data);
+    // Individual records are already aligned, no final alignment needed
 
     std::cerr << "DEBUG: Final .debug$T section size: " << debug_t_data.size() << " bytes" << std::endl;
 

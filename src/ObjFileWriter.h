@@ -9,6 +9,14 @@
 #include <iostream>
 #include <iomanip>
 
+// Additional COFF relocation types not defined in COFFI
+#ifndef IMAGE_REL_AMD64_SECREL
+#define IMAGE_REL_AMD64_SECREL          0x000B  // 32 bit offset from base of section containing target
+#endif
+#ifndef IMAGE_REL_AMD64_SECTION
+#define IMAGE_REL_AMD64_SECTION         0x000A  // Section index
+#endif
+
 enum class SectionType : unsigned char
 {
 	TEXT,
@@ -433,8 +441,9 @@ public:
 		std::cerr << "Added 3 PDATA relocations for function " << function_name << std::endl;
 	}
 
-	void add_debug_relocation(uint32_t offset, const std::string& symbol_name) {
-		std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name << std::endl;
+	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
+		std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name
+		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 
 		// Get the symbol (could be function symbol or section symbol)
 		auto* symbol = coffi_.get_symbol(symbol_name);
@@ -449,14 +458,15 @@ public:
 
 		auto debug_s_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_S]];
 
-		// Add relocation to .debug$S section
+		// Add relocation to .debug$S section with the specified type
 		COFFI::rel_entry_generic reloc;
 		reloc.virtual_address = offset;
 		reloc.symbol_table_index = symbol->get_index();
-		reloc.type = IMAGE_REL_AMD64_SECREL;  // Section-relative offset for debug info
+		reloc.type = relocation_type;  // Use the specified relocation type
 		debug_s_section->add_relocation_entry(&reloc);
 
-		std::cerr << "Added debug relocation for symbol " << symbol_name << " at offset " << offset << std::endl;
+		std::cerr << "Added debug relocation for symbol " << symbol_name << " at offset " << offset
+		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 	}
 
 	// Debug information methods
@@ -564,7 +574,7 @@ public:
 		// Add debug relocations
 		const auto& debug_relocations = debug_builder_.getDebugRelocations();
 		for (const auto& reloc : debug_relocations) {
-			add_debug_relocation(reloc.offset, reloc.symbol_name);
+			add_debug_relocation(reloc.offset, reloc.symbol_name, reloc.relocation_type);
 		}
 		std::cerr << "DEBUG: Added " << debug_relocations.size() << " debug relocations" << std::endl;
 

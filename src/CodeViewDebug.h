@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 // COFF relocation types for debug information
+#define IMAGE_REL_AMD64_SECTION         0x000A  // Section index
 #define IMAGE_REL_AMD64_SECREL          0x000B  // 32 bit offset from base of section containing target
 
 // CodeView debug information structures and constants
@@ -399,6 +400,7 @@ private:
     void writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data);
     void writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, const std::vector<uint8_t>& subsection_data);
     void alignTo4Bytes(std::vector<uint8_t>& data);
+    void addTypeRecordWithPadding(std::vector<uint8_t>& debug_t_data, TypeRecordKind kind, const std::vector<uint8_t>& record_data);
     void writeLittleEndian32(std::vector<uint8_t>& data, uint32_t value);
     void writeLittleEndian16(std::vector<uint8_t>& data, uint16_t value);
 
