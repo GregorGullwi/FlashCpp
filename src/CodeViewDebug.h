@@ -5,6 +5,9 @@
 #include <string>
 #include <unordered_map>
 
+// COFF relocation types for debug information
+#define IMAGE_REL_AMD64_SECREL          0x000B  // 32 bit offset from base of section containing target
+
 // CodeView debug information structures and constants
 // Based on Microsoft CodeView format specification
 
@@ -48,6 +51,7 @@ enum class SymbolKind : uint16_t {
 
 // Type record types
 enum class TypeRecordKind : uint16_t {
+    LF_MODIFIER = 0x1001,
     LF_POINTER = 0x1002,
     LF_PROCEDURE = 0x1008,
     LF_ARGLIST = 0x1201,
@@ -312,6 +316,13 @@ struct FunctionInfo {
     uint32_t epilogue_size = 0;       // Size of function epilogue
 };
 
+// Structure to track debug relocations
+struct DebugRelocation {
+    uint32_t offset;        // Offset in .debug$S section
+    std::string symbol_name; // Symbol name to reference
+    uint32_t relocation_type; // Type of relocation
+};
+
 class DebugInfoBuilder {
 public:
     DebugInfoBuilder();
@@ -350,6 +361,12 @@ public:
     // Generate .debug$S section data
     std::vector<uint8_t> generateDebugS();
 
+    // Get debug relocations that need to be added
+    const std::vector<DebugRelocation>& getDebugRelocations() const { return debug_relocations_; }
+
+    // Add a debug relocation
+    void addDebugRelocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type);
+
     // Generate .debug$T section data
     std::vector<uint8_t> generateDebugT();
 
@@ -363,6 +380,7 @@ private:
     std::unordered_map<std::string, uint32_t> string_offsets_;
 
     std::vector<FunctionInfo> functions_;
+    std::vector<DebugRelocation> debug_relocations_;
 
     // Current function being processed (for incremental line mapping)
     std::string current_function_name_;

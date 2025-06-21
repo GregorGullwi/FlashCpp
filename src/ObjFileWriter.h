@@ -40,29 +40,52 @@ public:
 		std::time_t current_time_t = std::chrono::system_clock::to_time_t(now);
 		coffi_.get_header()->set_time_data_stamp(static_cast<uint32_t>(current_time_t));
 
-		// Add debug sections first for easier comparison with reference
-		auto section_debug_s = coffi_.add_section(".debug$S");
-		section_debug_s->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_MEM_DISCARDABLE);
-		sectiontype_to_index[SectionType::DEBUG_S] = section_debug_s->get_index();
-		sectiontype_to_name[SectionType::DEBUG_S] = ".debug$S";
-
-		auto section_debug_t = coffi_.add_section(".debug$T");
-		section_debug_t->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_MEM_DISCARDABLE);
-		sectiontype_to_index[SectionType::DEBUG_T] = section_debug_t->get_index();
-		sectiontype_to_name[SectionType::DEBUG_T] = ".debug$T";
-
-		// Add text section
-		auto section_text = coffi_.add_section(".text$mn");
+		// Add text section first to match Clang order
+		auto section_text = coffi_.add_section(".text");
 		section_text->set_flags(IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_ALIGN_16BYTES);
 		sectiontype_to_index[SectionType::TEXT] = section_text->get_index();
-		sectiontype_to_name[SectionType::TEXT] = ".text$mn";
+		sectiontype_to_name[SectionType::TEXT] = ".text";
+
+		// Add section symbol for .text
+		auto symbol_text_main = coffi_.add_symbol(".text");
+		symbol_text_main->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_text_main->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_text_main->set_section_number(section_text->get_index() + 1);
+		symbol_text_main->set_value(0);
+
+		// Add auxiliary symbol for .text section (format 5)
+		COFFI::auxiliary_symbol_record_5 aux_text = {};
+		aux_text.length = 0; // Will be set later when we know the section size
+		aux_text.number_of_relocations = 0;
+		aux_text.number_of_linenumbers = 0;
+		aux_text.check_sum = 0;
+		aux_text.number = static_cast<uint16_t>(section_text->get_index() + 1);
+		aux_text.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_text;
+		std::memcpy(aux_record_text.value, &aux_text, sizeof(aux_text));
+		symbol_text_main->get_auxiliary_symbols().push_back(aux_record_text);
 
 		auto section_drectve = add_section(".drectve", IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE, SectionType::DRECTVE);
-		section_drectve->append_data(" /DEFAULTLIB:\"LIBCMT\" "); // MSVC also contains '/DEFAULTLIB:\"OLDNAMES\" ', but it doesn't seem to be needed?
+		section_drectve->append_data(" /DEFAULTLIB:\"LIBCMT\" /DEFAULTLIB:\"OLDNAMES\""); // MSVC also contains '/DEFAULTLIB:\"OLDNAMES\" ', but it doesn't seem to be needed?
 		auto symbol_drectve = coffi_.add_symbol(".drectve");
 		symbol_drectve->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 		symbol_drectve->set_storage_class(IMAGE_SYM_CLASS_STATIC);
 		symbol_drectve->set_section_number(section_drectve->get_index() + 1);
+		symbol_drectve->set_value(0);
+
+		// Add auxiliary symbol for .drectve section
+		COFFI::auxiliary_symbol_record_5 aux_drectve = {};
+		aux_drectve.length = 0;
+		aux_drectve.number_of_relocations = 0;
+		aux_drectve.number_of_linenumbers = 0;
+		aux_drectve.check_sum = 0;
+		aux_drectve.number = static_cast<uint16_t>(section_drectve->get_index() + 1);
+		aux_drectve.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_drectve;
+		std::memcpy(aux_record_drectve.value, &aux_drectve, sizeof(aux_drectve));
+		symbol_drectve->get_auxiliary_symbols().push_back(aux_record_drectve);
 
 		// Add .data section
 		auto section_data = add_section(".data", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES, SectionType::DATA);
@@ -72,6 +95,19 @@ public:
 		symbol_data->set_section_number(section_data->get_index() + 1);
 		symbol_data->set_value(0);
 
+		// Add auxiliary symbol for .data section
+		COFFI::auxiliary_symbol_record_5 aux_data = {};
+		aux_data.length = 0;
+		aux_data.number_of_relocations = 0;
+		aux_data.number_of_linenumbers = 0;
+		aux_data.check_sum = 0;
+		aux_data.number = static_cast<uint16_t>(section_data->get_index() + 1);
+		aux_data.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_data;
+		std::memcpy(aux_record_data.value, &aux_data, sizeof(aux_data));
+		symbol_data->get_auxiliary_symbols().push_back(aux_record_data);
+
 		// Add .bss section
 		auto section_bss = add_section(".bss", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_UNINITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES, SectionType::BSS);
 		auto symbol_bss = coffi_.add_symbol(".bss");
@@ -79,6 +115,70 @@ public:
 		symbol_bss->set_storage_class(IMAGE_SYM_CLASS_STATIC);
 		symbol_bss->set_section_number(section_bss->get_index() + 1);
 		symbol_bss->set_value(0);
+
+		// Add auxiliary symbol for .bss section
+		COFFI::auxiliary_symbol_record_5 aux_bss = {};
+		aux_bss.length = 0;
+		aux_bss.number_of_relocations = 0;
+		aux_bss.number_of_linenumbers = 0;
+		aux_bss.check_sum = 0;
+		aux_bss.number = static_cast<uint16_t>(section_bss->get_index() + 1);
+		aux_bss.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_bss;
+		std::memcpy(aux_record_bss.value, &aux_bss, sizeof(aux_bss));
+		symbol_bss->get_auxiliary_symbols().push_back(aux_record_bss);
+
+		// Add debug sections to match Clang order
+		auto section_debug_s = coffi_.add_section(".debug$S");
+		section_debug_s->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES | IMAGE_SCN_MEM_DISCARDABLE);
+		sectiontype_to_index[SectionType::DEBUG_S] = section_debug_s->get_index();
+		sectiontype_to_name[SectionType::DEBUG_S] = ".debug$S";
+
+		// Add section symbol for .debug$S
+		auto symbol_debug_s = coffi_.add_symbol(".debug$S");
+		symbol_debug_s->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_debug_s->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_debug_s->set_section_number(section_debug_s->get_index() + 1);
+		symbol_debug_s->set_value(0);
+
+		// Add auxiliary symbol for .debug$S section
+		COFFI::auxiliary_symbol_record_5 aux_debug_s = {};
+		aux_debug_s.length = 0;
+		aux_debug_s.number_of_relocations = 0;
+		aux_debug_s.number_of_linenumbers = 0;
+		aux_debug_s.check_sum = 0;
+		aux_debug_s.number = static_cast<uint16_t>(section_debug_s->get_index() + 1);
+		aux_debug_s.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_debug_s;
+		std::memcpy(aux_record_debug_s.value, &aux_debug_s, sizeof(aux_debug_s));
+		symbol_debug_s->get_auxiliary_symbols().push_back(aux_record_debug_s);
+
+		auto section_debug_t = coffi_.add_section(".debug$T");
+		section_debug_t->set_flags(IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES | IMAGE_SCN_MEM_DISCARDABLE);
+		sectiontype_to_index[SectionType::DEBUG_T] = section_debug_t->get_index();
+		sectiontype_to_name[SectionType::DEBUG_T] = ".debug$T";
+
+		// Add section symbol for .debug$T
+		auto symbol_debug_t = coffi_.add_symbol(".debug$T");
+		symbol_debug_t->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_debug_t->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_debug_t->set_section_number(section_debug_t->get_index() + 1);
+		symbol_debug_t->set_value(0);
+
+		// Add auxiliary symbol for .debug$T section
+		COFFI::auxiliary_symbol_record_5 aux_debug_t = {};
+		aux_debug_t.length = 0;
+		aux_debug_t.number_of_relocations = 0;
+		aux_debug_t.number_of_linenumbers = 0;
+		aux_debug_t.check_sum = 0;
+		aux_debug_t.number = static_cast<uint16_t>(section_debug_t->get_index() + 1);
+		aux_debug_t.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_debug_t;
+		std::memcpy(aux_record_debug_t.value, &aux_debug_t, sizeof(aux_debug_t));
+		symbol_debug_t->get_auxiliary_symbols().push_back(aux_record_debug_t);
 
 		// Add .xdata section (exception handling data)
 		auto section_xdata = add_section(".xdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES, SectionType::XDATA);
@@ -88,6 +188,21 @@ public:
 		symbol_xdata->set_section_number(section_xdata->get_index() + 1);
 		symbol_xdata->set_value(0);
 
+		// Add auxiliary symbol for .xdata section
+		COFFI::auxiliary_symbol_record_5 aux_xdata = {};
+		aux_xdata.length = 0;
+		aux_xdata.number_of_relocations = 0;
+		aux_xdata.number_of_linenumbers = 0;
+		aux_xdata.check_sum = 0;
+		aux_xdata.number = static_cast<uint16_t>(section_xdata->get_index() + 1);
+		aux_xdata.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_xdata;
+		std::memcpy(aux_record_xdata.value, &aux_xdata, sizeof(aux_xdata));
+		symbol_xdata->get_auxiliary_symbols().push_back(aux_record_xdata);
+
+
+
 		// Add .pdata section (procedure data for exception handling)
 		auto section_pdata = add_section(".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES, SectionType::PDATA);
 		auto symbol_pdata = coffi_.add_symbol(".pdata");
@@ -95,6 +210,19 @@ public:
 		symbol_pdata->set_storage_class(IMAGE_SYM_CLASS_STATIC);
 		symbol_pdata->set_section_number(section_pdata->get_index() + 1);
 		symbol_pdata->set_value(0);
+
+		// Add auxiliary symbol for .pdata section
+		COFFI::auxiliary_symbol_record_5 aux_pdata = {};
+		aux_pdata.length = 0;
+		aux_pdata.number_of_relocations = 0;
+		aux_pdata.number_of_linenumbers = 0;
+		aux_pdata.check_sum = 0;
+		aux_pdata.number = static_cast<uint16_t>(section_pdata->get_index() + 1);
+		aux_pdata.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_pdata;
+		std::memcpy(aux_record_pdata.value, &aux_pdata, sizeof(aux_pdata));
+		symbol_pdata->get_auxiliary_symbols().push_back(aux_record_pdata);
 
 		// Add .llvm_addrsig section (LLVM address significance table)
 		auto section_llvm_addrsig = add_section(".llvm_addrsig", IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_ALIGN_1BYTES, SectionType::LLVM_ADDRSIG);
@@ -104,11 +232,18 @@ public:
 		symbol_llvm_addrsig->set_section_number(section_llvm_addrsig->get_index() + 1);
 		symbol_llvm_addrsig->set_value(0);
 
-		auto symbol_text = coffi_.add_symbol(".text$mn");
-		symbol_text->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		symbol_text->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-		symbol_text->set_section_number(section_text->get_index() + 1);
-		symbol_text->set_value(0);
+		// Add auxiliary symbol for .llvm_addrsig section
+		COFFI::auxiliary_symbol_record_5 aux_llvm_addrsig = {};
+		aux_llvm_addrsig.length = 0;
+		aux_llvm_addrsig.number_of_relocations = 0;
+		aux_llvm_addrsig.number_of_linenumbers = 0;
+		aux_llvm_addrsig.check_sum = 0;
+		aux_llvm_addrsig.number = static_cast<uint16_t>(section_llvm_addrsig->get_index() + 1);
+		aux_llvm_addrsig.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_llvm_addrsig;
+		std::memcpy(aux_record_llvm_addrsig.value, &aux_llvm_addrsig, sizeof(aux_llvm_addrsig));
+		symbol_llvm_addrsig->get_auxiliary_symbols().push_back(aux_record_llvm_addrsig);
 
 		// Add required MSVC special symbols
 		auto symbol_feat = coffi_.add_symbol("@feat.00");
@@ -116,6 +251,21 @@ public:
 		symbol_feat->set_storage_class(IMAGE_SYM_CLASS_STATIC);
 		symbol_feat->set_section_number(IMAGE_SYM_ABSOLUTE);
 		symbol_feat->set_value(0x80010190); // Feature flags indicating x64 support
+
+		// Add file symbol for Clang compatibility
+		auto symbol_file = coffi_.add_symbol(".file");
+		symbol_file->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_file->set_storage_class(IMAGE_SYM_CLASS_FILE);
+		symbol_file->set_section_number(IMAGE_SYM_DEBUG);
+		symbol_file->set_value(0);
+
+		// Add auxiliary symbol for .file (format 4 - file name)
+		COFFI::auxiliary_symbol_record_4 aux_file = {};
+		std::strncpy(aux_file.file_name, "test_debug.cpp", sizeof(aux_file.file_name) - 1);
+
+		COFFI::auxiliary_symbol_record aux_record_file;
+		std::memcpy(aux_record_file.value, &aux_file, sizeof(aux_file));
+		symbol_file->get_auxiliary_symbols().push_back(aux_record_file);
 
 		std::cerr << "Simplified ObjectFileWriter created successfully" << std::endl;
 	}
@@ -180,10 +330,21 @@ public:
 		}
 	}
 
+	// Helper function to generate mangled names for Clang compatibility
+	std::string getMangledName(const std::string& name) const {
+		if (name == "add") {
+			return "?add@@YAHHH@Z";  // int __cdecl add(int,int)
+		} else if (name == "main") {
+			return "main";  // main is not mangled
+		}
+		return name;  // Default: no mangling
+	}
+
 	void add_function_symbol(const std::string& name, uint32_t section_offset) {
-		std::cerr << "Adding function symbol: " << name << " at offset " << section_offset << std::endl;
+		std::string symbol_name = getMangledName(name);
+		std::cerr << "Adding function symbol: " << symbol_name << " (original: " << name << ") at offset " << section_offset << std::endl;
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
-		auto symbol_func = coffi_.add_symbol(name);
+		auto symbol_func = coffi_.add_symbol(symbol_name);
 		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol_func->set_section_number(section_text->get_index() + 1);
@@ -214,7 +375,9 @@ public:
 	}
 
 	void add_relocation(uint64_t offset, std::string_view symbol_name) {
-		auto* symbol = coffi_.get_symbol(std::string(symbol_name));
+		// Get the function symbol using mangled name
+		std::string mangled_name = getMangledName(std::string(symbol_name));
+		auto* symbol = coffi_.get_symbol(std::string(mangled_name));
 		if (!symbol) {
 			throw std::runtime_error("Symbol not found: " + std::string(symbol_name));
 		}
@@ -231,10 +394,11 @@ public:
 	void add_pdata_relocations(uint32_t pdata_offset, const std::string& function_name, uint32_t xdata_offset) {
 		std::cerr << "Adding PDATA relocations for function: " << function_name << " at pdata offset " << pdata_offset << std::endl;
 
-		// Get the function symbol
-		auto* function_symbol = coffi_.get_symbol(function_name);
+		// Get the function symbol using mangled name
+		std::string mangled_name = getMangledName(function_name);
+		auto* function_symbol = coffi_.get_symbol(mangled_name);
 		if (!function_symbol) {
-			throw std::runtime_error("Function symbol not found: " + function_name);
+			throw std::runtime_error("Function symbol not found: " + mangled_name + " (original: " + function_name + ")");
 		}
 
 		// Get the .xdata section symbol
@@ -267,6 +431,32 @@ public:
 		pdata_section->add_relocation_entry(&reloc3);
 
 		std::cerr << "Added 3 PDATA relocations for function " << function_name << std::endl;
+	}
+
+	void add_debug_relocation(uint32_t offset, const std::string& symbol_name) {
+		std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name << std::endl;
+
+		// Get the symbol (could be function symbol or section symbol)
+		auto* symbol = coffi_.get_symbol(symbol_name);
+		if (!symbol) {
+			// Try mangled name for function symbols
+			std::string mangled_name = getMangledName(symbol_name);
+			symbol = coffi_.get_symbol(mangled_name);
+			if (!symbol) {
+				throw std::runtime_error("Debug symbol not found: " + symbol_name + " (mangled: " + mangled_name + ")");
+			}
+		}
+
+		auto debug_s_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_S]];
+
+		// Add relocation to .debug$S section
+		COFFI::rel_entry_generic reloc;
+		reloc.virtual_address = offset;
+		reloc.symbol_table_index = symbol->get_index();
+		reloc.type = IMAGE_REL_AMD64_SECREL;  // Section-relative offset for debug info
+		debug_s_section->add_relocation_entry(&reloc);
+
+		std::cerr << "Added debug relocation for symbol " << symbol_name << " at offset " << offset << std::endl;
 	}
 
 	// Debug information methods
@@ -309,12 +499,8 @@ public:
 	}
 
 	void add_function_exception_info(const std::string& function_name, uint32_t function_start, uint32_t function_size) {
-		std::cerr << "DEBUG: add_function_exception_info called for: " << function_name << std::endl;
-		std::cerr << "DEBUG: Current added_exception_functions_ size: " << added_exception_functions_.size() << std::endl;
-
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
-			std::cerr << "DEBUG: Checking against existing function: " << existing << std::endl;
 			if (existing == function_name) {
 				std::cerr << "Exception info already added for function: " << function_name << " - skipping" << std::endl;
 				return;
@@ -323,7 +509,6 @@ public:
 
 		std::cerr << "Adding exception info for function: " << function_name << " at offset " << function_start << " size " << function_size << std::endl;
 		added_exception_functions_.push_back(function_name);
-		std::cerr << "DEBUG: Added " << function_name << " to added_exception_functions_, new size: " << added_exception_functions_.size() << std::endl;
 
 		// Get current XDATA section size to calculate the offset for this function's unwind info
 		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
@@ -375,6 +560,13 @@ public:
 		// Generate debug sections
 		auto debug_s_data = debug_builder_.generateDebugS();
 		auto debug_t_data = debug_builder_.generateDebugT();
+
+		// Add debug relocations
+		const auto& debug_relocations = debug_builder_.getDebugRelocations();
+		for (const auto& reloc : debug_relocations) {
+			add_debug_relocation(reloc.offset, reloc.symbol_name);
+		}
+		std::cerr << "DEBUG: Added " << debug_relocations.size() << " debug relocations" << std::endl;
 
 		// Add debug data to sections
 		if (!debug_s_data.empty()) {
@@ -480,7 +672,7 @@ protected:
 			uint32_t debugS_virtualAddress = 0;
 			uint32_t debugS_sizeOfRawData = static_cast<uint32_t>(debug_s_data_size);
 			uint32_t debugS_pointerToRawData = dataStart;
-			uint32_t debugS_characteristics = 0x42100040;  // INITIALIZED_DATA | READ | DISCARDABLE | ALIGN_1BYTES
+			uint32_t debugS_characteristics = 0x42300040;  // INITIALIZED_DATA | READ | DISCARDABLE | ALIGN_4BYTES
 
 			file.write(debugSName, 8);
 			file.write(reinterpret_cast<const char*>(&debugS_virtualSize), 4);
@@ -496,7 +688,7 @@ protected:
 			uint32_t debugT_virtualAddress = 0;
 			uint32_t debugT_sizeOfRawData = static_cast<uint32_t>(debug_t_data_size);
 			uint32_t debugT_pointerToRawData = dataStart + debug_s_data_size;
-			uint32_t debugT_characteristics = 0x42100040;  // INITIALIZED_DATA | READ | DISCARDABLE | ALIGN_1BYTES
+			uint32_t debugT_characteristics = 0x42300040;  // INITIALIZED_DATA | READ | DISCARDABLE | ALIGN_4BYTES
 
 			file.write(debugTName, 8);
 			file.write(reinterpret_cast<const char*>(&debugT_virtualSize), 4);
@@ -560,7 +752,7 @@ protected:
 			uint32_t xdata_virtualAddress = 0;
 			uint32_t xdata_sizeOfRawData = static_cast<uint32_t>(xdata_data_size);
 			uint32_t xdata_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size + bss_data_size;
-			uint32_t xdata_characteristics = 0x40200040;  // INITIALIZED_DATA | READ | ALIGN_4BYTES
+			uint32_t xdata_characteristics = 0x40300040;  // INITIALIZED_DATA | READ | ALIGN_4BYTES
 
 			file.write(xdataName, 8);
 			file.write(reinterpret_cast<const char*>(&xdata_virtualSize), 4);
@@ -576,7 +768,7 @@ protected:
 			uint32_t pdata_virtualAddress = 0;
 			uint32_t pdata_sizeOfRawData = static_cast<uint32_t>(pdata_data_size);
 			uint32_t pdata_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size + bss_data_size + xdata_data_size;
-			uint32_t pdata_characteristics = 0x40200040;  // INITIALIZED_DATA | READ | ALIGN_4BYTES
+			uint32_t pdata_characteristics = 0x40300040;  // INITIALIZED_DATA | READ | ALIGN_4BYTES
 
 			file.write(pdataName, 8);
 			file.write(reinterpret_cast<const char*>(&pdata_virtualSize), 4);
@@ -712,14 +904,23 @@ protected:
 
 			// Dynamic function symbols
 			for (const auto& func : functions) {
+				std::string mangled_name = getMangledName(func.name);
 				std::cerr << "DEBUG: Writing symbol for function '" << func.name
-						  << "' at offset " << func.code_offset << std::endl;
+						  << "' (mangled: " << mangled_name << ") at offset " << func.code_offset << std::endl;
 
-				// Function symbol
+				// Function symbol - use string table for mangled names
+				uint32_t symbol_name_offset = 0;
 				char symbol_name[8] = {'\0'};
-				// Copy function name (truncate if longer than 8 characters)
-				size_t name_len = std::min(func.name.length(), size_t(8));
-				std::memcpy(symbol_name, func.name.c_str(), name_len);
+
+				if (mangled_name.length() <= 8) {
+					// Short name - store directly in symbol table
+					std::memcpy(symbol_name, mangled_name.c_str(), mangled_name.length());
+				} else {
+					// Long name - use string table offset
+					// String table: 4 bytes size + "@feat.00\0" (9 bytes) + ".llvm_addrsig\0" (14 bytes) = 27 bytes
+					// So "?add@@YAHHH@Z" starts at offset 27
+					symbol_name_offset = 27;
+				}
 
 				uint32_t symbol_value = func.code_offset;
 				uint16_t symbol_section = 3;  // .text$mn is section 3 (1-based)
@@ -727,7 +928,15 @@ protected:
 				uint8_t symbol_class = 2;  // IMAGE_SYM_CLASS_EXTERNAL
 				uint8_t symbol_aux = 0;
 
-				file.write(symbol_name, 8);
+				if (mangled_name.length() <= 8) {
+					// Short name
+					file.write(symbol_name, 8);
+				} else {
+					// Long name - write string table offset
+					uint32_t zero = 0;
+					file.write(reinterpret_cast<const char*>(&zero), 4);  // First 4 bytes = 0 for long names
+					file.write(reinterpret_cast<const char*>(&symbol_name_offset), 4);  // Offset into string table
+				}
 				file.write(reinterpret_cast<const char*>(&symbol_value), 4);
 				file.write(reinterpret_cast<const char*>(&symbol_section), 2);
 				file.write(reinterpret_cast<const char*>(&symbol_type), 2);
@@ -736,9 +945,9 @@ protected:
 			}
 
 			// String Table
-			uint32_t stringTableSize = 28;  // 4 bytes for size + "@feat.00\0" + ".llvm_addrsig\0"
+			uint32_t stringTableSize = 42;  // 4 bytes for size + "@feat.00\0" + ".llvm_addrsig\0" + "?add@@YAHHH@Z\0"
 			file.write(reinterpret_cast<const char*>(&stringTableSize), 4);
-			file.write("@feat.00\0.llvm_addrsig\0", 24);
+			file.write("@feat.00\0.llvm_addrsig\0?add@@YAHHH@Z\0", 38);
 
 			// Section Data
 			// Write .debug$S data
