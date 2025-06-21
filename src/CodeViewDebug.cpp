@@ -323,8 +323,8 @@ void DebugInfoBuilder::initializeFunctionIdMap() {
     for (size_t i = 0; i < functions_.size(); ++i) {
         // Each function gets 3 type indices: arglist, procedure, func_id
         // func_id is at offset +2 from the base index
-        // Account for 2 basic types (0x1000-0x1001) before function types start at 0x1002
-        uint32_t func_id_index = 0x1002 + static_cast<uint32_t>(i * 3) + 2; // LF_FUNC_ID index
+        // CLANG COMPATIBILITY: Functions start at 0x1000 (no basic types)
+        uint32_t func_id_index = 0x1000 + static_cast<uint32_t>(i * 3) + 2; // LF_FUNC_ID index
         function_id_map_[functions_[i].name] = func_id_index;
     }
 
@@ -995,66 +995,8 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
     // This matches Clang's approach of including comprehensive type information
     uint32_t current_type_index = 0x1000;
 
-    // SIMPLE TEST: Add just one LF_POINTER type to test format
-    std::cerr << "DEBUG: Adding ONE simple LF_POINTER type to test format..." << std::endl;
-
-    // Add ONE simple LF_POINTER for int* (0x1000) to test format
-    {
-        std::vector<uint8_t> pointer_data;
-
-        // Referent Type (4 bytes) - what the pointer points to
-        uint32_t pointee_type = 0x74; // T_INT4 (int)
-        writeLittleEndian32(pointer_data, pointee_type);
-
-        // Attributes (4 bytes) - according to LLVM docs format
-        // Bits 0-4: Kind (Near64 = 0x0c)
-        // Bits 5-7: Mode (Pointer = 0x00)
-        // Bits 8-12: Modifiers (None = 0x00)
-        // Bits 13-15: Size (8 bytes for 64-bit = 0x08)
-        // Bits 16-18: Flags (None = 0x00)
-        uint32_t pointer_attrs = 0x0000080C; // Size=8, Kind=Near64
-        writeLittleEndian32(pointer_data, pointer_attrs);
-
-        TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(pointer_data.size() + sizeof(TypeRecordKind));
-        header.kind = TypeRecordKind::LF_POINTER;
-
-        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
-                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
-        debug_t_data.insert(debug_t_data.end(), pointer_data.begin(), pointer_data.end());
-        alignTo4Bytes(debug_t_data);
-
-        std::cerr << "DEBUG: Added simple LF_POINTER 0x" << std::hex << current_type_index << std::dec << " (int*)" << std::endl;
-        current_type_index++;
-    }
-
-    // Add second LF_POINTER for void* (0x1001) to test multiple types
-    {
-        std::vector<uint8_t> pointer_data;
-
-        // Referent Type (4 bytes) - what the pointer points to
-        uint32_t pointee_type = 0x03; // T_VOID
-        writeLittleEndian32(pointer_data, pointee_type);
-
-        // Attributes (4 bytes) - same format as int*
-        uint32_t pointer_attrs = 0x0000080C; // Size=8, Kind=Near64
-        writeLittleEndian32(pointer_data, pointer_attrs);
-
-        TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(pointer_data.size() + sizeof(TypeRecordKind));
-        header.kind = TypeRecordKind::LF_POINTER;
-
-        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
-                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
-        debug_t_data.insert(debug_t_data.end(), pointer_data.begin(), pointer_data.end());
-        alignTo4Bytes(debug_t_data);
-
-        std::cerr << "DEBUG: Added simple LF_POINTER 0x" << std::hex << current_type_index << std::dec << " (void*)" << std::endl;
-        current_type_index++;
-    }
-
-    std::cerr << "DEBUG: Added 2 basic types, starting functions at 0x"
-              << std::hex << current_type_index << std::dec << std::endl;
+    // CLANG COMPATIBILITY: Skip basic pointer types, add LF_STRING_ID records like Clang
+    std::cerr << "DEBUG: Skipping basic pointer types, adding LF_STRING_ID records to match Clang..." << std::endl;
 
     // DEBUG: List all functions in the vector
     for (size_t i = 0; i < functions_.size(); ++i) {
@@ -1101,8 +1043,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                                reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
             debug_t_data.insert(debug_t_data.end(), arglist_data.begin(), arglist_data.end());
-            // Always align LF_ARGLIST records since they're not the last
-            alignTo4Bytes(debug_t_data);
+            // NO individual alignment - only at the end!
 
             std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << arglist_index << std::dec
                       << " (" << arg_count << " args for " << func.name << ")" << std::endl;
@@ -1141,8 +1082,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
                                reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
             debug_t_data.insert(debug_t_data.end(), proc_data.begin(), proc_data.end());
-            // Always align LF_PROCEDURE records since they're not the last
-            alignTo4Bytes(debug_t_data);
+            // NO individual alignment - only at the end!
 
             std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << procedure_index << std::dec
                       << " (" << func.name << " function)" << std::endl;
@@ -1178,10 +1118,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), func_id_data.begin(), func_id_data.end());
             size_t after_data_size = debug_t_data.size();
 
-            // Only align if this is not the last function
-            if (func_index < functions_.size() - 1) {
-                alignTo4Bytes(debug_t_data);
-            }
+            // NO individual alignment - only at the end!
             size_t after_align_size = debug_t_data.size();
 
             std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << func_id_index << std::dec
@@ -1196,14 +1133,159 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         current_type_index += 3;
     } // End of function loop
 
-    // CLANG COMPATIBILITY: Add build information AFTER functions (optional)
-    // This matches Clang's approach where functions come first
-    // For now, skip build info to match Clang exactly
-    std::cerr << "DEBUG: Skipping build information to match Clang compatibility" << std::endl;
+    // CLANG COMPATIBILITY: Add all LF_STRING_ID and LF_BUILDINFO records like Clang
+    std::cerr << "DEBUG: Adding LF_STRING_ID and LF_BUILDINFO records to match Clang..." << std::endl;
+
+    // Add LF_STRING_ID for directory path (0x1006 in Clang)
+    {
+        std::string dir_path = "C:\\Projects\\FlashCpp";
+        std::vector<uint8_t> string_data;
+
+        writeLittleEndian32(string_data, 0x00000000);
+        string_data.insert(string_data.end(), dir_path.begin(), dir_path.end());
+        string_data.push_back(0x00);
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+                  << " (directory: " << dir_path << ", length: " << header.length << ")" << std::endl;
+        current_type_index++;
+    }
+
+    // Add LF_STRING_ID for source file (0x1007 in Clang)
+    {
+        std::string source_file = "test_debug.cpp";
+        std::vector<uint8_t> string_data;
+
+        writeLittleEndian32(string_data, 0x00000000);
+        string_data.insert(string_data.end(), source_file.begin(), source_file.end());
+        string_data.push_back(0x00);
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+                  << " (source: " << source_file << ", length: " << header.length << ")" << std::endl;
+        current_type_index++;
+    }
+
+    // Add LF_STRING_ID for empty string (0x1008 in Clang)
+    {
+        std::vector<uint8_t> string_data;
+
+        writeLittleEndian32(string_data, 0x00000000);
+        string_data.push_back(0x00); // Just null terminator
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+                  << " (empty string, length: " << header.length << ")" << std::endl;
+        current_type_index++;
+    }
+
+    // Add LF_STRING_ID for compiler path (0x1009 in Clang)
+    {
+        std::string compiler_path = "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\Llvm\\x64\\bin\\clang-cl.exe";
+        std::vector<uint8_t> string_data;
+
+        writeLittleEndian32(string_data, 0x00000000);
+        string_data.insert(string_data.end(), compiler_path.begin(), compiler_path.end());
+        string_data.push_back(0x00);
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+                  << " (compiler path, length: " << header.length << ")" << std::endl;
+        current_type_index++;
+    }
+
+    // Add LF_STRING_ID for command line (0x100a in Clang) - This is the big one!
+    {
+        std::string cmdline = "\"-cc1\" \"-triple\" \"x86_64-pc-windows-msvc19.44.35209\" \"-emit-obj\" \"-mincremental-linker-compatible\" \"-disable-free\" \"-clear-ast-before-backend\" \"-disable-llvm-verifier\" \"-discard-value-names\" \"-mrelocation-model\" \"pic\" \"-pic-level\" \"2\" \"-mframe-pointer=none\" \"-relaxed-aliasing\" \"-fmath-errno\" \"-ffp-contract=on\" \"-fno-rounding-math\" \"-mconstructor-aliases\" \"-fms-volatile\" \"-funwind-tables=2\" \"-target-cpu\" \"x86-64\" \"-mllvm\" \"-x86-asm-syntax=intel\" \"-tune-cpu\" \"generic\" \"-D_MT\" \"-flto-visibility-public-std\" \"--dependent-lib=libcmt\" \"--dependent-lib=oldnames\" \"-stack-protector\" \"2\" \"-fdiagnostics-format\" \"msvc\" \"-gno-column-info\" \"-gcodeview\" \"-debug-info-kind=constructor\" \"-fdebug-compilation-dir=C:\\\\Projects\\\\FlashCpp\" \"-fcoverage-compilation-dir=C:\\\\Projects\\\\FlashCpp\" \"-resource-dir\" \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\VC\\\\Tools\\\\Llvm\\\\x64\\\\lib\\\\clang\\\\19\" \"-internal-isystem\" \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\VC\\\\Tools\\\\Llvm\\\\x64\\\\lib\\\\clang\\\\19\\\\include\" \"-internal-isystem\" \"C:\\\\Program Files (x86)\\\\Microsoft Visual Studio\\\\2019\\\\Community\\\\VC\\\\Tools\\\\MSVC\\\\14.29.30133\\\\include\" \"-fdeprecated-macro\" \"-ferror-limit\" \"19\" \"-fno-use-cxa-atexit\" \"-fms-extensions\" \"-fms-compatibility\" \"-fms-compatibility-version=19.44.35209\" \"-std=c++14\" \"-fskip-odr-check-in-gmf\" \"-fdelayed-template-parsing\" \"-fcolor-diagnostics\" \"-faddrsig\" \"-x\" \"c++\"";
+        std::vector<uint8_t> string_data;
+
+        writeLittleEndian32(string_data, 0x00000000);
+        string_data.insert(string_data.end(), cmdline.begin(), cmdline.end());
+        string_data.push_back(0x00);
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(string_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_STRING_ID;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+
+        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+                  << " (command line: " << cmdline.length() << " chars, length: " << header.length << ")" << std::endl;
+        current_type_index++;
+    }
+
+    // Add LF_BUILDINFO record (0x100b in Clang)
+    {
+        std::vector<uint8_t> buildinfo_data;
+
+        // Build info contains 5 string ID references
+        uint16_t count = 5;
+        writeLittleEndian16(buildinfo_data, count);
+
+        // References to the 5 string IDs we just created
+        uint32_t dir_id = current_type_index - 5;      // Directory
+        uint32_t compiler_id = current_type_index - 2;  // Compiler path
+        uint32_t source_id = current_type_index - 4;    // Source file
+        uint32_t empty_id = current_type_index - 3;     // Empty string
+        uint32_t cmdline_id = current_type_index - 1;   // Command line
+
+        writeLittleEndian32(buildinfo_data, dir_id);
+        writeLittleEndian32(buildinfo_data, compiler_id);
+        writeLittleEndian32(buildinfo_data, source_id);
+        writeLittleEndian32(buildinfo_data, empty_id);
+        writeLittleEndian32(buildinfo_data, cmdline_id);
+
+        TypeRecordHeader header;
+        header.length = static_cast<uint16_t>(buildinfo_data.size() + sizeof(TypeRecordKind));
+        header.kind = TypeRecordKind::LF_BUILDINFO;
+
+        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+        debug_t_data.insert(debug_t_data.end(), buildinfo_data.begin(), buildinfo_data.end());
+
+        std::cerr << "DEBUG: Added LF_BUILDINFO 0x" << std::hex << current_type_index << std::dec
+                  << " (length: " << header.length << ", references: 0x" << std::hex << dir_id << ", 0x" << compiler_id
+                  << ", 0x" << source_id << ", 0x" << empty_id << ", 0x" << cmdline_id
+                  << std::dec << ")" << std::endl;
+        current_type_index++;
+    }
 
 
 
 
+
+    // NO final alignment - padding creates spurious records in cvdump
+    // alignTo4Bytes(debug_t_data);
 
     std::cerr << "DEBUG: Final .debug$T section size: " << debug_t_data.size() << " bytes" << std::endl;
 
