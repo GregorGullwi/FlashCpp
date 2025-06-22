@@ -1188,17 +1188,7 @@ private:
 
 			// Update function length
 			writer.update_function_length(current_function_name_, function_length);
-
-			// Set debug range to match reference exactly
-			if (current_function_name_ == "add") {
-				// Reference: Debug start: 8, Debug end: 14 (code_length=17)
-				// prologue=8, epilogue=17-14=3
-				writer.set_function_debug_range(current_function_name_, 8, 3); // prologue=8, epilogue=3
-			} else if (current_function_name_ == "main") {
-				// Reference: Debug start: 4, Debug end: 13 (code_length=34)
-				// prologue=4, epilogue=34-13=21
-				writer.set_function_debug_range(current_function_name_, 4, 21); // prologue=4, epilogue=21
-			}
+			writer.set_function_debug_range(current_function_name_, 0, 0);	// doesn't seem needed
 
 			// Add exception handling information (required for x64) - once per function
 			std::cerr << "DEBUG: Adding exception info for completed function " << current_function_name_ << std::endl;
