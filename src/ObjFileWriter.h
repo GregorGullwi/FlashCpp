@@ -348,7 +348,7 @@ private:
 	mutable std::unordered_map<std::string, FunctionSignature> function_signatures_;
 
 	// Generate Microsoft Visual C++ mangled name
-	std::string generateMangledName(const std::string& name, const FunctionSignature& sig) const {
+	std::string generateMangledName(const std::string_view name, const FunctionSignature& sig) const {
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
@@ -384,24 +384,24 @@ private:
 	}
 
 	// Get Microsoft Visual C++ type code for mangling
-	std::string getTypeCode(Type type) const {
+	std::string_view getTypeCode(Type type) const {
 		switch (type) {
-			case Type::Void: return "X";
-			case Type::Bool: return "_N";
-			case Type::Char: return "D";
-			case Type::UnsignedChar: return "E";
-			case Type::Short: return "F";
-			case Type::UnsignedShort: return "G";
-			case Type::Int: return "H";
-			case Type::UnsignedInt: return "I";
-			case Type::Long: return "J";
-			case Type::UnsignedLong: return "K";
-			case Type::LongLong: return "_J";
-			case Type::UnsignedLongLong: return "_K";
-			case Type::Float: return "M";
-			case Type::Double: return "N";
-			case Type::LongDouble: return "O";
-			default: return "H";  // Default to int for unknown types
+			case Type::Void: return "X"sv;
+			case Type::Bool: return "_N"sv;
+			case Type::Char: return "D"sv;
+			case Type::UnsignedChar: return "E"sv;
+			case Type::Short: return "F"sv;
+			case Type::UnsignedShort: return "G"sv;
+			case Type::Int: return "H"sv;
+			case Type::UnsignedInt: return "I"sv;
+			case Type::Long: return "J"sv;
+			case Type::UnsignedLong: return "K"sv;
+			case Type::LongLong: return "_J"sv;
+			case Type::UnsignedLongLong: return "_K"sv;
+			case Type::Float: return "M"sv;
+			case Type::Double: return "N"sv;
+			case Type::LongDouble: return "O"sv;
+			default: return "H"sv;  // Default to int for unknown types
 		}
 	}
 
