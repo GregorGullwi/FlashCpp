@@ -569,18 +569,10 @@ public:
 
 		for (const auto& instruction : ir.getInstructions()) {
 			// Add line mapping for debug information if line number is available
-			// REFERENCE COMPATIBILITY: Only map meaningful statements, not closing braces
 			if (instruction.getOpcode() != IrOpcode::FunctionDecl && instruction.getOpcode() != IrOpcode::Return && instruction.getLineNumber() > 0) {
-				// Filter out closing brace lines (lines 4 and 9 in our test file)
-				// These correspond to the closing braces of functions which the reference doesn't map
-				if (instruction.getLineNumber() != 4 && instruction.getLineNumber() != 9) {
-					std::cerr << "DEBUG: Adding line mapping for line " << instruction.getLineNumber()
-						<< " (opcode: " << static_cast<int>(instruction.getOpcode()) << ")" << std::endl;
-					addLineMapping(instruction.getLineNumber());
-				} else {
-					std::cerr << "DEBUG: SKIPPING closing brace line mapping for line " << instruction.getLineNumber()
-						<< " (opcode: " << static_cast<int>(instruction.getOpcode()) << ") - reference compatibility" << std::endl;
-				}
+				std::cerr << "DEBUG: Adding line mapping for line " << instruction.getLineNumber()
+					<< " (opcode: " << static_cast<int>(instruction.getOpcode()) << ")" << std::endl;
+				addLineMapping(instruction.getLineNumber());
 			}
 
 			std::cerr << "DEBUG: Processing instruction opcode: " << static_cast<int>(instruction.getOpcode()) << std::endl;
@@ -894,23 +886,6 @@ private:
 				function_instructions[current_func_name].push_back(instruction);
 			}
 		}
-	}
-
-	// Count the number of parameters for a function
-	int countFunctionParameters(std::string_view func_name) {
-		auto it = function_instructions.find(func_name);
-		if (it == function_instructions.end()) {
-			return 0; // No instructions found for this function
-		}
-
-		// Look for the function declaration in the original IR to count parameters
-		// For now, we'll use a simple heuristic based on function name
-		if (func_name == "add") {
-			return 2; // add function has 2 parameters
-		} else if (func_name == "main") {
-			return 0; // main function has 0 parameters
-		}
-		return 0; // Default to 0 parameters
 	}
 
 	// Calculate the total stack space needed for a function by analyzing its IR instructions

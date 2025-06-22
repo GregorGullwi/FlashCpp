@@ -320,23 +320,23 @@ public:
 			return generateMangledName(name, it->second);
 		}
 
-		// Fallback for hardcoded cases (backward compatibility)
-		if (name == "add") {
-			return "?add@@YAHHH@Z";  // int __cdecl add(int,int)
-		} else if (name == "main") {
-			return "main";  // main is not mangled
-		}
 		return name;  // Default: no mangling
 	}
 
 private:
+	enum EFunctionCallingConv : unsigned char
+	{
+		cdecl,
+		stdcall,
+		fastcall,
+	};
 	// Function signature information for mangling
 	struct FunctionSignature {
 		Type return_type = Type::Void;
 		std::vector<Type> parameter_types;
 		bool is_const = false;
 		bool is_static = false;
-		std::string calling_convention = "cdecl";  // cdecl, stdcall, fastcall, etc.
+		EFunctionCallingConv calling_convention = EFunctionCallingConv::cdecl;
 		std::string namespace_name;
 		std::string class_name;
 
@@ -359,11 +359,11 @@ private:
 		mangled += "@@";
 
 		// Add calling convention and linkage
-		if (sig.calling_convention == "cdecl") {
+		if (sig.calling_convention == EFunctionCallingConv::cdecl) {
 			mangled += "YA";  // __cdecl
-		} else if (sig.calling_convention == "stdcall") {
+		} else if (sig.calling_convention == EFunctionCallingConv::stdcall) {
 			mangled += "YG";  // __stdcall
-		} else if (sig.calling_convention == "fastcall") {
+		} else if (sig.calling_convention == EFunctionCallingConv::fastcall) {
 			mangled += "YI";  // __fastcall
 		} else {
 			mangled += "YA";  // Default to __cdecl
@@ -409,14 +409,6 @@ public:
 	// Add function signature information for proper mangling
 	void addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types) {
 		FunctionSignature sig(return_type, parameter_types);
-		function_signatures_[name] = sig;
-	}
-
-	// Add function signature with calling convention
-	void addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types,
-	                         const std::string& calling_convention) {
-		FunctionSignature sig(return_type, parameter_types);
-		sig.calling_convention = calling_convention;
 		function_signatures_[name] = sig;
 	}
 
