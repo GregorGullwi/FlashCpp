@@ -412,7 +412,7 @@ public:
 		function_signatures_[name] = sig;
 	}
 
-	void add_function_symbol(const std::string& name, uint32_t section_offset) {
+	void add_function_symbol(const std::string& name, uint32_t section_offset, uint32_t stack_space) {
 		std::string symbol_name = getMangledName(name);
 		std::cerr << "Adding function symbol: " << symbol_name << " (original: " << name << ") at offset " << section_offset << std::endl;
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
@@ -424,7 +424,7 @@ public:
 
 		// Add function to debug info with length 0 - length will be calculated later
 		std::cerr << "DEBUG: Adding function to debug builder: " << name << " at offset " << section_offset << std::endl;
-		debug_builder_.addFunction(name, section_offset, 0);
+		debug_builder_.addFunction(name, section_offset, 0, stack_space);
 		std::cerr << "DEBUG: Function added to debug builder" << std::endl;
 
 		// Exception info is now handled directly in IRConverter finalization logic
@@ -551,7 +551,7 @@ public:
 		debug_builder_.addLocalVariable(name, type_index, stack_offset, start_offset, end_offset);
 	}
 
-	void add_function_parameter(const std::string& name, uint32_t type_index, uint32_t stack_offset) {
+	void add_function_parameter(const std::string& name, uint32_t type_index, int32_t stack_offset) {
 		debug_builder_.addFunctionParameter(name, type_index, stack_offset);
 	}
 

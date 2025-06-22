@@ -297,7 +297,7 @@ enum CV_CPU_TYPE : uint16_t {
 struct ParameterInfo {
     std::string name;
     uint32_t type_index;
-    uint32_t stack_offset;  // Offset from frame pointer (positive for parameters)
+    int32_t stack_offset;  // Offset from frame pointer
 };
 
 // Function information structure (moved to public for access from ObjFileWriter)
@@ -315,6 +315,7 @@ struct FunctionInfo {
     uint32_t debug_end_offset = 0;    // Offset where debugging ends (before epilogue)
     uint32_t prologue_size = 0;       // Size of function prologue
     uint32_t epilogue_size = 0;       // Size of function epilogue
+    uint32_t stack_space = 0;
 };
 
 // Structure to track debug relocations
@@ -332,7 +333,7 @@ public:
     uint32_t addSourceFile(const std::string& filename);
 
     // Add a function symbol with line information
-    void addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length);
+    void addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length, uint32_t stack_space);
 
     // Add a line mapping for the current function
     void addLineMapping(uint32_t code_offset, uint32_t line_number);
@@ -342,10 +343,10 @@ public:
 
     // Add a local variable to the current function
     void addLocalVariable(const std::string& name, uint32_t type_index,
-                         uint32_t stack_offset, uint32_t start_offset, uint32_t end_offset);
+                         uint32_t stack_offset, uint32_t start_offset, int32_t end_offset);
 
     // Add a function parameter to the current function
-    void addFunctionParameter(const std::string& name, uint32_t type_index, uint32_t stack_offset);
+    void addFunctionParameter(const std::string& name, uint32_t type_index, int32_t stack_offset);
 
     // Update function length for a previously added function
     void updateFunctionLength(const std::string& name, uint32_t code_length);

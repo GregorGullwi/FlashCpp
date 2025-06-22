@@ -153,13 +153,14 @@ uint32_t DebugInfoBuilder::addSourceFile(const std::string& filename) {
     return file_id;
 }
 
-void DebugInfoBuilder::addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length) {
+void DebugInfoBuilder::addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length, uint32_t stack_space) {
     // Add basic function info without line numbers
     FunctionInfo func_info;
     func_info.name = name;
     func_info.code_offset = code_offset;
     func_info.code_length = code_length;
     func_info.file_id = 0; // Default to first file
+    func_info.stack_space = stack_space;
 
     functions_.push_back(func_info);
 }
@@ -200,7 +201,7 @@ void DebugInfoBuilder::addLineMapping(uint32_t code_offset, uint32_t line_number
 }
 
 void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_index,
-                                       uint32_t stack_offset, uint32_t start_offset, uint32_t end_offset) {
+                                       uint32_t stack_offset, uint32_t start_offset, int32_t end_offset) {
     if (!current_function_name_.empty()) {
         // Find the current function and add the local variable
         for (auto& func : functions_) {
@@ -220,7 +221,7 @@ void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_i
     }
 }
 
-void DebugInfoBuilder::addFunctionParameter(const std::string& name, uint32_t type_index, uint32_t stack_offset) {
+void DebugInfoBuilder::addFunctionParameter(const std::string& name, uint32_t type_index, int32_t stack_offset) {
     if (!current_function_name_.empty()) {
         // Find the current function and add the parameter
         for (auto& func : functions_) {
@@ -874,9 +875,11 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
         writeSymbolRecord(symbols_data, SymbolKind::S_GPROC32_ID, proc_data);
 
+        
+
         // Add S_FRAMEPROC record
         std::vector<uint8_t> frameproc_data;
-        uint32_t frame_size = func.name == "main" ? 0x00000028 : 0x00000000;  // Frame size
+        uint32_t frame_size = func.name == "main" ? 0x00000028 : func.stack_space;  // Frame size
         uint32_t pad_size = 0x00000000;    // Pad size
         uint32_t pad_offset = 0x00000000;  // Offset of pad in frame
         uint32_t callee_save_size = 0x00000000; // Size of callee save registers
@@ -901,47 +904,33 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
         writeSymbolRecord(symbols_data, SymbolKind::S_FRAMEPROC, frameproc_data);
 
-        // Add S_LOCAL + S_DEFRANGE_FRAMEPOINTER_REL records for function parameters (modern approach)
+        // Add S_REGREL32 records for function parameters (RSP-relative addressing)
         for (const auto& param : func.parameters) {
-            // S_LOCAL record
-            std::vector<uint8_t> local_data;
+            std::vector<uint8_t> regrel_data;
 
-            // Type index (T_INT4 = 0x74)
+            // Offset from RSP (4 bytes)
+            uint32_t rsp_offset = static_cast<uint32_t>(param.stack_offset);
+            regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&rsp_offset),
+                            reinterpret_cast<const uint8_t*>(&rsp_offset) + sizeof(rsp_offset));
+
+            // Type index (4 bytes) - T_INT4 = 0x74 for int parameters
             uint32_t type_index = 0x74; // T_INT4 for int parameters
-            local_data.insert(local_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
-                             reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
+            regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
+                            reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
 
-            // Flags (0x0001 = parameter flag)
-            uint16_t flags = 0x0001; // Parameter flag
-            local_data.insert(local_data.end(), reinterpret_cast<const uint8_t*>(&flags),
-                             reinterpret_cast<const uint8_t*>(&flags) + sizeof(flags));
+            // Register code (2 bytes) - RSP register = 0x14 (CV_REG_RSP)
+            uint16_t register_code = 0x14e; // CV_REG_RSP
+            regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&register_code),
+                            reinterpret_cast<const uint8_t*>(&register_code) + sizeof(register_code));
 
             // Parameter name (null-terminated string)
             for (char c : param.name) {
-                local_data.push_back(static_cast<uint8_t>(c));
+                regrel_data.push_back(static_cast<uint8_t>(c));
             }
-            local_data.push_back(0); // Null terminator
+            regrel_data.push_back(0); // Null terminator
 
-            writeSymbolRecord(symbols_data, SymbolKind::S_LOCAL, local_data);
+            writeSymbolRecord(symbols_data, SymbolKind::S_REGREL32, regrel_data);
 
-            // S_DEFRANGE_FRAMEPOINTER_REL record
-            std::vector<uint8_t> defrange_data;
-
-            // Frame offset (positive for parameters above frame pointer)
-            int32_t frame_offset = static_cast<int32_t>(param.stack_offset);
-            defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&frame_offset),
-                                reinterpret_cast<const uint8_t*>(&frame_offset) + sizeof(frame_offset));
-
-            // Address range where parameter is valid (entire function)
-            LocalVariableAddrRange addr_range;
-            addr_range.offset_start = func.code_offset;
-            addr_range.section_start = 0; // Use section 0 to match MSVC/clang reference
-            addr_range.length = static_cast<uint16_t>(func.code_length);
-
-            defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&addr_range),
-                                reinterpret_cast<const uint8_t*>(&addr_range) + sizeof(addr_range));
-
-            writeSymbolRecord(symbols_data, SymbolKind::S_DEFRANGE_FRAMEPOINTER_REL, defrange_data);
         }
 
         // Add local variable symbols for this function

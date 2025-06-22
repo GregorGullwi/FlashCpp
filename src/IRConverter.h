@@ -889,7 +889,7 @@ private:
 	}
 
 	// Calculate the total stack space needed for a function by analyzing its IR instructions
-	int32_t calculateFunctionStackSpace(std::string_view func_name) {
+	uint32_t calculateFunctionStackSpace(std::string_view func_name, const std::vector<Type>& parameter_types) {
 		auto it = function_instructions.find(func_name);
 		if (it == function_instructions.end()) {
 			return 0; // No instructions found for this function
@@ -897,7 +897,7 @@ private:
 
 		// Find the maximum TempVar index used in this function
 		int32_t max_temp_var_index = -1;
-		int32_t shadow_stack_space = 0;
+		uint32_t shadow_stack_space = 0;
 
 		for (const auto& instruction : it->second) {
 			// Look for TempVar operands in the instruction
@@ -917,7 +917,7 @@ private:
 		//}
 
 		// Calculate space needed: (max_index + 1) * 8 bytes per variable
-		int32_t local_space = (max_temp_var_index + 1) * 8;
+		uint32_t local_space = parameter_types.size() * 8 + (max_temp_var_index + 1) * 8;
 		return local_space + shadow_stack_space; // for now, always assume that we need to allocate stack space for a function call
 	}
 
@@ -1178,7 +1178,8 @@ private:
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
 
 		// Function debug info is now added in add_function_symbol() with length 0
-		writer.add_function_symbol(std::string(func_name), func_offset);
+		uint32_t total_stack_space = calculateFunctionStackSpace(func_name, parameter_types);
+		writer.add_function_symbol(std::string(func_name), func_offset, total_stack_space);
 		functionSymbols[func_name] = func_offset;
 
 		// Track function for debug information
@@ -1198,8 +1199,6 @@ private:
 
 		// Create a new function scope
 		regAlloc.reset();
-
-		int32_t total_stack_space = calculateFunctionStackSpace(func_name);
 
 		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
 		if (total_stack_space > 0) {
@@ -1246,18 +1245,12 @@ private:
 
 			// Store parameter location based on addressing mode
 			int paramNumber = paramIndex / 3 - 1;
-
-			// MSVC-STYLE: RBP-relative addressing for parameters
-			// Store parameter at [rbp+10h] for first parameter, [rbp+18h] for second, etc.
-			int offset = 16 + (paramNumber * 8);
+			int offset = (paramNumber + 1) * -8;
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
 			variable_scopes.back().identifier_offset[param_name] = offset;
 
 			// Add parameter to debug information
-			// Convert RBP-relative offset to RSP-relative offset for debug info
-			// RBP+16 becomes RSP+8, RBP+24 becomes RSP+16, etc.
-			uint32_t rsp_offset = static_cast<uint32_t>(offset - 8);
 			uint32_t param_type_index = 0x74; // T_INT4 for int parameters
 			switch (param_type) {
 				case Type::Int: param_type_index = 0x74; break;  // T_INT4
@@ -1267,7 +1260,7 @@ private:
 				case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
 				default: param_type_index = 0x74; break;
 			}
-			writer.add_function_parameter(std::string(param_name), param_type_index, rsp_offset);
+			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
 			if (paramNumber < INT_PARAM_REGS.size()) {
 				X64Register src_reg = INT_PARAM_REGS[paramNumber];
@@ -1381,24 +1374,21 @@ private:
 		}
 
 		// MSVC-style epilogue
-		// mov rsp, rbp (restore stack pointer)
-		textSectionData.push_back(0x48);
-		textSectionData.push_back(0x89);
-		textSectionData.push_back(0xEC);
+		int32_t total_stack_space = variable_scopes.back().current_stack_offset;
 
-		// pop rbp (restore caller's base pointer)
-		textSectionData.push_back(0x5D);
+		if (total_stack_space != 0) {
+			// Function had a prologue, use MSVC-style epilogue
+			// mov rsp, rbp (restore stack pointer)
+			textSectionData.push_back(0x48);
+			textSectionData.push_back(0x89);
+			textSectionData.push_back(0xEC);
 
-		// REFERENCE COMPATIBILITY: Don't add closing brace line mappings
-		// The reference compiler (clang) only maps opening brace and actual statements
-		// Closing braces are not mapped in the line information
+			// pop rbp (restore caller's base pointer)
+			textSectionData.push_back(0x5D);
+		}
 
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
-
-		// Note: Function finalization (update_function_length, add_function_exception_info)
-		// is handled in handleFunctionDecl (for previous function) and finalizeSections (for last function)
-		// This ensures each function is finalized exactly once, regardless of number of return statements
 
 		variable_scopes.pop_back();
 	}
@@ -2205,14 +2195,8 @@ private:
 			writer.update_function_length(current_function_name_, function_length);
 
 			// Set debug range to match reference exactly
-			if (current_function_name_ == "add") {
-				// Reference: Debug start: 8, Debug end: 14 (code_length=17)
-				// prologue=8, epilogue=17-14=3
-				writer.set_function_debug_range(current_function_name_, 8, 3); // prologue=8, epilogue=3
-			} else if (current_function_name_ == "main") {
-				// Reference: Debug start: 4, Debug end: 13 (code_length=34)
-				// prologue=4, epilogue=34-13=21
-				writer.set_function_debug_range(current_function_name_, 4, 21); // prologue=4, epilogue=21
+			if (function_length > 13) {
+				//writer.set_function_debug_range(current_function_name_, 8, 5); // prologue=8, epilogue=3
 			}
 
 			// Add exception handling information (required for x64) - once per function
