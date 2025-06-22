@@ -2,12 +2,15 @@
 
 #include "coffi/coffi.hpp"
 #include "CodeViewDebug.h"
+#include "AstNodeTypes.h"
 #include <string>
 #include <array>
 #include <chrono>
 #include <optional>
 #include <iostream>
 #include <iomanip>
+#include <unordered_map>
+#include <vector>
 
 // Additional COFF relocation types not defined in COFFI
 #ifndef IMAGE_REL_AMD64_SECREL
@@ -209,8 +212,6 @@ public:
 		std::memcpy(aux_record_xdata.value, &aux_xdata, sizeof(aux_xdata));
 		symbol_xdata->get_auxiliary_symbols().push_back(aux_record_xdata);
 
-
-
 		// Add .pdata section (procedure data for exception handling)
 		auto section_pdata = add_section(".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES, SectionType::PDATA);
 		auto symbol_pdata = coffi_.add_symbol(".pdata");
@@ -252,28 +253,6 @@ public:
 		COFFI::auxiliary_symbol_record aux_record_llvm_addrsig;
 		std::memcpy(aux_record_llvm_addrsig.value, &aux_llvm_addrsig, sizeof(aux_llvm_addrsig));
 		symbol_llvm_addrsig->get_auxiliary_symbols().push_back(aux_record_llvm_addrsig);
-
-		// Add required MSVC special symbols
-		auto symbol_feat = coffi_.add_symbol("@feat.00");
-		symbol_feat->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		symbol_feat->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-		symbol_feat->set_section_number(IMAGE_SYM_ABSOLUTE);
-		symbol_feat->set_value(0x80010190); // Feature flags indicating x64 support
-
-		// Add file symbol for Clang compatibility
-		auto symbol_file = coffi_.add_symbol(".file");
-		symbol_file->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		symbol_file->set_storage_class(IMAGE_SYM_CLASS_FILE);
-		symbol_file->set_section_number(IMAGE_SYM_DEBUG);
-		symbol_file->set_value(0);
-
-		// Add auxiliary symbol for .file (format 4 - file name)
-		COFFI::auxiliary_symbol_record_4 aux_file = {};
-		std::strncpy(aux_file.file_name, "test_debug.cpp", sizeof(aux_file.file_name) - 1);
-
-		COFFI::auxiliary_symbol_record aux_record_file;
-		std::memcpy(aux_record_file.value, &aux_file, sizeof(aux_file));
-		symbol_file->get_auxiliary_symbols().push_back(aux_record_file);
 
 		std::cerr << "Simplified ObjectFileWriter created successfully" << std::endl;
 	}
@@ -324,13 +303,8 @@ public:
 			if (success) {
 				std::cerr << "Object file written successfully!" << std::endl;
 			} else {
-				std::cerr << "COFFI save failed! Attempting manual fallback..." << std::endl;
-
-				// Use our proven working manual implementation as fallback
-				if (!save_manually(filename)) {
-					throw std::runtime_error("Failed to save object file with both COFFI and manual fallback");
-				}
-				std::cerr << "Manual fallback succeeded!" << std::endl;
+				std::cerr << "COFFI save failed!" << std::endl;
+				throw std::runtime_error("Failed to save object file with both COFFI and manual fallback");
 			}
 		} catch (const std::exception& e) {
 			std::cerr << "Error writing object file: " << e.what() << std::endl;
@@ -338,14 +312,112 @@ public:
 		}
 	}
 
-	// Helper function to generate mangled names for Clang compatibility
+	// C++20 compatible name mangling system
 	std::string getMangledName(const std::string& name) const {
+		// Check if we have function signature information for this function
+		auto it = function_signatures_.find(name);
+		if (it != function_signatures_.end()) {
+			return generateMangledName(name, it->second);
+		}
+
+		// Fallback for hardcoded cases (backward compatibility)
 		if (name == "add") {
 			return "?add@@YAHHH@Z";  // int __cdecl add(int,int)
 		} else if (name == "main") {
 			return "main";  // main is not mangled
 		}
 		return name;  // Default: no mangling
+	}
+
+private:
+	// Function signature information for mangling
+	struct FunctionSignature {
+		Type return_type = Type::Void;
+		std::vector<Type> parameter_types;
+		bool is_const = false;
+		bool is_static = false;
+		std::string calling_convention = "cdecl";  // cdecl, stdcall, fastcall, etc.
+		std::string namespace_name;
+		std::string class_name;
+
+		FunctionSignature() = default;
+		FunctionSignature(Type ret_type, std::vector<Type> params)
+			: return_type(ret_type), parameter_types(std::move(params)) {}
+	};
+
+	mutable std::unordered_map<std::string, FunctionSignature> function_signatures_;
+
+	// Generate Microsoft Visual C++ mangled name
+	std::string generateMangledName(const std::string& name, const FunctionSignature& sig) const {
+		// Special case: main function is never mangled
+		if (name == "main") {
+			return "main";
+		}
+
+		std::string mangled = "?";
+		mangled += name;
+		mangled += "@@";
+
+		// Add calling convention and linkage
+		if (sig.calling_convention == "cdecl") {
+			mangled += "YA";  // __cdecl
+		} else if (sig.calling_convention == "stdcall") {
+			mangled += "YG";  // __stdcall
+		} else if (sig.calling_convention == "fastcall") {
+			mangled += "YI";  // __fastcall
+		} else {
+			mangled += "YA";  // Default to __cdecl
+		}
+
+		// Add return type
+		mangled += getTypeCode(sig.return_type);
+
+		// Add parameter types
+		for (const auto& param_type : sig.parameter_types) {
+			mangled += getTypeCode(param_type);
+		}
+
+		// End marker
+		mangled += "@Z";
+
+		return mangled;
+	}
+
+	// Get Microsoft Visual C++ type code for mangling
+	std::string getTypeCode(Type type) const {
+		switch (type) {
+			case Type::Void: return "X";
+			case Type::Bool: return "_N";
+			case Type::Char: return "D";
+			case Type::UnsignedChar: return "E";
+			case Type::Short: return "F";
+			case Type::UnsignedShort: return "G";
+			case Type::Int: return "H";
+			case Type::UnsignedInt: return "I";
+			case Type::Long: return "J";
+			case Type::UnsignedLong: return "K";
+			case Type::LongLong: return "_J";
+			case Type::UnsignedLongLong: return "_K";
+			case Type::Float: return "M";
+			case Type::Double: return "N";
+			case Type::LongDouble: return "O";
+			default: return "H";  // Default to int for unknown types
+		}
+	}
+
+public:
+	// Add function signature information for proper mangling
+	void addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types) {
+		FunctionSignature sig(return_type, parameter_types);
+		function_signatures_[name] = sig;
+	}
+
+	// Add function signature with calling convention
+	void addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types,
+	                         const std::string& calling_convention) {
+		FunctionSignature sig(return_type, parameter_types);
+		sig.calling_convention = calling_convention;
+		function_signatures_[name] = sig;
 	}
 
 	void add_function_symbol(const std::string& name, uint32_t section_offset) {
@@ -600,402 +672,4 @@ protected:
 
 	// Track functions that already have exception info to avoid duplicates
 	std::vector<std::string> added_exception_functions_;
-
-	// Manual fallback implementation when COFFI fails
-	bool save_manually(const std::string& filename) {
-		try {
-			std::cerr << "Using manual COFF implementation..." << std::endl;
-			std::cerr << "DEBUG: Attempting to save to filename: '" << filename << "'" << std::endl;
-
-			// Get section data
-			auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
-			auto debug_s_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_S]];
-			auto debug_t_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_T]];
-			auto data_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DATA]];
-			auto bss_section = coffi_.get_sections()[sectiontype_to_index[SectionType::BSS]];
-			auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-			auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
-			auto llvm_addrsig_section = coffi_.get_sections()[sectiontype_to_index[SectionType::LLVM_ADDRSIG]];
-
-			auto text_data_size = text_section->get_data_size();
-			auto text_data_ptr = text_section->get_data();
-			auto debug_s_data_size = debug_s_section->get_data_size();
-			auto debug_s_data_ptr = debug_s_section->get_data();
-			auto debug_t_data_size = debug_t_section->get_data_size();
-			auto debug_t_data_ptr = debug_t_section->get_data();
-			auto data_data_size = data_section->get_data_size();
-			auto data_data_ptr = data_section->get_data();
-			auto bss_data_size = bss_section->get_data_size();
-			auto bss_data_ptr = bss_section->get_data();
-			auto xdata_data_size = xdata_section->get_data_size();
-			auto xdata_data_ptr = xdata_section->get_data();
-			auto pdata_data_size = pdata_section->get_data_size();
-			auto pdata_data_ptr = pdata_section->get_data();
-			auto llvm_addrsig_data_size = llvm_addrsig_section->get_data_size();
-			auto llvm_addrsig_data_ptr = llvm_addrsig_section->get_data();
-
-			std::cerr << "Manual save: text=" << text_data_size << " bytes, debug_s=" << debug_s_data_size
-					  << " bytes, debug_t=" << debug_t_data_size << " bytes, data=" << data_data_size
-					  << " bytes, bss=" << bss_data_size << " bytes, xdata=" << xdata_data_size
-					  << " bytes, pdata=" << pdata_data_size << " bytes, llvm_addrsig=" << llvm_addrsig_data_size << " bytes" << std::endl;
-
-			// Create a simple COFF file manually with debug sections
-			std::ofstream file(filename, std::ios::binary);
-			if (!file) {
-				std::cerr << "Failed to open file for writing: " << filename << std::endl;
-				return false;
-			}
-
-			// Get function information dynamically
-			const auto& functions = debug_builder_.getFunctions();
-			std::cerr << "DEBUG: Manual save found " << functions.size() << " functions" << std::endl;
-
-			// COFF Header (20 bytes)
-			uint16_t machine = 0x8664;  // IMAGE_FILE_MACHINE_AMD64
-			uint16_t numberOfSections = 8;  // .debug$S, .debug$T, .text$mn, .data, .bss, .xdata, .pdata, .llvm_addrsig
-			uint32_t timeDateStamp = static_cast<uint32_t>(1718360000);
-			uint32_t pointerToSymbolTable = 20 + (8 * 40);  // After header + 8 section headers
-			uint32_t numberOfSymbols = 7 + static_cast<uint32_t>(functions.size());  // section symbols + @feat.00 + function symbols
-			uint16_t sizeOfOptionalHeader = 0;
-			uint16_t characteristics = 0x0004;  // IMAGE_FILE_LARGE_ADDRESS_AWARE
-
-			file.write(reinterpret_cast<const char*>(&machine), 2);
-			file.write(reinterpret_cast<const char*>(&numberOfSections), 2);
-			file.write(reinterpret_cast<const char*>(&timeDateStamp), 4);
-			file.write(reinterpret_cast<const char*>(&pointerToSymbolTable), 4);
-			file.write(reinterpret_cast<const char*>(&numberOfSymbols), 4);
-			file.write(reinterpret_cast<const char*>(&sizeOfOptionalHeader), 2);
-			file.write(reinterpret_cast<const char*>(&characteristics), 2);
-
-			// Calculate data pointers
-			uint32_t symbolTableSize = numberOfSymbols * 18 + 4;  // symbols + string table size
-			uint32_t dataStart = 20 + (8 * 40) + symbolTableSize;  // After headers + symbol table
-
-			// Section Header 1: .debug$S (40 bytes)
-			char debugSName[8] = {'.', 'd', 'e', 'b', 'u', 'g', '$', 'S'};
-			uint32_t debugS_virtualSize = 0;
-			uint32_t debugS_virtualAddress = 0;
-			uint32_t debugS_sizeOfRawData = static_cast<uint32_t>(debug_s_data_size);
-			uint32_t debugS_pointerToRawData = dataStart;
-			uint32_t debugS_characteristics = 0x42300040;  // INITIALIZED_DATA | READ | DISCARDABLE | ALIGN_4BYTES
-
-			file.write(debugSName, 8);
-			file.write(reinterpret_cast<const char*>(&debugS_virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&debugS_virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&debugS_sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&debugS_pointerToRawData), 4);
-			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
-			file.write(reinterpret_cast<const char*>(&debugS_characteristics), 4);
-
-			// Section Header 2: .debug$T (40 bytes)
-			char debugTName[8] = {'.', 'd', 'e', 'b', 'u', 'g', '$', 'T'};
-			uint32_t debugT_virtualSize = 0;
-			uint32_t debugT_virtualAddress = 0;
-			uint32_t debugT_sizeOfRawData = static_cast<uint32_t>(debug_t_data_size);
-			uint32_t debugT_pointerToRawData = dataStart + debug_s_data_size;
-			uint32_t debugT_characteristics = 0x42300040;  // INITIALIZED_DATA | READ | DISCARDABLE | ALIGN_4BYTES
-
-			file.write(debugTName, 8);
-			file.write(reinterpret_cast<const char*>(&debugT_virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&debugT_virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&debugT_sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&debugT_pointerToRawData), 4);
-			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
-			file.write(reinterpret_cast<const char*>(&debugT_characteristics), 4);
-
-			// Section Header 3: .text$mn (40 bytes)
-			char textName[8] = {'.', 't', 'e', 'x', 't', '$', 'm', 'n'};
-			uint32_t text_virtualSize = 0;
-			uint32_t text_virtualAddress = 0;
-			uint32_t text_sizeOfRawData = static_cast<uint32_t>(text_data_size);
-			uint32_t text_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size;
-			uint32_t text_characteristics = 0x60500020;  // CODE | EXECUTE | READ | ALIGN_16BYTES
-
-			file.write(textName, 8);
-			file.write(reinterpret_cast<const char*>(&text_virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&text_virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&text_sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&text_pointerToRawData), 4);
-			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
-			file.write(reinterpret_cast<const char*>(&text_characteristics), 4);
-
-			// Section Header 4: .data (40 bytes)
-			char dataName[8] = {'.', 'd', 'a', 't', 'a', '\0', '\0', '\0'};
-			uint32_t data_virtualSize = 0;
-			uint32_t data_virtualAddress = 0;
-			uint32_t data_sizeOfRawData = static_cast<uint32_t>(data_data_size);
-			uint32_t data_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size;
-			uint32_t data_characteristics = 0x40300040;  // INITIALIZED_DATA | READ | WRITE | ALIGN_8BYTES
-
-			file.write(dataName, 8);
-			file.write(reinterpret_cast<const char*>(&data_virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&data_virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&data_sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&data_pointerToRawData), 4);
-			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
-			file.write(reinterpret_cast<const char*>(&data_characteristics), 4);
-
-			// Section Header 5: .bss (40 bytes)
-			char bssName[8] = {'.', 'b', 's', 's', '\0', '\0', '\0', '\0'};
-			uint32_t bss_virtualSize = 0;
-			uint32_t bss_virtualAddress = 0;
-			uint32_t bss_sizeOfRawData = static_cast<uint32_t>(bss_data_size);
-			uint32_t bss_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size;
-			uint32_t bss_characteristics = 0x40300080;  // UNINITIALIZED_DATA | READ | WRITE | ALIGN_8BYTES
-
-			file.write(bssName, 8);
-			file.write(reinterpret_cast<const char*>(&bss_virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&bss_virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&bss_sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&bss_pointerToRawData), 4);
-			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
-			file.write(reinterpret_cast<const char*>(&bss_characteristics), 4);
-
-			// Section Header 6: .xdata (40 bytes)
-			char xdataName[8] = {'.', 'x', 'd', 'a', 't', 'a', '\0', '\0'};
-			uint32_t xdata_virtualSize = 0;
-			uint32_t xdata_virtualAddress = 0;
-			uint32_t xdata_sizeOfRawData = static_cast<uint32_t>(xdata_data_size);
-			uint32_t xdata_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size + bss_data_size;
-			uint32_t xdata_characteristics = 0x40300040;  // INITIALIZED_DATA | READ | ALIGN_4BYTES
-
-			file.write(xdataName, 8);
-			file.write(reinterpret_cast<const char*>(&xdata_virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&xdata_virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&xdata_sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&xdata_pointerToRawData), 4);
-			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
-			file.write(reinterpret_cast<const char*>(&xdata_characteristics), 4);
-
-			// Section Header 7: .pdata (40 bytes)
-			char pdataName[8] = {'.', 'p', 'd', 'a', 't', 'a', '\0', '\0'};
-			uint32_t pdata_virtualSize = 0;
-			uint32_t pdata_virtualAddress = 0;
-			uint32_t pdata_sizeOfRawData = static_cast<uint32_t>(pdata_data_size);
-			uint32_t pdata_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size + bss_data_size + xdata_data_size;
-			uint32_t pdata_characteristics = 0x40300040;  // INITIALIZED_DATA | READ | ALIGN_4BYTES
-
-			file.write(pdataName, 8);
-			file.write(reinterpret_cast<const char*>(&pdata_virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&pdata_virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&pdata_sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&pdata_pointerToRawData), 4);
-			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
-			file.write(reinterpret_cast<const char*>(&pdata_characteristics), 4);
-
-			// Section Header 8: .llvm_addrsig (40 bytes)
-			char llvmAddrsigName[8] = {'.', 'l', 'l', 'v', 'm', '_', 'a', 'd'};
-			uint32_t llvm_addrsig_virtualSize = 0;
-			uint32_t llvm_addrsig_virtualAddress = 0;
-			uint32_t llvm_addrsig_sizeOfRawData = static_cast<uint32_t>(llvm_addrsig_data_size);
-			uint32_t llvm_addrsig_pointerToRawData = dataStart + debug_s_data_size + debug_t_data_size + text_data_size + data_data_size + bss_data_size + xdata_data_size + pdata_data_size;
-			uint32_t llvm_addrsig_characteristics = 0x02100040;  // LNK_REMOVE | ALIGN_1BYTES
-
-			file.write(llvmAddrsigName, 8);
-			file.write(reinterpret_cast<const char*>(&llvm_addrsig_virtualSize), 4);
-			file.write(reinterpret_cast<const char*>(&llvm_addrsig_virtualAddress), 4);
-			file.write(reinterpret_cast<const char*>(&llvm_addrsig_sizeOfRawData), 4);
-			file.write(reinterpret_cast<const char*>(&llvm_addrsig_pointerToRawData), 4);
-			file.write("\0\0\0\0\0\0\0\0", 8);  // pointerToRelocations, pointerToLinenumbers, numberOfRelocations, numberOfLinenumbers
-			file.write(reinterpret_cast<const char*>(&llvm_addrsig_characteristics), 4);
-
-			// Symbol Table (section symbols + @feat.00 + function symbols)
-			// Symbol 1: .text$mn (section symbol)
-			char symbol1_name[8] = {'.', 't', 'e', 'x', 't', '$', 'm', 'n'};
-			uint32_t symbol1_value = 0;
-			uint16_t symbol1_section = 3;  // .text$mn is section 3 (1-based)
-			uint16_t symbol1_type = 0;
-			uint8_t symbol1_class = 3;  // IMAGE_SYM_CLASS_STATIC
-			uint8_t symbol1_aux = 0;
-
-			file.write(symbol1_name, 8);
-			file.write(reinterpret_cast<const char*>(&symbol1_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol1_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol1_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol1_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol1_aux), 1);
-
-			// Symbol 2: .data (section symbol)
-			char symbol2_name[8] = {'.', 'd', 'a', 't', 'a', '\0', '\0', '\0'};
-			uint32_t symbol2_value = 0;
-			uint16_t symbol2_section = 4;  // .data is section 4 (1-based)
-			uint16_t symbol2_type = 0;
-			uint8_t symbol2_class = 3;  // IMAGE_SYM_CLASS_STATIC
-			uint8_t symbol2_aux = 0;
-
-			file.write(symbol2_name, 8);
-			file.write(reinterpret_cast<const char*>(&symbol2_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol2_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol2_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol2_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol2_aux), 1);
-
-			// Symbol 3: .bss (section symbol)
-			char symbol3_name[8] = {'.', 'b', 's', 's', '\0', '\0', '\0', '\0'};
-			uint32_t symbol3_value = 0;
-			uint16_t symbol3_section = 5;  // .bss is section 5 (1-based)
-			uint16_t symbol3_type = 0;
-			uint8_t symbol3_class = 3;  // IMAGE_SYM_CLASS_STATIC
-			uint8_t symbol3_aux = 0;
-
-			file.write(symbol3_name, 8);
-			file.write(reinterpret_cast<const char*>(&symbol3_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol3_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol3_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol3_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol3_aux), 1);
-
-			// Symbol 4: .xdata (section symbol)
-			char symbol4_name[8] = {'.', 'x', 'd', 'a', 't', 'a', '\0', '\0'};
-			uint32_t symbol4_value = 0;
-			uint16_t symbol4_section = 6;  // .xdata is section 6 (1-based)
-			uint16_t symbol4_type = 0;
-			uint8_t symbol4_class = 3;  // IMAGE_SYM_CLASS_STATIC
-			uint8_t symbol4_aux = 0;
-
-			file.write(symbol4_name, 8);
-			file.write(reinterpret_cast<const char*>(&symbol4_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol4_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol4_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol4_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol4_aux), 1);
-
-			// Symbol 5: .pdata (section symbol)
-			char symbol5_name[8] = {'.', 'p', 'd', 'a', 't', 'a', '\0', '\0'};
-			uint32_t symbol5_value = 0;
-			uint16_t symbol5_section = 7;  // .pdata is section 7 (1-based)
-			uint16_t symbol5_type = 0;
-			uint8_t symbol5_class = 3;  // IMAGE_SYM_CLASS_STATIC
-			uint8_t symbol5_aux = 0;
-
-			file.write(symbol5_name, 8);
-			file.write(reinterpret_cast<const char*>(&symbol5_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol5_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol5_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol5_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol5_aux), 1);
-
-			// Symbol 6: .llvm_addrsig (section symbol) - use string table for long name
-			uint32_t symbol6_name_offset = 13;  // Offset in string table (after "@feat.00\0")
-			uint32_t symbol6_value = 0;
-			uint16_t symbol6_section = 8;  // .llvm_addrsig is section 8 (1-based)
-			uint16_t symbol6_type = 0;
-			uint8_t symbol6_class = 3;  // IMAGE_SYM_CLASS_STATIC
-			uint8_t symbol6_aux = 0;
-
-			file.write(reinterpret_cast<const char*>(&symbol6_name_offset), 4);
-			file.write("\0\0\0\0", 4);  // Second part of name (unused for long names)
-			file.write(reinterpret_cast<const char*>(&symbol6_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol6_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol6_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol6_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol6_aux), 1);
-
-			// Symbol 7: @feat.00
-			uint32_t symbol7_name_offset = 4;  // Offset in string table
-			uint32_t symbol7_value = 0x80010190;
-			uint16_t symbol7_section = 0xFFFF;  // IMAGE_SYM_ABSOLUTE
-			uint16_t symbol7_type = 0;
-			uint8_t symbol7_class = 3;  // IMAGE_SYM_CLASS_STATIC
-			uint8_t symbol7_aux = 0;
-
-			file.write(reinterpret_cast<const char*>(&symbol7_name_offset), 4);
-			file.write("\0\0\0\0", 4);  // Second part of name (unused for long names)
-			file.write(reinterpret_cast<const char*>(&symbol7_value), 4);
-			file.write(reinterpret_cast<const char*>(&symbol7_section), 2);
-			file.write(reinterpret_cast<const char*>(&symbol7_type), 2);
-			file.write(reinterpret_cast<const char*>(&symbol7_class), 1);
-			file.write(reinterpret_cast<const char*>(&symbol7_aux), 1);
-
-			// Dynamic function symbols
-			for (const auto& func : functions) {
-				std::string mangled_name = getMangledName(func.name);
-				std::cerr << "DEBUG: Writing symbol for function '" << func.name
-						  << "' (mangled: " << mangled_name << ") at offset " << func.code_offset << std::endl;
-
-				// Function symbol - use string table for mangled names
-				uint32_t symbol_name_offset = 0;
-				char symbol_name[8] = {'\0'};
-
-				if (mangled_name.length() <= 8) {
-					// Short name - store directly in symbol table
-					std::memcpy(symbol_name, mangled_name.c_str(), mangled_name.length());
-				} else {
-					// Long name - use string table offset
-					// String table: 4 bytes size + "@feat.00\0" (9 bytes) + ".llvm_addrsig\0" (14 bytes) = 27 bytes
-					// So "?add@@YAHHH@Z" starts at offset 27
-					symbol_name_offset = 27;
-				}
-
-				uint32_t symbol_value = func.code_offset;
-				uint16_t symbol_section = 3;  // .text$mn is section 3 (1-based)
-				uint16_t symbol_type = 0x20;  // IMAGE_SYM_TYPE_FUNCTION
-				uint8_t symbol_class = 2;  // IMAGE_SYM_CLASS_EXTERNAL
-				uint8_t symbol_aux = 0;
-
-				if (mangled_name.length() <= 8) {
-					// Short name
-					file.write(symbol_name, 8);
-				} else {
-					// Long name - write string table offset
-					uint32_t zero = 0;
-					file.write(reinterpret_cast<const char*>(&zero), 4);  // First 4 bytes = 0 for long names
-					file.write(reinterpret_cast<const char*>(&symbol_name_offset), 4);  // Offset into string table
-				}
-				file.write(reinterpret_cast<const char*>(&symbol_value), 4);
-				file.write(reinterpret_cast<const char*>(&symbol_section), 2);
-				file.write(reinterpret_cast<const char*>(&symbol_type), 2);
-				file.write(reinterpret_cast<const char*>(&symbol_class), 1);
-				file.write(reinterpret_cast<const char*>(&symbol_aux), 1);
-			}
-
-			// String Table
-			uint32_t stringTableSize = 42;  // 4 bytes for size + "@feat.00\0" + ".llvm_addrsig\0" + "?add@@YAHHH@Z\0"
-			file.write(reinterpret_cast<const char*>(&stringTableSize), 4);
-			file.write("@feat.00\0.llvm_addrsig\0?add@@YAHHH@Z\0", 38);
-
-			// Section Data
-			// Write .debug$S data
-			file.write(debug_s_data_ptr, debug_s_data_size);
-
-			// Write .debug$T data
-			file.write(debug_t_data_ptr, debug_t_data_size);
-
-			// Write .text$mn data
-			file.write(text_data_ptr, text_data_size);
-
-			// Write .data data
-			if (data_data_size > 0) {
-				file.write(data_data_ptr, data_data_size);
-			}
-
-			// Write .bss data (usually empty for uninitialized data)
-			if (bss_data_size > 0) {
-				file.write(bss_data_ptr, bss_data_size);
-			}
-
-			// Write .xdata data
-			if (xdata_data_size > 0) {
-				file.write(xdata_data_ptr, xdata_data_size);
-			}
-
-			// Write .pdata data
-			if (pdata_data_size > 0) {
-				file.write(pdata_data_ptr, pdata_data_size);
-			}
-
-			// Write .llvm_addrsig data
-			if (llvm_addrsig_data_size > 0) {
-				file.write(llvm_addrsig_data_ptr, llvm_addrsig_data_size);
-			}
-
-			file.close();
-			std::cerr << "Manual COFF file created successfully!" << std::endl;
-			return true;
-
-		} catch (const std::exception& e) {
-			std::cerr << "Manual save failed: " << e.what() << std::endl;
-			return false;
-		}
-	}
 };

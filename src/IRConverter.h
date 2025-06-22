@@ -563,9 +563,6 @@ class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
 
-	// CLANG COMPATIBILITY: Enable RSP-only code generation (no RBP frame pointer)
-	void setClangCompatibilityMode(bool enable) { clang_compatibility_mode_ = enable; }
-
 	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "") {
 		// Group instructions by function for stack space calculation
 		groupInstructionsByFunction(ir);
@@ -1166,6 +1163,24 @@ private:
 
 		std::cerr << "DEBUG: handleFunctionDecl called for function: " << func_name << std::endl;
 
+		// Extract function signature information for proper C++20 name mangling
+		auto return_type = instruction.getOperandAs<Type>(0);
+		std::vector<Type> parameter_types;
+
+		// Extract parameter types from the instruction
+		size_t paramIndex = 3;  // Start after return type, size, and function name
+		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
+			auto param_type = instruction.getOperandAs<Type>(paramIndex);
+			parameter_types.push_back(param_type);
+			paramIndex += 3;  // Skip type, size, and name
+		}
+
+		// Add function signature to the object file writer for proper mangling
+		writer.addFunctionSignature(std::string(func_name), return_type, parameter_types);
+		std::cerr << "DEBUG: Added function signature for " << func_name
+			<< " with return type " << static_cast<int>(return_type)
+			<< " and " << parameter_types.size() << " parameters" << std::endl;
+
 		// Finalize previous function before starting new one
 		if (!current_function_name_.empty()) {
 			std::cerr << "DEBUG: Finalizing previous function " << current_function_name_ << " before starting " << func_name << std::endl;
@@ -1205,9 +1220,6 @@ private:
 		current_function_name_ = std::string(func_name);
 		current_function_offset_ = func_offset;
 
-		// Reset prologue flag for each function
-		used_push_rax_prologue_ = false;
-
 		// Set up debug information for this function
 		// For now, use file ID 0 (first source file)
 		writer.set_current_function_for_debug(std::string(func_name), 0);
@@ -1224,55 +1236,24 @@ private:
 
 		int32_t total_stack_space = calculateFunctionStackSpace(func_name);
 
-		if (clang_compatibility_mode_) {
-			// CLANG-STYLE: Use "push rax" for 2-parameter functions (like add)
-			int param_count = countFunctionParameters(func_name);
+		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
+		if (total_stack_space > 0) {
+			// Ensure stack alignment to 16 bytes
+			total_stack_space = (total_stack_space + 15) & -16;
 
-			if (param_count == 2 && func_name == "add") {
-				// Generate "push rax" (0x50) - exactly like Clang's add function
-				textSectionData.push_back(0x50);
-				used_push_rax_prologue_ = true;
+			textSectionData.push_back(0x55); // push rbp
+			textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
+
+			// Generate stack allocation instruction
+			if (total_stack_space <= 127) {
+				// Use 8-bit immediate: sub rsp, imm8
+				textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xEC);
+				textSectionData.push_back(static_cast<uint8_t>(total_stack_space));
 			} else {
-				// CLANG-STYLE: RSP-only prologue for other functions
-				if (total_stack_space > 0) {
-					// Ensure stack alignment to 16 bytes
-					total_stack_space = (total_stack_space + 15) & -16;
-
-					// Minimal prologue: just allocate stack space
-					if (total_stack_space <= 127) {
-						// Use 8-bit immediate: sub rsp, imm8
-						textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xEC);
-						textSectionData.push_back(static_cast<uint8_t>(total_stack_space));
-					} else {
-						// Use 32-bit immediate: sub rsp, imm32
-						textSectionData.push_back(0x48); textSectionData.push_back(0x81); textSectionData.push_back(0xEC);
-						for (int i = 0; i < 4; ++i) {
-							textSectionData.push_back(static_cast<uint8_t>((total_stack_space >> (8 * i)) & 0xFF));
-						}
-					}
-				}
-				used_push_rax_prologue_ = false;
-			}
-		} else {
-			// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
-			if (total_stack_space > 0) {
-				// Ensure stack alignment to 16 bytes
-				total_stack_space = (total_stack_space + 15) & -16;
-
-				textSectionData.push_back(0x55); // push rbp
-				textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
-
-				// Generate stack allocation instruction
-				if (total_stack_space <= 127) {
-					// Use 8-bit immediate: sub rsp, imm8
-					textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xEC);
-					textSectionData.push_back(static_cast<uint8_t>(total_stack_space));
-				} else {
-					// Use 32-bit immediate: sub rsp, imm32
-					textSectionData.push_back(0x48); textSectionData.push_back(0x81); textSectionData.push_back(0xEC);
-					for (int i = 0; i < 4; ++i) {
-						textSectionData.push_back(static_cast<uint8_t>((total_stack_space >> (8 * i)) & 0xFF));
-					}
+				// Use 32-bit immediate: sub rsp, imm32
+				textSectionData.push_back(0x48); textSectionData.push_back(0x81); textSectionData.push_back(0xEC);
+				for (int i = 0; i < 4; ++i) {
+					textSectionData.push_back(static_cast<uint8_t>((total_stack_space >> (8 * i)) & 0xFF));
 				}
 			}
 		}
@@ -1293,24 +1274,17 @@ private:
 		std::vector<ParameterInfo> parameters;
 
 		// First pass: collect all parameter information
-		size_t paramIndex = 3;  // Start after return type, size, and function name
+		paramIndex = 3;  // Start after return type, size, and function name
 		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
 
 			// Store parameter location based on addressing mode
 			int paramNumber = paramIndex / 3 - 1;
-			int offset;
 
-			if (clang_compatibility_mode_) {
-				// CLANG-STYLE: RSP-relative addressing for parameters
-				// Parameters stored at 4-byte offsets: [rsp+0], [rsp+4], etc. (32-bit operations)
-				offset = paramNumber * 4;
-			} else {
-				// MSVC-STYLE: RBP-relative addressing for parameters
-				// Store parameter at [rbp+10h] for first parameter, [rbp+18h] for second, etc.
-				offset = 16 + (paramNumber * 8);
-			}
+			// MSVC-STYLE: RBP-relative addressing for parameters
+			// Store parameter at [rbp+10h] for first parameter, [rbp+18h] for second, etc.
+			int offset = 16 + (paramNumber * 8);
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
 			variable_scopes.back().identifier_offset[param_name] = offset;
@@ -1342,28 +1316,12 @@ private:
 		}
 
 		// Second pass: generate parameter storage code in the correct order
-		if (clang_compatibility_mode_ && func_name == "add" && parameters.size() == 2) {
-			// CLANG-STYLE: For add function, store parameters in Clang's exact order: RDX first, then RCX
-			// Store param2 (RDX) at [rsp+4] first
-			auto mov_opcodes_rdx = generateMovToRsp32(parameters[1].src_reg, parameters[1].offset);
-			textSectionData.insert(textSectionData.end(), mov_opcodes_rdx.op_codes.begin(), mov_opcodes_rdx.op_codes.begin() + mov_opcodes_rdx.size_in_bytes);
-
-			// Store param1 (RCX) at [rsp+0] second
-			auto mov_opcodes_rcx = generateMovToRsp32(parameters[0].src_reg, parameters[0].offset);
-			textSectionData.insert(textSectionData.end(), mov_opcodes_rcx.op_codes.begin(), mov_opcodes_rcx.op_codes.begin() + mov_opcodes_rcx.size_in_bytes);
-		} else {
-			// Standard order for other functions
-			for (const auto& param : parameters) {
-				if (clang_compatibility_mode_) {
-					// CLANG-STYLE: Store parameters using 32-bit RSP-relative addressing
-					auto mov_opcodes = generateMovToRsp32(param.src_reg, param.offset);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-				} else {
-					// MSVC-STYLE: Store parameters using RBP-relative addressing
-					auto mov_opcodes = generateMovToFrame(param.src_reg, param.offset);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-				}
-			}
+		
+		// Standard order for other functions
+		for (const auto& param : parameters) {
+			// MSVC-STYLE: Store parameters using RBP-relative addressing
+			auto mov_opcodes = generateMovToFrame(param.src_reg, param.offset);
+			textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 		}
 	}
 
@@ -1457,41 +1415,14 @@ private:
 			}
 		}
 
-		// Function epilogue
-		if (clang_compatibility_mode_) {
-			// CLANG-STYLE: Match the prologue type
-			if (used_push_rax_prologue_) {
-				// For functions that used "push rax", use "pop rcx" (matches Clang exactly)
-				textSectionData.push_back(0x59); // pop rcx
-			} else {
-				// CLANG-STYLE: RSP-only epilogue for functions that used sub rsp
-				int32_t total_stack_space = calculateFunctionStackSpace(current_function_name_);
-				if (total_stack_space > 0) {
-					// Ensure stack alignment to 16 bytes
-					total_stack_space = (total_stack_space + 15) & -16;
+		// MSVC-style epilogue
+		// mov rsp, rbp (restore stack pointer)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(0xEC);
 
-					// Restore stack: add rsp, total_stack_space
-					if (total_stack_space <= 127) {
-						textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xC4);
-						textSectionData.push_back(static_cast<uint8_t>(total_stack_space));
-					} else {
-						textSectionData.push_back(0x48); textSectionData.push_back(0x81); textSectionData.push_back(0xC4);
-						for (int i = 0; i < 4; ++i) {
-							textSectionData.push_back(static_cast<uint8_t>((total_stack_space >> (8 * i)) & 0xFF));
-						}
-					}
-				}
-			}
-		} else {
-			// MSVC-style epilogue
-			// mov rsp, rbp (restore stack pointer)
-			textSectionData.push_back(0x48);
-			textSectionData.push_back(0x89);
-			textSectionData.push_back(0xEC);
-
-			// pop rbp (restore caller's base pointer)
-			textSectionData.push_back(0x5D);
-		}
+		// pop rbp (restore caller's base pointer)
+		textSectionData.push_back(0x5D);
 
 		// REFERENCE COMPATIBILITY: Don't add closing brace line mappings
 		// The reference compiler (clang) only maps opening brace and actual statements
@@ -1547,34 +1478,15 @@ private:
 	}
 
 	void handleAdd(const IrInstruction& instruction) {
-		if (clang_compatibility_mode_ && current_function_name_ == "add") {
-			// CLANG-STYLE: Memory-to-memory arithmetic for add function
-			// Clang approach: mov eax,[rsp]; add eax,[rsp+4]
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "addition");
 
-			// Load param1 from [rsp+0] to EAX (32-bit operation)
-			auto load_param1 = generateMovFromRsp32(X64Register::RAX, 0);
-			textSectionData.insert(textSectionData.end(), load_param1.op_codes.begin(), load_param1.op_codes.begin() + load_param1.size_in_bytes);
+		// Perform the addition operation
+		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xC0 }; // add r/m64, r64. 0x01 is opcode, 0xC0 is ModR/M for reg, reg
+		addInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
 
-			// Add param2 from [rsp+4] to EAX (32-bit memory-to-register operation)
-			// ADD EAX, [rsp+4] - 32-bit operation, no REX prefix
-			textSectionData.push_back(0x03); // ADD r32, r/m32 opcode
-			textSectionData.push_back(0x44); // ModR/M: Mod=01, Reg=000 (EAX), R/M=100 (SIB required)
-			textSectionData.push_back(0x24); // SIB: Scale=00, Index=100 (none), Base=100 (RSP)
-			textSectionData.push_back(0x04); // 8-bit displacement: +4
-
-			// Result is now in EAX, no need to store anywhere for return
-		} else {
-			// Standard approach for other functions
-			auto ctx = setupAndLoadArithmeticOperation(instruction, "addition");
-
-			// Perform the addition operation
-			std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xC0 }; // add r/m64, r64. 0x01 is opcode, 0xC0 is ModR/M for reg, reg
-			addInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-			textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
-
-			// Store the result to the appropriate destination
-			storeArithmeticResult(ctx);
-		}
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
 	}
 
 	void handleSubtract(const IrInstruction& instruction) {
@@ -2390,10 +2302,4 @@ private:
 		std::unordered_map<std::string_view, int> identifier_offset;
 	};
 	std::vector<StackVariableScope> variable_scopes;
-
-	// CLANG COMPATIBILITY: Flag to enable RSP-only code generation
-	bool clang_compatibility_mode_ = false;
-
-	// CLANG COMPATIBILITY: Track prologue type for matching epilogue
-	bool used_push_rax_prologue_ = false;
 };

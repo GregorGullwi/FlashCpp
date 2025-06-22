@@ -97,8 +97,5 @@ int main(int argc, char *argv[]) {
     const auto& ir = converter.getIr();
     IrToObjConverter irConverter;
 
-    // CLANG COMPATIBILITY: Enable RSP-only code generation for debugging compatibility
-    irConverter.setClangCompatibilityMode(true);
-
     irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value());
 }
