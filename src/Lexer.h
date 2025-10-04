@@ -333,43 +333,100 @@ private:
 		++cursor_;
 		++column_;
 
-		// Handle multi-character operators
+		// Handle multi-character operators using branchless switch optimization
 		if (cursor_ < source_size_) {
 			char second_char = source_[cursor_];
 
-			// Two-character operators that should be consumed together
-			if ((first_char == '-' && second_char == '>') ||  // ->
-				(first_char == '+' && second_char == '+') ||  // ++
-				(first_char == '-' && second_char == '-') ||  // --
-				(first_char == '<' && second_char == '<') ||  // <<
-				(first_char == '>' && second_char == '>') ||  // >>
-				(first_char == '<' && second_char == '=') ||  // <=
-				(first_char == '>' && second_char == '=') ||  // >=
-				(first_char == '=' && second_char == '=') ||  // ==
-				(first_char == '!' && second_char == '=') ||  // !=
-				(first_char == '&' && second_char == '&') ||  // &&
-				(first_char == '|' && second_char == '|') ||  // ||
-				(first_char == '+' && second_char == '=') ||  // +=
-				(first_char == '-' && second_char == '=') ||  // -=
-				(first_char == '*' && second_char == '=') ||  // *=
-				(first_char == '/' && second_char == '=') ||  // /=
-				(first_char == '%' && second_char == '=') ||  // %=
-				(first_char == '&' && second_char == '=') ||  // &=
-				(first_char == '|' && second_char == '=') ||  // |=
-				(first_char == '^' && second_char == '='))    // ^=
-			{
-				++cursor_;
-				++column_;
-
-				// Check for three-character operators like <<= and >>=
-				if (cursor_ < source_size_ && source_[cursor_] == '=') {
-					if ((first_char == '<' && second_char == '<') ||  // <<=
-						(first_char == '>' && second_char == '>'))    // >>=
-					{
-						++cursor_;
-						++column_;
-					}
+			switch (first_char) {
+				case '-': { // -> -- -=
+					int advance = (second_char == '>') | (second_char == '-') | (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
 				}
+				case '+': { // ++ +=
+					int advance = (second_char == '+') | (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				case '<': { // << <= <<=
+					int advance = (second_char == '<') | (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					// Branchless check for three-character operator <<=
+					int is_shift = (second_char == '<');
+					int has_third = (cursor_ < source_size_);
+					char third_char = has_third ? source_[cursor_] : '\0';
+					int advance3 = is_shift & (third_char == '=');
+					cursor_ += advance3;
+					column_ += advance3;
+					break;
+				}
+				case '>': { // >> >= >>=
+					int advance = (second_char == '>') | (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					// Branchless check for three-character operator >>=
+					int is_shift = (second_char == '>');
+					int has_third = (cursor_ < source_size_);
+					char third_char = has_third ? source_[cursor_] : '\0';
+					int advance3 = is_shift & (third_char == '=');
+					cursor_ += advance3;
+					column_ += advance3;
+					break;
+				}
+				case '=': { // ==
+					int advance = (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				case '!': { // !=
+					int advance = (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				case '&': { // && &=
+					int advance = (second_char == '&') | (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				case '|': { // || |=
+					int advance = (second_char == '|') | (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				case '*': { // *=
+					int advance = (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				case '/': { // /=
+					int advance = (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				case '%': { // %=
+					int advance = (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				case '^': { // ^=
+					int advance = (second_char == '=');
+					cursor_ += advance;
+					column_ += advance;
+					break;
+				}
+				default:
+					// Single-character operator, no action needed
+					break;
 			}
 		}
 
