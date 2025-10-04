@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <variant>
 #include <vector>
+#include <unordered_map>
 #include <assert.h>
 #include "IRConverter.h"
 
@@ -298,152 +299,98 @@ private:
 		irOperands.insert(irOperands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
 
 		// Generate the IR for the operation based on the operator and operand types
-		if (binaryOperatorNode.op() == "+") {
-			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatAdd, std::move(irOperands), binaryOperatorNode.get_token()));
-			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(irOperands), binaryOperatorNode.get_token()));
-			}
+		// Use a lookup table approach for better performance and maintainability
+		IrOpcode opcode;
+		const auto& op = binaryOperatorNode.op();
+
+		// Simple operators (no type variants)
+		static const std::unordered_map<std::string_view, IrOpcode> simple_ops = {
+			{"&", IrOpcode::BitwiseAnd}, {"|", IrOpcode::BitwiseOr}, {"^", IrOpcode::BitwiseXor},
+			{"%", IrOpcode::Modulo}, {"<<", IrOpcode::ShiftLeft},
+			{"&&", IrOpcode::LogicalAnd}, {"||", IrOpcode::LogicalOr},
+			{"=", IrOpcode::Assignment}, {"+=", IrOpcode::AddAssign}, {"-=", IrOpcode::SubAssign},
+			{"*=", IrOpcode::MulAssign}, {"/=", IrOpcode::DivAssign}, {"%=", IrOpcode::ModAssign},
+			{"&=", IrOpcode::AndAssign}, {"|=", IrOpcode::OrAssign}, {"^=", IrOpcode::XorAssign},
+			{"<<=", IrOpcode::ShlAssign}, {">>=", IrOpcode::ShrAssign}
+		};
+
+		auto simple_it = simple_ops.find(op);
+		if (simple_it != simple_ops.end()) {
+			opcode = simple_it->second;
 		}
-		else if (binaryOperatorNode.op() == "-") {
-			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatSubtract, std::move(irOperands), binaryOperatorNode.get_token()));
-			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(irOperands), binaryOperatorNode.get_token()));
-			}
+		// Arithmetic operators (float vs int)
+		else if (op == "+") {
+			opcode = is_floating_point_op ? IrOpcode::FloatAdd : IrOpcode::Add;
 		}
-		else if (binaryOperatorNode.op() == "*") {
-			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatMultiply, std::move(irOperands), binaryOperatorNode.get_token()));
-			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(irOperands), binaryOperatorNode.get_token()));
-			}
+		else if (op == "-") {
+			opcode = is_floating_point_op ? IrOpcode::FloatSubtract : IrOpcode::Subtract;
 		}
-		else if (binaryOperatorNode.op() == "/") {
+		else if (op == "*") {
+			opcode = is_floating_point_op ? IrOpcode::FloatMultiply : IrOpcode::Multiply;
+		}
+		// Division (float vs unsigned vs signed)
+		else if (op == "/") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatDivide, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::FloatDivide;
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedDivide, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::UnsignedDivide;
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::Divide;
 			}
 		}
-		else if (binaryOperatorNode.op() == "<<") {
-			ir_.addInstruction(IrInstruction(IrOpcode::ShiftLeft, std::move(irOperands), binaryOperatorNode.get_token()));
+		// Right shift (unsigned vs signed)
+		else if (op == ">>") {
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedShiftRight : IrOpcode::ShiftRight;
 		}
-		else if (binaryOperatorNode.op() == ">>") {
-			// Choose signed or unsigned right shift based on left operand type (after promotion)
-			if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedShiftRight, std::move(irOperands), binaryOperatorNode.get_token()));
-			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(irOperands), binaryOperatorNode.get_token()));
-			}
+		// Comparison operators (float vs unsigned vs signed)
+		else if (op == "==") {
+			opcode = is_floating_point_op ? IrOpcode::FloatEqual : IrOpcode::Equal;
 		}
-		else if (binaryOperatorNode.op() == "&") {
-			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(irOperands), binaryOperatorNode.get_token()));
+		else if (op == "!=") {
+			opcode = is_floating_point_op ? IrOpcode::FloatNotEqual : IrOpcode::NotEqual;
 		}
-		else if (binaryOperatorNode.op() == "|") {
-			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseOr, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "^") {
-			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "%") {
-			ir_.addInstruction(IrInstruction(IrOpcode::Modulo, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "==") {
+		else if (op == "<") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatEqual, std::move(irOperands), binaryOperatorNode.get_token()));
-			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(irOperands), binaryOperatorNode.get_token()));
-			}
-		}
-		else if (binaryOperatorNode.op() == "!=") {
-			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(irOperands), binaryOperatorNode.get_token()));
-			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(irOperands), binaryOperatorNode.get_token()));
-			}
-		}
-		else if (binaryOperatorNode.op() == "<") {
-			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatLessThan, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::FloatLessThan;
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::UnsignedLessThan;
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::LessThan;
 			}
 		}
-		else if (binaryOperatorNode.op() == "<=") {
+		else if (op == "<=") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatLessEqual, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::FloatLessEqual;
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessEqual, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::UnsignedLessEqual;
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::LessEqual, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::LessEqual;
 			}
 		}
-		else if (binaryOperatorNode.op() == ">") {
+		else if (op == ">") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterThan, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::FloatGreaterThan;
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterThan, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::UnsignedGreaterThan;
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::GreaterThan, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::GreaterThan;
 			}
 		}
-		else if (binaryOperatorNode.op() == ">=") {
+		else if (op == ">=") {
 			if (is_floating_point_op) {
-				ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterEqual, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::FloatGreaterEqual;
 			} else if (is_unsigned_integer_type(commonType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedGreaterEqual, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::UnsignedGreaterEqual;
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::GreaterEqual, std::move(irOperands), binaryOperatorNode.get_token()));
+				opcode = IrOpcode::GreaterEqual;
 			}
-		}
-		else if (binaryOperatorNode.op() == "&&") {
-			ir_.addInstruction(IrInstruction(IrOpcode::LogicalAnd, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "||") {
-			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "+=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::AddAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "-=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::SubAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "*=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::MulAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "/=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::DivAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "%=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::ModAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "&=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::AndAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "|=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::OrAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "^=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::XorAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == "<<=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::ShlAssign, std::move(irOperands), binaryOperatorNode.get_token()));
-		}
-		else if (binaryOperatorNode.op() == ">>=") {
-			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 		else {
 			assert(false && "Unsupported binary operator");
 			return {};
 		}
+
+		ir_.addInstruction(IrInstruction(opcode, std::move(irOperands), binaryOperatorNode.get_token()));
 
 		// Return the result variable with its type and size
 		return { lhsIrOperands[0], lhsIrOperands[1], result_var };
