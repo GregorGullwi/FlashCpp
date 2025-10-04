@@ -329,19 +329,47 @@ private:
 
 	Token consume_operator() {
 		size_t start = cursor_;
+		char first_char = source_[start];
 		++cursor_;
 		++column_;
 
-		// Handle the '->' token
-		if (source_[start] == '-' && cursor_ < source_size_ &&
-			source_[cursor_] == '>') {
-			++cursor_;
-			++column_;
-		}
-		else {
-			while (cursor_ < source_size_&& is_operator(source_[cursor_])) {
+		// Handle multi-character operators
+		if (cursor_ < source_size_) {
+			char second_char = source_[cursor_];
+
+			// Two-character operators that should be consumed together
+			if ((first_char == '-' && second_char == '>') ||  // ->
+				(first_char == '+' && second_char == '+') ||  // ++
+				(first_char == '-' && second_char == '-') ||  // --
+				(first_char == '<' && second_char == '<') ||  // <<
+				(first_char == '>' && second_char == '>') ||  // >>
+				(first_char == '<' && second_char == '=') ||  // <=
+				(first_char == '>' && second_char == '=') ||  // >=
+				(first_char == '=' && second_char == '=') ||  // ==
+				(first_char == '!' && second_char == '=') ||  // !=
+				(first_char == '&' && second_char == '&') ||  // &&
+				(first_char == '|' && second_char == '|') ||  // ||
+				(first_char == '+' && second_char == '=') ||  // +=
+				(first_char == '-' && second_char == '=') ||  // -=
+				(first_char == '*' && second_char == '=') ||  // *=
+				(first_char == '/' && second_char == '=') ||  // /=
+				(first_char == '%' && second_char == '=') ||  // %=
+				(first_char == '&' && second_char == '=') ||  // &=
+				(first_char == '|' && second_char == '=') ||  // |=
+				(first_char == '^' && second_char == '='))    // ^=
+			{
 				++cursor_;
 				++column_;
+
+				// Check for three-character operators like <<= and >>=
+				if (cursor_ < source_size_ && source_[cursor_] == '=') {
+					if ((first_char == '<' && second_char == '<') ||  // <<=
+						(first_char == '>' && second_char == '>'))    // >>=
+					{
+						++cursor_;
+						++column_;
+					}
+				}
 			}
 		}
 

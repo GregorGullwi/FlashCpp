@@ -143,6 +143,10 @@ private:
 			const auto& expr = std::get<BinaryOperatorNode>(exprNode);
 			return generateBinaryOperatorIr(expr);
 		}
+		else if (std::holds_alternative<UnaryOperatorNode>(exprNode)) {
+			const auto& expr = std::get<UnaryOperatorNode>(exprNode);
+			return generateUnaryOperatorIr(expr);
+		}
 		else if (std::holds_alternative<FunctionCallNode>(exprNode)) {
 			const auto& expr = std::get<FunctionCallNode>(exprNode);
 			return generateFunctionCallIr(expr);
@@ -211,6 +215,49 @@ private:
 		// Generate IR for string literal and return appropriate operand
 		// ...
 		return { stringLiteralNode.value() };
+	}
+
+	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode) {
+		std::vector<IrOperand> irOperands;
+
+		// Generate IR for the operand
+		auto operandIrOperands = visitExpressionNode(unaryOperatorNode.get_operand().as<ExpressionNode>());
+
+		// Get the type of the operand
+		Type operandType = std::get<Type>(operandIrOperands[0]);
+
+		// Create a temporary variable for the result
+		TempVar result_var = var_counter.next();
+
+		// Add the result variable first
+		irOperands.emplace_back(result_var);
+
+		// Add the operand
+		irOperands.insert(irOperands.end(), operandIrOperands.begin(), operandIrOperands.end());
+
+		// Generate the IR for the operation based on the operator
+		if (unaryOperatorNode.op() == "!") {
+			// Logical NOT
+			ir_.addInstruction(IrInstruction(IrOpcode::LogicalNot, std::move(irOperands), Token()));
+		}
+		else if (unaryOperatorNode.op() == "~") {
+			// Bitwise NOT
+			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseNot, std::move(irOperands), Token()));
+		}
+		else if (unaryOperatorNode.op() == "-") {
+			// Unary minus (negation)
+			ir_.addInstruction(IrInstruction(IrOpcode::Negate, std::move(irOperands), Token()));
+		}
+		else if (unaryOperatorNode.op() == "+") {
+			// Unary plus (no-op, just return the operand)
+			return operandIrOperands;
+		}
+		else {
+			assert(false && "Unary operator not implemented yet");
+		}
+
+		// Return the result
+		return { operandType, std::get<int>(operandIrOperands[1]), result_var };
 	}
 
 	std::vector<IrOperand> generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {

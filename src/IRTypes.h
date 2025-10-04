@@ -29,6 +29,7 @@ enum class IrOpcode : int_fast16_t {
 	BitwiseOr,
 	BitwiseXor,
 	BitwiseNot,
+	Negate,
 	// Comparison operators
 	Equal,
 	NotEqual,

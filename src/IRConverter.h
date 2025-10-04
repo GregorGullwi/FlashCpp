@@ -721,6 +721,15 @@ public:
 			case IrOpcode::LogicalOr:
 				handleLogicalOr(instruction);
 				break;
+			case IrOpcode::LogicalNot:
+				handleLogicalNot(instruction);
+				break;
+			case IrOpcode::BitwiseNot:
+				handleBitwiseNot(instruction);
+				break;
+			case IrOpcode::Negate:
+				handleNegate(instruction);
+				break;
 			case IrOpcode::SignExtend:
 				handleSignExtend(instruction);
 				break;
@@ -767,9 +776,9 @@ private:
 			.result_operand = instruction.getOperand(0),
 		};
 
-		// For now, we only support integer operations
-		if (!is_integer_type(ctx.type)) {
-			assert(false && (std::string("Only integer ") + operation_name + " is supported").c_str());
+		// For now, we only support integer and boolean operations
+		if (!is_integer_type(ctx.type) && !is_bool_type(ctx.type)) {
+			assert(false && (std::string("Only integer/boolean ") + operation_name + " is supported").c_str());
 		}
 
 		ctx.result_physical_reg = X64Register::Count;
@@ -808,6 +817,18 @@ private:
 				regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 			}
 		}
+		else if (instruction.isOperandType<unsigned long long>(3)) {
+			// LHS is a literal value
+			auto lhs_value = instruction.getOperandAs<unsigned long long>(3);
+			ctx.result_physical_reg = regAlloc.allocate().reg;
+
+			// Load the literal value into the register
+			// mov reg, imm64
+			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 }; // movabs rax, imm64
+			movInst[1] = 0xB8 + static_cast<uint8_t>(ctx.result_physical_reg);
+			std::memcpy(&movInst[2], &lhs_value, sizeof(lhs_value));
+			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		}
 
 		ctx.rhs_physical_reg = X64Register::Count;
 		if (instruction.isOperandType<std::string_view>(6)) {
@@ -844,6 +865,23 @@ private:
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 			}
+		}
+		else if (instruction.isOperandType<unsigned long long>(6)) {
+			// RHS is a literal value
+			auto rhs_value = instruction.getOperandAs<unsigned long long>(6);
+			ctx.rhs_physical_reg = regAlloc.allocate().reg;
+
+			// Load the literal value into the register
+			// mov reg, imm64
+			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 }; // movabs rax, imm64
+			movInst[1] = 0xB8 + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
+			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		}
+
+		// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
+		if (ctx.result_physical_reg == X64Register::Count) {
+			ctx.result_physical_reg = regAlloc.allocate().reg;
 		}
 
 		if (std::holds_alternative<TempVar>(ctx.result_operand)) {
@@ -1029,8 +1067,8 @@ private:
 			// int argSize = instruction.getOperandAs<int>(argIndex + 1); // unused for now
 			auto argValue = instruction.getOperand(argIndex + 2); // could be immediate or variable
 
-			if (!is_integer_type(argType)) {
-				assert(false && "Only integer arguments are supported");
+			if (!is_integer_type(argType) && !is_bool_type(argType)) {
+				assert(false && "Only integer/boolean arguments are supported");
 				return;
 			}
 
@@ -1151,16 +1189,16 @@ private:
 			auto dst_offset = var_it->second;
 			regAlloc.set_stack_variable_offset(allocated_reg.reg, dst_offset);
 
-			std::string_view rvalue_var_name;
+			int src_offset = 0;
 			if (instruction.isOperandType<TempVar>(5)) {
-				rvalue_var_name = instruction.getOperandAs<TempVar>(5).name();
+				auto temp_var = instruction.getOperandAs<TempVar>(5);
+				src_offset = getStackOffsetFromTempVar(temp_var);
 			} else if (instruction.isOperandType<std::string_view>(5)) {
-				rvalue_var_name = instruction.getOperandAs<std::string_view>(5);
+				auto rvalue_var_name = instruction.getOperandAs<std::string_view>(5);
+				auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
+				assert(src_it != current_scope.identifier_offset.end());
+				src_offset = src_it->second;
 			}
-
-			auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
-			assert(src_it != current_scope.identifier_offset.end());
-			auto src_offset = src_it->second;
 
 			if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
 				auto mov_opcodes = regAlloc.get_reg_reg_move_op_code(allocated_reg.reg, src_reg.value(), 4);
@@ -1982,6 +2020,172 @@ private:
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+	}
+
+	void handleLogicalNot(const IrInstruction& instruction) {
+		// Logical NOT instruction has 4 operands: result_var, operand_type, operand_size, operand_val
+		assert(instruction.getOperandCount() == 4 && "LogicalNot instruction must have exactly 4 operands");
+
+		Type type = instruction.getOperandAs<Type>(1);
+		int size_in_bits = instruction.getOperandAs<int>(2);
+
+		// Allocate a register for the result
+		X64Register result_physical_reg = X64Register::Count;
+
+		// Load the operand into the result register
+		if (instruction.isOperandType<std::string_view>(3)) {
+			auto operand_var = instruction.getOperandAs<std::string_view>(3);
+			auto var_id = variable_scopes.back().identifier_offset.find(operand_var);
+			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto var_reg = regAlloc.tryGetStackVariableRegister(var_id->second); var_reg.has_value()) {
+					result_physical_reg = var_reg.value();
+				} else {
+					result_physical_reg = regAlloc.allocate().reg;
+					auto mov_opcodes = generateMovFromFrame(result_physical_reg, var_id->second);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(result_physical_reg);
+				}
+			}
+		} else if (instruction.isOperandType<TempVar>(3)) {
+			auto temp_var = instruction.getOperandAs<TempVar>(3);
+			auto stack_var_addr = getStackOffsetFromTempVar(temp_var);
+			if (auto var_reg = regAlloc.tryGetStackVariableRegister(stack_var_addr); var_reg.has_value()) {
+				result_physical_reg = var_reg.value();
+			} else {
+				result_physical_reg = regAlloc.allocate().reg;
+				auto mov_opcodes = generateMovFromFrame(result_physical_reg, stack_var_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(result_physical_reg);
+			}
+		}
+
+		// Compare with 0: cmp reg, 0
+		std::array<uint8_t, 4> cmpInst = { 0x48, 0x83, 0xF8, 0x00 }; // cmp r64, imm8
+		cmpInst[2] = 0xF8 + static_cast<uint8_t>(result_physical_reg);
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result to 1 if zero (sete), 0 otherwise
+		std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, 0xC0 }; // sete r8
+		seteInst[2] = 0xC0 + static_cast<uint8_t>(result_physical_reg);
+		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
+
+		// Store the result
+		storeUnaryResult(instruction.getOperand(0), result_physical_reg, size_in_bits);
+	}
+
+	void handleBitwiseNot(const IrInstruction& instruction) {
+		// Bitwise NOT instruction has 4 operands: result_var, operand_type, operand_size, operand_val
+		assert(instruction.getOperandCount() == 4 && "BitwiseNot instruction must have exactly 4 operands");
+
+		Type type = instruction.getOperandAs<Type>(1);
+		int size_in_bits = instruction.getOperandAs<int>(2);
+
+		// Allocate a register for the result
+		X64Register result_physical_reg = X64Register::Count;
+
+		// Load the operand into the result register
+		if (instruction.isOperandType<std::string_view>(3)) {
+			auto operand_var = instruction.getOperandAs<std::string_view>(3);
+			auto var_id = variable_scopes.back().identifier_offset.find(operand_var);
+			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto var_reg = regAlloc.tryGetStackVariableRegister(var_id->second); var_reg.has_value()) {
+					result_physical_reg = var_reg.value();
+				} else {
+					result_physical_reg = regAlloc.allocate().reg;
+					auto mov_opcodes = generateMovFromFrame(result_physical_reg, var_id->second);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(result_physical_reg);
+				}
+			}
+		} else if (instruction.isOperandType<TempVar>(3)) {
+			auto temp_var = instruction.getOperandAs<TempVar>(3);
+			auto stack_var_addr = getStackOffsetFromTempVar(temp_var);
+			if (auto var_reg = regAlloc.tryGetStackVariableRegister(stack_var_addr); var_reg.has_value()) {
+				result_physical_reg = var_reg.value();
+			} else {
+				result_physical_reg = regAlloc.allocate().reg;
+				auto mov_opcodes = generateMovFromFrame(result_physical_reg, stack_var_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(result_physical_reg);
+			}
+		}
+
+		// NOT instruction: not r64
+		std::array<uint8_t, 3> notInst = { 0x48, 0xF7, 0xD0 }; // not r64
+		notInst[2] = 0xD0 + static_cast<uint8_t>(result_physical_reg);
+		textSectionData.insert(textSectionData.end(), notInst.begin(), notInst.end());
+
+		// Store the result
+		storeUnaryResult(instruction.getOperand(0), result_physical_reg, size_in_bits);
+	}
+
+	void handleNegate(const IrInstruction& instruction) {
+		// Negate instruction has 4 operands: result_var, operand_type, operand_size, operand_val
+		assert(instruction.getOperandCount() == 4 && "Negate instruction must have exactly 4 operands");
+
+		Type type = instruction.getOperandAs<Type>(1);
+		int size_in_bits = instruction.getOperandAs<int>(2);
+
+		// Allocate a register for the result
+		X64Register result_physical_reg = X64Register::Count;
+
+		// Load the operand into the result register
+		if (instruction.isOperandType<std::string_view>(3)) {
+			auto operand_var = instruction.getOperandAs<std::string_view>(3);
+			auto var_id = variable_scopes.back().identifier_offset.find(operand_var);
+			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto var_reg = regAlloc.tryGetStackVariableRegister(var_id->second); var_reg.has_value()) {
+					result_physical_reg = var_reg.value();
+				} else {
+					result_physical_reg = regAlloc.allocate().reg;
+					auto mov_opcodes = generateMovFromFrame(result_physical_reg, var_id->second);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(result_physical_reg);
+				}
+			}
+		} else if (instruction.isOperandType<TempVar>(3)) {
+			auto temp_var = instruction.getOperandAs<TempVar>(3);
+			auto stack_var_addr = getStackOffsetFromTempVar(temp_var);
+			if (auto var_reg = regAlloc.tryGetStackVariableRegister(stack_var_addr); var_reg.has_value()) {
+				result_physical_reg = var_reg.value();
+			} else {
+				result_physical_reg = regAlloc.allocate().reg;
+				auto mov_opcodes = generateMovFromFrame(result_physical_reg, stack_var_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(result_physical_reg);
+			}
+		}
+
+		// NEG instruction: neg r64
+		std::array<uint8_t, 3> negInst = { 0x48, 0xF7, 0xD8 }; // neg r64
+		negInst[2] = 0xD8 + static_cast<uint8_t>(result_physical_reg);
+		textSectionData.insert(textSectionData.end(), negInst.begin(), negInst.end());
+
+		// Store the result
+		storeUnaryResult(instruction.getOperand(0), result_physical_reg, size_in_bits);
+	}
+
+	void storeUnaryResult(const IrOperand& result_operand, X64Register result_physical_reg, int size_in_bits) {
+		if (std::holds_alternative<TempVar>(result_operand)) {
+			auto result_var = std::get<TempVar>(result_operand);
+			auto result_stack_var_addr = getStackOffsetFromTempVar(result_var);
+			if (auto res_reg = regAlloc.tryGetStackVariableRegister(result_stack_var_addr); res_reg.has_value()) {
+				if (res_reg != result_physical_reg) {
+					auto moveOp = regAlloc.get_reg_reg_move_op_code(res_reg.value(), result_physical_reg, size_in_bits / 8);
+					textSectionData.insert(textSectionData.end(), moveOp.op_codes.begin(), moveOp.op_codes.begin() + moveOp.size_in_bytes);
+				}
+			} else {
+				auto mov_opcodes = generateMovToFrame(result_physical_reg, result_stack_var_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+			}
+		} else if (std::holds_alternative<std::string_view>(result_operand)) {
+			auto result_var_name = std::get<std::string_view>(result_operand);
+			auto var_id = variable_scopes.back().identifier_offset.find(result_var_name);
+			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				auto store_opcodes = generateMovToFrame(result_physical_reg, var_id->second);
+				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			}
+		}
 	}
 
 	void handleFloatAdd(const IrInstruction& instruction) {

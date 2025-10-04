@@ -376,7 +376,7 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 			consume_token(); // consume '='
 
 			// Parse the default value expression
-			auto default_value = parse_expression(0);
+			auto default_value = parse_expression();
 			// Set the default value
 		}
 
@@ -469,7 +469,7 @@ ParseResult Parser::parse_statement_or_declaration()
 	else if (current_token.type() == Token::Type::Identifier) {
 		// If it starts with an identifier, it could be an assignment, expression,
 		// or function call statement
-		return parse_expression(0);
+		return parse_expression();
 	}
 	else {
 		// Unknown token type - consume token to avoid infinite loop and return error
@@ -491,7 +491,7 @@ ParseResult Parser::parse_variable_declaration()
 	if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
 		consume_token(); // consume the '=' operator
 		// Parse the initialization expression
-		ParseResult init_expr_result = parse_expression(0);
+		ParseResult init_expr_result = parse_expression();
 		if (init_expr_result.is_error()) {
 			return init_expr_result;
 		}
@@ -545,7 +545,7 @@ ParseResult Parser::parse_return_statement()
 	if (!next_token_opt.has_value() ||
 		(next_token_opt.value().type() != Token::Type::Punctuator ||
 			next_token_opt.value().value() != ";")) {
-		return_expr_result = parse_expression(0);
+		return_expr_result = parse_expression();
 		if (return_expr_result.is_error()) {
 			return return_expr_result;
 		}
@@ -566,9 +566,38 @@ ParseResult Parser::parse_return_statement()
 	}
 }
 
+ParseResult Parser::parse_unary_expression()
+{
+	// Check if the current token is a unary operator
+	if (current_token_->type() == Token::Type::Operator) {
+		std::string_view op = current_token_->value();
+
+		// Check for unary operators: !, ~, +, -, ++, --
+		if (op == "!" || op == "~" || op == "+" || op == "-" || op == "++" || op == "--") {
+			Token operator_token = *current_token_;
+			consume_token();
+
+			// Parse the operand (recursively handle unary expressions)
+			ParseResult operand_result = parse_unary_expression();
+			if (operand_result.is_error()) {
+				return operand_result;
+			}
+
+			if (auto operand_node = operand_result.node()) {
+				auto unary_op = emplace_node<ExpressionNode>(
+					UnaryOperatorNode(operator_token, *operand_node, true));
+				return ParseResult::success(unary_op);
+			}
+		}
+	}
+
+	// Not a unary operator, parse as primary expression
+	return parse_primary_expression();
+}
+
 ParseResult Parser::parse_expression(int precedence)
 {
-	ParseResult result = parse_primary_expression();
+	ParseResult result = parse_unary_expression();
 	if (result.is_error()) {
 		return result;
 	}
@@ -666,15 +695,32 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 
 int Parser::get_operator_precedence(const std::string_view& op)
 {
+	// C++ operator precedence (higher number = higher precedence)
 	static const std::unordered_map<std::string_view, int> precedence_map = {
-			{"*", 5},  {"/", 5},  {"%", 5},  {"+", 4},  {"-", 4},
-			{"<<", 3}, {">>", 3}, {"&", 3},  {"|", 2},  {"^", 2},
-			{"<", 2},  {"<=", 2}, {">", 2},  {">=", 2}, {"==", 1},
-			{"!=", 1}, {"&&", 0}, {"||", -1},
-			// Assignment operators (right-associative, lowest precedence)
-			{"=", -2}, {"+=", -2}, {"-=", -2}, {"*=", -2}, {"/=", -2},
-			{"%=", -2}, {"&=", -2}, {"|=", -2}, {"^=", -2},
-			{"<<=", -2}, {">>=", -2},
+			// Multiplicative (precedence 16)
+			{"*", 16},  {"/", 16},  {"%", 16},
+			// Additive (precedence 15)
+			{"+", 15},  {"-", 15},
+			// Shift (precedence 14)
+			{"<<", 14}, {">>", 14},
+			// Relational (precedence 13)
+			{"<", 13},  {"<=", 13}, {">", 13},  {">=", 13},
+			// Equality (precedence 12)
+			{"==", 12}, {"!=", 12},
+			// Bitwise AND (precedence 11)
+			{"&", 11},
+			// Bitwise XOR (precedence 10)
+			{"^", 10},
+			// Bitwise OR (precedence 9)
+			{"|", 9},
+			// Logical AND (precedence 8)
+			{"&&", 8},
+			// Logical OR (precedence 7)
+			{"||", 7},
+			// Assignment operators (precedence 3, right-associative, lowest precedence)
+			{"=", 3}, {"+=", 3}, {"-=", 3}, {"*=", 3}, {"/=", 3},
+			{"%=", 3}, {"&=", 3}, {"|=", 3}, {"^=", 3},
+			{"<<=", 3}, {">>=", 3},
 	};
 
 	auto it = precedence_map.find(op);
@@ -732,7 +778,7 @@ ParseResult Parser::parse_primary_expression()
 
 				ChunkedVector<ASTNode> args;
 				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-					ParseResult argResult = parse_expression(0);
+					ParseResult argResult = parse_expression();
 					if (argResult.is_error()) {
 						return argResult;
 					}
@@ -777,7 +823,7 @@ ParseResult Parser::parse_primary_expression()
 
 				ChunkedVector<ASTNode> args;
 				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-					ParseResult argResult = parse_expression(0);
+					ParseResult argResult = parse_expression();
 					if (argResult.is_error()) {
 						return argResult;
 					}
@@ -835,14 +881,15 @@ ParseResult Parser::parse_primary_expression()
 	}
 	else if (consume_punctuator("(")) {
 		// Parse parenthesized expression
-		ParseResult result = parse_expression(0);
-		if (result.is_error()) {
-			return result;
+		ParseResult paren_result = parse_expression();
+		if (paren_result.is_error()) {
+			return paren_result;
 		}
 		if (!consume_punctuator(")")) {
 			return ParseResult::error("Expected ')' after parenthesized expression",
 				*current_token_);
 		}
+		result = paren_result.node();
 	}
 	else {
 		return ParseResult::error("Expected primary expression", *current_token_);
@@ -872,7 +919,7 @@ ParseResult Parser::parse_for_loop() {
         init = parse_type_and_name();
     } else {
         // Handle expression
-        init = parse_expression(0);
+        init = parse_expression();
     }
     if (init.is_error()) {
         return init;
@@ -882,7 +929,7 @@ ParseResult Parser::parse_for_loop() {
     }
 
     // Parse condition
-    auto condition = parse_expression(0);
+    auto condition = parse_expression();
     if (condition.is_error()) {
         return condition;
     }
@@ -891,7 +938,7 @@ ParseResult Parser::parse_for_loop() {
     }
 
     // Parse increment
-    auto increment = parse_expression(0);
+    auto increment = parse_expression();
     if (increment.is_error()) {
         return increment;
     }
