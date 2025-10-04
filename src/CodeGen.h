@@ -407,6 +407,39 @@ private:
 		else if (binaryOperatorNode.op() == "||") {
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
+		else if (binaryOperatorNode.op() == "=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "+=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::AddAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "-=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::SubAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "*=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::MulAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "/=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::DivAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "%=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::ModAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "&=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::AndAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "|=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::OrAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "^=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::XorAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == "<<=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::ShlAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+		else if (binaryOperatorNode.op() == ">>=") {
+			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
 		else {
 			assert(false && "Unsupported binary operator");
 			return {};

@@ -902,6 +902,38 @@ public:
 		}
 		break;
 
+		case IrOpcode::UnsignedLessEqual:
+		{
+			// %result = icmp ule [Type][Size] %lhs, %rhs (unsigned less than or equal)
+			assert(getOperandCount() == 7 && "UnsignedLessEqual instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = icmp ule " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
 		case IrOpcode::LessEqual:
 		{
 			// %result = icmp sle [Type][Size] %lhs, %rhs (signed less than or equal)
@@ -978,6 +1010,70 @@ public:
 					oss << getOperandAs<std::string_view>(0);
 
 				oss << " = icmp sge " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::UnsignedGreaterThan:
+		{
+			// %result = icmp ugt [Type][Size] %lhs, %rhs (unsigned greater than)
+			assert(getOperandCount() == 7 && "UnsignedGreaterThan instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = icmp ugt " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::UnsignedGreaterEqual:
+		{
+			// %result = icmp uge [Type][Size] %lhs, %rhs (unsigned greater than or equal)
+			assert(getOperandCount() == 7 && "UnsignedGreaterEqual instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = icmp uge " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
 
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
@@ -1532,6 +1628,349 @@ public:
 				oss << "br label %";
 				if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
+			}
+		}
+		break;
+
+		case IrOpcode::AddAssign:
+		{
+			// %var = add %var, %rhs (compound assignment a += b)
+			assert(getOperandCount() == 7 && "AddAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = add " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::SubAssign:
+		{
+			// %var = sub %var, %rhs (compound assignment a -= b)
+			assert(getOperandCount() == 7 && "SubAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = sub " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::MulAssign:
+		{
+			// %var = mul %var, %rhs (compound assignment a *= b)
+			assert(getOperandCount() == 7 && "MulAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = mul " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::DivAssign:
+		{
+			// %var = sdiv %var, %rhs (compound assignment a /= b)
+			assert(getOperandCount() == 7 && "DivAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = sdiv " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::ModAssign:
+		{
+			// %var = srem %var, %rhs (compound assignment a %= b)
+			assert(getOperandCount() == 7 && "ModAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = srem " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::AndAssign:
+		{
+			// %var = and %var, %rhs (compound assignment a &= b)
+			assert(getOperandCount() == 7 && "AndAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = and " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::OrAssign:
+		{
+			// %var = or %var, %rhs (compound assignment a |= b)
+			assert(getOperandCount() == 7 && "OrAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = or " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::XorAssign:
+		{
+			// %var = xor %var, %rhs (compound assignment a ^= b)
+			assert(getOperandCount() == 7 && "XorAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = xor " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::ShlAssign:
+		{
+			// %var = shl %var, %rhs (compound assignment a <<= b)
+			assert(getOperandCount() == 7 && "ShlAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = shl " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::ShrAssign:
+		{
+			// %var = ashr %var, %rhs (compound assignment a >>= b)
+			assert(getOperandCount() == 7 && "ShrAssign instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = ashr " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::Assignment:
+		{
+			// %var = %rhs (simple assignment a = b)
+			assert(getOperandCount() == 7 && "Assignment instruction must have exactly 7 operands");
+			if (getOperandCount() > 0) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
 			}
 		}
 		break;

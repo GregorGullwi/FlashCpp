@@ -739,6 +739,39 @@ public:
 			case IrOpcode::Truncate:
 				handleTruncate(instruction);
 				break;
+			case IrOpcode::AddAssign:
+				handleAddAssign(instruction);
+				break;
+			case IrOpcode::SubAssign:
+				handleSubAssign(instruction);
+				break;
+			case IrOpcode::MulAssign:
+				handleMulAssign(instruction);
+				break;
+			case IrOpcode::DivAssign:
+				handleDivAssign(instruction);
+				break;
+			case IrOpcode::ModAssign:
+				handleModAssign(instruction);
+				break;
+			case IrOpcode::AndAssign:
+				handleAndAssign(instruction);
+				break;
+			case IrOpcode::OrAssign:
+				handleOrAssign(instruction);
+				break;
+			case IrOpcode::XorAssign:
+				handleXorAssign(instruction);
+				break;
+			case IrOpcode::ShlAssign:
+				handleShlAssign(instruction);
+				break;
+			case IrOpcode::ShrAssign:
+				handleShrAssign(instruction);
+				break;
+			case IrOpcode::Assignment:
+				handleAssignment(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -2487,6 +2520,116 @@ private:
 
 		// TODO: Implement proper truncation (often just using smaller register names)
 		// e.g., using eax instead of rax for 32-bit, ax for 16-bit, al for 8-bit
+	}
+
+	void handleAddAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "add assignment");
+		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xC0 };
+		addInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleSubAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtract assignment");
+		std::array<uint8_t, 3> subInst = { 0x48, 0x29, 0xC0 };
+		subInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleMulAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "multiply assignment");
+		std::array<uint8_t, 4> imulInst = { 0x48, 0x0F, 0xAF, 0xC0 };
+		imulInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		textSectionData.insert(textSectionData.end(), imulInst.begin(), imulInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleDivAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "divide assignment");
+		std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xC0 };
+		movInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(X64Register::RAX);
+		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		std::array<uint8_t, 3> cqoInst = { 0x48, 0x99 };
+		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.begin() + 2);
+		std::array<uint8_t, 3> idivInst = { 0x48, 0xF7, 0xF8 };
+		idivInst[2] = 0xF8 + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		textSectionData.insert(textSectionData.end(), idivInst.begin(), idivInst.end());
+		std::array<uint8_t, 3> movResultInst = { 0x48, 0x89, 0xC0 };
+		movResultInst[2] = 0xC0 + (static_cast<uint8_t>(X64Register::RAX) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movResultInst.begin(), movResultInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleModAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo assignment");
+		std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xC0 };
+		movInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(X64Register::RAX);
+		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		std::array<uint8_t, 3> cqoInst = { 0x48, 0x99 };
+		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.begin() + 2);
+		std::array<uint8_t, 3> idivInst = { 0x48, 0xF7, 0xF8 };
+		idivInst[2] = 0xF8 + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		textSectionData.insert(textSectionData.end(), idivInst.begin(), idivInst.end());
+		std::array<uint8_t, 3> movResultInst = { 0x48, 0x89, 0xC0 };
+		movResultInst[2] = 0xC0 + (static_cast<uint8_t>(X64Register::RDX) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movResultInst.begin(), movResultInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleAndAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise and assignment");
+		std::array<uint8_t, 3> andInst = { 0x48, 0x21, 0xC0 };
+		andInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), andInst.begin(), andInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleOrAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise or assignment");
+		std::array<uint8_t, 3> orInst = { 0x48, 0x09, 0xC0 };
+		orInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleXorAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise xor assignment");
+		std::array<uint8_t, 3> xorInst = { 0x48, 0x31, 0xC0 };
+		xorInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), xorInst.begin(), xorInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleShlAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left assignment");
+		std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xC1 };
+		movInst[2] = 0xC1 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3);
+		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		std::array<uint8_t, 3> shlInst = { 0x48, 0xD3, 0xE0 };
+		shlInst[2] = 0xE0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), shlInst.begin(), shlInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleShrAssign(const IrInstruction& instruction) {
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right assignment");
+		std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xC1 };
+		movInst[2] = 0xC1 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3);
+		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		std::array<uint8_t, 3> sarInst = { 0x48, 0xD3, 0xF8 };
+		sarInst[2] = 0xF8 + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), sarInst.begin(), sarInst.end());
+		storeArithmeticResult(ctx);
+	}
+
+	void handleAssignment(const IrInstruction& instruction) {
+		// Simple assignment: just move the RHS value to the LHS location
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "assignment");
+		// The value is already in the result register from setupAndLoadArithmeticOperation
+		// We just need to store it
+		storeArithmeticResult(ctx);
 	}
 
 	void finalizeSections() {
