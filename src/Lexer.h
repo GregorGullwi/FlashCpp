@@ -59,6 +59,9 @@ public:
 			else if (c == '-' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
 				return consume_literal();	// Negative number
 			}
+			else if (c == '.' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
+				return consume_literal();	// Floating-point literal starting with decimal point (e.g., .5f)
+			}
 			else if (c == '\"') {
 				return consume_string_literal();
 			}
@@ -207,11 +210,21 @@ private:
 
 	Token consume_literal() {
 		size_t start = cursor_;
+		char first_char = source_[cursor_];
 		++cursor_;
 		++column_;
-		
+
+		// Check if this is a floating-point literal starting with decimal point (e.g., .5f)
+		if (first_char == '.') {
+			// Consume fractional part
+			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
+				++cursor_;
+				++column_;
+			}
+			// Skip to exponent/suffix handling below
+		}
 		// Check for prefix (hex, octal, binary)
-		if (source_[cursor_] == 'x') {
+		else if (source_[cursor_] == 'x') {
 			// Hexadecimal literal
 			++cursor_;
 			++column_;
@@ -252,7 +265,38 @@ private:
 			}
 		}
 
-		static constexpr std::string_view suffixCharacters = "ul";
+		// Check for decimal point (floating-point literal) - only if we didn't start with one
+		if (first_char != '.' && cursor_ < source_size_ && source_[cursor_] == '.') {
+			++cursor_;
+			++column_;
+
+			// Consume fractional part
+			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
+				++cursor_;
+				++column_;
+			}
+		}
+
+		// Check for exponent (e.g., 1.5e10, 3e-5)
+		if (cursor_ < source_size_ && (source_[cursor_] == 'e' || source_[cursor_] == 'E')) {
+			++cursor_;
+			++column_;
+
+			// Optional sign
+			if (cursor_ < source_size_ && (source_[cursor_] == '+' || source_[cursor_] == '-')) {
+				++cursor_;
+				++column_;
+			}
+
+			// Exponent digits
+			while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
+				++cursor_;
+				++column_;
+			}
+		}
+
+		// Handle suffixes: ul for integers, f/F for float, l/L for long/long double
+		static constexpr std::string_view suffixCharacters = "ulfULF";
 		while (cursor_ < source_size_ && suffixCharacters.find(source_[cursor_]) != std::string::npos) {
 			++cursor_;
 			++column_;

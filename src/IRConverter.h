@@ -809,9 +809,9 @@ private:
 			.result_operand = instruction.getOperand(0),
 		};
 
-		// For now, we only support integer and boolean operations
-		if (!is_integer_type(ctx.type) && !is_bool_type(ctx.type)) {
-			assert(false && (std::string("Only integer/boolean ") + operation_name + " is supported").c_str());
+		// Support integer, boolean, and floating-point operations
+		if (!is_integer_type(ctx.type) && !is_bool_type(ctx.type) && !is_floating_point_type(ctx.type)) {
+			assert(false && (std::string("Only integer/boolean/floating-point ") + operation_name + " is supported").c_str());
 		}
 
 		ctx.result_physical_reg = X64Register::Count;
@@ -862,6 +862,36 @@ private:
 			std::memcpy(&movInst[2], &lhs_value, sizeof(lhs_value));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
+		else if (instruction.isOperandType<double>(3)) {
+			// LHS is a floating-point literal value
+			auto lhs_value = instruction.getOperandAs<double>(3);
+			ctx.result_physical_reg = regAlloc.allocate().reg;
+
+			// For floating-point, we need to load the value into an XMM register
+			// Strategy: Load the bit pattern as integer into a GPR, then move to XMM
+			// 1. Load double bits into a GPR using movabs
+			// 2. Move from GPR to XMM using movq
+
+			uint64_t bits;
+			std::memcpy(&bits, &lhs_value, sizeof(bits));
+
+			// Allocate a temporary GPR for the bit pattern
+			X64Register temp_gpr = regAlloc.allocate().reg;
+
+			// movabs temp_gpr, imm64 (load bit pattern)
+			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
+			movInst[1] = 0xB8 + static_cast<uint8_t>(temp_gpr);
+			std::memcpy(&movInst[2], &bits, sizeof(bits));
+			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+
+			// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
+			std::array<uint8_t, 5> movqInst = { 0x66, 0x48, 0x0F, 0x6E, 0xC0 };
+			movqInst[4] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
+			textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
+
+			// Release the temporary GPR
+			regAlloc.release(temp_gpr);
+		}
 
 		ctx.rhs_physical_reg = X64Register::Count;
 		if (instruction.isOperandType<std::string_view>(6)) {
@@ -910,6 +940,36 @@ private:
 			movInst[1] = 0xB8 + static_cast<uint8_t>(ctx.rhs_physical_reg);
 			std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		}
+		else if (instruction.isOperandType<double>(6)) {
+			// RHS is a floating-point literal value
+			auto rhs_value = instruction.getOperandAs<double>(6);
+			ctx.rhs_physical_reg = regAlloc.allocate().reg;
+
+			// For floating-point, we need to load the value into an XMM register
+			// Strategy: Load the bit pattern as integer into a GPR, then move to XMM
+			// 1. Load double bits into a GPR using movabs
+			// 2. Move from GPR to XMM using movq
+
+			uint64_t bits;
+			std::memcpy(&bits, &rhs_value, sizeof(bits));
+
+			// Allocate a temporary GPR for the bit pattern
+			X64Register temp_gpr = regAlloc.allocate().reg;
+
+			// movabs temp_gpr, imm64 (load bit pattern)
+			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
+			movInst[1] = 0xB8 + static_cast<uint8_t>(temp_gpr);
+			std::memcpy(&movInst[2], &bits, sizeof(bits));
+			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+
+			// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
+			std::array<uint8_t, 5> movqInst = { 0x66, 0x48, 0x0F, 0x6E, 0xC0 };
+			movqInst[4] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
+			textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
+
+			// Release the temporary GPR
+			regAlloc.release(temp_gpr);
 		}
 
 		// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
@@ -1100,15 +1160,38 @@ private:
 			// int argSize = instruction.getOperandAs<int>(argIndex + 1); // unused for now
 			auto argValue = instruction.getOperand(argIndex + 2); // could be immediate or variable
 
-			if (!is_integer_type(argType) && !is_bool_type(argType)) {
-				assert(false && "Only integer/boolean arguments are supported");
-				return;
-			}
+			// Determine if this is a floating-point argument
+			bool is_float_arg = is_floating_point_type(argType);
 
 			// Determine the target register for the argument
-			X64Register target_reg = INT_PARAM_REGS[i];
+			X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
 
-			if (std::holds_alternative<unsigned long long>(argValue)) {
+			// Handle floating-point immediate values
+			if (is_float_arg && std::holds_alternative<double>(argValue)) {
+				// Load floating-point literal into XMM register
+				double float_value = std::get<double>(argValue);
+
+				// Convert double to bit pattern
+				uint64_t bits;
+				std::memcpy(&bits, &float_value, sizeof(bits));
+
+				// Allocate a temporary GPR for the bit pattern
+				X64Register temp_gpr = regAlloc.allocate().reg;
+
+				// movabs temp_gpr, imm64 (load bit pattern)
+				std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
+				movInst[1] = 0xB8 + static_cast<uint8_t>(temp_gpr);
+				std::memcpy(&movInst[2], &bits, sizeof(bits));
+				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+
+				// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
+				std::array<uint8_t, 5> movqInst = { 0x66, 0x48, 0x0F, 0x6E, 0xC0 };
+				movqInst[4] = 0xC0 + (static_cast<uint8_t>(target_reg) << 3) + static_cast<uint8_t>(temp_gpr);
+				textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
+
+				// Release the temporary GPR
+				regAlloc.release(temp_gpr);
+			} else if (std::holds_alternative<unsigned long long>(argValue)) {
 				// Construct the REX prefix based on target_reg for destination (Reg field).
 				// REX.W is always needed for 64-bit operations (0x48).
 				// REX.R (bit 2) is set if the target_reg is R8-R15 (as it appears in the Reg field of ModR/M or is directly encoded).
@@ -1135,17 +1218,44 @@ private:
 				std::string_view var_name = std::get<std::string_view>(argValue);
 				int var_offset = variable_scopes.back().identifier_offset[var_name];
 
-				if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
-					if (reg_var.value() != target_reg) {
-						auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 4);	// TODO: reg size
-						textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+				if (is_float_arg) {
+					// For floating-point arguments, use movsd xmm, [rbp+offset] (F2 0F 10 /r)
+					// or movss for float (F3 0F 10 /r)
+					uint8_t prefix = (argType == Type::Float) ? 0xF3 : 0xF2;
+
+					// Build the instruction: prefix 0F 10 ModR/M [SIB] [disp]
+					textSectionData.push_back(prefix);
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x10);
+
+					// ModR/M byte: Mod=01/10 (disp8/disp32), Reg=target_xmm, R/M=101 (RBP)
+					uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
+					uint8_t modrm;
+					if (var_offset >= -128 && var_offset <= 127) {
+						modrm = 0x45 | (reg_bits << 3); // Mod=01, R/M=101 (RBP)
+						textSectionData.push_back(modrm);
+						textSectionData.push_back(static_cast<uint8_t>(var_offset));
+					} else {
+						modrm = 0x85 | (reg_bits << 3); // Mod=10, R/M=101 (RBP)
+						textSectionData.push_back(modrm);
+						for (int j = 0; j < 4; ++j) {
+							textSectionData.push_back(static_cast<uint8_t>(var_offset & 0xFF));
+							var_offset >>= 8;
+						}
 					}
-				}
-				else {
-					// Load from stack using RBP-relative addressing
-					auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-					regAlloc.flushSingleDirtyRegister(target_reg);
+				} else {
+					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+						if (reg_var.value() != target_reg) {
+							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 4);	// TODO: reg size
+							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+						}
+					}
+					else {
+						// Load from stack using RBP-relative addressing
+						auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
+						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						regAlloc.flushSingleDirtyRegister(target_reg);
+					}
 				}
 			} else if (std::holds_alternative<TempVar>(argValue)) {
 				// Temporary variable value (stored on stack)
@@ -1158,16 +1268,43 @@ private:
 				if (it != current_scope.identifier_offset.end()) {
 					int var_offset = it->second;
 
-					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
-						if (reg_var.value() != target_reg) {
-							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 4);	// TODO: reg size
-							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+					if (is_float_arg) {
+						// For floating-point arguments, use movsd xmm, [rbp+offset] (F2 0F 10 /r)
+						// or movss for float (F3 0F 10 /r)
+						uint8_t prefix = (argType == Type::Float) ? 0xF3 : 0xF2;
+
+						// Build the instruction: prefix 0F 10 ModR/M [SIB] [disp]
+						textSectionData.push_back(prefix);
+						textSectionData.push_back(0x0F);
+						textSectionData.push_back(0x10);
+
+						// ModR/M byte: Mod=01/10 (disp8/disp32), Reg=target_xmm, R/M=101 (RBP)
+						uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
+						uint8_t modrm;
+						if (var_offset >= -128 && var_offset <= 127) {
+							modrm = 0x45 | (reg_bits << 3); // Mod=01, R/M=101 (RBP)
+							textSectionData.push_back(modrm);
+							textSectionData.push_back(static_cast<uint8_t>(var_offset));
+						} else {
+							modrm = 0x85 | (reg_bits << 3); // Mod=10, R/M=101 (RBP)
+							textSectionData.push_back(modrm);
+							for (int j = 0; j < 4; ++j) {
+								textSectionData.push_back(static_cast<uint8_t>(var_offset & 0xFF));
+								var_offset >>= 8;
+							}
 						}
+					} else {
+						if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+							if (reg_var.value() != target_reg) {
+								auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 4);	// TODO: reg size
+								textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+							}
+						}
+						// Use the existing generateMovFromFrame function for consistency
+						auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
-					// Use the existing generateMovFromFrame function for consistency
-					auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-					regAlloc.flushSingleDirtyRegister(target_reg);
 				} else {
 					// Temporary variable not found in stack. This indicates a problem with our
 					// TempVar management. Let's allocate a stack slot for it now and assume
@@ -1176,14 +1313,58 @@ private:
 					// Allocate stack slot for this TempVar
 					int stack_offset = allocateStackSlotForTempVar(src_reg_temp.index);
 
-					// Store RAX to the newly allocated stack slot first
-					auto store_opcodes = generateMovToFrame(X64Register::RAX, stack_offset);
-					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+					if (is_float_arg) {
+						// For floating-point, assume value is in XMM0 and store it
+						// movsd [rbp+offset], xmm0 (F2 0F 11 /r)
+						uint8_t prefix = (argType == Type::Float) ? 0xF3 : 0xF2;
+						textSectionData.push_back(prefix);
+						textSectionData.push_back(0x0F);
+						textSectionData.push_back(0x11); // Store variant
 
-					// Now load from stack to target register
-					auto load_opcodes = generateMovFromFrame(target_reg, stack_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-					regAlloc.flushSingleDirtyRegister(target_reg);
+						uint8_t modrm;
+						if (stack_offset >= -128 && stack_offset <= 127) {
+							modrm = 0x45; // Mod=01, Reg=XMM0, R/M=101 (RBP)
+							textSectionData.push_back(modrm);
+							textSectionData.push_back(static_cast<uint8_t>(stack_offset));
+						} else {
+							modrm = 0x85; // Mod=10, Reg=XMM0, R/M=101 (RBP)
+							textSectionData.push_back(modrm);
+							for (int j = 0; j < 4; ++j) {
+								textSectionData.push_back(static_cast<uint8_t>(stack_offset & 0xFF));
+								stack_offset >>= 8;
+							}
+						}
+
+						// Now load from stack to target register
+						prefix = (argType == Type::Float) ? 0xF3 : 0xF2;
+						int load_offset = allocateStackSlotForTempVar(src_reg_temp.index);
+						textSectionData.push_back(prefix);
+						textSectionData.push_back(0x0F);
+						textSectionData.push_back(0x10);
+
+						uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
+						if (load_offset >= -128 && load_offset <= 127) {
+							modrm = 0x45 | (reg_bits << 3);
+							textSectionData.push_back(modrm);
+							textSectionData.push_back(static_cast<uint8_t>(load_offset));
+						} else {
+							modrm = 0x85 | (reg_bits << 3);
+							textSectionData.push_back(modrm);
+							for (int j = 0; j < 4; ++j) {
+								textSectionData.push_back(static_cast<uint8_t>(load_offset & 0xFF));
+								load_offset >>= 8;
+							}
+						}
+					} else {
+						// Store RAX to the newly allocated stack slot first
+						auto store_opcodes = generateMovToFrame(X64Register::RAX, stack_offset);
+						textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+						// Now load from stack to target register
+						auto load_opcodes = generateMovFromFrame(target_reg, stack_offset);
+						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						regAlloc.flushSingleDirtyRegister(target_reg);
+					}
 				}
 			} else {
 				assert(false && "Unsupported argument value type");

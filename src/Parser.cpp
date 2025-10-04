@@ -643,34 +643,75 @@ ParseResult Parser::parse_expression(int precedence)
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 {
-	// Convert the text to lowercase
+	// Convert the text to lowercase for case-insensitive parsing
 	std::string lowerText(text);
 	std::transform(lowerText.begin(), lowerText.end(), lowerText.begin(), ::tolower);
 
 	TypedNumeric typeInfo;
 	char* end_ptr = nullptr;
-	// Check for prefixes
+
+	// Check if this is a floating-point literal (contains '.', 'e', or 'E', or has 'f'/'l' suffix)
+	bool has_decimal_point = lowerText.find('.') != std::string::npos;
+	bool has_exponent = lowerText.find('e') != std::string::npos;
+	bool has_float_suffix = lowerText.find('f') != std::string::npos;
+	bool is_floating_point = has_decimal_point || has_exponent || has_float_suffix;
+
+	if (is_floating_point) {
+		// Parse as floating-point literal
+		double float_value = std::strtod(lowerText.c_str(), &end_ptr);
+		typeInfo.value = float_value;
+
+		// Check suffix to determine float vs double
+		std::string_view suffix = end_ptr;
+
+		// Branchless suffix detection using bit manipulation
+		// Check for 'f' or 'F' suffix
+		bool is_float = (suffix.find('f') != std::string_view::npos);
+		// Check for 'l' or 'L' suffix (long double)
+		bool is_long_double = (suffix.find('l') != std::string_view::npos) && !is_float;
+
+		// Branchless type selection
+		// If is_float: Type::Float (12), else if is_long_double: Type::LongDouble (14), else Type::Double (13)
+		typeInfo.type = static_cast<Type>(
+			static_cast<int>(Type::Float) * is_float +
+			static_cast<int>(Type::LongDouble) * is_long_double * (!is_float) +
+			static_cast<int>(Type::Double) * (!is_float) * (!is_long_double)
+		);
+
+		// Branchless size selection: float=32, double=64, long double=80
+		typeInfo.sizeInBits = static_cast<unsigned char>(
+			32 * is_float +
+			80 * is_long_double * (!is_float) +
+			64 * (!is_float) * (!is_long_double)
+		);
+
+		typeInfo.typeQualifier = TypeQualifier::None;
+		return typeInfo;
+	}
+
+	// Integer literal parsing
 	if (lowerText.find("0x") == 0) {
 		// Hexadecimal literal
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8); // Round to the nearest 8-bit boundary
-		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 16); // Parse hexadecimal
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8);
+		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 16);
 	}
 	else if (lowerText.find("0b") == 0) {
 		// Binary literal
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8); // Round to the nearest 8-bit boundary
-		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 2); // Parse binary
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8);
+		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 2);
 	}
-	else if (lowerText.find("0") == 0) {
-		// Octal literal
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8); // Round to the nearest 8-bit boundary
-		typeInfo.value = std::strtoull(lowerText.substr(1).c_str(), &end_ptr, 8); // Parse octal
+	else if (lowerText.find("0") == 0 && lowerText.length() > 1 && lowerText[1] != '.') {
+		// Octal literal (but not "0." which is a float)
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8);
+		typeInfo.value = std::strtoull(lowerText.substr(1).c_str(), &end_ptr, 8);
 	}
 	else {
+		// Decimal integer literal
 		typeInfo.sizeInBits = static_cast<unsigned char>(sizeof(int) * 8);
-		typeInfo.value = std::strtoull(lowerText.c_str(), &end_ptr, 10); // Parse integer
+		typeInfo.value = std::strtoull(lowerText.c_str(), &end_ptr, 10);
 	}
 
-	// Check for valid suffixes
+	// Check for integer suffixes
 	static constexpr std::string_view suffixCharacters = "ul";
 	std::string_view suffix = end_ptr;
 	if (!suffix.empty() && suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {

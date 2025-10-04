@@ -176,7 +176,14 @@ private:
 	std::vector<IrOperand>
 		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
 		// Generate IR for numeric literal using the actual type from the literal
-		return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
+		// Check if it's a floating-point type
+		if (is_floating_point_type(numericLiteralNode.type())) {
+			// For floating-point literals, the value is stored as double
+			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<double>(numericLiteralNode.value()) };
+		} else {
+			// For integer literals, the value is stored as unsigned long long
+			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
+		}
 	}
 
 	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
