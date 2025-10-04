@@ -112,8 +112,8 @@ namespace {
         }
     };
 
-    std::array<uint8_t, 32> calculateFileSHA256(const std::string& filename) {
-        std::ifstream file(filename, std::ios::binary);
+    std::array<uint8_t, 32> calculateFileSHA256(const std::filesystem::path& filepath) {
+        std::ifstream file(filepath, std::ios::binary);
         if (!file) {
             // Return zero hash if file can't be read
             std::array<uint8_t, 32> zero_hash = {};
@@ -137,7 +137,7 @@ DebugInfoBuilder::DebugInfoBuilder() {
     string_offsets_[""] = 0;
 }
 
-uint32_t DebugInfoBuilder::addSourceFile(const std::string& filename) {
+uint32_t DebugInfoBuilder::addSourceFile(const std::filesystem::path& filename) {
     auto it = file_name_to_id_.find(filename);
     if (it != file_name_to_id_.end()) {
         return it->second;
@@ -148,7 +148,7 @@ uint32_t DebugInfoBuilder::addSourceFile(const std::string& filename) {
     file_name_to_id_[filename] = file_id;
     
     // Add filename to string table
-    addString(filename);
+    addString(filename.string());
     
     return file_id;
 }
@@ -200,20 +200,16 @@ void DebugInfoBuilder::addLineMapping(uint32_t code_offset, uint32_t line_number
     }
 }
 
-void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_index,
-                                       uint32_t stack_offset, uint32_t start_offset, int32_t end_offset) {
+void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_index, uint16_t flags,
+                                      const std::vector<VariableLocation>& locations) {
     if (!current_function_name_.empty()) {
-        // Find the current function and add the local variable
         for (auto& func : functions_) {
             if (func.name == current_function_name_) {
                 LocalVariableInfo var_info;
                 var_info.name = name;
                 var_info.type_index = type_index;
-                var_info.stack_offset = stack_offset;
-                var_info.start_offset = start_offset;
-                var_info.end_offset = end_offset;
-                var_info.flags = 0; // Default flags
-
+                var_info.flags = flags;
+                var_info.locations = locations;
                 func.local_variables.push_back(var_info);
                 break;
             }
@@ -453,8 +449,8 @@ void DebugInfoBuilder::writeLittleEndian16(std::vector<uint8_t>& data, uint16_t 
 std::vector<uint8_t> DebugInfoBuilder::generateFileChecksums() {
     std::vector<uint8_t> checksum_data;
 
-    for (size_t i = 0; i < source_files_.size(); ++i) {
-        const std::string& filename = source_files_[i];
+    for (const auto& file_path : source_files_) {
+        const std::string& filename = file_path.string();
         uint32_t filename_offset = string_offsets_[filename];
 
         // Calculate SHA-256 checksum for the file
@@ -681,8 +677,6 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     return line_data;
 }
 
-
-
 std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
     std::cerr << "DEBUG: generateDebugS() called" << std::endl;
 
@@ -875,8 +869,6 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
         writeSymbolRecord(symbols_data, SymbolKind::S_GPROC32_ID, proc_data);
 
-        
-
         // Add S_FRAMEPROC record
         std::vector<uint8_t> frameproc_data;
         uint32_t frame_size = func.name == "main" ? 0x00000028 : func.stack_space;  // Frame size
@@ -918,8 +910,8 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
             regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
                             reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
 
-            // Register code (2 bytes) - RSP register = 0x14 (CV_REG_RSP)
-            uint16_t register_code = 0x14e; // CV_REG_RSP
+            // Register code (2 bytes) - RBP register = 334 (CV_REG_RBP)
+            uint16_t register_code = static_cast<uint16_t>(Register::RBP);
             regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&register_code),
                             reinterpret_cast<const uint8_t*>(&register_code) + sizeof(register_code));
 
@@ -937,40 +929,42 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         for (const auto& var : func.local_variables) {
             // S_LOCAL symbol
             std::vector<uint8_t> local_data;
-
-            // Type index
             local_data.insert(local_data.end(), reinterpret_cast<const uint8_t*>(&var.type_index),
                              reinterpret_cast<const uint8_t*>(&var.type_index) + sizeof(var.type_index));
-
-            // Flags
             local_data.insert(local_data.end(), reinterpret_cast<const uint8_t*>(&var.flags),
                              reinterpret_cast<const uint8_t*>(&var.flags) + sizeof(var.flags));
-
-            // Variable name (null-terminated for C13 format)
             for (char c : var.name) {
                 local_data.push_back(static_cast<uint8_t>(c));
             }
-            local_data.push_back(0); // Null terminator
-
+            local_data.push_back(0);
             writeSymbolRecord(symbols_data, SymbolKind::S_LOCAL, local_data);
 
-            // S_DEFRANGE_FRAMEPOINTER_REL symbol for variable location
-            std::vector<uint8_t> defrange_data;
-
-            // Stack offset from frame pointer
-            defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&var.stack_offset),
-                                reinterpret_cast<const uint8_t*>(&var.stack_offset) + sizeof(var.stack_offset));
-
-            // Address range where variable is valid
-            LocalVariableAddrRange addr_range;
-            addr_range.offset_start = var.start_offset;
-            addr_range.section_start = 0; // Use section 0 to match MSVC/clang reference
-            addr_range.length = static_cast<uint16_t>(var.end_offset - var.start_offset);
-
-            defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&addr_range),
-                                reinterpret_cast<const uint8_t*>(&addr_range) + sizeof(addr_range));
-
-            writeSymbolRecord(symbols_data, SymbolKind::S_DEFRANGE_FRAMEPOINTER_REL, defrange_data);
+            // S_DEFRANGE symbols for each location
+            for (const auto& loc : var.locations) {
+                if (loc.type == VariableLocation::STACK_RELATIVE) {
+                    std::vector<uint8_t> defrange_data;
+                    defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&loc.offset),
+                                       reinterpret_cast<const uint8_t*>(&loc.offset) + sizeof(loc.offset));
+                    LocalVariableAddrRange addr_range;
+                    addr_range.offset_start = loc.start_offset - func.code_offset;
+                    addr_range.section_start = text_section_number_;
+                    addr_range.length = loc.length;
+                    defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&addr_range),
+                                       reinterpret_cast<const uint8_t*>(&addr_range) + sizeof(addr_range));
+                    writeSymbolRecord(symbols_data, SymbolKind::S_DEFRANGE_FRAMEPOINTER_REL, defrange_data);
+                } else if (loc.type == VariableLocation::REGISTER) {
+                    std::vector<uint8_t> defrange_data;
+                    defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&loc.register_code),
+                                       reinterpret_cast<const uint8_t*>(&loc.register_code) + sizeof(loc.register_code));
+                    LocalVariableAddrRange addr_range;
+                    addr_range.offset_start = loc.start_offset - func.code_offset;
+                    addr_range.section_start = text_section_number_;
+                    addr_range.length = loc.length;
+                    defrange_data.insert(defrange_data.end(), reinterpret_cast<const uint8_t*>(&addr_range),
+                                       reinterpret_cast<const uint8_t*>(&addr_range) + sizeof(addr_range));
+                    writeSymbolRecord(symbols_data, SymbolKind::S_DEFRANGE_REGISTER, defrange_data);
+                }
+            }
         }
 
         // Add S_PROC_ID_END symbol for function
@@ -1211,64 +1205,68 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
     // CLANG COMPATIBILITY: Add all LF_STRING_ID and LF_BUILDINFO records like Clang
     std::cerr << "DEBUG: Adding LF_STRING_ID and LF_BUILDINFO records to match Clang..." << std::endl;
 
-    // Add LF_STRING_ID for directory path (0x1006 in Clang)
-    {
-        std::string dir_path = "C:\\Projects\\FlashCpp";
-        std::vector<uint8_t> string_data;
+    // Add LF_STRING_ID records for each source file
+    for (const auto& source_path : source_files_) {
+        // Extract directory and filename using filesystem::path
+        std::string dir_path = source_path.has_parent_path() ? 
+                             source_path.parent_path().string() : ".";
+        std::string file_name = source_path.filename().string();
 
-        writeLittleEndian32(string_data, 0x00000000);
-        string_data.insert(string_data.end(), dir_path.begin(), dir_path.end());
-        string_data.push_back(0x00);
+        // Add directory path
+        {
+            std::vector<uint8_t> string_data;
+            writeLittleEndian32(string_data, 0x00000000);
+            string_data.insert(string_data.end(), dir_path.begin(), dir_path.end());
+            string_data.push_back(0x00);
 
-        // Calculate length exactly like Clang: TypeRecordKind + data + padding
-        size_t data_size = string_data.size();
-        size_t content_after_length = sizeof(TypeRecordKind) + data_size;
-        size_t total_record_size = sizeof(uint16_t) + content_after_length;
-        size_t aligned_record_size = (total_record_size + 3) & ~3;
-        size_t padding_bytes = aligned_record_size - total_record_size;
+            // Calculate length exactly like Clang: TypeRecordKind + data + padding
+            size_t data_size = string_data.size();
+            size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+            size_t total_record_size = sizeof(uint16_t) + content_after_length;
+            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t padding_bytes = aligned_record_size - total_record_size;
 
-        TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
-        header.kind = TypeRecordKind::LF_STRING_ID;
+            CodeView::TypeRecordHeader header;
+            header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
+            header.kind = TypeRecordKind::LF_STRING_ID;
 
-        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
-                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
-        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
-        alignTo4Bytes(debug_t_data);
+            debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                               reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+            debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+            alignTo4Bytes(debug_t_data);
 
-        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
-                  << " (directory: " << dir_path << ", length: " << header.length << ")" << std::endl;
-        current_type_index++;
-    }
+            std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+                      << " (directory: " << dir_path << ", length: " << header.length << ")" << std::endl;
+            current_type_index++;
+        }
 
-    // Add LF_STRING_ID for source file (0x1007 in Clang)
-    {
-        std::string source_file = "test_debug.cpp";
-        std::vector<uint8_t> string_data;
+        // Add source file
+        {
+            std::vector<uint8_t> string_data;
+            writeLittleEndian32(string_data, 0x00000000);
+            string_data.insert(string_data.end(), file_name.begin(), file_name.end());
+            string_data.push_back(0x00);
 
-        writeLittleEndian32(string_data, 0x00000000);
-        string_data.insert(string_data.end(), source_file.begin(), source_file.end());
-        string_data.push_back(0x00);
+            // Calculate length exactly like Clang: TypeRecordKind + data + padding
+            size_t data_size = string_data.size();
+            size_t content_after_length = sizeof(TypeRecordKind) + data_size;
+            size_t total_record_size = sizeof(uint16_t) + content_after_length;
+            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t padding_bytes = aligned_record_size - total_record_size;
 
-        // Calculate length exactly like Clang: TypeRecordKind + data + padding
-        size_t data_size = string_data.size();
-        size_t content_after_length = sizeof(TypeRecordKind) + data_size;
-        size_t total_record_size = sizeof(uint16_t) + content_after_length;
-        size_t aligned_record_size = (total_record_size + 3) & ~3;
-        size_t padding_bytes = aligned_record_size - total_record_size;
+            CodeView::TypeRecordHeader header;
+            header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
+            header.kind = TypeRecordKind::LF_STRING_ID;
 
-        TypeRecordHeader header;
-        header.length = static_cast<uint16_t>(content_after_length + padding_bytes);
-        header.kind = TypeRecordKind::LF_STRING_ID;
+            debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
+                               reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
+            debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
+            alignTo4Bytes(debug_t_data);
 
-        debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&header),
-                           reinterpret_cast<const uint8_t*>(&header) + sizeof(header));
-        debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
-        alignTo4Bytes(debug_t_data);
-
-        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
-                  << " (source: " << source_file << ", length: " << header.length << ")" << std::endl;
-        current_type_index++;
+            std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+                      << " (source: " << file_name << ", length: " << header.length << ")" << std::endl;
+            current_type_index++;
+        }
     }
 
     // Add LF_STRING_ID for empty string (0x1008 in Clang)

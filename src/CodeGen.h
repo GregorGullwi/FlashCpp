@@ -23,7 +23,7 @@ public:
 			visitReturnStatementNode(node.as<ReturnStatementNode>());
 		}
 		else if (node.is<VariableDeclarationNode>()) {
-			visitVariableDeclarationNode(node.as<VariableDeclarationNode>());
+			visitVariableDeclarationNode(node);
 		}
 		else if (node.is<ExpressionNode>()) {
 			visitExpressionNode(node.as<ExpressionNode>());
@@ -65,6 +65,7 @@ private:
 			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
 			
 			paramCount++;
+			var_counter.next();
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), func_decl.identifier_token()));
@@ -101,7 +102,8 @@ private:
 		}
 	}
 
-	void visitVariableDeclarationNode(const VariableDeclarationNode& node) {
+	void visitVariableDeclarationNode(const ASTNode& ast_node) {
+		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 
@@ -115,6 +117,10 @@ private:
 		if (node.initializer()) {
 			auto init_operands = visitExpressionNode(node.initializer()->as<ExpressionNode>());
 			operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+		}
+
+		if (!symbol_table.insert(decl.identifier_token().value(), node.declaration_node())) {
+			assert(false && "Expected identifier to be unique");
 		}
 
 		ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), node.declaration().identifier_token());
@@ -150,9 +156,16 @@ private:
 
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
 		const std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
-		const auto& decl_node = symbol->as<DeclarationNode>();
-		const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-		return { type_node.type(), static_cast<int>(type_node.size_in_bits()), identifierNode.name() };
+		if (!symbol.has_value()) {
+			assert(false && "Expected symbol to exist");
+			return {};
+		}
+		
+		if (symbol->is<DeclarationNode>()) {
+			const auto& decl_node = symbol->as<DeclarationNode>();
+			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), identifierNode.name() };
+		}
 	}
 
 	std::vector<IrOperand>

@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <filesystem>
 
 // COFF relocation types for debug information
 #define IMAGE_REL_AMD64_SECTION         0x000A  // Section index
@@ -46,6 +47,7 @@ enum class SymbolKind : uint16_t {
     S_LPROC32 = 0x110F,
     S_REGREL32 = 0x1111,
     S_DEFRANGE_FRAMEPOINTER_REL = 0x1142,
+    S_DEFRANGE_REGISTER = 0x1143,
     S_BUILDINFO = 0x114C,
     S_PROC_ID_END = 0x114F,
 };
@@ -181,22 +183,28 @@ struct LocalVariableSymbol {
     // Variable name follows (null-terminated string)
 };
 
-// Local variable address range
+// Represents a single location for a variable over a code range
 struct LocalVariableAddrRange {
     uint32_t offset_start;
     uint16_t section_start;
     uint16_t length;
-    // Gap information follows if needed
+};
+
+struct VariableLocation {
+    enum LocationType { REGISTER, STACK_RELATIVE };
+    LocationType type;
+    uint16_t register_code; // If type is REGISTER
+    int32_t offset;         // If type is STACK_RELATIVE
+    uint32_t start_offset;
+    uint16_t length;
 };
 
 // Local variable information
 struct LocalVariableInfo {
     std::string name;
     uint32_t type_index;
-    uint32_t stack_offset;  // Offset from frame pointer
-    uint32_t start_offset;  // Code offset where variable becomes valid
-    uint32_t end_offset;    // Code offset where variable goes out of scope
     uint16_t flags;
+    std::vector<VariableLocation> locations;
 };
 
 // S_COMPILE3 symbol record structure
@@ -293,6 +301,28 @@ enum CV_CPU_TYPE : uint16_t {
     CV_CFL_ARM64 = 0xF6
 };
 
+// x64 Register codes from CodeViewRegisters.def
+// These are used in S_DEFRANGE_REGISTER and other symbol types
+enum class Register : uint16_t {
+    NONE = 0,
+    AL = 1, CL = 2, DL = 3, BL = 4,
+    AH = 5, CH = 6, DH = 7, BH = 8,
+    AX = 9, CX = 10, DX = 11, BX = 12,
+    SP = 13, BP = 14, SI = 15, DI = 16,
+    EAX = 17, ECX = 18, EDX = 19, EBX = 20,
+    ESP = 21, EBP = 22, ESI = 23, EDI = 24,
+    ES = 25, CS = 26, SS = 27, DS = 28, FS = 29, GS = 30,
+    IP = 31, FLAGS = 32, EIP = 33, EFLAGS = 34,
+    RAX = 328, RBX = 329, RCX = 330, RDX = 331,
+    RSI = 332, RDI = 333, RBP = 334, RSP = 335,
+    R8 = 336, R9 = 337, R10 = 338, R11 = 339,
+    R12 = 340, R13 = 341, R14 = 342, R15 = 343,
+    XMM0 = 154, XMM1 = 155, XMM2 = 156, XMM3 = 157,
+    XMM4 = 158, XMM5 = 159, XMM6 = 160, XMM7 = 161,
+    XMM8 = 252, XMM9 = 253, XMM10 = 254, XMM11 = 255,
+    XMM12 = 256, XMM13 = 257, XMM14 = 258, XMM15 = 259
+};
+
 // Function parameter information
 struct ParameterInfo {
     std::string name;
@@ -330,7 +360,7 @@ public:
     DebugInfoBuilder();
 
     // Add a source file
-    uint32_t addSourceFile(const std::string& filename);
+    uint32_t addSourceFile(const std::filesystem::path& filename);
 
     // Add a function symbol with line information
     void addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length, uint32_t stack_space);
@@ -342,8 +372,8 @@ public:
     void setCurrentFunction(const std::string& name, uint32_t file_id);
 
     // Add a local variable to the current function
-    void addLocalVariable(const std::string& name, uint32_t type_index,
-                         uint32_t stack_offset, uint32_t start_offset, int32_t end_offset);
+    void addLocalVariable(const std::string& name, uint32_t type_index, uint16_t flags,
+                          const std::vector<VariableLocation>& locations);
 
     // Add a function parameter to the current function
     void addFunctionParameter(const std::string& name, uint32_t type_index, int32_t stack_offset);
@@ -375,9 +405,19 @@ public:
     // Get function information for dynamic symbol generation
     const std::vector<FunctionInfo>& getFunctions() const { return functions_; }
 
+    // Set the source file for debug info (adds to source_files_ if not already present)
+    // Returns the file ID that can be used with setCurrentFunction
+    uint32_t setSourceFile(const std::filesystem::path& source_path) {
+        auto it = file_name_to_id_.find(source_path);
+        if (it != file_name_to_id_.end()) {
+            return it->second;
+        }
+        return addSourceFile(source_path);
+    }
+
 private:
-    std::vector<std::string> source_files_;
-    std::unordered_map<std::string, uint32_t> file_name_to_id_;
+    std::vector<std::filesystem::path> source_files_;
+    std::unordered_map<std::filesystem::path, uint32_t> file_name_to_id_;
     std::vector<uint8_t> string_table_;
     std::unordered_map<std::string, uint32_t> string_offsets_;
 

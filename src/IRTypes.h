@@ -10,7 +10,7 @@
 
 #include "AstNodeTypes.h"
 
-enum class IrOpcode {
+enum class IrOpcode : int_fast16_t {
 	Add,
 	Subtract,
 	Multiply,
@@ -1535,7 +1535,21 @@ public:
 		}
 		break;
 
+		case IrOpcode::VariableDecl:
+			assert((getOperandCount() == 3 || getOperandCount() == 6) && "VariableDecl instruction must have exactly 3 or 6 operand");
+			oss << "%" << getOperandAs<std::string_view>(2) << " = alloc " << getOperandAsTypeString(0) << getOperandAs<int>(1);
+			if (getOperandCount() == 6) {
+				oss << "\nassign %" << getOperandAs<std::string_view>(2) << " = %";
+				if (isOperandType<TempVar>(5))
+					oss << getOperandAs<TempVar>(5).index;
+				else if (isOperandType<std::string_view>(5))
+					oss << getOperandAs<std::string_view>(5);
+			}
+			break;
+
 		default:
+			std::cerr << "Unhandled opcode: " << static_cast<std::underlying_type_t<IrOpcode>>(opcode_);
+			assert(false && "Unhandled opcode");
 			break;
 		}
 

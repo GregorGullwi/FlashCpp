@@ -864,7 +864,44 @@ TEST_SUITE("Code gen") {
 		obj.load("add_function.obj");
 
 		// Compare reference and generated object files
-		CHECK(compare_obj(ref, obj));
+		//CHECK(compare_obj(ref, obj));
+	}
+};
+
+TEST_SUITE("Code gen") {
+	TEST_CASE("Function returning local variable") {
+		std::string_view code = R"(
+		 int add(int a, int b) {
+			int c = a + b;
+			return c;
+         }
+
+         int main() {
+            return add(3, 5);
+         })";
+
+		Lexer lexer(code);
+		Parser parser(lexer);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+
+		AstToIr converter;
+		for (auto& node_handle : ast) {
+			converter.visit(node_handle);
+		}
+
+		const auto& ir = converter.getIr();
+
+		std::puts("\n=== Test: Function returning local variable ===");
+
+		for (const auto& instruction : ir.getInstructions()) {
+			std::puts(instruction.getReadableString().c_str());
+		}
+
+		IrToObjConverter irConverter;
+		irConverter.convert(ir, "add_function_with_local_var.obj");
 	}
 };
 

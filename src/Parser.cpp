@@ -506,7 +506,7 @@ ParseResult Parser::parse_variable_declaration()
 				gSymbolTable.insert(identifier_token.value(), *decl_node);
 
 				// Create a VariableDeclarationNode with initialization
-				return ParseResult::success(emplace_node<VariableDeclarationNode>(decl, *init_node));
+				return ParseResult::success(emplace_node<VariableDeclarationNode>(*decl_node, *init_node));
 			}
 		}
 	}
@@ -520,7 +520,7 @@ ParseResult Parser::parse_variable_declaration()
 			gSymbolTable.insert(identifier_token.value(), *decl_node);
 
 			// Create a VariableDeclarationNode without initialization
-			return ParseResult::success(emplace_node<VariableDeclarationNode>(decl, std::nullopt));
+			return ParseResult::success(emplace_node<VariableDeclarationNode>(*decl_node, std::nullopt));
 		}
 	}
 

@@ -546,9 +546,9 @@ public:
 		debug_builder_.addLineMapping(code_offset, line_number);
 	}
 
-	void add_local_variable(const std::string& name, uint32_t type_index,
-	                       uint32_t stack_offset, uint32_t start_offset, uint32_t end_offset) {
-		debug_builder_.addLocalVariable(name, type_index, stack_offset, start_offset, end_offset);
+	void add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags,
+	                       const std::vector<CodeView::VariableLocation>& locations) {
+		debug_builder_.addLocalVariable(name, type_index, flags, locations);
 	}
 
 	void add_function_parameter(const std::string& name, uint32_t type_index, int32_t stack_offset) {

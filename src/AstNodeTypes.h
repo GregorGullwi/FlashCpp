@@ -53,7 +53,7 @@ enum class TypeQualifier {
 	Unsigned,
 };
 
-enum class Type {
+enum class Type : int_fast16_t {
 	Void,
 	Bool,
 	Char,
@@ -213,10 +213,12 @@ class IdentifierNode {
 public:
 	explicit IdentifierNode(Token identifier) : identifier_(identifier) {}
 
+	std::optional<Token> try_get_parent_token() { return parent_token_; }
 	std::string_view name() const { return identifier_.value(); }
 
 private:
 	Token identifier_;
+	std::optional<Token> parent_token_;
 };
 
 using NumericLiteralValue = std::variant<unsigned long long, double>;
@@ -470,14 +472,15 @@ private:
 
 class VariableDeclarationNode {
 public:
-	explicit VariableDeclarationNode(DeclarationNode declaration, std::optional<ASTNode> initializer = std::nullopt)
-		: declaration_(declaration), initializer_(initializer) {}
+	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt)
+		: declaration_node_(declaration_node), initializer_(initializer) {}
 
-	const DeclarationNode& declaration() const { return declaration_; }
+	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
+	const ASTNode& declaration_node() const { return declaration_node_; }
 	std::optional<ASTNode> initializer() const { return initializer_; }
 
 private:
-	DeclarationNode declaration_;
+	ASTNode declaration_node_;
 	std::optional<ASTNode> initializer_;
 };
 
