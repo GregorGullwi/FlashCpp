@@ -410,6 +410,26 @@ private:
 			// Unary plus (no-op, just return the operand)
 			return operandIrOperands;
 		}
+		else if (unaryOperatorNode.op() == "++") {
+			// Increment operator (prefix or postfix)
+			if (unaryOperatorNode.is_prefix()) {
+				// Prefix increment: ++x
+				ir_.addInstruction(IrInstruction(IrOpcode::PreIncrement, std::move(irOperands), Token()));
+			} else {
+				// Postfix increment: x++
+				ir_.addInstruction(IrInstruction(IrOpcode::PostIncrement, std::move(irOperands), Token()));
+			}
+		}
+		else if (unaryOperatorNode.op() == "--") {
+			// Decrement operator (prefix or postfix)
+			if (unaryOperatorNode.is_prefix()) {
+				// Prefix decrement: --x
+				ir_.addInstruction(IrInstruction(IrOpcode::PreDecrement, std::move(irOperands), Token()));
+			} else {
+				// Postfix decrement: x--
+				ir_.addInstruction(IrInstruction(IrOpcode::PostDecrement, std::move(irOperands), Token()));
+			}
+		}
 		else {
 			assert(false && "Unary operator not implemented yet");
 		}

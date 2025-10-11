@@ -975,6 +975,21 @@ ParseResult Parser::parse_primary_expression()
 		return ParseResult::error("Expected primary expression", *current_token_);
 	}
 
+	// Check for postfix operators (++ and --)
+	if (result.has_value() && peek_token().has_value() &&
+	    peek_token()->type() == Token::Type::Operator) {
+		std::string_view op = peek_token()->value();
+		if (op == "++" || op == "--") {
+			Token operator_token = *current_token_;
+			consume_token(); // consume the postfix operator
+
+			// Create a postfix unary operator node (is_prefix = false)
+			auto postfix_op = emplace_node<ExpressionNode>(
+				UnaryOperatorNode(operator_token, *result, false));
+			return ParseResult::success(postfix_op);
+		}
+	}
+
 	if (result.has_value())
 		return ParseResult::success(*result);
 

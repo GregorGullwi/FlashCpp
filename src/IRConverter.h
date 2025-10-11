@@ -797,6 +797,18 @@ public:
 			case IrOpcode::Continue:
 				handleContinue(instruction);
 				break;
+			case IrOpcode::PreIncrement:
+				handlePreIncrement(instruction);
+				break;
+			case IrOpcode::PostIncrement:
+				handlePostIncrement(instruction);
+				break;
+			case IrOpcode::PreDecrement:
+				handlePreDecrement(instruction);
+				break;
+			case IrOpcode::PostDecrement:
+				handlePostDecrement(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -2965,6 +2977,166 @@ private:
 
 		// Record this branch for later patching
 		pending_branches_.push_back({target_label, patch_position});
+	}
+
+	void handlePreIncrement(const IrInstruction& instruction) {
+		// Pre-increment: ++x
+		// Operands: [result_var, type, size, operand]
+		assert(instruction.getOperandCount() == 4 && "PreIncrement must have 4 operands");
+
+		// Get operand (variable to increment)
+		auto operand = instruction.getOperandAs<std::string_view>(3);
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.identifier_offset.find(operand);
+		if (it == current_scope.identifier_offset.end()) {
+			assert(false && "Variable not found in scope");
+			return;
+		}
+		int32_t var_offset = it->second;
+
+		// Load the variable into a register
+		X64Register target_reg = X64Register::RAX;
+		auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
+		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+
+		// Increment the value: add rax, 1
+		// REX.W + ADD r/m64, imm8 (opcode 0x83 /0)
+		std::array<uint8_t, 4> incInst = { 0x48, 0x83, 0xC0, 0x01 };
+		incInst[2] = 0xC0 + static_cast<uint8_t>(target_reg); // ModR/M byte for ADD
+		textSectionData.insert(textSectionData.end(), incInst.begin(), incInst.end());
+
+		// Store the incremented value back to the variable
+		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+		// For pre-increment, the result is the new value (already in RAX)
+		// Store result to result_var
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		auto result_store = generateMovToFrame(target_reg, result_offset);
+		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
+		                       result_store.op_codes.begin() + result_store.size_in_bytes);
+	}
+
+	void handlePostIncrement(const IrInstruction& instruction) {
+		// Post-increment: x++
+		// Operands: [result_var, type, size, operand]
+		assert(instruction.getOperandCount() == 4 && "PostIncrement must have 4 operands");
+
+		// Get operand (variable to increment)
+		auto operand = instruction.getOperandAs<std::string_view>(3);
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.identifier_offset.find(operand);
+		if (it == current_scope.identifier_offset.end()) {
+			assert(false && "Variable not found in scope");
+			return;
+		}
+		int32_t var_offset = it->second;
+
+		// Load the variable into RAX
+		X64Register target_reg = X64Register::RAX;
+		auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
+		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+
+		// Save the old value to result_var (post-increment returns old value)
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		auto result_store = generateMovToFrame(target_reg, result_offset);
+		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
+		                       result_store.op_codes.begin() + result_store.size_in_bytes);
+
+		// Increment the value: add rax, 1
+		std::array<uint8_t, 4> incInst = { 0x48, 0x83, 0xC0, 0x01 };
+		incInst[2] = 0xC0 + static_cast<uint8_t>(target_reg);
+		textSectionData.insert(textSectionData.end(), incInst.begin(), incInst.end());
+
+		// Store the incremented value back to the variable
+		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+	}
+
+	void handlePreDecrement(const IrInstruction& instruction) {
+		// Pre-decrement: --x
+		// Operands: [result_var, type, size, operand]
+		assert(instruction.getOperandCount() == 4 && "PreDecrement must have 4 operands");
+
+		// Get operand (variable to decrement)
+		auto operand = instruction.getOperandAs<std::string_view>(3);
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.identifier_offset.find(operand);
+		if (it == current_scope.identifier_offset.end()) {
+			assert(false && "Variable not found in scope");
+			return;
+		}
+		int32_t var_offset = it->second;
+
+		// Load the variable into a register
+		X64Register target_reg = X64Register::RAX;
+		auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
+		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+
+		// Decrement the value: sub rax, 1
+		// REX.W + SUB r/m64, imm8 (opcode 0x83 /5)
+		std::array<uint8_t, 4> decInst = { 0x48, 0x83, 0xE8, 0x01 };
+		decInst[2] = 0xE8 + static_cast<uint8_t>(target_reg); // ModR/M byte for SUB
+		textSectionData.insert(textSectionData.end(), decInst.begin(), decInst.end());
+
+		// Store the decremented value back to the variable
+		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+		// For pre-decrement, the result is the new value (already in RAX)
+		// Store result to result_var
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		auto result_store = generateMovToFrame(target_reg, result_offset);
+		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
+		                       result_store.op_codes.begin() + result_store.size_in_bytes);
+	}
+
+	void handlePostDecrement(const IrInstruction& instruction) {
+		// Post-decrement: x--
+		// Operands: [result_var, type, size, operand]
+		assert(instruction.getOperandCount() == 4 && "PostDecrement must have 4 operands");
+
+		// Get operand (variable to decrement)
+		auto operand = instruction.getOperandAs<std::string_view>(3);
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.identifier_offset.find(operand);
+		if (it == current_scope.identifier_offset.end()) {
+			assert(false && "Variable not found in scope");
+			return;
+		}
+		int32_t var_offset = it->second;
+
+		// Load the variable into RAX
+		X64Register target_reg = X64Register::RAX;
+		auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
+		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+
+		// Save the old value to result_var (post-decrement returns old value)
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		auto result_store = generateMovToFrame(target_reg, result_offset);
+		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
+		                       result_store.op_codes.begin() + result_store.size_in_bytes);
+
+		// Decrement the value: sub rax, 1
+		std::array<uint8_t, 4> decInst = { 0x48, 0x83, 0xE8, 0x01 };
+		decInst[2] = 0xE8 + static_cast<uint8_t>(target_reg);
+		textSectionData.insert(textSectionData.end(), decInst.begin(), decInst.end());
+
+		// Store the decremented value back to the variable
+		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 	}
 
 	void handleConditionalBranch(const IrInstruction& instruction) {

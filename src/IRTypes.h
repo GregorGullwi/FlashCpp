@@ -1644,6 +1644,98 @@ public:
 		}
 		break;
 
+		case IrOpcode::PreIncrement:
+		{
+			// %result = pre_inc [Type][Size] %operand
+			assert(getOperandCount() == 4 && "PreIncrement instruction must have exactly 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = pre_inc " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+			}
+		}
+		break;
+
+		case IrOpcode::PostIncrement:
+		{
+			// %result = post_inc [Type][Size] %operand
+			assert(getOperandCount() == 4 && "PostIncrement instruction must have exactly 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = post_inc " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+			}
+		}
+		break;
+
+		case IrOpcode::PreDecrement:
+		{
+			// %result = pre_dec [Type][Size] %operand
+			assert(getOperandCount() == 4 && "PreDecrement instruction must have exactly 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = pre_dec " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+			}
+		}
+		break;
+
+		case IrOpcode::PostDecrement:
+		{
+			// %result = post_dec [Type][Size] %operand
+			assert(getOperandCount() == 4 && "PostDecrement instruction must have exactly 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = post_dec " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+			}
+		}
+		break;
+
 		case IrOpcode::AddAssign:
 		{
 			// %var = add %var, %rhs (compound assignment a += b)
