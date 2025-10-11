@@ -1622,25 +1622,17 @@ public:
 
 		case IrOpcode::Break:
 		{
-			// br label %break_label
-			assert(getOperandCount() == 1 && "Break instruction must have exactly 1 operand");
-			if (getOperandCount() > 0) {
-				oss << "br label %";
-				if (isOperandType<std::string_view>(0))
-					oss << getOperandAs<std::string_view>(0);
-			}
+			// break (no operands - uses loop context stack)
+			assert(getOperandCount() == 0 && "Break instruction must have exactly 0 operands");
+			oss << "break";
 		}
 		break;
 
 		case IrOpcode::Continue:
 		{
-			// br label %continue_label
-			assert(getOperandCount() == 1 && "Continue instruction must have exactly 1 operand");
-			if (getOperandCount() > 0) {
-				oss << "br label %";
-				if (isOperandType<std::string_view>(0))
-					oss << getOperandAs<std::string_view>(0);
-			}
+			// continue (no operands - uses loop context stack)
+			assert(getOperandCount() == 0 && "Continue instruction must have exactly 0 operands");
+			oss << "continue";
 		}
 		break;
 
