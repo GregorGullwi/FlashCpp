@@ -590,7 +590,11 @@ public:
 		// Group instructions by function for stack space calculation
 		groupInstructionsByFunction(ir);
 
+		std::cerr << "DEBUG: Total IR instructions: " << ir.getInstructions().size() << std::endl;
+		size_t instruction_index = 0;
 		for (const auto& instruction : ir.getInstructions()) {
+			std::cerr << "DEBUG: Processing instruction " << instruction_index << " of " << ir.getInstructions().size() << std::endl;
+			instruction_index++;
 			// Add line mapping for debug information if line number is available
 			if (instruction.getOpcode() != IrOpcode::FunctionDecl && instruction.getOpcode() != IrOpcode::Return && instruction.getLineNumber() > 0) {
 				std::cerr << "DEBUG: Adding line mapping for line " << instruction.getLineNumber()
@@ -772,11 +776,23 @@ public:
 			case IrOpcode::Assignment:
 				handleAssignment(instruction);
 				break;
+			case IrOpcode::Label:
+				handleLabel(instruction);
+				break;
+			case IrOpcode::Branch:
+				handleBranch(instruction);
+				break;
+			case IrOpcode::ConditionalBranch:
+				handleConditionalBranch(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
 			}
+			std::cerr << "DEBUG: Finished processing instruction " << instruction_index - 1 << std::endl;
 		}
+
+		std::cerr << "DEBUG: Finished processing all IR instructions" << std::endl;
 
 		// Use the provided source filename, or fall back to a default if not provided
 		std::string actual_source_file = source_filename.empty() ? "test_debug.cpp" : std::string(source_filename);
@@ -1541,6 +1557,10 @@ private:
 		current_function_name_ = std::string(func_name);
 		current_function_offset_ = func_offset;
 
+		// Clear control flow tracking for new function
+		label_positions_.clear();
+		pending_branches_.clear();
+
 		// Set up debug information for this function
 		// For now, use file ID 0 (first source file)
 		writer.set_current_function_for_debug(std::string(func_name), 0);
@@ -1636,12 +1656,9 @@ private:
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
-		std::cerr << "DEBUG: handleReturn called for function: " << current_function_name_ << std::endl;
-
 		// Add line mapping for the return statement itself (only for functions without function calls)
 		// For functions with function calls (like main), the closing brace is already mapped in handleFunctionCall
 		if (instruction.getLineNumber() > 0 && current_function_name_ != "main") {
-			std::cerr << "DEBUG: Adding return statement line mapping for line " << instruction.getLineNumber() << std::endl;
 			addLineMapping(instruction.getLineNumber());
 		}
 
@@ -1740,8 +1757,6 @@ private:
 
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
-
-		variable_scopes.pop_back();
 	}
 
 	void handleStackAlloc(const IrInstruction& instruction) {
@@ -2813,7 +2828,136 @@ private:
 		storeArithmeticResult(ctx);
 	}
 
+	void handleLabel(const IrInstruction& instruction) {
+		// Label instruction: mark a position in code for jumps
+		assert(instruction.getOperandCount() == 1 && "Label instruction must have exactly 1 operand (label name)");
+
+		auto label_name = instruction.getOperandAs<std::string>(0);
+
+		// Store the current code offset for this label
+		uint32_t label_offset = static_cast<uint32_t>(textSectionData.size());
+
+		// Track label positions for later resolution
+		if (label_positions_.find(label_name) == label_positions_.end()) {
+			label_positions_[label_name] = label_offset;
+		}
+
+		// Flush all dirty registers at label boundaries to ensure correct state
+		flushAllDirtyRegisters();
+	}
+
+	void handleBranch(const IrInstruction& instruction) {
+		// Unconditional branch: jmp label
+		assert(instruction.getOperandCount() == 1 && "Branch instruction must have exactly 1 operand (label name)");
+
+		auto target_label = instruction.getOperandAs<std::string>(0);
+
+		// Flush all dirty registers before branching
+		flushAllDirtyRegisters();
+
+		// Generate JMP instruction (E9 + 32-bit relative offset)
+		// We'll use a placeholder offset and fix it up later
+		textSectionData.push_back(0xE9); // JMP rel32
+
+		// Store position where we need to patch the offset
+		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
+
+		// Add placeholder offset (will be patched later)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// Record this branch for later patching
+		pending_branches_.push_back({target_label, patch_position});
+	}
+
+	void handleConditionalBranch(const IrInstruction& instruction) {
+		// Conditional branch: test condition, jump if true to then_label, otherwise fall through to else_label
+		// Operands: [type, size, condition_value, then_label, else_label]
+		std::cerr << "DEBUG: handleConditionalBranch called with " << instruction.getOperandCount() << " operands" << std::endl;
+		assert(instruction.getOperandCount() >= 5 && "ConditionalBranch must have at least 5 operands");
+
+		std::cerr << "DEBUG: Extracting operands..." << std::endl;
+		Type condition_type = instruction.getOperandAs<Type>(0);
+		std::cerr << "DEBUG: Got condition_type" << std::endl;
+		int condition_size = instruction.getOperandAs<int>(1);
+		std::cerr << "DEBUG: Got condition_size" << std::endl;
+		auto condition_value = instruction.getOperand(2);
+		std::cerr << "DEBUG: Got condition_value" << std::endl;
+		auto then_label = instruction.getOperandAs<std::string>(3);
+		std::cerr << "DEBUG: Got then_label: " << then_label << std::endl;
+		auto else_label = instruction.getOperandAs<std::string>(4);
+		std::cerr << "DEBUG: Got else_label: " << else_label << std::endl;
+
+		// Flush all dirty registers before branching
+		flushAllDirtyRegisters();
+
+		// Load condition value into a register
+		X64Register condition_reg = X64Register::RAX;
+
+		if (std::holds_alternative<TempVar>(condition_value)) {
+			const TempVar temp_var = std::get<TempVar>(condition_value);
+			int condition_offset = getStackOffsetFromTempVar(temp_var);
+
+			// Load condition from stack
+			auto load_opcodes = generateMovFromFrame(condition_reg, condition_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                      load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		} else if (std::holds_alternative<std::string_view>(condition_value)) {
+			std::string_view var_name = std::get<std::string_view>(condition_value);
+			int condition_offset = variable_scopes.back().identifier_offset[var_name];
+
+			// Load condition from stack
+			auto load_opcodes = generateMovFromFrame(condition_reg, condition_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                      load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		} else if (std::holds_alternative<unsigned long long>(condition_value)) {
+			// Immediate value
+			unsigned long long value = std::get<unsigned long long>(condition_value);
+
+			// MOV RAX, imm64
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0xB8); // MOV RAX, imm64
+			for (size_t i = 0; i < 8; ++i) {
+				textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
+				value >>= 8;
+			}
+		}
+
+		// Test if condition is non-zero: TEST RAX, RAX
+		std::array<uint8_t, 3> testInst = { 0x48, 0x85, 0xC0 }; // test rax, rax
+		textSectionData.insert(textSectionData.end(), testInst.begin(), testInst.end());
+
+		// Jump if not zero (JNZ) to then_label
+		textSectionData.push_back(0x0F); // Two-byte opcode prefix
+		textSectionData.push_back(0x85); // JNZ rel32
+
+		uint32_t then_patch_position = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		pending_branches_.push_back({then_label, then_patch_position});
+
+		// Fall through or jump to else_label
+		// If else_label is different from the next instruction, we need an unconditional jump
+		textSectionData.push_back(0xE9); // JMP rel32
+
+		uint32_t else_patch_position = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		pending_branches_.push_back({else_label, else_patch_position});
+	}
+
 	void finalizeSections() {
+		// Patch all pending branches before finalizing
+		patchBranches();
+
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (!current_function_name_.empty()) {
 			std::cerr << "DEBUG: Finalizing last function " << current_function_name_ << " in finalizeSections" << std::endl;
@@ -2840,6 +2984,32 @@ private:
 
 		// Finalize debug information
 		writer.finalize_debug_info();
+	}
+
+	void patchBranches() {
+		// Patch all pending branch instructions with correct offsets
+		std::cerr << "DEBUG: patchBranches called with " << pending_branches_.size() << " pending branches" << std::endl;
+		for (const auto& branch : pending_branches_) {
+			std::cerr << "DEBUG: Patching branch to label: " << branch.target_label << std::endl;
+			auto label_it = label_positions_.find(branch.target_label);
+			if (label_it == label_positions_.end()) {
+				std::cerr << "ERROR: Label not found: " << branch.target_label << std::endl;
+				continue;
+			}
+			std::cerr << "DEBUG: Found label at position: " << label_it->second << std::endl;
+
+			uint32_t label_offset = label_it->second;
+			uint32_t branch_end = branch.patch_position + 4; // Position after the 4-byte offset
+
+			// Calculate relative offset (target - current position)
+			int32_t relative_offset = static_cast<int32_t>(label_offset) - static_cast<int32_t>(branch_end);
+
+			// Patch the offset in little-endian format
+			textSectionData[branch.patch_position + 0] = static_cast<uint8_t>(relative_offset & 0xFF);
+			textSectionData[branch.patch_position + 1] = static_cast<uint8_t>((relative_offset >> 8) & 0xFF);
+			textSectionData[branch.patch_position + 2] = static_cast<uint8_t>((relative_offset >> 16) & 0xFF);
+			textSectionData[branch.patch_position + 3] = static_cast<uint8_t>((relative_offset >> 24) & 0xFF);
+		}
 	}
 
 	// Debug information tracking
@@ -2873,4 +3043,12 @@ private:
 	};
 	std::vector<PendingFunctionInfo> pending_functions_;
 	std::vector<StackVariableScope> variable_scopes;
+
+	// Control flow tracking
+	struct PendingBranch {
+		std::string target_label;
+		uint32_t patch_position; // Position in textSectionData where the offset needs to be written
+	};
+	std::unordered_map<std::string, uint32_t> label_positions_;
+	std::vector<PendingBranch> pending_branches_;
 };

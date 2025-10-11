@@ -201,6 +201,7 @@ private:
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();
         ParseResult parse_for_loop();  // Add this line
+        ParseResult parse_if_statement();  // Add if-statement parser
         ParseResult parse_return_statement();
         ParseResult parse_statement();
         // Minimum precedence to accept all operators (assignment has lowest precedence = 3)

@@ -431,10 +431,15 @@ ParseResult Parser::parse_statement_or_declaration()
 	}
 	const Token& current_token = current_token_opt.value();
 
+	// Handle nested blocks
+	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
+		return parse_block();
+	}
+
 	if (current_token.type() == Token::Type::Keyword) {
 		static const std::unordered_map<std::string_view, ParsingFunction>
 			keyword_parsing_functions = {
-			//{"if", &Parser::parse_if_statement},
+			{"if", &Parser::parse_if_statement},
 			{"for", &Parser::parse_for_loop},  // Add this line
 			//{"while", &Parser::parse_while_loop},
 			//{"do", &Parser::parse_do_while_loop},
@@ -487,44 +492,78 @@ ParseResult Parser::parse_variable_declaration()
 		return type_and_name_result;
 	}
 
-	// Check for optional initialization
+	// Get the type specifier for potential additional declarations
+	DeclarationNode& first_decl = type_and_name_result.node()->as<DeclarationNode>();
+	TypeSpecifierNode& type_specifier = first_decl.type_node().as<TypeSpecifierNode>();
+
+	// Helper lambda to create a single variable declaration
+	auto create_var_decl = [&](DeclarationNode& decl, std::optional<ASTNode> init_expr) -> ASTNode {
+		// Add the variable to the symbol table
+		const Token& identifier_token = decl.identifier_token();
+		gSymbolTable.insert(identifier_token.value(), emplace_node<DeclarationNode>(decl));
+
+		// Create and return a VariableDeclarationNode
+		return emplace_node<VariableDeclarationNode>(
+			emplace_node<DeclarationNode>(decl),
+			init_expr
+		);
+	};
+
+	// Process the first declaration
+	std::optional<ASTNode> first_init_expr;
 	if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
 		consume_token(); // consume the '=' operator
-		// Parse the initialization expression
 		ParseResult init_expr_result = parse_expression();
 		if (init_expr_result.is_error()) {
 			return init_expr_result;
 		}
+		first_init_expr = init_expr_result.node();
+	}
 
-		// Create a variable declaration with initialization
-		if (auto decl_node = type_and_name_result.node()) {
-			if (auto init_node = init_expr_result.node()) {
-				DeclarationNode& decl = decl_node->as<DeclarationNode>();
+	// Check if there are more declarations (comma-separated)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+		// Create a block to hold multiple declarations
+		auto [block_node, block_ref] = create_node_ref(BlockNode());
 
-				// Add the variable to the symbol table
-				const Token& identifier_token = decl.identifier_token();
-				gSymbolTable.insert(identifier_token.value(), *decl_node);
+		// Add the first declaration to the block
+		block_ref.add_statement_node(create_var_decl(first_decl, first_init_expr));
 
-				// Create a VariableDeclarationNode with initialization
-				return ParseResult::success(emplace_node<VariableDeclarationNode>(*decl_node, *init_node));
+		// Parse additional declarations
+		while (consume_punctuator(",")) {
+			// Parse the identifier (name) - reuse the same type
+			auto identifier_token = consume_token();
+			if (!identifier_token || identifier_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after comma in declaration list", *identifier_token);
 			}
+
+			// Create a new DeclarationNode with the same type
+			DeclarationNode& new_decl = emplace_node<DeclarationNode>(
+				emplace_node<TypeSpecifierNode>(type_specifier),
+				*identifier_token
+			).as<DeclarationNode>();
+
+			// Check for initialization
+			std::optional<ASTNode> init_expr;
+			if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
+				consume_token(); // consume the '=' operator
+				ParseResult init_expr_result = parse_expression();
+				if (init_expr_result.is_error()) {
+					return init_expr_result;
+				}
+				init_expr = init_expr_result.node();
+			}
+
+			// Add this declaration to the block
+			block_ref.add_statement_node(create_var_decl(new_decl, init_expr));
 		}
+
+		// Return the block containing all declarations
+		return ParseResult::success(block_node);
 	}
 	else {
-		// Simple declaration without initialization
-		if (auto decl_node = type_and_name_result.node()) {
-			DeclarationNode& decl = decl_node->as<DeclarationNode>();
-
-			// Add the variable to the symbol table
-			const Token& identifier_token = decl.identifier_token();
-			gSymbolTable.insert(identifier_token.value(), *decl_node);
-
-			// Create a VariableDeclarationNode without initialization
-			return ParseResult::success(emplace_node<VariableDeclarationNode>(*decl_node, std::nullopt));
-		}
+		// Single declaration - return it directly
+		return ParseResult::success(create_var_decl(first_decl, first_init_expr));
 	}
-
-	return ParseResult::error("Invalid variable declaration", *current_token_);
 }
 
 ParseResult Parser::parse_return_statement()
@@ -775,7 +814,7 @@ int Parser::get_operator_precedence(const std::string_view& op)
 
 bool Parser::consume_keyword(const std::string_view& value)
 {
-	if (peek_token()->type() == Token::Type::Keyword &&
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 		peek_token()->value() == value) {
 		consume_token(); // consume keyword
 		return true;
@@ -785,7 +824,7 @@ bool Parser::consume_keyword(const std::string_view& value)
 
 bool Parser::consume_punctuator(const std::string_view& value)
 {
-	if (peek_token()->type() == Token::Type::Punctuator &&
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
 		peek_token()->value() == value) {
 		consume_token(); // consume punctuator
 		return true;
@@ -943,8 +982,6 @@ ParseResult Parser::parse_primary_expression()
 }
 
 ParseResult Parser::parse_for_loop() {
-    auto saved_pos = save_token_position();
-    
     if (!consume_keyword("for")) {
         return ParseResult::error("Expected 'for' keyword", *current_token_);
     }
@@ -1007,4 +1044,95 @@ ParseResult Parser::parse_for_loop() {
     }
 
     return ParseResult::error("Invalid for loop construction", *current_token_);
+}
+
+ParseResult Parser::parse_if_statement() {
+    if (!consume_keyword("if")) {
+        return ParseResult::error("Expected 'if' keyword", *current_token_);
+    }
+
+    if (!consume_punctuator("(")) {
+        return ParseResult::error("Expected '(' after 'if'", *current_token_);
+    }
+
+    // Check for C++20 if-with-initializer: if (init; condition)
+    std::optional<ASTNode> init_statement;
+
+    // Look ahead to see if there's a semicolon (indicating init statement)
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+        // Could be a declaration like: if (int x = 5; x > 0)
+        auto checkpoint = save_token_position();
+        ParseResult potential_init = parse_type_and_name();
+
+        if (!potential_init.is_error() && peek_token().has_value() &&
+            peek_token()->type() == Token::Type::Punctuator &&
+            peek_token()->value() == ";") {
+            // We have an initializer
+            discard_saved_token(checkpoint);
+            init_statement = potential_init.node();
+            if (!consume_punctuator(";")) {
+                return ParseResult::error("Expected ';' after if initializer", *current_token_);
+            }
+        } else {
+            // Not an initializer, restore position
+            restore_token_position(checkpoint);
+        }
+    }
+
+    // Parse condition
+    auto condition = parse_expression();
+    if (condition.is_error()) {
+        return condition;
+    }
+
+    if (!consume_punctuator(")")) {
+        return ParseResult::error("Expected ')' after if condition", *current_token_);
+    }
+
+    // Parse then-statement (can be a block or a single statement)
+    ParseResult then_stmt;
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+        then_stmt = parse_block();
+    } else {
+        then_stmt = parse_statement_or_declaration();
+    }
+
+    if (then_stmt.is_error()) {
+        return then_stmt;
+    }
+
+    // Check for else clause
+    std::optional<ASTNode> else_stmt;
+    if (peek_token().has_value() &&
+        peek_token()->type() == Token::Type::Keyword &&
+        peek_token()->value() == "else") {
+        consume_keyword("else");
+
+        // Parse else-statement (can be a block, another if, or a single statement)
+        ParseResult else_result;
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+            else_result = parse_block();
+        } else if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "if") {
+            // Handle else-if chain
+            else_result = parse_if_statement();
+        } else {
+            else_result = parse_statement_or_declaration();
+        }
+
+        if (else_result.is_error()) {
+            return else_result;
+        }
+        else_stmt = else_result.node();
+    }
+
+    // Create if statement node
+    if (auto cond_node = condition.node()) {
+        if (auto then_node = then_stmt.node()) {
+            return ParseResult::success(emplace_node<IfStatementNode>(
+                *cond_node, *then_node, else_stmt, init_statement
+            ));
+        }
+    }
+
+    return ParseResult::error("Invalid if statement construction", *current_token_);
 }

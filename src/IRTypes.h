@@ -1554,21 +1554,31 @@ public:
 		case IrOpcode::ConditionalBranch:
 		{
 			// br i1 %condition, label %true_label, label %false_label
-			assert(getOperandCount() == 3 && "ConditionalBranch instruction must have exactly 3 operands");
-			if (getOperandCount() > 0) {
+			// Format: [type, size, condition, then_label, else_label]
+			assert(getOperandCount() == 5 && "ConditionalBranch instruction must have exactly 5 operands");
+			if (getOperandCount() >= 5) {
 				oss << "br i1 ";
-				if (isOperandType<TempVar>(0))
-					oss << '%' << getOperandAs<TempVar>(0).index;
-				else if (isOperandType<std::string_view>(0))
-					oss << '%' << getOperandAs<std::string_view>(0);
+				// Operand 2 is the condition value
+				if (isOperandType<TempVar>(2))
+					oss << '%' << getOperandAs<TempVar>(2).index;
+				else if (isOperandType<std::string_view>(2))
+					oss << '%' << getOperandAs<std::string_view>(2);
+				else if (isOperandType<unsigned long long>(2))
+					oss << getOperandAs<unsigned long long>(2);
 
 				oss << ", label %";
-				if (isOperandType<std::string_view>(1))
-					oss << getOperandAs<std::string_view>(1);
+				// Operand 3 is the then_label
+				if (isOperandType<std::string>(3))
+					oss << getOperandAs<std::string>(3);
+				else if (isOperandType<std::string_view>(3))
+					oss << getOperandAs<std::string_view>(3);
 
 				oss << ", label %";
-				if (isOperandType<std::string_view>(2))
-					oss << getOperandAs<std::string_view>(2);
+				// Operand 4 is the else_label
+				if (isOperandType<std::string>(4))
+					oss << getOperandAs<std::string>(4);
+				else if (isOperandType<std::string_view>(4))
+					oss << getOperandAs<std::string_view>(4);
 			}
 		}
 		break;

@@ -442,7 +442,9 @@ public:
 				if (line.size() > 0 && (line.find_last_of(' ') != line.size() - 1))
 					line = expandMacros(line);
 
-				std::cout << line << "\n";
+				if (isPreprocessorOnlyMode) {
+					std::cout << line << "\n";
+				}
 
 				result_.append(line).append("\n");
 			}

@@ -26,6 +26,12 @@ public:
 		else if (node.is<VariableDeclarationNode>()) {
 			visitVariableDeclarationNode(node);
 		}
+		else if (node.is<IfStatementNode>()) {
+			visitIfStatementNode(node.as<IfStatementNode>());
+		}
+		else if (node.is<BlockNode>()) {
+			visitBlockNode(node.as<BlockNode>());
+		}
 		else if (node.is<ExpressionNode>()) {
 			visitExpressionNode(node.as<ExpressionNode>());
 		}
@@ -103,6 +109,77 @@ private:
 		}
 	}
 
+	void visitBlockNode(const BlockNode& node) {
+		// Visit all statements in the block
+		node.get_statements().visit([&](const ASTNode& statement) {
+			visit(statement);
+		});
+	}
+
+	void visitIfStatementNode(const IfStatementNode& node) {
+		// Generate unique labels for this if statement
+		static size_t if_counter = 0;
+		std::string then_label = "if_then_" + std::to_string(if_counter);
+		std::string else_label = "if_else_" + std::to_string(if_counter);
+		std::string end_label = "if_end_" + std::to_string(if_counter);
+		if_counter++;
+
+		// Handle C++20 if-with-initializer
+		if (node.has_init()) {
+			auto init_stmt = node.get_init_statement();
+			if (init_stmt.has_value()) {
+				visit(*init_stmt);
+			}
+		}
+
+		// Evaluate condition
+		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+
+		// Generate conditional branch
+		std::vector<IrOperand> branch_operands;
+		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
+		branch_operands.emplace_back(then_label);
+		branch_operands.emplace_back(node.has_else() ? else_label : end_label);
+		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+
+		// Then block
+		ir_.addInstruction(IrOpcode::Label, {then_label}, Token());
+
+		// Visit then statement
+		auto then_stmt = node.get_then_statement();
+		if (then_stmt.is<BlockNode>()) {
+			then_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+				visit(statement);
+			});
+		} else {
+			visit(then_stmt);
+		}
+
+		// Branch to end after then block (skip else)
+		if (node.has_else()) {
+			ir_.addInstruction(IrOpcode::Branch, {end_label}, Token());
+		}
+
+		// Else block (if present)
+		if (node.has_else()) {
+			ir_.addInstruction(IrOpcode::Label, {else_label}, Token());
+
+			auto else_stmt = node.get_else_statement();
+			if (else_stmt.has_value()) {
+				if (else_stmt->is<BlockNode>()) {
+					else_stmt->as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+						visit(statement);
+					});
+				} else {
+					visit(*else_stmt);
+				}
+			}
+		}
+
+		// End label
+		ir_.addInstruction(IrOpcode::Label, {end_label}, Token());
+	}
+
 	void visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
@@ -165,12 +242,16 @@ private:
 			assert(false && "Expected symbol to exist");
 			return {};
 		}
-		
+
 		if (symbol->is<DeclarationNode>()) {
 			const auto& decl_node = symbol->as<DeclarationNode>();
 			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), identifierNode.name() };
 		}
+
+		// If we get here, the symbol is not a DeclarationNode
+		assert(false && "Identifier is not a DeclarationNode");
+		return {};
 	}
 
 	std::vector<IrOperand>
