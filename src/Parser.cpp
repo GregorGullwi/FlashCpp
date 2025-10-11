@@ -440,9 +440,9 @@ ParseResult Parser::parse_statement_or_declaration()
 		static const std::unordered_map<std::string_view, ParsingFunction>
 			keyword_parsing_functions = {
 			{"if", &Parser::parse_if_statement},
-			{"for", &Parser::parse_for_loop},  // Add this line
-			//{"while", &Parser::parse_while_loop},
-			//{"do", &Parser::parse_do_while_loop},
+			{"for", &Parser::parse_for_loop},
+			{"while", &Parser::parse_while_loop},
+			{"do", &Parser::parse_do_while_loop},
 			{"return", &Parser::parse_return_statement},
 			//{"struct", &Parser::parse_struct_declaration}
 		};
@@ -1101,6 +1101,100 @@ ParseResult Parser::parse_for_loop() {
 
     return ParseResult::success(emplace_node<ForStatementNode>(
         init_statement, condition, update_expression, *body_node
+    ));
+}
+
+ParseResult Parser::parse_while_loop() {
+    if (!consume_keyword("while")) {
+        return ParseResult::error("Expected 'while' keyword", *current_token_);
+    }
+
+    if (!consume_punctuator("(")) {
+        return ParseResult::error("Expected '(' after 'while'", *current_token_);
+    }
+
+    // Parse condition
+    ParseResult condition_result = parse_expression();
+    if (condition_result.is_error()) {
+        return condition_result;
+    }
+
+    if (!consume_punctuator(")")) {
+        return ParseResult::error("Expected ')' after while condition", *current_token_);
+    }
+
+    // Parse body (can be a block or a single statement)
+    ParseResult body_result;
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+        body_result = parse_block();
+    } else {
+        body_result = parse_statement_or_declaration();
+    }
+
+    if (body_result.is_error()) {
+        return body_result;
+    }
+
+    // Create while statement node
+    auto condition_node = condition_result.node();
+    auto body_node = body_result.node();
+    if (!condition_node.has_value() || !body_node.has_value()) {
+        return ParseResult::error("Invalid while loop construction", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<WhileStatementNode>(
+        *condition_node, *body_node
+    ));
+}
+
+ParseResult Parser::parse_do_while_loop() {
+    if (!consume_keyword("do")) {
+        return ParseResult::error("Expected 'do' keyword", *current_token_);
+    }
+
+    // Parse body (can be a block or a single statement)
+    ParseResult body_result;
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+        body_result = parse_block();
+    } else {
+        body_result = parse_statement_or_declaration();
+    }
+
+    if (body_result.is_error()) {
+        return body_result;
+    }
+
+    if (!consume_keyword("while")) {
+        return ParseResult::error("Expected 'while' after do-while body", *current_token_);
+    }
+
+    if (!consume_punctuator("(")) {
+        return ParseResult::error("Expected '(' after 'while'", *current_token_);
+    }
+
+    // Parse condition
+    ParseResult condition_result = parse_expression();
+    if (condition_result.is_error()) {
+        return condition_result;
+    }
+
+    if (!consume_punctuator(")")) {
+        return ParseResult::error("Expected ')' after do-while condition", *current_token_);
+    }
+
+    if (!consume_punctuator(";")) {
+        return ParseResult::error("Expected ';' after do-while statement", *current_token_);
+    }
+
+    // Create do-while statement node
+    auto body_node = body_result.node();
+    auto condition_node = condition_result.node();
+    if (!body_node.has_value() || !condition_node.has_value()) {
+        return ParseResult::error("Invalid do-while loop construction", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<DoWhileStatementNode>(
+        *body_node, *condition_node
     ));
 }
 

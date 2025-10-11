@@ -1151,7 +1151,8 @@ private:
 	// Helper function to allocate stack space for a temporary variable
 	int allocateStackSlotForTempVar(int32_t index) {
 		auto stack_offset = getStackOffsetFromTempVar(TempVar(index));
-		assert(variable_scopes.back().scope_stack_space < stack_offset);
+		// Note: stack_offset should be within allocated space (scope_stack_space <= stack_offset <= 0)
+		assert(variable_scopes.back().scope_stack_space <= stack_offset && stack_offset <= 0);
 		return stack_offset;
 	}
 
@@ -1162,7 +1163,8 @@ private:
 				auto tempVarIndex = getTempVarFromOffset(stackVariableOffset);
 
 				if (tempVarIndex.has_value()) {
-					assert(variable_scopes.back().scope_stack_space < stackVariableOffset);
+					// Note: stackVariableOffset should be within allocated space (scope_stack_space <= stackVariableOffset <= 0)
+					assert(variable_scopes.back().scope_stack_space <= stackVariableOffset && stackVariableOffset <= 0);
 
 					// Store the computed result from register to stack
 					auto store_opcodes = generateMovToFrame(reg, stackVariableOffset);

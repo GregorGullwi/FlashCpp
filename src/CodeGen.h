@@ -32,6 +32,12 @@ public:
 		else if (node.is<ForStatementNode>()) {
 			visitForStatementNode(node.as<ForStatementNode>());
 		}
+		else if (node.is<WhileStatementNode>()) {
+			visitWhileStatementNode(node.as<WhileStatementNode>());
+		}
+		else if (node.is<DoWhileStatementNode>()) {
+			visitDoWhileStatementNode(node.as<DoWhileStatementNode>());
+		}
 		else if (node.is<BlockNode>()) {
 			visitBlockNode(node.as<BlockNode>());
 		}
@@ -241,6 +247,99 @@ private:
 
 		// Branch back to loop start
 		ir_.addInstruction(IrOpcode::Branch, {loop_start_label}, Token());
+
+		// Loop end label
+		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+
+		// Mark loop end
+		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+	}
+
+	void visitWhileStatementNode(const WhileStatementNode& node) {
+		// Generate unique labels for this while loop
+		static size_t while_counter = 0;
+		std::string loop_start_label = "while_start_" + std::to_string(while_counter);
+		std::string loop_body_label = "while_body_" + std::to_string(while_counter);
+		std::string loop_end_label = "while_end_" + std::to_string(while_counter);
+		while_counter++;
+
+		// Mark loop begin for break/continue support
+		// For while loops, continue jumps to loop_start (re-evaluate condition)
+		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_start_label}, Token());
+
+		// Loop start: evaluate condition
+		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+
+		// Evaluate condition
+		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+
+		// Generate conditional branch: if true goto body, else goto end
+		std::vector<IrOperand> branch_operands;
+		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
+		branch_operands.emplace_back(loop_body_label);
+		branch_operands.emplace_back(loop_end_label);
+		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+
+		// Loop body label
+		ir_.addInstruction(IrOpcode::Label, {loop_body_label}, Token());
+
+		// Visit loop body
+		auto body_stmt = node.get_body_statement();
+		if (body_stmt.is<BlockNode>()) {
+			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+				visit(statement);
+			});
+		} else {
+			visit(body_stmt);
+		}
+
+		// Branch back to loop start (re-evaluate condition)
+		ir_.addInstruction(IrOpcode::Branch, {loop_start_label}, Token());
+
+		// Loop end label
+		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+
+		// Mark loop end
+		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+	}
+
+	void visitDoWhileStatementNode(const DoWhileStatementNode& node) {
+		// Generate unique labels for this do-while loop
+		static size_t do_while_counter = 0;
+		std::string loop_start_label = "do_while_start_" + std::to_string(do_while_counter);
+		std::string loop_condition_label = "do_while_condition_" + std::to_string(do_while_counter);
+		std::string loop_end_label = "do_while_end_" + std::to_string(do_while_counter);
+		do_while_counter++;
+
+		// Mark loop begin for break/continue support
+		// For do-while loops, continue jumps to condition check (not body start)
+		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_condition_label}, Token());
+
+		// Loop start: execute body first (do-while always executes at least once)
+		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+
+		// Visit loop body
+		auto body_stmt = node.get_body_statement();
+		if (body_stmt.is<BlockNode>()) {
+			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+				visit(statement);
+			});
+		} else {
+			visit(body_stmt);
+		}
+
+		// Condition check label (for continue statements)
+		ir_.addInstruction(IrOpcode::Label, {loop_condition_label}, Token());
+
+		// Evaluate condition
+		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+
+		// Generate conditional branch: if true goto start, else goto end
+		std::vector<IrOperand> branch_operands;
+		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
+		branch_operands.emplace_back(loop_start_label);
+		branch_operands.emplace_back(loop_end_label);
+		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
 
 		// Loop end label
 		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
