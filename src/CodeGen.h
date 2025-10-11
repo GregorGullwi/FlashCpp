@@ -38,6 +38,12 @@ public:
 		else if (node.is<DoWhileStatementNode>()) {
 			visitDoWhileStatementNode(node.as<DoWhileStatementNode>());
 		}
+		else if (node.is<BreakStatementNode>()) {
+			visitBreakStatementNode(node.as<BreakStatementNode>());
+		}
+		else if (node.is<ContinueStatementNode>()) {
+			visitContinueStatementNode(node.as<ContinueStatementNode>());
+		}
 		else if (node.is<BlockNode>()) {
 			visitBlockNode(node.as<BlockNode>());
 		}
@@ -346,6 +352,16 @@ private:
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+	}
+
+	void visitBreakStatementNode(const BreakStatementNode& node) {
+		// Generate Break IR instruction (no operands - uses loop context stack in IRConverter)
+		ir_.addInstruction(IrOpcode::Break, {}, node.break_token());
+	}
+
+	void visitContinueStatementNode(const ContinueStatementNode& node) {
+		// Generate Continue IR instruction (no operands - uses loop context stack in IRConverter)
+		ir_.addInstruction(IrOpcode::Continue, {}, node.continue_token());
 	}
 
 	void visitVariableDeclarationNode(const ASTNode& ast_node) {

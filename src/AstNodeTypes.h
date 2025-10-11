@@ -537,3 +537,25 @@ private:
 	ASTNode body_statement_;
 	ASTNode condition_;
 };
+
+class BreakStatementNode {
+public:
+	explicit BreakStatementNode(Token break_token = Token())
+		: break_token_(break_token) {}
+
+	const Token& break_token() const { return break_token_; }
+
+private:
+	Token break_token_;
+};
+
+class ContinueStatementNode {
+public:
+	explicit ContinueStatementNode(Token continue_token = Token())
+		: continue_token_(continue_token) {}
+
+	const Token& continue_token() const { return continue_token_; }
+
+private:
+	Token continue_token_;
+};

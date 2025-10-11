@@ -205,6 +205,8 @@ private:
         ParseResult parse_do_while_loop();  // Add do-while-loop parser
         ParseResult parse_if_statement();  // Add if-statement parser
         ParseResult parse_return_statement();
+        ParseResult parse_break_statement();  // Add break-statement parser
+        ParseResult parse_continue_statement();  // Add continue-statement parser
         ParseResult parse_statement();
         // Minimum precedence to accept all operators (assignment has lowest precedence = 3)
         static constexpr int MIN_PRECEDENCE = 0;

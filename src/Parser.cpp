@@ -444,6 +444,8 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"while", &Parser::parse_while_loop},
 			{"do", &Parser::parse_do_while_loop},
 			{"return", &Parser::parse_return_statement},
+			{"break", &Parser::parse_break_statement},
+			{"continue", &Parser::parse_continue_statement},
 			//{"struct", &Parser::parse_struct_declaration}
 		};
 
@@ -1196,6 +1198,38 @@ ParseResult Parser::parse_do_while_loop() {
     return ParseResult::success(emplace_node<DoWhileStatementNode>(
         *body_node, *condition_node
     ));
+}
+
+ParseResult Parser::parse_break_statement() {
+    auto break_token_opt = peek_token();
+    if (!break_token_opt.has_value() || break_token_opt->value() != "break") {
+        return ParseResult::error("Expected 'break' keyword", *current_token_);
+    }
+
+    Token break_token = break_token_opt.value();
+    consume_token(); // Consume the 'break' keyword
+
+    if (!consume_punctuator(";")) {
+        return ParseResult::error("Expected ';' after break statement", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<BreakStatementNode>(break_token));
+}
+
+ParseResult Parser::parse_continue_statement() {
+    auto continue_token_opt = peek_token();
+    if (!continue_token_opt.has_value() || continue_token_opt->value() != "continue") {
+        return ParseResult::error("Expected 'continue' keyword", *current_token_);
+    }
+
+    Token continue_token = continue_token_opt.value();
+    consume_token(); // Consume the 'continue' keyword
+
+    if (!consume_punctuator(";")) {
+        return ParseResult::error("Expected ';' after continue statement", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<ContinueStatementNode>(continue_token));
 }
 
 ParseResult Parser::parse_if_statement() {
