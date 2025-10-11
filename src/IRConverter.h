@@ -785,6 +785,18 @@ public:
 			case IrOpcode::ConditionalBranch:
 				handleConditionalBranch(instruction);
 				break;
+			case IrOpcode::LoopBegin:
+				handleLoopBegin(instruction);
+				break;
+			case IrOpcode::LoopEnd:
+				handleLoopEnd(instruction);
+				break;
+			case IrOpcode::Break:
+				handleBreak(instruction);
+				break;
+			case IrOpcode::Continue:
+				handleContinue(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -2872,6 +2884,89 @@ private:
 		pending_branches_.push_back({target_label, patch_position});
 	}
 
+	void handleLoopBegin(const IrInstruction& instruction) {
+		// LoopBegin marks the start of a loop and provides labels for break/continue
+		// Operands: [loop_start_label, loop_end_label, loop_increment_label]
+		assert(instruction.getOperandCount() == 3 && "LoopBegin must have 3 operands");
+
+		auto loop_start_label = instruction.getOperandAs<std::string>(0);
+		auto loop_end_label = instruction.getOperandAs<std::string>(1);
+		auto loop_increment_label = instruction.getOperandAs<std::string>(2);
+
+		// Push loop context onto stack for break/continue handling
+		loop_context_stack_.push_back({loop_end_label, loop_increment_label});
+
+		// Flush all dirty registers at loop boundaries
+		flushAllDirtyRegisters();
+	}
+
+	void handleLoopEnd(const IrInstruction& instruction) {
+		// LoopEnd marks the end of a loop
+		assert(instruction.getOperandCount() == 0 && "LoopEnd must have 0 operands");
+
+		// Pop loop context from stack
+		if (!loop_context_stack_.empty()) {
+			loop_context_stack_.pop_back();
+		}
+
+		// Flush all dirty registers at loop boundaries
+		flushAllDirtyRegisters();
+	}
+
+	void handleBreak(const IrInstruction& instruction) {
+		// Break: unconditional jump to loop end label
+		assert(instruction.getOperandCount() == 0 && "Break must have 0 operands");
+		assert(!loop_context_stack_.empty() && "Break must be inside a loop");
+
+		auto& loop_context = loop_context_stack_.back();
+		auto target_label = loop_context.loop_end_label;
+
+		// Flush all dirty registers before branching
+		flushAllDirtyRegisters();
+
+		// Generate JMP instruction to loop end
+		textSectionData.push_back(0xE9); // JMP rel32
+
+		// Store position where we need to patch the offset
+		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
+
+		// Add placeholder offset (will be patched later)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// Record this branch for later patching
+		pending_branches_.push_back({target_label, patch_position});
+	}
+
+	void handleContinue(const IrInstruction& instruction) {
+		// Continue: unconditional jump to loop increment label
+		assert(instruction.getOperandCount() == 0 && "Continue must have 0 operands");
+		assert(!loop_context_stack_.empty() && "Continue must be inside a loop");
+
+		auto& loop_context = loop_context_stack_.back();
+		auto target_label = loop_context.loop_increment_label;
+
+		// Flush all dirty registers before branching
+		flushAllDirtyRegisters();
+
+		// Generate JMP instruction to loop increment
+		textSectionData.push_back(0xE9); // JMP rel32
+
+		// Store position where we need to patch the offset
+		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
+
+		// Add placeholder offset (will be patched later)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// Record this branch for later patching
+		pending_branches_.push_back({target_label, patch_position});
+	}
+
 	void handleConditionalBranch(const IrInstruction& instruction) {
 		// Conditional branch: test condition, jump if true to then_label, otherwise fall through to else_label
 		// Operands: [type, size, condition_value, then_label, else_label]
@@ -3051,4 +3146,11 @@ private:
 	};
 	std::unordered_map<std::string, uint32_t> label_positions_;
 	std::vector<PendingBranch> pending_branches_;
+
+	// Loop context tracking for break/continue
+	struct LoopContext {
+		std::string loop_end_label;       // Label to jump to for break
+		std::string loop_increment_label; // Label to jump to for continue
+	};
+	std::vector<LoopContext> loop_context_stack_;
 };

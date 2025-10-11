@@ -985,65 +985,108 @@ ParseResult Parser::parse_for_loop() {
     if (!consume_keyword("for")) {
         return ParseResult::error("Expected 'for' keyword", *current_token_);
     }
-    
+
     if (!consume_punctuator("(")) {
         return ParseResult::error("Expected '(' after 'for'", *current_token_);
     }
 
-    // Parse initialization (can be declaration or expression)
-    ParseResult init;
-    if (peek_token()->type() == Token::Type::Keyword) {
-        // Handle variable declaration
-        init = parse_type_and_name();
-    } else {
-        // Handle expression
-        init = parse_expression();
-    }
-    if (init.is_error()) {
-        return init;
-    }
+    // Parse initialization (optional: can be empty, declaration, or expression)
+    std::optional<ASTNode> init_statement;
+
+    // Check if init is empty (starts with semicolon)
     if (!consume_punctuator(";")) {
-        return ParseResult::error("Expected ';' after for loop initialization", *current_token_);
-    }
+        // Not empty, parse init statement
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+            // Check if it's a type keyword (variable declaration)
+            static const std::unordered_set<std::string_view> type_keywords = {
+                "int", "float", "double", "char", "bool", "void",
+                "short", "long", "signed", "unsigned"
+            };
 
-    // Parse condition
-    auto condition = parse_expression();
-    if (condition.is_error()) {
-        return condition;
-    }
-    if (!consume_punctuator(";")) {
-        return ParseResult::error("Expected ';' after for loop condition", *current_token_);
-    }
-
-    // Parse increment
-    auto increment = parse_expression();
-    if (increment.is_error()) {
-        return increment;
-    }
-    if (!consume_punctuator(")")) {
-        return ParseResult::error("Expected ')' after for loop increment", *current_token_);
-    }
-
-    // Parse body
-    auto body = parse_block();
-    if (body.is_error()) {
-        return body;
-    }
-
-    // Create for loop node
-    if (auto init_node = init.node()) {
-        if (auto cond_node = condition.node()) {
-            if (auto inc_node = increment.node()) {
-                if (auto body_node = body.node()) {
-                    return ParseResult::success(emplace_node<ForLoopNode>(
-                        *init_node, *cond_node, *inc_node, *body_node
-                    ));
+            if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+                // Handle variable declaration
+                ParseResult init = parse_variable_declaration();
+                if (init.is_error()) {
+                    return init;
                 }
+                init_statement = init.node();
+            } else {
+                // Not a type keyword, try parsing as expression
+                ParseResult init = parse_expression();
+                if (init.is_error()) {
+                    return init;
+                }
+                init_statement = init.node();
             }
+        } else {
+            // Handle expression
+            ParseResult init = parse_expression();
+            if (init.is_error()) {
+                return init;
+            }
+            init_statement = init.node();
+        }
+
+        if (!consume_punctuator(";")) {
+            return ParseResult::error("Expected ';' after for loop initialization", *current_token_);
         }
     }
 
-    return ParseResult::error("Invalid for loop construction", *current_token_);
+    // Parse condition (optional: can be empty, defaults to true)
+    std::optional<ASTNode> condition;
+
+    // Check if condition is empty (next token is semicolon)
+    if (!consume_punctuator(";")) {
+        // Not empty, parse condition expression
+        ParseResult cond_result = parse_expression();
+        if (cond_result.is_error()) {
+            return cond_result;
+        }
+        condition = cond_result.node();
+
+        if (!consume_punctuator(";")) {
+            return ParseResult::error("Expected ';' after for loop condition", *current_token_);
+        }
+    }
+
+    // Parse increment/update expression (optional: can be empty)
+    std::optional<ASTNode> update_expression;
+
+    // Check if increment is empty (next token is closing paren)
+    if (!consume_punctuator(")")) {
+        // Not empty, parse increment expression
+        ParseResult inc_result = parse_expression();
+        if (inc_result.is_error()) {
+            return inc_result;
+        }
+        update_expression = inc_result.node();
+
+        if (!consume_punctuator(")")) {
+            return ParseResult::error("Expected ')' after for loop increment", *current_token_);
+        }
+    }
+
+    // Parse body (can be a block or a single statement)
+    ParseResult body_result;
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+        body_result = parse_block();
+    } else {
+        body_result = parse_statement_or_declaration();
+    }
+
+    if (body_result.is_error()) {
+        return body_result;
+    }
+
+    // Create for statement node with optional components
+    auto body_node = body_result.node();
+    if (!body_node.has_value()) {
+        return ParseResult::error("Invalid for loop body", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<ForStatementNode>(
+        init_statement, condition, update_expression, *body_node
+    ));
 }
 
 ParseResult Parser::parse_if_statement() {

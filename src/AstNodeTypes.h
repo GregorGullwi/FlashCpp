@@ -435,25 +435,7 @@ private:
 	size_t body_;
 };
 
-class ForLoopNode {
-public:
-    ForLoopNode(ASTNode init, ASTNode condition, ASTNode increment, ASTNode body)
-        : init_(std::move(init))
-        , condition_(std::move(condition))
-        , increment_(std::move(increment))
-        , body_(std::move(body)) {}
-
-    const ASTNode& init() const { return init_; }
-    const ASTNode& condition() const { return condition_; }
-    const ASTNode& increment() const { return increment_; }
-    const ASTNode& body() const { return body_; }
-
-private:
-    ASTNode init_;
-    ASTNode condition_;
-    ASTNode increment_;
-    ASTNode body_;
-};
+// ForLoopNode removed - use ForStatementNode instead for C++20 compatibility
 
 class ReturnStatementNode {
 public:

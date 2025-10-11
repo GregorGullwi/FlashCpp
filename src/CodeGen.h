@@ -29,6 +29,9 @@ public:
 		else if (node.is<IfStatementNode>()) {
 			visitIfStatementNode(node.as<IfStatementNode>());
 		}
+		else if (node.is<ForStatementNode>()) {
+			visitForStatementNode(node.as<ForStatementNode>());
+		}
 		else if (node.is<BlockNode>()) {
 			visitBlockNode(node.as<BlockNode>());
 		}
@@ -178,6 +181,72 @@ private:
 
 		// End label
 		ir_.addInstruction(IrOpcode::Label, {end_label}, Token());
+	}
+
+	void visitForStatementNode(const ForStatementNode& node) {
+		// Generate unique labels for this for loop
+		static size_t for_counter = 0;
+		std::string loop_start_label = "for_start_" + std::to_string(for_counter);
+		std::string loop_body_label = "for_body_" + std::to_string(for_counter);
+		std::string loop_increment_label = "for_increment_" + std::to_string(for_counter);
+		std::string loop_end_label = "for_end_" + std::to_string(for_counter);
+		for_counter++;
+
+		// Execute init statement (if present)
+		if (node.has_init()) {
+			auto init_stmt = node.get_init_statement();
+			if (init_stmt.has_value()) {
+				visit(*init_stmt);
+			}
+		}
+
+		// Mark loop begin for break/continue support
+		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_increment_label}, Token());
+
+		// Loop start: evaluate condition
+		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+
+		// Evaluate condition (if present, otherwise infinite loop)
+		if (node.has_condition()) {
+			auto condition_operands = visitExpressionNode(node.get_condition()->as<ExpressionNode>());
+
+			// Generate conditional branch: if true goto body, else goto end
+			std::vector<IrOperand> branch_operands;
+			branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
+			branch_operands.emplace_back(loop_body_label);
+			branch_operands.emplace_back(loop_end_label);
+			ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+		}
+
+		// Loop body label
+		ir_.addInstruction(IrOpcode::Label, {loop_body_label}, Token());
+
+		// Visit loop body
+		auto body_stmt = node.get_body_statement();
+		if (body_stmt.is<BlockNode>()) {
+			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+				visit(statement);
+			});
+		} else {
+			visit(body_stmt);
+		}
+
+		// Loop increment label (for continue statements)
+		ir_.addInstruction(IrOpcode::Label, {loop_increment_label}, Token());
+
+		// Execute update/increment expression (if present)
+		if (node.has_update()) {
+			visitExpressionNode(node.get_update_expression()->as<ExpressionNode>());
+		}
+
+		// Branch back to loop start
+		ir_.addInstruction(IrOpcode::Branch, {loop_start_label}, Token());
+
+		// Loop end label
+		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+
+		// Mark loop end
+		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
 	}
 
 	void visitVariableDeclarationNode(const ASTNode& ast_node) {

@@ -1043,7 +1043,7 @@ TEST_CASE("If statements") {
 }
 
 TEST_CASE("For loops") {
-	run_test_from_file("for_loops.cpp", "For loops", false);
+	run_test_from_file("for_loops_test.cpp", "For loops", true);
 }
 
 TEST_CASE("While loops") {

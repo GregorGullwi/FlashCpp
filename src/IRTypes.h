@@ -1596,25 +1596,27 @@ public:
 
 		case IrOpcode::LoopBegin:
 		{
-			// loop_begin %loop_label
-			assert(getOperandCount() == 1 && "LoopBegin instruction must have exactly 1 operand");
-			if (getOperandCount() > 0) {
+			// loop_begin %loop_start_label %loop_end_label %loop_increment_label
+			assert(getOperandCount() == 3 && "LoopBegin instruction must have exactly 3 operands");
+			if (getOperandCount() >= 3) {
 				oss << "loop_begin %";
 				if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
+				oss << " %";
+				if (isOperandType<std::string_view>(1))
+					oss << getOperandAs<std::string_view>(1);
+				oss << " %";
+				if (isOperandType<std::string_view>(2))
+					oss << getOperandAs<std::string_view>(2);
 			}
 		}
 		break;
 
 		case IrOpcode::LoopEnd:
 		{
-			// loop_end %loop_label
-			assert(getOperandCount() == 1 && "LoopEnd instruction must have exactly 1 operand");
-			if (getOperandCount() > 0) {
-				oss << "loop_end %";
-				if (isOperandType<std::string_view>(0))
-					oss << getOperandAs<std::string_view>(0);
-			}
+			// loop_end (no operands)
+			assert(getOperandCount() == 0 && "LoopEnd instruction must have exactly 0 operands");
+			oss << "loop_end";
 		}
 		break;
 
