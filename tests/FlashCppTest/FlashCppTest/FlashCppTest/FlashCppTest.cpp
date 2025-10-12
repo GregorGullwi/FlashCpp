@@ -1122,3 +1122,7 @@ TEST_CASE("All increments") {
 	run_test_from_file("test_all_increments.cpp", "All increments", false);
 }
 
+TEST_CASE("All test mix") {
+	run_test_from_file("test_all_mix.cpp", "Mixed things", false);
+}
+
