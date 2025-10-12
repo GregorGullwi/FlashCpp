@@ -250,26 +250,44 @@ ParseResult Parser::parse_type_specifier()
 
 	size_t long_count = 0;
 	TypeQualifier qualifier = TypeQualifier::None;
+	CVQualifier cv_qualifier = CVQualifier::None;
 
-	do {
+	// Parse CV-qualifiers and type qualifiers in any order
+	// e.g., "const int", "int const", "const unsigned int", "unsigned const int"
+	bool parsing_qualifiers = true;
+	while (parsing_qualifiers && current_token_opt.has_value()) {
 		std::string_view token_value = current_token_opt->value();
-		if (token_value == "long") {
+		if (token_value == "const") {
+			cv_qualifier = static_cast<CVQualifier>(
+				static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
+			consume_token();
+			current_token_opt = peek_token();
+		}
+		else if (token_value == "volatile") {
+			cv_qualifier = static_cast<CVQualifier>(
+				static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
+			consume_token();
+			current_token_opt = peek_token();
+		}
+		else if (token_value == "long") {
 			long_count++;
 			consume_token();
+			current_token_opt = peek_token();
 		}
 		else if (token_value == "signed") {
 			qualifier = TypeQualifier::Signed;
 			consume_token();
+			current_token_opt = peek_token();
 		}
 		else if (token_value == "unsigned") {
 			qualifier = TypeQualifier::Unsigned;
 			consume_token();
+			current_token_opt = peek_token();
 		}
 		else {
-			break;
+			parsing_qualifiers = false;
 		}
-		current_token_opt = peek_token();
-	} while (false);
+	}
 
 	static const std::unordered_map<std::string_view, std::tuple<Type, size_t>>
 		type_map = {
@@ -286,10 +304,20 @@ ParseResult Parser::parse_type_specifier()
 
 	Type type = Type::UserDefined;
 	unsigned char type_size = 0;
-	const auto& it = type_map.find(current_token_opt->value());
-	if (it != type_map.end()) {
-		type = std::get<0>(it->second);
-		type_size = static_cast<unsigned char>(std::get<1>(it->second));
+
+	// Check if we have a type keyword, or if we only have qualifiers (e.g., "long", "unsigned")
+	bool has_explicit_type = false;
+	if (current_token_opt.has_value()) {
+		const auto& it = type_map.find(current_token_opt->value());
+		if (it != type_map.end()) {
+			type = std::get<0>(it->second);
+			type_size = static_cast<unsigned char>(std::get<1>(it->second));
+			has_explicit_type = true;
+		}
+	}
+
+	// If we have an explicit type keyword, process it
+	if (has_explicit_type) {
 
 		// Apply signed/unsigned qualifier to integer types
 		if (qualifier == TypeQualifier::Unsigned) {
@@ -348,25 +376,54 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		consume_token();
-		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			type, qualifier, type_size, current_token_opt.value()));
-	}
-	else if (current_token_opt->type() == Token::Type::Identifier) {
-		// Handle user-defined type
-		// You can customize how to store user-defined types and their sizes
-		consume_token();
-		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			type, qualifier, type_size, current_token_opt.value()));
-	}
-	else if (qualifier != TypeQualifier::None) {
-		// Handle cases like "unsigned" or "signed" without explicit type (defaults to int)
-		type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedInt : Type::Int;
-		type_size = (qualifier == TypeQualifier::Unsigned) ?
-			std::numeric_limits<unsigned int>::digits :
-			std::numeric_limits<int>::digits;
+
+		// Check for trailing CV-qualifiers (e.g., "int const", "float volatile")
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view next_token = peek_token()->value();
+			if (next_token == "const") {
+				cv_qualifier = static_cast<CVQualifier>(
+					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
+				consume_token();
+			}
+			else if (next_token == "volatile") {
+				cv_qualifier = static_cast<CVQualifier>(
+					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
+				consume_token();
+			}
+			else {
+				break;
+			}
+		}
 
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			type, qualifier, type_size, Token()));
+			type, qualifier, type_size, current_token_opt.value(), cv_qualifier));
+	}
+	else if (qualifier != TypeQualifier::None || cv_qualifier != CVQualifier::None || long_count > 0) {
+		// Handle cases like "unsigned", "signed", "const", "long" without explicit type (defaults to int)
+		// Examples: "unsigned" -> unsigned int, "const" -> const int, "long" -> long int
+
+		if (long_count == 1) {
+			// "long" or "const long" -> long int
+			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedLong : Type::Long;
+			type_size = sizeof(long) * 8;
+		} else if (long_count == 2) {
+			// "long long" or "const long long" -> long long int
+			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedLongLong : Type::LongLong;
+			type_size = 64;
+		} else {
+			// "unsigned", "signed", or "const" without type -> int
+			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedInt : Type::Int;
+			type_size = 32;
+		}
+
+		return ParseResult::success(emplace_node<TypeSpecifierNode>(
+			type, qualifier, type_size, Token(), cv_qualifier));
+	}
+	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier) {
+		// Handle user-defined type (only if we don't have qualifiers that imply a built-in type)
+		consume_token();
+		return ParseResult::success(emplace_node<TypeSpecifierNode>(
+			type, qualifier, type_size, current_token_opt.value(), cv_qualifier));
 	}
 
 	return ParseResult::error("Unexpected token in type specifier",
@@ -480,10 +537,10 @@ ParseResult Parser::parse_statement_or_declaration()
 			return (this->*(keyword_iter->second))();
 		}
 		else {
-			// Check if it's a type specifier keyword (int, float, etc.)
+			// Check if it's a type specifier keyword (int, float, etc.) or CV-qualifier
 			static const std::unordered_set<std::string_view> type_keywords = {
 				"int", "float", "double", "char", "bool", "void",
-				"short", "long", "signed", "unsigned"
+				"short", "long", "signed", "unsigned", "const", "volatile"
 			};
 
 			if (type_keywords.find(current_token.value()) != type_keywords.end()) {
@@ -1083,10 +1140,10 @@ ParseResult Parser::parse_for_loop() {
     if (!consume_punctuator(";")) {
         // Not empty, parse init statement
         if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-            // Check if it's a type keyword (variable declaration)
+            // Check if it's a type keyword or CV-qualifier (variable declaration)
             static const std::unordered_set<std::string_view> type_keywords = {
                 "int", "float", "double", "char", "bool", "void",
-                "short", "long", "signed", "unsigned"
+                "short", "long", "signed", "unsigned", "const", "volatile"
             };
 
             if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
@@ -1314,14 +1371,14 @@ ParseResult Parser::parse_if_statement() {
     std::optional<ASTNode> init_statement;
 
     // Look ahead to see if there's a semicolon (indicating init statement)
-    // Only try to parse as initializer if we see a type keyword
+    // Only try to parse as initializer if we see a type keyword or CV-qualifier
     if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
         static const std::unordered_set<std::string_view> type_keywords = {
             "int", "float", "double", "char", "bool", "void",
-            "short", "long", "signed", "unsigned"
+            "short", "long", "signed", "unsigned", "const", "volatile"
         };
 
-        // Only proceed if this is actually a type keyword
+        // Only proceed if this is actually a type keyword or CV-qualifier
         if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
             // Could be a declaration like: if (int x = 5; x > 0)
             auto checkpoint = save_token_position();

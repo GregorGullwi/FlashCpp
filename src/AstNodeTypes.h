@@ -53,6 +53,15 @@ enum class TypeQualifier {
 	Unsigned,
 };
 
+// CV-qualifiers (const/volatile) - separate from sign qualifiers
+// These can be combined with type qualifiers using bitwise operations
+enum class CVQualifier : uint8_t {
+	None = 0,
+	Const = 1 << 0,
+	Volatile = 1 << 1,
+	ConstVolatile = Const | Volatile
+};
+
 enum class Type : int_fast16_t {
 	Void,
 	Bool,
@@ -180,17 +189,21 @@ class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
 	TypeSpecifierNode(Type type, TypeQualifier qualifier, unsigned char sizeInBits,
-		const Token& token = {})
-		: type_(type), size_(sizeInBits), qualifier_(qualifier), token_(token) {}
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
+		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token) {}
 
 	auto type() const { return type_; }
 	auto size_in_bits() const { return size_; }
 	auto qualifier() const { return qualifier_; }
+	auto cv_qualifier() const { return cv_qualifier_; }
+	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
+	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
 private:
 	Type type_;
 	unsigned char size_;
 	TypeQualifier qualifier_;
+	CVQualifier cv_qualifier_;
 	Token token_;
 };
 
