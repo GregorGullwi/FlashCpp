@@ -93,6 +93,9 @@ enum class IrOpcode : int_fast16_t {
 	Continue,
 	// Array operations
 	ArrayAccess,
+	// Pointer operations
+	AddressOf,
+	Dereference,
 };
 
 enum class X64Register : uint8_t {
@@ -1669,6 +1672,54 @@ public:
 					oss << '%' << getOperandAs<TempVar>(6).index;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::AddressOf:
+		{
+			// %result = addressof [Type][Size] %operand
+			// Format: [result_var, type, size, operand]
+			assert(getOperandCount() == 4 && "AddressOf instruction must have exactly 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = addressof " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+			}
+		}
+		break;
+
+		case IrOpcode::Dereference:
+		{
+			// %result = dereference [Type][Size] %operand
+			// Format: [result_var, type, size, operand]
+			assert(getOperandCount() == 4 && "Dereference instruction must have exactly 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = dereference " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
 			}
 		}
 		break;

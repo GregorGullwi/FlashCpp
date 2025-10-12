@@ -812,6 +812,12 @@ public:
 			case IrOpcode::PostDecrement:
 				handlePostDecrement(instruction);
 				break;
+			case IrOpcode::AddressOf:
+				handleAddressOf(instruction);
+				break;
+			case IrOpcode::Dereference:
+				handleDereference(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -3292,6 +3298,99 @@ private:
 		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
 		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+	}
+
+	void handleAddressOf(const IrInstruction& instruction) {
+		// Address-of: &x
+		// Operands: [result_var, type, size, operand]
+		assert(instruction.getOperandCount() == 4 && "AddressOf must have 4 operands");
+
+		// Get operand (variable to take address of)
+		auto operand = instruction.getOperandAs<std::string_view>(3);
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.identifier_offset.find(operand);
+		if (it == current_scope.identifier_offset.end()) {
+			assert(false && "Variable not found in scope");
+			return;
+		}
+		int32_t var_offset = it->second;
+
+		// Calculate the address: RBP + offset
+		// LEA RAX, [RBP + offset]
+		X64Register target_reg = X64Register::RAX;
+
+		// LEA r64, m (opcode 0x8D)
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8D); // LEA opcode
+
+		if (var_offset >= -128 && var_offset <= 127) {
+			// Use 8-bit displacement
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(var_offset));
+		} else {
+			// Use 32-bit displacement
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			uint32_t offset_u32 = static_cast<uint32_t>(var_offset);
+			textSectionData.push_back(offset_u32 & 0xFF);
+			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		}
+
+		// Store the address to result_var
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		auto result_store = generateMovToFrame(target_reg, result_offset);
+		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
+		                       result_store.op_codes.begin() + result_store.size_in_bytes);
+	}
+
+	void handleDereference(const IrInstruction& instruction) {
+		// Dereference: *ptr
+		// Operands: [result_var, type, size, operand]
+		assert(instruction.getOperandCount() == 4 && "Dereference must have 4 operands");
+
+		// Get the pointer operand
+		X64Register ptr_reg = X64Register::RAX;
+
+		if (instruction.isOperandType<std::string_view>(3)) {
+			// Load pointer from variable
+			auto operand = instruction.getOperandAs<std::string_view>(3);
+			const StackVariableScope& current_scope = variable_scopes.back();
+			auto it = current_scope.identifier_offset.find(operand);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Variable not found in scope");
+				return;
+			}
+			int32_t ptr_offset = it->second;
+
+			// Load pointer value into RAX
+			auto load_opcodes = generateMovFromFrame(ptr_reg, ptr_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		} else if (instruction.isOperandType<TempVar>(3)) {
+			// Load pointer from temp var
+			auto temp_var = instruction.getOperandAs<TempVar>(3);
+			int32_t ptr_offset = getStackOffsetFromTempVar(temp_var);
+
+			// Load pointer value into RAX
+			auto load_opcodes = generateMovFromFrame(ptr_reg, ptr_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		}
+
+		// Now dereference: load value from [RAX] into RAX
+		// MOV RAX, [RAX]
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		textSectionData.push_back(0x00); // ModR/M: [RAX], RAX
+
+		// Store the dereferenced value to result_var
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		auto result_store = generateMovToFrame(ptr_reg, result_offset);
+		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
+		                       result_store.op_codes.begin() + result_store.size_in_bytes);
 	}
 
 	void handleConditionalBranch(const IrInstruction& instruction) {

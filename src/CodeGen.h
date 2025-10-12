@@ -559,6 +559,14 @@ private:
 				ir_.addInstruction(IrInstruction(IrOpcode::PostDecrement, std::move(irOperands), Token()));
 			}
 		}
+		else if (unaryOperatorNode.op() == "&") {
+			// Address-of operator: &x
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(irOperands), Token()));
+		}
+		else if (unaryOperatorNode.op() == "*") {
+			// Dereference operator: *x
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(irOperands), Token()));
+		}
 		else {
 			assert(false && "Unary operator not implemented yet");
 		}

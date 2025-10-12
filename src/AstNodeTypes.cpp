@@ -1,4 +1,5 @@
 #include "AstNodeTypes.h"
+#include <sstream>
 
 std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<std::string, const TypeInfo*> gTypesByName;
@@ -268,4 +269,78 @@ Type get_common_type(Type left, Type right) {
 
 bool requires_conversion(Type from, Type to) {
     return from != to && is_integer_type(from) && is_integer_type(to);
+}
+
+// Helper function to get CV-qualifier string
+static std::string cv_qualifier_to_string(CVQualifier cv) {
+    std::string result;
+    if ((static_cast<uint8_t>(cv) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
+        result += "const";
+    }
+    if ((static_cast<uint8_t>(cv) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
+        if (!result.empty()) result += " ";
+        result += "volatile";
+    }
+    return result;
+}
+
+// Helper function to get base type string
+static std::string type_to_string(Type type, TypeQualifier qualifier) {
+    std::string result;
+
+    // Add sign qualifier if present
+    if (qualifier == TypeQualifier::Unsigned) {
+        result += "unsigned ";
+    } else if (qualifier == TypeQualifier::Signed) {
+        result += "signed ";
+    }
+
+    // Add base type
+    switch (type) {
+        case Type::Void: result += "void"; break;
+        case Type::Bool: result += "bool"; break;
+        case Type::Char: result += "char"; break;
+        case Type::UnsignedChar: result += "unsigned char"; break;
+        case Type::Short: result += "short"; break;
+        case Type::UnsignedShort: result += "unsigned short"; break;
+        case Type::Int: result += "int"; break;
+        case Type::UnsignedInt: result += "unsigned int"; break;
+        case Type::Long: result += "long"; break;
+        case Type::UnsignedLong: result += "unsigned long"; break;
+        case Type::LongLong: result += "long long"; break;
+        case Type::UnsignedLongLong: result += "unsigned long long"; break;
+        case Type::Float: result += "float"; break;
+        case Type::Double: result += "double"; break;
+        case Type::LongDouble: result += "long double"; break;
+        case Type::UserDefined: result += "user_defined"; break;
+        case Type::Auto: result += "auto"; break;
+        case Type::Function: result += "function"; break;
+        case Type::Struct: result += "struct"; break;
+    }
+
+    return result;
+}
+
+std::string TypeSpecifierNode::getReadableString() const {
+    std::ostringstream oss;
+
+    // Start with base type CV-qualifiers
+    std::string base_cv = cv_qualifier_to_string(cv_qualifier_);
+    if (!base_cv.empty()) {
+        oss << base_cv << " ";
+    }
+
+    // Add base type
+    oss << type_to_string(type_, qualifier_);
+
+    // Add pointer levels
+    for (const auto& ptr_level : pointer_levels_) {
+        oss << "*";
+        std::string ptr_cv = cv_qualifier_to_string(ptr_level.cv_qualifier);
+        if (!ptr_cv.empty()) {
+            oss << " " << ptr_cv;
+        }
+    }
+
+    return oss.str();
 }

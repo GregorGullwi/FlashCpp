@@ -1126,3 +1126,6 @@ TEST_CASE("All test mix") {
 	run_test_from_file("test_all_mix.cpp", "Mixed things", false);
 }
 
+TEST_CASE("Const test") {
+	run_test_from_file("test_pointer_declarations.cpp", "Const test", false);
+}

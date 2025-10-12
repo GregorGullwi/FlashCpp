@@ -185,6 +185,18 @@ Type promote_floating_point_type(Type type);
 Type get_common_type(Type left, Type right);
 bool requires_conversion(Type from, Type to);
 
+// Pointer level information - stores CV-qualifiers for each pointer level
+// Example: const int* const* volatile
+//   - Level 0 (base): const int
+//   - Level 1: const pointer to (const int)
+//   - Level 2: volatile pointer to (const pointer to const int)
+struct PointerLevel {
+	CVQualifier cv_qualifier = CVQualifier::None;
+
+	PointerLevel() = default;
+	explicit PointerLevel(CVQualifier cv) : cv_qualifier(cv) {}
+};
+
 class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
@@ -199,12 +211,22 @@ public:
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
+	// Pointer support
+	bool is_pointer() const { return !pointer_levels_.empty(); }
+	size_t pointer_depth() const { return pointer_levels_.empty() ? 0 : pointer_levels_.size(); }
+	const std::vector<PointerLevel>& pointer_levels() const { return pointer_levels_; }
+	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
+
+	// Get readable string representation
+	std::string getReadableString() const;
+
 private:
 	Type type_;
 	unsigned char size_;
 	TypeQualifier qualifier_;
-	CVQualifier cv_qualifier_;
+	CVQualifier cv_qualifier_;  // CV-qualifier for the base type
 	Token token_;
+	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
 };
 
 class DeclarationNode {

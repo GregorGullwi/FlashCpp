@@ -114,6 +114,35 @@ ParseResult Parser::parse_type_and_name() {
         return type_specifier_result;
     }
 
+    // Get the type specifier node to modify it with pointer levels
+    TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
+
+    // Parse pointer declarators: * [const] [volatile] *...
+    // Example: int* const* volatile ptr
+    while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+           peek_token()->value() == "*") {
+        consume_token(); // consume '*'
+
+        // Check for CV-qualifiers after the *
+        CVQualifier ptr_cv = CVQualifier::None;
+        while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+            std::string_view kw = peek_token()->value();
+            if (kw == "const") {
+                ptr_cv = static_cast<CVQualifier>(
+                    static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+                consume_token();
+            } else if (kw == "volatile") {
+                ptr_cv = static_cast<CVQualifier>(
+                    static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+                consume_token();
+            } else {
+                break;
+            }
+        }
+
+        type_spec.add_pointer_level(ptr_cv);
+    }
+
     // Parse the identifier (name)
     auto identifier_token = consume_token();
     if (!identifier_token ||
@@ -707,8 +736,9 @@ ParseResult Parser::parse_unary_expression()
 	if (current_token_->type() == Token::Type::Operator) {
 		std::string_view op = current_token_->value();
 
-		// Check for unary operators: !, ~, +, -, ++, --
-		if (op == "!" || op == "~" || op == "+" || op == "-" || op == "++" || op == "--") {
+		// Check for unary operators: !, ~, +, -, ++, --, * (dereference), & (address-of)
+		if (op == "!" || op == "~" || op == "+" || op == "-" || op == "++" || op == "--" ||
+		    op == "*" || op == "&") {
 			Token operator_token = *current_token_;
 			consume_token();
 
