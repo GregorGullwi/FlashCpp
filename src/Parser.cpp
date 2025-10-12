@@ -503,6 +503,18 @@ ParseResult Parser::parse_statement_or_declaration()
 		// or function call statement
 		return parse_expression();
 	}
+	else if (current_token.type() == Token::Type::Operator) {
+		// Handle prefix increment/decrement operators as expression statements
+		// e.g., ++i; or --i;
+		std::string_view op = current_token.value();
+		if (op == "++" || op == "--") {
+			return parse_expression();
+		}
+		// Unknown operator - consume token to avoid infinite loop and return error
+		consume_token();
+		return ParseResult::error("Unexpected operator: " + std::string(current_token.value()),
+			current_token);
+	}
 	else {
 		// Unknown token type - consume token to avoid infinite loop and return error
 		consume_token();
