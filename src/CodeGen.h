@@ -50,6 +50,10 @@ public:
 		else if (node.is<ExpressionNode>()) {
 			visitExpressionNode(node.as<ExpressionNode>());
 		}
+		else if (node.is<StructDeclarationNode>()) {
+			// Struct declarations don't generate IR - they just define types
+			// The type information is already registered in the global type system
+		}
 		else {
 			assert(false && "Unhandled AST node type");
 		}
@@ -427,6 +431,10 @@ private:
 			const auto& expr = std::get<ArraySubscriptNode>(exprNode);
 			return generateArraySubscriptIr(expr);
 		}
+		else if (std::holds_alternative<MemberAccessNode>(exprNode)) {
+			const auto& expr = std::get<MemberAccessNode>(exprNode);
+			return generateMemberAccessIr(expr);
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -578,6 +586,89 @@ private:
 	std::vector<IrOperand> generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
 		std::vector<IrOperand> irOperands;
 
+		const auto& op = binaryOperatorNode.op();
+
+		// Special handling for assignment to member access
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+				// This is a member access assignment: obj.member = value
+				const MemberAccessNode& member_access = std::get<MemberAccessNode>(lhs_expr);
+
+				// Generate IR for the RHS value
+				auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+				// Get the object and member information
+				const ASTNode& object_node = member_access.object();
+				std::string_view member_name = member_access.member_name();
+
+				// Unwrap ExpressionNode if needed
+				if (object_node.is<ExpressionNode>()) {
+					const ExpressionNode& expr = object_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
+						std::string_view object_name = object_ident.name();
+
+						// Look up the object in the symbol table
+						const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+						if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
+							// Error: variable not found
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						const auto& decl_node = symbol->as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+
+						if (type_node.type() != Type::Struct) {
+							// Error: not a struct type
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						// Get the struct type info
+						TypeIndex struct_type_index = type_node.type_index();
+						if (struct_type_index >= gTypeInfo.size()) {
+							// Error: invalid type index
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+						const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+						if (!struct_info) {
+							// Error: struct info not found
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						const StructMember* member = struct_info->findMember(std::string(member_name));
+						if (!member) {
+							// Error: member not found
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						// Build MemberStore IR operands: [member_type, member_size, object_name, member_name, offset, value]
+						irOperands.emplace_back(member->type);
+						irOperands.emplace_back(static_cast<int>(member->size * 8));
+						irOperands.emplace_back(object_name);
+						irOperands.emplace_back(member_name);
+						irOperands.emplace_back(static_cast<int>(member->offset));
+
+						// Add only the value from RHS (rhsIrOperands = [type, size, value])
+						// We only need the value (index 2)
+						if (rhsIrOperands.size() >= 3) {
+							irOperands.emplace_back(rhsIrOperands[2]);
+						} else {
+							// Error: invalid RHS operands
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						ir_.addInstruction(IrOpcode::MemberStore, std::move(irOperands), binaryOperatorNode.get_token());
+
+						// Return the RHS value as the result
+						return rhsIrOperands;
+					}
+				}
+			}
+		}
+
 		// Generate IR for the left-hand side and right-hand side of the operation
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
@@ -615,7 +706,6 @@ private:
 		// Generate the IR for the operation based on the operator and operand types
 		// Use a lookup table approach for better performance and maintainability
 		IrOpcode opcode;
-		const auto& op = binaryOperatorNode.op();
 
 		// Simple operators (no type variants)
 		static const std::unordered_map<std::string_view, IrOpcode> simple_ops = {
@@ -782,6 +872,148 @@ private:
 
 		// Return the result with the element type
 		return { array_type, element_size_bits, result_var };
+	}
+
+	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode) {
+		std::vector<IrOperand> irOperands;
+
+		// Get the object being accessed
+		ASTNode object_node = memberAccessNode.object();
+		std::string_view member_name = memberAccessNode.member_name();
+
+		// Unwrap ExpressionNode if needed
+		if (object_node.is<ExpressionNode>()) {
+			const ExpressionNode& expr = object_node.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr)) {
+				const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
+				std::string_view object_name = object_ident.name();
+
+				// Look up the object in the symbol table
+				const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
+					assert(false && "Object not found in symbol table");
+					return {};
+				}
+
+				const DeclarationNode& object_decl = symbol->as<DeclarationNode>();
+				const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
+
+				// Verify this is a struct type
+				if (object_type.type() != Type::Struct) {
+					assert(false && "Member access on non-struct type");
+					return {};
+				}
+
+				// Get the struct type info
+				const TypeInfo* type_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == object_type.type_index()) {
+						type_info = &ti;
+						break;
+					}
+				}
+
+				if (!type_info || !type_info->getStructInfo()) {
+					assert(false && "Struct type info not found");
+					return {};
+				}
+
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
+				const StructMember* member = struct_info->findMember(std::string(member_name));
+
+				if (!member) {
+					assert(false && "Member not found in struct");
+					return {};
+				}
+
+				// Create a temporary variable for the result
+				TempVar result_var = var_counter.next();
+
+				// Build IR operands: [result_var, member_type, member_size, object_name, member_name, offset]
+				irOperands.emplace_back(result_var);
+				irOperands.emplace_back(member->type);
+				irOperands.emplace_back(static_cast<int>(member->size * 8));  // Convert bytes to bits
+				irOperands.emplace_back(object_name);
+				irOperands.emplace_back(member_name);
+				irOperands.emplace_back(static_cast<int>(member->offset));
+
+				// Add the member access instruction
+				ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());
+
+				// Return the result variable with its type and size
+				return { member->type, static_cast<int>(member->size * 8), result_var };
+			}
+			else {
+				// TODO: Support chained member access (e.g., obj.member1.member2)
+				assert(false && "Member access on complex expression not yet supported");
+				return {};
+			}
+		}
+
+		// For now, we only support direct member access on identifiers (e.g., obj.member)
+		// TODO: Support chained member access (e.g., obj.member1.member2)
+		if (!object_node.is<IdentifierNode>()) {
+			assert(false && "Member access on non-identifier not yet supported");
+			return {};
+		}
+
+		const IdentifierNode& object_ident = object_node.as<IdentifierNode>();
+		std::string_view object_name = object_ident.name();
+
+		// Look up the object in the symbol table
+		const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+		if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
+			assert(false && "Object not found in symbol table");
+			return {};
+		}
+
+		const DeclarationNode& object_decl = symbol->as<DeclarationNode>();
+		const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
+
+		// Verify this is a struct type
+		if (object_type.type() != Type::Struct) {
+			assert(false && "Member access on non-struct type");
+			return {};
+		}
+
+		// Get the struct type info
+		const TypeInfo* type_info = nullptr;
+		for (const auto& ti : gTypeInfo) {
+			if (ti.type_index_ == object_type.type_index()) {
+				type_info = &ti;
+				break;
+			}
+		}
+
+		if (!type_info || !type_info->getStructInfo()) {
+			assert(false && "Struct type info not found");
+			return {};
+		}
+
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
+		const StructMember* member = struct_info->findMember(std::string(member_name));
+
+		if (!member) {
+			assert(false && "Member not found in struct");
+			return {};
+		}
+
+		// Create a temporary variable for the result
+		TempVar result_var = var_counter.next();
+
+		// Build IR operands: [result_var, member_type, member_size, object_name, member_name, offset]
+		irOperands.emplace_back(result_var);
+		irOperands.emplace_back(member->type);
+		irOperands.emplace_back(static_cast<int>(member->size * 8));  // Convert bytes to bits
+		irOperands.emplace_back(object_name);
+		irOperands.emplace_back(member_name);
+		irOperands.emplace_back(static_cast<int>(member->offset));
+
+		// Add the member access instruction
+		ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());
+
+		// Return the result variable with its type and size
+		return { member->type, static_cast<int>(member->size * 8), result_var };
 	}
 
 	Ir ir_;

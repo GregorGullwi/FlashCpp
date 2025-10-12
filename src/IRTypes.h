@@ -96,6 +96,9 @@ enum class IrOpcode : int_fast16_t {
 	// Pointer operations
 	AddressOf,
 	Dereference,
+	// Struct operations
+	MemberAccess,
+	MemberStore,
 };
 
 enum class X64Register : uint8_t {
@@ -1720,6 +1723,62 @@ public:
 					oss << '%' << getOperandAs<TempVar>(3).index;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
+			}
+		}
+		break;
+
+		case IrOpcode::MemberAccess:
+		{
+			// %result = member_access [MemberType][MemberSize] %object, member_name, offset
+			// Format: [result_var, member_type, member_size, object_name, member_name, offset]
+			assert(getOperandCount() == 6 && "MemberAccess instruction must have exactly 6 operands");
+			if (getOperandCount() >= 6) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = member_access ";
+				oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				// Object
+				if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << "." << getOperandAs<std::string_view>(4);
+				oss << " (offset: " << getOperandAs<int>(5) << ")";
+			}
+		}
+		break;
+
+		case IrOpcode::MemberStore:
+		{
+			// member_store [MemberType][MemberSize] %object, member_name, offset, %value
+			// Format: [member_type, member_size, object_name, member_name, offset, value]
+			assert(getOperandCount() == 6 && "MemberStore instruction must have exactly 6 operands");
+			if (getOperandCount() >= 6) {
+				oss << "member_store ";
+				oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+
+				// Object
+				if (isOperandType<TempVar>(2))
+					oss << '%' << getOperandAs<TempVar>(2).index;
+				else if (isOperandType<std::string_view>(2))
+					oss << '%' << getOperandAs<std::string_view>(2);
+
+				oss << "." << getOperandAs<std::string_view>(3);
+				oss << " (offset: " << getOperandAs<int>(4) << "), ";
+
+				// Value
+				if (isOperandType<TempVar>(5))
+					oss << '%' << getOperandAs<TempVar>(5).index;
+				else if (isOperandType<std::string_view>(5))
+					oss << '%' << getOperandAs<std::string_view>(5);
+				else if (isOperandType<int>(5))
+					oss << getOperandAs<int>(5);
 			}
 		}
 		break;

@@ -28,10 +28,10 @@ Parser::ScopedTokenPosition::~ScopedTokenPosition() {
     }
 }
 
-ParseResult Parser::ScopedTokenPosition::success() {
+ParseResult Parser::ScopedTokenPosition::success(ASTNode node) {
     discarded_ = true;
     parser_.discard_saved_token(saved_position_);
-    return ParseResult::success();
+    return ParseResult::success(node);
 }
 
 ParseResult Parser::ScopedTokenPosition::error(std::string_view error_message) {
@@ -89,8 +89,14 @@ ParseResult Parser::parse_top_level_node()
 	// Check if it's a class or struct declaration
 	if (peek_token()->type() == Token::Type::Keyword &&
 		(peek_token()->value() == "class" || peek_token()->value() == "struct")) {
-		// return parse_class_declaration();
-		return ParseResult::error(ParserError::NotImplemented, *peek_token());
+		auto result = parse_struct_declaration();
+		if (!result.is_error()) {
+			if (auto node = result.node()) {
+				ast_nodes_.push_back(*node);
+			}
+			return saved_position.success();
+		}
+		return result;
 	}
 
 	// Attempt to parse a function definition, variable declaration, or typedef
@@ -265,6 +271,129 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	discard_saved_token(saved_position);
 	return ParseResult::success();
+}
+
+ParseResult Parser::parse_struct_declaration()
+{
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'struct' or 'class' keyword
+	auto struct_keyword = consume_token();
+	if (!struct_keyword.has_value()) {
+		return ParseResult::error("Expected 'struct' or 'class' keyword", Token());
+	}
+
+	bool is_class = (struct_keyword->value() == "class");
+
+	// Parse struct name
+	auto name_token = consume_token();
+	if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected struct/class name", name_token.value_or(Token()));
+	}
+
+	std::string struct_name(name_token->value());
+
+	// Expect opening brace
+	if (!consume_punctuator("{")) {
+		return ParseResult::error("Expected '{' after struct/class name", *peek_token());
+	}
+
+	// Create struct declaration node
+	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
+
+	// Default access specifier (public for struct, private for class)
+	AccessSpecifier current_access = struct_ref.default_access();
+
+	// Parse members
+	while (peek_token().has_value() && peek_token()->value() != "}") {
+		// Check for access specifier
+		if (peek_token()->type() == Token::Type::Keyword) {
+			std::string_view keyword = peek_token()->value();
+			if (keyword == "public" || keyword == "protected" || keyword == "private") {
+				consume_token();
+				if (!consume_punctuator(":")) {
+					return ParseResult::error("Expected ':' after access specifier", *peek_token());
+				}
+
+				// Update current access level
+				if (keyword == "public") {
+					current_access = AccessSpecifier::Public;
+				} else if (keyword == "protected") {
+					current_access = AccessSpecifier::Protected;
+				} else if (keyword == "private") {
+					current_access = AccessSpecifier::Private;
+				}
+				continue;
+			}
+		}
+
+		// Parse member declaration
+		auto member_result = parse_type_and_name();
+		if (member_result.is_error()) {
+			return member_result;
+		}
+
+		// Expect semicolon after member declaration
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after struct member declaration", *peek_token());
+		}
+
+		// Add member to struct with current access level
+		if (auto member_node = member_result.node()) {
+			struct_ref.add_member(*member_node, current_access);
+		}
+	}
+
+	// Expect closing brace
+	if (!consume_punctuator("}")) {
+		return ParseResult::error("Expected '}' at end of struct/class definition", *peek_token());
+	}
+
+	// Expect semicolon after struct definition
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after struct/class definition", *peek_token());
+	}
+
+	// Register the struct type in the global type system
+	TypeInfo& struct_type_info = add_struct_type(struct_name);
+	auto struct_info = std::make_unique<StructTypeInfo>(struct_name, struct_ref.default_access());
+
+	// Process members and calculate layout
+	for (const auto& member_decl : struct_ref.members()) {
+		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+		// Get member size and alignment
+		size_t member_size = type_spec.size_in_bits() / 8;
+		size_t member_alignment = member_size;  // Simple alignment rule for now
+
+		// For struct types, get size from the struct type info
+		if (type_spec.type() == Type::Struct) {
+			const TypeInfo* member_type_info = gTypesByName[std::string(decl.identifier_token().value())];
+			if (member_type_info && member_type_info->getStructInfo()) {
+				member_size = member_type_info->getStructInfo()->total_size;
+				member_alignment = member_type_info->getStructInfo()->alignment;
+			}
+		}
+
+		// Add member to struct layout
+		struct_info->addMember(
+			std::string(decl.identifier_token().value()),
+			type_spec.type(),
+			type_spec.type_index(),
+			member_size,
+			member_alignment,
+			member_decl.access
+		);
+	}
+
+	// Finalize struct layout (add padding)
+	struct_info->finalize();
+
+	// Store struct info in type info
+	struct_type_info.setStructInfo(std::move(struct_info));
+
+	return saved_position.success(struct_node);
 }
 
 ParseResult Parser::parse_type_specifier()
@@ -449,8 +578,25 @@ ParseResult Parser::parse_type_specifier()
 			type, qualifier, type_size, Token(), cv_qualifier));
 	}
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier) {
-		// Handle user-defined type (only if we don't have qualifiers that imply a built-in type)
+		// Handle user-defined type (struct, class, or other user-defined types)
+		std::string type_name(current_token_opt->value());
 		consume_token();
+
+		// Check if this is a registered struct type
+		auto type_it = gTypesByName.find(type_name);
+		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			// This is a struct type
+			const TypeInfo* struct_type_info = type_it->second;
+			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+			if (struct_info) {
+				type_size = static_cast<unsigned char>(struct_info->total_size * 8);  // Convert bytes to bits
+				return ParseResult::success(emplace_node<TypeSpecifierNode>(
+					Type::Struct, struct_type_info->type_index_, type_size, current_token_opt.value(), cv_qualifier));
+			}
+		}
+
+		// Otherwise, treat as generic user-defined type
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			type, qualifier, type_size, current_token_opt.value(), cv_qualifier));
 	}
@@ -585,6 +731,14 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 	}
 	else if (current_token.type() == Token::Type::Identifier) {
+		// Check if this identifier is a registered struct/class type
+		std::string type_name(current_token.value());
+		auto type_it = gTypesByName.find(type_name);
+		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			// This is a struct type declaration
+			return parse_variable_declaration();
+		}
+
 		// If it starts with an identifier, it could be an assignment, expression,
 		// or function call statement
 		return parse_expression();
@@ -1142,6 +1296,25 @@ ParseResult Parser::parse_primary_expression()
 			} else {
 				return ParseResult::error("Invalid array index expression", bracket_token);
 			}
+		}
+
+		// Check for member access operator .
+		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ".") {
+			Token dot_token = *peek_token();
+			consume_token(); // consume '.'
+
+			// Expect an identifier (member name)
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected member name after '.'", *current_token_);
+			}
+
+			Token member_name_token = *peek_token();
+			consume_token(); // consume member name
+
+			// Create member access node
+			result = emplace_node<ExpressionNode>(
+				MemberAccessNode(*result, member_name_token));
+			continue;  // Check for more postfix operators (e.g., obj.member1.member2)
 		}
 
 		// No more postfix operators

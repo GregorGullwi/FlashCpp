@@ -17,6 +17,12 @@ TypeInfo& add_function_type(std::string name, Type return_type) {
     return type_info;
 }
 
+TypeInfo& add_struct_type(std::string name) {
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Struct, gTypeInfo.size());
+    gTypesByName.emplace(type_info.name_, &type_info);
+    return type_info;
+}
+
 void initialize_native_types() {
     // Initialize native types if not already done
     if (!gNativeTypes.empty()) {

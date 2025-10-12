@@ -98,4 +98,6 @@ int main(int argc, char *argv[]) {
     IrToObjConverter irConverter;
 
     irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value());
+
+    return 0;
 }

@@ -86,16 +86,25 @@ enum class Type : int_fast16_t {
 
 using TypeIndex = size_t;
 
+// Access specifier for struct/class members
+enum class AccessSpecifier {
+	Public,
+	Protected,
+	Private
+};
+
 // Struct member information
 struct StructMember {
 	std::string name;
 	Type type;
-	size_t offset;      // Offset in bytes from start of struct
-	size_t size;        // Size in bytes
-	size_t alignment;   // Alignment requirement
+	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.)
+	size_t offset;          // Offset in bytes from start of struct
+	size_t size;            // Size in bytes
+	size_t alignment;       // Alignment requirement
+	AccessSpecifier access; // Access level (public/protected/private)
 
-	StructMember(std::string n, Type t, size_t off, size_t sz, size_t align)
-		: name(std::move(n)), type(t), offset(off), size(sz), alignment(align) {}
+	StructMember(std::string n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public)
+		: name(std::move(n)), type(t), type_index(tidx), offset(off), size(sz), alignment(align), access(acc) {}
 };
 
 // Struct type information
@@ -104,14 +113,17 @@ struct StructTypeInfo {
 	std::vector<StructMember> members;
 	size_t total_size = 0;      // Total size of struct in bytes
 	size_t alignment = 1;       // Alignment requirement of struct
+	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
 
-	StructTypeInfo(std::string n) : name(std::move(n)) {}
+	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public)
+		: name(std::move(n)), default_access(default_acc) {}
 
-	void addMember(const std::string& member_name, Type member_type, size_t member_size, size_t member_alignment) {
+	void addMember(const std::string& member_name, Type member_type, TypeIndex type_index,
+	               size_t member_size, size_t member_alignment, AccessSpecifier access = AccessSpecifier::Public) {
 		// Calculate offset with proper alignment
 		size_t offset = (total_size + member_alignment - 1) & ~(member_alignment - 1);
 
-		members.emplace_back(member_name, member_type, offset, member_size, member_alignment);
+		members.emplace_back(member_name, member_type, type_index, offset, member_size, member_alignment, access);
 
 		// Update struct size and alignment
 		total_size = offset + member_size;
@@ -202,12 +214,18 @@ public:
 	TypeSpecifierNode() = default;
 	TypeSpecifierNode(Type type, TypeQualifier qualifier, unsigned char sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
-		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token) {}
+		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(0) {}
+
+	// Constructor for struct types
+	TypeSpecifierNode(Type type, TypeIndex type_index, unsigned char sizeInBits,
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
+		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
 
 	auto type() const { return type_; }
 	auto size_in_bits() const { return size_; }
 	auto qualifier() const { return qualifier_; }
 	auto cv_qualifier() const { return cv_qualifier_; }
+	auto type_index() const { return type_index_; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
@@ -226,6 +244,7 @@ private:
 	TypeQualifier qualifier_;
 	CVQualifier cv_qualifier_;  // CV-qualifier for the base type
 	Token token_;
+	TypeIndex type_index_;      // Index into gTypeInfo for user-defined types (structs, etc.)
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
 };
 
@@ -384,18 +403,35 @@ private:
 	Token called_from_;
 };
 
+// Struct member with access specifier
+struct StructMemberDecl {
+	ASTNode declaration;
+	AccessSpecifier access;
+
+	StructMemberDecl(ASTNode decl, AccessSpecifier acc)
+		: declaration(decl), access(acc) {}
+};
+
 class StructDeclarationNode {
 public:
-	explicit StructDeclarationNode(std::string name) : name_(std::move(name)) {}
+	explicit StructDeclarationNode(std::string name, bool is_class = false)
+		: name_(std::move(name)), is_class_(is_class) {}
 
 	const std::string& name() const { return name_; }
-	const std::vector<ASTNode>& members() const { return members_; }
+	const std::vector<StructMemberDecl>& members() const { return members_; }
+	bool is_class() const { return is_class_; }
+	AccessSpecifier default_access() const {
+		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
+	}
 
-	void add_member(ASTNode member) { members_.push_back(member); }
+	void add_member(ASTNode member, AccessSpecifier access) {
+		members_.emplace_back(member, access);
+	}
 
 private:
 	std::string name_;
-	std::vector<ASTNode> members_;
+	std::vector<StructMemberDecl> members_;
+	bool is_class_;  // true for class, false for struct
 };
 
 class MemberAccessNode {

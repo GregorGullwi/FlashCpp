@@ -366,7 +366,7 @@ private:
 	bool is_operator(char c) const {
 		static const std::unordered_set<char> operators = { '+', '-', '*', '/', '%',
 														   '^', '&', '|', '~', '!',
-														   '=', '<', '>', '?', ':' };
+														   '=', '<', '>', '?' };
 
 		return operators.count(c) > 0;
 	}

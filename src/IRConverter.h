@@ -818,6 +818,12 @@ public:
 			case IrOpcode::Dereference:
 				handleDereference(instruction);
 				break;
+			case IrOpcode::MemberAccess:
+				handleMemberAccess(instruction);
+				break;
+			case IrOpcode::MemberStore:
+				handleMemberStore(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -3137,6 +3143,240 @@ private:
 			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
 			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
 			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		}
+	}
+
+	void handleMemberAccess(const IrInstruction& instruction) {
+		// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
+		// Format: [result_var, member_type, member_size, object_name, member_name, offset]
+		assert(instruction.getOperandCount() == 6 && "MemberAccess must have 6 operands");
+
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		auto member_type = instruction.getOperandAs<Type>(1);
+		auto member_size_bits = instruction.getOperandAs<int>(2);
+		auto object_name = std::string(instruction.getOperandAs<std::string_view>(3));
+		auto member_name = instruction.getOperandAs<std::string_view>(4);
+		auto member_offset = instruction.getOperandAs<int>(5);
+
+		// Get the object's stack offset
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.identifier_offset.find(object_name);
+		if (it == current_scope.identifier_offset.end()) {
+			assert(false && "Struct object not found in scope");
+			return;
+		}
+		int32_t object_base_offset = it->second;
+
+		// Calculate the member's actual stack offset
+		// The object is at [RBP + object_base_offset]
+		// The member is at offset 'member_offset' bytes from the object's base
+		// Since stack grows downward, we subtract the member offset
+		int32_t member_stack_offset = object_base_offset - member_offset;
+
+		// Get the result variable's stack offset
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+
+		// Calculate member size in bytes
+		int member_size_bytes = member_size_bits / 8;
+
+		// Load the member value into a register based on size
+		X64Register temp_reg = X64Register::RAX;
+
+		if (member_size_bytes == 8) {
+			// 64-bit member: MOV RAX, [RBP + member_stack_offset]
+			auto load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		} else if (member_size_bytes == 4) {
+			// 32-bit member: MOV EAX, [RBP + member_stack_offset]
+			textSectionData.push_back(0x8B); // MOV r32, r/m32
+			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
+				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
+				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+		} else if (member_size_bytes == 2) {
+			// 16-bit member: MOVZX RAX, WORD PTR [RBP + member_stack_offset]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x0F); // Two-byte opcode prefix
+			textSectionData.push_back(0xB7); // MOVZX r64, r/m16
+			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+		} else if (member_size_bytes == 1) {
+			// 8-bit member: MOVZX RAX, BYTE PTR [RBP + member_stack_offset]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x0F); // Two-byte opcode prefix
+			textSectionData.push_back(0xB6); // MOVZX r64, r/m8
+			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+		} else {
+			assert(false && "Unsupported member size");
+			return;
+		}
+
+		// Store the result to the result variable's stack location
+		auto store_opcodes = generateMovToFrame(temp_reg, result_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+	}
+
+	void handleMemberStore(const IrInstruction& instruction) {
+		// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
+		// Format: [member_type, member_size, object_name, member_name, offset, value]
+		assert(instruction.getOperandCount() == 6 && "MemberStore must have 6 operands");
+
+		auto member_type = instruction.getOperandAs<Type>(0);
+		auto member_size_bits = instruction.getOperandAs<int>(1);
+		auto object_name = std::string(instruction.getOperandAs<std::string_view>(2));
+		auto member_name = instruction.getOperandAs<std::string_view>(3);
+		auto member_offset = instruction.getOperandAs<int>(4);
+
+		// Get the value - it could be a TempVar, a literal (int or unsigned long long), or a string_view (variable name)
+		TempVar value_var;
+		bool is_literal = false;
+		int64_t literal_value = 0;
+		bool is_variable = false;
+		std::string variable_name;
+
+		if (instruction.isOperandType<TempVar>(5)) {
+			value_var = instruction.getOperandAs<TempVar>(5);
+		} else if (instruction.isOperandType<int>(5)) {
+			is_literal = true;
+			literal_value = instruction.getOperandAs<int>(5);
+		} else if (instruction.isOperandType<unsigned long long>(5)) {
+			is_literal = true;
+			literal_value = static_cast<int64_t>(instruction.getOperandAs<unsigned long long>(5));
+		} else if (instruction.isOperandType<std::string_view>(5)) {
+			is_variable = true;
+			variable_name = std::string(instruction.getOperandAs<std::string_view>(5));
+		} else {
+			assert(false && "Value must be TempVar, int/unsigned long long literal, or string_view");
+			return;
+		}
+
+		// Get the object's stack offset
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.identifier_offset.find(object_name);
+		if (it == current_scope.identifier_offset.end()) {
+			assert(false && "Struct object not found in scope");
+			return;
+		}
+		int32_t object_base_offset = it->second;
+
+		// Calculate the member's actual stack offset
+		int32_t member_stack_offset = object_base_offset - member_offset;
+
+		// Calculate member size in bytes
+		int member_size_bytes = member_size_bits / 8;
+
+		// Load the value into a register
+		X64Register value_reg = X64Register::RAX;
+
+		if (is_literal) {
+			// MOV RAX, immediate
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg)); // MOV RAX, imm64
+			// For simplicity, use 64-bit immediate even for smaller values
+			uint64_t imm64 = static_cast<uint64_t>(literal_value);
+			for (int i = 0; i < 8; i++) {
+				textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
+			}
+		} else if (is_variable) {
+			// Load from variable's stack location
+			const StackVariableScope& current_scope = variable_scopes.back();
+			auto it = current_scope.identifier_offset.find(variable_name);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Variable not found in scope");
+				return;
+			}
+			int32_t value_offset = it->second;
+			auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		} else {
+			// Load from value variable's stack location (TempVar)
+			int32_t value_offset = getStackOffsetFromTempVar(value_var);
+			auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		}
+
+		// Store the value to the member's stack location
+		if (member_size_bytes == 8) {
+			// 64-bit member: MOV [RBP + member_stack_offset], RAX
+			auto store_opcodes = generateMovToFrame(value_reg, member_stack_offset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		} else if (member_size_bytes == 4) {
+			// 32-bit member: MOV [RBP + member_stack_offset], EAX
+			textSectionData.push_back(0x89); // MOV r/m32, r32
+			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
+				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
+				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+		} else if (member_size_bytes == 2) {
+			// 16-bit member: MOV [RBP + member_stack_offset], AX
+			textSectionData.push_back(0x66); // Operand-size override prefix
+			textSectionData.push_back(0x89); // MOV r/m16, r16
+			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], AX
+				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], AX
+				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+		} else if (member_size_bytes == 1) {
+			// 8-bit member: MOV [RBP + member_stack_offset], AL
+			textSectionData.push_back(0x88); // MOV r/m8, r8
+			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], AL
+				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], AL
+				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+		} else {
+			assert(false && "Unsupported member size");
+			return;
 		}
 	}
 
