@@ -543,6 +543,26 @@ private:
 	Token return_token_;
 };
 
+class InitializerListNode {
+public:
+	explicit InitializerListNode() {}
+
+	void add_initializer(ASTNode init_expr) {
+		initializers_.push_back(init_expr);
+	}
+
+	const std::vector<ASTNode>& initializers() const {
+		return initializers_;
+	}
+
+	size_t size() const {
+		return initializers_.size();
+	}
+
+private:
+	std::vector<ASTNode> initializers_;
+};
+
 class VariableDeclarationNode {
 public:
 	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt)

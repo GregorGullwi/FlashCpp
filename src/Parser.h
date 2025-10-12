@@ -201,6 +201,7 @@ private:
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();
+        ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
         ParseResult parse_for_loop();  // Add this line
         ParseResult parse_while_loop();  // Add while-loop parser
         ParseResult parse_do_while_loop();  // Add do-while-loop parser

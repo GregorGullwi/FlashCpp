@@ -1486,8 +1486,27 @@ private:
 			}
 
 			if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
-				auto mov_opcodes = regAlloc.get_reg_reg_move_op_code(allocated_reg.reg, src_reg.value(), 4);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				// Source value is already in a register (e.g., from function return)
+				// For struct types, we need to store the entire value to the stack
+				// For other types, we can keep it in a register
+				auto size_in_bits = instruction.getOperandAs<int>(1);
+				int size_bytes = size_in_bits / 8;
+
+				if (var_type == Type::Struct) {
+					// For structs, store directly from source register to destination stack location
+					// This handles the x64 Windows calling convention where small structs (≤8 bytes)
+					// are returned in RAX and need to be stored to the stack for member access
+					auto store_opcodes = generateMovToFrame(src_reg.value(), dst_offset);
+					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+					// Release the allocated register since we're not using it
+					regAlloc.release(allocated_reg.reg);
+				} else {
+					// For non-struct types, move to allocated register
+					auto mov_opcodes = regAlloc.get_reg_reg_move_op_code(allocated_reg.reg, src_reg.value(), size_bytes);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(),
+					                       mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				}
 			} else {
 				auto load_opcodes = generateMovFromFrame(allocated_reg.reg, src_offset);
 				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
@@ -2876,7 +2895,83 @@ private:
 	}
 
 	void handleAssignment(const IrInstruction& instruction) {
-		// Simple assignment: just move the RHS value to the LHS location
+		// Assignment instruction has 7 operands: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
+		assert(instruction.getOperandCount() == 7 && "Assignment instruction must have exactly 7 operands");
+
+		Type lhs_type = instruction.getOperandAs<Type>(1);
+		int lhs_size_bits = instruction.getOperandAs<int>(2);
+
+		// Special handling for struct assignment
+		if (lhs_type == Type::Struct) {
+			// For struct assignment, we need to copy the entire struct value
+			// LHS is the destination (should be a variable name or TempVar)
+			// RHS is the source (should be a TempVar from function return, or another variable)
+
+			// Get LHS destination
+			const IrOperand& lhs_operand = instruction.getOperand(3);
+			int32_t lhs_offset = -1;
+
+			if (std::holds_alternative<std::string_view>(lhs_operand)) {
+				std::string_view lhs_var_name = std::get<std::string_view>(lhs_operand);
+				auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
+				if (it != variable_scopes.back().identifier_offset.end()) {
+					lhs_offset = it->second;
+				}
+			} else if (std::holds_alternative<TempVar>(lhs_operand)) {
+				TempVar lhs_var = std::get<TempVar>(lhs_operand);
+				lhs_offset = getStackOffsetFromTempVar(lhs_var);
+			}
+
+			if (lhs_offset == -1) {
+				assert(false && "LHS variable not found in struct assignment");
+				return;
+			}
+
+			// Get RHS source
+			const IrOperand& rhs_operand = instruction.getOperand(6);
+			X64Register source_reg = X64Register::RAX;
+
+			if (std::holds_alternative<std::string_view>(rhs_operand)) {
+				std::string_view rhs_var_name = std::get<std::string_view>(rhs_operand);
+				auto it = variable_scopes.back().identifier_offset.find(rhs_var_name);
+				if (it != variable_scopes.back().identifier_offset.end()) {
+					int32_t rhs_offset = it->second;
+					// Load struct from RHS stack location into RAX (8 bytes for small structs)
+					auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
+			} else if (std::holds_alternative<TempVar>(rhs_operand)) {
+				TempVar rhs_var = std::get<TempVar>(rhs_operand);
+				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
+
+				// Check if the value is already in RAX (e.g., from function return)
+				if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
+					source_reg = rhs_reg.value();
+					if (source_reg != X64Register::RAX) {
+						// Move from source register to RAX
+						auto move_opcodes = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, source_reg, 8);
+						textSectionData.insert(textSectionData.end(), move_opcodes.op_codes.begin(),
+						                       move_opcodes.op_codes.begin() + move_opcodes.size_in_bytes);
+						source_reg = X64Register::RAX;
+					}
+				} else {
+					// Load struct from RHS stack location into RAX (8 bytes for small structs)
+					auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
+			}
+
+			// Store RAX to LHS stack location (8 bytes for small structs)
+			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+			return;
+		}
+
+		// For non-struct types, use the standard arithmetic operation handling
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "assignment");
 		// The value is already in the result register from setupAndLoadArithmeticOperation
 		// We just need to store it
@@ -3170,8 +3265,9 @@ private:
 		// Calculate the member's actual stack offset
 		// The object is at [RBP + object_base_offset]
 		// The member is at offset 'member_offset' bytes from the object's base
-		// Since stack grows downward, we subtract the member offset
-		int32_t member_stack_offset = object_base_offset - member_offset;
+		// For a struct at [RBP - 8] with member at offset 4:
+		//   member is at [RBP - 8 + 4] = [RBP - 4]
+		int32_t member_stack_offset = object_base_offset + member_offset;
 
 		// Get the result variable's stack offset
 		int32_t result_offset = getStackOffsetFromTempVar(result_var);
@@ -3288,7 +3384,9 @@ private:
 		int32_t object_base_offset = it->second;
 
 		// Calculate the member's actual stack offset
-		int32_t member_stack_offset = object_base_offset - member_offset;
+		// For a struct at [RBP - 8] with member at offset 4:
+		//   member is at [RBP - 8 + 4] = [RBP - 4]
+		int32_t member_stack_offset = object_base_offset + member_offset;
 
 		// Calculate member size in bytes
 		int member_size_bytes = member_size_bits / 8;

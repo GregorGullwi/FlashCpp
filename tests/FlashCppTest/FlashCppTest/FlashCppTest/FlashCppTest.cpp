@@ -1129,3 +1129,7 @@ TEST_CASE("All test mix") {
 TEST_CASE("Const test") {
 	run_test_from_file("test_pointer_declarations.cpp", "Const test", false);
 }
+
+TEST_CASE("Struct member access") {
+	run_test_from_file("test_struct_simple.cpp", "Struct member access", false);
+}

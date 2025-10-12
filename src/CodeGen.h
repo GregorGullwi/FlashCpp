@@ -391,8 +391,71 @@ private:
 
 		// Add initializer if present (for non-arrays)
 		if (node.initializer() && !decl.is_array()) {
-			auto init_operands = visitExpressionNode(node.initializer()->as<ExpressionNode>());
-			operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+			const ASTNode& init_node = *node.initializer();
+
+			// Check if this is a brace initializer (InitializerListNode)
+			if (init_node.is<InitializerListNode>()) {
+				// Handle brace initialization for structs
+				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+
+				// First, add the variable declaration without initializer
+				ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), node.declaration().identifier_token());
+
+				// Then, generate member store instructions for each initializer
+				if (type_node.type() == Type::Struct) {
+					TypeIndex type_index = type_node.type_index();
+					if (type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_info.struct_info_) {
+							const StructTypeInfo& struct_info = *type_info.struct_info_;
+							const auto& initializers = init_list.initializers();
+
+							// Generate member store for each initializer
+							for (size_t i = 0; i < initializers.size() && i < struct_info.members.size(); ++i) {
+								const StructMember& member = struct_info.members[i];
+								const ASTNode& init_expr = initializers[i];
+
+								// Generate IR for the initializer expression
+								// The initializer can be any expression type, so we need to check what it is
+							std::vector<IrOperand> init_operands;
+							if (init_expr.is<NumericLiteralNode>()) {
+								init_operands = generateNumericLiteralIr(init_expr.as<NumericLiteralNode>());
+							} else if (init_expr.is<IdentifierNode>()) {
+								init_operands = generateIdentifierIr(init_expr.as<IdentifierNode>());
+							} else if (init_expr.is<BinaryOperatorNode>()) {
+								init_operands = generateBinaryOperatorIr(init_expr.as<BinaryOperatorNode>());
+							} else if (init_expr.is<UnaryOperatorNode>()) {
+								init_operands = generateUnaryOperatorIr(init_expr.as<UnaryOperatorNode>());
+							} else if (init_expr.is<FunctionCallNode>()) {
+								init_operands = generateFunctionCallIr(init_expr.as<FunctionCallNode>());
+							} else if (init_expr.is<MemberAccessNode>()) {
+								init_operands = generateMemberAccessIr(init_expr.as<MemberAccessNode>());
+							} else {
+								assert(false && "Unsupported initializer expression type");
+							}
+
+								// Generate member store: struct.member = init_expr
+								std::vector<IrOperand> member_store_operands;
+								member_store_operands.emplace_back(member.type);
+								member_store_operands.emplace_back(static_cast<int>(member.size * 8)); // size in bits
+								member_store_operands.emplace_back(decl.identifier_token().value()); // object name
+								member_store_operands.emplace_back(member.name); // member name
+								member_store_operands.emplace_back(static_cast<int>(member.offset)); // member offset
+
+								// Add the value operands
+								member_store_operands.insert(member_store_operands.end(), init_operands.begin(), init_operands.end());
+
+								ir_.addInstruction(IrOpcode::MemberStore, std::move(member_store_operands), decl.identifier_token());
+							}
+						}
+					}
+				}
+				return; // Early return - we've already added the variable declaration
+			} else {
+				// Regular expression initializer
+				auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+				operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+			}
 		}
 
 		if (!symbol_table.insert(decl.identifier_token().value(), node.declaration_node())) {

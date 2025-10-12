@@ -792,11 +792,23 @@ ParseResult Parser::parse_variable_declaration()
 	std::optional<ASTNode> first_init_expr;
 	if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
 		consume_token(); // consume the '=' operator
-		ParseResult init_expr_result = parse_expression();
-		if (init_expr_result.is_error()) {
-			return init_expr_result;
+
+		// Check if this is a brace initializer (e.g., Point p = {10, 20})
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+			// Parse brace initializer list
+			ParseResult init_list_result = parse_brace_initializer(type_specifier);
+			if (init_list_result.is_error()) {
+				return init_list_result;
+			}
+			first_init_expr = init_list_result.node();
+		} else {
+			// Regular expression initializer
+			ParseResult init_expr_result = parse_expression();
+			if (init_expr_result.is_error()) {
+				return init_expr_result;
+			}
+			first_init_expr = init_expr_result.node();
 		}
-		first_init_expr = init_expr_result.node();
 	}
 
 	// Check if there are more declarations (comma-separated)
@@ -825,11 +837,21 @@ ParseResult Parser::parse_variable_declaration()
 			std::optional<ASTNode> init_expr;
 			if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
 				consume_token(); // consume the '=' operator
-				ParseResult init_expr_result = parse_expression();
-				if (init_expr_result.is_error()) {
-					return init_expr_result;
+
+				// Check if this is a brace initializer
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+					ParseResult init_list_result = parse_brace_initializer(type_specifier);
+					if (init_list_result.is_error()) {
+						return init_list_result;
+					}
+					init_expr = init_list_result.node();
+				} else {
+					ParseResult init_expr_result = parse_expression();
+					if (init_expr_result.is_error()) {
+						return init_expr_result;
+					}
+					init_expr = init_expr_result.node();
 				}
-				init_expr = init_expr_result.node();
 			}
 
 			// Add this declaration to the block
@@ -843,6 +865,90 @@ ParseResult Parser::parse_variable_declaration()
 		// Single declaration - return it directly
 		return ParseResult::success(create_var_decl(first_decl, first_init_expr));
 	}
+}
+
+ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specifier)
+{
+	// Parse brace initializer list: { expr1, expr2, ... }
+	// This is used for struct initialization like: Point p = {10, 20};
+
+	if (!consume_punctuator("{")) {
+		return ParseResult::error("Expected '{' for brace initializer", *current_token_);
+	}
+
+	// Create an InitializerListNode to hold the initializer expressions
+	auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+
+	// Get the struct type information for validation
+	if (type_specifier.type() != Type::Struct) {
+		return ParseResult::error("Brace initializers are currently only supported for struct types", *current_token_);
+	}
+
+	TypeIndex type_index = type_specifier.type_index();
+	if (type_index >= gTypeInfo.size()) {
+		return ParseResult::error("Invalid struct type index", *current_token_);
+	}
+
+	const TypeInfo& type_info = gTypeInfo[type_index];
+	if (!type_info.struct_info_) {
+		return ParseResult::error("Type is not a struct", *current_token_);
+	}
+
+	const StructTypeInfo& struct_info = *type_info.struct_info_;
+
+	// Parse comma-separated initializer expressions
+	size_t member_index = 0;
+	while (true) {
+		// Check if we've reached the end of the initializer list
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+			break;
+		}
+
+		// Check if we have too many initializers
+		if (member_index >= struct_info.members.size()) {
+			return ParseResult::error("Too many initializers for struct", *current_token_);
+		}
+
+		// Parse the initializer expression
+		ParseResult init_expr_result = parse_expression();
+		if (init_expr_result.is_error()) {
+			return init_expr_result;
+		}
+
+		// Add the initializer to the list
+		if (init_expr_result.node().has_value()) {
+			init_list_ref.add_initializer(*init_expr_result.node());
+		} else {
+			return ParseResult::error("Expected initializer expression", *current_token_);
+		}
+
+		member_index++;
+
+		// Check for comma or end of list
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+			consume_token(); // consume the comma
+
+			// Allow trailing comma before '}'
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				break;
+			}
+		} else {
+			// No comma, so we should be at the end
+			break;
+		}
+	}
+
+	if (!consume_punctuator("}")) {
+		return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+	}
+
+	// Check if we have too few initializers
+	if (member_index < struct_info.members.size()) {
+		// This is allowed in C++ - remaining members are zero-initialized
+		// For now, we'll just accept it
+	}
+
+	return ParseResult::success(init_list_node);
 }
 
 ParseResult Parser::parse_return_statement()

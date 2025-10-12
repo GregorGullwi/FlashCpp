@@ -95,6 +95,16 @@ int main(int argc, char *argv[]) {
     }
 
     const auto& ir = converter.getIr();
+
+    std::cerr << "DEBUG: Verbose mode = " << (context.isVerboseMode() ? "true" : "false") << std::endl;
+    if (context.isVerboseMode()) {
+        std::cerr << "\n=== IR Instructions ===" << std::endl;
+        for (const auto& instruction : ir.getInstructions()) {
+            std::cerr << instruction.getReadableString() << std::endl;
+        }
+        std::cerr << "=== End IR ===" << std::endl << std::endl;
+    }
+
     IrToObjConverter irConverter;
 
     irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value());
