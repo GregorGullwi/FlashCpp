@@ -1314,23 +1314,32 @@ ParseResult Parser::parse_if_statement() {
     std::optional<ASTNode> init_statement;
 
     // Look ahead to see if there's a semicolon (indicating init statement)
+    // Only try to parse as initializer if we see a type keyword
     if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-        // Could be a declaration like: if (int x = 5; x > 0)
-        auto checkpoint = save_token_position();
-        ParseResult potential_init = parse_type_and_name();
+        static const std::unordered_set<std::string_view> type_keywords = {
+            "int", "float", "double", "char", "bool", "void",
+            "short", "long", "signed", "unsigned"
+        };
 
-        if (!potential_init.is_error() && peek_token().has_value() &&
-            peek_token()->type() == Token::Type::Punctuator &&
-            peek_token()->value() == ";") {
-            // We have an initializer
-            discard_saved_token(checkpoint);
-            init_statement = potential_init.node();
-            if (!consume_punctuator(";")) {
-                return ParseResult::error("Expected ';' after if initializer", *current_token_);
+        // Only proceed if this is actually a type keyword
+        if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+            // Could be a declaration like: if (int x = 5; x > 0)
+            auto checkpoint = save_token_position();
+            ParseResult potential_init = parse_variable_declaration();
+
+            if (!potential_init.is_error() && peek_token().has_value() &&
+                peek_token()->type() == Token::Type::Punctuator &&
+                peek_token()->value() == ";") {
+                // We have an initializer
+                discard_saved_token(checkpoint);
+                init_statement = potential_init.node();
+                if (!consume_punctuator(";")) {
+                    return ParseResult::error("Expected ';' after if initializer", *current_token_);
+                }
+            } else {
+                // Not an initializer, restore position
+                restore_token_position(checkpoint);
             }
-        } else {
-            // Not an initializer, restore position
-            restore_token_position(checkpoint);
         }
     }
 
