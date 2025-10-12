@@ -91,6 +91,8 @@ enum class IrOpcode : int_fast16_t {
 	LoopEnd,
 	Break,
 	Continue,
+	// Array operations
+	ArrayAccess,
 };
 
 enum class X64Register : uint8_t {
@@ -1633,6 +1635,41 @@ public:
 			// continue (no operands - uses loop context stack)
 			assert(getOperandCount() == 0 && "Continue instruction must have exactly 0 operands");
 			oss << "continue";
+		}
+		break;
+
+		case IrOpcode::ArrayAccess:
+		{
+			// %result = array_access [ArrayType][ElementSize] %array, [IndexType][IndexSize] %index
+			// Format: [result_var, array_type, element_size, array_name, index_type, index_size, index_value]
+			assert(getOperandCount() == 7 && "ArrayAccess instruction must have exactly 7 operands");
+			if (getOperandCount() >= 7) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = array_access " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+
+				// Array operand
+				if (isOperandType<unsigned long long>(3))
+					oss << getOperandAs<unsigned long long>(3);
+				else if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
+
+				oss << ", " << getOperandAsTypeString(4) << getOperandAs<int>(5) << " ";
+
+				// Index operand
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
 		}
 		break;
 

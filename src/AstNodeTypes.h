@@ -198,15 +198,20 @@ class DeclarationNode {
 public:
 	DeclarationNode() = default;
 	DeclarationNode(ASTNode type_node, Token identifier)
-		: type_node_(type_node), identifier_(std::move(identifier)) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(std::nullopt) {}
+	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
+		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size) {}
 
 	ASTNode type_node() const { return type_node_; }
 	const Token& identifier_token() const { return identifier_; }
 	uint32_t line_number() const { return identifier_.line(); }
+	bool is_array() const { return array_size_.has_value(); }
+	std::optional<ASTNode> array_size() const { return array_size_; }
 
 private:
 	ASTNode type_node_;
 	Token identifier_;
+	std::optional<ASTNode> array_size_;  // For array declarations like int arr[10]
 };
 
 class IdentifierNode {
@@ -371,8 +376,23 @@ private:
 	Token member_name_;
 };
 
+class ArraySubscriptNode {
+public:
+	explicit ArraySubscriptNode(ASTNode array_expr, ASTNode index_expr, Token bracket_token)
+		: array_expr_(array_expr), index_expr_(index_expr), bracket_token_(bracket_token) {}
+
+	ASTNode array_expr() const { return array_expr_; }
+	ASTNode index_expr() const { return index_expr_; }
+	const Token& bracket_token() const { return bracket_token_; }
+
+private:
+	ASTNode array_expr_;
+	ASTNode index_expr_;
+	Token bracket_token_;
+};
+
 using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
-	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode>;
+	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, ArraySubscriptNode>;
 
 /*class FunctionDefinitionNode {
 public:

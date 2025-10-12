@@ -375,8 +375,18 @@ private:
 		operands.emplace_back(static_cast<int>(type_node.size_in_bits()));
 		operands.emplace_back(decl.identifier_token().value());
 
-		// Add initializer if present
-		if (node.initializer()) {
+		// For arrays, add the array size
+		if (decl.is_array()) {
+			auto size_expr = decl.array_size();
+			if (size_expr.has_value()) {
+				auto size_operands = visitExpressionNode(size_expr->as<ExpressionNode>());
+				// Add array size as an operand
+				operands.insert(operands.end(), size_operands.begin(), size_operands.end());
+			}
+		}
+
+		// Add initializer if present (for non-arrays)
+		if (node.initializer() && !decl.is_array()) {
 			auto init_operands = visitExpressionNode(node.initializer()->as<ExpressionNode>());
 			operands.insert(operands.end(), init_operands.begin(), init_operands.end());
 		}
@@ -412,6 +422,10 @@ private:
 		else if (std::holds_alternative<FunctionCallNode>(exprNode)) {
 			const auto& expr = std::get<FunctionCallNode>(exprNode);
 			return generateFunctionCallIr(expr);
+		}
+		else if (std::holds_alternative<ArraySubscriptNode>(exprNode)) {
+			const auto& expr = std::get<ArraySubscriptNode>(exprNode);
+			return generateArraySubscriptIr(expr);
 		}
 		else {
 			assert(false && "Not implemented yet");
@@ -723,6 +737,43 @@ private:
 		// Return the result variable with its type and size
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var };
+	}
+
+	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode) {
+		// Generate IR for array[index] expression
+		// This computes the address: base_address + (index * element_size)
+
+		// Get the array expression (should be an identifier for now)
+		auto array_operands = visitExpressionNode(arraySubscriptNode.array_expr().as<ExpressionNode>());
+
+		// Get the index expression
+		auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+
+		// Get array type information
+		Type array_type = std::get<Type>(array_operands[0]);
+		int element_size_bits = std::get<int>(array_operands[1]);
+
+		// Create a temporary variable for the result
+		TempVar result_var = var_counter.next();
+
+		// Build operands for array access IR instruction
+		// Format: [result_var, array_type, element_size, array_name/temp, index_type, index_size, index_value]
+		std::vector<IrOperand> irOperands;
+		irOperands.emplace_back(result_var);
+
+		// Array operands (type, size, name/temp)
+		irOperands.insert(irOperands.end(), array_operands.begin(), array_operands.end());
+
+		// Index operands (type, size, value)
+		irOperands.insert(irOperands.end(), index_operands.begin(), index_operands.end());
+
+		// For now, we'll use a Load-like instruction to read from the computed address
+		// The IRConverter will handle the address calculation
+		// We'll add a new IR opcode for this: ArrayAccess
+		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(irOperands), arraySubscriptNode.bracket_token()));
+
+		// Return the result with the element type
+		return { array_type, element_size_bits, result_var };
 	}
 
 	Ir ir_;

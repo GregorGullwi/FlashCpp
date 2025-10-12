@@ -797,6 +797,9 @@ public:
 			case IrOpcode::Continue:
 				handleContinue(instruction);
 				break;
+			case IrOpcode::ArrayAccess:
+				handleArrayAccess(instruction);
+				break;
 			case IrOpcode::PreIncrement:
 				handlePreIncrement(instruction);
 				break;
@@ -1116,8 +1119,22 @@ private:
 
 			if (instruction.getOpcode() == IrOpcode::VariableDecl) {
 				auto size_in_bits = instruction.getOperandAs<int>(1);
-				func_stack_space.named_vars_size += (size_in_bits / 8);
-				local_vars.push_back(VarDecl{ .var_name = instruction.getOperandAs<std::string_view>(2), .size_in_bits = size_in_bits });
+				auto var_name = instruction.getOperandAs<std::string_view>(2);
+
+				// Check if this is an array declaration (has array size operand)
+				// Format: [type, size, name, array_size_type, array_size_bits, array_size_value]
+				int total_size_bits = size_in_bits;
+				if (instruction.getOperandCount() >= 6 &&
+				    instruction.isOperandType<Type>(3)) {
+					// This is an array - get the array size
+					if (instruction.isOperandType<unsigned long long>(5)) {
+						uint64_t array_size = instruction.getOperandAs<unsigned long long>(5);
+						total_size_bits = size_in_bits * static_cast<int>(array_size);
+					}
+				}
+
+				func_stack_space.named_vars_size += (total_size_bits / 8);
+				local_vars.push_back(VarDecl{ .var_name = var_name, .size_in_bits = total_size_bits });
 			}
 			else {
 				for (size_t i = 0; i < instruction.getOperandCount(); ++i) {
@@ -2979,6 +2996,142 @@ private:
 
 		// Record this branch for later patching
 		pending_branches_.push_back({target_label, patch_position});
+	}
+
+	void handleArrayAccess(const IrInstruction& instruction) {
+		// ArrayAccess: %result = array_access [ArrayType][ElementSize] %array, [IndexType][IndexSize] %index
+		// Format: [result_var, array_type, element_size, array_name, index_type, index_size, index_value]
+		assert(instruction.getOperandCount() == 7 && "ArrayAccess must have 7 operands");
+
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		auto array_type = instruction.getOperandAs<Type>(1);
+		auto element_size_bits = instruction.getOperandAs<int>(2);
+		auto index_type = instruction.getOperandAs<Type>(4);
+		auto index_size_bits = instruction.getOperandAs<int>(5);
+
+		// Get the array base address (from stack)
+		std::string array_name;
+		if (instruction.isOperandType<std::string_view>(3)) {
+			array_name = std::string(instruction.getOperandAs<std::string_view>(3));
+		} else {
+			assert(false && "Array must be an identifier for now");
+		}
+
+		// Get the index value (could be a constant or a temp var)
+		int64_t index_offset = getStackOffsetFromTempVar(result_var);
+
+		// Calculate element size in bytes
+		int element_size_bytes = element_size_bits / 8;
+
+		// Load index into a register (RAX)
+		if (instruction.isOperandType<unsigned long long>(6)) {
+			// Constant index
+			uint64_t index_value = instruction.getOperandAs<unsigned long long>(6);
+
+			// Calculate offset directly: base_offset + (index * element_size)
+			int64_t array_base_offset = variable_scopes.back().identifier_offset[array_name];
+			int64_t element_offset = array_base_offset - (index_value * element_size_bytes);
+
+			// Load from [RBP + offset] into RAX
+			// MOV RAX, [RBP + offset]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+
+			if (element_offset >= -128 && element_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+				textSectionData.push_back(static_cast<uint8_t>(element_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+				uint32_t offset_u32 = static_cast<uint32_t>(element_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+		} else if (instruction.isOperandType<TempVar>(6)) {
+			// Variable index - need to compute address at runtime
+			TempVar index_var = instruction.getOperandAs<TempVar>(6);
+			int64_t index_var_offset = getStackOffsetFromTempVar(index_var);
+			int64_t array_base_offset = variable_scopes.back().identifier_offset[array_name];
+
+			// Load index into RCX: MOV RCX, [RBP + index_offset]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			if (index_var_offset >= -128 && index_var_offset <= 127) {
+				textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
+				textSectionData.push_back(static_cast<uint8_t>(index_var_offset));
+			} else {
+				textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
+				uint32_t offset_u32 = static_cast<uint32_t>(index_var_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+
+			// Multiply index by element size: IMUL RCX, element_size
+			if (element_size_bytes == 1) {
+				// No multiplication needed
+			} else if (element_size_bytes == 2 || element_size_bytes == 4 || element_size_bytes == 8) {
+				// Use shift for powers of 2
+				int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2 : 3;
+				// SHL RCX, shift_amount
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0xC1); // SHL r/m64, imm8
+				textSectionData.push_back(0xE1); // ModR/M: RCX
+				textSectionData.push_back(shift_amount);
+			} else {
+				// General multiplication: IMUL RCX, RCX, element_size
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
+				textSectionData.push_back(0xC9); // ModR/M: RCX, RCX
+				uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
+				textSectionData.push_back(size_u32 & 0xFF);
+				textSectionData.push_back((size_u32 >> 8) & 0xFF);
+				textSectionData.push_back((size_u32 >> 16) & 0xFF);
+				textSectionData.push_back((size_u32 >> 24) & 0xFF);
+			}
+
+			// Load array base address into RAX: LEA RAX, [RBP + array_base_offset]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8D); // LEA r64, m
+			if (array_base_offset >= -128 && array_base_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+				textSectionData.push_back(static_cast<uint8_t>(array_base_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+				uint32_t offset_u32 = static_cast<uint32_t>(array_base_offset);
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+
+			// Subtract index offset from base: SUB RAX, RCX
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x29); // SUB r/m64, r64
+			textSectionData.push_back(0xC8); // ModR/M: RAX, RCX
+
+			// Load value from computed address: MOV RAX, [RAX]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			textSectionData.push_back(0x00); // ModR/M: [RAX], RAX
+		}
+
+		// Store result to stack: MOV [RBP + result_offset], RAX
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		if (index_offset >= -128 && index_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(index_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			uint32_t offset_u32 = static_cast<uint32_t>(index_offset);
+			textSectionData.push_back(offset_u32 & 0xFF);
+			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		}
 	}
 
 	void handlePreIncrement(const IrInstruction& instruction) {

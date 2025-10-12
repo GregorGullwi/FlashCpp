@@ -121,9 +121,34 @@ ParseResult Parser::parse_type_and_name() {
         return ParseResult::error("Expected identifier token", *identifier_token);
     }
 
+    // Check for array declaration: identifier[size]
+    std::optional<ASTNode> array_size;
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+        peek_token()->value() == "[") {
+        consume_token(); // consume '['
+
+        // Parse the array size expression
+        ParseResult size_result = parse_expression();
+        if (size_result.is_error()) {
+            return size_result;
+        }
+        array_size = size_result.node();
+
+        // Expect closing ']'
+        if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
+            peek_token()->value() != "]") {
+            return ParseResult::error("Expected ']' after array size", *current_token_);
+        }
+        consume_token(); // consume ']'
+    }
+
     // Unwrap the optional ASTNode before passing it to emplace_node
     if (auto node = type_specifier_result.node()) {
-        return ParseResult::success(emplace_node<DeclarationNode>(*node, *identifier_token));
+        if (array_size.has_value()) {
+            return ParseResult::success(emplace_node<DeclarationNode>(*node, *identifier_token, array_size));
+        } else {
+            return ParseResult::success(emplace_node<DeclarationNode>(*node, *identifier_token));
+        }
     }
     return ParseResult::error("Invalid type specifier node", *identifier_token);
 }
@@ -977,19 +1002,51 @@ ParseResult Parser::parse_primary_expression()
 		return ParseResult::error("Expected primary expression", *current_token_);
 	}
 
-	// Check for postfix operators (++ and --)
-	if (result.has_value() && peek_token().has_value() &&
-	    peek_token()->type() == Token::Type::Operator) {
-		std::string_view op = peek_token()->value();
-		if (op == "++" || op == "--") {
-			Token operator_token = *current_token_;
-			consume_token(); // consume the postfix operator
+	// Check for postfix operators (++, --, and array subscript [])
+	while (result.has_value() && peek_token().has_value()) {
+		if (peek_token()->type() == Token::Type::Operator) {
+			std::string_view op = peek_token()->value();
+			if (op == "++" || op == "--") {
+				Token operator_token = *current_token_;
+				consume_token(); // consume the postfix operator
 
-			// Create a postfix unary operator node (is_prefix = false)
-			auto postfix_op = emplace_node<ExpressionNode>(
-				UnaryOperatorNode(operator_token, *result, false));
-			return ParseResult::success(postfix_op);
+				// Create a postfix unary operator node (is_prefix = false)
+				result = emplace_node<ExpressionNode>(
+					UnaryOperatorNode(operator_token, *result, false));
+				continue;  // Check for more postfix operators
+			}
 		}
+
+		// Check for array subscript operator []
+		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "[") {
+			Token bracket_token = *peek_token();
+			consume_token(); // consume '['
+
+			// Parse the index expression
+			ParseResult index_result = parse_expression();
+			if (index_result.is_error()) {
+				return index_result;
+			}
+
+			// Expect closing ']'
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
+			    peek_token()->value() != "]") {
+				return ParseResult::error("Expected ']' after array index", *current_token_);
+			}
+			consume_token(); // consume ']'
+
+			// Create array subscript node
+			if (auto index_node = index_result.node()) {
+				result = emplace_node<ExpressionNode>(
+					ArraySubscriptNode(*result, *index_node, bracket_token));
+				continue;  // Check for more postfix operators (e.g., arr[i][j])
+			} else {
+				return ParseResult::error("Invalid array index expression", bracket_token);
+			}
+		}
+
+		// No more postfix operators
+		break;
 	}
 
 	if (result.has_value())
