@@ -1057,3 +1057,68 @@ TEST_CASE("Do-while loops") {
 TEST_CASE("Control flow comprehensive") {
 	run_test_from_file("control_flow_comprehensive.cpp", "Control flow comprehensive", false);
 }
+
+TEST_CASE("While loops comprehensive") {
+	run_test_from_file("while_loops_comprehensive.cpp", "While loops comprehensive", false);
+}
+
+TEST_CASE("While loops with break and continue") {
+	run_test_from_file("while_loops_with_break_continue.cpp", "While loops with break and continue", false);
+}
+
+TEST_CASE("For loops simple") {
+	run_test_from_file("for_loops_simple.cpp", "For loops simple", false);
+}
+
+TEST_CASE("For loops") {
+	run_test_from_file("for_loops.cpp", "For loops", false);
+}
+
+TEST_CASE("Float double mixed") {
+	run_test_from_file("float_double_mixed.cpp", "Float double mixed", false);
+}
+
+TEST_CASE("Float edge cases") {
+	run_test_from_file("float_edge_cases.cpp", "Float edge cases", false);
+}
+
+TEST_CASE("Double literals") {
+	run_test_from_file("double_literals.cpp", "Double literals", false);
+}
+
+TEST_CASE("Array declaration only") {
+	run_test_from_file("test_array_decl_only.cpp", "Array declaration only", false);
+}
+
+TEST_CASE("Array basic") {
+	run_test_from_file("test_array_basic.cpp", "Array basic", false);
+}
+
+TEST_CASE("Array comprehensive") {
+	run_test_from_file("test_arrays_comprehensive.cpp", "Array comprehensive", false);
+}
+
+TEST_CASE("Break and continue") {
+	run_test_from_file("test_break_continue.cpp", "Break and continue", false);
+}
+
+TEST_CASE("Nested break and continue") {
+	run_test_from_file("test_nested_break_continue.cpp", "Nested break and continue", false);
+}
+
+TEST_CASE("Break targets inner loop") {
+	run_test_from_file("test_break_targets_inner.cpp", "Break targets inner loop", false);
+}
+
+TEST_CASE("Compound assignment operators") {
+	run_test_from_file("test_compound_assign.cpp", "Compound assignment operators", false);
+}
+
+TEST_CASE("All loops") {
+	run_test_from_file("test_all_loops.cpp", "All loops", false);
+}
+
+TEST_CASE("All increments") {
+	run_test_from_file("test_all_increments.cpp", "All increments", false);
+}
+
