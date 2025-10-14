@@ -87,6 +87,8 @@ ParseResult Parser::parse_top_level_node()
 	}
 
 	// Check if it's a class or struct declaration
+	// Note: alignas can appear before struct, but we handle that in parse_struct_declaration
+	// If alignas appears before a variable declaration, it will be handled by parse_declaration_or_function_definition
 	if (peek_token()->type() == Token::Type::Keyword &&
 		(peek_token()->value() == "class" || peek_token()->value() == "struct")) {
 		auto result = parse_struct_declaration();
@@ -114,6 +116,9 @@ ParseResult Parser::parse_top_level_node()
 }
 
 ParseResult Parser::parse_type_and_name() {
+    // Check for alignas specifier before the type
+    std::optional<size_t> custom_alignment = parse_alignas_specifier();
+
     // Parse the type specifier
     auto type_specifier_result = parse_type_specifier();
     if (type_specifier_result.is_error()) {
@@ -149,6 +154,11 @@ ParseResult Parser::parse_type_and_name() {
         type_spec.add_pointer_level(ptr_cv);
     }
 
+    // Check for alignas specifier before the identifier (if not already specified)
+    if (!custom_alignment.has_value()) {
+        custom_alignment = parse_alignas_specifier();
+    }
+
     // Parse the identifier (name)
     auto identifier_token = consume_token();
     if (!identifier_token ||
@@ -179,11 +189,19 @@ ParseResult Parser::parse_type_and_name() {
 
     // Unwrap the optional ASTNode before passing it to emplace_node
     if (auto node = type_specifier_result.node()) {
+        ASTNode decl_node;
         if (array_size.has_value()) {
-            return ParseResult::success(emplace_node<DeclarationNode>(*node, *identifier_token, array_size));
+            decl_node = emplace_node<DeclarationNode>(*node, *identifier_token, array_size);
         } else {
-            return ParseResult::success(emplace_node<DeclarationNode>(*node, *identifier_token));
+            decl_node = emplace_node<DeclarationNode>(*node, *identifier_token);
         }
+
+        // Apply custom alignment if specified
+        if (custom_alignment.has_value()) {
+            decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+        }
+
+        return ParseResult::success(decl_node);
     }
     return ParseResult::error("Invalid type specifier node", *identifier_token);
 }
@@ -277,13 +295,23 @@ ParseResult Parser::parse_struct_declaration()
 {
 	ScopedTokenPosition saved_position(*this);
 
+	// Check for alignas specifier before struct/class keyword
+	std::optional<size_t> custom_alignment = parse_alignas_specifier();
+
 	// Consume 'struct' or 'class' keyword
 	auto struct_keyword = consume_token();
-	if (!struct_keyword.has_value()) {
-		return ParseResult::error("Expected 'struct' or 'class' keyword", Token());
+	if (!struct_keyword.has_value() ||
+	    (struct_keyword->value() != "struct" && struct_keyword->value() != "class")) {
+		return ParseResult::error("Expected 'struct' or 'class' keyword",
+		                          struct_keyword.value_or(Token()));
 	}
 
 	bool is_class = (struct_keyword->value() == "class");
+
+	// Check for alignas specifier after struct/class keyword (if not already specified)
+	if (!custom_alignment.has_value()) {
+		custom_alignment = parse_alignas_specifier();
+	}
 
 	// Parse struct name
 	auto name_token = consume_token();
@@ -292,6 +320,11 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	std::string struct_name(name_token->value());
+
+	// Check for alignas specifier after struct name (if not already specified)
+	if (!custom_alignment.has_value()) {
+		custom_alignment = parse_alignas_specifier();
+	}
 
 	// Expect opening brace
 	if (!consume_punctuator("{")) {
@@ -393,6 +426,11 @@ ParseResult Parser::parse_struct_declaration()
 			member_alignment,
 			member_decl.access
 		);
+	}
+
+	// Apply custom alignment if specified
+	if (custom_alignment.has_value()) {
+		struct_info->set_custom_alignment(custom_alignment.value());
 	}
 
 	// Finalize struct layout (add padding)
@@ -720,10 +758,10 @@ ParseResult Parser::parse_statement_or_declaration()
 			return (this->*(keyword_iter->second))();
 		}
 		else {
-			// Check if it's a type specifier keyword (int, float, etc.) or CV-qualifier
+			// Check if it's a type specifier keyword (int, float, etc.) or CV-qualifier or alignas
 			static const std::unordered_set<std::string_view> type_keywords = {
 				"int", "float", "double", "char", "bool", "void",
-				"short", "long", "signed", "unsigned", "const", "volatile"
+				"short", "long", "signed", "unsigned", "const", "volatile", "alignas"
 			};
 
 			if (type_keywords.find(current_token.value()) != type_keywords.end()) {
@@ -1229,6 +1267,64 @@ bool Parser::consume_punctuator(const std::string_view& value)
 		return true;
 	}
 	return false;
+}
+
+std::optional<size_t> Parser::parse_alignas_specifier()
+{
+	// Parse: alignas(constant-expression)
+	// For now, we only support integer literals
+
+	// Check if next token is alignas keyword
+	if (!peek_token().has_value() ||
+	    peek_token()->type() != Token::Type::Keyword ||
+	    peek_token()->value() != "alignas") {
+		return std::nullopt;
+	}
+
+	// Save position in case parsing fails
+	TokenPosition saved_pos = save_token_position();
+
+	consume_token(); // consume "alignas"
+
+	if (!consume_punctuator("(")) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	// Parse the alignment value (must be a constant expression, we support literals for now)
+	auto token = peek_token();
+	if (!token.has_value() || token->type() != Token::Type::Literal) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	// Parse the numeric literal
+	std::string_view value_str = token->value();
+	size_t alignment = 0;
+
+	// Try to parse as integer
+	auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
+	if (result.ec != std::errc()) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	consume_token(); // consume the literal
+
+	if (!consume_punctuator(")")) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	// Validate alignment (must be power of 2)
+	if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	// Success - discard saved position
+	discard_saved_token(saved_pos);
+	return alignment;
 }
 
 ParseResult Parser::parse_primary_expression()

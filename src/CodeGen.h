@@ -374,10 +374,12 @@ private:
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 
 		// Create variable declaration operands
+		// Format: [type, size_in_bits, var_name, custom_alignment]
 		std::vector<IrOperand> operands;
 		operands.emplace_back(type_node.type());
 		operands.emplace_back(static_cast<int>(type_node.size_in_bits()));
 		operands.emplace_back(decl.identifier_token().value());
+		operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
 
 		// For arrays, add the array size
 		if (decl.is_array()) {

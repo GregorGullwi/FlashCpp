@@ -1110,6 +1110,7 @@ private:
 		struct VarDecl {
 			std::string_view var_name{};
 			int size_in_bits{};
+			size_t alignment{};  // Custom alignment from alignas(n), 0 = use natural alignment
 		};
 		std::vector<VarDecl> local_vars;
 
@@ -1120,21 +1121,22 @@ private:
 			if (instruction.getOpcode() == IrOpcode::VariableDecl) {
 				auto size_in_bits = instruction.getOperandAs<int>(1);
 				auto var_name = instruction.getOperandAs<std::string_view>(2);
+				size_t custom_alignment = instruction.getOperandAs<unsigned long long>(3);
 
 				// Check if this is an array declaration (has array size operand)
-				// Format: [type, size, name, array_size_type, array_size_bits, array_size_value]
+				// Format: [type, size, name, custom_alignment, array_size_type, array_size_bits, array_size_value]
 				int total_size_bits = size_in_bits;
-				if (instruction.getOperandCount() >= 6 &&
-				    instruction.isOperandType<Type>(3)) {
+				if (instruction.getOperandCount() >= 7 &&
+				    instruction.isOperandType<Type>(4)) {
 					// This is an array - get the array size
-					if (instruction.isOperandType<unsigned long long>(5)) {
-						uint64_t array_size = instruction.getOperandAs<unsigned long long>(5);
+					if (instruction.isOperandType<unsigned long long>(6)) {
+						uint64_t array_size = instruction.getOperandAs<unsigned long long>(6);
 						total_size_bits = size_in_bits * static_cast<int>(array_size);
 					}
 				}
 
 				func_stack_space.named_vars_size += (total_size_bits / 8);
-				local_vars.push_back(VarDecl{ .var_name = var_name, .size_in_bits = total_size_bits });
+				local_vars.push_back(VarDecl{ .var_name = var_name, .size_in_bits = total_size_bits, .alignment = custom_alignment });
 			}
 			else {
 				for (size_t i = 0; i < instruction.getOperandCount(); ++i) {
@@ -1150,7 +1152,20 @@ private:
 
 		int_fast32_t stack_offset = min_stack_offset;
 		for (const VarDecl& local_var : local_vars) {
-			stack_offset -= local_var.size_in_bits / 8;
+			// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
+			size_t var_alignment = local_var.alignment > 0 ? local_var.alignment : 8;
+
+			// Align the stack offset down to the required alignment
+			// Stack grows downward, so we need to align down (toward more negative values)
+			int_fast32_t aligned_offset = stack_offset;
+			if (var_alignment > 1) {
+				// Round down to nearest multiple of alignment
+				// For negative offsets: (-16 & ~15) = -16, (-15 & ~15) = -16, (-17 & ~15) = -32
+				aligned_offset = (stack_offset - static_cast<int_fast32_t>(var_alignment) + 1) & ~(static_cast<int_fast32_t>(var_alignment) - 1);
+			}
+
+			// Allocate space for the variable
+			stack_offset = aligned_offset - (local_var.size_in_bits / 8);
 			var_scope.identifier_offset.insert_or_assign(local_var.var_name, stack_offset);
 		}
 
@@ -1449,57 +1464,91 @@ private:
 	void handleVariableDecl(const IrInstruction& instruction) {
 		auto var_type = instruction.getOperandAs<Type>(0);
 		auto var_name = instruction.getOperandAs<std::string_view>(2);
+		// Operand 3 is custom_alignment (added for alignas support)
 		StackVariableScope& current_scope = variable_scopes.back();
 		auto var_it = current_scope.identifier_offset.find(var_name);
 		assert(var_it != current_scope.identifier_offset.end());
 
-		bool is_initialized = instruction.getOperandCount() > 3;
+		// Format: [type, size, name, custom_alignment] for uninitialized
+		//         [type, size, name, custom_alignment, init_type, init_size, init_value] for initialized
+		bool is_initialized = instruction.getOperandCount() > 4;
 		X64Register allocated_reg_val = X64Register::RAX; // Default
 
 		if (is_initialized) {
+
 			auto allocated_reg = regAlloc.allocate();
 			allocated_reg_val = allocated_reg.reg;
 			auto dst_offset = var_it->second;
 			regAlloc.set_stack_variable_offset(allocated_reg.reg, dst_offset);
 
-			int src_offset = 0;
-			if (instruction.isOperandType<TempVar>(5)) {
-				auto temp_var = instruction.getOperandAs<TempVar>(5);
-				src_offset = getStackOffsetFromTempVar(temp_var);
-			} else if (instruction.isOperandType<std::string_view>(5)) {
-				auto rvalue_var_name = instruction.getOperandAs<std::string_view>(5);
-				auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
-				assert(src_it != current_scope.identifier_offset.end());
-				src_offset = src_it->second;
-			}
+			// Check if the initializer is a literal value
+			bool is_literal = instruction.isOperandType<unsigned long long>(6) ||
+			                  instruction.isOperandType<int>(6) ||
+			                  instruction.isOperandType<double>(6);
 
-			if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
-				// Source value is already in a register (e.g., from function return)
-				// For struct types, we need to store the entire value to the stack
-				// For other types, we can keep it in a register
-				auto size_in_bits = instruction.getOperandAs<int>(1);
-				int size_bytes = size_in_bits / 8;
+			if (is_literal) {
+				// Load immediate value into register
+				if (instruction.isOperandType<unsigned long long>(6)) {
+					uint64_t value = instruction.getOperandAs<unsigned long long>(6);
 
-				if (var_type == Type::Struct) {
-					// For structs, store directly from source register to destination stack location
-					// This handles the x64 Windows calling convention where small structs (≤8 bytes)
-					// are returned in RAX and need to be stored to the stack for member access
-					auto store_opcodes = generateMovToFrame(src_reg.value(), dst_offset);
-					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-					// Release the allocated register since we're not using it
-					regAlloc.release(allocated_reg.reg);
-				} else {
-					// For non-struct types, move to allocated register
-					auto mov_opcodes = regAlloc.get_reg_reg_move_op_code(allocated_reg.reg, src_reg.value(), size_bytes);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(),
-					                       mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					// MOV reg, imm64
+					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
+					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg.reg) >> 3);
+					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg.reg) & 0x7);
+					std::memcpy(&movInst[2], &value, sizeof(value));
+					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+				} else if (instruction.isOperandType<int>(6)) {
+					int value = instruction.getOperandAs<int>(6);
+
+					// MOV reg, imm32 (sign-extended to 64-bit)
+					std::array<uint8_t, 7> movInst = { 0x48, 0xC7, 0xC0, 0, 0, 0, 0 };
+					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg.reg) >> 3);
+					movInst[2] = 0xC0 + (static_cast<uint8_t>(allocated_reg.reg) & 0x7);
+					std::memcpy(&movInst[3], &value, sizeof(value));
+					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				}
+				// TODO: Handle double literals
 			} else {
-				auto load_opcodes = generateMovFromFrame(allocated_reg.reg, src_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-			}
-		}
+				// Load from memory (TempVar or variable)
+				int src_offset = 0;
+				if (instruction.isOperandType<TempVar>(6)) {
+					auto temp_var = instruction.getOperandAs<TempVar>(6);
+					src_offset = getStackOffsetFromTempVar(temp_var);
+				} else if (instruction.isOperandType<std::string_view>(6)) {
+					auto rvalue_var_name = instruction.getOperandAs<std::string_view>(6);
+					auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
+					assert(src_it != current_scope.identifier_offset.end());
+					src_offset = src_it->second;
+				}
+
+				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
+					// Source value is already in a register (e.g., from function return)
+					// For struct types, we need to store the entire value to the stack
+					// For other types, we can keep it in a register
+					auto size_in_bits = instruction.getOperandAs<int>(1);
+					int size_bytes = size_in_bits / 8;
+
+					if (var_type == Type::Struct) {
+						// For structs, store directly from source register to destination stack location
+						// This handles the x64 Windows calling convention where small structs (≤8 bytes)
+						// are returned in RAX and need to be stored to the stack for member access
+						auto store_opcodes = generateMovToFrame(src_reg.value(), dst_offset);
+						textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+						                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+						// Release the allocated register since we're not using it
+						regAlloc.release(allocated_reg.reg);
+					} else {
+						// For non-struct types, move to allocated register
+						auto mov_opcodes = regAlloc.get_reg_reg_move_op_code(allocated_reg.reg, src_reg.value(), size_bytes);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(),
+						                       mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					}
+				} else {
+					auto load_opcodes = generateMovFromFrame(allocated_reg.reg, src_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
+			} // end else (not literal)
+		} // end if (is_initialized)
 
 		// Add debug information for the local variable
 		if (!current_function_name_.empty()) {

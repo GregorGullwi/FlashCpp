@@ -222,6 +222,7 @@ private:
         bool consume_punctuator(const std::string_view& value);
         bool consume_keyword(const std::string_view& value);
         int get_operator_precedence(const std::string_view& op);
+        std::optional<size_t> parse_alignas_specifier();  // Parse alignas(n) and return alignment value
 
         TokenPosition save_token_position();
         void restore_token_position(const TokenPosition& token_position);

@@ -113,6 +113,7 @@ struct StructTypeInfo {
 	std::vector<StructMember> members;
 	size_t total_size = 0;      // Total size of struct in bytes
 	size_t alignment = 1;       // Alignment requirement of struct
+	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
 
 	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public)
@@ -131,8 +132,17 @@ struct StructTypeInfo {
 	}
 
 	void finalize() {
+		// If custom alignment is specified, use it instead of natural alignment
+		if (custom_alignment > 0) {
+			alignment = custom_alignment;
+		}
+
 		// Pad struct to its alignment
 		total_size = (total_size + alignment - 1) & ~(alignment - 1);
+	}
+
+	void set_custom_alignment(size_t align) {
+		custom_alignment = align;
 	}
 
 	const StructMember* findMember(const std::string& name) const {
@@ -288,9 +298,9 @@ class DeclarationNode {
 public:
 	DeclarationNode() = default;
 	DeclarationNode(ASTNode type_node, Token identifier)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(std::nullopt) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(std::nullopt), custom_alignment_(0) {}
 	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size), custom_alignment_(0) {}
 
 	ASTNode type_node() const { return type_node_; }
 	const Token& identifier_token() const { return identifier_; }
@@ -298,10 +308,15 @@ public:
 	bool is_array() const { return array_size_.has_value(); }
 	std::optional<ASTNode> array_size() const { return array_size_; }
 
+	// Alignment support
+	size_t custom_alignment() const { return custom_alignment_; }
+	void set_custom_alignment(size_t alignment) { custom_alignment_ = alignment; }
+
 private:
 	ASTNode type_node_;
 	Token identifier_;
 	std::optional<ASTNode> array_size_;  // For array declarations like int arr[10]
+	size_t custom_alignment_;            // Custom alignment from alignas(n), 0 = use natural alignment
 };
 
 class IdentifierNode {
