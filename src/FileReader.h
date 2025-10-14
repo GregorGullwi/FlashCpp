@@ -233,7 +233,7 @@ static std::tm localtime_safely(const std::time_t* time) {
 class FileReader {
 public:
 	static constexpr size_t default_result_size = 1024 * 1024;
-	FileReader(const CompileContext& settings, FileTree& tree) : settings_(settings), tree_(tree) {
+	FileReader(CompileContext& settings, FileTree& tree) : settings_(settings), tree_(tree) {
 		addBuiltinDefines();
 		result_.reserve(default_result_size);
 	}
@@ -437,6 +437,9 @@ public:
 			}
 			else if (line.find("#pragma once", 0) == 0) {
 				proccessedHeaders_.insert(std::string(filestack_.top().file_name));
+			}
+			else if (line.find("#pragma pack", 0) == 0) {
+				processPragmaPack(line);
 			}
 			else {
 				if (line.size() > 0 && (line.find_last_of(' ') != line.size() - 1))
@@ -768,6 +771,107 @@ private:
 		return true;
 	}
 
+	void processPragmaPack(const std::string& line) {
+		// Parse #pragma pack directives
+		// Supported formats:
+		//   #pragma pack()           - reset to default (no packing)
+		//   #pragma pack(n)          - set pack alignment to n (1, 2, 4, 8, 16)
+		//   #pragma pack(push)       - push current alignment onto stack
+		//   #pragma pack(push, n)    - push current alignment and set to n
+		//   #pragma pack(pop)        - pop alignment from stack
+
+		// Find the opening parenthesis
+		size_t open_paren = line.find('(');
+		if (open_paren == std::string::npos) {
+			// No parenthesis - ignore (malformed pragma)
+			return;
+		}
+
+		size_t close_paren = line.find(')', open_paren);
+		if (close_paren == std::string::npos) {
+			// No closing parenthesis - ignore (malformed pragma)
+			return;
+		}
+
+		// Extract content between parentheses
+		std::string content = line.substr(open_paren + 1, close_paren - open_paren - 1);
+
+		// Trim whitespace
+		auto trim_start = content.find_first_not_of(" \t");
+		auto trim_end = content.find_last_not_of(" \t");
+		if (trim_start != std::string::npos && trim_end != std::string::npos) {
+			content = content.substr(trim_start, trim_end - trim_start + 1);
+		} else {
+			content.clear();
+		}
+
+		// Handle empty parentheses: #pragma pack()
+		if (content.empty()) {
+			settings_.setPackAlignment(0);  // Reset to default (no packing)
+			return;
+		}
+
+		// Check for push/pop
+		if (content == "push") {
+			settings_.pushPackAlignment();
+			return;
+		}
+
+		if (content == "pop") {
+			settings_.popPackAlignment();
+			return;
+		}
+
+		// Check for "push, n" format
+		size_t comma_pos = content.find(',');
+		if (comma_pos != std::string::npos) {
+			std::string first_part = content.substr(0, comma_pos);
+			std::string second_part = content.substr(comma_pos + 1);
+
+			// Trim both parts
+			auto trim_first_start = first_part.find_first_not_of(" \t");
+			auto trim_first_end = first_part.find_last_not_of(" \t");
+			if (trim_first_start != std::string::npos && trim_first_end != std::string::npos) {
+				first_part = first_part.substr(trim_first_start, trim_first_end - trim_first_start + 1);
+			}
+
+			auto trim_second_start = second_part.find_first_not_of(" \t");
+			auto trim_second_end = second_part.find_last_not_of(" \t");
+			if (trim_second_start != std::string::npos && trim_second_end != std::string::npos) {
+				second_part = second_part.substr(trim_second_start, trim_second_end - trim_second_start + 1);
+			}
+
+			if (first_part == "push") {
+				// Parse the alignment value
+				try {
+					size_t alignment = std::stoull(second_part);
+					// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
+					if (alignment == 0 || alignment == 1 || alignment == 2 ||
+					    alignment == 4 || alignment == 8 || alignment == 16) {
+						settings_.pushPackAlignment(alignment);
+					}
+					// Invalid alignment values are silently ignored (matches MSVC behavior)
+				} catch (...) {
+					// Invalid number - ignore
+				}
+			}
+			return;
+		}
+
+		// Otherwise, try to parse as a single number: #pragma pack(n)
+		try {
+			size_t alignment = std::stoull(content);
+			// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
+			if (alignment == 0 || alignment == 1 || alignment == 2 ||
+			    alignment == 4 || alignment == 8 || alignment == 16) {
+				settings_.setPackAlignment(alignment);
+			}
+			// Invalid alignment values are silently ignored (matches MSVC behavior)
+		} catch (...) {
+			// Invalid number - ignore
+		}
+	}
+
 	void handleDefine(std::istringstream& iss) {
 		DefineDirective define;
 
@@ -882,7 +986,7 @@ private:
 		std::stack<CurrentFile>& filestack_;
 	};
 
-	const CompileContext& settings_;
+	CompileContext& settings_;
 	FileTree& tree_;
 	std::unordered_map<std::string, Directive> defines_;
 	std::unordered_set<std::string> proccessedHeaders_;

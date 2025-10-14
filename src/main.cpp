@@ -79,7 +79,7 @@ int main(int argc, char *argv[]) {
     }
 
     Lexer lexer(file_reader.get_result());
-    Parser parser(lexer);
+    Parser parser(lexer, context);
     auto parse_result = parser.parse();
 
     if (parse_result.is_error()) {

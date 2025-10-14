@@ -16,6 +16,7 @@
 #include "Lexer.h"
 #include "Token.h"
 #include "SymbolTable.h"
+#include "CompileContext.h"
 
 using namespace std::literals::string_view_literals;
 
@@ -106,7 +107,7 @@ class Parser {
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;
 
-        explicit Parser(Lexer& lexer);
+        explicit Parser(Lexer& lexer, CompileContext& context);
 
         ParseResult parse() {
                 ParseResult parseResult;
@@ -145,6 +146,7 @@ public:
 
 private:
         Lexer& lexer_;
+        CompileContext& context_;
         std::optional<Token> current_token_;
         std::vector<ASTNode> ast_nodes_;
         std::string last_error_ = "this feature has not been implemented yet";

@@ -39,7 +39,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
     std::string code = read_test_file(filename);
 
     Lexer lexer(code);
-    Parser parser(lexer);
+    Parser parser(lexer, compile_context);
     auto parse_result = parser.parse();
 
 	CHECK(!parse_result.is_error());
@@ -365,7 +365,7 @@ TEST_SUITE("Parser") {
 			})";
 
 		Lexer lexer(code);
-		Parser parser(lexer);
+		Parser parser(lexer, compile_context);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
@@ -417,7 +417,7 @@ TEST_SUITE("Code gen") {
             })";
 
 		Lexer lexer(code);
-		Parser parser(lexer);
+		Parser parser(lexer, compile_context);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
@@ -742,7 +742,7 @@ TEST_SUITE("Code gen") {
             })";
 
 		Lexer lexer(code);
-		Parser parser(lexer);
+		Parser parser(lexer, compile_context);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
@@ -786,7 +786,7 @@ TEST_SUITE("Code gen") {
          })";
 
 		Lexer lexer(code);
-		Parser parser(lexer);
+		Parser parser(lexer, compile_context);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
@@ -833,7 +833,7 @@ TEST_SUITE("Code gen") {
          })";
 
 		Lexer lexer(code);
-		Parser parser(lexer);
+		Parser parser(lexer, compile_context);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
@@ -881,7 +881,7 @@ TEST_SUITE("Code gen") {
          })";
 
 		Lexer lexer(code);
-		Parser parser(lexer);
+		Parser parser(lexer, compile_context);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
@@ -940,7 +940,7 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 		})";
 
 	Lexer lexer(code);
-	Parser parser(lexer);
+	Parser parser(lexer, compile_context);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 

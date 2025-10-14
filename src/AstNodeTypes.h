@@ -114,6 +114,7 @@ struct StructTypeInfo {
 	size_t total_size = 0;      // Total size of struct in bytes
 	size_t alignment = 1;       // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
+	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
 
 	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public)
@@ -121,14 +122,21 @@ struct StructTypeInfo {
 
 	void addMember(const std::string& member_name, Type member_type, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access = AccessSpecifier::Public) {
-		// Calculate offset with proper alignment
-		size_t offset = (total_size + member_alignment - 1) & ~(member_alignment - 1);
+		// Apply pack alignment if specified
+		// Pack alignment limits the maximum alignment of members
+		size_t effective_alignment = member_alignment;
+		if (pack_alignment > 0 && pack_alignment < member_alignment) {
+			effective_alignment = pack_alignment;
+		}
 
-		members.emplace_back(member_name, member_type, type_index, offset, member_size, member_alignment, access);
+		// Calculate offset with effective alignment
+		size_t offset = (total_size + effective_alignment - 1) & ~(effective_alignment - 1);
+
+		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment, access);
 
 		// Update struct size and alignment
 		total_size = offset + member_size;
-		alignment = std::max(alignment, member_alignment);
+		alignment = std::max(alignment, effective_alignment);
 	}
 
 	void finalize() {
@@ -143,6 +151,10 @@ struct StructTypeInfo {
 
 	void set_custom_alignment(size_t align) {
 		custom_alignment = align;
+	}
+
+	void set_pack_alignment(size_t align) {
+		pack_alignment = align;
 	}
 
 	const StructMember* findMember(const std::string& name) const {

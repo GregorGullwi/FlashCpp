@@ -13,8 +13,8 @@ bool Parser::generate_coff(const std::string& outputFilename) {
 #endif
 }
 
-Parser::Parser(Lexer& lexer)
-    : lexer_(lexer), current_token_(lexer_.next_token()) {
+Parser::Parser(Lexer& lexer, CompileContext& context)
+    : lexer_(lexer), context_(context), current_token_(lexer_.next_token()) {
     initialize_native_types();
     ast_nodes_.reserve(default_ast_tree_size_);
 }
@@ -431,6 +431,12 @@ ParseResult Parser::parse_struct_declaration()
 	// Apply custom alignment if specified
 	if (custom_alignment.has_value()) {
 		struct_info->set_custom_alignment(custom_alignment.value());
+	}
+
+	// Apply pack alignment from #pragma pack
+	size_t pack_alignment = context_.getCurrentPackAlignment();
+	if (pack_alignment > 0) {
+		struct_info->set_pack_alignment(pack_alignment);
 	}
 
 	// Finalize struct layout (add padding)

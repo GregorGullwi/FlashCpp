@@ -4,6 +4,7 @@
 #include <string_view>
 #include <vector>
 #include <optional>
+#include <stack>
 
 class CompileContext {
 public:
@@ -56,6 +57,37 @@ public:
 		preprocessorOnlyMode_ = preprocessorOnlyMode;
 	}
 
+	// #pragma pack state management
+	// Returns the current pack alignment value (0 = no packing, use natural alignment)
+	size_t getCurrentPackAlignment() const {
+		return currentPackAlignment_;
+	}
+
+	// Set the current pack alignment (0 = reset to default, n = pack to n bytes)
+	void setPackAlignment(size_t alignment) {
+		currentPackAlignment_ = alignment;
+	}
+
+	// Push current pack alignment onto stack (for #pragma pack(push))
+	void pushPackAlignment() {
+		packAlignmentStack_.push(currentPackAlignment_);
+	}
+
+	// Push a specific pack alignment onto stack (for #pragma pack(push, n))
+	void pushPackAlignment(size_t alignment) {
+		packAlignmentStack_.push(currentPackAlignment_);
+		currentPackAlignment_ = alignment;
+	}
+
+	// Pop pack alignment from stack (for #pragma pack(pop))
+	void popPackAlignment() {
+		if (!packAlignmentStack_.empty()) {
+			currentPackAlignment_ = packAlignmentStack_.top();
+			packAlignmentStack_.pop();
+		}
+		// If stack is empty, keep current value (matches MSVC behavior)
+	}
+
 private:
 	std::vector<std::string> includeDirs_;
 	std::optional<std::string> inputFile_;
@@ -63,4 +95,8 @@ private:
 	bool verboseMode_ = false;
 	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
 	std::vector<std::string> dependencies_;
+
+	// #pragma pack state
+	size_t currentPackAlignment_ = 0;  // 0 = no packing (use natural alignment)
+	std::stack<size_t> packAlignmentStack_;  // Stack for push/pop operations
 };
