@@ -570,7 +570,7 @@ public:
 
 	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
 	const ASTNode& declaration_node() const { return declaration_node_; }
-	std::optional<ASTNode> initializer() const { return initializer_; }
+	const std::optional<ASTNode>& initializer() const { return initializer_; }
 
 private:
 	ASTNode declaration_node_;

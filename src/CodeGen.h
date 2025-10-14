@@ -398,6 +398,11 @@ private:
 				// Handle brace initialization for structs
 				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 
+				// Add to symbol table first (needed for member store instructions)
+				if (!symbol_table.insert(decl.identifier_token().value(), node.declaration_node())) {
+					assert(false && "Expected identifier to be unique");
+				}
+
 				// First, add the variable declaration without initializer
 				ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), node.declaration().identifier_token());
 
@@ -416,34 +421,29 @@ private:
 								const ASTNode& init_expr = initializers[i];
 
 								// Generate IR for the initializer expression
-								// The initializer can be any expression type, so we need to check what it is
-							std::vector<IrOperand> init_operands;
-							if (init_expr.is<NumericLiteralNode>()) {
-								init_operands = generateNumericLiteralIr(init_expr.as<NumericLiteralNode>());
-							} else if (init_expr.is<IdentifierNode>()) {
-								init_operands = generateIdentifierIr(init_expr.as<IdentifierNode>());
-							} else if (init_expr.is<BinaryOperatorNode>()) {
-								init_operands = generateBinaryOperatorIr(init_expr.as<BinaryOperatorNode>());
-							} else if (init_expr.is<UnaryOperatorNode>()) {
-								init_operands = generateUnaryOperatorIr(init_expr.as<UnaryOperatorNode>());
-							} else if (init_expr.is<FunctionCallNode>()) {
-								init_operands = generateFunctionCallIr(init_expr.as<FunctionCallNode>());
-							} else if (init_expr.is<MemberAccessNode>()) {
-								init_operands = generateMemberAccessIr(init_expr.as<MemberAccessNode>());
-							} else {
-								assert(false && "Unsupported initializer expression type");
-							}
+								std::vector<IrOperand> init_operands;
+								if (init_expr.is<ExpressionNode>()) {
+									init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+								} else {
+									assert(false && "Initializer must be an ExpressionNode");
+								}
 
 								// Generate member store: struct.member = init_expr
 								std::vector<IrOperand> member_store_operands;
 								member_store_operands.emplace_back(member.type);
 								member_store_operands.emplace_back(static_cast<int>(member.size * 8)); // size in bits
 								member_store_operands.emplace_back(decl.identifier_token().value()); // object name
-								member_store_operands.emplace_back(member.name); // member name
+								member_store_operands.emplace_back(std::string_view(member.name)); // member name (convert to string_view)
 								member_store_operands.emplace_back(static_cast<int>(member.offset)); // member offset
 
-								// Add the value operands
-								member_store_operands.insert(member_store_operands.end(), init_operands.begin(), init_operands.end());
+								// Add only the value from init_operands (init_operands = [type, size, value])
+								// We only need the value (index 2)
+								if (init_operands.size() >= 3) {
+									member_store_operands.emplace_back(init_operands[2]);
+								} else {
+									// Error: invalid init operands
+									assert(false && "Invalid initializer operands");
+								}
 
 								ir_.addInstruction(IrOpcode::MemberStore, std::move(member_store_operands), decl.identifier_token());
 							}

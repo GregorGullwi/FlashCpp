@@ -777,15 +777,20 @@ ParseResult Parser::parse_variable_declaration()
 
 	// Helper lambda to create a single variable declaration
 	auto create_var_decl = [&](DeclarationNode& decl, std::optional<ASTNode> init_expr) -> ASTNode {
+
 		// Add the variable to the symbol table
 		const Token& identifier_token = decl.identifier_token();
 		gSymbolTable.insert(identifier_token.value(), emplace_node<DeclarationNode>(decl));
 
 		// Create and return a VariableDeclarationNode
-		return emplace_node<VariableDeclarationNode>(
+		ASTNode var_decl_node = emplace_node<VariableDeclarationNode>(
 			emplace_node<DeclarationNode>(decl),
 			init_expr
 		);
+
+		const VariableDeclarationNode& var_decl = var_decl_node.as<VariableDeclarationNode>();
+
+		return var_decl_node;
 	};
 
 	// Process the first declaration
