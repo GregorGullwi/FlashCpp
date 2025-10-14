@@ -1488,7 +1488,25 @@ private:
 
 			if (is_literal) {
 				// Load immediate value into register
-				if (instruction.isOperandType<unsigned long long>(6)) {
+				if (instruction.isOperandType<double>(6)) {
+					// Handle double/float literals
+					double value = instruction.getOperandAs<double>(6);
+
+					// Convert double to bit pattern
+					uint64_t bits;
+					std::memcpy(&bits, &value, sizeof(bits));
+
+					// For floating-point types, we need to use XMM registers
+					// But for now, we'll store the bit pattern in a GPR and let the register allocator handle it
+					// This matches the pattern used for function arguments
+
+					// MOV reg, imm64 (load bit pattern)
+					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
+					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg.reg) >> 3);
+					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg.reg) & 0x7);
+					std::memcpy(&movInst[2], &bits, sizeof(bits));
+					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+				} else if (instruction.isOperandType<unsigned long long>(6)) {
 					uint64_t value = instruction.getOperandAs<unsigned long long>(6);
 
 					// MOV reg, imm64
@@ -1507,7 +1525,6 @@ private:
 					std::memcpy(&movInst[3], &value, sizeof(value));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				}
-				// TODO: Handle double literals
 			} else {
 				// Load from memory (TempVar or variable)
 				int src_offset = 0;
