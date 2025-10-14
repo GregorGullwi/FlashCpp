@@ -365,11 +365,19 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Get member size and alignment
 		size_t member_size = type_spec.size_in_bits() / 8;
-		size_t member_alignment = member_size;  // Simple alignment rule for now
+		size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
-		// For struct types, get size from the struct type info
+		// For struct types, get size and alignment from the struct type info
 		if (type_spec.type() == Type::Struct) {
-			const TypeInfo* member_type_info = gTypesByName[std::string(decl.identifier_token().value())];
+			// Look up the struct type by type_index
+			const TypeInfo* member_type_info = nullptr;
+			for (const auto& ti : gTypeInfo) {
+				if (ti.type_index_ == type_spec.type_index()) {
+					member_type_info = &ti;
+					break;
+				}
+			}
+
 			if (member_type_info && member_type_info->getStructInfo()) {
 				member_size = member_type_info->getStructInfo()->total_size;
 				member_alignment = member_type_info->getStructInfo()->alignment;

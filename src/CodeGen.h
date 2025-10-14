@@ -944,9 +944,16 @@ private:
 		ASTNode object_node = memberAccessNode.object();
 		std::string_view member_name = memberAccessNode.member_name();
 
+		// Variables to hold the base object info
+		std::variant<std::string_view, TempVar> base_object;
+		Type base_type = Type::Void;
+		size_t base_type_index = 0;
+
 		// Unwrap ExpressionNode if needed
 		if (object_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = object_node.as<ExpressionNode>();
+
+			// Case 1: Simple identifier (e.g., obj.member)
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
 				std::string_view object_name = object_ident.name();
@@ -967,82 +974,86 @@ private:
 					return {};
 				}
 
-				// Get the struct type info
-				const TypeInfo* type_info = nullptr;
-				for (const auto& ti : gTypeInfo) {
-					if (ti.type_index_ == object_type.type_index()) {
-						type_info = &ti;
-						break;
+				base_object = object_name;
+				base_type = object_type.type();
+				base_type_index = object_type.type_index();
+			}
+			// Case 2: Nested member access (e.g., obj.inner.member)
+			else if (std::holds_alternative<MemberAccessNode>(expr)) {
+				const MemberAccessNode& nested_access = std::get<MemberAccessNode>(expr);
+
+				// Recursively generate IR for the nested member access
+				std::vector<IrOperand> nested_result = generateMemberAccessIr(nested_access);
+				if (nested_result.empty()) {
+					return {};
+				}
+
+				// The result is [type, size_bits, temp_var, type_index]
+				// We need to add type_index to the return value
+				base_type = std::get<Type>(nested_result[0]);
+				// size_bits is in nested_result[1]
+				base_object = std::get<TempVar>(nested_result[2]);
+
+				// For nested member access, we need to get the type_index from the result
+				// The base_type should be Type::Struct
+				if (base_type != Type::Struct) {
+					assert(false && "Nested member access on non-struct type");
+					return {};
+				}
+
+				// Get the type_index from the nested result (if available)
+				if (nested_result.size() >= 4) {
+					base_type_index = std::get<size_t>(nested_result[3]);
+				} else {
+					// Fallback: search through gTypeInfo (less reliable)
+					base_type_index = 0;
+					for (const auto& ti : gTypeInfo) {
+						if (ti.type_ == Type::Struct && ti.getStructInfo()) {
+							base_type_index = ti.type_index_;
+							break;
+						}
 					}
 				}
-
-				if (!type_info || !type_info->getStructInfo()) {
-					assert(false && "Struct type info not found");
-					return {};
-				}
-
-				const StructTypeInfo* struct_info = type_info->getStructInfo();
-				const StructMember* member = struct_info->findMember(std::string(member_name));
-
-				if (!member) {
-					assert(false && "Member not found in struct");
-					return {};
-				}
-
-				// Create a temporary variable for the result
-				TempVar result_var = var_counter.next();
-
-				// Build IR operands: [result_var, member_type, member_size, object_name, member_name, offset]
-				irOperands.emplace_back(result_var);
-				irOperands.emplace_back(member->type);
-				irOperands.emplace_back(static_cast<int>(member->size * 8));  // Convert bytes to bits
-				irOperands.emplace_back(object_name);
-				irOperands.emplace_back(member_name);
-				irOperands.emplace_back(static_cast<int>(member->offset));
-
-				// Add the member access instruction
-				ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());
-
-				// Return the result variable with its type and size
-				return { member->type, static_cast<int>(member->size * 8), result_var };
 			}
 			else {
-				// TODO: Support chained member access (e.g., obj.member1.member2)
-				assert(false && "Member access on complex expression not yet supported");
+				assert(false && "Member access on unsupported expression type");
 				return {};
 			}
 		}
+		else if (object_node.is<IdentifierNode>()) {
+			const IdentifierNode& object_ident = object_node.as<IdentifierNode>();
+			std::string_view object_name = object_ident.name();
 
-		// For now, we only support direct member access on identifiers (e.g., obj.member)
-		// TODO: Support chained member access (e.g., obj.member1.member2)
-		if (!object_node.is<IdentifierNode>()) {
-			assert(false && "Member access on non-identifier not yet supported");
+			// Look up the object in the symbol table
+			const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+			if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
+				assert(false && "Object not found in symbol table");
+				return {};
+			}
+
+			const DeclarationNode& object_decl = symbol->as<DeclarationNode>();
+			const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
+
+			// Verify this is a struct type
+			if (object_type.type() != Type::Struct) {
+				assert(false && "Member access on non-struct type");
+				return {};
+			}
+
+			base_object = object_name;
+			base_type = object_type.type();
+			base_type_index = object_type.type_index();
+		}
+		else {
+			assert(false && "Member access on unsupported object type");
 			return {};
 		}
 
-		const IdentifierNode& object_ident = object_node.as<IdentifierNode>();
-		std::string_view object_name = object_ident.name();
-
-		// Look up the object in the symbol table
-		const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-		if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
-			assert(false && "Object not found in symbol table");
-			return {};
-		}
-
-		const DeclarationNode& object_decl = symbol->as<DeclarationNode>();
-		const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
-
-		// Verify this is a struct type
-		if (object_type.type() != Type::Struct) {
-			assert(false && "Member access on non-struct type");
-			return {};
-		}
-
+		// Now we have the base object (either a name or a temp var) and its type
 		// Get the struct type info
 		const TypeInfo* type_info = nullptr;
 		for (const auto& ti : gTypeInfo) {
-			if (ti.type_index_ == object_type.type_index()) {
+			if (ti.type_index_ == base_type_index) {
 				type_info = &ti;
 				break;
 			}
@@ -1064,19 +1075,27 @@ private:
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
-		// Build IR operands: [result_var, member_type, member_size, object_name, member_name, offset]
+		// Build IR operands: [result_var, member_type, member_size, object_name/temp, member_name, offset]
 		irOperands.emplace_back(result_var);
 		irOperands.emplace_back(member->type);
 		irOperands.emplace_back(static_cast<int>(member->size * 8));  // Convert bytes to bits
-		irOperands.emplace_back(object_name);
-		irOperands.emplace_back(member_name);
+
+		// Add the base object (either string_view or TempVar)
+		if (std::holds_alternative<std::string_view>(base_object)) {
+			irOperands.emplace_back(std::get<std::string_view>(base_object));
+		} else {
+			irOperands.emplace_back(std::get<TempVar>(base_object));
+		}
+
+		irOperands.emplace_back(std::string_view(member_name));
 		irOperands.emplace_back(static_cast<int>(member->offset));
 
 		// Add the member access instruction
 		ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());
 
-		// Return the result variable with its type and size
-		return { member->type, static_cast<int>(member->size * 8), result_var };
+		// Return the result variable with its type, size, and type_index (for nested access)
+		// Format: [type, size_bits, temp_var, type_index]
+		return { member->type, static_cast<int>(member->size * 8), result_var, member->type_index };
 	}
 
 	Ir ir_;

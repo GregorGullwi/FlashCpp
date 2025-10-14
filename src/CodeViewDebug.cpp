@@ -194,9 +194,6 @@ void DebugInfoBuilder::addLineMapping(uint32_t code_offset, uint32_t line_number
         if (current_function_lines_.empty() || current_function_lines_.rbegin()->second != line_number) {
             current_function_lines_.emplace_back(code_offset, line_number);
         }
-        else {
-            std::cerr << "DEBUG: Ignoring duplicate line number (for now)" << line_number << " with function=" << current_function_name_ << std::endl;
-        }
     }
 }
 

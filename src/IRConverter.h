@@ -590,22 +590,14 @@ public:
 		// Group instructions by function for stack space calculation
 		groupInstructionsByFunction(ir);
 
-		std::cerr << "DEBUG: Total IR instructions: " << ir.getInstructions().size() << std::endl;
-		size_t instruction_index = 0;
 		for (const auto& instruction : ir.getInstructions()) {
-			std::cerr << "DEBUG: Processing instruction " << instruction_index << " of " << ir.getInstructions().size() << std::endl;
-			instruction_index++;
 			// Add line mapping for debug information if line number is available
 			if (instruction.getOpcode() != IrOpcode::FunctionDecl && instruction.getOpcode() != IrOpcode::Return && instruction.getLineNumber() > 0) {
-				std::cerr << "DEBUG: Adding line mapping for line " << instruction.getLineNumber()
-					<< " (opcode: " << static_cast<int>(instruction.getOpcode()) << ")" << std::endl;
 				addLineMapping(instruction.getLineNumber());
 			}
 
-			std::cerr << "DEBUG: Processing instruction opcode: " << static_cast<int>(instruction.getOpcode()) << std::endl;
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
-				std::cerr << "DEBUG: Found FunctionDecl instruction" << std::endl;
 				handleFunctionDecl(instruction);
 				break;
 			case IrOpcode::VariableDecl:
@@ -828,14 +820,10 @@ public:
 				assert(false && "Not implemented yet");
 				break;
 			}
-			std::cerr << "DEBUG: Finished processing instruction " << instruction_index - 1 << std::endl;
 		}
-
-		std::cerr << "DEBUG: Finished processing all IR instructions" << std::endl;
 
 		// Use the provided source filename, or fall back to a default if not provided
 		std::string actual_source_file = source_filename.empty() ? "test_debug.cpp" : std::string(source_filename);
-		std::cerr << "Adding source file to debug info: '" << actual_source_file << "'" << std::endl;
 		writer.add_source_file(actual_source_file);
 
 		finalizeSections();
@@ -1569,14 +1557,17 @@ private:
 			case X64Register::R13: return 13;
 			case X64Register::R14: return 14;
 			case X64Register::R15: return 15;
+			// XMM registers (SSE/AVX)
+			case X64Register::XMM0: return 154;  // CV_AMD64_XMM0
+			case X64Register::XMM1: return 155;  // CV_AMD64_XMM1
+			case X64Register::XMM2: return 156;  // CV_AMD64_XMM2
+			case X64Register::XMM3: return 157;  // CV_AMD64_XMM3
 			default: assert(false && "Unsupported X64Register");
 		}
 	}
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		auto func_name = instruction.getOperandAs<std::string_view>(2);
-
-		std::cerr << "DEBUG: handleFunctionDecl called for function: " << func_name << std::endl;
 
 		// Extract function signature information for proper C++20 name mangling
 		auto return_type = instruction.getOperandAs<Type>(0);
@@ -1592,13 +1583,9 @@ private:
 
 		// Add function signature to the object file writer for proper mangling
 		writer.addFunctionSignature(std::string(func_name), return_type, parameter_types);
-		std::cerr << "DEBUG: Added function signature for " << func_name
-			<< " with return type " << static_cast<int>(return_type)
-			<< " and " << parameter_types.size() << " parameters" << std::endl;
 
 		// Finalize previous function before starting new one
 		if (!current_function_name_.empty()) {
-			std::cerr << "DEBUG: Finalizing previous function " << current_function_name_ << " before starting " << func_name << std::endl;
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length
@@ -1606,7 +1593,6 @@ private:
 			writer.set_function_debug_range(current_function_name_, 0, 0);	// doesn't seem needed
 
 			// Add exception handling information (required for x64) - once per function
-			std::cerr << "DEBUG: Adding exception info for completed function " << current_function_name_ << std::endl;
 			writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
 		}
 
@@ -1642,7 +1628,6 @@ private:
 		// Add line mapping for function declaration (now that current function is set)
 		if (instruction.getLineNumber() > 0) {
 			// Also add line mapping for function opening brace (next line)
-			std::cerr << "DEBUG: Adding function opening brace line mapping for line " << (instruction.getLineNumber() + 1) << std::endl;
 			addLineMapping(instruction.getLineNumber() + 1);
 		}
 
@@ -3243,24 +3228,38 @@ private:
 
 	void handleMemberAccess(const IrInstruction& instruction) {
 		// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
-		// Format: [result_var, member_type, member_size, object_name, member_name, offset]
+		// Format: [result_var, member_type, member_size, object_name/temp_var, member_name, offset]
 		assert(instruction.getOperandCount() == 6 && "MemberAccess must have 6 operands");
 
 		auto result_var = instruction.getOperandAs<TempVar>(0);
 		auto member_type = instruction.getOperandAs<Type>(1);
 		auto member_size_bits = instruction.getOperandAs<int>(2);
-		auto object_name = std::string(instruction.getOperandAs<std::string_view>(3));
+		// Operand 3 can be either a string_view (variable name) or TempVar (nested access result)
 		auto member_name = instruction.getOperandAs<std::string_view>(4);
 		auto member_offset = instruction.getOperandAs<int>(5);
 
-		// Get the object's stack offset
+		// Get the object's base stack offset
+		int32_t object_base_offset = 0;
 		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(object_name);
-		if (it == current_scope.identifier_offset.end()) {
-			assert(false && "Struct object not found in scope");
+
+		// Check if operand 3 is a string_view (variable name) or TempVar (nested access)
+		if (instruction.isOperandType<std::string_view>(3)) {
+			// Simple case: object is a variable name
+			auto object_name = std::string(instruction.getOperandAs<std::string_view>(3));
+			auto it = current_scope.identifier_offset.find(object_name);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Struct object not found in scope");
+				return;
+			}
+			object_base_offset = it->second;
+		} else if (instruction.isOperandType<TempVar>(3)) {
+			// Nested case: object is the result of a previous member access
+			auto object_temp = instruction.getOperandAs<TempVar>(3);
+			object_base_offset = getStackOffsetFromTempVar(object_temp);
+		} else {
+			assert(false && "MemberAccess operand 3 must be string_view or TempVar");
 			return;
 		}
-		int32_t object_base_offset = it->second;
 
 		// Calculate the member's actual stack offset
 		// The object is at [RBP + object_base_offset]
@@ -3342,12 +3341,12 @@ private:
 
 	void handleMemberStore(const IrInstruction& instruction) {
 		// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
-		// Format: [member_type, member_size, object_name, member_name, offset, value]
+		// Format: [member_type, member_size, object_name/temp_var, member_name, offset, value]
 		assert(instruction.getOperandCount() == 6 && "MemberStore must have 6 operands");
 
 		auto member_type = instruction.getOperandAs<Type>(0);
 		auto member_size_bits = instruction.getOperandAs<int>(1);
-		auto object_name = std::string(instruction.getOperandAs<std::string_view>(2));
+		// Operand 2 can be either a string_view (variable name) or TempVar (nested access result)
 		auto member_name = instruction.getOperandAs<std::string_view>(3);
 		auto member_offset = instruction.getOperandAs<int>(4);
 
@@ -3374,14 +3373,28 @@ private:
 			return;
 		}
 
-		// Get the object's stack offset
+		// Get the object's base stack offset
+		int32_t object_base_offset = 0;
 		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(object_name);
-		if (it == current_scope.identifier_offset.end()) {
-			assert(false && "Struct object not found in scope");
+
+		// Check if operand 2 is a string_view (variable name) or TempVar (nested access)
+		if (instruction.isOperandType<std::string_view>(2)) {
+			// Simple case: object is a variable name
+			auto object_name = std::string(instruction.getOperandAs<std::string_view>(2));
+			auto it = current_scope.identifier_offset.find(object_name);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Struct object not found in scope");
+				return;
+			}
+			object_base_offset = it->second;
+		} else if (instruction.isOperandType<TempVar>(2)) {
+			// Nested case: object is the result of a previous member access
+			auto object_temp = instruction.getOperandAs<TempVar>(2);
+			object_base_offset = getStackOffsetFromTempVar(object_temp);
+		} else {
+			assert(false && "MemberStore operand 2 must be string_view or TempVar");
 			return;
 		}
-		int32_t object_base_offset = it->second;
 
 		// Calculate the member's actual stack offset
 		// For a struct at [RBP - 8] with member at offset 4:
@@ -3734,20 +3747,13 @@ private:
 	void handleConditionalBranch(const IrInstruction& instruction) {
 		// Conditional branch: test condition, jump if true to then_label, otherwise fall through to else_label
 		// Operands: [type, size, condition_value, then_label, else_label]
-		std::cerr << "DEBUG: handleConditionalBranch called with " << instruction.getOperandCount() << " operands" << std::endl;
 		assert(instruction.getOperandCount() >= 5 && "ConditionalBranch must have at least 5 operands");
 
-		std::cerr << "DEBUG: Extracting operands..." << std::endl;
 		Type condition_type = instruction.getOperandAs<Type>(0);
-		std::cerr << "DEBUG: Got condition_type" << std::endl;
 		int condition_size = instruction.getOperandAs<int>(1);
-		std::cerr << "DEBUG: Got condition_size" << std::endl;
 		auto condition_value = instruction.getOperand(2);
-		std::cerr << "DEBUG: Got condition_value" << std::endl;
 		auto then_label = instruction.getOperandAs<std::string>(3);
-		std::cerr << "DEBUG: Got then_label: " << then_label << std::endl;
 		auto else_label = instruction.getOperandAs<std::string>(4);
-		std::cerr << "DEBUG: Got else_label: " << else_label << std::endl;
 
 		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
@@ -3819,7 +3825,6 @@ private:
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (!current_function_name_.empty()) {
-			std::cerr << "DEBUG: Finalizing last function " << current_function_name_ << " in finalizeSections" << std::endl;
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length
@@ -3831,7 +3836,6 @@ private:
 			}
 
 			// Add exception handling information (required for x64) - once per function
-			std::cerr << "DEBUG: Adding exception info for last function " << current_function_name_ << std::endl;
 			writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
 
 			// Clear the current function state
@@ -3847,15 +3851,12 @@ private:
 
 	void patchBranches() {
 		// Patch all pending branch instructions with correct offsets
-		std::cerr << "DEBUG: patchBranches called with " << pending_branches_.size() << " pending branches" << std::endl;
 		for (const auto& branch : pending_branches_) {
-			std::cerr << "DEBUG: Patching branch to label: " << branch.target_label << std::endl;
 			auto label_it = label_positions_.find(branch.target_label);
 			if (label_it == label_positions_.end()) {
 				std::cerr << "ERROR: Label not found: " << branch.target_label << std::endl;
 				continue;
 			}
-			std::cerr << "DEBUG: Found label at position: " << label_it->second << std::endl;
 
 			uint32_t label_offset = label_it->second;
 			uint32_t branch_end = branch.patch_position + 4; // Position after the 4-byte offset
@@ -3875,11 +3876,7 @@ private:
 	void addLineMapping(uint32_t line_number, int32_t manual_offset = 0) {
 		if (!current_function_name_.empty()) {
 			uint32_t code_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_ + manual_offset;
-			std::cerr << "DEBUG: Line mapping added - function: " << current_function_name_
-			         << ", offset: " << code_offset << ", line: " << line_number << std::endl;
 			writer.add_line_mapping(code_offset, line_number);
-		} else {
-			std::cerr << "DEBUG: Line mapping SKIPPED (no current function) - line: " << line_number << std::endl;
 		}
 	}
 

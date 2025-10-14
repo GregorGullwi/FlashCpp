@@ -183,6 +183,42 @@ TypeInfo& add_struct_type(std::string name);
 
 void initialize_native_types();
 
+// Get the natural alignment for a type (in bytes)
+// This follows the x64 Windows ABI alignment rules
+inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
+	switch (type) {
+		case Type::Void:
+			return 1;
+		case Type::Bool:
+		case Type::Char:
+		case Type::UnsignedChar:
+			return 1;
+		case Type::Short:
+		case Type::UnsignedShort:
+			return 2;
+		case Type::Int:
+		case Type::UnsignedInt:
+		case Type::Long:
+		case Type::UnsignedLong:
+		case Type::Float:
+			return 4;
+		case Type::LongLong:
+		case Type::UnsignedLongLong:
+		case Type::Double:
+			return 8;
+		case Type::LongDouble:
+			// On x64 Windows, long double is 8 bytes (same as double)
+			return 8;
+		case Type::Struct:
+			// For structs, alignment is determined by the struct's alignment field
+			// This should be passed separately
+			return type_size_bytes;
+		default:
+			// For other types, use the size as alignment (up to 8 bytes max on x64)
+			return std::min(type_size_bytes, size_t(8));
+	}
+}
+
 // Type utilities
 bool is_integer_type(Type type);
 bool is_signed_integer_type(Type type);
