@@ -1095,9 +1095,11 @@ private:
 		// Add the member access instruction
 		ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());
 
-		// Return the result variable with its type, size, and type_index (for nested access)
-		// Format: [type, size_bits, temp_var, type_index]
-		return { member->type, static_cast<int>(member->size * 8), result_var, member->type_index };
+		// Return the result variable with its type and size (standard 3-operand format)
+		// Format: [type, size_bits, temp_var]
+		// Note: type_index is not returned because it's not needed for arithmetic operations
+		// and would break binary operators that expect exactly 3 operands per side
+		return { member->type, static_cast<int>(member->size * 8), result_var };
 	}
 
 	Ir ir_;
