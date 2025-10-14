@@ -1133,3 +1133,15 @@ TEST_CASE("Const test") {
 TEST_CASE("Struct member access") {
 	run_test_from_file("test_struct_simple.cpp", "Struct member access", false);
 }
+
+TEST_CASE("Alignas:Struct") {
+	run_test_from_file("test_alignas.cpp", "Alignas on struct declarations", false);
+}
+
+TEST_CASE("Alignas:Variables") {
+	run_test_from_file("test_alignas_var.cpp", "Alignas on local variables", false);
+}
+
+TEST_CASE("Alignas:NestedStructs") {
+	run_test_from_file("test_nested_struct.cpp", "Nested struct alignment", false);
+}
