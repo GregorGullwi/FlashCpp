@@ -1525,6 +1525,16 @@ private:
 					std::memcpy(&movInst[3], &value, sizeof(value));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				}
+
+				// Store the value from register to stack
+				// This is necessary so that later accesses to the variable can read from the stack
+				auto store_opcodes = generateMovToFrame(allocated_reg.reg, dst_offset);
+				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+				// Release the register since the value is now in the stack
+				// This ensures future accesses will load from the stack instead of using a stale register value
+				regAlloc.release(allocated_reg.reg);
 			} else {
 				// Load from memory (TempVar or variable)
 				int src_offset = 0;

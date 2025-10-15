@@ -500,6 +500,14 @@ private:
 			const auto& expr = std::get<MemberAccessNode>(exprNode);
 			return generateMemberAccessIr(expr);
 		}
+		else if (std::holds_alternative<SizeofExprNode>(exprNode)) {
+			const auto& expr = std::get<SizeofExprNode>(exprNode);
+			return generateSizeofIr(expr);
+		}
+		else if (std::holds_alternative<OffsetofExprNode>(exprNode)) {
+			const auto& expr = std::get<OffsetofExprNode>(exprNode);
+			return generateOffsetofIr(expr);
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -546,6 +554,31 @@ private:
 		int fromSize = get_type_size_bits(fromType);
 		int toSize = get_type_size_bits(toType);
 
+		// Check if the value is a compile-time constant (literal)
+		// operands format: [type, size, value]
+		bool is_literal = (operands.size() == 3) &&
+		                  (std::holds_alternative<unsigned long long>(operands[2]) ||
+		                   std::holds_alternative<int>(operands[2]) ||
+		                   std::holds_alternative<double>(operands[2]));
+
+		if (is_literal) {
+			// For literal values, just convert the value directly without creating a TempVar
+			// This allows the literal to be used as an immediate value in instructions
+			if (std::holds_alternative<unsigned long long>(operands[2])) {
+				unsigned long long value = std::get<unsigned long long>(operands[2]);
+				// For integer literals, the value remains the same (truncation/extension happens at runtime)
+				return { toType, toSize, value };
+			} else if (std::holds_alternative<int>(operands[2])) {
+				int value = std::get<int>(operands[2]);
+				// Convert to unsigned long long for consistency
+				return { toType, toSize, static_cast<unsigned long long>(value) };
+			} else if (std::holds_alternative<double>(operands[2])) {
+				double value = std::get<double>(operands[2]);
+				return { toType, toSize, value };
+			}
+		}
+
+		// For non-literal values (variables, TempVars), create a conversion instruction
 		TempVar resultVar = var_counter.next();
 		std::vector<IrOperand> conversionOperands;
 		conversionOperands.push_back(resultVar);
@@ -1100,6 +1133,118 @@ private:
 		// Note: type_index is not returned because it's not needed for arithmetic operations
 		// and would break binary operators that expect exactly 3 operands per side
 		return { member->type, static_cast<int>(member->size * 8), result_var };
+	}
+
+	std::vector<IrOperand> generateSizeofIr(const SizeofExprNode& sizeofNode) {
+		size_t size_in_bytes = 0;
+
+		if (sizeofNode.is_type()) {
+			// sizeof(type)
+			const ASTNode& type_node = sizeofNode.type_or_expr();
+			if (!type_node.is<TypeSpecifierNode>()) {
+				assert(false && "sizeof type argument must be TypeSpecifierNode");
+				return {};
+			}
+
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+			Type type = type_spec.type();
+
+			// Handle struct types
+			if (type == Type::Struct) {
+				size_t type_index = type_spec.type_index();
+				if (type_index >= gTypeInfo.size()) {
+					assert(false && "Invalid type index for struct");
+					return {};
+				}
+
+				const TypeInfo& type_info = gTypeInfo[type_index];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (!struct_info) {
+					assert(false && "Struct type info not found");
+					return {};
+				}
+
+				size_in_bytes = struct_info->total_size;
+			}
+			else {
+				// For primitive types, convert bits to bytes
+				size_in_bytes = type_spec.size_in_bits() / 8;
+			}
+		}
+		else {
+			// sizeof(expression) - evaluate the type of the expression
+			const ASTNode& expr_node = sizeofNode.type_or_expr();
+			if (!expr_node.is<ExpressionNode>()) {
+				assert(false && "sizeof expression argument must be ExpressionNode");
+				return {};
+			}
+
+			// Generate IR for the expression to get its type
+			auto expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
+			if (expr_operands.empty()) {
+				return {};
+			}
+
+			// Extract type and size from the expression result
+			Type expr_type = std::get<Type>(expr_operands[0]);
+			int size_in_bits = std::get<int>(expr_operands[1]);
+
+			// Handle struct types
+			if (expr_type == Type::Struct) {
+				// For struct expressions, we need to look up the type index
+				// This is a simplification - in a full implementation we'd track type_index through expressions
+				assert(false && "sizeof(struct_expression) not fully implemented yet");
+				return {};
+			}
+			else {
+				size_in_bytes = size_in_bits / 8;
+			}
+		}
+
+		// Return sizeof result as a constant unsigned long long (size_t equivalent)
+		// Format: [type, size_bits, value]
+		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+	}
+
+	std::vector<IrOperand> generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
+		// offsetof(struct_type, member)
+		const ASTNode& type_node = offsetofNode.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			assert(false && "offsetof type argument must be TypeSpecifierNode");
+			return {};
+		}
+
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		if (type_spec.type() != Type::Struct) {
+			assert(false && "offsetof requires a struct type");
+			return {};
+		}
+
+		// Get the struct type info
+		size_t type_index = type_spec.type_index();
+		if (type_index >= gTypeInfo.size()) {
+			assert(false && "Invalid type index for struct");
+			return {};
+		}
+
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		if (!struct_info) {
+			assert(false && "Struct type info not found");
+			return {};
+		}
+
+		// Find the member
+		std::string_view member_name = offsetofNode.member_name();
+		const StructMember* member = struct_info->findMember(std::string(member_name));
+		if (!member) {
+			assert(false && "Member not found in struct");
+			return {};
+		}
+
+		// Return offset as a constant unsigned long long (size_t equivalent)
+		// Format: [type, size_bits, value]
+		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member->offset) };
 	}
 
 	Ir ir_;

@@ -79,6 +79,51 @@ ParseResult Parser::parse_top_level_node()
 	// error
 	ScopedTokenPosition saved_position(*this);
 
+	// Check for #pragma pack directives
+	if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "#") {
+		consume_token(); // consume '#'
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+		    peek_token()->value() == "pragma") {
+			consume_token(); // consume 'pragma'
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+			    peek_token()->value() == "pack") {
+				consume_token(); // consume 'pack'
+
+				if (!consume_punctuator("(")) {
+					return ParseResult::error("Expected '(' after '#pragma pack'", *current_token_);
+				}
+
+				// Check if it's empty: #pragma pack()
+				if (consume_punctuator(")")) {
+					context_.setPackAlignment(0); // Reset to default
+					return saved_position.success();
+				}
+
+				// Try to parse a number
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Literal) {
+					std::string_view value_str = peek_token()->value();
+					try {
+						size_t alignment = std::stoull(std::string(value_str));
+						if (alignment == 0 || alignment == 1 || alignment == 2 ||
+						    alignment == 4 || alignment == 8 || alignment == 16) {
+							context_.setPackAlignment(alignment);
+							consume_token(); // consume the number
+							if (!consume_punctuator(")")) {
+								return ParseResult::error("Expected ')' after pack alignment value", *current_token_);
+							}
+							return saved_position.success();
+						}
+					} catch (...) {
+						// Invalid number
+					}
+				}
+
+				// If we get here, it's an unsupported pragma pack format
+				return ParseResult::error("Unsupported #pragma pack format", *current_token_);
+			}
+		}
+	}
+
 	// Check if it's a namespace declaration
 	if (peek_token()->type() == Token::Type::Keyword &&
 		peek_token()->value() == "namespace") {
@@ -391,6 +436,12 @@ ParseResult Parser::parse_struct_declaration()
 	TypeInfo& struct_type_info = add_struct_type(struct_name);
 	auto struct_info = std::make_unique<StructTypeInfo>(struct_name, struct_ref.default_access());
 
+	// Apply pack alignment from #pragma pack BEFORE adding members
+	size_t pack_alignment = context_.getCurrentPackAlignment();
+	if (pack_alignment > 0) {
+		struct_info->set_pack_alignment(pack_alignment);
+	}
+
 	// Process members and calculate layout
 	for (const auto& member_decl : struct_ref.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
@@ -431,12 +482,6 @@ ParseResult Parser::parse_struct_declaration()
 	// Apply custom alignment if specified
 	if (custom_alignment.has_value()) {
 		struct_info->set_custom_alignment(custom_alignment.value());
-	}
-
-	// Apply pack alignment from #pragma pack
-	size_t pack_alignment = context_.getCurrentPackAlignment();
-	if (pack_alignment > 0) {
-		struct_info->set_pack_alignment(pack_alignment);
 	}
 
 	// Finalize struct layout (add padding)
@@ -628,6 +673,37 @@ ParseResult Parser::parse_type_specifier()
 
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			type, qualifier, type_size, Token(), cv_qualifier));
+	}
+	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Keyword &&
+	         (current_token_opt->value() == "struct" || current_token_opt->value() == "class")) {
+		// Handle "struct TypeName" or "class TypeName"
+		consume_token(); // consume 'struct' or 'class'
+
+		// Get the type name
+		current_token_opt = peek_token();
+		if (!current_token_opt.has_value() || current_token_opt->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected type name after 'struct' or 'class'",
+			                          current_token_opt.value_or(Token()));
+		}
+
+		std::string type_name(current_token_opt->value());
+		Token type_name_token = *current_token_opt;
+		consume_token();
+
+		// Look up the struct type
+		auto type_it = gTypesByName.find(type_name);
+		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			const TypeInfo* struct_type_info = type_it->second;
+			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+			if (struct_info) {
+				type_size = static_cast<unsigned char>(struct_info->total_size * 8);  // Convert bytes to bits
+				return ParseResult::success(emplace_node<TypeSpecifierNode>(
+					Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+			}
+		}
+
+		return ParseResult::error("Unknown struct/class type: " + type_name, type_name_token);
 	}
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier) {
 		// Handle user-defined type (struct, class, or other user-defined types)
@@ -1336,7 +1412,42 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 ParseResult Parser::parse_primary_expression()
 {
 	std::optional<ASTNode> result;
-	if (current_token_->type() == Token::Type::Identifier) {
+
+	// Check for offsetof builtin first (before general identifier handling)
+	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "offsetof") {
+		// Handle offsetof builtin: offsetof(struct_type, member)
+		Token offsetof_token = *current_token_;
+		consume_token(); // consume 'offsetof'
+
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after 'offsetof'", *current_token_);
+		}
+
+		// Parse the struct type
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			return ParseResult::error("Expected struct type in offsetof", *current_token_);
+		}
+
+		if (!consume_punctuator(",")) {
+			return ParseResult::error("Expected ',' after struct type in offsetof", *current_token_);
+		}
+
+		// Parse the member name
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected member name in offsetof", *current_token_);
+		}
+		Token member_name = *peek_token();
+		consume_token(); // consume member name
+
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after offsetof arguments", *current_token_);
+		}
+
+		result = emplace_node<ExpressionNode>(
+			OffsetofExprNode(*type_result.node(), member_name, offsetof_token));
+	}
+	else if (current_token_->type() == Token::Type::Identifier) {
 		Token idenfifier_token = *current_token_;
 
 		// Get the identifier's type information from the symbol table
@@ -1459,6 +1570,41 @@ ParseResult Parser::parse_primary_expression()
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
 			static_cast<unsigned long long>(value), Type::Bool, TypeQualifier::None, 1));
 		consume_token();
+	}
+	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "sizeof") {
+		// Handle sizeof operator: sizeof(type) or sizeof(expression)
+		Token sizeof_token = *current_token_;
+		consume_token(); // consume 'sizeof'
+
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after 'sizeof'", *current_token_);
+		}
+
+		// Try to parse as a type first
+		TokenPosition saved_pos = save_token_position();
+		ParseResult type_result = parse_type_specifier();
+
+		if (!type_result.is_error() && type_result.node().has_value()) {
+			// Successfully parsed as type
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after sizeof type", *current_token_);
+			}
+			discard_saved_token(saved_pos);
+			result = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
+		}
+		else {
+			// Not a type, try parsing as expression
+			restore_token_position(saved_pos);
+			ParseResult expr_result = parse_expression();
+			if (expr_result.is_error()) {
+				return ParseResult::error("Expected type or expression after 'sizeof('", *current_token_);
+			}
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after sizeof expression", *current_token_);
+			}
+			result = emplace_node<ExpressionNode>(
+				SizeofExprNode::from_expression(*expr_result.node(), sizeof_token));
+		}
 	}
 	else if (consume_punctuator("(")) {
 		// Parse parenthesized expression

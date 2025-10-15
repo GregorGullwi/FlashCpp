@@ -440,6 +440,8 @@ public:
 			}
 			else if (line.find("#pragma pack", 0) == 0) {
 				processPragmaPack(line);
+				// Pass through the pragma pack directive to the parser
+				result_.append(line).append("\n");
 			}
 			else {
 				if (line.size() > 0 && (line.find_last_of(' ') != line.size() - 1))

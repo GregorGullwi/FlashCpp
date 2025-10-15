@@ -2220,18 +2220,26 @@ public:
 
 		case IrOpcode::VariableDecl:
 			// Format: [type, size, name, custom_alignment] or
-			//         [type, size, name, custom_alignment, array_type, array_size_bits, array_size_value]
+			//         [type, size, name, custom_alignment, array_type, array_size_bits, array_size_value] or
+			//         [type, size, name, custom_alignment, init_type, init_size, init_value]
 			assert((getOperandCount() == 4 || getOperandCount() == 7) && "VariableDecl instruction must have exactly 4 or 7 operands");
 			oss << "%" << getOperandAs<std::string_view>(2) << " = alloc " << getOperandAsTypeString(0) << getOperandAs<int>(1);
 			if (getOperandAs<unsigned long long>(3) > 0) {
 				oss << " alignas(" << getOperandAs<unsigned long long>(3) << ")";
 			}
 			if (getOperandCount() == 7) {
-				oss << "\nassign %" << getOperandAs<std::string_view>(2) << " = %";
-				if (isOperandType<TempVar>(6))
-					oss << getOperandAs<TempVar>(6).index;
+				oss << "\nassign %" << getOperandAs<std::string_view>(2) << " = ";
+				// Check if operand 6 is a literal value or a variable/TempVar
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<int>(6))
+					oss << getOperandAs<int>(6);
+				else if (isOperandType<double>(6))
+					oss << getOperandAs<double>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
 				else if (isOperandType<std::string_view>(6))
-					oss << getOperandAs<std::string_view>(6);
+					oss << '%' << getOperandAs<std::string_view>(6);
 			}
 			break;
 

@@ -33,7 +33,8 @@ public:
 			if (std::isspace(c)) {
 				consume_whitespace();
 			}
-			else if (c == '#') {
+			else if (c == '#' && cursor_ + 1 < source_size_ && std::isdigit(source_[cursor_ + 1])) {
+				// Only consume as file info if # is followed by a digit (line directive)
 				consume_file_info();
 			}
 			else if (c == '/' && num_characters_left >= 2) {

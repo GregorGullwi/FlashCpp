@@ -525,8 +525,49 @@ private:
 	Token bracket_token_;
 };
 
+// sizeof operator node - can take either a type or an expression
+class SizeofExprNode {
+public:
+	// Constructor for sizeof(type)
+	explicit SizeofExprNode(ASTNode type_node, Token sizeof_token)
+		: type_or_expr_(type_node), sizeof_token_(sizeof_token), is_type_(true) {}
+
+	// Constructor for sizeof(expression)
+	static SizeofExprNode from_expression(ASTNode expr_node, Token sizeof_token) {
+		SizeofExprNode node(expr_node, sizeof_token);
+		node.is_type_ = false;
+		return node;
+	}
+
+	ASTNode type_or_expr() const { return type_or_expr_; }
+	const Token& sizeof_token() const { return sizeof_token_; }
+	bool is_type() const { return is_type_; }
+
+private:
+	ASTNode type_or_expr_;  // Either TypeSpecifierNode or ExpressionNode
+	Token sizeof_token_;
+	bool is_type_;
+};
+
+// offsetof operator node - offsetof(struct_type, member)
+class OffsetofExprNode {
+public:
+	explicit OffsetofExprNode(ASTNode type_node, Token member_name, Token offsetof_token)
+		: type_node_(type_node), member_name_(member_name), offsetof_token_(offsetof_token) {}
+
+	ASTNode type_node() const { return type_node_; }
+	std::string_view member_name() const { return member_name_.value(); }
+	const Token& offsetof_token() const { return offsetof_token_; }
+
+private:
+	ASTNode type_node_;      // TypeSpecifierNode for the struct type
+	Token member_name_;      // Name of the member
+	Token offsetof_token_;
+};
+
 using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
-	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, ArraySubscriptNode>;
+	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, ArraySubscriptNode,
+	SizeofExprNode, OffsetofExprNode>;
 
 /*class FunctionDefinitionNode {
 public:
