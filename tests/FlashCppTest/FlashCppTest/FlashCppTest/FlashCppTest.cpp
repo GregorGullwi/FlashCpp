@@ -39,6 +39,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
     std::string code = read_test_file(filename);
 
     Lexer lexer(code);
+	compile_context.setInputFile(filename);
     Parser parser(lexer, compile_context);
     auto parse_result = parser.parse();
 
@@ -389,14 +390,14 @@ TEST_SUITE("Parser") {
 
 		// Test with function return type
 		Lexer lexer1(code_with_return_type);
-		Parser parser1(lexer1);
+		Parser parser1(lexer1, compile_context);
 		auto parse_result1 = parser1.parse();
 		CHECK(!parse_result1.is_error());
 		const auto& ast1 = parser1.get_nodes();
 
 		// Test with auto and trailing return type
 		Lexer lexer2(code_with_auto_return_type);
-		Parser parser2(lexer2);
+		Parser parser2(lexer2, compile_context);
 		auto parse_result2 = parser2.parse();
 		CHECK(!parse_result2.is_error());
 		const auto& ast2 = parser2.get_nodes();
@@ -1144,4 +1145,8 @@ TEST_CASE("Alignas:Variables") {
 
 TEST_CASE("Alignas:NestedStructs") {
 	run_test_from_file("test_nested_struct.cpp", "Nested struct alignment", false);
+}
+
+TEST_CASE("sizeof() and offsetof()") {
+	run_test_from_file("test_sizeof_offsetof.cpp", "sizeof() and offsetof()", false);
 }
