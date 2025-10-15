@@ -1740,6 +1740,50 @@ ParseResult Parser::parse_for_loop() {
             init_statement = init.node();
         }
 
+        // Check for ranged-for syntax: for (declaration : range_expression)
+        if (consume_punctuator(":")) {
+            // This is a ranged for loop
+            if (!init_statement.has_value()) {
+                return ParseResult::error("Ranged for loop requires a loop variable declaration", *current_token_);
+            }
+
+            // Parse the range expression
+            ParseResult range_result = parse_expression();
+            if (range_result.is_error()) {
+                return range_result;
+            }
+
+            auto range_expr = range_result.node();
+            if (!range_expr.has_value()) {
+                return ParseResult::error("Expected range expression in ranged for loop", *current_token_);
+            }
+
+            if (!consume_punctuator(")")) {
+                return ParseResult::error("Expected ')' after ranged for loop range expression", *current_token_);
+            }
+
+            // Parse body (can be a block or a single statement)
+            ParseResult body_result;
+            if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+                body_result = parse_block();
+            } else {
+                body_result = parse_statement_or_declaration();
+            }
+
+            if (body_result.is_error()) {
+                return body_result;
+            }
+
+            auto body_node = body_result.node();
+            if (!body_node.has_value()) {
+                return ParseResult::error("Invalid ranged for loop body", *current_token_);
+            }
+
+            return ParseResult::success(emplace_node<RangedForStatementNode>(
+                *init_statement, *range_expr, *body_node
+            ));
+        }
+
         if (!consume_punctuator(";")) {
             return ParseResult::error("Expected ';' after for loop initialization", *current_token_);
         }

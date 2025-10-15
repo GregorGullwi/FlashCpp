@@ -753,6 +753,25 @@ private:
 	ASTNode condition_;
 };
 
+class RangedForStatementNode {
+public:
+	explicit RangedForStatementNode(ASTNode loop_variable_decl,
+		ASTNode range_expression,
+		ASTNode body_statement)
+		: loop_variable_decl_(loop_variable_decl),
+		  range_expression_(range_expression),
+		  body_statement_(body_statement) {}
+
+	auto get_loop_variable_decl() const { return loop_variable_decl_; }
+	auto get_range_expression() const { return range_expression_; }
+	auto get_body_statement() const { return body_statement_; }
+
+private:
+	ASTNode loop_variable_decl_;  // for (int x : range)
+	ASTNode range_expression_;     // the array or container to iterate over
+	ASTNode body_statement_;
+};
+
 class BreakStatementNode {
 public:
 	explicit BreakStatementNode(Token break_token = Token())
