@@ -1450,7 +1450,9 @@ private:
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
-		writer.add_relocation(textSectionData.size() - 4, function_name);
+		// Get the mangled name for the function (handles both regular and member functions)
+		std::string mangled_name = writer.getMangledName(std::string(function_name));
+		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
 		// REFERENCE COMPATIBILITY: Don't add closing brace line mappings
 		// The reference compiler (clang) only maps opening brace and actual statements
@@ -1643,14 +1645,19 @@ private:
 	}
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
+		// Verify we have at least the minimum operands: return type, size, function name, struct name
+		assert(instruction.getOperandCount() >= 4 && "FunctionDecl must have at least 4 operands");
+
 		auto func_name = instruction.getOperandAs<std::string_view>(2);
+		auto struct_name = instruction.getOperandAs<std::string_view>(3);  // Empty for non-member functions
 
 		// Extract function signature information for proper C++20 name mangling
 		auto return_type = instruction.getOperandAs<Type>(0);
 		std::vector<Type> parameter_types;
 
 		// Extract parameter types from the instruction
-		size_t paramIndex = 3;  // Start after return type, size, and function name
+		// Now parameters start at index 4 (after return type, size, function name, and struct name)
+		size_t paramIndex = 4;
 		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			parameter_types.push_back(param_type);
@@ -1658,7 +1665,13 @@ private:
 		}
 
 		// Add function signature to the object file writer for proper mangling
-		writer.addFunctionSignature(std::string(func_name), return_type, parameter_types);
+		if (!struct_name.empty()) {
+			// Member function - include struct name for mangling
+			writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name));
+		} else {
+			// Regular function
+			writer.addFunctionSignature(std::string(func_name), return_type, parameter_types);
+		}
 
 		// Finalize previous function before starting new one
 		if (!current_function_name_.empty()) {
@@ -1744,14 +1757,31 @@ private:
 		};
 		std::vector<ParameterInfo> parameters;
 
+		// For member functions, add implicit 'this' pointer as first parameter
+		int param_offset_adjustment = 0;
+		if (!struct_name.empty()) {
+			// 'this' is passed in RCX (first parameter register)
+			int this_offset = -8;  // First parameter slot
+			variable_scopes.back().identifier_offset["this"] = this_offset;
+
+			// Add 'this' parameter to debug information
+			writer.add_function_parameter("this", 0x603, this_offset);  // 0x603 = T_64PVOID (pointer type)
+
+			// Store 'this' parameter info
+			parameters.push_back({Type::Struct, 64, "this", 0, this_offset, INT_PARAM_REGS[0]});
+			regAlloc.allocateSpecific(INT_PARAM_REGS[0], this_offset);
+
+			param_offset_adjustment = 1;  // Shift other parameters by 1
+		}
+
 		// First pass: collect all parameter information
-		paramIndex = 3;  // Start after return type, size, and function name
+		paramIndex = 4;  // Start after return type, size, function name, and struct name
 		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
 
 			// Store parameter location based on addressing mode
-			int paramNumber = paramIndex / 3 - 1;
+			int paramNumber = (paramIndex / 3 - 1) + param_offset_adjustment;
 			int offset = (paramNumber + 1) * -8;
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
@@ -1765,11 +1795,12 @@ private:
 				case Type::Double: param_type_index = 0x41; break; // T_REAL64
 				case Type::Char: param_type_index = 0x10; break;  // T_CHAR
 				case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
+				case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
 				default: param_type_index = 0x74; break;
 			}
 			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
-			if (paramNumber < INT_PARAM_REGS.size()) {
+			if (paramNumber < static_cast<int>(INT_PARAM_REGS.size())) {
 				X64Register src_reg = INT_PARAM_REGS[paramNumber];
 				regAlloc.allocateSpecific(src_reg, offset);
 

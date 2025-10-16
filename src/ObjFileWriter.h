@@ -356,6 +356,13 @@ private:
 
 		std::string mangled = "?";
 		mangled += name;
+
+		// Add class name if this is a member function
+		if (!sig.class_name.empty()) {
+			mangled += "@";
+			mangled += sig.class_name;
+		}
+
 		mangled += "@@";
 
 		// Add calling convention and linkage
@@ -409,6 +416,13 @@ public:
 	// Add function signature information for proper mangling
 	void addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types) {
 		FunctionSignature sig(return_type, parameter_types);
+		function_signatures_[name] = sig;
+	}
+
+	// Add function signature information for member functions with class name
+	void addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types, const std::string& class_name) {
+		FunctionSignature sig(return_type, parameter_types);
+		sig.class_name = class_name;
 		function_signatures_[name] = sig;
 	}
 

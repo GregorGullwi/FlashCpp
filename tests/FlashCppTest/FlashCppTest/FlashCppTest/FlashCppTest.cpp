@@ -36,6 +36,7 @@ std::string read_test_file(const std::string& filename) {
 
 // Helper function to run a test with a given source file
 void run_test_from_file(const std::string& filename, const std::string& test_name, bool generate_obj = true) {
+	std::cout << "run_test_from_file: " << test_name.c_str() << std::endl;
     std::string code = read_test_file(filename);
 
     Lexer lexer(code);
@@ -1145,6 +1146,10 @@ TEST_CASE("Alignas:Variables") {
 
 TEST_CASE("Alignas:NestedStructs") {
 	run_test_from_file("test_nested_struct.cpp", "Nested struct alignment", false);
+}
+
+TEST_CASE("Struct member function") {
+	run_test_from_file("test_struct_method_simple.cpp", "Simple member function", false);
 }
 
 TEST_CASE("sizeof() and offsetof()") {

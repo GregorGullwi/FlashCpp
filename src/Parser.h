@@ -151,6 +151,14 @@ private:
         std::vector<ASTNode> ast_nodes_;
         std::string last_error_ = "this feature has not been implemented yet";
 
+        // Track current struct context for member function parsing
+        struct MemberFunctionContext {
+                std::string struct_name;
+                size_t struct_type_index;
+                StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
+        };
+        std::vector<MemberFunctionContext> member_function_context_stack_;
+
         template <typename T>
         std::pair<ASTNode, T&> create_node_ref(T&& node) {
                 return emplace_node_ref<T>(node);

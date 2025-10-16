@@ -107,10 +107,24 @@ struct StructMember {
 		: name(std::move(n)), type(t), type_index(tidx), offset(off), size(sz), alignment(align), access(acc) {}
 };
 
+// Forward declaration for member function support
+class FunctionDeclarationNode;
+
+// Struct member function information
+struct StructMemberFunction {
+	std::string name;
+	ASTNode function_decl;  // FunctionDeclarationNode
+	AccessSpecifier access; // Access level (public/protected/private)
+
+	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public)
+		: name(std::move(n)), function_decl(func_decl), access(acc) {}
+};
+
 // Struct type information
 struct StructTypeInfo {
 	std::string name;
 	std::vector<StructMember> members;
+	std::vector<StructMemberFunction> member_functions;
 	size_t total_size = 0;      // Total size of struct in bytes
 	size_t alignment = 1;       // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
@@ -139,6 +153,10 @@ struct StructTypeInfo {
 		alignment = std::max(alignment, effective_alignment);
 	}
 
+	void addMemberFunction(const std::string& function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public) {
+		member_functions.emplace_back(function_name, function_decl, access);
+	}
+
 	void finalize() {
 		// If custom alignment is specified, use it instead of natural alignment
 		if (custom_alignment > 0) {
@@ -161,6 +179,15 @@ struct StructTypeInfo {
 		for (const auto& member : members) {
 			if (member.name == name) {
 				return &member;
+			}
+		}
+		return nullptr;
+	}
+
+	const StructMemberFunction* findMemberFunction(const std::string& name) const {
+		for (const auto& func : member_functions) {
+			if (func.name == name) {
+				return &func;
 			}
 		}
 		return nullptr;
@@ -420,7 +447,9 @@ class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
-		: decl_node_(decl_node) {}
+		: decl_node_(decl_node), is_member_function_(false), parent_struct_name_("") {}
+	FunctionDeclarationNode(DeclarationNode& decl_node, std::string parent_struct_name)
+		: decl_node_(decl_node), is_member_function_(true), parent_struct_name_(std::move(parent_struct_name)) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -442,10 +471,16 @@ public:
 		return true;
 	}
 
+	// Member function support
+	bool is_member_function() const { return is_member_function_; }
+	const std::string& parent_struct_name() const { return parent_struct_name_; }
+
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<BlockNode*> definition_block_;
+	bool is_member_function_;
+	std::string parent_struct_name_;  // Name of the struct/class this method belongs to
 };
 
 class FunctionCallNode {
@@ -475,6 +510,15 @@ struct StructMemberDecl {
 		: declaration(decl), access(acc) {}
 };
 
+// Struct member function with access specifier
+struct StructMemberFunctionDecl {
+	ASTNode function_declaration;  // FunctionDeclarationNode
+	AccessSpecifier access;
+
+	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc)
+		: function_declaration(func_decl), access(acc) {}
+};
+
 class StructDeclarationNode {
 public:
 	explicit StructDeclarationNode(std::string name, bool is_class = false)
@@ -482,6 +526,7 @@ public:
 
 	const std::string& name() const { return name_; }
 	const std::vector<StructMemberDecl>& members() const { return members_; }
+	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
 	bool is_class() const { return is_class_; }
 	AccessSpecifier default_access() const {
 		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
@@ -491,9 +536,14 @@ public:
 		members_.emplace_back(member, access);
 	}
 
+	void add_member_function(ASTNode function_decl, AccessSpecifier access) {
+		member_functions_.emplace_back(function_decl, access);
+	}
+
 private:
 	std::string name_;
 	std::vector<StructMemberDecl> members_;
+	std::vector<StructMemberFunctionDecl> member_functions_;
 	bool is_class_;  // true for class, false for struct
 };
 
@@ -508,6 +558,27 @@ public:
 private:
 	ASTNode object_;
 	Token member_name_;
+};
+
+// Member function call node (e.g., obj.method(args))
+class MemberFunctionCallNode {
+public:
+	explicit MemberFunctionCallNode(ASTNode object, FunctionDeclarationNode& func_decl,
+	                                ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+		: object_(object), func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+
+	ASTNode object() const { return object_; }
+	const auto& arguments() const { return arguments_; }
+	const auto& function_declaration() const { return func_decl_; }
+	Token called_from() const { return called_from_; }
+
+	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
+
+private:
+	ASTNode object_;                    // The object on which the method is called
+	FunctionDeclarationNode& func_decl_; // The member function declaration
+	ChunkedVector<ASTNode> arguments_;   // Arguments to the function call
+	Token called_from_;                  // Token for error reporting
 };
 
 class ArraySubscriptNode {
@@ -566,8 +637,8 @@ private:
 };
 
 using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
-	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, ArraySubscriptNode,
-	SizeofExprNode, OffsetofExprNode>;
+	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
+	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode>;
 
 /*class FunctionDefinitionNode {
 public:

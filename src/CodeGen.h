@@ -54,8 +54,7 @@ public:
 			visitExpressionNode(node.as<ExpressionNode>());
 		}
 		else if (node.is<StructDeclarationNode>()) {
-			// Struct declarations don't generate IR - they just define types
-			// The type information is already registered in the global type system
+			visitStructDeclarationNode(node.as<StructDeclarationNode>());
 		}
 		else {
 			assert(false && "Unhandled AST node type");
@@ -82,17 +81,24 @@ private:
 		funcDeclOperands.emplace_back(static_cast<int>(ret_type.size_in_bits()));
 		funcDeclOperands.emplace_back(func_decl.identifier_token().value());
 
+		// Add struct/class name for member functions
+		if (node.is_member_function()) {
+			funcDeclOperands.emplace_back(std::string_view(node.parent_struct_name()));
+		} else {
+			funcDeclOperands.emplace_back(std::string_view(""));  // Empty string_view for non-member functions
+		}
+
 		// Add parameter types to function declaration
 		size_t paramCount = 0;
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			
+
 			// Add parameter type and size to function declaration
 			funcDeclOperands.emplace_back(param_type.type());
 			funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
 			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
-			
+
 			paramCount++;
 			var_counter.next();
 		}
@@ -100,6 +106,27 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), func_decl.identifier_token()));
 
 		symbol_table.enter_scope(ScopeType::Function);
+
+		// For member functions, add implicit 'this' pointer to symbol table
+		if (node.is_member_function()) {
+			// Look up the struct type to get its type index and size
+			auto type_it = gTypesByName.find(node.parent_struct_name());
+			if (type_it != gTypesByName.end()) {
+				const TypeInfo* struct_type_info = type_it->second;
+				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+				if (struct_info) {
+					// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
+					Token this_token = func_decl.identifier_token();  // Use function token for location
+					auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+						Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
+
+					// Add 'this' to symbol table (it's the implicit first parameter)
+					symbol_table.insert("this", this_decl);
+				}
+			}
+		}
 
 		// Allocate stack space for local variables and parameters
 		// Parameters are already in their registers, we just need to allocate space for them
@@ -117,6 +144,16 @@ private:
 		});
 
 		symbol_table.exit_scope();
+	}
+
+	void visitStructDeclarationNode(const StructDeclarationNode& node) {
+		// Struct declarations themselves don't generate IR - they just define types
+		// The type information is already registered in the global type system
+		// However, we need to visit member functions to generate IR for them
+		for (const auto& member_func : node.member_functions()) {
+			// Each member function has a FunctionDeclarationNode
+			visit(member_func.function_declaration);
+		}
 	}
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
@@ -637,6 +674,10 @@ private:
 			const auto& expr = std::get<FunctionCallNode>(exprNode);
 			return generateFunctionCallIr(expr);
 		}
+		else if (std::holds_alternative<MemberFunctionCallNode>(exprNode)) {
+			const auto& expr = std::get<MemberFunctionCallNode>(exprNode);
+			return generateMemberFunctionCallIr(expr);
+		}
 		else if (std::holds_alternative<ArraySubscriptNode>(exprNode)) {
 			const auto& expr = std::get<ArraySubscriptNode>(exprNode);
 			return generateArraySubscriptIr(expr);
@@ -1077,6 +1118,84 @@ private:
 
 		// Return the result variable with its type and size
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var };
+	}
+
+	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
+		std::vector<IrOperand> irOperands;
+
+		// Get the object expression
+		ASTNode object_node = memberFunctionCallNode.object();
+		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+
+		// Get the object's type
+		// For now, we'll assume the object is an identifier
+		std::string_view object_name;
+		const DeclarationNode* object_decl = nullptr;
+
+		if (std::holds_alternative<IdentifierNode>(object_expr)) {
+			const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
+			object_name = object_ident.name();
+
+			// Look up the object in the symbol table
+			const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+			if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+				object_decl = &symbol->as<DeclarationNode>();
+			}
+		}
+
+		if (!object_decl) {
+			// Error: object not found
+			assert(false && "Object not found for member function call");
+			return { Type::Int, 32, TempVar{0} };
+		}
+
+		const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
+
+		// Verify this is a struct type
+		if (object_type.type() != Type::Struct) {
+			assert(false && "Member function call on non-struct type");
+			return { Type::Int, 32, TempVar{0} };
+		}
+
+		// Get the function declaration directly from the node (no need to look it up)
+		const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
+		const DeclarationNode& func_decl_node = func_decl.decl_node();
+
+		// Always add the return variable and function name
+		TempVar ret_var = var_counter.next();
+		irOperands.emplace_back(ret_var);
+		irOperands.emplace_back(func_decl_node.identifier_token().value());
+
+		// Add the object as the first argument (this pointer)
+		// We need to pass the address of the object
+		irOperands.emplace_back(object_type.type());
+		irOperands.emplace_back(static_cast<int>(object_type.size_in_bits()));
+		irOperands.emplace_back(object_name);
+
+		// Generate IR for function arguments
+		memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+			// For variables, we need to add the type and size
+			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+				const auto& decl_node = symbol->as<DeclarationNode>();
+				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+				irOperands.emplace_back(type_node.type());
+				irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+				irOperands.emplace_back(identifier.name());
+			}
+			else {
+				irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+			}
+		});
+
+		// Add the function call instruction
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+
+		// Return the result variable with its type and size
+		const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
 		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var };
 	}
 

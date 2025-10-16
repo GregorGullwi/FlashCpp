@@ -405,20 +405,102 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
-		// Parse member declaration
+		// Parse member declaration (could be data member or member function)
 		auto member_result = parse_type_and_name();
 		if (member_result.is_error()) {
 			return member_result;
 		}
 
-		// Expect semicolon after member declaration
-		if (!consume_punctuator(";")) {
-			return ParseResult::error("Expected ';' after struct member declaration", *peek_token());
+		// Get the member node - we need to check this exists before proceeding
+		if (!member_result.node().has_value()) {
+			return ParseResult::error("Expected member declaration", *peek_token());
 		}
 
-		// Add member to struct with current access level
-		if (auto member_node = member_result.node()) {
-			struct_ref.add_member(*member_node, current_access);
+		// Check if this is a member function (has '(') or data member (has ';')
+		if (peek_token().has_value() && peek_token()->value() == "(") {
+			// This is a member function declaration
+			if (!member_result.node()->is<DeclarationNode>()) {
+				return ParseResult::error("Expected declaration node for member function", *peek_token());
+			}
+
+			DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+
+			// Parse function declaration with parameters
+			auto func_result = parse_function_declaration(decl_node);
+			if (func_result.is_error()) {
+				return func_result;
+			}
+
+			// Mark this as a member function
+			if (!func_result.node().has_value()) {
+				return ParseResult::error("Failed to create function declaration node", *peek_token());
+			}
+
+			FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+
+			// Create a new FunctionDeclarationNode with member function info
+			auto [member_func_node, member_func_ref] =
+				emplace_node_ref<FunctionDeclarationNode>(decl_node, struct_name);
+
+			// Copy parameters from the parsed function
+			for (const auto& param : func_decl.parameter_nodes()) {
+				member_func_ref.add_parameter_node(param);
+			}
+
+			// Parse function body if present
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Enter function scope for parsing the body
+				gSymbolTable.enter_scope(ScopeType::Function);
+
+				// Look up the struct type to get its type index
+				auto type_it = gTypesByName.find(struct_name);
+				size_t struct_type_index = 0;
+				if (type_it != gTypesByName.end()) {
+					struct_type_index = type_it->second->type_index_;
+				}
+
+				// Push member function context so we can resolve member variables
+				// Store a pointer to the struct node so we can access members during parsing
+				member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
+
+				// Add parameters to symbol table
+				for (const auto& param : member_func_ref.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& param_decl_node = param.as<DeclarationNode>();
+						const Token& param_token = param_decl_node.identifier_token();
+						gSymbolTable.insert(param_token.value(), param);
+					}
+				}
+
+				// Parse function body
+				auto block_result = parse_block();
+				if (block_result.is_error()) {
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					return block_result;
+				}
+
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+
+				if (auto block = block_result.node()) {
+					member_func_ref.set_definition(block->as<BlockNode>());
+				}
+			} else if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected '{' or ';' after member function declaration", *peek_token());
+			}
+
+			// Add member function to struct
+			struct_ref.add_member_function(member_func_node, current_access);
+		} else {
+			// This is a data member
+			// Expect semicolon after member declaration
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after struct member declaration", *peek_token());
+			}
+
+			// Add member to struct with current access level
+			struct_ref.add_member(*member_result.node(), current_access);
 		}
 	}
 
@@ -442,7 +524,7 @@ ParseResult Parser::parse_struct_declaration()
 		struct_info->set_pack_alignment(pack_alignment);
 	}
 
-	// Process members and calculate layout
+	// Process data members and calculate layout
 	for (const auto& member_decl : struct_ref.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
@@ -476,6 +558,19 @@ ParseResult Parser::parse_struct_declaration()
 			member_size,
 			member_alignment,
 			member_decl.access
+		);
+	}
+
+	// Process member functions
+	for (const auto& func_decl : struct_ref.member_functions()) {
+		const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
+		const DeclarationNode& decl = func.decl_node();
+
+		// Add member function to struct type info
+		struct_info->addMemberFunction(
+			std::string(decl.identifier_token().value()),
+			func_decl.function_declaration,
+			func_decl.access
 		);
 	}
 
@@ -1453,6 +1548,37 @@ ParseResult Parser::parse_primary_expression()
 		// Get the identifier's type information from the symbol table
 		auto identifierType = gSymbolTable.lookup(idenfifier_token.value());
 		if (!identifierType) {
+			// If we're inside a member function, check if this is a member variable
+			if (!member_function_context_stack_.empty()) {
+				const auto& context = member_function_context_stack_.back();
+				const StructDeclarationNode* struct_node = context.struct_node;
+
+				// Check if this identifier matches any data member in the struct
+				if (struct_node) {
+					for (const auto& member_decl : struct_node->members()) {
+						const ASTNode& member_node = member_decl.declaration;
+						if (member_node.is<DeclarationNode>()) {
+							const DeclarationNode& decl = member_node.as<DeclarationNode>();
+							if (decl.identifier_token().value() == idenfifier_token.value()) {
+								// This is a member variable! Transform it into this->member
+								// Create a "this" token with the correct value
+								Token this_token(Token::Type::Keyword, "this",
+								                 idenfifier_token.line(), idenfifier_token.column(),
+								                 idenfifier_token.file_index());
+								auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+
+								// Create member access node: this->member
+								result = emplace_node<ExpressionNode>(
+									MemberAccessNode(this_ident, idenfifier_token));
+
+								consume_token();
+								return ParseResult::success(*result);
+							}
+						}
+					}
+				}
+			}
+
 			// Check if this is a function call (forward reference)
 			consume_token();
 			if (consume_punctuator("(")) {
@@ -1678,7 +1804,59 @@ ParseResult Parser::parse_primary_expression()
 			Token member_name_token = *peek_token();
 			consume_token(); // consume member name
 
-			// Create member access node
+			// Check if this is a member function call (followed by '(')
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				// This is a member function call: obj.method(args)
+				// We need to find the member function in the struct type info
+
+				// For now, create a placeholder - we'll need to look up the function from struct type info
+				// The actual lookup will happen during code generation when we have type information
+
+				consume_token(); // consume '('
+
+				// Parse function arguments
+				ChunkedVector<ASTNode> args;
+				if (!peek_token().has_value() || peek_token()->value() != ")") {
+					while (true) {
+						auto arg_result = parse_expression();
+						if (arg_result.is_error()) {
+							return arg_result;
+						}
+						if (auto arg = arg_result.node()) {
+							args.push_back(*arg);
+						}
+
+						if (!peek_token().has_value()) {
+							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+						}
+
+						if (peek_token()->value() == ")") {
+							break;
+						}
+
+						if (!consume_punctuator(",")) {
+							return ParseResult::error("Expected ',' between function arguments", *current_token_);
+						}
+					}
+				}
+
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				}
+
+				// Create a temporary function declaration node for the member function
+				// We'll resolve the actual function during code generation
+				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_name_token);
+				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
+				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+
+				// Create member function call node
+				result = emplace_node<ExpressionNode>(
+					MemberFunctionCallNode(*result, func_ref, std::move(args), member_name_token));
+				continue;
+			}
+
+			// Regular member access (not a function call)
 			result = emplace_node<ExpressionNode>(
 				MemberAccessNode(*result, member_name_token));
 			continue;  // Check for more postfix operators (e.g., obj.member1.member2)
