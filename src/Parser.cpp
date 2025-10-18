@@ -1623,13 +1623,13 @@ ParseResult Parser::parse_primary_expression()
 		consume_token();
 		if (current_token_.has_value() && current_token_->value() == "::") {
 			// Build the qualified identifier manually
-			std::vector<std::string> namespaces;
+			std::vector<StringType<32>> namespaces;
 			Token final_identifier = idenfifier_token;
 
 			// Collect namespace parts
 			while (current_token_.has_value() && current_token_->value() == "::") {
 				// Current identifier is a namespace part
-				namespaces.push_back(std::string(final_identifier.value()));
+				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 				consume_token(); // consume ::
 
 				// Get next identifier
@@ -2411,7 +2411,7 @@ ParseResult Parser::parse_qualified_identifier() {
 	// This method parses qualified identifiers like std::print or ns1::ns2::func
 	// It should be called when we've already seen an identifier followed by ::
 
-	std::vector<std::string> namespaces;
+	std::vector<StringType<>> namespaces;
 	Token final_identifier;
 
 	// We should already be at an identifier
@@ -2430,7 +2430,7 @@ ParseResult Parser::parse_qualified_identifier() {
 		// Check if followed by ::
 		if (peek_token().has_value() && peek_token()->value() == "::") {
 			// This is a namespace part
-			namespaces.push_back(std::string(identifier_token->value()));
+			namespaces.emplace_back(StringType<>(identifier_token->value()));
 			consume_token(); // consume ::
 		} else {
 			// This is the final identifier

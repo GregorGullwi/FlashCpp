@@ -14,6 +14,7 @@
 
 #include "Token.h"
 #include "ChunkedAnyVector.h"
+#include "StackString.h"
 
 class ASTNode {
 public:
@@ -373,26 +374,31 @@ private:
 // Qualified identifier node for namespace::identifier chains
 class QualifiedIdentifierNode {
 public:
-	explicit QualifiedIdentifierNode(std::vector<std::string> namespaces, Token identifier)
+	explicit QualifiedIdentifierNode(std::vector<StringType<>> namespaces, Token identifier)
 		: namespaces_(std::move(namespaces)), identifier_(identifier) {}
 
-	const std::vector<std::string>& namespaces() const { return namespaces_; }
+	const std::vector<StringType<>>& namespaces() const { return namespaces_; }
 	std::string_view name() const { return identifier_.value(); }
 	const Token& identifier_token() const { return identifier_; }
 
 	// Get the full qualified name as a string (e.g., "std::print")
+	// Note: This allocates a string, so use sparingly (mainly for debugging)
 	std::string full_name() const {
 		std::string result;
 		for (const auto& ns : namespaces_) {
+#if USE_OLD_STRING_APPROACH
 			result += ns + "::";
+#else
+			result += std::string(ns.view()) + "::";
+#endif
 		}
 		result += std::string(identifier_.value());
 		return result;
 	}
 
 private:
-	std::vector<std::string> namespaces_;  // e.g., ["std"] for std::print
-	Token identifier_;
+	std::vector<StringType<>> namespaces_;  // e.g., ["std"] for std::print, ["A", "B"] for A::B::func
+	Token identifier_;                          // The final identifier (e.g., "print", "func")
 };
 
 using NumericLiteralValue = std::variant<unsigned long long, double>;
@@ -575,10 +581,10 @@ private:
 // Namespace declaration node
 class NamespaceDeclarationNode {
 public:
-	explicit NamespaceDeclarationNode(std::string name)
-		: name_(std::move(name)) {}
+	explicit NamespaceDeclarationNode(std::string_view name)
+		: name_(name) {}
 
-	const std::string& name() const { return name_; }
+	std::string_view name() const { return name_; }
 	const std::vector<ASTNode>& declarations() const { return declarations_; }
 
 	void add_declaration(ASTNode decl) {
@@ -586,7 +592,7 @@ public:
 	}
 
 private:
-	std::string name_;
+	std::string_view name_;  // Points directly into source text from lexer token
 	std::vector<ASTNode> declarations_;  // Declarations within the namespace
 };
 

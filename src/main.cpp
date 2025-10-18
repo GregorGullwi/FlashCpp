@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 #include <filesystem>
+#include <chrono>
 
 #include "FileTree.h"
 #include "FileReader.h"
@@ -15,8 +16,32 @@
 #include "Parser.h"
 // #include "LibClangIRGenerator.h"  // Disabled for now due to LLVM dependency
 #include "CodeGen.h"
+#include "StackString.h"
+
+// Timing helper
+struct PhaseTimer {
+    std::chrono::high_resolution_clock::time_point start;
+    const char* phase_name;
+    bool enabled;
+
+    PhaseTimer(const char* name, bool enable) : phase_name(name), enabled(enable) {
+        if (enabled) {
+            start = std::chrono::high_resolution_clock::now();
+        }
+    }
+
+    ~PhaseTimer() {
+        if (enabled) {
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+            printf("  %-20s: %8.3f ms\n", phase_name, duration.count() / 1000.0);
+        }
+    }
+};
 
 int main(int argc, char *argv[]) {
+    auto total_start = std::chrono::high_resolution_clock::now();
+
     CompileContext context;
     CommandLineParser argsparser(argc, argv, context);
 
@@ -33,6 +58,9 @@ int main(int argc, char *argv[]) {
 
     context.setVerboseMode(argsparser.hasFlag("v") || argsparser.hasFlag("verbose"));
     context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
+
+    bool show_perf_stats = argsparser.hasFlag("perf-stats") || argsparser.hasFlag("stats");
+    bool show_timing = argsparser.hasFlag("time") || argsparser.hasFlag("timing") || show_perf_stats;
 
     // Process input file arguments here...
     const auto& inputFileArgs = argsparser.inputFileArgs();
@@ -60,11 +88,23 @@ int main(int argc, char *argv[]) {
     std::filesystem::path inputDirPath = inputFilePath.parent_path();
     context.addIncludeDir(inputDirPath.string());
 
+    if (show_timing) {
+        printf("\n=== Compilation Timing ===\n");
+#if USE_OLD_STRING_APPROACH
+        printf("String approach: std::string (baseline)\n\n");
+#else
+        printf("String approach: StackString<32> (optimized)\n\n");
+#endif
+    }
+
     FileTree file_tree;
     FileReader file_reader(context, file_tree);
-    if (!file_reader.readFile(context.getInputFile().value())) {
-        std::cerr << "Failed to read input file: " << context.getInputFile().value() << std::endl;
-        return 1;
+    {
+        PhaseTimer timer("File I/O", show_timing);
+        if (!file_reader.readFile(context.getInputFile().value())) {
+            std::cerr << "Failed to read input file: " << context.getInputFile().value() << std::endl;
+            return 1;
+        }
     }
 
     if (context.isVerboseMode() && !context.isPreprocessorOnlyMode()) {
@@ -79,19 +119,26 @@ int main(int argc, char *argv[]) {
     }
 
     Lexer lexer(file_reader.get_result());
-    Parser parser(lexer, context);
-    auto parse_result = parser.parse();
 
-    if (parse_result.is_error()) {
-        std::cerr << "Error: " << parse_result.error_message() << std::endl;
-        return 1;
+    Parser parser(lexer, context);
+    {
+        PhaseTimer timer("Lexing + Parsing", show_timing);
+        auto parse_result = parser.parse();
+
+        if (parse_result.is_error()) {
+            std::cerr << "Error: " << parse_result.error_message() << std::endl;
+            return 1;
+        }
     }
 
     const auto& ast = parser.get_nodes();
 
     AstToIr converter;
-    for (auto& node_handle : ast) {
-        converter.visit(node_handle);
+    {
+        PhaseTimer timer("AST to IR", show_timing);
+        for (auto& node_handle : ast) {
+            converter.visit(node_handle);
+        }
     }
 
     const auto& ir = converter.getIr();
@@ -107,7 +154,32 @@ int main(int argc, char *argv[]) {
 
     IrToObjConverter irConverter;
 
-    irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value());
+    try {
+        PhaseTimer timer("Code Generation", show_timing);
+        irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value());
+    } catch (...) {
+        if (show_timing) {
+            auto total_end = std::chrono::high_resolution_clock::now();
+            auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
+            printf("  %-20s: %8.3f ms\n", "TOTAL", total_duration.count() / 1000.0);
+            printf("==========================\n\n");
+        }
+        if (show_perf_stats) {
+            StackStringStats::print_stats();
+        }
+        throw;
+    }
+
+    if (show_timing) {
+        auto total_end = std::chrono::high_resolution_clock::now();
+        auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
+        printf("  %-20s: %8.3f ms\n", "TOTAL", total_duration.count() / 1000.0);
+        printf("==========================\n\n");
+    }
+
+    if (show_perf_stats) {
+        StackStringStats::print_stats();
+    }
 
     return 0;
 }

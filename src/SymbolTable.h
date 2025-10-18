@@ -4,7 +4,9 @@
 #include <string_view>
 #include <stack>
 #include <optional>
+#include <vector>
 #include "AstNodeTypes.h"
+#include "StackString.h"
 
 enum class ScopeType {
 	Global,
@@ -22,16 +24,51 @@ struct SymbolScopeHandle {
 	std::string_view identifier;
 };
 
+// Namespace path key - stores namespace components without concatenation
+// Uses StringType (StackString or std::string depending on USE_OLD_STRING_APPROACH)
+using NamespacePath = std::vector<StringType<>>;
+
+// Hash function for NamespacePath to use in unordered_map
+struct NamespacePathHash {
+	size_t operator()(const NamespacePath& path) const {
+		size_t hash = 0;
+		for (const auto& component : path) {
+			// Combine hashes using a simple but effective method
+#if USE_OLD_STRING_APPROACH
+			hash ^= std::hash<std::string>{}(component) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+#else
+			hash ^= std::hash<std::string_view>{}(component.view()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+#endif
+		}
+		return hash;
+	}
+};
+
+// Equality comparison for NamespacePath
+struct NamespacePathEqual {
+	bool operator()(const NamespacePath& lhs, const NamespacePath& rhs) const {
+		if (lhs.size() != rhs.size()) return false;
+		for (size_t i = 0; i < lhs.size(); ++i) {
+#if USE_OLD_STRING_APPROACH
+			if (lhs[i] != rhs[i]) return false;
+#else
+			if (lhs[i].view() != rhs[i].view()) return false;
+#endif
+		}
+		return true;
+	}
+};
+
 struct Scope {
 	Scope() = default;
 	Scope(ScopeType scopeType, size_t scope_level) : scope_type(scopeType), scope_handle{ .scope_level = scope_level } {}
-	Scope(ScopeType scopeType, size_t scope_level, std::string namespace_name)
+	Scope(ScopeType scopeType, size_t scope_level, StringType<> namespace_name)
 		: scope_type(scopeType), scope_handle{ .scope_level = scope_level }, namespace_name(std::move(namespace_name)) {}
 
 	ScopeType scope_type = ScopeType::Block;
 	std::unordered_map<std::string_view, ASTNode> symbols;
 	ScopeHandle scope_handle;
-	std::string namespace_name;  // Only used for Namespace scopes
+	StringType<> namespace_name;  // Only used for Namespace scopes
 };
 
 class SymbolTable {
@@ -45,9 +82,9 @@ public:
 
 		// If we're in a namespace, also add to the persistent namespace map
 		if (symbol_table_stack_.back().scope_type == ScopeType::Namespace) {
-			// Get the full namespace path for nested namespaces
-			std::string full_ns_path = get_full_namespace_path();
-			namespace_symbols_[full_ns_path].emplace(std::string(identifier), node);
+			// Build the namespace path without string concatenation
+			NamespacePath ns_path = build_current_namespace_path();
+			namespace_symbols_[ns_path].emplace(StringType<32>(identifier), node);
 		}
 
 		return true;
@@ -101,65 +138,72 @@ public:
 		symbol_table_stack_.emplace_back(Scope(scopeType, symbol_table_stack_.size()));
 	}
 
-	void enter_namespace(const std::string& namespace_name) {
-		symbol_table_stack_.emplace_back(Scope(ScopeType::Namespace, symbol_table_stack_.size(), namespace_name));
+	void enter_namespace(std::string_view namespace_name) {
+		symbol_table_stack_.emplace_back(Scope(ScopeType::Namespace, symbol_table_stack_.size(), StringType<>(namespace_name)));
 	}
 
 	void exit_scope() {
 		symbol_table_stack_.pop_back();
 	}
 
-	// Get the full namespace path (e.g., "A::B" for nested namespaces)
-	// This must be defined before lookup_qualified since it's used there
-	std::string get_full_namespace_path() const {
-		std::string path;
+	// Build the current namespace path as a vector of components
+	// For nested namespaces A::B, returns ["A", "B"]
+	NamespacePath build_current_namespace_path() const {
+		NamespacePath path;
 		for (const auto& scope : symbol_table_stack_) {
 			if (scope.scope_type == ScopeType::Namespace) {
-				if (!path.empty()) {
-					path += "::";
-				}
-				path += scope.namespace_name;
+				path.push_back(scope.namespace_name);
 			}
 		}
 		return path;
 	}
 
 	// Lookup a qualified identifier (e.g., "std::print" or "A::B::func")
-	std::optional<ASTNode> lookup_qualified(const std::vector<std::string>& namespaces, std::string_view identifier) const {
+	// Takes a span/vector of namespace components instead of building a concatenated string
+	template<typename StringContainer>
+	std::optional<ASTNode> lookup_qualified(const StringContainer& namespaces, std::string_view identifier) const {
 		if (namespaces.empty()) {
 			return std::nullopt;
 		}
 
-		// Build the full namespace path by joining all namespace parts
-		// For "A::B::func", namespaces = ["A", "B"], so we build "A::B"
-		std::string full_namespace_path;
-		for (size_t i = 0; i < namespaces.size(); ++i) {
-			if (i > 0) {
-				full_namespace_path += "::";
-			}
-			full_namespace_path += namespaces[i];
+		// Build namespace path from the components
+		// For "A::B::func", namespaces = ["A", "B"]
+		NamespacePath ns_path;
+		ns_path.reserve(namespaces.size());
+		for (const auto& ns : namespaces) {
+			ns_path.emplace_back(StringType<>(std::string_view(ns)));
 		}
 
 		// Look up the namespace in our persistent namespace map
-		auto ns_it = namespace_symbols_.find(full_namespace_path);
+		auto ns_it = namespace_symbols_.find(ns_path);
 		if (ns_it == namespace_symbols_.end()) {
 			return std::nullopt;
 		}
 
 		// Look for the identifier in the namespace
-		auto symbol_it = ns_it->second.find(std::string(identifier));
-		if (symbol_it != ns_it->second.end()) {
-			return symbol_it->second;
+		// Use string_view for lookup to avoid creating StringType
+		for (const auto& [key, value] : ns_it->second) {
+#if USE_OLD_STRING_APPROACH
+			if (key == std::string(identifier)) {
+#else
+			if (key.view() == identifier) {
+#endif
+				return value;
+			}
 		}
 
 		return std::nullopt;
 	}
 
 	// Get the current namespace name (empty if not in a namespace)
-	std::string get_current_namespace() const {
+	std::string_view get_current_namespace() const {
 		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			if (stackIt->scope_type == ScopeType::Namespace) {
+#if USE_OLD_STRING_APPROACH
 				return stackIt->namespace_name;
+#else
+				return stackIt->namespace_name.view();
+#endif
 			}
 		}
 		return "";
@@ -167,8 +211,10 @@ public:
 
 private:
 	std::vector<Scope> symbol_table_stack_ = { Scope(ScopeType::Global, 0 ) };
-	// Persistent map of namespace contents (namespace_name -> (symbol_name -> ASTNode))
-	std::unordered_map<std::string, std::unordered_map<std::string, ASTNode>> namespace_symbols_;
+	// Persistent map of namespace contents
+	// Uses NamespacePath (vector of components) as key to avoid string concatenation
+	// Maps: namespace_path -> (symbol_name -> ASTNode)
+	std::unordered_map<NamespacePath, std::unordered_map<StringType<32>, ASTNode>, NamespacePathHash, NamespacePathEqual> namespace_symbols_;
 };
 
 static inline SymbolTable gSymbolTable;
