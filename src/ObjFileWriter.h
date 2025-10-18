@@ -465,7 +465,19 @@ public:
 		std::string mangled_name = getMangledName(std::string(symbol_name));
 		auto* symbol = coffi_.get_symbol(std::string(mangled_name));
 		if (!symbol) {
-			throw std::runtime_error("Symbol not found: " + std::string(symbol_name));
+			// Symbol not found - add it as an external symbol (for C library functions like puts, printf, etc.)
+			std::cerr << "Adding external symbol: " << mangled_name << " (original: " << symbol_name << ")" << std::endl;
+
+			// Add external symbol with:
+			// - section number 0 (undefined/external)
+			// - storage class IMAGE_SYM_CLASS_EXTERNAL
+			// - value 0
+			// - type 0x20 (function)
+			symbol = coffi_.add_symbol(mangled_name);
+			symbol->set_value(0);
+			symbol->set_section_number(0);  // 0 = undefined/external symbol
+			symbol->set_type(0x20);  // 0x20 = function type
+			symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		}
 
 		auto symbol_index = symbol->get_index();

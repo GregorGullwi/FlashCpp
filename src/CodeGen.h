@@ -17,6 +17,11 @@ public:
 	AstToIr() {}
 
 	void visit(const ASTNode& node) {
+		// Skip empty nodes (e.g., from forward declarations)
+		if (!node.has_value()) {
+			return;
+		}
+
 		if (node.is<FunctionDeclarationNode>()) {
 			visitFunctionDeclarationNode(node.as<FunctionDeclarationNode>());
 		}
@@ -65,6 +70,11 @@ public:
 		else if (node.is<DeclarationNode>()) {
 			// Forward declarations or global variable declarations
 			// These are already in the symbol table, no code generation needed
+			return;
+		}
+		else if (node.is<TypeSpecifierNode>()) {
+			// Type specifier nodes can appear in the AST for forward declarations
+			// No code generation needed
 			return;
 		}
 		else {
@@ -918,10 +928,53 @@ private:
 
 		const auto& op = binaryOperatorNode.op();
 
-		// Special handling for assignment to member access
+		// Special handling for assignment to array subscript
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
-			if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr)) {
+				// This is an array subscript assignment: arr[index] = value
+				const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(lhs_expr);
+
+				// Generate IR for the RHS value
+				auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+				// Generate IR for the array subscript to get the address
+				auto arrayAccessIrOperands = generateArraySubscriptIr(array_subscript);
+
+				// The arrayAccessIrOperands contains [type, size, temp_var]
+				// where temp_var holds the address of the array element
+				// We need to generate an ArrayStore instruction
+				// Format: [element_type, element_size, array_name, index_type, index_size, index_value, value]
+
+				// Get array information
+				const ExpressionNode& array_expr = array_subscript.array_expr().as<ExpressionNode>();
+				if (!std::holds_alternative<IdentifierNode>(array_expr)) {
+					// Error: array must be an identifier for now
+					return { Type::Int, 32, TempVar{0} };
+				}
+
+				const IdentifierNode& array_ident = std::get<IdentifierNode>(array_expr);
+				std::string_view array_name = array_ident.name();
+
+				// Get index information
+				auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
+
+				// Build ArrayStore IR operands
+				std::vector<IrOperand> arrayStoreOperands;
+				arrayStoreOperands.emplace_back(std::get<Type>(arrayAccessIrOperands[0])); // element type
+				arrayStoreOperands.emplace_back(std::get<int>(arrayAccessIrOperands[1]));   // element size
+				arrayStoreOperands.emplace_back(array_name);                                 // array name
+				arrayStoreOperands.emplace_back(std::get<Type>(indexIrOperands[0]));        // index type
+				arrayStoreOperands.emplace_back(std::get<int>(indexIrOperands[1]));         // index size
+				arrayStoreOperands.emplace_back(indexIrOperands[2]);                         // index value
+				arrayStoreOperands.emplace_back(rhsIrOperands[2]);                           // value to store
+
+				ir_.addInstruction(IrOpcode::ArrayStore, std::move(arrayStoreOperands), binaryOperatorNode.get_token());
+
+				// Return the RHS value as the result
+				return rhsIrOperands;
+			}
+			else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 				// This is a member access assignment: obj.member = value
 				const MemberAccessNode& member_access = std::get<MemberAccessNode>(lhs_expr);
 
@@ -1150,9 +1203,33 @@ private:
 				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 				const auto& decl_node = symbol->as<DeclarationNode>();
 				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-				irOperands.emplace_back(type_node.type());
-				irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-				irOperands.emplace_back(identifier.name());
+
+				// Check if this is an array - arrays decay to pointers when passed to functions
+				if (decl_node.is_array()) {
+					// For arrays, we need to pass the address of the first element
+					// Create a temporary for the address
+					TempVar addr_var = var_counter.next();
+
+					// Generate AddressOf IR instruction to get the address of the array
+					std::vector<IrOperand> addrOfOperands;
+					addrOfOperands.emplace_back(addr_var);
+					addrOfOperands.emplace_back(type_node.type());
+					addrOfOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+					addrOfOperands.emplace_back(identifier.name());
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addrOfOperands), Token()));
+
+					// Add the pointer (address) to the function call operands
+					// For now, we use the element type with 64-bit size to indicate it's a pointer
+					// TODO: Add proper pointer type support to the Type enum
+					irOperands.emplace_back(type_node.type());  // Element type (e.g., Char for char[])
+					irOperands.emplace_back(64);  // Pointer size is 64 bits on x64
+					irOperands.emplace_back(addr_var);
+				} else {
+					// Regular variable - pass by value
+					irOperands.emplace_back(type_node.type());
+					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+					irOperands.emplace_back(identifier.name());
+				}
 			}
 			else {
 				irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());

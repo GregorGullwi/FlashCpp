@@ -44,6 +44,10 @@ public:
 		return node_.type().name();
 	}
 
+	bool has_value() const {
+		return node_.has_value();
+	}
+
 private:
 	std::any node_;
 };

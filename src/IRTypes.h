@@ -93,6 +93,7 @@ enum class IrOpcode : int_fast16_t {
 	Continue,
 	// Array operations
 	ArrayAccess,
+	ArrayStore,
 	// Pointer operations
 	AddressOf,
 	Dereference,
@@ -1669,6 +1670,45 @@ public:
 				oss << ", " << getOperandAsTypeString(4) << getOperandAs<int>(5) << " ";
 
 				// Index operand
+				if (isOperandType<unsigned long long>(6))
+					oss << getOperandAs<unsigned long long>(6);
+				else if (isOperandType<TempVar>(6))
+					oss << '%' << getOperandAs<TempVar>(6).index;
+				else if (isOperandType<std::string_view>(6))
+					oss << '%' << getOperandAs<std::string_view>(6);
+			}
+		}
+		break;
+
+		case IrOpcode::ArrayStore:
+		{
+			// array_store [ElementType][ElementSize] %array, [IndexType][IndexSize] %index, %value
+			// Format: [element_type, element_size, array_name, index_type, index_size, index_value, value]
+			assert(getOperandCount() == 7 && "ArrayStore instruction must have exactly 7 operands");
+			if (getOperandCount() >= 7) {
+				oss << "array_store " << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+
+				// Array operand
+				if (isOperandType<unsigned long long>(2))
+					oss << getOperandAs<unsigned long long>(2);
+				else if (isOperandType<TempVar>(2))
+					oss << '%' << getOperandAs<TempVar>(2).index;
+				else if (isOperandType<std::string_view>(2))
+					oss << '%' << getOperandAs<std::string_view>(2);
+
+				oss << ", " << getOperandAsTypeString(3) << getOperandAs<int>(4) << " ";
+
+				// Index operand
+				if (isOperandType<unsigned long long>(5))
+					oss << getOperandAs<unsigned long long>(5);
+				else if (isOperandType<TempVar>(5))
+					oss << '%' << getOperandAs<TempVar>(5).index;
+				else if (isOperandType<std::string_view>(5))
+					oss << '%' << getOperandAs<std::string_view>(5);
+
+				oss << ", ";
+
+				// Value operand
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))

@@ -152,7 +152,8 @@ int main(int argc, char *argv[]) {
     try {
         PhaseTimer timer("Code Generation", show_timing);
         irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
-    } catch (...) {
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: Code generation failed: " << e.what() << std::endl;
         if (show_timing) {
             auto total_end = std::chrono::high_resolution_clock::now();
             auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
@@ -162,7 +163,19 @@ int main(int argc, char *argv[]) {
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
-        throw;
+        return 1;
+    } catch (...) {
+        std::cerr << "ERROR: Code generation failed with unknown exception" << std::endl;
+        if (show_timing) {
+            auto total_end = std::chrono::high_resolution_clock::now();
+            auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
+            printf("  %-20s: %8.3f ms\n", "TOTAL", total_duration.count() / 1000.0);
+            printf("==========================\n\n");
+        }
+        if (show_perf_stats) {
+            StackStringStats::print_stats();
+        }
+        return 1;
     }
 
     if (show_timing) {
