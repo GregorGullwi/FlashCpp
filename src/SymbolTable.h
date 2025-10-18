@@ -10,6 +10,7 @@ enum class ScopeType {
 	Global,
 	Function,
 	Block,
+	Namespace,
 };
 
 struct ScopeHandle {
@@ -24,10 +25,13 @@ struct SymbolScopeHandle {
 struct Scope {
 	Scope() = default;
 	Scope(ScopeType scopeType, size_t scope_level) : scope_type(scopeType), scope_handle{ .scope_level = scope_level } {}
+	Scope(ScopeType scopeType, size_t scope_level, std::string namespace_name)
+		: scope_type(scopeType), scope_handle{ .scope_level = scope_level }, namespace_name(std::move(namespace_name)) {}
 
 	ScopeType scope_type = ScopeType::Block;
 	std::unordered_map<std::string_view, ASTNode> symbols;
 	ScopeHandle scope_handle;
+	std::string namespace_name;  // Only used for Namespace scopes
 };
 
 class SymbolTable {
@@ -89,8 +93,52 @@ public:
 		symbol_table_stack_.emplace_back(Scope(scopeType, symbol_table_stack_.size()));
 	}
 
+	void enter_namespace(const std::string& namespace_name) {
+		symbol_table_stack_.emplace_back(Scope(ScopeType::Namespace, symbol_table_stack_.size(), namespace_name));
+	}
+
 	void exit_scope() {
 		symbol_table_stack_.pop_back();
+	}
+
+	// Lookup a qualified identifier (e.g., "std::print")
+	std::optional<ASTNode> lookup_qualified(const std::vector<std::string>& namespaces, std::string_view identifier) const {
+		// For now, we'll do a simple lookup that checks if we're in the right namespace context
+		// A full implementation would need to search through namespace scopes
+
+		// First, try to find the namespace in our scope stack
+		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			const Scope& scope = *stackIt;
+
+			// Check if this scope matches the namespace we're looking for
+			if (scope.scope_type == ScopeType::Namespace) {
+				// Check if this is the namespace we want
+				bool matches = false;
+				if (namespaces.size() == 1 && scope.namespace_name == namespaces[0]) {
+					matches = true;
+				}
+
+				if (matches) {
+					// Look for the identifier in this namespace scope
+					auto symbolIt = scope.symbols.find(identifier);
+					if (symbolIt != scope.symbols.end()) {
+						return symbolIt->second;
+					}
+				}
+			}
+		}
+
+		return std::nullopt;
+	}
+
+	// Get the current namespace name (empty if not in a namespace)
+	std::string get_current_namespace() const {
+		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			if (stackIt->scope_type == ScopeType::Namespace) {
+				return stackIt->namespace_name;
+			}
+		}
+		return "";
 	}
 
 private:

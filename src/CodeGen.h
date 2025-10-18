@@ -56,6 +56,9 @@ public:
 		else if (node.is<StructDeclarationNode>()) {
 			visitStructDeclarationNode(node.as<StructDeclarationNode>());
 		}
+		else if (node.is<NamespaceDeclarationNode>()) {
+			visitNamespaceDeclarationNode(node.as<NamespaceDeclarationNode>());
+		}
 		else {
 			assert(false && "Unhandled AST node type");
 		}
@@ -153,6 +156,14 @@ private:
 		for (const auto& member_func : node.member_functions()) {
 			// Each member function has a FunctionDeclarationNode
 			visit(member_func.function_declaration);
+		}
+	}
+
+	void visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
+		// Namespace declarations themselves don't generate IR - they just provide scope
+		// Visit all declarations within the namespace
+		for (const auto& decl : node.declarations()) {
+			visit(decl);
 		}
 	}
 
@@ -654,6 +665,10 @@ private:
 			const auto& expr = std::get<IdentifierNode>(exprNode);
 			return generateIdentifierIr(expr);
 		}
+		else if (std::holds_alternative<QualifiedIdentifierNode>(exprNode)) {
+			const auto& expr = std::get<QualifiedIdentifierNode>(exprNode);
+			return generateQualifiedIdentifierIr(expr);
+		}
 		else if (std::holds_alternative<NumericLiteralNode>(exprNode)) {
 			const auto& expr = std::get<NumericLiteralNode>(exprNode);
 			return generateNumericLiteralIr(expr);
@@ -716,6 +731,28 @@ private:
 
 		// If we get here, the symbol is not a DeclarationNode
 		assert(false && "Identifier is not a DeclarationNode");
+		return {};
+	}
+
+	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+		// For now, treat qualified identifiers similarly to regular identifiers
+		// In a full implementation, we would use the namespace information for name mangling
+		// For external functions like std::print, we just use the identifier name
+		const std::optional<ASTNode> symbol = symbol_table.lookup_qualified(qualifiedIdNode.namespaces(), qualifiedIdNode.name());
+		if (!symbol.has_value()) {
+			// For external functions (like std::print), we might not have them in our symbol table
+			// Return a placeholder - the actual linking will happen later
+			return { Type::Int, 32, qualifiedIdNode.name() };
+		}
+
+		if (symbol->is<DeclarationNode>()) {
+			const auto& decl_node = symbol->as<DeclarationNode>();
+			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), qualifiedIdNode.name() };
+		}
+
+		// If we get here, the symbol is not a DeclarationNode
+		assert(false && "Qualified identifier is not a DeclarationNode");
 		return {};
 	}
 

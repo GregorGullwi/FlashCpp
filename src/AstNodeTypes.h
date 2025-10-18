@@ -370,6 +370,31 @@ private:
 	std::optional<Token> parent_token_;
 };
 
+// Qualified identifier node for namespace::identifier chains
+class QualifiedIdentifierNode {
+public:
+	explicit QualifiedIdentifierNode(std::vector<std::string> namespaces, Token identifier)
+		: namespaces_(std::move(namespaces)), identifier_(identifier) {}
+
+	const std::vector<std::string>& namespaces() const { return namespaces_; }
+	std::string_view name() const { return identifier_.value(); }
+	const Token& identifier_token() const { return identifier_; }
+
+	// Get the full qualified name as a string (e.g., "std::print")
+	std::string full_name() const {
+		std::string result;
+		for (const auto& ns : namespaces_) {
+			result += ns + "::";
+		}
+		result += std::string(identifier_.value());
+		return result;
+	}
+
+private:
+	std::vector<std::string> namespaces_;  // e.g., ["std"] for std::print
+	Token identifier_;
+};
+
 using NumericLiteralValue = std::variant<unsigned long long, double>;
 
 class NumericLiteralNode {
@@ -547,6 +572,24 @@ private:
 	bool is_class_;  // true for class, false for struct
 };
 
+// Namespace declaration node
+class NamespaceDeclarationNode {
+public:
+	explicit NamespaceDeclarationNode(std::string name)
+		: name_(std::move(name)) {}
+
+	const std::string& name() const { return name_; }
+	const std::vector<ASTNode>& declarations() const { return declarations_; }
+
+	void add_declaration(ASTNode decl) {
+		declarations_.push_back(decl);
+	}
+
+private:
+	std::string name_;
+	std::vector<ASTNode> declarations_;  // Declarations within the namespace
+};
+
 class MemberAccessNode {
 public:
 	explicit MemberAccessNode(ASTNode object, Token member_name)
@@ -636,7 +679,7 @@ private:
 	Token offsetof_token_;
 };
 
-using ExpressionNode = std::variant<IdentifierNode, StringLiteralNode, NumericLiteralNode,
+using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode>;
 

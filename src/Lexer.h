@@ -499,6 +499,17 @@ private:
 
 	Token consume_punctuator() {
 		size_t start = cursor_;
+		char first_char = source_[cursor_];
+
+		// Check for :: (scope resolution operator)
+		if (first_char == ':' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == ':') {
+			cursor_ += 2;
+			column_ += 2;
+			std::string_view value = source_.substr(start, 2);
+			return Token(Token::Type::Punctuator, value, line_, column_,
+				current_file_index_);
+		}
+
 		++cursor_;
 		++column_;
 

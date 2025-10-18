@@ -227,6 +227,7 @@ private:
         ParseResult parse_unary_expression();
         ParseResult parse_binary_expression(int min_precedence = 0);
         ParseResult parse_parenthesized_expression();
+        ParseResult parse_qualified_identifier();  // Parse namespace::identifier
 
         // Utility functions
         bool consume_punctuator(const std::string_view& value);
