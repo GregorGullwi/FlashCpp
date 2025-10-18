@@ -623,7 +623,22 @@ ParseResult Parser::parse_namespace() {
 
 	// Parse declarations within the namespace
 	while (peek_token().has_value() && peek_token()->value() != "}") {
-		auto decl_result = parse_declaration_or_function_definition();
+		ParseResult decl_result;
+
+		// Check if it's a nested namespace
+		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "namespace") {
+			decl_result = parse_namespace();
+		}
+		// Check if it's a struct/class declaration
+		else if (peek_token()->type() == Token::Type::Keyword &&
+			(peek_token()->value() == "class" || peek_token()->value() == "struct")) {
+			decl_result = parse_struct_declaration();
+		}
+		// Otherwise, parse as function or variable declaration
+		else {
+			decl_result = parse_declaration_or_function_definition();
+		}
+
 		if (decl_result.is_error()) {
 			gSymbolTable.exit_scope();
 			return decl_result;
