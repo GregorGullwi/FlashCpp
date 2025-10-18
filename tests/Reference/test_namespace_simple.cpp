@@ -4,9 +4,15 @@
 // 2. Define functions inside namespaces
 // 3. Generate correct code for namespaced functions
 
-namespace std {
+namespace A {
     int print(int value) {
         return value;
+    }
+
+    namespace B {
+        int func() {
+            return 42;
+        }
     }
 }
 
