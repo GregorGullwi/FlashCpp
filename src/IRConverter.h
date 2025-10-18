@@ -11,6 +11,7 @@
 
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
+#include "ProfilingTimer.h"
 
 /*
 	+ ---------------- +
@@ -586,11 +587,33 @@ class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
 
-	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "") {
-		// Group instructions by function for stack space calculation
-		groupInstructionsByFunction(ir);
+	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "", bool show_timing = false) {
+		// High-level timing (always enabled when show_timing=true)
+		auto convert_start = std::chrono::high_resolution_clock::now();
 
+		// Group instructions by function for stack space calculation
+		{
+			ProfilingTimer timer("Group instructions by function", show_timing);
+			groupInstructionsByFunction(ir);
+		}
+
+		// Detailed profiling accumulators (only active when ENABLE_DETAILED_PROFILING is set)
+		#if ENABLE_DETAILED_PROFILING
+		ProfilingAccumulator funcDecl_accum("FunctionDecl instructions");
+		ProfilingAccumulator varDecl_accum("VariableDecl instructions");
+		ProfilingAccumulator return_accum("Return instructions");
+		ProfilingAccumulator funcCall_accum("FunctionCall instructions");
+		ProfilingAccumulator arithmetic_accum("Arithmetic instructions");
+		ProfilingAccumulator comparison_accum("Comparison instructions");
+		ProfilingAccumulator control_flow_accum("Control flow instructions");
+		ProfilingAccumulator memory_accum("Memory access instructions");
+		#endif
+
+		auto ir_processing_start = std::chrono::high_resolution_clock::now();
 		for (const auto& instruction : ir.getInstructions()) {
+			#if ENABLE_DETAILED_PROFILING
+			auto instr_start = std::chrono::high_resolution_clock::now();
+			#endif
 			// Add line mapping for debug information if line number is available
 			if (instruction.getOpcode() != IrOpcode::FunctionDecl && instruction.getOpcode() != IrOpcode::Return && instruction.getLineNumber() > 0) {
 				addLineMapping(instruction.getLineNumber());
@@ -820,14 +843,130 @@ public:
 				assert(false && "Not implemented yet");
 				break;
 			}
+
+			#if ENABLE_DETAILED_PROFILING
+			auto instr_end = std::chrono::high_resolution_clock::now();
+			auto instr_duration = std::chrono::duration_cast<std::chrono::microseconds>(instr_end - instr_start);
+
+			// Categorize and accumulate timing
+			switch (instruction.getOpcode()) {
+				case IrOpcode::FunctionDecl:
+					funcDecl_accum.add(instr_duration);
+					break;
+				case IrOpcode::VariableDecl:
+				case IrOpcode::StackAlloc:
+					varDecl_accum.add(instr_duration);
+					break;
+				case IrOpcode::Return:
+					return_accum.add(instr_duration);
+					break;
+				case IrOpcode::FunctionCall:
+					funcCall_accum.add(instr_duration);
+					break;
+				case IrOpcode::Add:
+				case IrOpcode::Subtract:
+				case IrOpcode::Multiply:
+				case IrOpcode::Divide:
+				case IrOpcode::UnsignedDivide:
+				case IrOpcode::Modulo:
+				case IrOpcode::FloatAdd:
+				case IrOpcode::FloatSubtract:
+				case IrOpcode::FloatMultiply:
+				case IrOpcode::FloatDivide:
+				case IrOpcode::ShiftLeft:
+				case IrOpcode::ShiftRight:
+				case IrOpcode::UnsignedShiftRight:
+				case IrOpcode::BitwiseAnd:
+				case IrOpcode::BitwiseOr:
+				case IrOpcode::BitwiseXor:
+				case IrOpcode::BitwiseNot:
+				case IrOpcode::LogicalNot:
+				case IrOpcode::Negate:
+				case IrOpcode::PreIncrement:
+				case IrOpcode::PostIncrement:
+				case IrOpcode::PreDecrement:
+				case IrOpcode::PostDecrement:
+					arithmetic_accum.add(instr_duration);
+					break;
+				case IrOpcode::Equal:
+				case IrOpcode::NotEqual:
+				case IrOpcode::LessThan:
+				case IrOpcode::LessEqual:
+				case IrOpcode::GreaterThan:
+				case IrOpcode::GreaterEqual:
+				case IrOpcode::UnsignedLessThan:
+				case IrOpcode::UnsignedLessEqual:
+				case IrOpcode::UnsignedGreaterThan:
+				case IrOpcode::UnsignedGreaterEqual:
+				case IrOpcode::FloatEqual:
+				case IrOpcode::FloatNotEqual:
+				case IrOpcode::FloatLessThan:
+				case IrOpcode::FloatLessEqual:
+				case IrOpcode::FloatGreaterThan:
+				case IrOpcode::FloatGreaterEqual:
+					comparison_accum.add(instr_duration);
+					break;
+				case IrOpcode::Label:
+				case IrOpcode::Jump:
+				case IrOpcode::JumpIfZero:
+				case IrOpcode::JumpIfNotZero:
+					control_flow_accum.add(instr_duration);
+					break;
+				case IrOpcode::Store:
+				case IrOpcode::AddressOf:
+				case IrOpcode::Dereference:
+				case IrOpcode::MemberAccess:
+				case IrOpcode::MemberStore:
+				case IrOpcode::ArrayAccess:
+					memory_accum.add(instr_duration);
+					break;
+				default:
+					break;
+			}
+			#endif
 		}
+
+		auto ir_processing_end = std::chrono::high_resolution_clock::now();
+		if (show_timing) {
+			auto ir_duration = std::chrono::duration_cast<std::chrono::microseconds>(ir_processing_end - ir_processing_start);
+			printf("    IR instruction processing: %8.3f ms\n", ir_duration.count() / 1000.0);
+		}
+
+		#if ENABLE_DETAILED_PROFILING
+		printf("\n  Detailed instruction timing:\n");
+		funcDecl_accum.print();
+		varDecl_accum.print();
+		return_accum.print();
+		funcCall_accum.print();
+		arithmetic_accum.print();
+		comparison_accum.print();
+		control_flow_accum.print();
+		memory_accum.print();
+		printf("\n");
+		#endif
 
 		// Use the provided source filename, or fall back to a default if not provided
 		std::string actual_source_file = source_filename.empty() ? "test_debug.cpp" : std::string(source_filename);
-		writer.add_source_file(actual_source_file);
+		{
+			ProfilingTimer timer("Add source file", show_timing);
+			writer.add_source_file(actual_source_file);
+		}
 
-		finalizeSections();
-		writer.write(std::string(filename));
+		{
+			ProfilingTimer timer("Finalize sections", show_timing);
+			finalizeSections();
+		}
+
+		{
+			ProfilingTimer timer("Write object file", show_timing);
+			writer.write(std::string(filename));
+		}
+
+		if (show_timing) {
+			auto convert_end = std::chrono::high_resolution_clock::now();
+			auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(convert_end - convert_start);
+			printf("    Total code generation:     %8.3f ms\n", total_duration.count() / 1000.0);
+		}
 	}
 
 private:

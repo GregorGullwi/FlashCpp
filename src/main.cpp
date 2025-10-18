@@ -151,7 +151,7 @@ int main(int argc, char *argv[]) {
 
     try {
         PhaseTimer timer("Code Generation", show_timing);
-        irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value());
+        irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
     } catch (...) {
         if (show_timing) {
             auto total_end = std::chrono::high_resolution_clock::now();
