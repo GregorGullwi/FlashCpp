@@ -72,11 +72,6 @@ int main(int argc, char *argv[]) {
     inputFilePath = std::filesystem::absolute(inputFilePath);
     context.setInputFile(inputFilePath.string());
 
-    // If no -o option was specified but we have a second argument, use it as output file
-    if (!argsparser.hasOption("o") && inputFileArgs.size() >= 2) {
-        context.setOutputFile(inputFileArgs[1]);
-    }
-
     // If no output file was specified, generate default output filename
     if (context.getOutputFile().empty()) {
         std::filesystem::path outputPath = inputFilePath;

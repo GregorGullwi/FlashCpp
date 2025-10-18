@@ -21,7 +21,7 @@ public:
 	}
 
 	void setOutputFile(std::string_view outputFile) {
-		outputFile_ = outputFile;
+		outputFile_ = std::string(outputFile);
 	}
 
 	bool isVerboseMode() const {
@@ -91,7 +91,7 @@ public:
 private:
 	std::vector<std::string> includeDirs_;
 	std::optional<std::string> inputFile_;
-	std::string_view outputFile_;
+	std::string outputFile_;
 	bool verboseMode_ = false;
 	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
 	std::vector<std::string> dependencies_;
