@@ -42,6 +42,14 @@ public:
 			return false;
 
 		symbol_table_stack_.back().symbols.emplace(identifier, node);
+
+		// If we're in a namespace, also add to the persistent namespace map
+		if (symbol_table_stack_.back().scope_type == ScopeType::Namespace) {
+			// Get the full namespace path for nested namespaces
+			std::string full_ns_path = get_full_namespace_path();
+			namespace_symbols_[full_ns_path].emplace(std::string(identifier), node);
+		}
+
 		return true;
 	}
 
@@ -101,31 +109,47 @@ public:
 		symbol_table_stack_.pop_back();
 	}
 
-	// Lookup a qualified identifier (e.g., "std::print")
-	std::optional<ASTNode> lookup_qualified(const std::vector<std::string>& namespaces, std::string_view identifier) const {
-		// For now, we'll do a simple lookup that checks if we're in the right namespace context
-		// A full implementation would need to search through namespace scopes
-
-		// First, try to find the namespace in our scope stack
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			const Scope& scope = *stackIt;
-
-			// Check if this scope matches the namespace we're looking for
+	// Get the full namespace path (e.g., "A::B" for nested namespaces)
+	// This must be defined before lookup_qualified since it's used there
+	std::string get_full_namespace_path() const {
+		std::string path;
+		for (const auto& scope : symbol_table_stack_) {
 			if (scope.scope_type == ScopeType::Namespace) {
-				// Check if this is the namespace we want
-				bool matches = false;
-				if (namespaces.size() == 1 && scope.namespace_name == namespaces[0]) {
-					matches = true;
+				if (!path.empty()) {
+					path += "::";
 				}
-
-				if (matches) {
-					// Look for the identifier in this namespace scope
-					auto symbolIt = scope.symbols.find(identifier);
-					if (symbolIt != scope.symbols.end()) {
-						return symbolIt->second;
-					}
-				}
+				path += scope.namespace_name;
 			}
+		}
+		return path;
+	}
+
+	// Lookup a qualified identifier (e.g., "std::print" or "A::B::func")
+	std::optional<ASTNode> lookup_qualified(const std::vector<std::string>& namespaces, std::string_view identifier) const {
+		if (namespaces.empty()) {
+			return std::nullopt;
+		}
+
+		// Build the full namespace path by joining all namespace parts
+		// For "A::B::func", namespaces = ["A", "B"], so we build "A::B"
+		std::string full_namespace_path;
+		for (size_t i = 0; i < namespaces.size(); ++i) {
+			if (i > 0) {
+				full_namespace_path += "::";
+			}
+			full_namespace_path += namespaces[i];
+		}
+
+		// Look up the namespace in our persistent namespace map
+		auto ns_it = namespace_symbols_.find(full_namespace_path);
+		if (ns_it == namespace_symbols_.end()) {
+			return std::nullopt;
+		}
+
+		// Look for the identifier in the namespace
+		auto symbol_it = ns_it->second.find(std::string(identifier));
+		if (symbol_it != ns_it->second.end()) {
+			return symbol_it->second;
 		}
 
 		return std::nullopt;
@@ -143,6 +167,8 @@ public:
 
 private:
 	std::vector<Scope> symbol_table_stack_ = { Scope(ScopeType::Global, 0 ) };
+	// Persistent map of namespace contents (namespace_name -> (symbol_name -> ASTNode))
+	std::unordered_map<std::string, std::unordered_map<std::string, ASTNode>> namespace_symbols_;
 };
 
 static inline SymbolTable gSymbolTable;

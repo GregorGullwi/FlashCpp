@@ -1619,24 +1619,28 @@ ParseResult Parser::parse_primary_expression()
 		Token idenfifier_token = *current_token_;
 
 		// Check if this is a qualified identifier (namespace::identifier)
-		if (peek_token().has_value() && peek_token()->value() == "::") {
+		// We need to consume the identifier first to check what comes after it
+		consume_token();
+		if (current_token_.has_value() && current_token_->value() == "::") {
 			// Build the qualified identifier manually
 			std::vector<std::string> namespaces;
 			Token final_identifier = idenfifier_token;
 
 			// Collect namespace parts
-			while (peek_token().has_value() && peek_token()->value() == "::") {
+			while (current_token_.has_value() && current_token_->value() == "::") {
 				// Current identifier is a namespace part
 				namespaces.push_back(std::string(final_identifier.value()));
 				consume_token(); // consume ::
 
 				// Get next identifier
-				auto next_id = consume_token();
-				if (!next_id.has_value() || next_id->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected identifier after '::'", next_id.value_or(Token()));
+				if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
 				}
-				final_identifier = *next_id;
+				final_identifier = *current_token_;
+				consume_token(); // consume the identifier to check for the next ::
 			}
+
+			// current_token_ is now the token after the final identifier
 
 			// Create a QualifiedIdentifierNode
 			auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
@@ -1646,7 +1650,7 @@ ParseResult Parser::parse_primary_expression()
 			auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());
 
 			// Check if followed by '(' for function call
-			if (peek_token().has_value() && peek_token()->value() == "(") {
+			if (current_token_.has_value() && current_token_->value() == "(") {
 				consume_token(); // consume '('
 
 				// If not found, create a forward declaration
@@ -1724,7 +1728,7 @@ ParseResult Parser::parse_primary_expression()
 								result = emplace_node<ExpressionNode>(
 									MemberAccessNode(this_ident, idenfifier_token));
 
-								consume_token();
+								// Identifier already consumed at line 1621
 								return ParseResult::success(*result);
 							}
 						}
@@ -1733,7 +1737,7 @@ ParseResult Parser::parse_primary_expression()
 			}
 
 			// Check if this is a function call (forward reference)
-			consume_token();
+			// Identifier already consumed at line 1621
 			if (consume_punctuator("(")) {
 				// Create a forward declaration for the function
 				// We'll assume it returns int for now (this is a simplification)
@@ -1786,7 +1790,7 @@ ParseResult Parser::parse_primary_expression()
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
 		}
 		else {
-			consume_token();
+			// Identifier already consumed at line 1621
 
 			if (consume_punctuator("(")) {
 				if (!peek_token().has_value())

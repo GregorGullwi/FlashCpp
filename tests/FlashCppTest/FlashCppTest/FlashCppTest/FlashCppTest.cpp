@@ -1156,6 +1156,6 @@ TEST_CASE("sizeof() and offsetof()") {
 	run_test_from_file("test_sizeof_offsetof.cpp", "sizeof() and offsetof()", false);
 }
 
-TEST_CASE("Namespace:Simple") {
-	run_test_from_file("test_namespace_simple.cpp", "Simple namespace with qualified function call", false);
+TEST_CASE("Namespace:Nested") {
+	run_test_from_file("test_nested_namespace.cpp", "Nested namespace declarations", false);
 }
