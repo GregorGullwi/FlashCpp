@@ -153,7 +153,7 @@ private:
 
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
-                std::string struct_name;
+                std::string_view struct_name;  // Points directly into source text from lexer token
                 size_t struct_type_index;
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
         };

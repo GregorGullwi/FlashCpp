@@ -370,7 +370,7 @@ ParseResult Parser::parse_struct_declaration()
 		return ParseResult::error("Expected struct/class name", name_token.value_or(Token()));
 	}
 
-	std::string struct_name(name_token->value());
+	std::string_view struct_name = name_token->value();
 
 	// Check for alignas specifier after struct name (if not already specified)
 	if (!custom_alignment.has_value()) {
@@ -382,7 +382,7 @@ ParseResult Parser::parse_struct_declaration()
 		return ParseResult::error("Expected '{' after struct/class name", *peek_token());
 	}
 
-	// Create struct declaration node
+	// Create struct declaration node - string_view points directly into source text
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 
 	// Default access specifier (public for struct, private for class)
@@ -445,6 +445,7 @@ ParseResult Parser::parse_struct_declaration()
 			FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
 
 			// Create a new FunctionDeclarationNode with member function info
+			// Pass string_view directly - FunctionDeclarationNode stores it as string_view
 			auto [member_func_node, member_func_ref] =
 				emplace_node_ref<FunctionDeclarationNode>(decl_node, struct_name);
 
@@ -459,6 +460,7 @@ ParseResult Parser::parse_struct_declaration()
 				gSymbolTable.enter_scope(ScopeType::Function);
 
 				// Look up the struct type to get its type index
+				// Use string_view directly - gTypesByName supports heterogeneous lookup
 				auto type_it = gTypesByName.find(struct_name);
 				size_t struct_type_index = 0;
 				if (type_it != gTypesByName.end()) {
@@ -467,6 +469,7 @@ ParseResult Parser::parse_struct_declaration()
 
 				// Push member function context so we can resolve member variables
 				// Store a pointer to the struct node so we can access members during parsing
+				// Pass string_view directly - MemberFunctionContext stores it as string_view
 				member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
 
 				// Add parameters to symbol table
@@ -521,8 +524,9 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	// Register the struct type in the global type system
-	TypeInfo& struct_type_info = add_struct_type(struct_name);
-	auto struct_info = std::make_unique<StructTypeInfo>(struct_name, struct_ref.default_access());
+	// Convert string_view to string for type registry (which needs to own the name)
+	TypeInfo& struct_type_info = add_struct_type(std::string(struct_name));
+	auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), struct_ref.default_access());
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
 	size_t pack_alignment = context_.getCurrentPackAlignment();
@@ -608,14 +612,14 @@ ParseResult Parser::parse_namespace() {
 		return ParseResult::error("Expected namespace name", name_token.value_or(Token()));
 	}
 
-	std::string namespace_name(name_token->value());
+	std::string_view namespace_name = name_token->value();
 
 	// Expect opening brace
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' after namespace name", *peek_token());
 	}
 
-	// Create namespace declaration node
+	// Create namespace declaration node - string_view points directly into source text
 	auto [namespace_node, namespace_ref] = emplace_node_ref<NamespaceDeclarationNode>(namespace_name);
 
 	// Enter namespace scope

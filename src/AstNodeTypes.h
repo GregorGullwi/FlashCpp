@@ -221,7 +221,19 @@ struct TypeInfo
 
 extern std::deque<TypeInfo> gTypeInfo;
 
-extern std::unordered_map<std::string, const TypeInfo*> gTypesByName;
+// Custom hash and equality for heterogeneous lookup with string_view
+struct StringHash {
+	using is_transparent = void;
+	size_t operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
+	size_t operator()(const std::string& s) const { return std::hash<std::string>{}(s); }
+};
+
+struct StringEqual {
+	using is_transparent = void;
+	bool operator()(std::string_view lhs, std::string_view rhs) const { return lhs == rhs; }
+};
+
+extern std::unordered_map<std::string, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
@@ -479,8 +491,8 @@ public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
 		: decl_node_(decl_node), is_member_function_(false), parent_struct_name_("") {}
-	FunctionDeclarationNode(DeclarationNode& decl_node, std::string parent_struct_name)
-		: decl_node_(decl_node), is_member_function_(true), parent_struct_name_(std::move(parent_struct_name)) {}
+	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
+		: decl_node_(decl_node), is_member_function_(true), parent_struct_name_(parent_struct_name) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -504,14 +516,14 @@ public:
 
 	// Member function support
 	bool is_member_function() const { return is_member_function_; }
-	const std::string& parent_struct_name() const { return parent_struct_name_; }
+	std::string_view parent_struct_name() const { return parent_struct_name_; }
 
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<BlockNode*> definition_block_;
 	bool is_member_function_;
-	std::string parent_struct_name_;  // Name of the struct/class this method belongs to
+	std::string_view parent_struct_name_;  // Points directly into source text from lexer token
 };
 
 class FunctionCallNode {
@@ -552,10 +564,10 @@ struct StructMemberFunctionDecl {
 
 class StructDeclarationNode {
 public:
-	explicit StructDeclarationNode(std::string name, bool is_class = false)
-		: name_(std::move(name)), is_class_(is_class) {}
+	explicit StructDeclarationNode(std::string_view name, bool is_class = false)
+		: name_(name), is_class_(is_class) {}
 
-	const std::string& name() const { return name_; }
+	std::string_view name() const { return name_; }
 	const std::vector<StructMemberDecl>& members() const { return members_; }
 	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
 	bool is_class() const { return is_class_; }
@@ -572,7 +584,7 @@ public:
 	}
 
 private:
-	std::string name_;
+	std::string_view name_;  // Points directly into source text from lexer token
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	bool is_class_;  // true for class, false for struct

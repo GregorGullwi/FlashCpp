@@ -2,7 +2,7 @@
 #include <sstream>
 
 std::deque<TypeInfo> gTypeInfo;
-std::unordered_map<std::string, const TypeInfo*> gTypesByName;
+std::unordered_map<std::string, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
 TypeInfo& add_user_type(std::string name) {
