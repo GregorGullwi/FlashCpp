@@ -92,7 +92,7 @@ private:
 		}
 
 		// Add parameter types to function declaration
-		size_t paramCount = 0;
+		//size_t paramCount = 0;
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -102,7 +102,7 @@ private:
 			funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
 			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
 
-			paramCount++;
+			//paramCount++;
 			var_counter.next();
 		}
 
@@ -133,13 +133,13 @@ private:
 
 		// Allocate stack space for local variables and parameters
 		// Parameters are already in their registers, we just need to allocate space for them
-		size_t paramIndex = 0;
+		//size_t paramIndex = 0;
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			//const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 			symbol_table.insert(param_decl.identifier_token().value(), param);
-			paramIndex++;
+			//paramIndex++;
 		}
 
 		(*definition_block)->get_statements().visit([&](ASTNode statement) {

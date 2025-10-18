@@ -1212,7 +1212,7 @@ private:
 
 		// Get result variable and function name
 		auto result_var = instruction.getOperand(0);
-		auto funcName = instruction.getOperandAs<std::string_view>(1);
+		//auto funcName = instruction.getOperandAs<std::string_view>(1);
 
 		// Get result offset
 		int result_offset = 0;
@@ -1640,7 +1640,7 @@ private:
 			case X64Register::XMM1: return 155;  // CV_AMD64_XMM1
 			case X64Register::XMM2: return 156;  // CV_AMD64_XMM2
 			case X64Register::XMM3: return 157;  // CV_AMD64_XMM3
-			default: assert(false && "Unsupported X64Register");
+			default: assert(false && "Unsupported X64Register"); return 0;
 		}
 	}
 
@@ -2991,7 +2991,7 @@ private:
 		assert(instruction.getOperandCount() == 7 && "Assignment instruction must have exactly 7 operands");
 
 		Type lhs_type = instruction.getOperandAs<Type>(1);
-		int lhs_size_bits = instruction.getOperandAs<int>(2);
+		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
 		// Special handling for struct assignment
 		if (lhs_type == Type::Struct) {
@@ -3203,10 +3203,10 @@ private:
 		assert(instruction.getOperandCount() == 7 && "ArrayAccess must have 7 operands");
 
 		auto result_var = instruction.getOperandAs<TempVar>(0);
-		auto array_type = instruction.getOperandAs<Type>(1);
+		//auto array_type = instruction.getOperandAs<Type>(1);
 		auto element_size_bits = instruction.getOperandAs<int>(2);
-		auto index_type = instruction.getOperandAs<Type>(4);
-		auto index_size_bits = instruction.getOperandAs<int>(5);
+		//auto index_type = instruction.getOperandAs<Type>(4);
+		//auto index_size_bits = instruction.getOperandAs<int>(5);
 
 		// Get the array base address (from stack)
 		std::string array_name;
@@ -3339,10 +3339,10 @@ private:
 		assert(instruction.getOperandCount() == 6 && "MemberAccess must have 6 operands");
 
 		auto result_var = instruction.getOperandAs<TempVar>(0);
-		auto member_type = instruction.getOperandAs<Type>(1);
+		//auto member_type = instruction.getOperandAs<Type>(1);
 		auto member_size_bits = instruction.getOperandAs<int>(2);
 		// Operand 3 can be either a string_view (variable name) or TempVar (nested access result)
-		auto member_name = instruction.getOperandAs<std::string_view>(4);
+		//auto member_name = instruction.getOperandAs<std::string_view>(4);
 		auto member_offset = instruction.getOperandAs<int>(5);
 
 		// Get the object's base stack offset
@@ -3451,10 +3451,10 @@ private:
 		// Format: [member_type, member_size, object_name/temp_var, member_name, offset, value]
 		assert(instruction.getOperandCount() == 6 && "MemberStore must have 6 operands");
 
-		auto member_type = instruction.getOperandAs<Type>(0);
+		//auto member_type = instruction.getOperandAs<Type>(0);
 		auto member_size_bits = instruction.getOperandAs<int>(1);
 		// Operand 2 can be either a string_view (variable name) or TempVar (nested access result)
-		auto member_name = instruction.getOperandAs<std::string_view>(3);
+		//auto member_name = instruction.getOperandAs<std::string_view>(3);
 		auto member_offset = instruction.getOperandAs<int>(4);
 
 		// Get the value - it could be a TempVar, a literal (int or unsigned long long), or a string_view (variable name)
@@ -3856,8 +3856,8 @@ private:
 		// Operands: [type, size, condition_value, then_label, else_label]
 		assert(instruction.getOperandCount() >= 5 && "ConditionalBranch must have at least 5 operands");
 
-		Type condition_type = instruction.getOperandAs<Type>(0);
-		int condition_size = instruction.getOperandAs<int>(1);
+		//Type condition_type = instruction.getOperandAs<Type>(0);
+		//int condition_size = instruction.getOperandAs<int>(1);
 		auto condition_value = instruction.getOperand(2);
 		auto then_label = instruction.getOperandAs<std::string>(3);
 		auto else_label = instruction.getOperandAs<std::string>(4);
