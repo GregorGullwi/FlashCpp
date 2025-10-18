@@ -1159,3 +1159,54 @@ TEST_CASE("sizeof() and offsetof()") {
 TEST_CASE("Namespace:Nested") {
 	run_test_from_file("test_nested_namespace.cpp", "Nested namespace declarations", false);
 }
+
+TEST_SUITE("External Functions") {
+	TEST_CASE("Call puts() with stack char array") {
+		std::string_view code = R"(
+			// External declaration for puts
+			int puts(char* str);
+
+			int main() {
+				char msg[6];
+				msg[0] = 'H';
+				msg[1] = 'e';
+				msg[2] = 'l';
+				msg[3] = 'l';
+				msg[4] = 'o';
+				msg[5] = 0;
+				puts(msg);
+				return 0;
+			})";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+
+		if (parse_result.is_error()) {
+			std::printf("Parse error: %s\n", parse_result.error_message().c_str());
+			return;
+		}
+
+		const auto& ast = parser.get_nodes();
+
+		AstToIr converter;
+		for (auto& node_handle : ast) {
+			converter.visit(node_handle);
+		}
+
+		const auto& ir = converter.getIr();
+
+		std::puts("\n=== Test: Call puts() with stack char array ===");
+
+		for (const auto& instruction : ir.getInstructions()) {
+			std::puts(instruction.getReadableString().c_str());
+		}
+
+		std::puts("=== End Test ===\n");
+
+		// Try to generate object file
+		IrToObjConverter irConverter;
+		irConverter.convert(ir, "test_puts_stack.obj", "test_puts_stack.cpp");
+	}
+}

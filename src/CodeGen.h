@@ -59,7 +59,16 @@ public:
 		else if (node.is<NamespaceDeclarationNode>()) {
 			visitNamespaceDeclarationNode(node.as<NamespaceDeclarationNode>());
 		}
+		else if (node.is<FunctionDeclarationNode>()) {
+			visitFunctionDeclarationNode(node.as<FunctionDeclarationNode>());
+		}
+		else if (node.is<DeclarationNode>()) {
+			// Forward declarations or global variable declarations
+			// These are already in the symbol table, no code generation needed
+			return;
+		}
 		else {
+			puts(node.type_name());
 			assert(false && "Unhandled AST node type");
 		}
 	}
