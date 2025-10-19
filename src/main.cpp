@@ -102,7 +102,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (context.isVerboseMode() && !context.isPreprocessorOnlyMode()) {
+    // If preprocessor-only mode, we're done - the preprocessor already output the result
+    if (context.isPreprocessorOnlyMode()) {
+        return 0;
+    }
+
+    if (context.isVerboseMode()) {
         // Use context and file_tree to perform the desired operation
         std::cout << "Output file: " << context.getOutputFile() << std::endl;
         std::cout << "Verbose mode: " << (context.isVerboseMode() ? "enabled" : "disabled") << std::endl;
