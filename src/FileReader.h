@@ -544,8 +544,117 @@ private:
 	static bool is_seperator_character(char c) {
 		return ((c == ' ') | (c == ',') | (c == '#') | (c == ')') | (c == '(')) != 0;
 	}
+	// Helper function to check if a position is inside a string literal (static version)
+	// Handles both regular strings "..." and raw strings R"(...)" or R"delim(...)delim"
+	static bool is_inside_string_literal(const std::string& str, size_t pos) {
+		bool inside_string = false;
+		bool inside_raw_string = false;
+		bool escaped = false;
+		std::string raw_delimiter;
+
+		for (size_t i = 0; i < pos && i < str.size(); ++i) {
+			if (inside_raw_string) {
+				// Inside a raw string - look for )" followed by delimiter and "
+				if (str[i] == ')' && i + 1 + raw_delimiter.size() < str.size()) {
+					if (str[i + 1] == '"') {
+						// Check if delimiter matches (empty delimiter case)
+						if (raw_delimiter.empty()) {
+							inside_raw_string = false;
+							i += 1; // Skip the closing "
+							continue;
+						}
+					} else if (i + 1 + raw_delimiter.size() < str.size()) {
+						// Check if delimiter matches
+						bool delimiter_matches = true;
+						for (size_t j = 0; j < raw_delimiter.size(); ++j) {
+							if (str[i + 1 + j] != raw_delimiter[j]) {
+								delimiter_matches = false;
+								break;
+							}
+						}
+						if (delimiter_matches && str[i + 1 + raw_delimiter.size()] == '"') {
+							inside_raw_string = false;
+							i += raw_delimiter.size() + 1; // Skip delimiter and closing "
+							continue;
+						}
+					}
+				}
+			} else if (inside_string) {
+				// Inside a regular string
+				if (escaped) {
+					escaped = false;
+					continue;
+				}
+
+				if (str[i] == '\\') {
+					escaped = true;
+				} else if (str[i] == '"') {
+					inside_string = false;
+				}
+			} else {
+				// Outside any string - check for string start
+				// Check for raw string literal: R"delim(
+				if (str[i] == 'R' && i + 2 < str.size() && str[i + 1] == '"') {
+					inside_raw_string = true;
+					raw_delimiter.clear();
+					i += 2; // Skip R"
+
+					// Extract delimiter (characters between " and ()
+					while (i < str.size() && str[i] != '(') {
+						raw_delimiter += str[i];
+						++i;
+					}
+					// i now points to '(', continue from next character
+					continue;
+				}
+				// Check for regular string literal
+				else if (str[i] == '"') {
+					inside_string = true;
+				}
+			}
+		}
+
+		return inside_string || inside_raw_string;
+	}
+
 	std::string expandMacros(const std::string& input) {
 		std::string output = input;
+
+		// Check if we're inside a multiline raw string from a previous line
+		// If so, we need to check if this line ends the raw string
+		if (inside_multiline_raw_string_) {
+			// Scan this line to see if it contains the closing delimiter
+			std::string closing = ")" + multiline_raw_delimiter_ + "\"";
+			size_t close_pos = output.find(closing);
+			if (close_pos != std::string::npos) {
+				// Raw string ends on this line
+				inside_multiline_raw_string_ = false;
+				multiline_raw_delimiter_.clear();
+			}
+			// Don't expand macros on this line since we're inside a raw string
+			return output;
+		}
+
+		// Check if this line starts a multiline raw string
+		// Scan for R"delimiter( patterns
+		size_t raw_start = 0;
+		while ((raw_start = output.find("R\"", raw_start)) != std::string::npos) {
+			size_t delim_start = raw_start + 2;
+			size_t paren_pos = output.find('(', delim_start);
+			if (paren_pos != std::string::npos) {
+				std::string delimiter = output.substr(delim_start, paren_pos - delim_start);
+				std::string closing = ")" + delimiter + "\"";
+				size_t close_pos = output.find(closing, paren_pos);
+				if (close_pos == std::string::npos) {
+					// Raw string starts but doesn't end on this line
+					inside_multiline_raw_string_ = true;
+					multiline_raw_delimiter_ = delimiter;
+					// Don't expand macros on this line
+					return output;
+				}
+			}
+			raw_start++;
+		}
 
 		bool expanded = true;
 		size_t loop_guard = 100'000'000;
@@ -553,15 +662,35 @@ private:
 			expanded = false;
 			size_t last_char_index = output.size() - 1;
 			for (const auto& [pattern, directive] : defines_) {
-				size_t pos = output.find(pattern, 0);
-				if (pos != std::string::npos) {
-					if (pos > 0 && !is_seperator_character(output[pos - 1])) {
+				// Search for all occurrences of the pattern and find the first one
+				// that's not inside a string literal and has proper separators
+				size_t search_pos = 0;
+				size_t pos = std::string::npos;
+
+				while ((search_pos = output.find(pattern, search_pos)) != std::string::npos) {
+					// Skip if the pattern is inside a string literal
+					if (is_inside_string_literal(output, search_pos)) {
+						search_pos++;
 						continue;
 					}
-					size_t pattern_end = pos + pattern.size();
+
+					if (search_pos > 0 && !is_seperator_character(output[search_pos - 1])) {
+						search_pos++;
+						continue;
+					}
+					size_t pattern_end = search_pos + pattern.size();
 					if (pattern_end < last_char_index && !is_seperator_character(output[pattern_end])) {
+						search_pos++;
 						continue;
 					}
+
+					// Found a valid occurrence
+					pos = search_pos;
+					break;
+				}
+
+				if (pos != std::string::npos) {
+					size_t pattern_end = pos + pattern.size();
 
 					std::string replace_str;
 					if (auto* defineDirective = directive.get_if<DefineDirective>()) {
@@ -1176,10 +1305,14 @@ private:
 			return std::to_string(filestack_.size() > 0 ? filestack_.size() - 1 : 0);
 		} };
 
-		// __PRETTY_FUNCTION__ (GCC extension), __FUNCTION__ (MSVC extension), and __func__ (C++11 standard)
+		// __FUNCTION__ (MSVC extension)
+		defines_["__FUNCTION__"] = DefineDirective("__func__", {});
+
+		// __PRETTY_FUNCTION__ (GCC extension) and __func__ (C++11 standard)
 		// These are NOT preprocessor macros - they are compiler builtins handled by the parser
 		// The parser will replace them with string literals containing the current function name
 		// when they appear inside a function body
+		//
 
 		defines_["__STDCPP_DEFAULT_NEW_ALIGNMENT__"] = FunctionDirective{ [] {
 			constexpr std::size_t default_new_alignment = alignof(std::max_align_t);
@@ -1222,4 +1355,8 @@ private:
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
 	unsigned long long counter_value_ = 0;
+
+	// State for tracking multiline raw string literals
+	bool inside_multiline_raw_string_ = false;
+	std::string multiline_raw_delimiter_;
 };

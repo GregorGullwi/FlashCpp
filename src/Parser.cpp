@@ -313,7 +313,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Add function parameters to the symbol table within a function scope
 		gSymbolTable.enter_scope(ScopeType::Function);
 
-		// Set current function pointer for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+		// Set current function pointer for __func__, __PRETTY_FUNCTION__
 		// The FunctionDeclarationNode persists in the AST, so the pointer is safe
 		if (auto funcNode = function_definition_result.node()) {
 			const auto& func_decl = funcNode->as<FunctionDeclarationNode>();
@@ -473,7 +473,7 @@ ParseResult Parser::parse_struct_declaration()
 				// Enter function scope for parsing the body
 				gSymbolTable.enter_scope(ScopeType::Function);
 
-				// Set current function pointer for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+				// Set current function pointer for __func__, __PRETTY_FUNCTION__
 				// The FunctionDeclarationNode persists in the AST, so the pointer is safe
 				current_function_ = &member_func_ref;
 
@@ -1648,9 +1648,8 @@ ParseResult Parser::parse_primary_expression()
 	else if (current_token_->type() == Token::Type::Identifier) {
 		Token idenfifier_token = *current_token_;
 
-		// Check for __FUNCTION__, __func__, __PRETTY_FUNCTION__ (compiler builtins)
-		if (idenfifier_token.value() == "__FUNCTION__"sv ||
-		    idenfifier_token.value() == "__func__"sv ||
+		// Check for __func__, __PRETTY_FUNCTION__ (compiler builtins)
+		if (idenfifier_token.value() == "__func__"sv ||
 		    idenfifier_token.value() == "__PRETTY_FUNCTION__"sv) {
 
 			if (!current_function_) {
@@ -1665,13 +1664,13 @@ ParseResult Parser::parse_primary_expression()
 			if (idenfifier_token.value() == "__PRETTY_FUNCTION__"sv) {
 				persistent_name = context_.storeFunctionNameLiteral(buildPrettyFunctionSignature(*current_function_));
 			} else {
-				// For __FUNCTION__ and __func__, just use the simple function name
+				// For __func__, just use the simple function name
 				persistent_name = current_function_->decl_node().identifier_token().value();
 			}
 
 			// Store the function name string in CompileContext so it persists
 			// Note: Unlike string literals from source code (which include quotes in the token),
-			// __FUNCTION__/__func__/__PRETTY_FUNCTION__ are predefined identifiers that expand
+			// __func__/__PRETTY_FUNCTION__ are predefined identifiers that expand
 			// to the string content directly, without quotes. This matches MSVC/GCC/Clang behavior.
 			Token string_token(Token::Type::StringLiteral,
 			                   persistent_name,
