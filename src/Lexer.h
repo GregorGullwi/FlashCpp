@@ -66,6 +66,9 @@ public:
 			else if (c == '\"') {
 				return consume_string_literal();
 			}
+			else if (c == '\'') {
+				return consume_character_literal();
+			}
 			else if (is_operator(c)) {
 				return consume_operator();
 			}
@@ -332,6 +335,44 @@ private:
 
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::StringLiteral, value, line_, column_,
+			current_file_index_);
+	}
+
+	Token consume_character_literal() {
+		size_t start = cursor_;
+		++cursor_;  // Skip opening '
+		++column_;
+
+		// Character literals can contain:
+		// - A single character: 'a'
+		// - An escape sequence: '\n', '\t', '\0', '\\', '\''
+		while (cursor_ < source_size_ && source_[cursor_] != '\'') {
+			if (source_[cursor_] == '\\') {
+				// Skip the backslash and the next character (escape sequence)
+				++cursor_;
+				++column_;
+				if (cursor_ < source_size_) {
+					++cursor_;
+					++column_;
+				}
+			}
+			else {
+				++cursor_;
+				++column_;
+			}
+		}
+
+		if (cursor_ < source_size_ && source_[cursor_] == '\'') {
+			++cursor_;  // Skip closing '
+			++column_;
+		}
+		else {
+			// Handle unterminated character literal error
+			// ...
+		}
+
+		std::string_view value = source_.substr(start, cursor_ - start);
+		return Token(Token::Type::CharacterLiteral, value, line_, column_,
 			current_file_index_);
 	}
 

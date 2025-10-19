@@ -25,6 +25,7 @@ enum class SectionType : unsigned char
 	TEXT,
 	DATA,
 	BSS,
+	RDATA,
 	DRECTVE,
 	XDATA,
 	PDATA,
@@ -139,6 +140,27 @@ public:
 		COFFI::auxiliary_symbol_record aux_record_bss;
 		std::memcpy(aux_record_bss.value, &aux_bss, sizeof(aux_bss));
 		symbol_bss->get_auxiliary_symbols().push_back(aux_record_bss);
+
+		// Add .rdata section (read-only data for string literals and constants)
+		auto section_rdata = add_section(".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_16BYTES, SectionType::RDATA);
+		auto symbol_rdata = coffi_.add_symbol(".rdata");
+		symbol_rdata->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol_rdata->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol_rdata->set_section_number(section_rdata->get_index() + 1);
+		symbol_rdata->set_value(0);
+
+		// Add auxiliary symbol for .rdata section
+		COFFI::auxiliary_symbol_record_5 aux_rdata = {};
+		aux_rdata.length = 0;
+		aux_rdata.number_of_relocations = 0;
+		aux_rdata.number_of_linenumbers = 0;
+		aux_rdata.check_sum = 0;
+		aux_rdata.number = static_cast<uint16_t>(section_rdata->get_index() + 1);
+		aux_rdata.selection = 0;
+
+		COFFI::auxiliary_symbol_record aux_record_rdata;
+		std::memcpy(aux_record_rdata.value, &aux_rdata, sizeof(aux_rdata));
+		symbol_rdata->get_auxiliary_symbols().push_back(aux_record_rdata);
 
 		// Add debug sections to match Clang order
 		auto section_debug_s = coffi_.add_section(".debug$S");
@@ -674,6 +696,61 @@ public:
 		}
 	}
 
+	// Add a string literal to the .rdata section and return its symbol name
+	std::string add_string_literal(const std::string& str_content) {
+		// Generate a unique symbol name for this string literal
+		std::string symbol_name = ".str." + std::to_string(string_literal_counter_++);
+
+		// Get current offset in .rdata section
+		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+		uint32_t offset = rdata_section->get_data_size();
+
+		// Process the string: remove quotes and handle escape sequences
+		std::string processed_str;
+		if (str_content.size() >= 2 && str_content.front() == '"' && str_content.back() == '"') {
+			// Remove quotes
+			std::string_view content(str_content.data() + 1, str_content.size() - 2);
+
+			// Process escape sequences
+			for (size_t i = 0; i < content.size(); ++i) {
+				if (content[i] == '\\' && i + 1 < content.size()) {
+					switch (content[i + 1]) {
+						case 'n': processed_str += '\n'; ++i; break;
+						case 't': processed_str += '\t'; ++i; break;
+						case 'r': processed_str += '\r'; ++i; break;
+						case '\\': processed_str += '\\'; ++i; break;
+						case '"': processed_str += '"'; ++i; break;
+						case '0': processed_str += '\0'; ++i; break;
+						default: processed_str += content[i]; break;
+					}
+				} else {
+					processed_str += content[i];
+				}
+			}
+		} else {
+			processed_str = str_content;
+		}
+
+		// Add null terminator
+		processed_str += '\0';
+
+		// Add the string data to .rdata section
+		std::vector<char> str_data(processed_str.begin(), processed_str.end());
+		add_data(str_data, SectionType::RDATA);
+
+		// Add a symbol for this string literal
+		auto symbol = coffi_.add_symbol(symbol_name);
+		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol->set_section_number(rdata_section->get_index() + 1);
+		symbol->set_value(offset);
+
+		std::cerr << "Added string literal '" << processed_str.substr(0, processed_str.size() - 1)
+		          << "' at offset " << offset << " with symbol " << symbol_name << std::endl;
+
+		return symbol_name;
+	}
+
 protected:
 	COFFI::coffi coffi_;
 	std::unordered_map<SectionType, std::string> sectiontype_to_name;
@@ -690,4 +767,7 @@ protected:
 
 	// Track functions that already have exception info to avoid duplicates
 	std::vector<std::string> added_exception_functions_;
+
+	// Counter for generating unique string literal symbols
+	uint32_t string_literal_counter_ = 0;
 };

@@ -1850,6 +1850,46 @@ ParseResult Parser::parse_primary_expression()
 		result = emplace_node<ExpressionNode>(StringLiteralNode(*current_token_));
 		consume_token();
 	}
+	else if (current_token_->type() == Token::Type::CharacterLiteral) {
+		// Parse character literal and convert to numeric value
+		std::string_view value = current_token_->value();
+
+		// Character literal format: 'x' or '\x'
+		// Remove the surrounding quotes
+		if (value.size() < 3) {
+			return ParseResult::error("Invalid character literal", *current_token_);
+		}
+
+		char char_value = 0;
+		if (value[1] == '\\') {
+			// Escape sequence
+			if (value.size() < 4) {
+				return ParseResult::error("Invalid escape sequence in character literal", *current_token_);
+			}
+			char escape_char = value[2];
+			switch (escape_char) {
+				case 'n': char_value = '\n'; break;
+				case 't': char_value = '\t'; break;
+				case 'r': char_value = '\r'; break;
+				case '0': char_value = '\0'; break;
+				case '\\': char_value = '\\'; break;
+				case '\'': char_value = '\''; break;
+				case '"': char_value = '"'; break;
+				default:
+					return ParseResult::error("Unknown escape sequence in character literal", *current_token_);
+			}
+		}
+		else {
+			// Single character
+			char_value = value[1];
+		}
+
+		// Create a numeric literal node with the character's value
+		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
+			static_cast<unsigned long long>(static_cast<unsigned char>(char_value)),
+			Type::Char, TypeQualifier::None, 8));
+		consume_token();
+	}
 	else if (current_token_->type() == Token::Type::Keyword &&
 			 (current_token_->value() == "true" || current_token_->value() == "false")) {
 		// Handle bool literals

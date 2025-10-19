@@ -818,6 +818,9 @@ public:
 			case IrOpcode::ArrayStore:
 				handleArrayStore(instruction);
 				break;
+			case IrOpcode::StringLiteral:
+				handleStringLiteral(instruction);
+				break;
 			case IrOpcode::PreIncrement:
 				handlePreIncrement(instruction);
 				break;
@@ -3638,6 +3641,56 @@ private:
 				textSectionData.push_back(0x89); // MOV r/m64, r64
 				textSectionData.push_back(0x02); // ModR/M: [RDX], RAX
 			}
+		}
+	}
+
+	void handleStringLiteral(const IrInstruction& instruction) {
+		// StringLiteral: %result = string_literal "content"
+		// Format: [result_var, string_content]
+		assert(instruction.getOperandCount() == 2 && "StringLiteral must have 2 operands");
+
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		auto string_content = instruction.getOperandAs<std::string_view>(1);
+
+		// Add the string literal to the .rdata section and get its symbol name
+		std::string symbol_name = writer.add_string_literal(std::string(string_content));
+
+		// Calculate stack offset for the result variable (pointer to string)
+		int64_t stack_offset = getStackOffsetFromTempVar(result_var);
+		variable_scopes.back().identifier_offset[std::string(result_var.name())] = stack_offset;
+
+		// LEA RAX, [RIP + symbol]
+		// This requires a relocation entry
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0x8D); // LEA
+		textSectionData.push_back(0x05); // ModR/M: [RIP + disp32], RAX
+
+		// Add placeholder for the displacement (will be filled by relocation)
+		uint32_t relocation_offset = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// Add a relocation for the string literal symbol
+		writer.add_relocation(relocation_offset, symbol_name);
+
+		// Store the address to the stack
+		// MOV [RBP + offset], RAX
+		if (stack_offset >= -128 && stack_offset <= 127) {
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x89); // MOV r/m64, r64
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(stack_offset));
+		} else {
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x89); // MOV r/m64, r64
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			uint32_t offset_u32 = static_cast<uint32_t>(stack_offset);
+			textSectionData.push_back(offset_u32 & 0xFF);
+			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 		}
 	}
 

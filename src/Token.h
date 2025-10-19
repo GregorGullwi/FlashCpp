@@ -10,6 +10,7 @@ public:
 		Keyword,
 		Literal,
 		StringLiteral,
+		CharacterLiteral,
 		Operator,
 		Punctuator,
 		EndOfFile

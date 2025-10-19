@@ -100,6 +100,8 @@ enum class IrOpcode : int_fast16_t {
 	// Struct operations
 	MemberAccess,
 	MemberStore,
+	// String literal
+	StringLiteral,
 };
 
 enum class X64Register : uint8_t {
@@ -1819,6 +1821,24 @@ public:
 					oss << '%' << getOperandAs<std::string_view>(5);
 				else if (isOperandType<int>(5))
 					oss << getOperandAs<int>(5);
+			}
+		}
+		break;
+
+		case IrOpcode::StringLiteral:
+		{
+			// %result = string_literal "content"
+			// Format: [result_var, string_content]
+			assert(getOperandCount() == 2 && "StringLiteral instruction must have exactly 2 operands");
+			if (getOperandCount() >= 2) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = string_literal ";
+				oss << getOperandAs<std::string_view>(1);
 			}
 		}
 		break;

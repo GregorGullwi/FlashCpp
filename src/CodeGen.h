@@ -847,9 +847,21 @@ private:
 
 	std::vector<IrOperand>
 		generateStringLiteralIr(const StringLiteralNode& stringLiteralNode) {
-		// Generate IR for string literal and return appropriate operand
-		// ...
-		return { stringLiteralNode.value() };
+		// Generate IR for string literal
+		// Create a temporary variable to hold the address of the string
+		TempVar result_var = var_counter.next();
+
+		// Add StringLiteral IR instruction
+		// Format: [result_var, string_content]
+		std::vector<IrOperand> operands;
+		operands.emplace_back(result_var);
+		operands.emplace_back(stringLiteralNode.value());
+
+		ir_.addInstruction(IrInstruction(IrOpcode::StringLiteral, std::move(operands), Token()));
+
+		// Return the result as a char pointer (const char*)
+		// We use Type::Char with 64-bit size to indicate it's a pointer
+		return { Type::Char, 64, result_var };
 	}
 
 	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode) {
