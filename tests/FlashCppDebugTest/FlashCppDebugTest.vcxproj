@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <ProjectGuid>{A24C4537-A1D4-4213-AD8D-21DA9824AF7C}</ProjectGuid>
+    <RootNamespace>FlashCppDebugTest</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
+    <IntDir>$(Configuration)\</IntDir>
+    <TargetName>flashcpp_debug_test</TargetName>
+    <TargetExt>.exe</TargetExt>
+    <NMakeBuildCommandLine>$(SolutionDir)build_flashcpp_debug.bat</NMakeBuildCommandLine>
+    <NMakeOutput>$(OutDir)flashcpp_debug_test.exe</NMakeOutput>
+    <NMakeCleanCommandLine>del /Q "$(OutDir)flashcpp_debug_test.exe" "$(OutDir)flashcpp_debug_test.pdb" "$(IntDir)flashcpp_debug_test.obj" 2&gt;nul</NMakeCleanCommandLine>
+    <NMakeReBuildCommandLine>$(NMakeCleanCommandLine) &amp;&amp; $(NMakeBuildCommandLine)</NMakeReBuildCommandLine>
+    <NMakePreprocessorDefinitions>_DEBUG;_CONSOLE;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+    <NMakeIncludeSearchPath>$(SolutionDir);$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="flashcpp_debug_test.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\build_flashcpp_debug.bat" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
