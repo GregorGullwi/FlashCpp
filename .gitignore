@@ -4,3 +4,4 @@ Debug/
 .ccls-cache/
 */*.obj
 core.*
+*.user
