@@ -1,6 +1,13 @@
 int puts(const char* str);
 int printf(const char* format, ...);
 
+// Test: Proxy function that forwards to printf
+int my_printf(const char* format, ...) {
+    // For now, just forward to printf with the same arguments
+    // This tests if we can call variadic functions from variadic functions
+    return printf(format);
+}
+
 int main() {
     // Test 1: Stack-based char array
     char msg[6];
@@ -24,6 +31,9 @@ int main() {
     int y = 20;
     int sum = x + y;
     printf("x = %d, y = %d, sum = %d\n", x, y, sum);
+
+    // Test 5: Call proxy function (just format string for now)
+    my_printf("Proxy test: %d\n", sum);
 
     return 0;
 }

@@ -1672,9 +1672,16 @@ private:
 		// The reference compiler (clang) only maps opening brace and actual statements
 		// Closing braces are not mapped in the line information
 
+		// Store the return value from RAX to the result variable's stack location
+		// This is critical - without this, the return value in RAX gets overwritten
+		// by subsequent operations before it's ever saved
+		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+		// Reset the register allocator since we've saved the return value to memory
+		// Don't keep RAX allocated - it will be overwritten by subsequent operations
 		regAlloc.reset();
-		regAlloc.allocateSpecific(X64Register::RAX, result_offset);
-		regAlloc.mark_reg_dirty(X64Register::RAX);
 	}
 
 	void handleVariableDecl(const IrInstruction& instruction) {
@@ -1691,11 +1698,7 @@ private:
 		X64Register allocated_reg_val = X64Register::RAX; // Default
 
 		if (is_initialized) {
-
-			auto allocated_reg = regAlloc.allocate();
-			allocated_reg_val = allocated_reg.reg;
 			auto dst_offset = var_it->second;
-			regAlloc.set_stack_variable_offset(allocated_reg.reg, dst_offset);
 
 			// Check if the initializer is a literal value
 			bool is_literal = instruction.isOperandType<unsigned long long>(6) ||
@@ -1703,6 +1706,9 @@ private:
 			                  instruction.isOperandType<double>(6);
 
 			if (is_literal) {
+				// For literal initialization, allocate a register temporarily
+				auto allocated_reg = regAlloc.allocate();
+				allocated_reg_val = allocated_reg.reg;
 				// Load immediate value into register
 				if (instruction.isOperandType<double>(6)) {
 					// Handle double/float literals
@@ -1753,6 +1759,8 @@ private:
 				regAlloc.release(allocated_reg.reg);
 			} else {
 				// Load from memory (TempVar or variable)
+				// For non-literal initialization, we don't allocate a register
+				// We just copy the value from source to destination on the stack
 				int src_offset = 0;
 				if (instruction.isOperandType<TempVar>(6)) {
 					auto temp_var = instruction.getOperandAs<TempVar>(6);
@@ -1766,29 +1774,20 @@ private:
 
 				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
 					// Source value is already in a register (e.g., from function return)
-					// For struct types, we need to store the entire value to the stack
-					// For other types, we can keep it in a register
-					auto size_in_bits = instruction.getOperandAs<int>(1);
-					int size_bytes = size_in_bits / 8;
-
-					if (var_type == Type::Struct) {
-						// For structs, store directly from source register to destination stack location
-						// This handles the x64 Windows calling convention where small structs (≤8 bytes)
-						// are returned in RAX and need to be stored to the stack for member access
-						auto store_opcodes = generateMovToFrame(src_reg.value(), dst_offset);
-						textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-						                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-						// Release the allocated register since we're not using it
-						regAlloc.release(allocated_reg.reg);
-					} else {
-						// For non-struct types, move to allocated register
-						auto mov_opcodes = regAlloc.get_reg_reg_move_op_code(allocated_reg.reg, src_reg.value(), size_bytes);
-						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(),
-						                       mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-					}
+					// Store it directly to the destination stack location
+					auto store_opcodes = generateMovToFrame(src_reg.value(), dst_offset);
+					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 				} else {
-					auto load_opcodes = generateMovFromFrame(allocated_reg.reg, src_offset);
+					// Source is on the stack, load it to a temporary register and store to destination
+					auto temp_reg = regAlloc.allocate();
+					allocated_reg_val = temp_reg.reg;
+					auto load_opcodes = generateMovFromFrame(temp_reg.reg, src_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					auto store_opcodes = generateMovToFrame(temp_reg.reg, dst_offset);
+					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+					regAlloc.release(temp_reg.reg);
 				}
 			} // end else (not literal)
 		} // end if (is_initialized)
