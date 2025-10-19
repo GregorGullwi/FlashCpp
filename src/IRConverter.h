@@ -511,6 +511,10 @@ struct RegisterAllocator
 
 	std::optional<X64Register> tryGetStackVariableRegister(int32_t stackVariableOffset) const {
 		for (auto& reg : registers) {
+			// Skip RSP and RBP - they should never be used as general-purpose registers
+			if (reg.reg == X64Register::RSP || reg.reg == X64Register::RBP) {
+				continue;
+			}
 			if (reg.stackVariableOffset == stackVariableOffset) {
 				return reg.reg;
 			}
@@ -534,33 +538,84 @@ struct RegisterAllocator
 
 		// For 64-bit moves, we need the REX prefix (0x48)
 		if (size_in_bytes == 8) {
-			result.op_codes[0] = 0x48;
+			// Build REX prefix: 0100WRXB
+			// W=1 for 64-bit, R=1 if src_reg is R8-R15, B=1 if dst_reg is R8-R15
+			uint8_t rex = 0x48;  // REX.W = 1
+			if (static_cast<uint8_t>(src_reg) >= 8) {
+				rex |= 0x04;  // REX.R = 1
+			}
+			if (static_cast<uint8_t>(dst_reg) >= 8) {
+				rex |= 0x01;  // REX.B = 1
+			}
+			result.op_codes[0] = rex;
 			result.op_codes[1] = 0x89;  // MOV r64, r64
-			// ModR/M: Mod=11 (register-to-register), Reg=src_reg, R/M=dst_reg
-			result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
+			// ModR/M: Mod=11 (register-to-register), Reg=src_reg (lower 3 bits), R/M=dst_reg (lower 3 bits)
+			result.op_codes[2] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
 			result.size_in_bytes = 3;
 		}
-		// For 32-bit moves, we don't need REX prefix
+		// For 32-bit moves, we may need REX prefix for R8-R15
 		else if (size_in_bytes == 4) {
-			result.op_codes[0] = 0x89;  // MOV r32, r32
-			// ModR/M: Mod=11 (register-to-register), Reg=src_reg, R/M=dst_reg
-			result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
-			result.size_in_bytes = 2;
+			// Check if we need REX prefix for extended registers
+			if (static_cast<uint8_t>(src_reg) >= 8 || static_cast<uint8_t>(dst_reg) >= 8) {
+				uint8_t rex = 0x40;  // Base REX prefix
+				if (static_cast<uint8_t>(src_reg) >= 8) {
+					rex |= 0x04;  // REX.R = 1
+				}
+				if (static_cast<uint8_t>(dst_reg) >= 8) {
+					rex |= 0x01;  // REX.B = 1
+				}
+				result.op_codes[0] = rex;
+				result.op_codes[1] = 0x89;  // MOV r32, r32
+				result.op_codes[2] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
+				result.size_in_bytes = 3;
+			} else {
+				result.op_codes[0] = 0x89;  // MOV r32, r32
+				result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
+				result.size_in_bytes = 2;
+			}
 		}
 		// For 16-bit moves, we need the 66 prefix
 		else if (size_in_bytes == 2) {
 			result.op_codes[0] = 0x66;
-			result.op_codes[1] = 0x89;  // MOV r16, r16
-			// ModR/M: Mod=11 (register-to-register), Reg=src_reg, R/M=dst_reg
-			result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
-			result.size_in_bytes = 3;
+			// Check if we need REX prefix for extended registers
+			if (static_cast<uint8_t>(src_reg) >= 8 || static_cast<uint8_t>(dst_reg) >= 8) {
+				uint8_t rex = 0x40;  // Base REX prefix
+				if (static_cast<uint8_t>(src_reg) >= 8) {
+					rex |= 0x04;  // REX.R = 1
+				}
+				if (static_cast<uint8_t>(dst_reg) >= 8) {
+					rex |= 0x01;  // REX.B = 1
+				}
+				result.op_codes[1] = rex;
+				result.op_codes[2] = 0x89;  // MOV r16, r16
+				result.op_codes[3] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
+				result.size_in_bytes = 4;
+			} else {
+				result.op_codes[1] = 0x89;  // MOV r16, r16
+				result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
+				result.size_in_bytes = 3;
+			}
 		}
 		// For 8-bit moves, we need special handling for high registers
 		else if (size_in_bytes == 1) {
-			result.op_codes[0] = 0x88;  // MOV r8, r8
-			// ModR/M: Mod=11 (register-to-register), Reg=src_reg, R/M=dst_reg
-			result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
-			result.size_in_bytes = 2;
+			// Check if we need REX prefix for extended registers
+			if (static_cast<uint8_t>(src_reg) >= 8 || static_cast<uint8_t>(dst_reg) >= 8) {
+				uint8_t rex = 0x40;  // Base REX prefix
+				if (static_cast<uint8_t>(src_reg) >= 8) {
+					rex |= 0x04;  // REX.R = 1
+				}
+				if (static_cast<uint8_t>(dst_reg) >= 8) {
+					rex |= 0x01;  // REX.B = 1
+				}
+				result.op_codes[0] = rex;
+				result.op_codes[1] = 0x88;  // MOV r8, r8
+				result.op_codes[2] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
+				result.size_in_bytes = 3;
+			} else {
+				result.op_codes[0] = 0x88;  // MOV r8, r8
+				result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
+				result.size_in_bytes = 2;
+			}
 		}
 
 		return result;
@@ -1382,7 +1437,17 @@ private:
 			// Determine if this is a floating-point argument
 			bool is_float_arg = is_floating_point_type(argType);
 
-			// Determine the target register for the argument
+			// Check if this argument goes in a register or on the stack
+			// x64 Windows calling convention: first 4 args in registers, rest on stack
+			bool use_register = (i < 4);
+
+			// TODO: Implement stack-based argument passing for arguments 5+
+			// For now, skip arguments beyond the 4th one to prevent crashes
+			if (!use_register) {
+				continue; // Skip this argument for now
+			}
+
+			// Determine the target register for the argument (if using registers)
 			X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
 
 			// Handle floating-point immediate values
@@ -1463,9 +1528,10 @@ private:
 						}
 					}
 				} else {
-					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
+					    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
 						if (reg_var.value() != target_reg) {
-							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 4);	// TODO: reg size
+							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 8);	// Use 64-bit move
 							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 						}
 					}
@@ -1513,16 +1579,19 @@ private:
 							}
 						}
 					} else {
-						if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+						if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
+						    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
 							if (reg_var.value() != target_reg) {
-								auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 4);	// TODO: reg size
+								auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 8);	// Use 64-bit move
 								textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 							}
 						}
-						// Use the existing generateMovFromFrame function for consistency
-						auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
-						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-						regAlloc.flushSingleDirtyRegister(target_reg);
+						else {
+							// Use the existing generateMovFromFrame function for consistency
+							auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
+							textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+							regAlloc.flushSingleDirtyRegister(target_reg);
+						}
 					}
 				} else {
 					// Temporary variable not found in stack. This indicates a problem with our

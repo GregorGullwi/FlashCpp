@@ -918,6 +918,17 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		create_node_ref<FunctionDeclarationNode>(declaration_node);
 
 	while (!consume_punctuator(")"sv)) {
+		// Check for variadic parameter (...)
+		if (peek_token().has_value() && peek_token()->value() == "...") {
+			consume_token(); // consume '...'
+			// Variadic parameter - just skip it for now
+			// The function is marked as variadic, but we don't need to store the ... parameter
+			if (!consume_punctuator(")"sv)) {
+				return ParseResult::error("Expected ')' after variadic parameter '...'", *current_token_);
+			}
+			break;
+		}
+
 		// Parse parameter type and name (identifier)
 		ParseResult type_and_name_result = parse_type_and_name();
 		if (type_and_name_result.is_error()) {

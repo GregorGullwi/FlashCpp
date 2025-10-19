@@ -551,6 +551,16 @@ private:
 				current_file_index_);
 		}
 
+		// Check for ... (variadic parameter)
+		if (first_char == '.' && cursor_ + 2 < source_size_ &&
+			source_[cursor_ + 1] == '.' && source_[cursor_ + 2] == '.') {
+			cursor_ += 3;
+			column_ += 3;
+			std::string_view value = source_.substr(start, 3);
+			return Token(Token::Type::Punctuator, value, line_, column_,
+				current_file_index_);
+		}
+
 		++cursor_;
 		++column_;
 
