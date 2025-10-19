@@ -1900,8 +1900,41 @@ ParseResult Parser::parse_primary_expression()
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::StringLiteral) {
-		result = emplace_node<ExpressionNode>(StringLiteralNode(*current_token_));
+		// Handle adjacent string literal concatenation
+		// C++ allows "Hello " "World" to be concatenated into "Hello World"
+		Token first_string = *current_token_;
+		std::string concatenated_value(first_string.value());
 		consume_token();
+
+		// Check for adjacent string literals
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::StringLiteral) {
+			Token next_string = *peek_token();
+			// Remove quotes from both strings and concatenate
+			// First string: remove trailing quote
+			// Next string: remove leading quote
+			std::string_view first_content = concatenated_value;
+			if (first_content.size() >= 2 && first_content.back() == '"') {
+				first_content.remove_suffix(1);
+			}
+			std::string_view next_content = next_string.value();
+			if (next_content.size() >= 2 && next_content.front() == '"') {
+				next_content.remove_prefix(1);
+			}
+
+			// Concatenate: first_content (without trailing ") + next_content (without leading ")
+			concatenated_value = std::string(first_content) + std::string(next_content);
+			consume_token();
+		}
+
+		// Store the concatenated string in CompileContext so it persists
+		std::string_view persistent_string = context_.storeFunctionNameLiteral(concatenated_value);
+		Token concatenated_token(Token::Type::StringLiteral,
+		                         persistent_string,
+		                         first_string.line(),
+		                         first_string.column(),
+		                         first_string.file_index());
+
+		result = emplace_node<ExpressionNode>(StringLiteralNode(concatenated_token));
 	}
 	else if (current_token_->type() == Token::Type::CharacterLiteral) {
 		// Parse character literal and convert to numeric value
