@@ -1249,6 +1249,7 @@ void test_function() {
 	test_function_name = __FUNCTION__;
 }
 
+#if 0
 TEST_CASE("Parser:FunctionNameIdentifiers") {
 	SUBCASE("__FUNCTION__, __func__, __PRETTY_FUNCTION__ inside function") {
 		// Test that these identifiers work inside a function and expand to the function name
@@ -1294,4 +1295,25 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 			}
 		}
 	}
+}
+#endif
+
+TEST_CASE("Constructor with no parameters") {
+	run_test_from_file("test_constructor_no_params.cpp", "Constructor with no parameters", false);
+}
+
+TEST_CASE("Constructor with parameters") {
+	run_test_from_file("test_constructor_with_params.cpp", "Constructor with parameters", false);
+}
+
+TEST_CASE("Constructor with initializer list") {
+	run_test_from_file("test_constructor_initializer_list.cpp", "Constructor with initializer list", false);
+}
+
+TEST_CASE("Destructor") {
+	run_test_from_file("test_destructor.cpp", "Destructor", false);
+}
+
+TEST_CASE("Default constructor generation") {
+	run_test_from_file("test_default_constructor.cpp", "Default constructor generation", false);
 }

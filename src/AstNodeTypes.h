@@ -118,11 +118,14 @@ class FunctionDeclarationNode;
 // Struct member function information
 struct StructMemberFunction {
 	std::string name;
-	ASTNode function_decl;  // FunctionDeclarationNode
+	ASTNode function_decl;  // FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 	AccessSpecifier access; // Access level (public/protected/private)
+	bool is_constructor;    // True if this is a constructor
+	bool is_destructor;     // True if this is a destructor
 
-	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public)
-		: name(std::move(n)), function_decl(func_decl), access(acc) {}
+	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
+	                     bool is_ctor = false, bool is_dtor = false)
+		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor) {}
 };
 
 // Struct type information
@@ -159,7 +162,15 @@ struct StructTypeInfo {
 	}
 
 	void addMemberFunction(const std::string& function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		member_functions.emplace_back(function_name, function_decl, access);
+		member_functions.emplace_back(function_name, function_decl, access, false, false);
+	}
+
+	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
+		member_functions.emplace_back(name, constructor_decl, access, true, false);
+	}
+
+	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
+		member_functions.emplace_back("~" + name, destructor_decl, access, false, true);
 	}
 
 	void finalize() {
@@ -196,6 +207,34 @@ struct StructTypeInfo {
 			}
 		}
 		return nullptr;
+	}
+
+	// Find default constructor (no parameters)
+	const StructMemberFunction* findDefaultConstructor() const {
+		for (const auto& func : member_functions) {
+			if (func.is_constructor) {
+				return &func;
+			}
+		}
+		return nullptr;
+	}
+
+	// Find destructor
+	const StructMemberFunction* findDestructor() const {
+		for (const auto& func : member_functions) {
+			if (func.is_destructor) {
+				return &func;
+			}
+		}
+		return nullptr;
+	}
+
+	bool hasConstructor() const {
+		return findDefaultConstructor() != nullptr;
+	}
+
+	bool hasDestructor() const {
+		return findDestructor() != nullptr;
 	}
 };
 
@@ -548,6 +587,85 @@ private:
 	Token called_from_;
 };
 
+// Member initializer for constructor initializer lists
+struct MemberInitializer {
+	std::string_view member_name;
+	ASTNode initializer_expr;
+
+	MemberInitializer(std::string_view name, ASTNode expr)
+		: member_name(name), initializer_expr(expr) {}
+};
+
+// Constructor declaration node
+class ConstructorDeclarationNode {
+public:
+	ConstructorDeclarationNode() = delete;
+	ConstructorDeclarationNode(std::string_view struct_name, std::string_view name)
+		: struct_name_(struct_name), name_(name), is_implicit_(false) {}
+
+	std::string_view struct_name() const { return struct_name_; }
+	std::string_view name() const { return name_; }
+	Token name_token() const { return Token(Token::Type::Identifier, name_, 0, 0, 0); }  // Create token on demand
+	const std::vector<ASTNode>& parameter_nodes() const { return parameter_nodes_; }
+	const std::vector<MemberInitializer>& member_initializers() const { return member_initializers_; }
+	bool is_implicit() const { return is_implicit_; }
+
+	void add_parameter_node(ASTNode parameter_node) {
+		parameter_nodes_.push_back(parameter_node);
+	}
+
+	void add_member_initializer(std::string_view member_name, ASTNode initializer_expr) {
+		member_initializers_.emplace_back(member_name, initializer_expr);
+	}
+
+	void set_is_implicit(bool implicit) {
+		is_implicit_ = implicit;
+	}
+
+	auto get_definition() const { return definition_block_; }
+
+	bool set_definition(BlockNode& block_node) {
+		if (definition_block_.has_value())
+			return false;
+		definition_block_.emplace(&block_node);
+		return true;
+	}
+
+private:
+	std::string_view struct_name_;  // Points directly into source text from lexer token
+	std::string_view name_;         // Points directly into source text from lexer token
+	std::vector<ASTNode> parameter_nodes_;
+	std::vector<MemberInitializer> member_initializers_;
+	std::optional<BlockNode*> definition_block_;
+	bool is_implicit_;  // True if this is an implicitly generated default constructor
+};
+
+// Destructor declaration node
+class DestructorDeclarationNode {
+public:
+	DestructorDeclarationNode() = delete;
+	DestructorDeclarationNode(std::string_view struct_name, std::string_view name)
+		: struct_name_(struct_name), name_(name) {}
+
+	std::string_view struct_name() const { return struct_name_; }
+	std::string_view name() const { return name_; }
+	Token name_token() const { return Token(Token::Type::Identifier, name_, 0, 0, 0); }  // Create token on demand
+
+	auto get_definition() const { return definition_block_; }
+
+	bool set_definition(BlockNode& block_node) {
+		if (definition_block_.has_value())
+			return false;
+		definition_block_.emplace(&block_node);
+		return true;
+	}
+
+private:
+	std::string_view struct_name_;  // Points directly into source text from lexer token
+	std::string_view name_;         // Points directly into source text from lexer token
+	std::optional<BlockNode*> definition_block_;
+};
+
 // Struct member with access specifier
 struct StructMemberDecl {
 	ASTNode declaration;
@@ -559,11 +677,13 @@ struct StructMemberDecl {
 
 // Struct member function with access specifier
 struct StructMemberFunctionDecl {
-	ASTNode function_declaration;  // FunctionDeclarationNode
+	ASTNode function_declaration;  // FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 	AccessSpecifier access;
+	bool is_constructor;
+	bool is_destructor;
 
-	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc)
-		: function_declaration(func_decl), access(acc) {}
+	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false)
+		: function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor) {}
 };
 
 class StructDeclarationNode {
@@ -584,7 +704,15 @@ public:
 	}
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access) {
-		member_functions_.emplace_back(function_decl, access);
+		member_functions_.emplace_back(function_decl, access, false, false);
+	}
+
+	void add_constructor(ASTNode constructor_decl, AccessSpecifier access) {
+		member_functions_.emplace_back(constructor_decl, access, true, false);
+	}
+
+	void add_destructor(ASTNode destructor_decl, AccessSpecifier access) {
+		member_functions_.emplace_back(destructor_decl, access, false, true);
 	}
 
 private:

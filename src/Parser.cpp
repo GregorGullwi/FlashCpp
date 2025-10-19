@@ -217,8 +217,10 @@ ParseResult Parser::parse_type_and_name() {
 
     // Parse the identifier (name)
     auto identifier_token = consume_token();
-    if (!identifier_token ||
-        identifier_token->type() != Token::Type::Identifier) {
+    if (!identifier_token) {
+        return ParseResult::error("Expected identifier token", Token());
+    }
+    if (identifier_token->type() != Token::Type::Identifier) {
         return ParseResult::error("Expected identifier token", *identifier_token);
     }
 
@@ -425,6 +427,211 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
+		// Check for constructor (identifier matching struct name followed by '(')
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+		    peek_token()->value() == struct_name) {
+			// Save position to check if this is a constructor
+			TokenPosition saved_pos = save_token_position();
+			auto name_token_opt = consume_token();
+			if (!name_token_opt.has_value()) {
+				return ParseResult::error("Expected constructor name", Token());
+			}
+			Token name_token = name_token_opt.value();  // Copy the token to keep it alive
+			std::string_view ctor_name = name_token.value();  // Get the string_view from the token
+
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				// This is a constructor
+				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(struct_name, ctor_name);
+
+				// Parse parameters
+				if (!consume_punctuator("(")) {
+					return ParseResult::error("Expected '(' for constructor parameter list", *peek_token());
+				}
+
+				while (!consume_punctuator(")")) {
+					// Parse parameter type and name
+					ParseResult type_and_name_result = parse_type_and_name();
+					if (type_and_name_result.is_error()) {
+						return type_and_name_result;
+					}
+
+					if (auto node = type_and_name_result.node()) {
+						ctor_ref.add_parameter_node(*node);
+					}
+
+					// Check if next token is comma (more parameters) or closing paren (done)
+					if (!consume_punctuator(",")) {
+						// No comma, so we expect a closing paren on the next iteration
+						// Don't break here - let the while loop condition consume the ')'
+					}
+				}
+
+				// Enter a temporary scope for parsing the initializer list
+				// This allows the initializer expressions to reference the constructor parameters
+				gSymbolTable.enter_scope(ScopeType::Function);
+
+				// Add parameters to symbol table so they can be referenced in the initializer list
+				for (const auto& param : ctor_ref.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& param_decl_node = param.as<DeclarationNode>();
+						const Token& param_token = param_decl_node.identifier_token();
+						gSymbolTable.insert(param_token.value(), param);
+					}
+				}
+
+				// Parse member initializer list if present (: member(value), member(value), ...)
+				if (peek_token().has_value() && peek_token()->value() == ":") {
+					consume_token();  // consume ':'
+
+					// Parse initializers until we hit '{' or ';'
+					while (peek_token().has_value() &&
+					       peek_token()->value() != "{" &&
+					       peek_token()->value() != ";") {
+						// Parse member name
+						auto member_name_token = consume_token();
+						if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected member name in initializer list", member_name_token.value_or(Token()));
+						}
+
+						// Expect '('
+						if (!consume_punctuator("(")) {
+							return ParseResult::error("Expected '(' after member name in initializer list", *peek_token());
+						}
+
+						// Parse initializer expression
+						ParseResult init_expr_result = parse_expression();
+						if (init_expr_result.is_error()) {
+							return init_expr_result;
+						}
+
+						// Expect ')'
+						if (!consume_punctuator(")")) {
+							return ParseResult::error("Expected ')' after initializer expression", *peek_token());
+						}
+
+						// Add initializer to constructor
+						if (auto init_expr = init_expr_result.node()) {
+							ctor_ref.add_member_initializer(member_name_token->value(), *init_expr);
+						}
+
+						// Check for comma (more initializers) or '{'/';' (end of initializer list)
+						if (!consume_punctuator(",")) {
+							// No comma, so we expect '{' or ';' next
+							break;
+						}
+					}
+				}
+
+				// Parse constructor body if present
+				if (peek_token().has_value() && peek_token()->value() == "{") {
+					// We already entered a scope for the initializer list, so we don't need to enter again
+					// Just set up the member function context
+					current_function_ = nullptr;  // Constructors don't have a return type
+
+					// Look up the struct type
+					auto type_it = gTypesByName.find(struct_name);
+					size_t struct_type_index = 0;
+					if (type_it != gTypesByName.end()) {
+						struct_type_index = type_it->second->type_index_;
+					}
+
+					member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
+
+					// Parameters are already in the symbol table from the initializer list parsing
+
+					auto block_result = parse_block();
+					if (block_result.is_error()) {
+						current_function_ = nullptr;
+						member_function_context_stack_.pop_back();
+						gSymbolTable.exit_scope();
+						return block_result;
+					}
+
+					current_function_ = nullptr;
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+
+					if (auto block = block_result.node()) {
+						ctor_ref.set_definition(block->as<BlockNode>());
+					}
+				} else if (!consume_punctuator(";")) {
+					// No constructor body, just exit the scope we entered for the initializer list
+					gSymbolTable.exit_scope();
+					return ParseResult::error("Expected '{' or ';' after constructor declaration", *peek_token());
+				} else {
+					// Constructor declaration only (no body), exit the scope
+					gSymbolTable.exit_scope();
+				}
+
+				// Add constructor to struct
+				struct_ref.add_constructor(ctor_node, current_access);
+				continue;
+			} else {
+				// Not a constructor, restore position and parse as normal member
+				restore_token_position(saved_pos);
+			}
+		}
+
+		// Check for destructor (~StructName followed by '(')
+		if (peek_token().has_value() && peek_token()->value() == "~") {
+			consume_token();  // consume '~'
+
+			auto name_token_opt = consume_token();
+			if (!name_token_opt.has_value() || name_token_opt->type() != Token::Type::Identifier ||
+			    name_token_opt->value() != struct_name) {
+				return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt.value_or(Token()));
+			}
+			Token name_token = name_token_opt.value();  // Copy the token to keep it alive
+			std::string_view dtor_name = name_token.value();  // Get the string_view from the token
+
+			if (!consume_punctuator("(")) {
+				return ParseResult::error("Expected '(' after destructor name", *peek_token());
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Destructor cannot have parameters", *peek_token());
+			}
+
+			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(struct_name, dtor_name);
+
+			// Parse destructor body if present
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				gSymbolTable.enter_scope(ScopeType::Function);
+				current_function_ = nullptr;
+
+				// Look up the struct type
+				auto type_it = gTypesByName.find(struct_name);
+				size_t struct_type_index = 0;
+				if (type_it != gTypesByName.end()) {
+					struct_type_index = type_it->second->type_index_;
+				}
+
+				member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
+
+				auto block_result = parse_block();
+				if (block_result.is_error()) {
+					current_function_ = nullptr;
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					return block_result;
+				}
+
+				current_function_ = nullptr;
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+
+				if (auto block = block_result.node()) {
+					dtor_ref.set_definition(block->as<BlockNode>());
+				}
+			} else if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected '{' or ';' after destructor declaration", *peek_token());
+			}
+
+			// Add destructor to struct
+			struct_ref.add_destructor(dtor_node, current_access);
+			continue;
+		}
+
 		// Parse member declaration (could be data member or member function)
 		auto member_result = parse_type_and_name();
 		if (member_result.is_error()) {
@@ -591,17 +798,59 @@ ParseResult Parser::parse_struct_declaration()
 		);
 	}
 
-	// Process member functions
+	// Process member functions, constructors, and destructors
+	bool has_user_defined_constructor = false;
 	for (const auto& func_decl : struct_ref.member_functions()) {
-		const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
-		const DeclarationNode& decl = func.decl_node();
+		if (func_decl.is_constructor) {
+			// Add constructor to struct type info
+			struct_info->addConstructor(
+				func_decl.function_declaration,
+				func_decl.access
+			);
+			has_user_defined_constructor = true;
+		} else if (func_decl.is_destructor) {
+			// Add destructor to struct type info
+			struct_info->addDestructor(
+				func_decl.function_declaration,
+				func_decl.access
+			);
+		} else {
+			// Regular member function
+			const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
+			const DeclarationNode& decl = func.decl_node();
 
-		// Add member function to struct type info
-		struct_info->addMemberFunction(
-			std::string(decl.identifier_token().value()),
-			func_decl.function_declaration,
-			func_decl.access
+			// Add member function to struct type info
+			struct_info->addMemberFunction(
+				std::string(decl.identifier_token().value()),
+				func_decl.function_declaration,
+				func_decl.access
+			);
+		}
+	}
+
+	// Generate default constructor if no user-defined constructor exists
+	if (!has_user_defined_constructor) {
+		// Create a default constructor node
+		auto [default_ctor_node, default_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+			struct_name,
+			struct_name
 		);
+
+		// Create an empty block for the constructor body
+		auto [block_node, block_ref] = create_node_ref(BlockNode());
+		default_ctor_ref.set_definition(block_ref);
+
+		// Mark this as an implicit default constructor
+		default_ctor_ref.set_is_implicit(true);
+
+		// Add the default constructor to the struct type info
+		struct_info->addConstructor(
+			default_ctor_node,
+			AccessSpecifier::Public  // Default constructors are always public
+		);
+
+		// Add the default constructor to the struct node
+		struct_ref.add_constructor(default_ctor_node, AccessSpecifier::Public);
 	}
 
 	// Apply custom alignment if specified

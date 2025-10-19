@@ -91,6 +91,9 @@ enum class IrOpcode : int_fast16_t {
 	LoopEnd,
 	Break,
 	Continue,
+	// Scope control
+	ScopeBegin,
+	ScopeEnd,
 	// Array operations
 	ArrayAccess,
 	ArrayStore,
@@ -100,6 +103,9 @@ enum class IrOpcode : int_fast16_t {
 	// Struct operations
 	MemberAccess,
 	MemberStore,
+	// Constructor/Destructor operations
+	ConstructorCall,
+	DestructorCall,
 	// String literal
 	StringLiteral,
 };
@@ -1482,8 +1488,13 @@ public:
 		{
 			// define [Type][SizeInBits] [Name]
 			oss << "define "
-				<< getOperandAsTypeString(0) << getOperandAs<int>(1) << " "
-				<< getOperandAs<std::string_view>(2);
+				<< getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+
+			// Function name can be either std::string or std::string_view
+			if (isOperandType<std::string>(2))
+				oss << getOperandAs<std::string>(2);
+			else if (isOperandType<std::string_view>(2))
+				oss << getOperandAs<std::string_view>(2);
 		}
 		break;
 
@@ -1628,6 +1639,22 @@ public:
 			// loop_end (no operands)
 			assert(getOperandCount() == 0 && "LoopEnd instruction must have exactly 0 operands");
 			oss << "loop_end";
+		}
+		break;
+
+		case IrOpcode::ScopeBegin:
+		{
+			// scope_begin (no operands)
+			assert(getOperandCount() == 0 && "ScopeBegin instruction must have exactly 0 operands");
+			oss << "scope_begin";
+		}
+		break;
+
+		case IrOpcode::ScopeEnd:
+		{
+			// scope_end (no operands)
+			assert(getOperandCount() == 0 && "ScopeEnd instruction must have exactly 0 operands");
+			oss << "scope_end";
 		}
 		break;
 
@@ -1821,6 +1848,74 @@ public:
 					oss << '%' << getOperandAs<std::string_view>(5);
 				else if (isOperandType<int>(5))
 					oss << getOperandAs<int>(5);
+				else if (isOperandType<unsigned long long>(5))
+					oss << getOperandAs<unsigned long long>(5);
+			}
+		}
+		break;
+
+		case IrOpcode::ConstructorCall:
+		{
+			// constructor_call StructName %object_var [param1_type, param1_size, param1_value, ...]
+			// Format: [struct_name, object_var, param1_type, param1_size, param1_value, ...]
+			assert(getOperandCount() >= 2 && "ConstructorCall instruction must have at least 2 operands");
+			if (getOperandCount() >= 2) {
+				oss << "constructor_call ";
+
+				// Struct name can be either std::string or std::string_view
+				if (isOperandType<std::string>(0))
+					oss << getOperandAs<std::string>(0);
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " %";
+
+				if (isOperandType<TempVar>(1))
+					oss << getOperandAs<TempVar>(1).index;
+				else if (isOperandType<std::string_view>(1))
+					oss << getOperandAs<std::string_view>(1);
+				else if (isOperandType<std::string>(1))
+					oss << getOperandAs<std::string>(1);
+
+				// Add parameters if any
+				for (size_t i = 2; i < getOperandCount(); i += 3) {
+					if (i + 2 < getOperandCount()) {
+						oss << " " << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
+
+						if (isOperandType<TempVar>(i + 2))
+							oss << '%' << getOperandAs<TempVar>(i + 2).index;
+						else if (isOperandType<std::string_view>(i + 2))
+							oss << '%' << getOperandAs<std::string_view>(i + 2);
+						else if (isOperandType<unsigned long long>(i + 2))
+							oss << getOperandAs<unsigned long long>(i + 2);
+					}
+				}
+			}
+		}
+		break;
+
+		case IrOpcode::DestructorCall:
+		{
+			// destructor_call StructName %object_var
+			// Format: [struct_name, object_var]
+			assert(getOperandCount() == 2 && "DestructorCall instruction must have exactly 2 operands");
+			if (getOperandCount() >= 2) {
+				oss << "destructor_call ";
+
+				// Struct name can be either std::string or std::string_view
+				if (isOperandType<std::string>(0))
+					oss << getOperandAs<std::string>(0);
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " %";
+
+				if (isOperandType<TempVar>(1))
+					oss << getOperandAs<TempVar>(1).index;
+				else if (isOperandType<std::string_view>(1))
+					oss << getOperandAs<std::string_view>(1);
+				else if (isOperandType<std::string>(1))
+					oss << getOperandAs<std::string>(1);
 			}
 		}
 		break;

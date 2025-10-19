@@ -64,8 +64,11 @@ public:
 		else if (node.is<NamespaceDeclarationNode>()) {
 			visitNamespaceDeclarationNode(node.as<NamespaceDeclarationNode>());
 		}
-		else if (node.is<FunctionDeclarationNode>()) {
-			visitFunctionDeclarationNode(node.as<FunctionDeclarationNode>());
+		else if (node.is<ConstructorDeclarationNode>()) {
+			visitConstructorDeclarationNode(node.as<ConstructorDeclarationNode>());
+		}
+		else if (node.is<DestructorDeclarationNode>()) {
+			visitDestructorDeclarationNode(node.as<DestructorDeclarationNode>());
 		}
 		else if (node.is<DeclarationNode>()) {
 			// Forward declarations or global variable declarations
@@ -171,11 +174,198 @@ private:
 	void visitStructDeclarationNode(const StructDeclarationNode& node) {
 		// Struct declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
-		// However, we need to visit member functions to generate IR for them
+		// However, we need to visit member functions, constructors, and destructors to generate IR for them
 		for (const auto& member_func : node.member_functions()) {
-			// Each member function has a FunctionDeclarationNode
+			// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 			visit(member_func.function_declaration);
 		}
+	}
+
+	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
+		auto definition_block = node.get_definition();
+		if (!definition_block.has_value())
+			return;
+
+		// Reset the temporary variable counter for each new constructor
+		var_counter = TempVar();
+
+		// Create constructor declaration with struct name
+		std::vector<IrOperand> ctorDeclOperands;
+		ctorDeclOperands.emplace_back(Type::Void);  // Constructors don't have a return type
+		ctorDeclOperands.emplace_back(0);  // Size is 0 for void
+		ctorDeclOperands.emplace_back(std::string(node.struct_name()) + "::" + std::string(node.struct_name()));
+		ctorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
+
+		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
+		// We don't add it here to avoid duplication
+
+		// Add parameter types to constructor declaration
+		for (const auto& param : node.parameter_nodes()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+			ctorDeclOperands.emplace_back(param_type.type());
+			ctorDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
+			ctorDeclOperands.emplace_back(param_decl.identifier_token().value());
+		}
+
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctorDeclOperands), node.name_token()));
+
+		symbol_table.enter_scope(ScopeType::Function);
+
+		// Add 'this' pointer to symbol table for member access
+		// Look up the struct type to get its type index and size
+		auto type_it = gTypesByName.find(node.struct_name());
+		if (type_it != gTypesByName.end()) {
+			const TypeInfo* struct_type_info = type_it->second;
+			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+			if (struct_info) {
+				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
+				Token this_token = node.name_token();  // Use constructor token for location
+				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+					Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
+
+				// Add 'this' to symbol table (it's the implicit first parameter)
+				symbol_table.insert("this", this_decl);
+			}
+		}
+
+		// Add parameters to symbol table
+		for (const auto& param : node.parameter_nodes()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			symbol_table.insert(param_decl.identifier_token().value(), param);
+		}
+
+		// Generate IR for member initializers (executed before constructor body)
+		// Look up the struct type to get member information
+		auto struct_type_it = gTypesByName.find(node.struct_name());
+		if (struct_type_it != gTypesByName.end()) {
+			const TypeInfo* struct_type_info = struct_type_it->second;
+			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+			if (struct_info) {
+				// If this is an implicit default constructor, zero-initialize all members
+				if (node.is_implicit()) {
+					for (const auto& member : struct_info->members) {
+						// Generate MemberStore IR to zero-initialize the member
+						// Format: [member_type, member_size, object_name, member_name, offset, value]
+						std::vector<IrOperand> store_operands;
+						store_operands.emplace_back(member.type);  // member type
+						store_operands.emplace_back(static_cast<int>(member.size * 8));  // member size in bits
+						store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
+						store_operands.emplace_back(std::string_view(member.name));  // member name
+						store_operands.emplace_back(static_cast<int>(member.offset));  // member offset
+
+						// Zero-initialize based on type
+						if (member.type == Type::Int || member.type == Type::Long ||
+						    member.type == Type::Short || member.type == Type::Char) {
+							store_operands.emplace_back(0);  // Zero for integer types
+						} else if (member.type == Type::Float || member.type == Type::Double) {
+							store_operands.emplace_back(0.0);  // Zero for floating-point types
+						} else if (member.type == Type::Bool) {
+							store_operands.emplace_back(false);  // False for bool
+						} else {
+							store_operands.emplace_back(0);  // Default to zero
+						}
+
+						ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+					}
+				} else {
+					// Process explicit member initializers
+					for (const auto& initializer : node.member_initializers()) {
+						// Find the member in the struct to get its type, size, and offset
+						const StructMember* member = struct_info->findMember(std::string(initializer.member_name));
+						if (!member) {
+							// Member not found - this should be a compile error, but for now just skip
+							continue;
+						}
+
+						// Generate IR for the initializer expression
+						// This returns [type, size, value]
+						auto init_operands = visitExpressionNode(initializer.initializer_expr.as<ExpressionNode>());
+
+						// Generate MemberStore IR to store the value in the member
+						// Format: [member_type, member_size, object_name, member_name, offset, value]
+						std::vector<IrOperand> store_operands;
+						store_operands.emplace_back(member->type);  // member type
+						store_operands.emplace_back(static_cast<int>(member->size * 8));  // member size in bits
+						store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
+						store_operands.emplace_back(std::string_view(member->name));  // member name
+						store_operands.emplace_back(static_cast<int>(member->offset));  // member offset
+						// Add just the value (third element of init_operands)
+						store_operands.emplace_back(init_operands[2]);
+
+						ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+					}
+				}
+			}
+		}
+
+		// Visit the constructor body
+		definition_block.value()->get_statements().visit([&](const ASTNode& statement) {
+			visit(statement);
+		});
+
+		// Add implicit return for constructor (constructors don't have explicit return statements)
+		// Format: [type, size, value] - for void return, value is 0
+		ir_.addInstruction(IrOpcode::Return, {Type::Void, 0, 0ULL}, node.name_token());
+
+		symbol_table.exit_scope();
+	}
+
+	void visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
+		auto definition_block = node.get_definition();
+		if (!definition_block.has_value())
+			return;
+
+		// Reset the temporary variable counter for each new destructor
+		var_counter = TempVar();
+
+		// Create destructor declaration with struct name
+		std::vector<IrOperand> dtorDeclOperands;
+		dtorDeclOperands.emplace_back(Type::Void);  // Destructors don't have a return type
+		dtorDeclOperands.emplace_back(0);  // Size is 0 for void
+		dtorDeclOperands.emplace_back(std::string(node.struct_name()) + "::~" + std::string(node.struct_name()));
+		dtorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
+
+		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
+		// We don't add it here to avoid duplication
+
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(dtorDeclOperands), node.name_token()));
+
+		symbol_table.enter_scope(ScopeType::Function);
+
+		// Add 'this' pointer to symbol table for member access
+		// Look up the struct type to get its type index and size
+		auto type_it = gTypesByName.find(node.struct_name());
+		if (type_it != gTypesByName.end()) {
+			const TypeInfo* struct_type_info = type_it->second;
+			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+			if (struct_info) {
+				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
+				Token this_token = node.name_token();  // Use destructor token for location
+				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+					Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
+
+				// Add 'this' to symbol table (it's the implicit first parameter)
+				symbol_table.insert("this", this_decl);
+			}
+		}
+
+		// Visit the destructor body
+		definition_block.value()->get_statements().visit([&](const ASTNode& statement) {
+			visit(statement);
+		});
+
+		// Add implicit return for destructor (destructors don't have explicit return statements)
+		// Format: [type, size, value] - for void return, value is 0
+		ir_.addInstruction(IrOpcode::Return, {Type::Void, 0, 0ULL}, node.name_token());
+
+		symbol_table.exit_scope();
 	}
 
 	void visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
@@ -199,10 +389,18 @@ private:
 	}
 
 	void visitBlockNode(const BlockNode& node) {
+		// Enter a new scope
+		enterScope();
+		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+
 		// Visit all statements in the block
 		node.get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
+
+		// Exit scope and call destructors
+		ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+		exitScope();
 	}
 
 	void visitIfStatementNode(const IfStatementNode& node) {
@@ -612,15 +810,15 @@ private:
 				// Handle brace initialization for structs
 				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 
-				// Add to symbol table first (needed for member store instructions)
+				// Add to symbol table first
 				if (!symbol_table.insert(decl.identifier_token().value(), node.declaration_node())) {
 					assert(false && "Expected identifier to be unique");
 				}
 
-				// First, add the variable declaration without initializer
+				// Add the variable declaration without initializer
 				ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), node.declaration().identifier_token());
 
-				// Then, generate member store instructions for each initializer
+				// Check if this struct has a constructor
 				if (type_node.type() == Type::Struct) {
 					TypeIndex type_index = type_node.type_index();
 					if (type_index < gTypeInfo.size()) {
@@ -629,37 +827,67 @@ private:
 							const StructTypeInfo& struct_info = *type_info.struct_info_;
 							const auto& initializers = init_list.initializers();
 
-							// Generate member store for each initializer
-							for (size_t i = 0; i < initializers.size() && i < struct_info.members.size(); ++i) {
-								const StructMember& member = struct_info.members[i];
-								const ASTNode& init_expr = initializers[i];
+							if (struct_info.hasConstructor()) {
+								// Generate constructor call with parameters from initializer list
+								std::vector<IrOperand> ctor_operands;
+								ctor_operands.emplace_back(type_info.name_);  // Struct name
+								ctor_operands.emplace_back(std::string(decl.identifier_token().value()));  // Object name
 
-								// Generate IR for the initializer expression
-								std::vector<IrOperand> init_operands;
-								if (init_expr.is<ExpressionNode>()) {
-									init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
-								} else {
-									assert(false && "Initializer must be an ExpressionNode");
+								// Add each initializer as a constructor parameter
+								for (const ASTNode& init_expr : initializers) {
+									if (init_expr.is<ExpressionNode>()) {
+										auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+										// init_operands = [type, size, value]
+										// Add all three to match function call parameter format
+										if (init_operands.size() >= 3) {
+											ctor_operands.insert(ctor_operands.end(), init_operands.begin(), init_operands.end());
+										} else {
+											assert(false && "Invalid initializer operands - expected [type, size, value]");
+										}
+									} else {
+										assert(false && "Initializer must be an ExpressionNode");
+									}
 								}
 
-								// Generate member store: struct.member = init_expr
-								std::vector<IrOperand> member_store_operands;
-								member_store_operands.emplace_back(member.type);
-								member_store_operands.emplace_back(static_cast<int>(member.size * 8)); // size in bits
-								member_store_operands.emplace_back(decl.identifier_token().value()); // object name
-								member_store_operands.emplace_back(std::string_view(member.name)); // member name (convert to string_view)
-								member_store_operands.emplace_back(static_cast<int>(member.offset)); // member offset
+								ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), decl.identifier_token());
+							} else {
+								// No constructor - use direct member initialization
+								for (size_t i = 0; i < initializers.size() && i < struct_info.members.size(); ++i) {
+									const StructMember& member = struct_info.members[i];
+									const ASTNode& init_expr = initializers[i];
 
-								// Add only the value from init_operands (init_operands = [type, size, value])
-								// We only need the value (index 2)
-								if (init_operands.size() >= 3) {
-									member_store_operands.emplace_back(init_operands[2]);
-								} else {
-									// Error: invalid init operands
-									assert(false && "Invalid initializer operands");
+									// Generate IR for the initializer expression
+									std::vector<IrOperand> init_operands;
+									if (init_expr.is<ExpressionNode>()) {
+										init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+									} else {
+										assert(false && "Initializer must be an ExpressionNode");
+									}
+
+									// Generate member store: struct.member = init_expr
+									std::vector<IrOperand> member_store_operands;
+									member_store_operands.emplace_back(member.type);
+									member_store_operands.emplace_back(static_cast<int>(member.size * 8));
+									member_store_operands.emplace_back(decl.identifier_token().value());
+									member_store_operands.emplace_back(std::string_view(member.name));
+									member_store_operands.emplace_back(static_cast<int>(member.offset));
+
+									if (init_operands.size() >= 3) {
+										member_store_operands.emplace_back(init_operands[2]);
+									} else {
+										assert(false && "Invalid initializer operands");
+									}
+
+									ir_.addInstruction(IrOpcode::MemberStore, std::move(member_store_operands), decl.identifier_token());
 								}
+							}
 
-								ir_.addInstruction(IrOpcode::MemberStore, std::move(member_store_operands), decl.identifier_token());
+							// Register for destructor if needed
+							if (struct_info.hasDestructor()) {
+								registerVariableWithDestructor(
+									std::string(decl.identifier_token().value()),
+									type_info.name_
+								);
 							}
 						}
 					}
@@ -677,6 +905,32 @@ private:
 		}
 
 		ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), node.declaration().identifier_token());
+
+		// If this is a struct type with a constructor, generate a constructor call
+		if (type_node.type() == Type::Struct) {
+			TypeIndex type_index = type_node.type_index();
+			if (type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_index];
+				if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
+					// Generate constructor call
+					std::vector<IrOperand> ctor_operands;
+					ctor_operands.emplace_back(type_info.name_);  // Struct name (std::string)
+					ctor_operands.emplace_back(std::string(decl.identifier_token().value()));    // Object variable name
+
+					// TODO: Add support for constructor parameters from initializer
+
+					ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), decl.identifier_token());
+				}
+
+				// If this struct has a destructor, register it for automatic cleanup
+				if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+					registerVariableWithDestructor(
+						std::string(decl.identifier_token().value()),
+						type_info.name_
+					);
+				}
+			}
+		}
 	}
 
 	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode) {
@@ -1644,6 +1898,40 @@ private:
 		// Return offset as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member->offset) };
+	}
+
+	// Structure to track variables that need destructors called
+	struct ScopeVariableInfo {
+		std::string variable_name;
+		std::string struct_name;
+	};
+
+	// Stack of scopes, each containing variables that need destructors
+	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
+
+	void enterScope() {
+		scope_stack_.push_back({});
+	}
+
+	void exitScope() {
+		if (!scope_stack_.empty()) {
+			// Generate destructor calls for all variables in this scope (in reverse order)
+			const auto& scope_vars = scope_stack_.back();
+			for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+				// Generate destructor call
+				std::vector<IrOperand> dtor_operands;
+				dtor_operands.emplace_back(it->struct_name);  // Struct name
+				dtor_operands.emplace_back(it->variable_name); // Object variable name
+				ir_.addInstruction(IrOpcode::DestructorCall, std::move(dtor_operands), Token());
+			}
+			scope_stack_.pop_back();
+		}
+	}
+
+	void registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name) {
+		if (!scope_stack_.empty()) {
+			scope_stack_.back().push_back({var_name, struct_name});
+		}
 	}
 
 	Ir ir_;

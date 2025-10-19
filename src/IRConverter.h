@@ -861,6 +861,12 @@ public:
 			case IrOpcode::LoopEnd:
 				handleLoopEnd(instruction);
 				break;
+			case IrOpcode::ScopeBegin:
+				// No code generation needed - just a marker
+				break;
+			case IrOpcode::ScopeEnd:
+				// No code generation needed - destructors are already emitted before this
+				break;
 			case IrOpcode::Break:
 				handleBreak(instruction);
 				break;
@@ -899,6 +905,12 @@ public:
 				break;
 			case IrOpcode::MemberStore:
 				handleMemberStore(instruction);
+				break;
+			case IrOpcode::ConstructorCall:
+				handleConstructorCall(instruction);
+				break;
+			case IrOpcode::DestructorCall:
+				handleDestructorCall(instruction);
 				break;
 			default:
 				assert(false && "Not implemented yet");
@@ -980,6 +992,10 @@ public:
 				case IrOpcode::MemberStore:
 				case IrOpcode::ArrayAccess:
 					memory_accum.add(instr_duration);
+					break;
+				case IrOpcode::ConstructorCall:
+				case IrOpcode::DestructorCall:
+					funcCall_accum.add(instr_duration);
 					break;
 				default:
 					break;
@@ -1273,11 +1289,16 @@ private:
 	// Group IR instructions by function for analysis
 	void groupInstructionsByFunction(const Ir& ir) {
 		function_instructions.clear();
-		std::string_view current_func_name;
+		std::string current_func_name;
 
 		for (const auto& instruction : ir.getInstructions()) {
 			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
-				current_func_name = instruction.getOperandAs<std::string_view>(2);
+				// Function name can be either std::string or std::string_view
+				if (instruction.isOperandType<std::string>(2)) {
+					current_func_name = instruction.getOperandAs<std::string>(2);
+				} else if (instruction.isOperandType<std::string_view>(2)) {
+					current_func_name = std::string(instruction.getOperandAs<std::string_view>(2));
+				}
 				function_instructions[current_func_name] = std::vector<IrInstruction>();
 			} else if (!current_func_name.empty()) {
 				function_instructions[current_func_name].push_back(instruction);
@@ -1684,6 +1705,182 @@ private:
 		regAlloc.reset();
 	}
 
+	void handleConstructorCall(const IrInstruction& instruction) {
+		// Constructor call format: [struct_name, object_var, param1_type, param1_size, param1_value, ...]
+		assert(instruction.getOperandCount() >= 2 && "ConstructorCall must have at least 2 operands");
+
+		flushAllDirtyRegisters();
+
+		// Get struct name - it could be either std::string or std::string_view
+		std::string struct_name;
+		if (instruction.isOperandType<std::string>(0)) {
+			struct_name = instruction.getOperandAs<std::string>(0);
+		} else if (instruction.isOperandType<std::string_view>(0)) {
+			struct_name = std::string(instruction.getOperandAs<std::string_view>(0));
+		} else {
+			throw std::runtime_error("Constructor call: first operand must be struct name (string or string_view)");
+		}
+
+		auto object_var = instruction.getOperand(1);
+
+		// Get the object's stack offset
+		int object_offset = 0;
+		if (std::holds_alternative<TempVar>(object_var)) {
+			const TempVar temp_var = std::get<TempVar>(object_var);
+			object_offset = getStackOffsetFromTempVar(temp_var);
+		} else if (std::holds_alternative<std::string>(object_var)) {
+			const std::string& var_name_str = std::get<std::string>(object_var);
+			std::string_view var_name(var_name_str);
+			auto it = variable_scopes.back().identifier_offset.find(var_name);
+			if (it == variable_scopes.back().identifier_offset.end()) {
+				throw std::runtime_error("Constructor call: variable not found in identifier_offset map: " + std::string(var_name));
+			}
+			object_offset = it->second;
+		} else {
+			std::string_view var_name = std::get<std::string_view>(object_var);
+			auto it = variable_scopes.back().identifier_offset.find(var_name);
+			if (it == variable_scopes.back().identifier_offset.end()) {
+				throw std::runtime_error("Constructor call: variable not found in identifier_offset map: " + std::string(var_name));
+			}
+			object_offset = it->second;
+		}
+
+		// Load the address of the object into RCX (first parameter - 'this' pointer)
+		// LEA RCX, [RBP + object_offset]
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8D); // LEA opcode
+		if (object_offset >= -128 && object_offset <= 127) {
+			textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
+			textSectionData.push_back(static_cast<uint8_t>(object_offset));
+		} else {
+			textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(object_offset & 0xFF));
+				object_offset >>= 8;
+			}
+		}
+
+		// Process constructor parameters (if any) - similar to function call
+		const size_t first_param_index = 2;
+		const size_t param_stride = 3; // type, size, value
+		const size_t num_params = (instruction.getOperandCount() - first_param_index) / param_stride;
+
+		for (size_t i = 0; i < num_params && i < 3; ++i) { // Max 3 additional params (RCX is 'this')
+			size_t paramIndex = first_param_index + i * param_stride;
+			Type paramType = instruction.getOperandAs<Type>(paramIndex);
+			int paramSize = instruction.getOperandAs<int>(paramIndex + 1);
+			auto paramValue = instruction.getOperand(paramIndex + 2);
+
+			X64Register target_reg = INT_PARAM_REGS[i + 1]; // Skip RCX (index 0)
+
+			if (std::holds_alternative<unsigned long long>(paramValue)) {
+				// Immediate value
+				uint8_t rex_prefix = 0x48;
+				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					rex_prefix |= (1 << 2);
+				}
+				textSectionData.push_back(rex_prefix);
+
+				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					textSectionData.back() |= (1 << 0);
+				}
+				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(target_reg) & 0x07));
+				unsigned long long value = std::get<unsigned long long>(paramValue);
+				for (size_t j = 0; j < 8; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
+					value >>= 8;
+				}
+			} else if (std::holds_alternative<TempVar>(paramValue)) {
+				// Load from temp variable
+				const TempVar temp_var = std::get<TempVar>(paramValue);
+				int param_offset = getStackOffsetFromTempVar(temp_var);
+				auto load_opcodes = generateMovFromFrame(target_reg, param_offset);
+				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			} else if (std::holds_alternative<std::string_view>(paramValue)) {
+				// Load from variable
+				std::string_view var_name = std::get<std::string_view>(paramValue);
+				auto it = variable_scopes.back().identifier_offset.find(var_name);
+				if (it != variable_scopes.back().identifier_offset.end()) {
+					int param_offset = it->second;
+					auto load_opcodes = generateMovFromFrame(target_reg, param_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
+			}
+		}
+
+		// Generate the call instruction
+		std::string function_name = std::string(struct_name) + "::" + std::string(struct_name);
+		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+
+		// Get the mangled name for the constructor (handles name mangling)
+		std::string mangled_name = writer.getMangledName(function_name);
+		writer.add_relocation(textSectionData.size() - 4, mangled_name);
+
+		regAlloc.reset();
+	}
+
+	void handleDestructorCall(const IrInstruction& instruction) {
+		// Destructor call format: [struct_name, object_var]
+		assert(instruction.getOperandCount() == 2 && "DestructorCall must have exactly 2 operands");
+
+		flushAllDirtyRegisters();
+
+		// Get struct name - it could be either std::string or std::string_view
+		std::string struct_name;
+		if (instruction.isOperandType<std::string>(0)) {
+			struct_name = instruction.getOperandAs<std::string>(0);
+		} else if (instruction.isOperandType<std::string_view>(0)) {
+			struct_name = std::string(instruction.getOperandAs<std::string_view>(0));
+		} else {
+			throw std::runtime_error("Destructor call: first operand must be struct name (string or string_view)");
+		}
+
+		auto object_var = instruction.getOperand(1);
+
+		// Get the object's stack offset
+		int object_offset = 0;
+		if (std::holds_alternative<TempVar>(object_var)) {
+			const TempVar temp_var = std::get<TempVar>(object_var);
+			object_offset = getStackOffsetFromTempVar(temp_var);
+		} else if (std::holds_alternative<std::string>(object_var)) {
+			const std::string& var_name_str = std::get<std::string>(object_var);
+			std::string_view var_name(var_name_str);
+			object_offset = variable_scopes.back().identifier_offset[var_name];
+		} else {
+			std::string_view var_name = std::get<std::string_view>(object_var);
+			object_offset = variable_scopes.back().identifier_offset[var_name];
+		}
+
+		// Load the address of the object into RCX (first parameter - 'this' pointer)
+		// LEA RCX, [RBP + object_offset]
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8D); // LEA opcode
+		if (object_offset >= -128 && object_offset <= 127) {
+			textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
+			textSectionData.push_back(static_cast<uint8_t>(object_offset));
+		} else {
+			textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(object_offset & 0xFF));
+				object_offset >>= 8;
+			}
+		}
+
+		// Generate the call instruction
+		std::string function_name = std::string(struct_name) + "::~" + std::string(struct_name);
+		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+
+		// Get the mangled name for the destructor (handles name mangling)
+		std::string mangled_name = writer.getMangledName(function_name);
+		writer.add_relocation(textSectionData.size() - 4, mangled_name);
+
+		regAlloc.reset();
+	}
+
 	void handleVariableDecl(const IrInstruction& instruction) {
 		auto var_type = instruction.getOperandAs<Type>(0);
 		auto var_name = instruction.getOperandAs<std::string_view>(2);
@@ -1861,8 +2058,23 @@ private:
 		// Verify we have at least the minimum operands: return type, size, function name, struct name
 		assert(instruction.getOperandCount() >= 4 && "FunctionDecl must have at least 4 operands");
 
-		auto func_name = instruction.getOperandAs<std::string_view>(2);
-		auto struct_name = instruction.getOperandAs<std::string_view>(3);  // Empty for non-member functions
+		// Function name can be either std::string or std::string_view
+		std::string func_name;
+		if (instruction.isOperandType<std::string>(2)) {
+			func_name = instruction.getOperandAs<std::string>(2);
+		} else if (instruction.isOperandType<std::string_view>(2)) {
+			func_name = std::string(instruction.getOperandAs<std::string_view>(2));
+		}
+
+		// Struct name can be either std::string or std::string_view (empty for non-member functions)
+		std::string struct_name;
+		if (instruction.getOperandCount() > 3) {
+			if (instruction.isOperandType<std::string>(3)) {
+				struct_name = instruction.getOperandAs<std::string>(3);
+			} else if (instruction.isOperandType<std::string_view>(3)) {
+				struct_name = std::string(instruction.getOperandAs<std::string_view>(3));
+			}
+		}
 
 		// Extract function signature information for proper C++20 name mangling
 		auto return_type = instruction.getOperandAs<Type>(0);
@@ -3774,20 +3986,27 @@ private:
 		//auto member_name = instruction.getOperandAs<std::string_view>(4);
 		auto member_offset = instruction.getOperandAs<int>(5);
 
-		// Get the object's base stack offset
+		// Get the object's base stack offset or pointer
 		int32_t object_base_offset = 0;
+		bool is_pointer_access = false;  // true if object is 'this' (a pointer)
 		const StackVariableScope& current_scope = variable_scopes.back();
 
 		// Check if operand 3 is a string_view (variable name) or TempVar (nested access)
+		std::string object_name_str;
 		if (instruction.isOperandType<std::string_view>(3)) {
 			// Simple case: object is a variable name
-			auto object_name = std::string(instruction.getOperandAs<std::string_view>(3));
-			auto it = current_scope.identifier_offset.find(object_name);
+			object_name_str = std::string(instruction.getOperandAs<std::string_view>(3));
+			auto it = current_scope.identifier_offset.find(object_name_str);
 			if (it == current_scope.identifier_offset.end()) {
 				assert(false && "Struct object not found in scope");
 				return;
 			}
 			object_base_offset = it->second;
+
+			// Check if this is the 'this' pointer
+			if (object_name_str == "this") {
+				is_pointer_access = true;
+			}
 		} else if (instruction.isOperandType<TempVar>(3)) {
 			// Nested case: object is the result of a previous member access
 			auto object_temp = instruction.getOperandAs<TempVar>(3);
@@ -3798,11 +4017,17 @@ private:
 		}
 
 		// Calculate the member's actual stack offset
-		// The object is at [RBP + object_base_offset]
-		// The member is at offset 'member_offset' bytes from the object's base
-		// For a struct at [RBP - 8] with member at offset 4:
-		//   member is at [RBP - 8 + 4] = [RBP - 4]
-		int32_t member_stack_offset = object_base_offset + member_offset;
+		int32_t member_stack_offset;
+		if (is_pointer_access) {
+			// For 'this' pointer: we need to load the pointer and use indirect addressing
+			// The pointer is at [RBP + object_base_offset]
+			// We'll handle this differently below
+			member_stack_offset = 0;  // Not used for pointer access
+		} else {
+			// For a struct at [RBP - 8] with member at offset 4:
+			//   member is at [RBP - 8 + 4] = [RBP - 4]
+			member_stack_offset = object_base_offset + member_offset;
+		}
 
 		// Get the result variable's stack offset
 		int32_t result_offset = getStackOffsetFromTempVar(result_var);
@@ -3813,60 +4038,145 @@ private:
 		// Load the member value into a register based on size
 		X64Register temp_reg = X64Register::RAX;
 
-		if (member_size_bytes == 8) {
-			// 64-bit member: MOV RAX, [RBP + member_stack_offset]
-			auto load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
-			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-		} else if (member_size_bytes == 4) {
-			// 32-bit member: MOV EAX, [RBP + member_stack_offset]
-			textSectionData.push_back(0x8B); // MOV r32, r/m32
-			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
-				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+		if (is_pointer_access) {
+			// For 'this' pointer: load pointer into RCX, then load from [RCX + member_offset]
+			// Load 'this' pointer from stack into RCX
+			// MOV RCX, [RBP + object_base_offset]
+			auto load_ptr_opcodes = generateMovFromFrame(X64Register::RCX, object_base_offset);
+			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+
+			// Now load from [RCX + member_offset] into RAX
+			if (member_size_bytes == 8) {
+				// 64-bit member: MOV RAX, [RCX + member_offset]
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8B); // MOV r64, r/m64
+				if (member_offset == 0) {
+					textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+				} else if (member_offset >= -128 && member_offset <= 127) {
+					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], RAX
+					textSectionData.push_back(static_cast<uint8_t>(member_offset));
+				} else {
+					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], RAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 4) {
+				// 32-bit member: MOV EAX, [RCX + member_offset]
+				textSectionData.push_back(0x8B); // MOV r32, r/m32
+				if (member_offset == 0) {
+					textSectionData.push_back(0x01); // ModR/M: [RCX], EAX
+				} else if (member_offset >= -128 && member_offset <= 127) {
+					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], EAX
+					textSectionData.push_back(static_cast<uint8_t>(member_offset));
+				} else {
+					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], EAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 2) {
+				// 16-bit member: MOVZX RAX, WORD PTR [RCX + member_offset]
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x0F); // Two-byte opcode prefix
+				textSectionData.push_back(0xB7); // MOVZX r64, r/m16
+				if (member_offset == 0) {
+					textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+				} else if (member_offset >= -128 && member_offset <= 127) {
+					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], RAX
+					textSectionData.push_back(static_cast<uint8_t>(member_offset));
+				} else {
+					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], RAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 1) {
+				// 8-bit member: MOVZX RAX, BYTE PTR [RCX + member_offset]
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x0F); // Two-byte opcode prefix
+				textSectionData.push_back(0xB6); // MOVZX r64, r/m8
+				if (member_offset == 0) {
+					textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+				} else if (member_offset >= -128 && member_offset <= 127) {
+					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], RAX
+					textSectionData.push_back(static_cast<uint8_t>(member_offset));
+				} else {
+					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], RAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
 			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
-				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-			}
-		} else if (member_size_bytes == 2) {
-			// 16-bit member: MOVZX RAX, WORD PTR [RBP + member_stack_offset]
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x0F); // Two-byte opcode prefix
-			textSectionData.push_back(0xB7); // MOVZX r64, r/m16
-			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
-			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-			}
-		} else if (member_size_bytes == 1) {
-			// 8-bit member: MOVZX RAX, BYTE PTR [RBP + member_stack_offset]
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x0F); // Two-byte opcode prefix
-			textSectionData.push_back(0xB6); // MOVZX r64, r/m8
-			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
-			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				assert(false && "Unsupported member size");
+				return;
 			}
 		} else {
-			assert(false && "Unsupported member size");
-			return;
+			// For regular struct variables on the stack
+			if (member_size_bytes == 8) {
+				// 64-bit member: MOV RAX, [RBP + member_stack_offset]
+				auto load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
+				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			} else if (member_size_bytes == 4) {
+				// 32-bit member: MOV EAX, [RBP + member_stack_offset]
+				textSectionData.push_back(0x8B); // MOV r32, r/m32
+				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
+					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+				} else {
+					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 2) {
+				// 16-bit member: MOVZX RAX, WORD PTR [RBP + member_stack_offset]
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x0F); // Two-byte opcode prefix
+				textSectionData.push_back(0xB7); // MOVZX r64, r/m16
+				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+				} else {
+					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 1) {
+				// 8-bit member: MOVZX RAX, BYTE PTR [RBP + member_stack_offset]
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x0F); // Two-byte opcode prefix
+				textSectionData.push_back(0xB6); // MOVZX r64, r/m8
+				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+				} else {
+					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else {
+				assert(false && "Unsupported member size");
+				return;
+			}
 		}
 
 		// Store the result to the result variable's stack location
@@ -3909,20 +4219,27 @@ private:
 			return;
 		}
 
-		// Get the object's base stack offset
+		// Get the object's base stack offset or pointer
 		int32_t object_base_offset = 0;
+		bool is_pointer_access = false;  // true if object is 'this' (a pointer)
 		const StackVariableScope& current_scope = variable_scopes.back();
 
 		// Check if operand 2 is a string_view (variable name) or TempVar (nested access)
+		std::string object_name_str;
 		if (instruction.isOperandType<std::string_view>(2)) {
 			// Simple case: object is a variable name
-			auto object_name = std::string(instruction.getOperandAs<std::string_view>(2));
-			auto it = current_scope.identifier_offset.find(object_name);
+			object_name_str = std::string(instruction.getOperandAs<std::string_view>(2));
+			auto it = current_scope.identifier_offset.find(object_name_str);
 			if (it == current_scope.identifier_offset.end()) {
 				assert(false && "Struct object not found in scope");
 				return;
 			}
 			object_base_offset = it->second;
+
+			// Check if this is the 'this' pointer
+			if (object_name_str == "this") {
+				is_pointer_access = true;
+			}
 		} else if (instruction.isOperandType<TempVar>(2)) {
 			// Nested case: object is the result of a previous member access
 			auto object_temp = instruction.getOperandAs<TempVar>(2);
@@ -3933,9 +4250,17 @@ private:
 		}
 
 		// Calculate the member's actual stack offset
-		// For a struct at [RBP - 8] with member at offset 4:
-		//   member is at [RBP - 8 + 4] = [RBP - 4]
-		int32_t member_stack_offset = object_base_offset + member_offset;
+		int32_t member_stack_offset;
+		if (is_pointer_access) {
+			// For 'this' pointer: we need to load the pointer and use indirect addressing
+			// The pointer is at [RBP + object_base_offset]
+			// We'll handle this differently below
+			member_stack_offset = 0;  // Not used for pointer access
+		} else {
+			// For a struct at [RBP - 8] with member at offset 4:
+			//   member is at [RBP - 8 + 4] = [RBP - 4]
+			member_stack_offset = object_base_offset + member_offset;
+		}
 
 		// Calculate member size in bytes
 		int member_size_bytes = member_size_bits / 8;
@@ -3972,58 +4297,140 @@ private:
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		}
 
-		// Store the value to the member's stack location
-		if (member_size_bytes == 8) {
-			// 64-bit member: MOV [RBP + member_stack_offset], RAX
-			auto store_opcodes = generateMovToFrame(value_reg, member_stack_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		} else if (member_size_bytes == 4) {
-			// 32-bit member: MOV [RBP + member_stack_offset], EAX
-			textSectionData.push_back(0x89); // MOV r/m32, r32
-			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
-				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+		// Store the value to the member's location
+		if (is_pointer_access) {
+			// For 'this' pointer: load pointer into RCX, then store to [RCX + member_offset]
+			// Load 'this' pointer from stack into RCX
+			// MOV RCX, [RBP + object_base_offset]
+			auto load_ptr_opcodes = generateMovFromFrame(X64Register::RCX, object_base_offset);
+			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+
+			// Now store value_reg to [RCX + member_offset]
+			if (member_size_bytes == 8) {
+				// 64-bit member: MOV [RCX + member_offset], RAX
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x89); // MOV r/m64, r64
+				if (member_offset == 0) {
+					textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+				} else if (member_offset >= -128 && member_offset <= 127) {
+					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], RAX
+					textSectionData.push_back(static_cast<uint8_t>(member_offset));
+				} else {
+					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], RAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 4) {
+				// 32-bit member: MOV [RCX + member_offset], EAX
+				textSectionData.push_back(0x89); // MOV r/m32, r32
+				if (member_offset == 0) {
+					textSectionData.push_back(0x01); // ModR/M: [RCX], EAX
+				} else if (member_offset >= -128 && member_offset <= 127) {
+					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], EAX
+					textSectionData.push_back(static_cast<uint8_t>(member_offset));
+				} else {
+					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], EAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 2) {
+				// 16-bit member: MOV [RCX + member_offset], AX
+				textSectionData.push_back(0x66); // Operand-size override prefix
+				textSectionData.push_back(0x89); // MOV r/m16, r16
+				if (member_offset == 0) {
+					textSectionData.push_back(0x01); // ModR/M: [RCX], AX
+				} else if (member_offset >= -128 && member_offset <= 127) {
+					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], AX
+					textSectionData.push_back(static_cast<uint8_t>(member_offset));
+				} else {
+					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], AX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 1) {
+				// 8-bit member: MOV [RCX + member_offset], AL
+				textSectionData.push_back(0x88); // MOV r/m8, r8
+				if (member_offset == 0) {
+					textSectionData.push_back(0x01); // ModR/M: [RCX], AL
+				} else if (member_offset >= -128 && member_offset <= 127) {
+					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], AL
+					textSectionData.push_back(static_cast<uint8_t>(member_offset));
+				} else {
+					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], AL
+					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
 			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
-				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-			}
-		} else if (member_size_bytes == 2) {
-			// 16-bit member: MOV [RBP + member_stack_offset], AX
-			textSectionData.push_back(0x66); // Operand-size override prefix
-			textSectionData.push_back(0x89); // MOV r/m16, r16
-			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], AX
-				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
-			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], AX
-				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-			}
-		} else if (member_size_bytes == 1) {
-			// 8-bit member: MOV [RBP + member_stack_offset], AL
-			textSectionData.push_back(0x88); // MOV r/m8, r8
-			if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], AL
-				textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
-			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], AL
-				uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				assert(false && "Unsupported member size");
+				return;
 			}
 		} else {
-			assert(false && "Unsupported member size");
-			return;
+			// For regular struct variables on the stack
+			if (member_size_bytes == 8) {
+				// 64-bit member: MOV [RBP + member_stack_offset], RAX
+				auto store_opcodes = generateMovToFrame(value_reg, member_stack_offset);
+				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			} else if (member_size_bytes == 4) {
+				// 32-bit member: MOV [RBP + member_stack_offset], EAX
+				textSectionData.push_back(0x89); // MOV r/m32, r32
+				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
+					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+				} else {
+					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 2) {
+				// 16-bit member: MOV [RBP + member_stack_offset], AX
+				textSectionData.push_back(0x66); // Operand-size override prefix
+				textSectionData.push_back(0x89); // MOV r/m16, r16
+				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], AX
+					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+				} else {
+					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], AX
+					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else if (member_size_bytes == 1) {
+				// 8-bit member: MOV [RBP + member_stack_offset], AL
+				textSectionData.push_back(0x88); // MOV r/m8, r8
+				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
+					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], AL
+					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
+				} else {
+					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], AL
+					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else {
+				assert(false && "Unsupported member size");
+				return;
+			}
 		}
 	}
 
