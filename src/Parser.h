@@ -151,10 +151,9 @@ private:
         std::vector<ASTNode> ast_nodes_;
         std::string last_error_ = "this feature has not been implemented yet";
 
-        // Track current function name for __FUNCTION__, __func__, __PRETTY_FUNCTION__
-        // Using std::string_view since token values persist for the lifetime of parsing
-        // We only create a std::string when these identifiers are actually used
-        std::optional<std::string_view> current_function_name_;
+        // Track current function for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+        // Store pointer to the FunctionDeclarationNode which contains all the info we need
+        const FunctionDeclarationNode* current_function_ = nullptr;
 
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
@@ -237,6 +236,9 @@ private:
         // Utility functions
         bool consume_punctuator(const std::string_view& value);
         bool consume_keyword(const std::string_view& value);
+
+        // Helper to build __PRETTY_FUNCTION__ signature from FunctionDeclarationNode
+        std::string buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const;
         int get_operator_precedence(const std::string_view& op);
         std::optional<size_t> parse_alignas_specifier();  // Parse alignas(n) and return alignment value
 

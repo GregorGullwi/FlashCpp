@@ -313,12 +313,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Add function parameters to the symbol table within a function scope
 		gSymbolTable.enter_scope(ScopeType::Function);
 
-		// Set current function name for __FUNCTION__, __func__, __PRETTY_FUNCTION__
-		// Token values persist for the lifetime of parsing, so string_view is safe
-		current_function_name_ = identifier_token.value();
-
+		// Set current function pointer for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+		// The FunctionDeclarationNode persists in the AST, so the pointer is safe
 		if (auto funcNode = function_definition_result.node()) {
 			const auto& func_decl = funcNode->as<FunctionDeclarationNode>();
+			current_function_ = &func_decl;
+
 			for (const auto& param : func_decl.parameter_nodes()) {
 				if (param.is<DeclarationNode>()) {
 					const auto& param_decl_node = param.as<DeclarationNode>();
@@ -330,12 +330,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// Parse function body
 			auto block_result = parse_block();
 			if (block_result.is_error()) {
-				current_function_name_.reset();
+				current_function_ = nullptr;
 				gSymbolTable.exit_scope();
 				return block_result;
 			}
 
-			current_function_name_.reset();
+			current_function_ = nullptr;
 			gSymbolTable.exit_scope();
 
 			if (auto node = function_definition_result.node()) {
@@ -473,9 +473,9 @@ ParseResult Parser::parse_struct_declaration()
 				// Enter function scope for parsing the body
 				gSymbolTable.enter_scope(ScopeType::Function);
 
-				// Set current function name for __FUNCTION__, __func__, __PRETTY_FUNCTION__
-				// Token values persist for the lifetime of parsing, so string_view is safe
-				current_function_name_ = decl_node.identifier_token().value();
+				// Set current function pointer for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+				// The FunctionDeclarationNode persists in the AST, so the pointer is safe
+				current_function_ = &member_func_ref;
 
 				// Look up the struct type to get its type index
 				// Use string_view directly - gTypesByName supports heterogeneous lookup
@@ -502,13 +502,13 @@ ParseResult Parser::parse_struct_declaration()
 				// Parse function body
 				auto block_result = parse_block();
 				if (block_result.is_error()) {
-					current_function_name_.reset();
+					current_function_ = nullptr;
 					member_function_context_stack_.pop_back();
 					gSymbolTable.exit_scope();
 					return block_result;
 				}
 
-				current_function_name_.reset();
+				current_function_ = nullptr;
 				member_function_context_stack_.pop_back();
 				gSymbolTable.exit_scope();
 
@@ -1653,17 +1653,28 @@ ParseResult Parser::parse_primary_expression()
 		    idenfifier_token.value() == "__func__"sv ||
 		    idenfifier_token.value() == "__PRETTY_FUNCTION__"sv) {
 
-			if (!current_function_name_.has_value()) {
+			if (!current_function_) {
 				return ParseResult::error(
 					std::string(idenfifier_token.value()) + " can only be used inside a function",
 					idenfifier_token);
 			}
 
-			// Create a string literal with the function name
-			// Store the quoted string in CompileContext so it persists
-			std::string_view quoted_name = context_.storeFunctionNameLiteral(current_function_name_.value());
+			// Create a string literal with the function name or signature
+			// For __PRETTY_FUNCTION__, use the full signature; for others, use simple name
+			std::string_view persistent_name;
+			if (idenfifier_token.value() == "__PRETTY_FUNCTION__"sv) {
+				persistent_name = context_.storeFunctionNameLiteral(buildPrettyFunctionSignature(*current_function_));
+			} else {
+				// For __FUNCTION__ and __func__, just use the simple function name
+				persistent_name = current_function_->decl_node().identifier_token().value();
+			}
+
+			// Store the function name string in CompileContext so it persists
+			// Note: Unlike string literals from source code (which include quotes in the token),
+			// __FUNCTION__/__func__/__PRETTY_FUNCTION__ are predefined identifiers that expand
+			// to the string content directly, without quotes. This matches MSVC/GCC/Clang behavior.
 			Token string_token(Token::Type::StringLiteral,
-			                   quoted_name,
+			                   persistent_name,
 			                   idenfifier_token.line(),
 			                   idenfifier_token.column(),
 			                   idenfifier_token.file_index());
@@ -2561,4 +2572,46 @@ ParseResult Parser::parse_qualified_identifier() {
 	// Create a QualifiedIdentifierNode
 	auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 	return ParseResult::success(qualified_node);
+}
+
+std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const {
+	std::string result;
+
+	// Get return type from the function's declaration node
+	const DeclarationNode& decl = func_node.decl_node();
+	const TypeSpecifierNode& ret_type = decl.type_node().as<TypeSpecifierNode>();
+	result += ret_type.getReadableString();
+	result += " ";
+
+	// Add namespace prefix if we're in a namespace
+	auto namespace_path = gSymbolTable.build_current_namespace_path();
+	for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+		result += ns + "::";
+#else
+		result += std::string(ns.view()) + "::";
+#endif
+	}
+
+	// Add class/struct prefix if this is a member function
+	if (func_node.is_member_function()) {
+		result += func_node.parent_struct_name();
+		result += "::";
+	}
+
+	// Add function name
+	result += decl.identifier_token().value();
+
+	// Add parameters
+	result += "(";
+	const auto& params = func_node.parameter_nodes();
+	for (size_t i = 0; i < params.size(); ++i) {
+		if (i > 0) result += ", ";
+		const auto& param_decl = params[i].as<DeclarationNode>();
+		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		result += param_type.getReadableString();
+	}
+	result += ")";
+
+	return result;
 }

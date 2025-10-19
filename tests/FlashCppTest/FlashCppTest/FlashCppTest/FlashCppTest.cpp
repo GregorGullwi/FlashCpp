@@ -1244,7 +1244,11 @@ TEST_CASE("String literals and puts") {
 	run_test_from_file("test_puts_stack.cpp", "Tests char literals and .rdata strings by calling puts()", false);
 }
 
-const char* global_name = __func__;
+static const char* test_function_name;
+void test_function() {
+	test_function_name = __FUNCTION__;
+}
+
 TEST_CASE("Parser:FunctionNameIdentifiers") {
 	SUBCASE("__FUNCTION__, __func__, __PRETTY_FUNCTION__ inside function") {
 		// Test that these identifiers work inside a function and expand to the function name
@@ -1278,12 +1282,13 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 				converter.visit(node_handle);
 			}
 
+			test_function();	// to initialize test_function_name
 			const auto& ir = converter.getIr();
 			for (const auto& instruction : ir.getInstructions()) {
 				std::puts(instruction.getReadableString().c_str());
 				if (instruction.getOpcode() == IrOpcode::StringLiteral) {
 					const std::string_view func_name = instruction.getOperandAs<std::string_view>(1);
-					bool is_valid_func_name = (func_name == R"("test_function")"sv || func_name == R"("main")"sv);
+					bool is_valid_func_name = (func_name == test_function_name || func_name == "void test_function()"sv || func_name == "main"sv);
 					CHECK(is_valid_func_name);
 				}
 			}

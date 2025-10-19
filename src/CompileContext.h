@@ -90,13 +90,11 @@ public:
 		// If stack is empty, keep current value (matches MSVC behavior)
 	}
 
-	// Store a string literal for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+	// Store a string literal for __PRETTY_FUNCTION__
 	// Returns a string_view that remains valid for the lifetime of CompileContext
 	// Only called when these identifiers are actually used in the code
 	std::string_view storeFunctionNameLiteral(std::string_view function_name) {
-		// Create quoted string: "function_name"
-		std::string quoted = "\"" + std::string(function_name) + "\"";
-		function_name_literals_.push_back(std::move(quoted));
+		function_name_literals_.push_back(std::string(function_name));
 		return function_name_literals_.back();
 	}
 
