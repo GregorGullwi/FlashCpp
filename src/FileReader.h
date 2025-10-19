@@ -619,9 +619,28 @@ private:
 									continue;
 								}
 								for (size_t i = 0; i < defineDirective->args.size(); ++i) {
-									// Handle string concatenation macro token (#)
-									replaceAll(replace_str, "#" + defineDirective->args[i], "\"" + args[i] + "\"");
-									// Replace macro arguments
+									// Handle stringification operator (#) - but NOT token pasting (##)
+									// We need to avoid matching # when it's part of ##
+									size_t stringify_pos = 0;
+									while ((stringify_pos = replace_str.find("#" + defineDirective->args[i], stringify_pos)) != std::string::npos) {
+										// Check if this # is part of ##
+										if (stringify_pos > 0 && replace_str[stringify_pos - 1] == '#') {
+											// This is part of ##, skip it
+											stringify_pos += 1;
+											continue;
+										}
+										// Check if the next character after the argument is also #
+										size_t arg_end = stringify_pos + 1 + defineDirective->args[i].length();
+										if (arg_end < replace_str.length() && replace_str[arg_end] == '#') {
+											// This is part of ##, skip it
+											stringify_pos += 1;
+											continue;
+										}
+										// This is a real stringification operator
+										replace_str.replace(stringify_pos, 1 + defineDirective->args[i].length(), "\"" + args[i] + "\"");
+										stringify_pos += args[i].length() + 2; // Skip past the replaced string
+									}
+									// Replace macro arguments (non-stringified)
 									replaceAll(replace_str, defineDirective->args[i], args[i]);
 								}
 							}
