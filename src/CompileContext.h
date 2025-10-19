@@ -3,8 +3,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <deque>
 #include <optional>
 #include <stack>
+#include "ChunkedAnyVector.h"
 
 class CompileContext {
 public:
@@ -88,6 +90,16 @@ public:
 		// If stack is empty, keep current value (matches MSVC behavior)
 	}
 
+	// Store a string literal for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+	// Returns a string_view that remains valid for the lifetime of CompileContext
+	// Only called when these identifiers are actually used in the code
+	std::string_view storeFunctionNameLiteral(std::string_view function_name) {
+		// Create quoted string: "function_name"
+		std::string quoted = "\"" + std::string(function_name) + "\"";
+		function_name_literals_.push_back(std::move(quoted));
+		return function_name_literals_.back();
+	}
+
 private:
 	std::vector<std::string> includeDirs_;
 	std::optional<std::string> inputFile_;
@@ -99,4 +111,9 @@ private:
 	// #pragma pack state
 	size_t currentPackAlignment_ = 0;  // 0 = no packing (use natural alignment)
 	std::stack<size_t> packAlignmentStack_;  // Stack for push/pop operations
+
+	// Storage for function name string literals (__FUNCTION__, __func__, __PRETTY_FUNCTION__)
+	// Using std::deque instead of std::vector to avoid invalidating string_views on reallocation
+	// deque guarantees that references/pointers to elements remain valid when adding new elements
+	std::deque<std::string> function_name_literals_;
 };

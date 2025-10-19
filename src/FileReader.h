@@ -89,6 +89,7 @@ private:
 struct CurrentFile {
 	std::string_view file_name;
 	long line_number = 0;
+	std::string timestamp;  // File modification timestamp for __TIMESTAMP__
 };
 
 enum class Operator {
@@ -269,10 +270,10 @@ public:
 		std::string file_content(file_size, '\0');
 		stream.read(file_content.data(), file_size);
 
-		return processFileContent(file_content);
+		return preprocessFileContent(file_content);
 	}
 
-	bool processFileContent(const std::string& file_content) {
+	bool preprocessFileContent(const std::string& file_content) {
 		std::istringstream stream(file_content);
 		std::string line;
 		bool in_comment = false;
@@ -513,6 +514,9 @@ public:
 				// Pass through the pragma pack directive to the parser
 				result_.append(line).append("\n");
 			}
+			else if (line.find("#line", 0) == 0) {
+				processLineDirective(line);
+			}
 			else {
 				if (line.size() > 0 && (line.find_last_of(' ') != line.size() - 1))
 					line = expandMacros(line);
@@ -568,16 +572,45 @@ private:
 							size_t args_end = findMatchingClosingParen(output, args_start);
 							std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
 
-							// Handling the __VA_ARGS__ macro
-							size_t va_args_pos = replace_str.find("__VA_ARGS__");
-							if (va_args_pos != std::string::npos) {
-								std::string va_args_str;
+							// Calculate variadic arguments
+							std::string va_args_str;
+							bool has_variadic_args = false;
+							if (args.size() > defineDirective->args.size()) {
+								has_variadic_args = true;
 								for (size_t i = defineDirective->args.size(); i < args.size(); ++i) {
 									va_args_str += args[i];
 									if (i < args.size() - 1) {
 										va_args_str += ", ";
 									}
 								}
+							}
+
+							// Handle __VA_OPT__ (C++20 feature)
+							// __VA_OPT__(content) expands to content if __VA_ARGS__ is non-empty, otherwise empty
+							size_t va_opt_pos = 0;
+							while ((va_opt_pos = replace_str.find("__VA_OPT__", va_opt_pos)) != std::string::npos) {
+								// Find the opening parenthesis
+								size_t opt_paren_start = replace_str.find('(', va_opt_pos + 10);
+								if (opt_paren_start != std::string::npos) {
+									size_t opt_paren_end = findMatchingClosingParen(replace_str, opt_paren_start);
+									if (opt_paren_end != std::string::npos) {
+										std::string opt_content = replace_str.substr(opt_paren_start + 1, opt_paren_end - opt_paren_start - 1);
+										// Replace __VA_OPT__(content) with content if variadic args exist, otherwise empty
+										std::string replacement = has_variadic_args ? opt_content : "";
+										replace_str.replace(va_opt_pos, opt_paren_end - va_opt_pos + 1, replacement);
+										// Continue searching from the replacement position
+										va_opt_pos += replacement.length();
+									} else {
+										break;
+									}
+								} else {
+									break;
+								}
+							}
+
+							// Handling the __VA_ARGS__ macro
+							size_t va_args_pos = replace_str.find("__VA_ARGS__");
+							if (va_args_pos != std::string::npos) {
 								replace_str.replace(va_args_pos, 11, va_args_str);
 							}
 
@@ -944,6 +977,47 @@ private:
 		}
 	}
 
+	void processLineDirective(const std::string& line) {
+		// #line directive format:
+		// #line line_number
+		// #line line_number "filename"
+		std::istringstream iss(line);
+		iss.seekg("#line"sv.length());
+
+		long new_line_number;
+		iss >> new_line_number;
+
+		if (iss.fail()) {
+			std::cerr << "Invalid #line directive: expected line number" << std::endl;
+			return;
+		}
+
+		// Update the current line number (will be incremented on next line)
+		if (!filestack_.empty()) {
+			filestack_.top().line_number = new_line_number - 1;
+		}
+
+		// Check if there's a filename
+		std::string filename;
+		iss >> std::ws;  // Skip whitespace
+		if (!iss.eof()) {
+			std::getline(iss, filename);
+			// Remove quotes if present
+			if (filename.size() >= 2 && filename.front() == '"' && filename.back() == '"') {
+				filename = filename.substr(1, filename.size() - 2);
+			}
+			// Update the filename
+			if (!filestack_.empty()) {
+				// We need to store the filename somewhere persistent
+				// For now, we'll just update the file_name in the stack
+				// Note: This is a bit tricky because file_name is a string_view
+				// In a real implementation, we'd need to manage the lifetime properly
+				// For now, we'll skip updating the filename to avoid lifetime issues
+				// TODO: Properly handle filename updates in #line directives
+			}
+		}
+	}
+
 	void handleDefine(std::istringstream& iss) {
 		DefineDirective define;
 
@@ -1037,9 +1111,15 @@ private:
 		defines_["_M_X64"] = DefineDirective{ "100", {} };  // MSVC-style
 		defines_["_M_AMD64"] = DefineDirective{ "100", {} };
 
-		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string { return std::string(filestack_.top().file_name); } };
-		defines_["__LINE__"] = FunctionDirective{ [this]() -> std::string { return std::to_string(filestack_.top().line_number); } };
-		defines_["__COUNTER__"] = FunctionDirective{ [this]() -> std::string { return std::to_string(counter_value_++); } };
+		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string {
+			return "\"" + std::string(filestack_.top().file_name) + "\"";
+		} };
+		defines_["__LINE__"] = FunctionDirective{ [this]() -> std::string {
+			return std::to_string(filestack_.top().line_number);
+		} };
+		defines_["__COUNTER__"] = FunctionDirective{ [this]() -> std::string {
+			return std::to_string(counter_value_++);
+		} };
 
 		defines_["__DATE__"] = FunctionDirective{ [] {
 			auto now = std::chrono::system_clock::now();
@@ -1059,6 +1139,25 @@ private:
 			return std::string(buffer);
 		} };
 
+		// __TIMESTAMP__ - file modification time
+		defines_["__TIMESTAMP__"] = FunctionDirective{ [this]() -> std::string {
+			if (!filestack_.empty()) {
+				return filestack_.top().timestamp;
+			}
+			return "\"??? ??? ?? ??:??:?? ????\"";
+		} };
+
+		// __INCLUDE_LEVEL__ - nesting depth of includes (0 for main file)
+		defines_["__INCLUDE_LEVEL__"] = FunctionDirective{ [this]() -> std::string {
+			// Stack size - 1 because the main file is at level 0
+			return std::to_string(filestack_.size() > 0 ? filestack_.size() - 1 : 0);
+		} };
+
+		// __PRETTY_FUNCTION__ (GCC extension), __FUNCTION__ (MSVC extension), and __func__ (C++11 standard)
+		// These are NOT preprocessor macros - they are compiler builtins handled by the parser
+		// The parser will replace them with string literals containing the current function name
+		// when they appear inside a function body
+
 		defines_["__STDCPP_DEFAULT_NEW_ALIGNMENT__"] = FunctionDirective{ [] {
 			constexpr std::size_t default_new_alignment = alignof(std::max_align_t);
 			char buffer[32];
@@ -1069,7 +1168,22 @@ private:
 
 	struct ScopedFileStack {
 		ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file) : filestack_(filestack) {
-			filestack_.push({ file });
+			// Get file modification timestamp
+			std::string timestamp_str;
+			try {
+				auto ftime = std::filesystem::last_write_time(file);
+				auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+					ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+				auto time_t_now = std::chrono::system_clock::to_time_t(sctp);
+				std::tm tm_now = localtime_safely(&time_t_now);
+				char buffer[32];
+				std::strftime(buffer, sizeof(buffer), "\"%a %b %d %H:%M:%S %Y\"", &tm_now);
+				timestamp_str = buffer;
+			} catch (...) {
+				// If we can't get the timestamp, use a default
+				timestamp_str = "\"??? ??? ?? ??:??:?? ????\"";
+			}
+			filestack_.push({ file, 0, timestamp_str });
 		}
 		~ScopedFileStack() {
 			filestack_.pop();

@@ -5,6 +5,11 @@
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 
+static const std::unordered_set<std::string_view> type_keywords = {
+	"int"sv, "float"sv, "double"sv, "char"sv, "bool"sv, "void"sv,
+	"short"sv, "long"sv, "signed"sv, "unsigned"sv, "const"sv, "volatile"sv, "alignas"sv
+};
+
 bool Parser::generate_coff(const std::string& outputFilename) {
 #ifdef USE_LLVM
     return FlashCpp::GenerateCOFF(ast_nodes_, outputFilename);
@@ -307,6 +312,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 		// Add function parameters to the symbol table within a function scope
 		gSymbolTable.enter_scope(ScopeType::Function);
+
+		// Set current function name for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+		// Token values persist for the lifetime of parsing, so string_view is safe
+		current_function_name_ = identifier_token.value();
+
 		if (auto funcNode = function_definition_result.node()) {
 			const auto& func_decl = funcNode->as<FunctionDeclarationNode>();
 			for (const auto& param : func_decl.parameter_nodes()) {
@@ -319,9 +329,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			// Parse function body
 			auto block_result = parse_block();
-			if (block_result.is_error())
+			if (block_result.is_error()) {
+				current_function_name_.reset();
+				gSymbolTable.exit_scope();
 				return block_result;
+			}
 
+			current_function_name_.reset();
 			gSymbolTable.exit_scope();
 
 			if (auto node = function_definition_result.node()) {
@@ -459,6 +473,10 @@ ParseResult Parser::parse_struct_declaration()
 				// Enter function scope for parsing the body
 				gSymbolTable.enter_scope(ScopeType::Function);
 
+				// Set current function name for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+				// Token values persist for the lifetime of parsing, so string_view is safe
+				current_function_name_ = decl_node.identifier_token().value();
+
 				// Look up the struct type to get its type index
 				// Use string_view directly - gTypesByName supports heterogeneous lookup
 				auto type_it = gTypesByName.find(struct_name);
@@ -484,11 +502,13 @@ ParseResult Parser::parse_struct_declaration()
 				// Parse function body
 				auto block_result = parse_block();
 				if (block_result.is_error()) {
+					current_function_name_.reset();
 					member_function_context_stack_.pop_back();
 					gSymbolTable.exit_scope();
 					return block_result;
 				}
 
+				current_function_name_.reset();
 				member_function_context_stack_.pop_back();
 				gSymbolTable.exit_scope();
 
@@ -1024,11 +1044,6 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 		else {
 			// Check if it's a type specifier keyword (int, float, etc.) or CV-qualifier or alignas
-			static const std::unordered_set<std::string_view> type_keywords = {
-				"int", "float", "double", "char", "bool", "void",
-				"short", "long", "signed", "unsigned", "const", "volatile", "alignas"
-			};
-
 			if (type_keywords.find(current_token.value()) != type_keywords.end()) {
 				// Parse as variable declaration with optional initialization
 				return parse_variable_declaration();
@@ -1633,16 +1648,43 @@ ParseResult Parser::parse_primary_expression()
 	else if (current_token_->type() == Token::Type::Identifier) {
 		Token idenfifier_token = *current_token_;
 
+		// Check for __FUNCTION__, __func__, __PRETTY_FUNCTION__ (compiler builtins)
+		if (idenfifier_token.value() == "__FUNCTION__"sv ||
+		    idenfifier_token.value() == "__func__"sv ||
+		    idenfifier_token.value() == "__PRETTY_FUNCTION__"sv) {
+
+			if (!current_function_name_.has_value()) {
+				return ParseResult::error(
+					std::string(idenfifier_token.value()) + " can only be used inside a function",
+					idenfifier_token);
+			}
+
+			// Create a string literal with the function name
+			// Store the quoted string in CompileContext so it persists
+			std::string_view quoted_name = context_.storeFunctionNameLiteral(current_function_name_.value());
+			Token string_token(Token::Type::StringLiteral,
+			                   quoted_name,
+			                   idenfifier_token.line(),
+			                   idenfifier_token.column(),
+			                   idenfifier_token.file_index());
+
+			result = emplace_node<ExpressionNode>(StringLiteralNode(string_token));
+			consume_token();
+
+			if (result.has_value())
+				return ParseResult::success(*result);
+		}
+
 		// Check if this is a qualified identifier (namespace::identifier)
 		// We need to consume the identifier first to check what comes after it
 		consume_token();
-		if (current_token_.has_value() && current_token_->value() == "::") {
+		if (current_token_.has_value() && current_token_->value() == "::"sv) {
 			// Build the qualified identifier manually
 			std::vector<StringType<32>> namespaces;
 			Token final_identifier = idenfifier_token;
 
 			// Collect namespace parts
-			while (current_token_.has_value() && current_token_->value() == "::") {
+			while (current_token_.has_value() && current_token_->value() == "::"sv) {
 				// Current identifier is a namespace part
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 				consume_token(); // consume ::
@@ -1677,7 +1719,7 @@ ParseResult Parser::parse_primary_expression()
 
 				// Parse function arguments
 				ChunkedVector<ASTNode> args;
-				if (!peek_token().has_value() || peek_token()->value() != ")") {
+				if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 					while (true) {
 						auto arg_result = parse_expression();
 						if (arg_result.is_error()) {
@@ -1753,7 +1795,7 @@ ParseResult Parser::parse_primary_expression()
 
 			// Check if this is a function call (forward reference)
 			// Identifier already consumed at line 1621
-			if (consume_punctuator("(")) {
+			if (consume_punctuator("("sv)) {
 				// Create a forward declaration for the function
 				// We'll assume it returns int for now (this is a simplification)
 				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
@@ -1807,12 +1849,12 @@ ParseResult Parser::parse_primary_expression()
 		else {
 			// Identifier already consumed at line 1621
 
-			if (consume_punctuator("(")) {
+			if (consume_punctuator("("sv)) {
 				if (!peek_token().has_value())
 					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
 				ChunkedVector<ASTNode> args;
-				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")"sv) {
 					ParseResult argResult = parse_expression();
 					if (argResult.is_error()) {
 						return argResult;
@@ -1822,10 +1864,10 @@ ParseResult Parser::parse_primary_expression()
 						args.push_back(*node);
 					}
 
-					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ","sv) {
 						consume_token(); // Consume comma
 					}
-					else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+					else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")"sv) {
 						return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
 					}
 
@@ -1902,19 +1944,19 @@ ParseResult Parser::parse_primary_expression()
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::Keyword &&
-			 (current_token_->value() == "true" || current_token_->value() == "false")) {
+			 (current_token_->value() == "true"sv || current_token_->value() == "false"sv)) {
 		// Handle bool literals
 		bool value = (current_token_->value() == "true");
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
 			static_cast<unsigned long long>(value), Type::Bool, TypeQualifier::None, 1));
 		consume_token();
 	}
-	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "sizeof") {
+	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "sizeof"sv) {
 		// Handle sizeof operator: sizeof(type) or sizeof(expression)
 		Token sizeof_token = *current_token_;
 		consume_token(); // consume 'sizeof'
 
-		if (!consume_punctuator("(")) {
+		if (!consume_punctuator("("sv)) {
 			return ParseResult::error("Expected '(' after 'sizeof'", *current_token_);
 		}
 
@@ -2004,8 +2046,7 @@ ParseResult Parser::parse_primary_expression()
 		}
 
 		// Check for member access operator .
-		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ".") {
-			Token dot_token = *peek_token();
+		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
 			consume_token(); // consume '.'
 
 			// Expect an identifier (member name)
@@ -2017,7 +2058,7 @@ ParseResult Parser::parse_primary_expression()
 			consume_token(); // consume member name
 
 			// Check if this is a member function call (followed by '(')
-			if (peek_token().has_value() && peek_token()->value() == "(") {
+			if (peek_token().has_value() && peek_token()->value() == "("sv) {
 				// This is a member function call: obj.method(args)
 				// We need to find the member function in the struct type info
 
@@ -2028,7 +2069,7 @@ ParseResult Parser::parse_primary_expression()
 
 				// Parse function arguments
 				ChunkedVector<ASTNode> args;
-				if (!peek_token().has_value() || peek_token()->value() != ")") {
+				if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 					while (true) {
 						auto arg_result = parse_expression();
 						if (arg_result.is_error()) {
@@ -2085,11 +2126,11 @@ ParseResult Parser::parse_primary_expression()
 }
 
 ParseResult Parser::parse_for_loop() {
-    if (!consume_keyword("for")) {
+    if (!consume_keyword("for"sv)) {
         return ParseResult::error("Expected 'for' keyword", *current_token_);
     }
 
-    if (!consume_punctuator("(")) {
+    if (!consume_punctuator("("sv)) {
         return ParseResult::error("Expected '(' after 'for'", *current_token_);
     }
 
@@ -2097,15 +2138,10 @@ ParseResult Parser::parse_for_loop() {
     std::optional<ASTNode> init_statement;
 
     // Check if init is empty (starts with semicolon)
-    if (!consume_punctuator(";")) {
+    if (!consume_punctuator(";"sv)) {
         // Not empty, parse init statement
         if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
             // Check if it's a type keyword or CV-qualifier (variable declaration)
-            static const std::unordered_set<std::string_view> type_keywords = {
-                "int", "float", "double", "char", "bool", "void",
-                "short", "long", "signed", "unsigned", "const", "volatile"
-            };
-
             if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
                 // Handle variable declaration
                 ParseResult init = parse_variable_declaration();
@@ -2131,7 +2167,7 @@ ParseResult Parser::parse_for_loop() {
         }
 
         // Check for ranged-for syntax: for (declaration : range_expression)
-        if (consume_punctuator(":")) {
+        if (consume_punctuator(":"sv)) {
             // This is a ranged for loop
             if (!init_statement.has_value()) {
                 return ParseResult::error("Ranged for loop requires a loop variable declaration", *current_token_);
@@ -2148,7 +2184,7 @@ ParseResult Parser::parse_for_loop() {
                 return ParseResult::error("Expected range expression in ranged for loop", *current_token_);
             }
 
-            if (!consume_punctuator(")")) {
+            if (!consume_punctuator(")"sv)) {
                 return ParseResult::error("Expected ')' after ranged for loop range expression", *current_token_);
             }
 
@@ -2174,7 +2210,7 @@ ParseResult Parser::parse_for_loop() {
             ));
         }
 
-        if (!consume_punctuator(";")) {
+        if (!consume_punctuator(";"sv)) {
             return ParseResult::error("Expected ';' after for loop initialization", *current_token_);
         }
     }
@@ -2183,7 +2219,7 @@ ParseResult Parser::parse_for_loop() {
     std::optional<ASTNode> condition;
 
     // Check if condition is empty (next token is semicolon)
-    if (!consume_punctuator(";")) {
+    if (!consume_punctuator(";"sv)) {
         // Not empty, parse condition expression
         ParseResult cond_result = parse_expression();
         if (cond_result.is_error()) {
@@ -2191,7 +2227,7 @@ ParseResult Parser::parse_for_loop() {
         }
         condition = cond_result.node();
 
-        if (!consume_punctuator(";")) {
+        if (!consume_punctuator(";"sv)) {
             return ParseResult::error("Expected ';' after for loop condition", *current_token_);
         }
     }
@@ -2200,7 +2236,7 @@ ParseResult Parser::parse_for_loop() {
     std::optional<ASTNode> update_expression;
 
     // Check if increment is empty (next token is closing paren)
-    if (!consume_punctuator(")")) {
+    if (!consume_punctuator(")"sv)) {
         // Not empty, parse increment expression
         ParseResult inc_result = parse_expression();
         if (inc_result.is_error()) {
@@ -2237,11 +2273,11 @@ ParseResult Parser::parse_for_loop() {
 }
 
 ParseResult Parser::parse_while_loop() {
-    if (!consume_keyword("while")) {
+    if (!consume_keyword("while"sv)) {
         return ParseResult::error("Expected 'while' keyword", *current_token_);
     }
 
-    if (!consume_punctuator("(")) {
+    if (!consume_punctuator("("sv)) {
         return ParseResult::error("Expected '(' after 'while'", *current_token_);
     }
 
@@ -2251,13 +2287,13 @@ ParseResult Parser::parse_while_loop() {
         return condition_result;
     }
 
-    if (!consume_punctuator(")")) {
+    if (!consume_punctuator(")"sv)) {
         return ParseResult::error("Expected ')' after while condition", *current_token_);
     }
 
     // Parse body (can be a block or a single statement)
     ParseResult body_result;
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{"sv) {
         body_result = parse_block();
     } else {
         body_result = parse_statement_or_declaration();
@@ -2280,7 +2316,7 @@ ParseResult Parser::parse_while_loop() {
 }
 
 ParseResult Parser::parse_do_while_loop() {
-    if (!consume_keyword("do")) {
+    if (!consume_keyword("do"sv)) {
         return ParseResult::error("Expected 'do' keyword", *current_token_);
     }
 
@@ -2296,11 +2332,11 @@ ParseResult Parser::parse_do_while_loop() {
         return body_result;
     }
 
-    if (!consume_keyword("while")) {
+    if (!consume_keyword("while"sv)) {
         return ParseResult::error("Expected 'while' after do-while body", *current_token_);
     }
 
-    if (!consume_punctuator("(")) {
+    if (!consume_punctuator("("sv)) {
         return ParseResult::error("Expected '(' after 'while'", *current_token_);
     }
 
@@ -2310,11 +2346,11 @@ ParseResult Parser::parse_do_while_loop() {
         return condition_result;
     }
 
-    if (!consume_punctuator(")")) {
+    if (!consume_punctuator(")"sv)) {
         return ParseResult::error("Expected ')' after do-while condition", *current_token_);
     }
 
-    if (!consume_punctuator(";")) {
+    if (!consume_punctuator(";"sv)) {
         return ParseResult::error("Expected ';' after do-while statement", *current_token_);
     }
 
@@ -2332,14 +2368,14 @@ ParseResult Parser::parse_do_while_loop() {
 
 ParseResult Parser::parse_break_statement() {
     auto break_token_opt = peek_token();
-    if (!break_token_opt.has_value() || break_token_opt->value() != "break") {
+    if (!break_token_opt.has_value() || break_token_opt->value() != "break"sv) {
         return ParseResult::error("Expected 'break' keyword", *current_token_);
     }
 
     Token break_token = break_token_opt.value();
     consume_token(); // Consume the 'break' keyword
 
-    if (!consume_punctuator(";")) {
+    if (!consume_punctuator(";"sv)) {
         return ParseResult::error("Expected ';' after break statement", *current_token_);
     }
 
@@ -2348,14 +2384,14 @@ ParseResult Parser::parse_break_statement() {
 
 ParseResult Parser::parse_continue_statement() {
     auto continue_token_opt = peek_token();
-    if (!continue_token_opt.has_value() || continue_token_opt->value() != "continue") {
+    if (!continue_token_opt.has_value() || continue_token_opt->value() != "continue"sv) {
         return ParseResult::error("Expected 'continue' keyword", *current_token_);
     }
 
     Token continue_token = continue_token_opt.value();
     consume_token(); // Consume the 'continue' keyword
 
-    if (!consume_punctuator(";")) {
+    if (!consume_punctuator(";"sv)) {
         return ParseResult::error("Expected ';' after continue statement", *current_token_);
     }
 
@@ -2363,11 +2399,11 @@ ParseResult Parser::parse_continue_statement() {
 }
 
 ParseResult Parser::parse_if_statement() {
-    if (!consume_keyword("if")) {
+    if (!consume_keyword("if"sv)) {
         return ParseResult::error("Expected 'if' keyword", *current_token_);
     }
 
-    if (!consume_punctuator("(")) {
+    if (!consume_punctuator("("sv)) {
         return ParseResult::error("Expected '(' after 'if'", *current_token_);
     }
 
@@ -2377,11 +2413,6 @@ ParseResult Parser::parse_if_statement() {
     // Look ahead to see if there's a semicolon (indicating init statement)
     // Only try to parse as initializer if we see a type keyword or CV-qualifier
     if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-        static const std::unordered_set<std::string_view> type_keywords = {
-            "int", "float", "double", "char", "bool", "void",
-            "short", "long", "signed", "unsigned", "const", "volatile"
-        };
-
         // Only proceed if this is actually a type keyword or CV-qualifier
         if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
             // Could be a declaration like: if (int x = 5; x > 0)

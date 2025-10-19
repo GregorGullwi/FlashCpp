@@ -151,6 +151,11 @@ private:
         std::vector<ASTNode> ast_nodes_;
         std::string last_error_ = "this feature has not been implemented yet";
 
+        // Track current function name for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+        // Using std::string_view since token values persist for the lifetime of parsing
+        // We only create a std::string when these identifiers are actually used
+        std::optional<std::string_view> current_function_name_;
+
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
                 std::string_view struct_name;  // Points directly into source text from lexer token

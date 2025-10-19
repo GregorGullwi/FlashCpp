@@ -99,7 +99,7 @@ static bool compare_lexers_ignore_whitespace(Lexer& lexer1, Lexer& lexer2) {
 static void run_test_case(const std::string& input, const std::string& expected_output) {
 	FileReader file_reader(compile_context, file_tree.reset());
 	file_reader.push_file_to_stack({ __FILE__, __LINE__ });
-	CHECK(file_reader.processFileContent(input));
+	CHECK(file_reader.preprocessFileContent(input));
 	const std::string& actual_output = file_reader.get_result();
 	Lexer lexer_expected(expected_output);
 	Lexer lexer_actual(actual_output);
@@ -269,6 +269,86 @@ TEST_CASE("preprocessor") {
 			int sum(int x, int y, int z) { return x + y + z; }
 			const int a = 1, b = 2, c = 3;
 			const int total = sum(4, a, b, c);
+		  )";
+		run_test_case(input, expected_output);
+	}
+
+	SUBCASE("__VA_OPT__") {
+		// Test __VA_OPT__ with variadic arguments present
+		const std::string input1 = R"(
+			#define LOG(msg, ...) printf(msg __VA_OPT__(,) __VA_ARGS__)
+			void test() {
+				LOG("Hello %s", "world");
+			}
+		  )";
+		const std::string expected_output1 = R"(
+			void test() {
+				printf("Hello %s" , "world");
+			}
+		  )";
+		run_test_case(input1, expected_output1);
+
+		// Test __VA_OPT__ with no variadic arguments
+		const std::string input2 = R"(
+			#define LOG(msg, ...) printf(msg __VA_OPT__(,) __VA_ARGS__)
+			void test() {
+				LOG("Hello");
+			}
+		  )";
+		const std::string expected_output2 = R"(
+			void test() {
+				printf("Hello" );
+			}
+		  )";
+		run_test_case(input2, expected_output2);
+	}
+
+	SUBCASE("#line directive") {
+		// Test #line with just line number
+		const std::string input1 = R"(
+			int x = 1;
+			#line 100
+			int y = 2;
+		  )";
+		// We can't easily test the line number change in output, but we can verify it doesn't break
+		run_test_case(input1, R"(
+			int x = 1;
+			int y = 2;
+		  )");
+
+		// Test #line with line number and filename
+		const std::string input2 = R"(
+			int x = 1;
+			#line 50 "test.cpp"
+			int y = 2;
+		  )";
+		run_test_case(input2, R"(
+			int x = 1;
+			int y = 2;
+		  )");
+	}
+
+	SUBCASE("Predefined macros - __TIMESTAMP__") {
+		const std::string input = R"(
+			const char* timestamp = __TIMESTAMP__;
+		  )";
+		// We can't predict the exact timestamp, but we can verify it expands to a string
+		CompileContext compile_context;
+		FileTree file_tree;
+		FileReader file_reader(compile_context, file_tree);
+		file_reader.preprocessFileContent(input);
+		const std::string& output = file_reader.get_result();
+		// Check that __TIMESTAMP__ was replaced with something (should contain quotes)
+		CHECK(output.find("__TIMESTAMP__") == std::string::npos);
+		CHECK(output.find("timestamp = \"") != std::string::npos);
+	}
+
+	SUBCASE("Predefined macros - __INCLUDE_LEVEL__") {
+		const std::string input = R"(
+			int level = __INCLUDE_LEVEL__;
+		  )";
+		const std::string expected_output = R"(
+			int level = 0;
 		  )";
 		run_test_case(input, expected_output);
 	}
@@ -1162,4 +1242,51 @@ TEST_CASE("Namespace:Nested") {
 
 TEST_CASE("String literals and puts") {
 	run_test_from_file("test_puts_stack.cpp", "Tests char literals and .rdata strings by calling puts()", false);
+}
+
+const char* global_name = __func__;
+TEST_CASE("Parser:FunctionNameIdentifiers") {
+	SUBCASE("__FUNCTION__, __func__, __PRETTY_FUNCTION__ inside function") {
+		// Test that these identifiers work inside a function and expand to the function name
+		std::string code = R"(
+			void test_function() {
+				const char* msvc_name = __FUNCTION__;
+				const char* standard_name = __func__;
+				const char* gcc_name = __PRETTY_FUNCTION__;
+			}
+
+			int main() {
+				const char* name = __func__;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		compile_context.setInputFile("test_function_names.cpp");
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+
+		// Should parse successfully
+		CHECK(!parse_result.is_error());
+
+		if (!parse_result.is_error()) {
+			const auto& ast = parser.get_nodes();
+
+			// Convert to IR to verify the string literals are created correctly
+			AstToIr converter;
+			for (auto& node_handle : ast) {
+				converter.visit(node_handle);
+			}
+
+			const auto& ir = converter.getIr();
+			for (const auto& instruction : ir.getInstructions()) {
+				std::puts(instruction.getReadableString().c_str());
+				if (instruction.getOpcode() == IrOpcode::StringLiteral) {
+					const std::string_view func_name = instruction.getOperandAs<std::string_view>(1);
+					bool is_valid_func_name = (func_name == R"("test_function")"sv || func_name == R"("main")"sv);
+					CHECK(is_valid_func_name);
+				}
+			}
+		}
+	}
 }
