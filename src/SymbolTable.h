@@ -320,4 +320,4 @@ private:
 	std::unordered_map<NamespacePath, std::unordered_map<StringType<32>, std::vector<ASTNode>>, NamespacePathHash, NamespacePathEqual> namespace_symbols_;
 };
 
-static inline SymbolTable gSymbolTable;
+extern SymbolTable gSymbolTable;

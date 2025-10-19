@@ -370,8 +370,8 @@ private:
 	};
 	// Function signature information for mangling
 	struct FunctionSignature {
-		Type return_type = Type::Void;
-		std::vector<Type> parameter_types;
+		TypeSpecifierNode return_type;
+		std::vector<TypeSpecifierNode> parameter_types;
 		bool is_const = false;
 		bool is_static = false;
 		EFunctionCallingConv calling_convention = EFunctionCallingConv::cdecl;
@@ -379,7 +379,7 @@ private:
 		std::string class_name;
 
 		FunctionSignature() = default;
-		FunctionSignature(Type ret_type, std::vector<Type> params)
+		FunctionSignature(const TypeSpecifierNode& ret_type, std::vector<TypeSpecifierNode> params)
 			: return_type(ret_type), parameter_types(std::move(params)) {}
 	};
 
@@ -429,32 +429,42 @@ private:
 		return mangled;
 	}
 
-	// Get Microsoft Visual C++ type code for mangling
-	std::string_view getTypeCode(Type type) const {
-		switch (type) {
-			case Type::Void: return "X"sv;
-			case Type::Bool: return "_N"sv;
-			case Type::Char: return "D"sv;
-			case Type::UnsignedChar: return "E"sv;
-			case Type::Short: return "F"sv;
-			case Type::UnsignedShort: return "G"sv;
-			case Type::Int: return "H"sv;
-			case Type::UnsignedInt: return "I"sv;
-			case Type::Long: return "J"sv;
-			case Type::UnsignedLong: return "K"sv;
-			case Type::LongLong: return "_J"sv;
-			case Type::UnsignedLongLong: return "_K"sv;
-			case Type::Float: return "M"sv;
-			case Type::Double: return "N"sv;
-			case Type::LongDouble: return "O"sv;
-			default: return "H"sv;  // Default to int for unknown types
+	// Get Microsoft Visual C++ type code for mangling (with pointer support)
+	std::string getTypeCode(const TypeSpecifierNode& type_node) const {
+		std::string code;
+
+		// Add pointer prefix for each level of indirection
+		for (size_t i = 0; i < type_node.pointer_depth(); ++i) {
+			code += "PE";  // Pointer prefix in MSVC mangling
 		}
+
+		// Add base type code
+		switch (type_node.type()) {
+			case Type::Void: code += "X"; break;
+			case Type::Bool: code += "_N"; break;
+			case Type::Char: code += "D"; break;
+			case Type::UnsignedChar: code += "E"; break;
+			case Type::Short: code += "F"; break;
+			case Type::UnsignedShort: code += "G"; break;
+			case Type::Int: code += "H"; break;
+			case Type::UnsignedInt: code += "I"; break;
+			case Type::Long: code += "J"; break;
+			case Type::UnsignedLong: code += "K"; break;
+			case Type::LongLong: code += "_J"; break;
+			case Type::UnsignedLongLong: code += "_K"; break;
+			case Type::Float: code += "M"; break;
+			case Type::Double: code += "N"; break;
+			case Type::LongDouble: code += "O"; break;
+			default: code += "H"; break;  // Default to int for unknown types
+		}
+
+		return code;
 	}
 
 public:
 	// Add function signature information for proper mangling
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types) {
+	std::string addFunctionSignature(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types) {
 		FunctionSignature sig(return_type, parameter_types);
 		// Generate the mangled name and use it as the key
 		std::string mangled_name = generateMangledName(name, sig);
@@ -464,7 +474,7 @@ public:
 
 	// Add function signature information for member functions with class name
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types, const std::string& class_name) {
+	std::string addFunctionSignature(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, const std::string& class_name) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.class_name = class_name;
 		// Generate the mangled name and use it as the key

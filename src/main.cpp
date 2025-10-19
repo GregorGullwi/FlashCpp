@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
 
     const auto& ast = parser.get_nodes();
 
-    AstToIr converter;
+    AstToIr converter(&gSymbolTable);
     {
         PhaseTimer timer("AST to IR", show_timing);
         for (auto& node_handle : ast) {

@@ -1486,15 +1486,22 @@ public:
 
 		case IrOpcode::FunctionDecl:
 		{
-			// define [Type][SizeInBits] [Name]
+			// define [Type][SizeInBits][PointerDepth] [Name]
 			oss << "define "
-				<< getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+				<< getOperandAsTypeString(0) << getOperandAs<int>(1);
 
-			// Function name can be either std::string or std::string_view
-			if (isOperandType<std::string>(2))
-				oss << getOperandAs<std::string>(2);
-			else if (isOperandType<std::string_view>(2))
-				oss << getOperandAs<std::string_view>(2);
+			// Add pointer depth indicator if present
+			int pointer_depth = getOperandAs<int>(2);
+			for (int i = 0; i < pointer_depth; ++i) {
+				oss << "*";
+			}
+			oss << " ";
+
+			// Function name can be either std::string or std::string_view (now at index 3)
+			if (isOperandType<std::string>(3))
+				oss << getOperandAs<std::string>(3);
+			else if (isOperandType<std::string_view>(3))
+				oss << getOperandAs<std::string_view>(3);
 		}
 		break;
 

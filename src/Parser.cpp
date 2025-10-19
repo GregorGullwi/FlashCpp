@@ -2,8 +2,12 @@
 #ifdef USE_LLVM
 #include "LibClangIRGenerator.h"
 #endif
+#include "OverloadResolution.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
+
+// Define the global symbol table (declared as extern in SymbolTable.h)
+SymbolTable gSymbolTable;
 
 static const std::unordered_set<std::string_view> type_keywords = {
 	"int"sv, "float"sv, "double"sv, "char"sv, "bool"sv, "void"sv,
@@ -2211,13 +2215,46 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 
-				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
-				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
-				if (!decl_ptr) {
-					return ParseResult::error("Invalid function declaration", idenfifier_token);
+				// Perform overload resolution
+				// First, get all overloads of this function
+				auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
+
+				// Extract argument types
+				std::vector<TypeSpecifierNode> arg_types;
+				for (size_t i = 0; i < args.size(); ++i) {
+					auto arg_type = get_expression_type(args[i]);
+					if (!arg_type.has_value()) {
+						// If we can't determine the type, fall back to old behavior
+						const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+						if (!decl_ptr) {
+							return ParseResult::error("Invalid function declaration", idenfifier_token);
+						}
+						result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+						break;
+					}
+					arg_types.push_back(*arg_type);
 				}
 
-				result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+				// If we successfully extracted all argument types, perform overload resolution
+				if (!result.has_value() && arg_types.size() == args.size()) {
+					auto resolution_result = resolve_overload(all_overloads, arg_types);
+
+					if (!resolution_result.has_match) {
+						return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+					}
+
+					if (resolution_result.is_ambiguous) {
+						return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+					}
+
+					// Get the selected overload
+					const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
+					if (!decl_ptr) {
+						return ParseResult::error("Invalid function declaration", idenfifier_token);
+					}
+
+					result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+				}
 			}
 			else {
 				// Regular identifier
@@ -2939,4 +2976,47 @@ std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& 
 	result += ")";
 
 	return result;
+}
+
+// Helper to extract type from an expression for overload resolution
+std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) const {
+	if (!expr_node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+
+	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+
+	// Handle different expression types
+	if (std::holds_alternative<NumericLiteralNode>(expr)) {
+		const auto& literal = std::get<NumericLiteralNode>(expr);
+		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits());
+	}
+	else if (std::holds_alternative<IdentifierNode>(expr)) {
+		const auto& ident = std::get<IdentifierNode>(expr);
+		auto symbol = gSymbolTable.lookup(ident.name());
+		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+			const auto& decl = symbol->as<DeclarationNode>();
+			return decl.type_node().as<TypeSpecifierNode>();
+		}
+	}
+	else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+		// For binary operators, we'd need to evaluate the result type
+		// For now, just return int as a placeholder
+		// TODO: Implement proper type inference for binary operators
+		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+	}
+	else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		// For unary operators, get the type of the operand
+		const auto& unary = std::get<UnaryOperatorNode>(expr);
+		return get_expression_type(unary.get_operand());
+	}
+	else if (std::holds_alternative<FunctionCallNode>(expr)) {
+		// For function calls, get the return type
+		const auto& func_call = std::get<FunctionCallNode>(expr);
+		const auto& decl = func_call.function_declaration();
+		return decl.type_node().as<TypeSpecifierNode>();
+	}
+	// Add more cases as needed
+
+	return std::nullopt;
 }

@@ -14,7 +14,8 @@ class Parser;
 
 class AstToIr {
 public:
-	AstToIr() {}
+	AstToIr() : global_symbol_table_(nullptr) {}
+	AstToIr(SymbolTable* global_symbol_table) : global_symbol_table_(global_symbol_table) {}
 
 	void visit(const ASTNode& node) {
 		// Skip empty nodes (e.g., from forward declarations)
@@ -104,6 +105,7 @@ private:
 		std::vector<IrOperand> funcDeclOperands;
 		funcDeclOperands.emplace_back(ret_type.type());
 		funcDeclOperands.emplace_back(static_cast<int>(ret_type.size_in_bits()));
+		funcDeclOperands.emplace_back(static_cast<int>(ret_type.pointer_depth()));  // Add pointer depth
 		funcDeclOperands.emplace_back(func_decl.identifier_token().value());
 
 		// Add struct/class name for member functions
@@ -119,9 +121,10 @@ private:
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-			// Add parameter type and size to function declaration
+			// Add parameter type, size, and pointer depth to function declaration
 			funcDeclOperands.emplace_back(param_type.type());
 			funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
+			funcDeclOperands.emplace_back(static_cast<int>(param_type.pointer_depth()));  // Add pointer depth
 			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
 
 			//paramCount++;
@@ -1449,16 +1452,117 @@ private:
 		return { lhsIrOperands[0], lhsIrOperands[1], result_var };
 	}
 
+	// Helper function to generate Microsoft Visual C++ mangled name for function calls
+	// This matches the mangling scheme in ObjFileWriter::generateMangledName
+	std::string generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types) {
+		// Special case: main function is never mangled
+		if (name == "main") {
+			return "main";
+		}
+
+		std::string mangled = "?";
+		mangled += name;
+		mangled += "@@";
+
+		// Add calling convention and linkage (__cdecl)
+		mangled += "YA";
+
+		// Add return type code
+		mangled += getTypeCodeForMangling(return_type);
+
+		// Add parameter type codes
+		for (const auto& param_type : param_types) {
+			mangled += getTypeCodeForMangling(param_type);
+		}
+
+		// End marker
+		mangled += "@Z";
+
+		return mangled;
+	}
+
+	// Helper to get type code for mangling (matches ObjFileWriter::getTypeCode)
+	std::string getTypeCodeForMangling(const TypeSpecifierNode& type_node) {
+		std::string code;
+
+		// Add pointer prefix for each level of indirection
+		for (int i = 0; i < type_node.pointer_depth(); ++i) {
+			code += "PE";  // Pointer prefix in MSVC mangling
+		}
+
+		// Add base type code
+		switch (type_node.type()) {
+			case Type::Void: code += "X"; break;
+			case Type::Bool: code += "_N"; break;  // bool
+			case Type::Char: code += "D"; break;   // char
+			case Type::UnsignedChar: code += "E"; break;  // unsigned char
+			case Type::Short: code += "F"; break;  // short
+			case Type::UnsignedShort: code += "G"; break;  // unsigned short
+			case Type::Int: code += "H"; break;    // int
+			case Type::UnsignedInt: code += "I"; break;  // unsigned int
+			case Type::Long: code += "J"; break;   // long
+			case Type::UnsignedLong: code += "K"; break;  // unsigned long
+			case Type::LongLong: code += "_J"; break;  // long long
+			case Type::UnsignedLongLong: code += "K"; break;  // unsigned long long
+			case Type::Float: code += "M"; break;  // float
+			case Type::Double: code += "N"; break;  // double
+			case Type::LongDouble: code += "O"; break;  // long double
+			default: code += "H"; break;  // Default to int
+		}
+
+		return code;
+	}
+
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 
 		const auto& decl_node = functionCallNode.function_declaration();
-		auto type = gSymbolTable.lookup(decl_node.identifier_token().value());
 
-		// Always add the return variable and function name
+		// Get the function declaration to extract parameter types for mangling
+		std::string function_name = std::string(decl_node.identifier_token().value());
+
+		// Look up the function in the global symbol table to get all overloads
+		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
+		auto all_overloads = global_symbol_table_
+			? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
+			: symbol_table.lookup_all(decl_node.identifier_token().value());
+
+		// Find the matching overload by comparing the DeclarationNode address
+		// This works because the FunctionCallNode holds a reference to the specific
+		// DeclarationNode that was selected by overload resolution
+		for (const auto& overload : all_overloads) {
+			if (overload.is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
+				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+				if (overload_decl == &decl_node) {
+					// Found the matching overload
+					const auto& func_decl = *overload_func_decl;
+
+					// Extract parameter types for mangling (including pointer information)
+					std::vector<TypeSpecifierNode> param_types;
+					for (const auto& param_node : func_decl.parameter_nodes()) {
+						if (param_node.is<DeclarationNode>()) {
+							const auto& param_decl = param_node.as<DeclarationNode>();
+							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							param_types.push_back(param_type);
+						}
+					}
+
+					// Get return type (including pointer information)
+					const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+
+					// Generate the mangled name directly
+					// This ensures we call the correct overload
+					function_name = generateMangledNameForCall(function_name, return_type, param_types);
+					break;
+				}
+			}
+		}
+
+		// Always add the return variable and function name (mangled for overload resolution)
 		TempVar ret_var = var_counter.next();
 		irOperands.emplace_back(ret_var);
-		irOperands.emplace_back(decl_node.identifier_token().value());
+		irOperands.emplace_back(function_name);
 
 		// Generate IR for function arguments
 		functionCallNode.arguments().visit([&](ASTNode argument) {
@@ -1937,4 +2041,5 @@ private:
 	Ir ir_;
 	TempVar var_counter{ 0 };
 	SymbolTable symbol_table;
+	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 };

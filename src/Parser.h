@@ -110,6 +110,7 @@ public:
         explicit Parser(Lexer& lexer, CompileContext& context);
 
         ParseResult parse() {
+                gSymbolTable = SymbolTable();
                 ParseResult parseResult;
                 while (peek_token().has_value() && !parseResult.is_error() &&
                         peek_token()->type() != Token::Type::EndOfFile) {
@@ -241,6 +242,9 @@ private:
         std::string buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const;
         int get_operator_precedence(const std::string_view& op);
         std::optional<size_t> parse_alignas_specifier();  // Parse alignas(n) and return alignment value
+
+        // Helper to extract type from an expression for overload resolution
+        std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node) const;
 
         TokenPosition save_token_position();
         void restore_token_position(const TokenPosition& token_position);

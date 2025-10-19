@@ -1293,11 +1293,11 @@ private:
 
 		for (const auto& instruction : ir.getInstructions()) {
 			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
-				// Function name can be either std::string or std::string_view
-				if (instruction.isOperandType<std::string>(2)) {
-					current_func_name = instruction.getOperandAs<std::string>(2);
-				} else if (instruction.isOperandType<std::string_view>(2)) {
-					current_func_name = std::string(instruction.getOperandAs<std::string_view>(2));
+				// Function name can be either std::string or std::string_view (now at index 3)
+				if (instruction.isOperandType<std::string>(3)) {
+					current_func_name = instruction.getOperandAs<std::string>(3);
+				} else if (instruction.isOperandType<std::string_view>(3)) {
+					current_func_name = std::string(instruction.getOperandAs<std::string_view>(3));
 				}
 				function_instructions[current_func_name] = std::vector<IrInstruction>();
 			} else if (!current_func_name.empty()) {
@@ -1681,12 +1681,25 @@ private:
 		}
 
 		// call [function name] instruction is 5 bytes
-		auto function_name = instruction.getOperandAs<std::string_view>(1);
+		// Function name can be either std::string (mangled) or std::string_view (unmangled)
+		std::string function_name;
+		if (instruction.isOperandType<std::string>(1)) {
+			function_name = instruction.getOperandAs<std::string>(1);
+		} else if (instruction.isOperandType<std::string_view>(1)) {
+			function_name = std::string(instruction.getOperandAs<std::string_view>(1));
+		}
+
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		// Get the mangled name for the function (handles both regular and member functions)
-		std::string mangled_name = writer.getMangledName(std::string(function_name));
+		// If the function name is already mangled (starts with '?'), use it directly
+		std::string mangled_name;
+		if (!function_name.empty() && function_name[0] == '?') {
+			mangled_name = function_name;  // Already mangled
+		} else {
+			mangled_name = writer.getMangledName(function_name);  // Need to mangle
+		}
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
 		// REFERENCE COMPATIBILITY: Don't add closing brace line mappings
@@ -2055,38 +2068,56 @@ private:
 	}
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
-		// Verify we have at least the minimum operands: return type, size, function name, struct name
-		assert(instruction.getOperandCount() >= 4 && "FunctionDecl must have at least 4 operands");
+		// Verify we have at least the minimum operands: return type, size, pointer depth, function name, struct name
+		assert(instruction.getOperandCount() >= 5 && "FunctionDecl must have at least 5 operands");
 
-		// Function name can be either std::string or std::string_view
+		// Function name can be either std::string or std::string_view (now at index 3)
 		std::string func_name;
-		if (instruction.isOperandType<std::string>(2)) {
-			func_name = instruction.getOperandAs<std::string>(2);
-		} else if (instruction.isOperandType<std::string_view>(2)) {
-			func_name = std::string(instruction.getOperandAs<std::string_view>(2));
+		if (instruction.isOperandType<std::string>(3)) {
+			func_name = instruction.getOperandAs<std::string>(3);
+		} else if (instruction.isOperandType<std::string_view>(3)) {
+			func_name = std::string(instruction.getOperandAs<std::string_view>(3));
 		}
 
-		// Struct name can be either std::string or std::string_view (empty for non-member functions)
+		// Struct name can be either std::string or std::string_view (empty for non-member functions, now at index 4)
 		std::string struct_name;
-		if (instruction.getOperandCount() > 3) {
-			if (instruction.isOperandType<std::string>(3)) {
-				struct_name = instruction.getOperandAs<std::string>(3);
-			} else if (instruction.isOperandType<std::string_view>(3)) {
-				struct_name = std::string(instruction.getOperandAs<std::string_view>(3));
+		if (instruction.getOperandCount() > 4) {
+			if (instruction.isOperandType<std::string>(4)) {
+				struct_name = instruction.getOperandAs<std::string>(4);
+			} else if (instruction.isOperandType<std::string_view>(4)) {
+				struct_name = std::string(instruction.getOperandAs<std::string_view>(4));
 			}
 		}
 
 		// Extract function signature information for proper C++20 name mangling
-		auto return_type = instruction.getOperandAs<Type>(0);
-		std::vector<Type> parameter_types;
+		auto return_base_type = instruction.getOperandAs<Type>(0);
+		auto return_size = instruction.getOperandAs<int>(1);
+		auto return_pointer_depth = instruction.getOperandAs<int>(2);
+
+		// Construct return type TypeSpecifierNode
+		TypeSpecifierNode return_type(return_base_type, TypeQualifier::None, static_cast<unsigned char>(return_size));
+		for (int i = 0; i < return_pointer_depth; ++i) {
+			return_type.add_pointer_level();
+		}
+
+		std::vector<TypeSpecifierNode> parameter_types;
 
 		// Extract parameter types from the instruction
-		// Now parameters start at index 4 (after return type, size, function name, and struct name)
-		size_t paramIndex = 4;
-		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
-			auto param_type = instruction.getOperandAs<Type>(paramIndex);
+		// Now parameters start at index 5 (after return type, size, pointer depth, function name, and struct name)
+		size_t paramIndex = 5;
+		while (paramIndex + 4 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, and name
+			auto param_base_type = instruction.getOperandAs<Type>(paramIndex);
+			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
+			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + 2);
+
+			// Construct parameter TypeSpecifierNode
+			TypeSpecifierNode param_type(param_base_type, TypeQualifier::None, static_cast<unsigned char>(param_size));
+			for (int i = 0; i < param_pointer_depth; ++i) {
+				param_type.add_pointer_level();
+			}
+
 			parameter_types.push_back(param_type);
-			paramIndex += 3;  // Skip type, size, and name
+			paramIndex += 4;  // Skip type, size, pointer depth, and name
 		}
 
 		// Add function signature to the object file writer for proper mangling
@@ -2203,28 +2234,33 @@ private:
 		}
 
 		// First pass: collect all parameter information
-		paramIndex = 4;  // Start after return type, size, function name, and struct name
-		while (paramIndex + 2 < instruction.getOperandCount()) {  // Need at least type, size, and name
+		paramIndex = 5;  // Start after return type, size, pointer depth, function name, and struct name
+		while (paramIndex + 4 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, and name
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
+			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + 2);
 
 			// Store parameter location based on addressing mode
-			int paramNumber = (paramIndex / 3 - 1) + param_offset_adjustment;
+			int paramNumber = ((paramIndex - 5) / 4) + param_offset_adjustment;
 			int offset = (paramNumber + 1) * -8;
 
-			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 2);
+			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 3);
 			variable_scopes.back().identifier_offset[param_name] = offset;
 
 			// Add parameter to debug information
 			uint32_t param_type_index = 0x74; // T_INT4 for int parameters
-			switch (param_type) {
-				case Type::Int: param_type_index = 0x74; break;  // T_INT4
-				case Type::Float: param_type_index = 0x40; break; // T_REAL32
-				case Type::Double: param_type_index = 0x41; break; // T_REAL64
-				case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-				case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-				case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-				default: param_type_index = 0x74; break;
+			if (param_pointer_depth > 0) {
+				param_type_index = 0x603;  // T_64PVOID for pointer types
+			} else {
+				switch (param_type) {
+					case Type::Int: param_type_index = 0x74; break;  // T_INT4
+					case Type::Float: param_type_index = 0x40; break; // T_REAL32
+					case Type::Double: param_type_index = 0x41; break; // T_REAL64
+					case Type::Char: param_type_index = 0x10; break;  // T_CHAR
+					case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
+					case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
+					default: param_type_index = 0x74; break;
+				}
 			}
 			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
@@ -2236,7 +2272,7 @@ private:
 				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg});
 			}
 
-			paramIndex += 3;  // Skip type, size, and name
+			paramIndex += 4;  // Skip type, size, pointer depth, and name
 		}
 
 		// Second pass: generate parameter storage code in the correct order
