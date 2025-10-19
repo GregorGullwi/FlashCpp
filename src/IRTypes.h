@@ -1517,13 +1517,19 @@ public:
 
 				oss << " = call ";
 				if (getOperandCount() > 1) {
-					oss << "@" << getOperandAs<std::string_view>(1) << "(";
+					oss << "@";
+					// Function name can be either std::string or std::string_view
+					if (isOperandType<std::string>(1))
+						oss << getOperandAs<std::string>(1);
+					else if (isOperandType<std::string_view>(1))
+						oss << getOperandAs<std::string_view>(1);
+					oss << "(";
 
 					const size_t funcSymbolIndex = getOperandCount() - 1;
 					for (size_t i = 2; i < funcSymbolIndex; i += 3) {
 						if (i > 2) oss << ", ";
 						oss << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
-						
+
 						if (isOperandType<unsigned long long>(i + 2))
 							oss << getOperandAs<unsigned long long>(i + 2);
 						else if (isOperandType<TempVar>(i + 2))

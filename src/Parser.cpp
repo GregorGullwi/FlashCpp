@@ -2996,7 +2996,20 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto symbol = gSymbolTable.lookup(ident.name());
 		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 			const auto& decl = symbol->as<DeclarationNode>();
-			return decl.type_node().as<TypeSpecifierNode>();
+			TypeSpecifierNode type = decl.type_node().as<TypeSpecifierNode>();
+
+			// Handle array-to-pointer decay
+			// When an array is used in an expression (except with sizeof, &, etc.),
+			// it decays to a pointer to its first element
+			if (decl.array_size().has_value()) {
+				// This is an array declaration - decay to pointer
+				// Create a new TypeSpecifierNode with one level of pointer
+				TypeSpecifierNode pointer_type = type;
+				pointer_type.add_pointer_level();
+				return pointer_type;
+			}
+
+			return type;
 		}
 	}
 	else if (std::holds_alternative<BinaryOperatorNode>(expr)) {

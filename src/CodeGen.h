@@ -196,6 +196,7 @@ private:
 		std::vector<IrOperand> ctorDeclOperands;
 		ctorDeclOperands.emplace_back(Type::Void);  // Constructors don't have a return type
 		ctorDeclOperands.emplace_back(0);  // Size is 0 for void
+		ctorDeclOperands.emplace_back(0);  // Pointer depth is 0 for void
 		ctorDeclOperands.emplace_back(std::string(node.struct_name()) + "::" + std::string(node.struct_name()));
 		ctorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
 
@@ -209,6 +210,7 @@ private:
 
 			ctorDeclOperands.emplace_back(param_type.type());
 			ctorDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
+			ctorDeclOperands.emplace_back(static_cast<int>(param_type.pointer_depth()));  // Add pointer depth
 			ctorDeclOperands.emplace_back(param_decl.identifier_token().value());
 		}
 
@@ -330,6 +332,7 @@ private:
 		std::vector<IrOperand> dtorDeclOperands;
 		dtorDeclOperands.emplace_back(Type::Void);  // Destructors don't have a return type
 		dtorDeclOperands.emplace_back(0);  // Size is 0 for void
+		dtorDeclOperands.emplace_back(0);  // Pointer depth is 0 for void
 		dtorDeclOperands.emplace_back(std::string(node.struct_name()) + "::~" + std::string(node.struct_name()));
 		dtorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
 
