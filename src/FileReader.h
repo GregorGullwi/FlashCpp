@@ -278,6 +278,10 @@ public:
 		bool in_comment = false;
 		std::stack<bool> skipping_stack;
 		skipping_stack.push(false); // Initial state: not skipping
+		// Track whether any condition in an #if/#elif chain has been true
+		// This is needed for proper #elif handling
+		std::stack<bool> condition_was_true_stack;
+		condition_was_true_stack.push(false);
 
 		long line_number_fallback = 1;
 		long& line_number = !filestack_.empty() ? filestack_.top().line_number : line_number_fallback;
@@ -355,13 +359,32 @@ public:
 			if (skipping) {
 				if (line.find("#endif", 0) == 0) {
 					skipping_stack.pop();
+					condition_was_true_stack.pop();
 				}
 				else if (line.find("#if", 0) == 0) {
 					// Nesting, push a new skipping state
 					skipping_stack.push(true);
+					condition_was_true_stack.push(false);
+				}
+				else if (line.find("#elif", 0) == 0) {
+					// If we're skipping and haven't found a true condition yet, evaluate #elif
+					if (!condition_was_true_stack.top()) {
+						std::istringstream iss(line);
+						iss.seekg("#elif"sv.length());
+						long expression_result = evaluate_expression(iss);
+						if (expression_result != 0) {
+							skipping_stack.top() = false;  // Stop skipping
+							condition_was_true_stack.top() = true;  // Mark that we found a true condition
+						}
+					}
+					// If a previous condition was true, keep skipping
 				}
 				else if (line.find("#else", 0) == 0) {
-					skipping_stack.top() = !skipping_stack.top();
+					// Only stop skipping if no previous condition was true
+					if (!condition_was_true_stack.top()) {
+						skipping_stack.top() = false;
+						condition_was_true_stack.top() = true;
+					}
 				}
 				continue;
 			}
@@ -391,42 +414,89 @@ public:
 				iss.seekg("#ifdef"sv.length());
 				std::string symbol;
 				iss >> symbol;
-				if (defines_.count(symbol)) {
-					skipping_stack.push(false);
-				}
-				else {
-					skipping_stack.push(true);
-				}
+				bool is_defined = defines_.count(symbol) > 0;
+				skipping_stack.push(!is_defined);
+				condition_was_true_stack.push(is_defined);
 			}
 			else if (line.find("#ifndef", 0) == 0) {
 				std::istringstream iss(line);
 				iss.seekg("#ifndef"sv.length());
 				std::string symbol;
 				iss >> symbol;
-				if (defines_.count(symbol)) {
-					skipping_stack.push(true);
-				}
-				else {
-					skipping_stack.push(false);
-				}
+				bool is_defined = defines_.count(symbol) > 0;
+				skipping_stack.push(is_defined);
+				condition_was_true_stack.push(!is_defined);
 			}
 			else if (line.find("#if", 0) == 0) {
 				std::istringstream iss(line);
 				iss.seekg("#if"sv.length());
 				long expression_result = evaluate_expression(iss);
-				skipping_stack.push(expression_result == 0);
+				bool condition_true = (expression_result != 0);
+				skipping_stack.push(!condition_true);
+				condition_was_true_stack.push(condition_true);
+			}
+			else if (line.find("#elif", 0) == 0) {
+				if (skipping_stack.empty() || condition_was_true_stack.empty()) {
+					std::cerr << "Unmatched #elif directive" << std::endl;
+					return false;
+				}
+				// If a previous condition was true, start skipping
+				if (condition_was_true_stack.top()) {
+					skipping_stack.top() = true;
+				}
+				else {
+					// Evaluate the #elif condition
+					std::istringstream iss(line);
+					iss.seekg("#elif"sv.length());
+					long expression_result = evaluate_expression(iss);
+					if (expression_result != 0) {
+						skipping_stack.top() = false;  // Stop skipping
+						condition_was_true_stack.top() = true;  // Mark condition as true
+					}
+				}
 			}
 			else if (line.find("#else", 0) == 0) {
-				skipping_stack.top() = !skipping_stack.top();
+				if (skipping_stack.empty() || condition_was_true_stack.empty()) {
+					std::cerr << "Unmatched #else directive" << std::endl;
+					return false;
+				}
+				// Only execute #else block if no previous condition was true
+				if (condition_was_true_stack.top()) {
+					skipping_stack.top() = true;  // Start skipping
+				}
+				else {
+					skipping_stack.top() = false;  // Stop skipping
+					condition_was_true_stack.top() = true;  // Mark that we're in a true block
+				}
 			}
 			else if (line.find("#endif", 0) == 0) {
 				if (!skipping_stack.empty()) {
 					skipping_stack.pop();
+					condition_was_true_stack.pop();
 				}
 				else {
 					std::cerr << "Unmatched #endif directive" << std::endl;
 					return false;
 				}
+			}
+			else if (line.find("#error", 0) == 0) {
+				std::string message = line.substr(6);
+				// Trim leading whitespace
+				size_t first_non_space = message.find_first_not_of(" \t");
+				if (first_non_space != std::string::npos) {
+					message = message.substr(first_non_space);
+				}
+				std::cerr << "Error: " << message << std::endl;
+				return false;
+			}
+			else if (line.find("#warning", 0) == 0) {
+				std::string message = line.substr(8);
+				// Trim leading whitespace
+				size_t first_non_space = message.find_first_not_of(" \t");
+				if (first_non_space != std::string::npos) {
+					message = message.substr(first_non_space);
+				}
+				std::cerr << "Warning: " << message << std::endl;
 			}
 			else if (line.find("#undef") == 0) {
 				std::istringstream iss(line);
@@ -946,6 +1016,26 @@ private:
 		defines_["__STDC_HOSTED__"] = DefineDirective{ "1", {} };
 		defines_["__STDCPP_THREADS__"] = DefineDirective{ "1", {} };
 		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
+
+		// FlashCpp compiler identification
+		defines_["__FLASHCPP__"] = DefineDirective{ "1", {} };
+		defines_["__FLASHCPP_VERSION__"] = DefineDirective{ "1", {} };
+		defines_["__FLASHCPP_VERSION_MAJOR__"] = DefineDirective{ "0", {} };
+		defines_["__FLASHCPP_VERSION_MINOR__"] = DefineDirective{ "1", {} };
+		defines_["__FLASHCPP_VERSION_PATCH__"] = DefineDirective{ "0", {} };
+
+		// Windows platform macros
+		defines_["_WIN32"] = DefineDirective{ "1", {} };
+		defines_["_WIN64"] = DefineDirective{ "1", {} };
+		defines_["_MSC_VER"] = DefineDirective{ "1900", {} };  // Pretend to be MSVC 2015 for compatibility
+		defines_["_MSC_FULL_VER"] = DefineDirective{ "190023026", {} };
+
+		// Architecture macros
+		defines_["__x86_64__"] = DefineDirective{ "1", {} };
+		defines_["__amd64__"] = DefineDirective{ "1", {} };
+		defines_["__amd64"] = DefineDirective{ "1", {} };
+		defines_["_M_X64"] = DefineDirective{ "100", {} };  // MSVC-style
+		defines_["_M_AMD64"] = DefineDirective{ "100", {} };
 
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string { return std::string(filestack_.top().file_name); } };
 		defines_["__LINE__"] = FunctionDirective{ [this]() -> std::string { return std::to_string(filestack_.top().line_number); } };
