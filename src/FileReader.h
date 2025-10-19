@@ -1131,7 +1131,11 @@ private:
 		defines_["_M_AMD64"] = DefineDirective{ "100", {} };
 
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string {
-			return "\"" + std::string(filestack_.top().file_name) + "\"";
+			// Use std::filesystem to normalize path separators for cross-platform compatibility
+			// This converts backslashes to forward slashes on all platforms
+			std::filesystem::path file_path(filestack_.top().file_name);
+			std::string normalized_path = file_path.generic_string();
+			return "\"" + normalized_path + "\"";
 		} };
 		defines_["__LINE__"] = FunctionDirective{ [this]() -> std::string {
 			return std::to_string(filestack_.top().line_number);
