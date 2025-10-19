@@ -1370,7 +1370,46 @@ ParseResult Parser::parse_variable_declaration()
 
 	// Process the first declaration
 	std::optional<ASTNode> first_init_expr;
-	if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
+
+	// Check for direct initialization with parentheses: Type var(args)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+		// Direct initialization with parentheses
+		consume_token(); // consume '('
+
+		// Create an InitializerListNode to hold the arguments
+		auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+
+		// Parse argument list
+		while (true) {
+			// Check if we've reached the end
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ")") {
+				break;
+			}
+
+			// Parse the argument expression
+			ParseResult arg_result = parse_expression();
+			if (arg_result.is_error()) {
+				return arg_result;
+			}
+
+			if (auto arg_node = arg_result.node()) {
+				init_list_ref.add_initializer(*arg_node);
+			}
+
+			// Check for comma (more arguments) or closing paren
+			if (!consume_punctuator(",")) {
+				// No comma, so we expect a closing paren on the next iteration
+				break;
+			}
+		}
+
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after direct initialization arguments", *current_token_);
+		}
+
+		first_init_expr = init_list_node;
+	}
+	else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
 		consume_token(); // consume the '=' operator
 
 		// Check if this is a brace initializer (e.g., Point p = {10, 20})
@@ -1389,6 +1428,14 @@ ParseResult Parser::parse_variable_declaration()
 			}
 			first_init_expr = init_expr_result.node();
 		}
+	}
+	else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+		// Direct list initialization: Type var{args}
+		ParseResult init_list_result = parse_brace_initializer(type_specifier);
+		if (init_list_result.is_error()) {
+			return init_list_result;
+		}
+		first_init_expr = init_list_result.node();
 	}
 
 	// Check if there are more declarations (comma-separated)
