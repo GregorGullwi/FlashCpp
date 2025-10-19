@@ -2090,24 +2090,26 @@ private:
 		}
 
 		// Add function signature to the object file writer for proper mangling
+		// and get the mangled name for this function
+		std::string mangled_name;
 		if (!struct_name.empty()) {
 			// Member function - include struct name for mangling
-			writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name));
+			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name));
 		} else {
 			// Regular function
-			writer.addFunctionSignature(std::string(func_name), return_type, parameter_types);
+			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types);
 		}
 
 		// Finalize previous function before starting new one
 		if (!current_function_name_.empty()) {
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
-			// Update function length
+			// Update function length (uses unmangled name for debug info)
 			writer.update_function_length(current_function_name_, function_length);
 			writer.set_function_debug_range(current_function_name_, 0, 0);	// doesn't seem needed
 
-			// Add exception handling information (required for x64) - once per function
-			writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
+			// Add exception handling information (required for x64) - uses mangled name
+			writer.add_function_exception_info(current_function_mangled_name_, current_function_offset_, function_length);
 		}
 
 		// align the function to 16 bytes
@@ -2124,11 +2126,12 @@ private:
 		total_stack_space = (total_stack_space + 15) & -16;
 
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
-		writer.add_function_symbol(std::string(func_name), func_offset, total_stack_space);
+		writer.add_function_symbol(mangled_name, func_offset, total_stack_space);
 		functionSymbols[func_name] = func_offset;
 
 		// Track function for debug information
 		current_function_name_ = std::string(func_name);
+		current_function_mangled_name_ = mangled_name;
 		current_function_offset_ = func_offset;
 
 		// Clear control flow tracking for new function
@@ -4832,6 +4835,7 @@ private:
 
 	// Debug information tracking
 	std::string current_function_name_;
+	std::string current_function_mangled_name_;
 	uint32_t current_function_offset_ = 0;
 
 	// Pending function info for exception handling

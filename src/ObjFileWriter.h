@@ -336,10 +336,26 @@ public:
 
 	// C++20 compatible name mangling system
 	std::string getMangledName(const std::string& name) const {
-		// Check if we have function signature information for this function
-		auto it = function_signatures_.find(name);
-		if (it != function_signatures_.end()) {
-			return generateMangledName(name, it->second);
+		// Check if the name is already a mangled name (starts with '?')
+		if (!name.empty() && name[0] == '?') {
+			// Already mangled, return as-is
+			return name;
+		}
+
+		// For overloaded functions, we can't determine which overload to use
+		// without signature information. The caller should pass the mangled name directly.
+		// For now, we'll search for any mangled name that starts with the function name.
+		// This is a temporary solution - ideally the IR should include the mangled name.
+		for (const auto& [mangled, sig] : function_signatures_) {
+			// Check if this mangled name corresponds to the function name
+			// Mangled names start with '?' followed by the function name
+			if (mangled.size() > name.size() + 1 &&
+			    mangled[0] == '?' &&
+			    mangled.substr(1, name.size()) == name) {
+				// Found a match - return this mangled name
+				// Note: This returns the LAST added overload, which should be the current one
+				return mangled;
+			}
 		}
 
 		return name;  // Default: no mangling
@@ -367,6 +383,7 @@ private:
 			: return_type(ret_type), parameter_types(std::move(params)) {}
 	};
 
+	// Map from mangled name to function signature
 	mutable std::unordered_map<std::string, FunctionSignature> function_signatures_;
 
 	// Generate Microsoft Visual C++ mangled name
@@ -436,31 +453,48 @@ private:
 
 public:
 	// Add function signature information for proper mangling
-	void addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types) {
+	// Returns the mangled name for the function
+	std::string addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types) {
 		FunctionSignature sig(return_type, parameter_types);
-		function_signatures_[name] = sig;
+		// Generate the mangled name and use it as the key
+		std::string mangled_name = generateMangledName(name, sig);
+		function_signatures_[mangled_name] = sig;
+		return mangled_name;
 	}
 
 	// Add function signature information for member functions with class name
-	void addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types, const std::string& class_name) {
+	// Returns the mangled name for the function
+	std::string addFunctionSignature(const std::string& name, Type return_type, const std::vector<Type>& parameter_types, const std::string& class_name) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.class_name = class_name;
-		function_signatures_[name] = sig;
+		// Generate the mangled name and use it as the key
+		std::string mangled_name = generateMangledName(name, sig);
+		function_signatures_[mangled_name] = sig;
+		return mangled_name;
 	}
 
-	void add_function_symbol(const std::string& name, uint32_t section_offset, uint32_t stack_space) {
-		std::string symbol_name = getMangledName(name);
-		std::cerr << "Adding function symbol: " << symbol_name << " (original: " << name << ") at offset " << section_offset << std::endl;
+	void add_function_symbol(const std::string& mangled_name, uint32_t section_offset, uint32_t stack_space) {
+		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << std::endl;
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
-		auto symbol_func = coffi_.add_symbol(symbol_name);
+		auto symbol_func = coffi_.add_symbol(mangled_name);
 		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol_func->set_section_number(section_text->get_index() + 1);
 		symbol_func->set_value(section_offset);
 
+		// Extract unmangled name for debug info
+		// Mangled names start with '?' followed by the function name up to '@@'
+		std::string unmangled_name = mangled_name;
+		if (!mangled_name.empty() && mangled_name[0] == '?') {
+			size_t end_pos = mangled_name.find("@@");
+			if (end_pos != std::string::npos) {
+				unmangled_name = mangled_name.substr(1, end_pos - 1);
+			}
+		}
+
 		// Add function to debug info with length 0 - length will be calculated later
-		std::cerr << "DEBUG: Adding function to debug builder: " << name << " at offset " << section_offset << std::endl;
-		debug_builder_.addFunction(name, section_offset, 0, stack_space);
+		std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " at offset " << section_offset << std::endl;
+		debug_builder_.addFunction(unmangled_name, section_offset, 0, stack_space);
 		std::cerr << "DEBUG: Function added to debug builder" << std::endl;
 
 		// Exception info is now handled directly in IRConverter finalization logic
@@ -511,14 +545,13 @@ public:
 		section_text->add_relocation_entry(&relocation);
 	}
 
-	void add_pdata_relocations(uint32_t pdata_offset, const std::string& function_name, uint32_t xdata_offset) {
-		std::cerr << "Adding PDATA relocations for function: " << function_name << " at pdata offset " << pdata_offset << std::endl;
+	void add_pdata_relocations(uint32_t pdata_offset, const std::string& mangled_name, uint32_t xdata_offset) {
+		std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
 		// Get the function symbol using mangled name
-		std::string mangled_name = getMangledName(function_name);
 		auto* function_symbol = coffi_.get_symbol(mangled_name);
 		if (!function_symbol) {
-			throw std::runtime_error("Function symbol not found: " + mangled_name + " (original: " + function_name + ")");
+			throw std::runtime_error("Function symbol not found: " + mangled_name);
 		}
 
 		// Get the .xdata section symbol
@@ -550,7 +583,7 @@ public:
 		reloc3.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
 		pdata_section->add_relocation_entry(&reloc3);
 
-		std::cerr << "Added 3 PDATA relocations for function " << function_name << std::endl;
+		std::cerr << "Added 3 PDATA relocations for function " << mangled_name << std::endl;
 	}
 
 	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
@@ -615,17 +648,17 @@ public:
 		debug_builder_.finalizeCurrentFunction();
 	}
 
-	void add_function_exception_info(const std::string& function_name, uint32_t function_start, uint32_t function_size) {
+	void add_function_exception_info(const std::string& mangled_name, uint32_t function_start, uint32_t function_size) {
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
-			if (existing == function_name) {
-				std::cerr << "Exception info already added for function: " << function_name << " - skipping" << std::endl;
+			if (existing == mangled_name) {
+				std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
 				return;
 			}
 		}
 
-		std::cerr << "Adding exception info for function: " << function_name << " at offset " << function_start << " size " << function_size << std::endl;
-		added_exception_functions_.push_back(function_name);
+		std::cerr << "Adding exception info for function: " << mangled_name << " at offset " << function_start << " size " << function_size << std::endl;
+		added_exception_functions_.push_back(mangled_name);
 
 		// Get current XDATA section size to calculate the offset for this function's unwind info
 		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
@@ -659,7 +692,7 @@ public:
 
 		// Add relocations for PDATA section
 		// These relocations are critical for the linker to resolve addresses correctly
-		add_pdata_relocations(pdata_offset, function_name, xdata_offset);
+		add_pdata_relocations(pdata_offset, mangled_name, xdata_offset);
 	}
 
 	void finalize_debug_info() {

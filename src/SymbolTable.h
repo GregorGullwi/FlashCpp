@@ -66,25 +66,83 @@ struct Scope {
 		: scope_type(scopeType), scope_handle{ .scope_level = scope_level }, namespace_name(std::move(namespace_name)) {}
 
 	ScopeType scope_type = ScopeType::Block;
-	std::unordered_map<std::string_view, ASTNode> symbols;
+	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
+	std::unordered_map<std::string_view, std::vector<ASTNode>> symbols;
 	ScopeHandle scope_handle;
 	StringType<> namespace_name;  // Only used for Namespace scopes
 };
 
+// Helper function to extract parameter types from a FunctionDeclarationNode
+inline std::vector<Type> extractParameterTypes(const ASTNode& node) {
+	std::vector<Type> param_types;
+
+	if (!node.is<DeclarationNode>()) {
+		return param_types;
+	}
+
+	// For function declarations, we need to look up the FunctionDeclarationNode
+	// This is a simplified version - in practice, we'd need to traverse the AST
+	// to find the associated FunctionDeclarationNode
+	return param_types;
+}
+
+// Helper function to check if two function signatures match
+inline bool signaturesMatch(const std::vector<Type>& sig1, const std::vector<Type>& sig2) {
+	if (sig1.size() != sig2.size()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < sig1.size(); ++i) {
+		if (sig1[i] != sig2[i]) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 class SymbolTable {
 public:
 	bool insert(std::string_view identifier, ASTNode node) {
-		auto existing_type = lookup(identifier);
-		if (existing_type && existing_type->type_name() != node.type_name())
-			return false;
+		auto& current_scope = symbol_table_stack_.back();
+		auto it = current_scope.symbols.find(identifier);
 
-		symbol_table_stack_.back().symbols.emplace(identifier, node);
+		// If this is a new identifier, create a new vector
+		if (it == current_scope.symbols.end()) {
+			current_scope.symbols[identifier] = std::vector<ASTNode>{node};
+		} else {
+			// Identifier exists - check if we can add this as an overload
+			auto& existing_nodes = it->second;
+
+			// For non-function symbols (variables, etc.), don't allow duplicates
+			if (!node.is<DeclarationNode>() && !node.is<FunctionDeclarationNode>()) {
+				// Check if any existing symbol has a different type
+				if (!existing_nodes.empty() && existing_nodes[0].type_name() != node.type_name()) {
+					return false;
+				}
+				// Don't allow duplicate non-function symbols
+				return false;
+			}
+
+			// For function declarations, allow overloading
+			// Check if a function with the same signature already exists
+			// (This will be enhanced when we have proper signature extraction)
+			existing_nodes.push_back(node);
+		}
 
 		// If we're in a namespace, also add to the persistent namespace map
-		if (symbol_table_stack_.back().scope_type == ScopeType::Namespace) {
+		if (current_scope.scope_type == ScopeType::Namespace) {
 			// Build the namespace path without string concatenation
 			NamespacePath ns_path = build_current_namespace_path();
-			namespace_symbols_[ns_path].emplace(StringType<32>(identifier), node);
+			auto& ns_symbols = namespace_symbols_[ns_path];
+			StringType<32> key(identifier);
+
+			auto ns_it = ns_symbols.find(key);
+			if (ns_it == ns_symbols.end()) {
+				ns_symbols[key] = std::vector<ASTNode>{node};
+			} else {
+				ns_it->second.push_back(node);
+			}
 		}
 
 		return true;
@@ -110,12 +168,54 @@ public:
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
+				// Return the first match for backward compatibility
+				return symbolIt->second[0];
+			}
+		}
+
+		return std::nullopt;
+	}
+
+	// New method to get all overloads of a function
+	std::vector<ASTNode> lookup_all(std::string_view identifier) const {
+		return lookup_all(identifier, get_current_scope_handle());
+	}
+
+	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
+		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			const Scope& scope = *stackIt;
+			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end()) {
 				return symbolIt->second;
 			}
 		}
 
-		return std::nullopt;
+		return {};
+	}
+
+	// Resolve function overload based on argument types
+	// Returns the best matching function declaration, or nullopt if no match or ambiguous
+	std::optional<ASTNode> lookup_function(std::string_view identifier, const std::vector<Type>& arg_types) const {
+		return lookup_function(identifier, arg_types, get_current_scope_handle());
+	}
+
+	std::optional<ASTNode> lookup_function(std::string_view identifier, const std::vector<Type>& arg_types, ScopeHandle scope_limit_handle) const {
+		// Get all overloads
+		auto overloads = lookup_all(identifier, scope_limit_handle);
+		if (overloads.empty()) {
+			return std::nullopt;
+		}
+
+		// If only one overload, return it (for now, we'll add signature checking later)
+		if (overloads.size() == 1) {
+			return overloads[0];
+		}
+
+		// Multiple overloads - need to find the best match
+		// For now, return the first one (we'll implement proper overload resolution later)
+		// TODO: Implement proper overload resolution with exact match, implicit conversions, etc.
+		return overloads[0];
 	}
 
 	std::optional<SymbolScopeHandle> get_scope_handle(std::string_view identifier) const {
@@ -126,11 +226,11 @@ public:
  		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
  			const Scope& scope = *stackIt;
  			auto symbolIt = scope.symbols.find(identifier);
- 			if (symbolIt != scope.symbols.end()) {
+ 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
  				return SymbolScopeHandle{ .scope_handle = scope.scope_handle, .identifier = identifier };
  			}
  		}
- 
+
  		return std::nullopt;
  	}
 
@@ -182,13 +282,16 @@ public:
 
 		// Look for the identifier in the namespace
 		// Use string_view for lookup to avoid creating StringType
-		for (const auto& [key, value] : ns_it->second) {
+		for (const auto& [key, value_vec] : ns_it->second) {
 #if USE_OLD_STRING_APPROACH
 			if (key == std::string(identifier)) {
 #else
 			if (key.view() == identifier) {
 #endif
-				return value;
+				// Return the first match for backward compatibility
+				if (!value_vec.empty()) {
+					return value_vec[0];
+				}
 			}
 		}
 
@@ -213,8 +316,8 @@ private:
 	std::vector<Scope> symbol_table_stack_ = { Scope(ScopeType::Global, 0 ) };
 	// Persistent map of namespace contents
 	// Uses NamespacePath (vector of components) as key to avoid string concatenation
-	// Maps: namespace_path -> (symbol_name -> ASTNode)
-	std::unordered_map<NamespacePath, std::unordered_map<StringType<32>, ASTNode>, NamespacePathHash, NamespacePathEqual> namespace_symbols_;
+	// Maps: namespace_path -> (symbol_name -> vector<ASTNode>) to support overloading
+	std::unordered_map<NamespacePath, std::unordered_map<StringType<32>, std::vector<ASTNode>>, NamespacePathHash, NamespacePathEqual> namespace_symbols_;
 };
 
 static inline SymbolTable gSymbolTable;

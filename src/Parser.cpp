@@ -302,9 +302,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	if (is_probably_function) {
 		const Token& identifier_token = decl_node.identifier_token();
-		if (auto node = type_and_name_result.node()) {
-			if (!gSymbolTable.insert(identifier_token.value(), *node))
+		// Insert the FunctionDeclarationNode (which contains parameter info for overload resolution)
+		// instead of just the DeclarationNode
+		if (auto func_node = function_definition_result.node()) {
+			if (!gSymbolTable.insert(identifier_token.value(), *func_node)) {
+				// Note: With overloading support, insert() now allows multiple functions with same name
+				// It only returns false for non-function duplicate symbols
 				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+			}
 		}
 
 		// Is only function declaration
@@ -1982,6 +1987,16 @@ ParseResult Parser::parse_primary_expression()
 		}
 
 		// Check if this is a qualified identifier (namespace::identifier)
+		// Helper to get DeclarationNode from either DeclarationNode or FunctionDeclarationNode
+		auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
+			if (node.is<DeclarationNode>()) {
+				return &node.as<DeclarationNode>();
+			} else if (node.is<FunctionDeclarationNode>()) {
+				return &node.as<FunctionDeclarationNode>().decl_node();
+			}
+			return nullptr;
+		};
+
 		// We need to consume the identifier first to check what comes after it
 		consume_token();
 		if (current_token_.has_value() && current_token_->value() == "::"sv) {
@@ -2053,9 +2068,15 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 
+				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
+				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+				if (!decl_ptr) {
+					return ParseResult::error("Invalid function declaration", qual_id.identifier_token());
+				}
+
 				// Create function call node with the qualified identifier
 				result = emplace_node<ExpressionNode>(
-					FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args), qual_id.identifier_token()));
+					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), qual_id.identifier_token()));
 			} else {
 				// Just a qualified identifier reference
 				result = emplace_node<ExpressionNode>(qual_id);
@@ -2067,6 +2088,7 @@ ParseResult Parser::parse_primary_expression()
 
 		// Get the identifier's type information from the symbol table
 		auto identifierType = gSymbolTable.lookup(idenfifier_token.value());
+
 		if (!identifierType) {
 			// If we're inside a member function, check if this is a member variable
 			if (!member_function_context_stack_.empty()) {
@@ -2140,16 +2162,20 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 
-				// Additional type checking and verification logic can be performed here using identifierType
+				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
+				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+				if (!decl_ptr) {
+					return ParseResult::error("Invalid function declaration", idenfifier_token);
+				}
 
-				result = emplace_node<ExpressionNode>(FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args), idenfifier_token));
+				result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 			}
 			else {
 				// Not a function call, but identifier not found - this is an error
 				return ParseResult::error("Missing identifier", idenfifier_token);
 			}
 		}
-		else if (!identifierType->is<DeclarationNode>()) {
+		else if (!identifierType->is<DeclarationNode>() && !identifierType->is<FunctionDeclarationNode>()) {
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
 		}
 		else {
@@ -2185,9 +2211,13 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 
-				// Additional type checking and verification logic can be performed here using identifierType
+				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
+				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+				if (!decl_ptr) {
+					return ParseResult::error("Invalid function declaration", idenfifier_token);
+				}
 
-				result = emplace_node<ExpressionNode>(FunctionCallNode(identifierType->as<DeclarationNode>(), std::move(args), idenfifier_token));
+				result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 			}
 			else {
 				// Regular identifier
