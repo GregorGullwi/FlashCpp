@@ -1383,6 +1383,7 @@ ParseResult Parser::parse_type_specifier()
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier) {
 		// Handle user-defined type (struct, class, or other user-defined types)
 		std::string type_name(current_token_opt->value());
+		Token type_name_token = *current_token_opt;  // Save the token before consuming it
 		consume_token();
 
 		// Check if this is a registered struct type
@@ -1400,7 +1401,7 @@ ParseResult Parser::parse_type_specifier()
 				type_size = 0;
 			}
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				Type::Struct, struct_type_info->type_index_, type_size, current_token_opt.value(), cv_qualifier));
+				Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 		}
 
 		// Otherwise, treat as generic user-defined type
@@ -1410,7 +1411,7 @@ ParseResult Parser::parse_type_specifier()
 			user_type_index = type_it->second->type_index_;
 		}
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			Type::UserDefined, user_type_index, type_size, current_token_opt.value(), cv_qualifier));
+			Type::UserDefined, user_type_index, type_size, type_name_token, cv_qualifier));
 	}
 
 	return ParseResult::error("Unexpected token in type specifier",
