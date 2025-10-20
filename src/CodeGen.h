@@ -177,8 +177,19 @@ private:
 		if (node.is_implicit() && node.is_member_function()) {
 			std::string_view func_name = func_decl.identifier_token().value();
 			if (func_name == "operator=") {
-				// This is an implicit copy assignment operator
+				// This is an implicit copy or move assignment operator
+				// Determine which one by checking the parameter type
+				bool is_move_assignment = false;
+				if (node.parameter_nodes().size() == 1) {
+					const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
+					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					if (param_type.is_rvalue_reference()) {
+						is_move_assignment = true;
+					}
+				}
+
 				// Generate memberwise assignment from 'other' to 'this'
+				// (same code for both copy and move assignment - memberwise copy/move)
 
 				// Look up the struct type
 				auto type_it = gTypesByName.find(node.parent_struct_name());
@@ -325,18 +336,23 @@ private:
 			if (struct_info) {
 				// If this is an implicit constructor, generate appropriate initialization
 				if (node.is_implicit()) {
-					// Check if this is a copy constructor (has one parameter that is a reference)
+					// Check if this is a copy or move constructor (has one parameter that is a reference)
 					bool is_copy_constructor = false;
+					bool is_move_constructor = false;
 					if (node.parameter_nodes().size() == 1) {
 						const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						if (param_type.is_reference() && param_type.type() == Type::Struct) {
-							is_copy_constructor = true;
+							if (param_type.is_rvalue_reference()) {
+								is_move_constructor = true;
+							} else {
+								is_copy_constructor = true;
+							}
 						}
 					}
 
-					if (is_copy_constructor) {
-						// Implicit copy constructor: memberwise copy from 'other' to 'this'
+					if (is_copy_constructor || is_move_constructor) {
+						// Implicit copy/move constructor: memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
 							// First, load the member from 'other'
 							// Format: [result_var, member_type, member_size, object_name, member_name, offset]

@@ -216,19 +216,18 @@ ParseResult Parser::parse_type_and_name() {
 
     // Parse reference declarators: & or &&
     // Example: int& ref or int&& rvalue_ref
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-        peek_token()->value() == "&") {
-        consume_token(); // consume first '&'
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+        std::string_view op_value = peek_token()->value();
 
-        // Check for && (rvalue reference)
-        bool is_rvalue = false;
-        if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-            peek_token()->value() == "&") {
-            consume_token(); // consume second '&'
-            is_rvalue = true;
+        if (op_value == "&&") {
+            // Rvalue reference (lexer tokenizes && as a single token)
+            consume_token();
+            type_spec.set_reference(true);  // true = rvalue reference
+        } else if (op_value == "&") {
+            // Lvalue reference
+            consume_token();
+            type_spec.set_reference(false);  // false = lvalue reference
         }
-
-        type_spec.set_reference(is_rvalue);
     }
 
     // Check for alignas specifier before the identifier (if not already specified)
@@ -882,6 +881,7 @@ ParseResult Parser::parse_struct_declaration()
 	bool has_user_defined_move_constructor = false;
 	bool has_user_defined_copy_assignment = false;
 	bool has_user_defined_move_assignment = false;
+	bool has_user_defined_destructor = false;
 
 	for (const auto& func_decl : struct_ref.member_functions()) {
 		if (func_decl.is_constructor) {
@@ -911,6 +911,7 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.function_declaration,
 				func_decl.access
 			);
+			has_user_defined_destructor = true;
 		} else if (func_decl.is_operator_overload) {
 			// Operator overload
 			struct_info->addOperatorOverload(
@@ -1088,6 +1089,119 @@ ParseResult Parser::parse_struct_declaration()
 		// Add the operator= to the struct node
 		static const std::string_view operator_symbol_eq = "=";
 		struct_ref.add_operator_overload(operator_symbol_eq, func_node, AccessSpecifier::Public);
+	}
+
+	// Generate move constructor if no user-defined special member functions exist
+	// According to C++ rules, move constructor is implicitly generated unless:
+	// - User declared a copy constructor, copy assignment, move assignment, or destructor
+	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
+	    !has_user_defined_move_assignment && !has_user_defined_destructor) {
+		// Create a move constructor node: Type(Type&& other)
+		auto [move_ctor_node, move_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+			struct_name,
+			struct_name
+		);
+
+		// Create parameter: Type&& other (rvalue reference)
+		TypeIndex struct_type_index = struct_type_info.type_index_;
+		auto param_type_node = emplace_node<TypeSpecifierNode>(
+			Type::Struct,
+			struct_type_index,
+			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			*name_token,
+			CVQualifier::None
+		);
+
+		// Make it an rvalue reference type
+		param_type_node.as<TypeSpecifierNode>().set_reference(true);  // true = rvalue reference
+
+		// Create parameter declaration
+		static const std::string param_name_move = "other";
+		Token param_token(Token::Type::Identifier, param_name_move, 0, 0, 0);
+		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
+
+		// Add parameter to constructor
+		move_ctor_ref.add_parameter_node(param_decl_node);
+
+		// Create an empty block for the constructor body
+		auto [move_block_node, move_block_ref] = create_node_ref(BlockNode());
+		move_ctor_ref.set_definition(move_block_ref);
+
+		// Mark this as an implicit move constructor
+		move_ctor_ref.set_is_implicit(true);
+
+		// Add the move constructor to the struct type info
+		struct_info->addConstructor(move_ctor_node, AccessSpecifier::Public);
+
+		// Add the move constructor to the struct node
+		struct_ref.add_constructor(move_ctor_node, AccessSpecifier::Public);
+	}
+
+	// Generate move assignment operator if no user-defined special member functions exist
+	// According to C++ rules, move assignment operator is implicitly generated unless:
+	// - User declared a copy constructor, copy assignment, move constructor, or destructor
+	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
+	    !has_user_defined_move_constructor && !has_user_defined_destructor) {
+		// Create a move assignment operator node: Type& operator=(Type&& other)
+
+		// Create return type: Type& (reference to struct type)
+		TypeIndex struct_type_index = struct_type_info.type_index_;
+		auto return_type_node = emplace_node<TypeSpecifierNode>(
+			Type::Struct,
+			struct_type_index,
+			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			*name_token,
+			CVQualifier::None
+		);
+		return_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+
+		// Create declaration node for operator=
+		static const std::string move_operator_eq_name = "operator=";
+		Token move_operator_name_token(Token::Type::Identifier, move_operator_eq_name,
+		                          name_token->line(), name_token->column(),
+		                          name_token->file_index());
+
+		auto move_operator_decl_node = emplace_node<DeclarationNode>(return_type_node, move_operator_name_token);
+
+		// Create function declaration node
+		auto [move_func_node, move_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+			move_operator_decl_node.as<DeclarationNode>(), struct_name);
+
+		// Create parameter: Type&& other (rvalue reference)
+		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
+			Type::Struct,
+			struct_type_index,
+			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			*name_token,
+			CVQualifier::None
+		);
+		move_param_type_node.as<TypeSpecifierNode>().set_reference(true);  // true = rvalue reference
+
+		// Create parameter declaration
+		static const std::string param_name_move_assign = "other";
+		Token move_param_token(Token::Type::Identifier, param_name_move_assign, 0, 0, 0);
+		auto move_param_decl_node = emplace_node<DeclarationNode>(move_param_type_node, move_param_token);
+
+		// Add parameter to function
+		move_func_ref.add_parameter_node(move_param_decl_node);
+
+		// Create an empty block for the operator= body
+		auto [move_op_block_node, move_op_block_ref] = create_node_ref(BlockNode());
+		move_func_ref.set_definition(move_op_block_ref);
+
+		// Mark this as an implicit operator=
+		move_func_ref.set_is_implicit(true);
+
+		// Add the move assignment operator to the struct type info
+		struct_info->addOperatorOverload(
+			"=",
+			move_func_node,
+			AccessSpecifier::Public
+		);
+
+		// Add the move assignment operator to the struct node
+		static const std::string_view move_operator_symbol_eq = "=";
+		struct_ref.add_operator_overload(move_operator_symbol_eq, move_func_node, AccessSpecifier::Public);
 	}
 
 	// Apply custom alignment if specified
