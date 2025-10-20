@@ -839,25 +839,29 @@ private:
 	Token offsetof_token_;
 };
 
-// New expression node: new Type, new Type(args), new Type[size]
+// New expression node: new Type, new Type(args), new Type[size], new (address) Type
 class NewExpressionNode {
 public:
 	explicit NewExpressionNode(ASTNode type_node, bool is_array = false,
 	                          std::optional<ASTNode> size_expr = std::nullopt,
-	                          ChunkedVector<ASTNode, 128, 256> constructor_args = {})
+	                          ChunkedVector<ASTNode, 128, 256> constructor_args = {},
+	                          std::optional<ASTNode> placement_address = std::nullopt)
 		: type_node_(type_node), is_array_(is_array),
-		  size_expr_(size_expr), constructor_args_(std::move(constructor_args)) {}
+		  size_expr_(size_expr), constructor_args_(std::move(constructor_args)),
+		  placement_address_(placement_address) {}
 
 	const ASTNode& type_node() const { return type_node_; }
 	bool is_array() const { return is_array_; }
 	const std::optional<ASTNode>& size_expr() const { return size_expr_; }
 	const ChunkedVector<ASTNode, 128, 256>& constructor_args() const { return constructor_args_; }
+	const std::optional<ASTNode>& placement_address() const { return placement_address_; }
 
 private:
 	ASTNode type_node_;  // TypeSpecifierNode
 	bool is_array_;      // true for new[], false for new
 	std::optional<ASTNode> size_expr_;  // For new Type[size], the size expression
 	ChunkedVector<ASTNode, 128, 256> constructor_args_;  // For new Type(args)
+	std::optional<ASTNode> placement_address_;  // For new (address) Type, the placement address
 };
 
 // Delete expression node: delete ptr, delete[] ptr

@@ -924,6 +924,9 @@ public:
 			case IrOpcode::HeapFreeArray:
 				handleHeapFreeArray(instruction);
 				break;
+			case IrOpcode::PlacementNew:
+				handlePlacementNew(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -1962,11 +1965,33 @@ private:
 		TempVar result_var = instruction.getOperandAs<TempVar>(0);
 		int element_size = instruction.getOperandAs<int>(2);
 
-		// Load count into RAX - handle both TempVar and constant values
+		// Load count into RAX - handle TempVar, std::string_view (identifier), and constant values
 		if (instruction.isOperandType<TempVar>(4)) {
-			// Count is a variable - load from stack
+			// Count is a TempVar - load from stack
 			TempVar count_var = instruction.getOperandAs<TempVar>(4);
 			int count_offset = getStackOffsetFromTempVar(count_var);
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			if (count_offset >= -128 && count_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
+				textSectionData.push_back(static_cast<uint8_t>(count_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
+				for (int j = 0; j < 4; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(count_offset & 0xFF));
+					count_offset >>= 8;
+				}
+			}
+		} else if (instruction.isOperandType<std::string_view>(4)) {
+			// Count is an identifier (variable name) - load from stack
+			std::string_view count_name = instruction.getOperandAs<std::string_view>(4);
+			const StackVariableScope& current_scope = variable_scopes.back();
+			auto it = current_scope.identifier_offset.find(count_name);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Array size variable not found in scope");
+				return;
+			}
+			int count_offset = it->second;
 			textSectionData.push_back(0x48); // REX.W prefix
 			textSectionData.push_back(0x8B); // MOV r64, r/m64
 			if (count_offset >= -128 && count_offset <= 127) {
@@ -1987,7 +2012,7 @@ private:
 			} else if (instruction.isOperandType<unsigned long long>(4)) {
 				count_value = instruction.getOperandAs<unsigned long long>(4);
 			} else {
-				assert(false && "Count operand must be TempVar, int, or unsigned long long");
+				assert(false && "Count operand must be TempVar, std::string_view, int, or unsigned long long");
 			}
 
 			// MOV RAX, immediate
@@ -2090,6 +2115,98 @@ private:
 		// For types with destructors, we'd need to call destructors for each element first
 		// This is a simplified implementation
 		handleHeapFree(instruction);
+	}
+
+	void handlePlacementNew(const IrInstruction& instruction) {
+		// PlacementNew format: [result_var, type, size_in_bytes, pointer_depth, address_operand]
+		// address_operand can be TempVar, std::string_view (identifier), or constant
+		assert(instruction.getOperandCount() == 5 && "PlacementNew must have exactly 5 operands");
+
+		flushAllDirtyRegisters();
+
+		TempVar result_var = instruction.getOperandAs<TempVar>(0);
+
+		// Load the placement address into RAX
+		// The address can be a TempVar, identifier, or constant
+		if (instruction.isOperandType<TempVar>(4)) {
+			// Address is a TempVar - load from stack
+			TempVar address_var = instruction.getOperandAs<TempVar>(4);
+			int address_offset = getStackOffsetFromTempVar(address_var);
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			if (address_offset >= -128 && address_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
+				textSectionData.push_back(static_cast<uint8_t>(address_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
+				for (int j = 0; j < 4; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(address_offset & 0xFF));
+					address_offset >>= 8;
+				}
+			}
+		} else if (instruction.isOperandType<std::string_view>(4)) {
+			// Address is an identifier (variable name) - load from stack
+			std::string_view address_name = instruction.getOperandAs<std::string_view>(4);
+			const StackVariableScope& current_scope = variable_scopes.back();
+			auto it = current_scope.identifier_offset.find(address_name);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Placement address variable not found in scope");
+				return;
+			}
+			int address_offset = it->second;
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			if (address_offset >= -128 && address_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
+				textSectionData.push_back(static_cast<uint8_t>(address_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
+				for (int j = 0; j < 4; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(address_offset & 0xFF));
+					address_offset >>= 8;
+				}
+			}
+		} else if (instruction.isOperandType<unsigned long long>(4)) {
+			// Address is a constant - load immediate value
+			uint64_t address_value = instruction.getOperandAs<unsigned long long>(4);
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0xB8); // MOV RAX, imm64
+			for (int j = 0; j < 8; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>((address_value >> (j * 8)) & 0xFF));
+			}
+		} else if (instruction.isOperandType<int>(4)) {
+			// Address is a constant int - load immediate value
+			int address_value = instruction.getOperandAs<int>(4);
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0xC7); // MOV r/m64, imm32
+			textSectionData.push_back(0xC0); // ModR/M for RAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>((address_value >> (j * 8)) & 0xFF));
+			}
+		} else {
+			assert(false && "Placement address must be TempVar, identifier, int, or unsigned long long");
+			return;
+		}
+
+		// Store the placement address to the result variable
+		// No malloc call - we just use the provided address
+		int result_offset = getStackOffsetFromTempVar(result_var);
+
+		// MOV [RBP + result_offset], RAX
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		if (result_offset >= -128 && result_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(result_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
+				result_offset >>= 8;
+			}
+		}
+
+		regAlloc.reset();
 	}
 
 	void handleVariableDecl(const IrInstruction& instruction) {

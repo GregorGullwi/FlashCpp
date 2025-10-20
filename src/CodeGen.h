@@ -2051,7 +2051,45 @@ private:
 		// Create a temporary variable for the result (pointer to allocated memory)
 		TempVar result_var = var_counter.next();
 
-		if (newExpr.is_array()) {
+		// Check if this is placement new
+		if (newExpr.placement_address().has_value()) {
+			// Placement new: new (address) Type or new (address) Type(args)
+			// Evaluate the placement address expression
+			auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
+
+			// Format: [result_var, type, size_in_bytes, pointer_depth, address_operand]
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_var);
+			operands.emplace_back(type);
+			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
+			operands.emplace_back(pointer_depth);
+			operands.emplace_back(address_operands[2]);  // placement address (TempVar, identifier, or constant)
+
+			ir_.addInstruction(IrOpcode::PlacementNew, std::move(operands), Token());
+
+			// If this is a struct type with a constructor, generate constructor call
+			if (type == Type::Struct) {
+				TypeIndex type_index = type_spec.type_index();
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
+						// Generate constructor call on the placement address
+						std::vector<IrOperand> ctor_operands;
+						ctor_operands.emplace_back(type_info.name_);  // Struct name
+						ctor_operands.emplace_back(result_var);       // Pointer to object (placement address)
+
+						// Add constructor arguments
+						const auto& ctor_args = newExpr.constructor_args();
+						for (size_t i = 0; i < ctor_args.size(); ++i) {
+							auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
+							ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+						}
+
+						ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), Token());
+					}
+				}
+			}
+		} else if (newExpr.is_array()) {
 			// Array allocation: new Type[size]
 			// Evaluate the size expression
 			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());

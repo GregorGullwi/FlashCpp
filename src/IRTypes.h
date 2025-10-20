@@ -113,6 +113,7 @@ enum class IrOpcode : int_fast16_t {
 	HeapAllocArray,  // new Type[size]
 	HeapFree,        // delete ptr
 	HeapFreeArray,   // delete[] ptr
+	PlacementNew,    // new (address) Type or new (address) Type(args)
 };
 
 enum class X64Register : uint8_t {

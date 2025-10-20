@@ -98,6 +98,21 @@ public:
 		return function_name_literals_.back();
 	}
 
+	// Check if a specific header was included
+	bool hasIncludedHeader(std::string_view header_name) const {
+		for (const auto& dep : dependencies_) {
+			// Check if the dependency ends with the header name
+			// This handles both <new> and "new" style includes
+			if (dep.size() >= header_name.size()) {
+				size_t pos = dep.rfind(header_name);
+				if (pos != std::string::npos && pos + header_name.size() == dep.size()) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 private:
 	std::vector<std::string> includeDirs_;
 	std::optional<std::string> inputFile_;

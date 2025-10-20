@@ -7,6 +7,7 @@
 #include <vector>
 #include <filesystem>
 #include <chrono>
+#include <algorithm>
 
 #include "FileTree.h"
 #include "FileReader.h"
@@ -100,6 +101,11 @@ int main(int argc, char *argv[]) {
             std::cerr << "Failed to read input file: " << context.getInputFile().value() << std::endl;
             return 1;
         }
+    }
+
+    // Copy dependencies from FileTree to CompileContext for later use
+    for (const auto& dep : file_tree.getAllDependencies()) {
+        context.addDependency(dep);
     }
 
     // If preprocessor-only mode, we're done - the preprocessor already output the result

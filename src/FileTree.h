@@ -18,6 +18,17 @@ public:
 		return dependencies_.at(file);
 	}
 
+	// Get all dependencies across all files
+	std::unordered_set<std::string> getAllDependencies() const {
+		std::unordered_set<std::string> all_deps;
+		for (const auto& [file, deps] : dependencies_) {
+			for (const auto& dep : deps) {
+				all_deps.insert(dep);
+			}
+		}
+		return all_deps;
+	}
+
 	void addDependency(std::string_view file, std::string_view dependency) {
 		dependencies_[std::string(file)].insert(std::string(dependency));
 	}

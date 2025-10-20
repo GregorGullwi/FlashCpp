@@ -1663,6 +1663,48 @@ ParseResult Parser::parse_unary_expression()
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "new") {
 		consume_token(); // consume 'new'
 
+		// Check for placement new: new (address) Type
+		std::optional<ASTNode> placement_address;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+		    peek_token()->value() == "(") {
+			// This could be placement new or constructor call
+			// We need to look ahead to distinguish:
+			// - new (expr) Type      -> placement new
+			// - new Type(args)       -> constructor call
+			//
+			// Strategy: Try to parse as placement new first
+			// If we see ") Type", it's placement new
+			// Otherwise, backtrack and parse as constructor call later
+
+			ScopedTokenPosition saved_position(*this);
+			consume_token(); // consume '('
+
+			// Try to parse placement address expression
+			ParseResult placement_result = parse_expression();
+			if (!placement_result.is_error() &&
+			    peek_token().has_value() && peek_token()->value() == ")") {
+				consume_token(); // consume ')'
+
+				// Check if next token looks like a type (not end of expression)
+				if (peek_token().has_value() &&
+				    (peek_token()->type() == Token::Type::Keyword ||
+				     peek_token()->type() == Token::Type::Identifier)) {
+					// This is placement new - commit the parse
+					placement_address = placement_result.node();
+					saved_position.success();  // Discard saved position
+
+					// Emit warning if <new> header was not included
+					if (!context_.hasIncludedHeader("new")) {
+						std::cerr << "Warning: placement new used without '#include <new>'. "
+						          << "This is a compiler extension. "
+						          << "Standard C++ requires: void* operator new(std::size_t, void*);\n";
+					}
+				}
+				// If not a type, the destructor will restore the position
+			}
+			// If failed to parse, the destructor will restore the position
+		}
+
 		// Parse the type
 		ParseResult type_result = parse_type_specifier();
 		if (type_result.is_error()) {
@@ -1690,7 +1732,7 @@ ParseResult Parser::parse_unary_expression()
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, true, size_result.node()));
+				NewExpressionNode(*type_node, true, size_result.node(), {}, placement_address));
 			return ParseResult::success(new_expr);
 		}
 		// Check for constructor call: new Type(args)
@@ -1725,13 +1767,13 @@ ParseResult Parser::parse_unary_expression()
 			}
 
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, false, std::nullopt, std::move(args)));
+				NewExpressionNode(*type_node, false, std::nullopt, std::move(args), placement_address));
 			return ParseResult::success(new_expr);
 		}
 		// Simple new: new Type
 		else {
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, false));
+				NewExpressionNode(*type_node, false, std::nullopt, {}, placement_address));
 			return ParseResult::success(new_expr);
 		}
 	}
