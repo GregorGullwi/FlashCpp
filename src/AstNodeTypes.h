@@ -122,10 +122,13 @@ struct StructMemberFunction {
 	AccessSpecifier access; // Access level (public/protected/private)
 	bool is_constructor;    // True if this is a constructor
 	bool is_destructor;     // True if this is a destructor
+	bool is_operator_overload; // True if this is an operator overload (operator=, operator+, etc.)
+	std::string_view operator_symbol; // The operator symbol (e.g., "=", "+", "==") if is_operator_overload is true
 
 	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
-	                     bool is_ctor = false, bool is_dtor = false)
-		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor) {}
+	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
+		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
+		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
 };
 
 // Struct type information
@@ -170,7 +173,13 @@ struct StructTypeInfo {
 	}
 
 	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		member_functions.emplace_back("~" + name, destructor_decl, access, false, true);
+		member_functions.emplace_back("~" + name, destructor_decl, access, false, true, false, "");
+	}
+
+	void addOperatorOverload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public) {
+		std::string op_name = "operator";
+		op_name += operator_symbol;
+		member_functions.emplace_back(op_name, function_decl, access, false, false, true, operator_symbol);
 	}
 
 	void finalize() {
@@ -248,6 +257,20 @@ struct StructTypeInfo {
 
 	bool hasMoveConstructor() const {
 		return findMoveConstructor() != nullptr;
+	}
+
+	// Find copy assignment operator (operator= taking const Type& or Type& parameter)
+	const StructMemberFunction* findCopyAssignmentOperator() const;
+
+	// Find move assignment operator (operator= taking Type&& parameter)
+	const StructMemberFunction* findMoveAssignmentOperator() const;
+
+	bool hasCopyAssignmentOperator() const {
+		return findCopyAssignmentOperator() != nullptr;
+	}
+
+	bool hasMoveAssignmentOperator() const {
+		return findMoveAssignmentOperator() != nullptr;
 	}
 
 	bool hasDestructor() const {
@@ -708,9 +731,13 @@ struct StructMemberFunctionDecl {
 	AccessSpecifier access;
 	bool is_constructor;
 	bool is_destructor;
+	bool is_operator_overload;
+	std::string_view operator_symbol;  // The operator symbol (e.g., "=", "+") if is_operator_overload is true
 
-	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false)
-		: function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor) {}
+	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false,
+	                         bool is_op_overload = false, std::string_view op_symbol = "")
+		: function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
+		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
 };
 
 class StructDeclarationNode {
@@ -739,7 +766,11 @@ public:
 	}
 
 	void add_destructor(ASTNode destructor_decl, AccessSpecifier access) {
-		member_functions_.emplace_back(destructor_decl, access, false, true);
+		member_functions_.emplace_back(destructor_decl, access, false, true, false, "");
+	}
+
+	void add_operator_overload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access) {
+		member_functions_.emplace_back(function_decl, access, false, false, true, operator_symbol);
 	}
 
 private:

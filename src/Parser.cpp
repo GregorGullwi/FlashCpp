@@ -663,6 +663,125 @@ ParseResult Parser::parse_struct_declaration()
 			continue;
 		}
 
+		// Check for operator overload (e.g., operator=)
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    peek_token()->value() == "operator") {
+
+			Token operator_keyword_token = *peek_token();
+			consume_token(); // consume 'operator'
+
+			// Parse the operator symbol
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator) {
+				return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
+			}
+
+			Token operator_symbol_token = *peek_token();
+			std::string_view operator_symbol = operator_symbol_token.value();
+			consume_token(); // consume operator symbol
+
+			// For now, we only support operator=
+			if (operator_symbol != "=") {
+				return ParseResult::error("Only operator= is currently supported", operator_symbol_token);
+			}
+
+			// Parse parameters: operator= should have signature Type& operator=(const Type& other)
+			if (!consume_punctuator("(")) {
+				return ParseResult::error("Expected '(' after operator symbol", *peek_token());
+			}
+
+			// Create a return type node: Type& (reference to the struct type)
+			auto type_it = gTypesByName.find(struct_name);
+			size_t struct_type_index = 0;
+			if (type_it != gTypesByName.end()) {
+				struct_type_index = type_it->second->type_index_;
+			}
+
+			auto return_type_node = emplace_node<TypeSpecifierNode>(
+				Type::Struct,
+				struct_type_index,
+				static_cast<unsigned char>(64),  // Pointer size (will be updated later)
+				operator_keyword_token,
+				CVQualifier::None
+			);
+			return_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+
+			// Create a declaration node for the operator function
+			// Use "operator=" as the identifier name
+			static const std::string operator_eq_name = "operator=";
+			Token operator_name_token(Token::Type::Identifier, operator_eq_name,
+			                          operator_keyword_token.line(), operator_keyword_token.column(),
+			                          operator_keyword_token.file_index());
+
+			auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
+
+			// Parse function declaration with parameters
+			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+				operator_decl_node.as<DeclarationNode>(), struct_name);
+
+			// Parse parameters (should be exactly one: const Type& other)
+			while (!consume_punctuator(")")) {
+				// Parse parameter type and name
+				ParseResult type_and_name_result = parse_type_and_name();
+				if (type_and_name_result.is_error()) {
+					return type_and_name_result;
+				}
+
+				if (auto node = type_and_name_result.node()) {
+					func_ref.add_parameter_node(*node);
+				}
+
+				// Check if next token is comma (more parameters) or closing paren (done)
+				if (!consume_punctuator(",")) {
+					// No comma, so we expect a closing paren on the next iteration
+					// Don't break here - let the while loop condition consume the ')'
+				}
+			}
+
+			// Parse function body if present
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Enter function scope for parsing the body
+				gSymbolTable.enter_scope(ScopeType::Function);
+
+				// Set current function pointer
+				current_function_ = &func_ref;
+
+				// Push member function context
+				member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
+
+				// Add parameters to symbol table
+				for (const auto& param : func_ref.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& param_decl_node = param.as<DeclarationNode>();
+						const Token& param_token = param_decl_node.identifier_token();
+						gSymbolTable.insert(param_token.value(), param);
+					}
+				}
+
+				// Parse function body
+				auto block_result = parse_block();
+				if (block_result.is_error()) {
+					current_function_ = nullptr;
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					return block_result;
+				}
+
+				current_function_ = nullptr;
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+
+				if (auto block = block_result.node()) {
+					func_ref.set_definition(block->as<BlockNode>());
+				}
+			} else if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected '{' or ';' after operator= declaration", *peek_token());
+			}
+
+			// Add operator overload to struct
+			struct_ref.add_operator_overload(operator_symbol, func_node, current_access);
+			continue;
+		}
+
 		// Parse member declaration (could be data member or member function)
 		auto member_result = parse_type_and_name();
 		if (member_result.is_error()) {
@@ -858,6 +977,13 @@ ParseResult Parser::parse_struct_declaration()
 		} else if (func_decl.is_destructor) {
 			// Add destructor to struct type info
 			struct_info->addDestructor(
+				func_decl.function_declaration,
+				func_decl.access
+			);
+		} else if (func_decl.is_operator_overload) {
+			// Operator overload
+			struct_info->addOperatorOverload(
+				func_decl.operator_symbol,
 				func_decl.function_declaration,
 				func_decl.access
 			);

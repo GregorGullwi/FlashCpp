@@ -409,3 +409,50 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
     }
     return nullptr;
 }
+
+const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
+    for (const auto& func : member_functions) {
+        if (func.is_operator_overload && func.operator_symbol == "=") {
+            // Check if this is a copy assignment operator
+            // Copy assignment operator has signature: Type& operator=(const Type& other)
+            // or Type& operator=(Type& other)
+            const auto& func_node = func.function_decl.as<FunctionDeclarationNode>();
+            const auto& params = func_node.parameter_nodes();
+
+            // Copy assignment operator has exactly one parameter (by reference)
+            if (params.size() == 1) {
+                const auto& param_decl = params[0].as<DeclarationNode>();
+                const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+                // Check if it's a reference to the same struct type (not rvalue reference)
+                if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+                    return &func;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
+    for (const auto& func : member_functions) {
+        if (func.is_operator_overload && func.operator_symbol == "=") {
+            // Check if this is a move assignment operator
+            // Move assignment operator has signature: Type& operator=(Type&& other)
+            const auto& func_node = func.function_decl.as<FunctionDeclarationNode>();
+            const auto& params = func_node.parameter_nodes();
+
+            // Move assignment operator has exactly one parameter (by rvalue reference)
+            if (params.size() == 1) {
+                const auto& param_decl = params[0].as<DeclarationNode>();
+                const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+                // Check if it's an rvalue reference to the same struct type
+                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+                    return &func;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
