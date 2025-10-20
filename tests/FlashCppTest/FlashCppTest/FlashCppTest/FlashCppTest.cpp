@@ -1322,6 +1322,10 @@ TEST_CASE("Copy constructor generation") {
 	run_test_from_file("test_copy_constructor.cpp", "Copy constructor generation", false);
 }
 
+TEST_CASE("Implicit copy constructor generation") {
+	run_test_from_file("test_implicit_copy_constructor.cpp", "Implicit copy constructor generation", false);
+}
+
 TEST_SUITE("new and delete operators") {
 	TEST_CASE("Simple new and delete for int") {
 		const std::string code = R"(

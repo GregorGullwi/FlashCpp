@@ -210,14 +210,13 @@ struct StructTypeInfo {
 	}
 
 	// Find default constructor (no parameters)
-	const StructMemberFunction* findDefaultConstructor() const {
-		for (const auto& func : member_functions) {
-			if (func.is_constructor) {
-				return &func;
-			}
-		}
-		return nullptr;
-	}
+	const StructMemberFunction* findDefaultConstructor() const;
+
+	// Find copy constructor (takes const Type& or Type& parameter)
+	const StructMemberFunction* findCopyConstructor() const;
+
+	// Find move constructor (takes Type&& parameter)
+	const StructMemberFunction* findMoveConstructor() const;
 
 	// Find destructor
 	const StructMemberFunction* findDestructor() const {
@@ -229,8 +228,26 @@ struct StructTypeInfo {
 		return nullptr;
 	}
 
+	// Check if any constructor exists (user-defined)
+	bool hasAnyConstructor() const {
+		for (const auto& func : member_functions) {
+			if (func.is_constructor) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	bool hasConstructor() const {
 		return findDefaultConstructor() != nullptr;
+	}
+
+	bool hasCopyConstructor() const {
+		return findCopyConstructor() != nullptr;
+	}
+
+	bool hasMoveConstructor() const {
+		return findMoveConstructor() != nullptr;
 	}
 
 	bool hasDestructor() const {

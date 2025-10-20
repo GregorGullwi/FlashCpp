@@ -257,31 +257,72 @@ private:
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 			if (struct_info) {
-				// If this is an implicit default constructor, zero-initialize all members
+				// If this is an implicit constructor, generate appropriate initialization
 				if (node.is_implicit()) {
-					for (const auto& member : struct_info->members) {
-						// Generate MemberStore IR to zero-initialize the member
-						// Format: [member_type, member_size, object_name, member_name, offset, value]
-						std::vector<IrOperand> store_operands;
-						store_operands.emplace_back(member.type);  // member type
-						store_operands.emplace_back(static_cast<int>(member.size * 8));  // member size in bits
-						store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
-						store_operands.emplace_back(std::string_view(member.name));  // member name
-						store_operands.emplace_back(static_cast<int>(member.offset));  // member offset
-
-						// Zero-initialize based on type
-						if (member.type == Type::Int || member.type == Type::Long ||
-						    member.type == Type::Short || member.type == Type::Char) {
-							store_operands.emplace_back(0);  // Zero for integer types
-						} else if (member.type == Type::Float || member.type == Type::Double) {
-							store_operands.emplace_back(0.0);  // Zero for floating-point types
-						} else if (member.type == Type::Bool) {
-							store_operands.emplace_back(false);  // False for bool
-						} else {
-							store_operands.emplace_back(0);  // Default to zero
+					// Check if this is a copy constructor (has one parameter that is a reference)
+					bool is_copy_constructor = false;
+					if (node.parameter_nodes().size() == 1) {
+						const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
+						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+						if (param_type.is_reference() && param_type.type() == Type::Struct) {
+							is_copy_constructor = true;
 						}
+					}
 
-						ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+					if (is_copy_constructor) {
+						// Implicit copy constructor: memberwise copy from 'other' to 'this'
+						for (const auto& member : struct_info->members) {
+							// First, load the member from 'other'
+							// Format: [result_var, member_type, member_size, object_name, member_name, offset]
+							TempVar member_value = var_counter.next();
+							std::vector<IrOperand> load_operands;
+							load_operands.emplace_back(member_value);
+							load_operands.emplace_back(member.type);
+							load_operands.emplace_back(static_cast<int>(member.size * 8));
+							load_operands.emplace_back(std::string_view("other"));  // Load from 'other' parameter
+							load_operands.emplace_back(std::string_view(member.name));
+							load_operands.emplace_back(static_cast<int>(member.offset));
+
+							ir_.addInstruction(IrOpcode::MemberAccess, std::move(load_operands), node.name_token());
+
+							// Then, store the member to 'this'
+							// Format: [member_type, member_size, object_name, member_name, offset, value]
+							std::vector<IrOperand> store_operands;
+							store_operands.emplace_back(member.type);
+							store_operands.emplace_back(static_cast<int>(member.size * 8));
+							store_operands.emplace_back(std::string_view("this"));
+							store_operands.emplace_back(std::string_view(member.name));
+							store_operands.emplace_back(static_cast<int>(member.offset));
+							store_operands.emplace_back(member_value);  // Value from 'other'
+
+							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+						}
+					} else {
+						// Implicit default constructor: zero-initialize all members
+						for (const auto& member : struct_info->members) {
+							// Generate MemberStore IR to zero-initialize the member
+							// Format: [member_type, member_size, object_name, member_name, offset, value]
+							std::vector<IrOperand> store_operands;
+							store_operands.emplace_back(member.type);  // member type
+							store_operands.emplace_back(static_cast<int>(member.size * 8));  // member size in bits
+							store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
+							store_operands.emplace_back(std::string_view(member.name));  // member name
+							store_operands.emplace_back(static_cast<int>(member.offset));  // member offset
+
+							// Zero-initialize based on type
+							if (member.type == Type::Int || member.type == Type::Long ||
+							    member.type == Type::Short || member.type == Type::Char) {
+								store_operands.emplace_back(0);  // Zero for integer types
+							} else if (member.type == Type::Float || member.type == Type::Double) {
+								store_operands.emplace_back(0.0);  // Zero for floating-point types
+							} else if (member.type == Type::Bool) {
+								store_operands.emplace_back(false);  // False for bool
+							} else {
+								store_operands.emplace_back(0);  // Default to zero
+							}
+
+							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+						}
 					}
 				} else {
 					// Process explicit member initializers

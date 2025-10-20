@@ -830,6 +830,9 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Process member functions, constructors, and destructors
 	bool has_user_defined_constructor = false;
+	bool has_user_defined_copy_constructor = false;
+	bool has_user_defined_move_constructor = false;
+
 	for (const auto& func_decl : struct_ref.member_functions()) {
 		if (func_decl.is_constructor) {
 			// Add constructor to struct type info
@@ -838,6 +841,20 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.access
 			);
 			has_user_defined_constructor = true;
+
+			// Check if this is a copy or move constructor
+			const auto& ctor_node = func_decl.function_declaration.as<ConstructorDeclarationNode>();
+			const auto& params = ctor_node.parameter_nodes();
+			if (params.size() == 1) {
+				const auto& param_decl = params[0].as<DeclarationNode>();
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+				if (param_type.is_reference() && param_type.type() == Type::Struct) {
+					has_user_defined_copy_constructor = true;
+				} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+					has_user_defined_move_constructor = true;
+				}
+			}
 		} else if (func_decl.is_destructor) {
 			// Add destructor to struct type info
 			struct_info->addDestructor(
@@ -881,6 +898,56 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Add the default constructor to the struct node
 		struct_ref.add_constructor(default_ctor_node, AccessSpecifier::Public);
+	}
+
+	// Generate copy constructor if no user-defined copy constructor exists
+	// According to C++ rules, copy constructor is implicitly generated unless:
+	// - User declared a move constructor or move assignment operator
+	// - User declared a copy constructor
+	if (!has_user_defined_copy_constructor && !has_user_defined_move_constructor) {
+		// Create a copy constructor node: Type(const Type& other)
+		auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+			struct_name,
+			struct_name
+		);
+
+		// Create parameter: const Type& other
+		TypeIndex struct_type_index = struct_type_info.type_index_;
+		auto param_type_node = emplace_node<TypeSpecifierNode>(
+			Type::Struct,
+			struct_type_index,
+			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			*name_token,
+			CVQualifier::Const  // const qualifier
+		);
+
+		// Make it a reference type
+		param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+
+		// Create parameter declaration
+		// Use a static string to ensure the string_view in the token remains valid
+		static const std::string param_name = "other";
+		Token param_token(Token::Type::Identifier, param_name, 0, 0, 0);
+		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
+
+		// Add parameter to constructor
+		copy_ctor_ref.add_parameter_node(param_decl_node);
+
+		// Create an empty block for the constructor body
+		auto [copy_block_node, copy_block_ref] = create_node_ref(BlockNode());
+		copy_ctor_ref.set_definition(copy_block_ref);
+
+		// Mark this as an implicit copy constructor
+		copy_ctor_ref.set_is_implicit(true);
+
+		// Add the copy constructor to the struct type info
+		struct_info->addConstructor(
+			copy_ctor_node,
+			AccessSpecifier::Public
+		);
+
+		// Add the copy constructor to the struct node
+		struct_ref.add_constructor(copy_ctor_node, AccessSpecifier::Public);
 	}
 
 	// Apply custom alignment if specified
