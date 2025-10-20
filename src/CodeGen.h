@@ -1775,8 +1775,10 @@ private:
 				const DeclarationNode& object_decl = symbol->as<DeclarationNode>();
 				const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
 
-				// Verify this is a struct type
-				if (object_type.type() != Type::Struct) {
+				// Verify this is a struct type (or a reference to a struct type)
+				// References are automatically dereferenced for member access
+				// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
+				if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
 					assert(false && "Member access on non-struct type");
 					return {};
 				}
@@ -1859,10 +1861,23 @@ private:
 		// Now we have the base object (either a name or a temp var) and its type
 		// Get the struct type info
 		const TypeInfo* type_info = nullptr;
-		for (const auto& ti : gTypeInfo) {
-			if (ti.type_index_ == base_type_index) {
+
+		// First try to find by type_index
+		if (base_type_index < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[base_type_index];
+			if (ti.type_ == Type::Struct && ti.getStructInfo()) {
 				type_info = &ti;
-				break;
+			}
+		}
+
+		// If not found by index, search through all type info entries
+		// This handles cases where type_index might not be set correctly
+		if (!type_info) {
+			for (const auto& ti : gTypeInfo) {
+				if (ti.type_index_ == base_type_index && ti.type_ == Type::Struct && ti.getStructInfo()) {
+					type_info = &ti;
+					break;
+				}
 			}
 		}
 

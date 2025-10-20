@@ -1317,3 +1317,7 @@ TEST_CASE("Destructor") {
 TEST_CASE("Default constructor generation") {
 	run_test_from_file("test_default_constructor.cpp", "Default constructor generation", false);
 }
+
+TEST_CASE("Copy constructor generation") {
+	run_test_from_file("test_copy_constructor.cpp", "Copy constructor generation", false);
+}

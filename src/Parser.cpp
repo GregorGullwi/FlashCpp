@@ -414,6 +414,11 @@ ParseResult Parser::parse_struct_declaration()
 
 	std::string_view struct_name = name_token->value();
 
+	// Register the struct type in the global type system EARLY
+	// This allows member functions (like constructors) to reference the struct type
+	// We'll fill in the struct info later after parsing all members
+	TypeInfo& struct_type_info = add_struct_type(std::string(struct_name));
+
 	// Check for alignas specifier after struct name (if not already specified)
 	if (!custom_alignment.has_value()) {
 		custom_alignment = parse_alignas_specifier();
@@ -776,9 +781,8 @@ ParseResult Parser::parse_struct_declaration()
 		return ParseResult::error("Expected ';' after struct/class definition", *peek_token());
 	}
 
-	// Register the struct type in the global type system
-	// Convert string_view to string for type registry (which needs to own the name)
-	TypeInfo& struct_type_info = add_struct_type(std::string(struct_name));
+	// struct_type_info was already registered early (before parsing members)
+	// Now create the StructTypeInfo to fill in the details
 	auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), struct_ref.default_access());
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
@@ -1192,8 +1196,13 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// Otherwise, treat as generic user-defined type
+		// Look up the type_index if it's a registered type
+		TypeIndex user_type_index = 0;
+		if (type_it != gTypesByName.end()) {
+			user_type_index = type_it->second->type_index_;
+		}
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			type, qualifier, type_size, current_token_opt.value(), cv_qualifier));
+			Type::UserDefined, user_type_index, type_size, current_token_opt.value(), cv_qualifier));
 	}
 
 	return ParseResult::error("Unexpected token in type specifier",
