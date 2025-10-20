@@ -117,6 +117,10 @@ public:
                         parseResult = parse_top_level_node();
                 }
 
+                if (parseResult.is_error()) {
+                    last_error_ = parseResult.error_message();
+                    std::cerr << last_error_;
+                }
                 return parseResult;
         }
 
@@ -150,7 +154,7 @@ private:
         CompileContext& context_;
         std::optional<Token> current_token_;
         std::vector<ASTNode> ast_nodes_;
-        std::string last_error_ = "this feature has not been implemented yet";
+        std::string last_error_;
 
         // Track current function for __FUNCTION__, __func__, __PRETTY_FUNCTION__
         // Store pointer to the FunctionDeclarationNode which contains all the info we need
