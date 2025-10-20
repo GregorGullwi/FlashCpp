@@ -1317,7 +1317,7 @@ private:
 		int scope_stack_space = 0;
 		std::unordered_map<std::string_view, int> identifier_offset;
 	};
-	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope) {
+	StackSpaceSize calculateFunctionStackSpace(const std::string& func_name, StackVariableScope& var_scope) {
 		StackSpaceSize func_stack_space{};
 
 		auto it = function_instructions.find(func_name);
@@ -4818,7 +4818,7 @@ private:
 			}
 
 			// Add exception handling information (required for x64) - once per function
-			writer.add_function_exception_info(current_function_name_, current_function_offset_, function_length);
+			writer.add_function_exception_info(current_function_mangled_name_, current_function_offset_, function_length);
 
 			// Clear the current function state
 			current_function_name_.clear();
@@ -4865,7 +4865,7 @@ private:
 	TWriterClass writer;
 	std::vector<char> textSectionData;
 	std::unordered_map<std::string_view, uint32_t> functionSymbols;
-	std::unordered_map<std::string_view, std::vector<IrInstruction>> function_instructions;
+	std::unordered_map<std::string, std::vector<IrInstruction>> function_instructions;
 
 	RegisterAllocator regAlloc;
 
