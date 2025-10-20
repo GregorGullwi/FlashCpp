@@ -1330,6 +1330,329 @@ TEST_CASE("Implicit copy assignment operator generation") {
 	run_test_from_file("test_implicit_operator_assign.cpp", "Implicit copy assignment operator generation", false);
 }
 
+TEST_SUITE("= default and = delete special member functions") {
+	// C++20 Rule: Explicitly defaulted functions behave as if they were implicitly declared
+	TEST_CASE("Defaulted default constructor") {
+		const std::string code = R"(
+			struct Point {
+				int x;
+				int y;
+				Point() = default;
+			};
+
+			int main() {
+				Point p;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	TEST_CASE("Defaulted copy constructor") {
+		const std::string code = R"(
+			struct Point {
+				int x;
+				int y;
+				Point(Point& other) = default;
+			};
+
+			int main() {
+				Point p1;
+				Point p2(p1);
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	TEST_CASE("Defaulted move constructor") {
+		const std::string code = R"(
+			struct Point {
+				int x;
+				int y;
+				Point(Point&& other) = default;
+			};
+
+			int main() {
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	TEST_CASE("Defaulted copy assignment operator") {
+		const std::string code = R"(
+			struct Point {
+				int x;
+				int y;
+				Point& operator=(Point& other) = default;
+			};
+
+			int main() {
+				Point p1;
+				Point p2;
+				p2 = p1;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	TEST_CASE("Defaulted move assignment operator") {
+		const std::string code = R"(
+			struct Point {
+				int x;
+				int y;
+				Point& operator=(Point&& other) = default;
+			};
+
+			int main() {
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	TEST_CASE("Defaulted destructor") {
+		const std::string code = R"(
+			struct Point {
+				int x;
+				int y;
+				~Point() = default;
+			};
+
+			int main() {
+				Point p;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	// C++20 Rule: Deleted functions participate in overload resolution but cause compilation error if selected
+	TEST_CASE("Deleted copy constructor - NonCopyable pattern") {
+		const std::string code = R"(
+			struct NonCopyable {
+				int x;
+				NonCopyable() = default;
+				NonCopyable(NonCopyable& other) = delete;
+			};
+
+			int main() {
+				NonCopyable nc;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	TEST_CASE("Deleted copy assignment operator") {
+		const std::string code = R"(
+			struct NonCopyable {
+				int x;
+				NonCopyable() = default;
+				NonCopyable& operator=(NonCopyable& other) = delete;
+			};
+
+			int main() {
+				NonCopyable nc;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	TEST_CASE("Deleted move constructor") {
+		const std::string code = R"(
+			struct NonMovable {
+				int x;
+				NonMovable() = default;
+				NonMovable(NonMovable&& other) = delete;
+			};
+
+			int main() {
+				NonMovable nm;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	TEST_CASE("Deleted move assignment operator") {
+		const std::string code = R"(
+			struct NonMovable {
+				int x;
+				NonMovable() = default;
+				NonMovable& operator=(NonMovable&& other) = delete;
+			};
+
+			int main() {
+				NonMovable nm;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	// C++20 Rule: Deleting copy operations prevents implicit move generation
+	TEST_CASE("Deleted copy constructor suppresses implicit move constructor") {
+		const std::string code = R"(
+			struct Test {
+				int x;
+				Test() = default;
+				Test(Test& other) = delete;
+				// Move constructor is NOT implicitly generated because copy constructor is user-declared
+			};
+
+			int main() {
+				Test t;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	// C++20 Rule: All special member functions can be defaulted or deleted
+	TEST_CASE("All special member functions explicitly defaulted") {
+		const std::string code = R"(
+			struct AllDefaulted {
+				int x;
+				int y;
+
+				AllDefaulted() = default;
+				AllDefaulted(AllDefaulted& other) = default;
+				AllDefaulted(AllDefaulted&& other) = default;
+				AllDefaulted& operator=(AllDefaulted& other) = default;
+				AllDefaulted& operator=(AllDefaulted&& other) = default;
+				~AllDefaulted() = default;
+			};
+
+			int main() {
+				AllDefaulted a1;
+				AllDefaulted a2(a1);
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	// C++20 Rule: Deleted default constructor prevents object creation
+	TEST_CASE("Deleted default constructor") {
+		const std::string code = R"(
+			struct NoDefault {
+				int x;
+				NoDefault() = delete;
+				NoDefault(int val) : x(val) {}
+			};
+
+			int main() {
+				NoDefault nd(42);
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	// C++20 Rule: Deleted destructor prevents object destruction
+	TEST_CASE("Deleted destructor") {
+		const std::string code = R"(
+			struct NoDestroy {
+				int x;
+				~NoDestroy() = delete;
+			};
+
+			int main() {
+				// Cannot create NoDestroy on stack (would need to destroy it)
+				// Can only create via new (and never delete)
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+
+	// C++20 Rule: Mix of defaulted and user-defined special members
+	TEST_CASE("Mix of defaulted and user-defined special members") {
+		const std::string code = R"(
+			struct Mixed {
+				int* data;
+
+				Mixed() : data(0) {}  // User-defined default constructor
+				Mixed(Mixed& other) = default;  // Defaulted copy constructor
+				Mixed(Mixed&& other) = default;  // Defaulted move constructor
+				Mixed& operator=(Mixed& other) = default;  // Defaulted copy assignment
+				~Mixed() = default;  // Defaulted destructor
+			};
+
+			int main() {
+				Mixed m1;
+				Mixed m2(m1);
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+	}
+}
+
 TEST_SUITE("new and delete operators") {
 	TEST_CASE("Simple new and delete for int") {
 		const std::string code = R"(

@@ -589,8 +589,58 @@ ParseResult Parser::parse_struct_declaration()
 					}
 				}
 
-				// Parse constructor body if present
-				if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Check for = default or = delete
+				bool is_defaulted = false;
+				bool is_deleted = false;
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+				    peek_token()->value() == "=") {
+					consume_token(); // consume '='
+
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+						if (peek_token()->value() == "default") {
+							consume_token(); // consume 'default'
+							is_defaulted = true;
+
+							// Expect ';'
+							if (!consume_punctuator(";")) {
+								gSymbolTable.exit_scope();
+								return ParseResult::error("Expected ';' after '= default'", *peek_token());
+							}
+
+							// Mark as implicit (same behavior as compiler-generated)
+							ctor_ref.set_is_implicit(true);
+
+							// Create an empty block for the constructor body
+							auto [block_node, block_ref] = create_node_ref(BlockNode());
+							ctor_ref.set_definition(block_ref);
+
+							gSymbolTable.exit_scope();
+						} else if (peek_token()->value() == "delete") {
+							consume_token(); // consume 'delete'
+							is_deleted = true;
+
+							// Expect ';'
+							if (!consume_punctuator(";")) {
+								gSymbolTable.exit_scope();
+								return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+							}
+
+							// For now, we'll just skip deleted constructors
+							// TODO: Track deleted constructors to prevent their use
+							gSymbolTable.exit_scope();
+							continue; // Don't add deleted constructor to struct
+						} else {
+							gSymbolTable.exit_scope();
+							return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+						}
+					} else {
+						gSymbolTable.exit_scope();
+						return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+					}
+				}
+
+				// Parse constructor body if present (and not defaulted/deleted)
+				if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
 					// We already entered a scope for the initializer list, so we don't need to enter again
 					// Just set up the member function context
 					current_function_ = nullptr;  // Constructors don't have a return type
@@ -621,11 +671,11 @@ ParseResult Parser::parse_struct_declaration()
 					if (auto block = block_result.node()) {
 						ctor_ref.set_definition(block->as<BlockNode>());
 					}
-				} else if (!consume_punctuator(";")) {
+				} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
 					// No constructor body, just exit the scope we entered for the initializer list
 					gSymbolTable.exit_scope();
-					return ParseResult::error("Expected '{' or ';' after constructor declaration", *peek_token());
-				} else {
+					return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", *peek_token());
+				} else if (!is_defaulted && !is_deleted) {
 					// Constructor declaration only (no body), exit the scope
 					gSymbolTable.exit_scope();
 				}
@@ -664,8 +714,48 @@ ParseResult Parser::parse_struct_declaration()
 
 			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(struct_name, dtor_name);
 
-			// Parse destructor body if present
-			if (peek_token().has_value() && peek_token()->value() == "{") {
+			// Check for = default or = delete
+			bool is_defaulted = false;
+			bool is_deleted = false;
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			    peek_token()->value() == "=") {
+				consume_token(); // consume '='
+
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					if (peek_token()->value() == "default") {
+						consume_token(); // consume 'default'
+						is_defaulted = true;
+
+						// Expect ';'
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= default'", *peek_token());
+						}
+
+						// Create an empty block for the destructor body
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						dtor_ref.set_definition(block_ref);
+					} else if (peek_token()->value() == "delete") {
+						consume_token(); // consume 'delete'
+						is_deleted = true;
+
+						// Expect ';'
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+						}
+
+						// For now, we'll just skip deleted destructors
+						// TODO: Track deleted destructors to prevent their use
+						continue; // Don't add deleted destructor to struct
+					} else {
+						return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+					}
+				} else {
+					return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+				}
+			}
+
+			// Parse destructor body if present (and not defaulted/deleted)
+			if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
 				gSymbolTable.enter_scope(ScopeType::Function);
 				current_function_ = nullptr;
 
@@ -693,12 +783,14 @@ ParseResult Parser::parse_struct_declaration()
 				if (auto block = block_result.node()) {
 					dtor_ref.set_definition(block->as<BlockNode>());
 				}
-			} else if (!consume_punctuator(";")) {
-				return ParseResult::error("Expected '{' or ';' after destructor declaration", *peek_token());
+			} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
+				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after destructor declaration", *peek_token());
 			}
 
-			// Add destructor to struct
-			struct_ref.add_destructor(dtor_node, current_access);
+			// Add destructor to struct (unless deleted)
+			if (!is_deleted) {
+				struct_ref.add_destructor(dtor_node, current_access);
+			}
 			continue;
 		}
 
@@ -745,8 +837,51 @@ ParseResult Parser::parse_struct_declaration()
 				member_func_ref.add_parameter_node(param);
 			}
 
-			// Parse function body if present
-			if (peek_token().has_value() && peek_token()->value() == "{") {
+			// Check for = default or = delete
+			bool is_defaulted = false;
+			bool is_deleted = false;
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			    peek_token()->value() == "=") {
+				consume_token(); // consume '='
+
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					if (peek_token()->value() == "default") {
+						consume_token(); // consume 'default'
+						is_defaulted = true;
+
+						// Expect ';'
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= default'", *peek_token());
+						}
+
+						// Mark as implicit (same behavior as compiler-generated)
+						member_func_ref.set_is_implicit(true);
+
+						// Create an empty block for the function body
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						member_func_ref.set_definition(block_ref);
+					} else if (peek_token()->value() == "delete") {
+						consume_token(); // consume 'delete'
+						is_deleted = true;
+
+						// Expect ';'
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+						}
+
+						// For now, we'll just skip deleted functions
+						// TODO: Track deleted functions to prevent their use
+						continue; // Don't add deleted function to struct
+					} else {
+						return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+					}
+				} else {
+					return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+				}
+			}
+
+			// Parse function body if present (and not defaulted/deleted)
+			if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
 				// Enter function scope for parsing the body
 				gSymbolTable.enter_scope(ScopeType::Function);
 
@@ -792,8 +927,8 @@ ParseResult Parser::parse_struct_declaration()
 				if (auto block = block_result.node()) {
 					member_func_ref.set_definition(block->as<BlockNode>());
 				}
-			} else if (!consume_punctuator(";")) {
-				return ParseResult::error("Expected '{' or ';' after member function declaration", *peek_token());
+			} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
+				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after member function declaration", *peek_token());
 			}
 
 			// Check if this is an operator overload
