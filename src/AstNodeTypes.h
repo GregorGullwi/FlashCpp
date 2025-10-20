@@ -415,6 +415,7 @@ public:
 	size_t pointer_depth() const { return pointer_levels_.empty() ? 0 : pointer_levels_.size(); }
 	const std::vector<PointerLevel>& pointer_levels() const { return pointer_levels_; }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
+	void remove_pointer_level() { if (!pointer_levels_.empty()) pointer_levels_.pop_back(); }
 
 	// Reference support
 	bool is_reference() const { return is_reference_; }
@@ -583,9 +584,9 @@ class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
-		: decl_node_(decl_node), is_member_function_(false), parent_struct_name_("") {}
+		: decl_node_(decl_node), is_member_function_(false), parent_struct_name_(""), is_implicit_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
-		: decl_node_(decl_node), is_member_function_(true), parent_struct_name_(parent_struct_name) {}
+		: decl_node_(decl_node), is_member_function_(true), parent_struct_name_(parent_struct_name), is_implicit_(false) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -611,12 +612,17 @@ public:
 	bool is_member_function() const { return is_member_function_; }
 	std::string_view parent_struct_name() const { return parent_struct_name_; }
 
+	// Implicit function support (for compiler-generated functions like operator=)
+	void set_is_implicit(bool implicit) { is_implicit_ = implicit; }
+	bool is_implicit() const { return is_implicit_; }
+
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<BlockNode*> definition_block_;
 	bool is_member_function_;
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token
+	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 };
 
 class FunctionCallNode {

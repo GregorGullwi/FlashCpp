@@ -173,9 +173,75 @@ private:
 			//paramIndex++;
 		}
 
-		(*definition_block)->get_statements().visit([&](ASTNode statement) {
-			visit(statement);
-		});
+		// Check if this is an implicit operator= that needs code generation
+		if (node.is_implicit() && node.is_member_function()) {
+			std::string_view func_name = func_decl.identifier_token().value();
+			if (func_name == "operator=") {
+				// This is an implicit copy assignment operator
+				// Generate memberwise assignment from 'other' to 'this'
+
+				// Look up the struct type
+				auto type_it = gTypesByName.find(node.parent_struct_name());
+				if (type_it != gTypesByName.end()) {
+					const TypeInfo* struct_type_info = type_it->second;
+					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+					if (struct_info) {
+						// Generate memberwise assignment
+						for (const auto& member : struct_info->members) {
+							// First, load the member from 'other'
+							// Format: [result_var, member_type, member_size, object_name, member_name, offset]
+							TempVar member_value = var_counter.next();
+							std::vector<IrOperand> load_operands;
+							load_operands.emplace_back(member_value);
+							load_operands.emplace_back(member.type);
+							load_operands.emplace_back(static_cast<int>(member.size * 8));
+							load_operands.emplace_back(std::string_view("other"));  // Load from 'other' parameter
+							load_operands.emplace_back(std::string_view(member.name));
+							load_operands.emplace_back(static_cast<int>(member.offset));
+
+							ir_.addInstruction(IrOpcode::MemberAccess, std::move(load_operands), func_decl.identifier_token());
+
+							// Then, store the member to 'this'
+							// Format: [member_type, member_size, object_name, member_name, offset, value]
+							std::vector<IrOperand> store_operands;
+							store_operands.emplace_back(member.type);
+							store_operands.emplace_back(static_cast<int>(member.size * 8));
+							store_operands.emplace_back(std::string_view("this"));  // Store to 'this'
+							store_operands.emplace_back(std::string_view(member.name));
+							store_operands.emplace_back(static_cast<int>(member.offset));
+							store_operands.emplace_back(member_value);
+
+							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), func_decl.identifier_token());
+						}
+
+						// Return *this (the return value is the 'this' pointer dereferenced)
+						// Generate: %temp = dereference [Type][Size] %this
+						//           return [Type][Size] %temp
+						TempVar this_deref = var_counter.next();
+						std::vector<IrOperand> deref_operands;
+						deref_operands.emplace_back(this_deref);  // result variable
+						deref_operands.emplace_back(Type::Struct);  // type
+						deref_operands.emplace_back(static_cast<int>(struct_info->total_size * 8));  // size in bits
+						deref_operands.emplace_back(std::string_view("this"));  // operand (this pointer)
+
+						ir_.addInstruction(IrOpcode::Dereference, std::move(deref_operands), func_decl.identifier_token());
+
+						// Return the dereferenced value
+						std::vector<IrOperand> ret_operands;
+						ret_operands.emplace_back(Type::Struct);
+						ret_operands.emplace_back(static_cast<int>(struct_info->total_size * 8));
+						ret_operands.emplace_back(this_deref);
+						ir_.addInstruction(IrOpcode::Return, std::move(ret_operands), func_decl.identifier_token());
+					}
+				}
+			}
+		} else {
+			// User-defined function body
+			(*definition_block)->get_statements().visit([&](ASTNode statement) {
+				visit(statement);
+			});
+		}
 
 		symbol_table.exit_scope();
 	}
@@ -1374,6 +1440,60 @@ private:
 
 						// Return the RHS value as the result
 						return rhsIrOperands;
+					}
+				}
+				else if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+					// Check if this is a struct assignment that needs operator=
+					const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
+					std::string_view lhs_name = lhs_ident.name();
+
+					// Look up the LHS in the symbol table
+					const std::optional<ASTNode> lhs_symbol = symbol_table.lookup(lhs_name);
+					if (lhs_symbol.has_value() && lhs_symbol->is<DeclarationNode>()) {
+						const auto& lhs_decl = lhs_symbol->as<DeclarationNode>();
+						const auto& lhs_type = lhs_decl.type_node().as<TypeSpecifierNode>();
+
+						// Check if this is a struct type
+						if (lhs_type.type() == Type::Struct) {
+							TypeIndex struct_type_index = lhs_type.type_index();
+							if (struct_type_index < gTypeInfo.size()) {
+								const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+								const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+
+								// Check if the struct has an operator=
+								if (struct_info && struct_info->hasCopyAssignmentOperator()) {
+									const StructMemberFunction* copy_assign_op = struct_info->findCopyAssignmentOperator();
+									if (copy_assign_op) {
+										// Generate a member function call to operator=
+										// Format: [ret_var, function_name, this_type, this_size, this_name, param_type, param_size, param_value]
+
+										TempVar ret_var = var_counter.next();
+										std::vector<IrOperand> call_operands;
+										call_operands.emplace_back(ret_var);
+										call_operands.emplace_back(copy_assign_op->name);  // "operator="
+
+										// Add 'this' pointer (the LHS object)
+										call_operands.emplace_back(lhs_type.type());
+										call_operands.emplace_back(static_cast<int>(lhs_type.size_in_bits()));
+										call_operands.emplace_back(lhs_name);
+
+										// Generate IR for the RHS value
+										auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+										// Add the RHS as the parameter
+										call_operands.emplace_back(rhsIrOperands[0]);  // type
+										call_operands.emplace_back(rhsIrOperands[1]);  // size
+										call_operands.emplace_back(rhsIrOperands[2]);  // value
+
+										// Add the function call instruction
+										ir_.addInstruction(IrOpcode::FunctionCall, std::move(call_operands), binaryOperatorNode.get_token());
+
+										// Return the LHS value as the result (operator= returns *this)
+										return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), ret_var };
+									}
+								}
+							}
+						}
 					}
 				}
 			}

@@ -236,13 +236,46 @@ ParseResult Parser::parse_type_and_name() {
         custom_alignment = parse_alignas_specifier();
     }
 
-    // Parse the identifier (name)
-    auto identifier_token = consume_token();
-    if (!identifier_token) {
-        return ParseResult::error("Expected identifier token", Token());
-    }
-    if (identifier_token->type() != Token::Type::Identifier) {
-        return ParseResult::error("Expected identifier token", *identifier_token);
+    // Parse the identifier (name) or operator overload
+    Token identifier_token;
+
+    // Check for operator overload (e.g., operator=)
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+        peek_token()->value() == "operator") {
+
+        Token operator_keyword_token = *peek_token();
+        consume_token(); // consume 'operator'
+
+        // Parse the operator symbol
+        if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator) {
+            return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
+        }
+
+        Token operator_symbol_token = *peek_token();
+        std::string_view operator_symbol = operator_symbol_token.value();
+        consume_token(); // consume operator symbol
+
+        // For now, we only support operator=
+        if (operator_symbol != "=") {
+            return ParseResult::error("Only operator= is currently supported", operator_symbol_token);
+        }
+
+        // Create a synthetic identifier token for "operator="
+        // Use a static string so the string_view remains valid
+        static const std::string operator_eq_name = "operator=";
+        identifier_token = Token(Token::Type::Identifier, operator_eq_name,
+                                operator_keyword_token.line(), operator_keyword_token.column(),
+                                operator_keyword_token.file_index());
+    } else {
+        // Regular identifier
+        auto id_token = consume_token();
+        if (!id_token) {
+            return ParseResult::error("Expected identifier token", Token());
+        }
+        if (id_token->type() != Token::Type::Identifier) {
+            return ParseResult::error("Expected identifier token", *id_token);
+        }
+        identifier_token = *id_token;
     }
 
     // Check for array declaration: identifier[size]
@@ -270,9 +303,9 @@ ParseResult Parser::parse_type_and_name() {
     if (auto node = type_specifier_result.node()) {
         ASTNode decl_node;
         if (array_size.has_value()) {
-            decl_node = emplace_node<DeclarationNode>(*node, *identifier_token, array_size);
+            decl_node = emplace_node<DeclarationNode>(*node, identifier_token, array_size);
         } else {
-            decl_node = emplace_node<DeclarationNode>(*node, *identifier_token);
+            decl_node = emplace_node<DeclarationNode>(*node, identifier_token);
         }
 
         // Apply custom alignment if specified
@@ -282,7 +315,7 @@ ParseResult Parser::parse_type_and_name() {
 
         return ParseResult::success(decl_node);
     }
-    return ParseResult::error("Invalid type specifier node", *identifier_token);
+    return ParseResult::error("Invalid type specifier node", identifier_token);
 }
 
 ParseResult Parser::parse_declaration_or_function_definition()
@@ -663,125 +696,6 @@ ParseResult Parser::parse_struct_declaration()
 			continue;
 		}
 
-		// Check for operator overload (e.g., operator=)
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-		    peek_token()->value() == "operator") {
-
-			Token operator_keyword_token = *peek_token();
-			consume_token(); // consume 'operator'
-
-			// Parse the operator symbol
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator) {
-				return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
-			}
-
-			Token operator_symbol_token = *peek_token();
-			std::string_view operator_symbol = operator_symbol_token.value();
-			consume_token(); // consume operator symbol
-
-			// For now, we only support operator=
-			if (operator_symbol != "=") {
-				return ParseResult::error("Only operator= is currently supported", operator_symbol_token);
-			}
-
-			// Parse parameters: operator= should have signature Type& operator=(const Type& other)
-			if (!consume_punctuator("(")) {
-				return ParseResult::error("Expected '(' after operator symbol", *peek_token());
-			}
-
-			// Create a return type node: Type& (reference to the struct type)
-			auto type_it = gTypesByName.find(struct_name);
-			size_t struct_type_index = 0;
-			if (type_it != gTypesByName.end()) {
-				struct_type_index = type_it->second->type_index_;
-			}
-
-			auto return_type_node = emplace_node<TypeSpecifierNode>(
-				Type::Struct,
-				struct_type_index,
-				static_cast<unsigned char>(64),  // Pointer size (will be updated later)
-				operator_keyword_token,
-				CVQualifier::None
-			);
-			return_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
-
-			// Create a declaration node for the operator function
-			// Use "operator=" as the identifier name
-			static const std::string operator_eq_name = "operator=";
-			Token operator_name_token(Token::Type::Identifier, operator_eq_name,
-			                          operator_keyword_token.line(), operator_keyword_token.column(),
-			                          operator_keyword_token.file_index());
-
-			auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
-
-			// Parse function declaration with parameters
-			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-				operator_decl_node.as<DeclarationNode>(), struct_name);
-
-			// Parse parameters (should be exactly one: const Type& other)
-			while (!consume_punctuator(")")) {
-				// Parse parameter type and name
-				ParseResult type_and_name_result = parse_type_and_name();
-				if (type_and_name_result.is_error()) {
-					return type_and_name_result;
-				}
-
-				if (auto node = type_and_name_result.node()) {
-					func_ref.add_parameter_node(*node);
-				}
-
-				// Check if next token is comma (more parameters) or closing paren (done)
-				if (!consume_punctuator(",")) {
-					// No comma, so we expect a closing paren on the next iteration
-					// Don't break here - let the while loop condition consume the ')'
-				}
-			}
-
-			// Parse function body if present
-			if (peek_token().has_value() && peek_token()->value() == "{") {
-				// Enter function scope for parsing the body
-				gSymbolTable.enter_scope(ScopeType::Function);
-
-				// Set current function pointer
-				current_function_ = &func_ref;
-
-				// Push member function context
-				member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
-
-				// Add parameters to symbol table
-				for (const auto& param : func_ref.parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& param_decl_node = param.as<DeclarationNode>();
-						const Token& param_token = param_decl_node.identifier_token();
-						gSymbolTable.insert(param_token.value(), param);
-					}
-				}
-
-				// Parse function body
-				auto block_result = parse_block();
-				if (block_result.is_error()) {
-					current_function_ = nullptr;
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
-					return block_result;
-				}
-
-				current_function_ = nullptr;
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
-
-				if (auto block = block_result.node()) {
-					func_ref.set_definition(block->as<BlockNode>());
-				}
-			} else if (!consume_punctuator(";")) {
-				return ParseResult::error("Expected '{' or ';' after operator= declaration", *peek_token());
-			}
-
-			// Add operator overload to struct
-			struct_ref.add_operator_overload(operator_symbol, func_node, current_access);
-			continue;
-		}
-
 		// Parse member declaration (could be data member or member function)
 		auto member_result = parse_type_and_name();
 		if (member_result.is_error()) {
@@ -876,8 +790,16 @@ ParseResult Parser::parse_struct_declaration()
 				return ParseResult::error("Expected '{' or ';' after member function declaration", *peek_token());
 			}
 
-			// Add member function to struct
-			struct_ref.add_member_function(member_func_node, current_access);
+			// Check if this is an operator overload
+			std::string_view func_name = decl_node.identifier_token().value();
+			if (func_name.starts_with("operator")) {
+				// Extract the operator symbol (e.g., "operator=" -> "=")
+				std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
+				struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access);
+			} else {
+				// Add regular member function to struct
+				struct_ref.add_member_function(member_func_node, current_access);
+			}
 		} else {
 			// This is a data member
 			// Expect semicolon after member declaration
@@ -951,6 +873,8 @@ ParseResult Parser::parse_struct_declaration()
 	bool has_user_defined_constructor = false;
 	bool has_user_defined_copy_constructor = false;
 	bool has_user_defined_move_constructor = false;
+	bool has_user_defined_copy_assignment = false;
+	bool has_user_defined_move_assignment = false;
 
 	for (const auto& func_decl : struct_ref.member_functions()) {
 		if (func_decl.is_constructor) {
@@ -987,6 +911,22 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.function_declaration,
 				func_decl.access
 			);
+
+			// Check if this is a copy or move assignment operator
+			if (func_decl.operator_symbol == "=") {
+				const auto& func_node = func_decl.function_declaration.as<FunctionDeclarationNode>();
+				const auto& params = func_node.parameter_nodes();
+				if (params.size() == 1) {
+					const auto& param_decl = params[0].as<DeclarationNode>();
+					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+					if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+						has_user_defined_copy_assignment = true;
+					} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+						has_user_defined_move_assignment = true;
+					}
+				}
+			}
 		} else {
 			// Regular member function
 			const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
@@ -1074,6 +1014,73 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Add the copy constructor to the struct node
 		struct_ref.add_constructor(copy_ctor_node, AccessSpecifier::Public);
+	}
+
+	// Generate copy assignment operator if no user-defined copy assignment operator exists
+	// According to C++ rules, copy assignment operator is implicitly generated unless:
+	// - User declared a move constructor or move assignment operator
+	// - User declared a copy assignment operator
+	if (!has_user_defined_copy_assignment && !has_user_defined_move_assignment) {
+		// Create a copy assignment operator node: Type& operator=(const Type& other)
+
+		// Create return type: Type& (reference to struct type)
+		TypeIndex struct_type_index = struct_type_info.type_index_;
+		auto return_type_node = emplace_node<TypeSpecifierNode>(
+			Type::Struct,
+			struct_type_index,
+			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			*name_token,
+			CVQualifier::None
+		);
+		return_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+
+		// Create declaration node for operator=
+		static const std::string operator_eq_name = "operator=";
+		Token operator_name_token(Token::Type::Identifier, operator_eq_name,
+		                          name_token->line(), name_token->column(),
+		                          name_token->file_index());
+
+		auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
+
+		// Create function declaration node
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+			operator_decl_node.as<DeclarationNode>(), struct_name);
+
+		// Create parameter: const Type& other
+		auto param_type_node = emplace_node<TypeSpecifierNode>(
+			Type::Struct,
+			struct_type_index,
+			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			*name_token,
+			CVQualifier::Const  // const qualifier
+		);
+		param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+
+		// Create parameter declaration
+		static const std::string param_name_assign = "other";
+		Token param_token(Token::Type::Identifier, param_name_assign, 0, 0, 0);
+		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
+
+		// Add parameter to function
+		func_ref.add_parameter_node(param_decl_node);
+
+		// Create an empty block for the operator= body
+		auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
+		func_ref.set_definition(op_block_ref);
+
+		// Mark this as an implicit operator=
+		func_ref.set_is_implicit(true);
+
+		// Add the operator= to the struct type info
+		struct_info->addOperatorOverload(
+			"=",
+			func_node,
+			AccessSpecifier::Public
+		);
+
+		// Add the operator= to the struct node
+		static const std::string_view operator_symbol_eq = "=";
+		struct_ref.add_operator_overload(operator_symbol_eq, func_node, AccessSpecifier::Public);
 	}
 
 	// Apply custom alignment if specified
@@ -1362,9 +1369,13 @@ ParseResult Parser::parse_type_specifier()
 
 			if (struct_info) {
 				type_size = static_cast<unsigned char>(struct_info->total_size * 8);  // Convert bytes to bits
-				return ParseResult::success(emplace_node<TypeSpecifierNode>(
-					Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+			} else {
+				// Struct is being defined but not yet finalized (e.g., in member function parameters)
+				// Use a placeholder size of 0 - it will be updated when the struct is finalized
+				type_size = 0;
 			}
+			return ParseResult::success(emplace_node<TypeSpecifierNode>(
+				Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 		}
 
 		return ParseResult::error("Unknown struct/class type: " + type_name, type_name_token);
@@ -1383,9 +1394,13 @@ ParseResult Parser::parse_type_specifier()
 
 			if (struct_info) {
 				type_size = static_cast<unsigned char>(struct_info->total_size * 8);  // Convert bytes to bits
-				return ParseResult::success(emplace_node<TypeSpecifierNode>(
-					Type::Struct, struct_type_info->type_index_, type_size, current_token_opt.value(), cv_qualifier));
+			} else {
+				// Struct is being defined but not yet finalized (e.g., in member function parameters)
+				// Use a placeholder size of 0 - it will be updated when the struct is finalized
+				type_size = 0;
 			}
+			return ParseResult::success(emplace_node<TypeSpecifierNode>(
+				Type::Struct, struct_type_info->type_index_, type_size, current_token_opt.value(), cv_qualifier));
 		}
 
 		// Otherwise, treat as generic user-defined type
@@ -2728,6 +2743,19 @@ ParseResult Parser::parse_primary_expression()
 			static_cast<unsigned long long>(value), Type::Bool, TypeQualifier::None, 1));
 		consume_token();
 	}
+	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "this"sv) {
+		// Handle 'this' keyword - represents a pointer to the current object
+		// Only valid inside member functions
+		if (member_function_context_stack_.empty()) {
+			return ParseResult::error("'this' can only be used inside a member function", *current_token_);
+		}
+
+		Token this_token = *current_token_;
+		consume_token();
+
+		// Create an identifier node for 'this'
+		result = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+	}
 	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "sizeof"sv) {
 		// Handle sizeof operator: sizeof(type) or sizeof(expression)
 		Token sizeof_token = *current_token_;
@@ -3390,9 +3418,41 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
 	}
 	else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-		// For unary operators, get the type of the operand
+		// For unary operators, handle type transformations
 		const auto& unary = std::get<UnaryOperatorNode>(expr);
-		return get_expression_type(unary.get_operand());
+		std::string_view op = unary.op();
+
+		// Get the operand type
+		auto operand_type_opt = get_expression_type(unary.get_operand());
+		if (!operand_type_opt.has_value()) {
+			return std::nullopt;
+		}
+
+		TypeSpecifierNode operand_type = *operand_type_opt;
+
+		// Handle dereference operator: *ptr -> removes one level of pointer/reference
+		if (op == "*") {
+			if (operand_type.is_reference()) {
+				// Dereferencing a reference gives the underlying type
+				TypeSpecifierNode result = operand_type;
+				result.set_reference(false);
+				return result;
+			} else if (operand_type.pointer_levels().size() > 0) {
+				// Dereferencing a pointer removes one level of pointer
+				TypeSpecifierNode result = operand_type;
+				result.remove_pointer_level();
+				return result;
+			}
+		}
+		// Handle address-of operator: &var -> adds one level of pointer
+		else if (op == "&") {
+			TypeSpecifierNode result = operand_type;
+			result.add_pointer_level();
+			return result;
+		}
+
+		// For other unary operators (+, -, !, ~, ++, --), return the operand type
+		return operand_type;
 	}
 	else if (std::holds_alternative<FunctionCallNode>(expr)) {
 		// For function calls, get the return type
