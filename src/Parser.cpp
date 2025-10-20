@@ -1332,6 +1332,11 @@ ParseResult Parser::parse_statement_or_declaration()
 				// Parse as variable declaration with optional initialization
 				return parse_variable_declaration();
 			}
+			// Check if it's 'new' or 'delete' - these are expression keywords
+			else if (current_token.value() == "new" || current_token.value() == "delete") {
+				// Parse as expression statement
+				return parse_expression();
+			}
 			else {
 				// Unknown keyword - consume token to avoid infinite loop and return error
 				consume_token();
@@ -1354,10 +1359,10 @@ ParseResult Parser::parse_statement_or_declaration()
 		return parse_expression();
 	}
 	else if (current_token.type() == Token::Type::Operator) {
-		// Handle prefix increment/decrement operators as expression statements
-		// e.g., ++i; or --i;
+		// Handle prefix operators as expression statements
+		// e.g., ++i; or --i; or *p = 42;
 		std::string_view op = current_token.value();
-		if (op == "++" || op == "--") {
+		if (op == "++" || op == "--" || op == "*" || op == "&") {
 			return parse_expression();
 		}
 		// Unknown operator - consume token to avoid infinite loop and return error
@@ -1654,6 +1659,111 @@ ParseResult Parser::parse_return_statement()
 
 ParseResult Parser::parse_unary_expression()
 {
+	// Check for 'new' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "new") {
+		consume_token(); // consume 'new'
+
+		// Parse the type
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error()) {
+			return type_result;
+		}
+
+		auto type_node = type_result.node();
+		if (!type_node.has_value()) {
+			return ParseResult::error("Expected type after 'new'", *current_token_);
+		}
+
+		// Check for array allocation: new Type[size]
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+		    peek_token()->value() == "[") {
+			consume_token(); // consume '['
+
+			// Parse the size expression
+			ParseResult size_result = parse_expression();
+			if (size_result.is_error()) {
+				return size_result;
+			}
+
+			if (!consume_punctuator("]")) {
+				return ParseResult::error("Expected ']' after array size", *current_token_);
+			}
+
+			auto new_expr = emplace_node<ExpressionNode>(
+				NewExpressionNode(*type_node, true, size_result.node()));
+			return ParseResult::success(new_expr);
+		}
+		// Check for constructor call: new Type(args)
+		else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+		         peek_token()->value() == "(") {
+			consume_token(); // consume '('
+
+			ChunkedVector<ASTNode, 128, 256> args;
+
+			// Parse constructor arguments
+			if (!peek_token().has_value() || peek_token()->value() != ")") {
+				while (true) {
+					ParseResult arg_result = parse_expression();
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+
+					if (auto arg_node = arg_result.node()) {
+						args.push_back(*arg_node);
+					}
+
+					if (peek_token().has_value() && peek_token()->value() == ",") {
+						consume_token(); // consume ','
+					} else {
+						break;
+					}
+				}
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+			}
+
+			auto new_expr = emplace_node<ExpressionNode>(
+				NewExpressionNode(*type_node, false, std::nullopt, std::move(args)));
+			return ParseResult::success(new_expr);
+		}
+		// Simple new: new Type
+		else {
+			auto new_expr = emplace_node<ExpressionNode>(
+				NewExpressionNode(*type_node, false));
+			return ParseResult::success(new_expr);
+		}
+	}
+
+	// Check for 'delete' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "delete") {
+		consume_token(); // consume 'delete'
+
+		// Check for array delete: delete[]
+		bool is_array = false;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+		    peek_token()->value() == "[") {
+			consume_token(); // consume '['
+			if (!consume_punctuator("]")) {
+				return ParseResult::error("Expected ']' after 'delete['", *current_token_);
+			}
+			is_array = true;
+		}
+
+		// Parse the expression to delete
+		ParseResult expr_result = parse_unary_expression();
+		if (expr_result.is_error()) {
+			return expr_result;
+		}
+
+		if (auto expr_node = expr_result.node()) {
+			auto delete_expr = emplace_node<ExpressionNode>(
+				DeleteExpressionNode(*expr_node, is_array));
+			return ParseResult::success(delete_expr);
+		}
+	}
+
 	// Check if the current token is a unary operator
 	if (current_token_->type() == Token::Type::Operator) {
 		std::string_view op = current_token_->value();

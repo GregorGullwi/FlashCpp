@@ -912,6 +912,18 @@ public:
 			case IrOpcode::DestructorCall:
 				handleDestructorCall(instruction);
 				break;
+			case IrOpcode::HeapAlloc:
+				handleHeapAlloc(instruction);
+				break;
+			case IrOpcode::HeapAllocArray:
+				handleHeapAllocArray(instruction);
+				break;
+			case IrOpcode::HeapFree:
+				handleHeapFree(instruction);
+				break;
+			case IrOpcode::HeapFreeArray:
+				handleHeapFreeArray(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -1892,6 +1904,192 @@ private:
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
 		regAlloc.reset();
+	}
+
+	void handleHeapAlloc(const IrInstruction& instruction) {
+		// HeapAlloc format: [result_var, type, size_in_bytes, pointer_depth]
+		assert(instruction.getOperandCount() == 4 && "HeapAlloc must have exactly 4 operands");
+
+		flushAllDirtyRegisters();
+
+		TempVar result_var = instruction.getOperandAs<TempVar>(0);
+		int size_in_bytes = instruction.getOperandAs<int>(2);
+
+		// Call malloc(size)
+		// Windows x64 calling convention: RCX = first parameter (size)
+
+		// Move size into RCX (first parameter)
+		// MOV RCX, size_in_bytes
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0xC7); // MOV r/m64, imm32
+		textSectionData.push_back(0xC1); // ModR/M for RCX
+		for (int i = 0; i < 4; ++i) {
+			textSectionData.push_back(static_cast<uint8_t>((size_in_bytes >> (i * 8)) & 0xFF));
+		}
+
+		// Call malloc
+		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+		writer.add_relocation(textSectionData.size() - 4, "malloc");
+
+		// Result is in RAX, store it to the result variable
+		int result_offset = getStackOffsetFromTempVar(result_var);
+
+		// MOV [RBP + result_offset], RAX
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		if (result_offset >= -128 && result_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(result_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
+				result_offset >>= 8;
+			}
+		}
+
+		regAlloc.reset();
+	}
+
+	void handleHeapAllocArray(const IrInstruction& instruction) {
+		// HeapAllocArray format: [result_var, type, size_in_bytes, pointer_depth, count_operand]
+		// count_operand can be either TempVar or a constant value (int/unsigned long long)
+		assert(instruction.getOperandCount() == 5 && "HeapAllocArray must have exactly 5 operands");
+
+		flushAllDirtyRegisters();
+
+		TempVar result_var = instruction.getOperandAs<TempVar>(0);
+		int element_size = instruction.getOperandAs<int>(2);
+
+		// Load count into RAX - handle both TempVar and constant values
+		if (instruction.isOperandType<TempVar>(4)) {
+			// Count is a variable - load from stack
+			TempVar count_var = instruction.getOperandAs<TempVar>(4);
+			int count_offset = getStackOffsetFromTempVar(count_var);
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			if (count_offset >= -128 && count_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
+				textSectionData.push_back(static_cast<uint8_t>(count_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
+				for (int j = 0; j < 4; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(count_offset & 0xFF));
+					count_offset >>= 8;
+				}
+			}
+		} else {
+			// Count is a constant - load immediate value
+			uint64_t count_value = 0;
+			if (instruction.isOperandType<int>(4)) {
+				count_value = static_cast<uint64_t>(instruction.getOperandAs<int>(4));
+			} else if (instruction.isOperandType<unsigned long long>(4)) {
+				count_value = instruction.getOperandAs<unsigned long long>(4);
+			} else {
+				assert(false && "Count operand must be TempVar, int, or unsigned long long");
+			}
+
+			// MOV RAX, immediate
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0xB8); // MOV RAX, imm64
+			for (int i = 0; i < 8; ++i) {
+				textSectionData.push_back(static_cast<uint8_t>((count_value >> (i * 8)) & 0xFF));
+			}
+		}
+
+		// Multiply count by element_size: IMUL RAX, element_size
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
+		textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
+		for (int i = 0; i < 4; ++i) {
+			textSectionData.push_back(static_cast<uint8_t>((element_size >> (i * 8)) & 0xFF));
+		}
+
+		// Move result to RCX (first parameter for malloc)
+		// MOV RCX, RAX
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		textSectionData.push_back(0xC1); // ModR/M: RCX, RAX
+
+		// Call malloc
+		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+		writer.add_relocation(textSectionData.size() - 4, "malloc");
+
+		// Result is in RAX, store it to the result variable
+		int result_offset = getStackOffsetFromTempVar(result_var);
+
+		// MOV [RBP + result_offset], RAX
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		if (result_offset >= -128 && result_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(result_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
+				result_offset >>= 8;
+			}
+		}
+
+		regAlloc.reset();
+	}
+
+	void handleHeapFree(const IrInstruction& instruction) {
+		// HeapFree format: [ptr_operand] where ptr_operand can be TempVar or std::string_view (identifier)
+		assert(instruction.getOperandCount() == 1 && "HeapFree must have exactly 1 operand");
+
+		flushAllDirtyRegisters();
+
+		// Get the pointer offset (from either TempVar or identifier)
+		int ptr_offset = 0;
+		if (instruction.isOperandType<TempVar>(0)) {
+			TempVar ptr_var = instruction.getOperandAs<TempVar>(0);
+			ptr_offset = getStackOffsetFromTempVar(ptr_var);
+		} else if (instruction.isOperandType<std::string_view>(0)) {
+			std::string_view var_name = instruction.getOperandAs<std::string_view>(0);
+			const StackVariableScope& current_scope = variable_scopes.back();
+			auto it = current_scope.identifier_offset.find(var_name);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Variable not found in scope");
+				return;
+			}
+			ptr_offset = it->second;
+		} else {
+			assert(false && "HeapFree operand must be TempVar or std::string_view");
+			return;
+		}
+
+		// Load pointer from stack into RCX (first parameter for free)
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		if (ptr_offset >= -128 && ptr_offset <= 127) {
+			textSectionData.push_back(0x4D); // ModR/M: RCX, [RBP + disp8]
+			textSectionData.push_back(static_cast<uint8_t>(ptr_offset));
+		} else {
+			textSectionData.push_back(0x8D); // ModR/M: RCX, [RBP + disp32]
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(ptr_offset & 0xFF));
+				ptr_offset >>= 8;
+			}
+		}
+
+		// Call free
+		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+		writer.add_relocation(textSectionData.size() - 4, "free");
+
+		regAlloc.reset();
+	}
+
+	void handleHeapFreeArray(const IrInstruction& instruction) {
+		// HeapFreeArray format: [ptr_var]
+		// For C++, delete[] is the same as delete for POD types (just calls free)
+		// For types with destructors, we'd need to call destructors for each element first
+		// This is a simplified implementation
+		handleHeapFree(instruction);
 	}
 
 	void handleVariableDecl(const IrInstruction& instruction) {

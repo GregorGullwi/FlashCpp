@@ -108,6 +108,11 @@ enum class IrOpcode : int_fast16_t {
 	DestructorCall,
 	// String literal
 	StringLiteral,
+	// Heap allocation/deallocation (new/delete)
+	HeapAlloc,       // new Type or new Type(args)
+	HeapAllocArray,  // new Type[size]
+	HeapFree,        // delete ptr
+	HeapFreeArray,   // delete[] ptr
 };
 
 enum class X64Register : uint8_t {
@@ -1947,6 +1952,67 @@ public:
 
 				oss << " = string_literal ";
 				oss << getOperandAs<std::string_view>(1);
+			}
+		}
+		break;
+
+		case IrOpcode::HeapAlloc:
+		{
+			// %result = heap_alloc [Type][Size][PointerDepth]
+			// Format: [result_var, type, size_in_bytes, pointer_depth]
+			assert(getOperandCount() == 4 && "HeapAlloc instruction must have exactly 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+
+				oss << " = heap_alloc [" << static_cast<int>(getOperandAs<Type>(1)) << "]["
+				    << getOperandAs<int>(2) << "][" << getOperandAs<int>(3) << "]";
+			}
+		}
+		break;
+
+		case IrOpcode::HeapAllocArray:
+		{
+			// %result = heap_alloc_array [Type][Size][PointerDepth] %count
+			// Format: [result_var, type, size_in_bytes, pointer_depth, count_var]
+			assert(getOperandCount() == 5 && "HeapAllocArray instruction must have exactly 5 operands");
+			if (getOperandCount() >= 5) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+
+				oss << " = heap_alloc_array [" << static_cast<int>(getOperandAs<Type>(1)) << "]["
+				    << getOperandAs<int>(2) << "][" << getOperandAs<int>(3) << "] %";
+
+				if (isOperandType<TempVar>(4))
+					oss << getOperandAs<TempVar>(4).index;
+			}
+		}
+		break;
+
+		case IrOpcode::HeapFree:
+		{
+			// heap_free %ptr
+			// Format: [ptr_var]
+			assert(getOperandCount() == 1 && "HeapFree instruction must have exactly 1 operand");
+			if (getOperandCount() >= 1) {
+				oss << "heap_free %";
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+			}
+		}
+		break;
+
+		case IrOpcode::HeapFreeArray:
+		{
+			// heap_free_array %ptr
+			// Format: [ptr_var]
+			assert(getOperandCount() == 1 && "HeapFreeArray instruction must have exactly 1 operand");
+			if (getOperandCount() >= 1) {
+				oss << "heap_free_array %";
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
 			}
 		}
 		break;

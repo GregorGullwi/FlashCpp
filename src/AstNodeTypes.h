@@ -839,9 +839,44 @@ private:
 	Token offsetof_token_;
 };
 
+// New expression node: new Type, new Type(args), new Type[size]
+class NewExpressionNode {
+public:
+	explicit NewExpressionNode(ASTNode type_node, bool is_array = false,
+	                          std::optional<ASTNode> size_expr = std::nullopt,
+	                          ChunkedVector<ASTNode, 128, 256> constructor_args = {})
+		: type_node_(type_node), is_array_(is_array),
+		  size_expr_(size_expr), constructor_args_(std::move(constructor_args)) {}
+
+	const ASTNode& type_node() const { return type_node_; }
+	bool is_array() const { return is_array_; }
+	const std::optional<ASTNode>& size_expr() const { return size_expr_; }
+	const ChunkedVector<ASTNode, 128, 256>& constructor_args() const { return constructor_args_; }
+
+private:
+	ASTNode type_node_;  // TypeSpecifierNode
+	bool is_array_;      // true for new[], false for new
+	std::optional<ASTNode> size_expr_;  // For new Type[size], the size expression
+	ChunkedVector<ASTNode, 128, 256> constructor_args_;  // For new Type(args)
+};
+
+// Delete expression node: delete ptr, delete[] ptr
+class DeleteExpressionNode {
+public:
+	explicit DeleteExpressionNode(ASTNode expr, bool is_array = false)
+		: expr_(expr), is_array_(is_array) {}
+
+	const ASTNode& expr() const { return expr_; }
+	bool is_array() const { return is_array_; }
+
+private:
+	ASTNode expr_;       // Expression to delete
+	bool is_array_;      // true for delete[], false for delete
+};
+
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
-	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode>;
+	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode>;
 
 /*class FunctionDefinitionNode {
 public:

@@ -994,6 +994,14 @@ private:
 			const auto& expr = std::get<OffsetofExprNode>(exprNode);
 			return generateOffsetofIr(expr);
 		}
+		else if (std::holds_alternative<NewExpressionNode>(exprNode)) {
+			const auto& expr = std::get<NewExpressionNode>(exprNode);
+			return generateNewExpressionIr(expr);
+		}
+		else if (std::holds_alternative<DeleteExpressionNode>(exprNode)) {
+			const auto& expr = std::get<DeleteExpressionNode>(exprNode);
+			return generateDeleteExpressionIr(expr);
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -2032,6 +2040,103 @@ private:
 		// Return offset as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member->offset) };
+	}
+
+	std::vector<IrOperand> generateNewExpressionIr(const NewExpressionNode& newExpr) {
+		const TypeSpecifierNode& type_spec = newExpr.type_node().as<TypeSpecifierNode>();
+		Type type = type_spec.type();
+		int size_in_bits = static_cast<int>(type_spec.size_in_bits());
+		int pointer_depth = static_cast<int>(type_spec.pointer_depth());
+
+		// Create a temporary variable for the result (pointer to allocated memory)
+		TempVar result_var = var_counter.next();
+
+		if (newExpr.is_array()) {
+			// Array allocation: new Type[size]
+			// Evaluate the size expression
+			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
+
+			// Format: [result_var, type, size_in_bytes, pointer_depth, count_operand]
+			// count_operand can be either TempVar or a constant value (int/unsigned long long)
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_var);
+			operands.emplace_back(type);
+			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
+			operands.emplace_back(pointer_depth);
+			operands.emplace_back(size_operands[2]);  // size expression result (TempVar or constant)
+
+			ir_.addInstruction(IrOpcode::HeapAllocArray, std::move(operands), Token());
+		} else {
+			// Single object allocation: new Type or new Type(args)
+			// Format: [result_var, type, size_in_bytes, pointer_depth]
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_var);
+			operands.emplace_back(type);
+			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
+			operands.emplace_back(pointer_depth);
+
+			ir_.addInstruction(IrOpcode::HeapAlloc, std::move(operands), Token());
+
+			// If this is a struct type with a constructor, generate constructor call
+			if (type == Type::Struct) {
+				TypeIndex type_index = type_spec.type_index();
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
+						// Generate constructor call on the newly allocated object
+						std::vector<IrOperand> ctor_operands;
+						ctor_operands.emplace_back(type_info.name_);  // Struct name
+						ctor_operands.emplace_back(result_var);       // Pointer to object
+
+						// Add constructor arguments
+						const auto& ctor_args = newExpr.constructor_args();
+						for (size_t i = 0; i < ctor_args.size(); ++i) {
+							auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
+							ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+						}
+
+						ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), Token());
+					}
+				}
+			}
+		}
+
+		// Return pointer to allocated memory
+		// The result is a pointer, so we return it with pointer_depth + 1
+		return { type, size_in_bits, result_var };
+	}
+
+	std::vector<IrOperand> generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
+		// Evaluate the expression to get the pointer to delete
+		auto ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
+
+		// Get the pointer type
+		Type ptr_type = std::get<Type>(ptr_operands[0]);
+
+		// Check if we need to call destructor (for struct types)
+		if (ptr_type == Type::Struct && !deleteExpr.is_array()) {
+			// For single object deletion, call destructor before freeing
+			// Note: For array deletion, we'd need to track the array size and call destructors for each element
+			// This is a simplified implementation
+
+			// We need the type index to get struct info
+			// For now, we'll skip destructor calls for delete (can be enhanced later)
+			// TODO: Track type information through pointer types to enable destructor calls
+		}
+
+		// Generate the appropriate free instruction
+		// Pass the pointer operand directly (can be TempVar or std::string_view)
+		std::vector<IrOperand> operands;
+		operands.emplace_back(ptr_operands[2]);  // The pointer value (TempVar or identifier)
+
+		if (deleteExpr.is_array()) {
+			ir_.addInstruction(IrOpcode::HeapFreeArray, std::move(operands), Token());
+		} else {
+			ir_.addInstruction(IrOpcode::HeapFree, std::move(operands), Token());
+		}
+
+		// delete is a statement, not an expression, so return empty
+		return {};
 	}
 
 	// Structure to track variables that need destructors called

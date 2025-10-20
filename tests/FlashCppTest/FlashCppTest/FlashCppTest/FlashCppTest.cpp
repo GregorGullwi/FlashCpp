@@ -1321,3 +1321,143 @@ TEST_CASE("Default constructor generation") {
 TEST_CASE("Copy constructor generation") {
 	run_test_from_file("test_copy_constructor.cpp", "Copy constructor generation", false);
 }
+
+TEST_SUITE("new and delete operators") {
+	TEST_CASE("Simple new and delete for int") {
+		const std::string code = R"(
+			int main() {
+				int* p = new int;
+				*p = 42;
+				delete p;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+
+		AstToIr converter;
+		for (auto& node_handle : ast) {
+			converter.visit(node_handle);
+		}
+
+		const auto& ir = converter.getIr();
+
+		std::puts("\n=== Test: Simple new and delete for int ===");
+		for (const auto& instruction : ir.getInstructions()) {
+			std::puts(instruction.getReadableString().c_str());
+		}
+
+		// Check that we have HeapAlloc and HeapFree instructions
+		bool has_heap_alloc = false;
+		bool has_heap_free = false;
+		for (const auto& instruction : ir.getInstructions()) {
+			if (instruction.getOpcode() == IrOpcode::HeapAlloc) {
+				has_heap_alloc = true;
+			}
+			if (instruction.getOpcode() == IrOpcode::HeapFree) {
+				has_heap_free = true;
+			}
+		}
+		CHECK(has_heap_alloc);
+		CHECK(has_heap_free);
+	}
+
+	TEST_CASE("Array new and delete") {
+		const std::string code = R"(
+			int main() {
+				int* arr = new int[10];
+				arr[0] = 1;
+				arr[9] = 10;
+				delete[] arr;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+
+		AstToIr converter;
+		for (auto& node_handle : ast) {
+			converter.visit(node_handle);
+		}
+
+		const auto& ir = converter.getIr();
+
+		std::puts("\n=== Test: Array new and delete ===");
+		for (const auto& instruction : ir.getInstructions()) {
+			std::puts(instruction.getReadableString().c_str());
+		}
+
+		// Check that we have HeapAllocArray and HeapFreeArray instructions
+		bool has_heap_alloc_array = false;
+		bool has_heap_free_array = false;
+		for (const auto& instruction : ir.getInstructions()) {
+			if (instruction.getOpcode() == IrOpcode::HeapAllocArray) {
+				has_heap_alloc_array = true;
+			}
+			if (instruction.getOpcode() == IrOpcode::HeapFreeArray) {
+				has_heap_free_array = true;
+			}
+		}
+		CHECK(has_heap_alloc_array);
+		CHECK(has_heap_free_array);
+	}
+
+	TEST_CASE("New with constructor arguments") {
+		const std::string code = R"(
+			struct Point {
+				int x;
+				int y;
+				Point(int a, int b) : x(a), y(b) {}
+			};
+
+			int main() {
+				Point* p = new Point(10, 20);
+				delete p;
+				return 0;
+			}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		auto parse_result = parser.parse();
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+
+		AstToIr converter;
+		for (auto& node_handle : ast) {
+			converter.visit(node_handle);
+		}
+
+		const auto& ir = converter.getIr();
+
+		std::puts("\n=== Test: New with constructor arguments ===");
+		for (const auto& instruction : ir.getInstructions()) {
+			std::puts(instruction.getReadableString().c_str());
+		}
+
+		// Check that we have HeapAlloc and ConstructorCall instructions
+		bool has_heap_alloc = false;
+		bool has_constructor_call = false;
+		for (const auto& instruction : ir.getInstructions()) {
+			if (instruction.getOpcode() == IrOpcode::HeapAlloc) {
+				has_heap_alloc = true;
+			}
+			if (instruction.getOpcode() == IrOpcode::ConstructorCall) {
+				has_constructor_call = true;
+			}
+		}
+		CHECK(has_heap_alloc);
+		CHECK(has_constructor_call);
+	}
+}
