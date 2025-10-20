@@ -62,6 +62,9 @@ public:
 		else if (node.is<StructDeclarationNode>()) {
 			visitStructDeclarationNode(node.as<StructDeclarationNode>());
 		}
+		else if (node.is<EnumDeclarationNode>()) {
+			visitEnumDeclarationNode(node.as<EnumDeclarationNode>());
+		}
 		else if (node.is<NamespaceDeclarationNode>()) {
 			visitNamespaceDeclarationNode(node.as<NamespaceDeclarationNode>());
 		}
@@ -265,6 +268,13 @@ private:
 			// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 			visit(member_func.function_declaration);
 		}
+	}
+
+	void visitEnumDeclarationNode(const EnumDeclarationNode& node) {
+		// Enum declarations themselves don't generate IR - they just define types
+		// The type information is already registered in the global type system
+		// Enumerators are treated as compile-time constants and don't need runtime code generation
+		// For unscoped enums, the enumerators are already added to the symbol table during parsing
 	}
 
 	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {

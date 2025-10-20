@@ -87,6 +87,7 @@ enum class Type : int_fast16_t {
 	Auto,
 	Function,
 	Struct,
+	Enum,
 };
 
 using TypeIndex = size_t;
@@ -278,6 +279,45 @@ struct StructTypeInfo {
 	}
 };
 
+// Enumerator information
+struct Enumerator {
+	std::string name;
+	long long value;  // Enumerator value (always an integer)
+
+	Enumerator(std::string n, long long v)
+		: name(std::move(n)), value(v) {}
+};
+
+// Enum type information
+struct EnumTypeInfo {
+	std::string name;
+	bool is_scoped;                  // true for enum class, false for enum
+	Type underlying_type;            // Underlying type (default: int)
+	unsigned char underlying_size;   // Size in bits of underlying type
+	std::vector<Enumerator> enumerators;
+
+	EnumTypeInfo(std::string n, bool scoped = false, Type underlying = Type::Int, unsigned char size = 32)
+		: name(std::move(n)), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
+
+	void addEnumerator(const std::string& enumerator_name, long long value) {
+		enumerators.emplace_back(enumerator_name, value);
+	}
+
+	const Enumerator* findEnumerator(const std::string& name) const {
+		for (const auto& enumerator : enumerators) {
+			if (enumerator.name == name) {
+				return &enumerator;
+			}
+		}
+		return nullptr;
+	}
+
+	long long getEnumeratorValue(const std::string& name) const {
+		const Enumerator* e = findEnumerator(name);
+		return e ? e->value : 0;
+	}
+};
+
 struct TypeInfo
 {
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
@@ -290,6 +330,9 @@ struct TypeInfo
 	// For struct types, store additional information
 	std::unique_ptr<StructTypeInfo> struct_info_;
 
+	// For enum types, store additional information
+	std::unique_ptr<EnumTypeInfo> enum_info_;
+
 	const char* name() { return name_.c_str(); };
 
 	// Helper methods for struct types
@@ -299,6 +342,15 @@ struct TypeInfo
 
 	void setStructInfo(std::unique_ptr<StructTypeInfo> info) {
 		struct_info_ = std::move(info);
+	}
+
+	// Helper methods for enum types
+	bool isEnum() const { return type_ == Type::Enum; }
+	const EnumTypeInfo* getEnumInfo() const { return enum_info_.get(); }
+	EnumTypeInfo* getEnumInfo() { return enum_info_.get(); }
+
+	void setEnumInfo(std::unique_ptr<EnumTypeInfo> info) {
+		enum_info_ = std::move(info);
 	}
 };
 
@@ -325,6 +377,8 @@ TypeInfo& add_user_type(std::string name);
 TypeInfo& add_function_type(std::string name, Type /*return_type*/);
 
 TypeInfo& add_struct_type(std::string name);
+
+TypeInfo& add_enum_type(std::string name);
 
 void initialize_native_types();
 
@@ -802,6 +856,49 @@ public:
 private:
 	std::string_view name_;  // Points directly into source text from lexer token
 	std::vector<ASTNode> declarations_;  // Declarations within the namespace
+};
+
+// Enumerator node - represents a single enumerator in an enum
+class EnumeratorNode {
+public:
+	EnumeratorNode(Token name, std::optional<ASTNode> value = std::nullopt)
+		: name_(name), value_(value) {}
+
+	std::string_view name() const { return name_.value(); }
+	const Token& name_token() const { return name_; }
+	bool has_value() const { return value_.has_value(); }
+	const std::optional<ASTNode>& value() const { return value_; }
+
+private:
+	Token name_;                    // Enumerator name
+	std::optional<ASTNode> value_;  // Optional initializer expression
+};
+
+// Enum declaration node - represents enum or enum class
+class EnumDeclarationNode {
+public:
+	explicit EnumDeclarationNode(std::string_view name, bool is_scoped = false)
+		: name_(name), is_scoped_(is_scoped), underlying_type_() {}
+
+	std::string_view name() const { return name_; }
+	bool is_scoped() const { return is_scoped_; }  // true for enum class, false for enum
+	bool has_underlying_type() const { return underlying_type_.has_value(); }
+	const std::optional<ASTNode>& underlying_type() const { return underlying_type_; }
+	const std::vector<ASTNode>& enumerators() const { return enumerators_; }
+
+	void set_underlying_type(ASTNode type) {
+		underlying_type_ = type;
+	}
+
+	void add_enumerator(ASTNode enumerator) {
+		enumerators_.push_back(enumerator);
+	}
+
+private:
+	std::string_view name_;                 // Points directly into source text from lexer token
+	bool is_scoped_;                        // true for enum class, false for enum
+	std::optional<ASTNode> underlying_type_; // Optional underlying type (TypeSpecifierNode)
+	std::vector<ASTNode> enumerators_;      // List of EnumeratorNode
 };
 
 class MemberAccessNode {

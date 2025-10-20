@@ -1240,6 +1240,10 @@ TEST_CASE("Namespace:Nested") {
 	run_test_from_file("test_nested_namespace.cpp", "Nested namespace declarations", false);
 }
 
+TEST_CASE("Enums") {
+	run_test_from_file("test_enums.cpp", "Enum and Enum class tests", false);
+}
+
 TEST_CASE("String literals and puts") {
 	run_test_from_file("test_puts_stack.cpp", "Tests char literals and .rdata strings by calling puts()", false);
 }

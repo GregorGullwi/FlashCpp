@@ -23,6 +23,12 @@ TypeInfo& add_struct_type(std::string name) {
     return type_info;
 }
 
+TypeInfo& add_enum_type(std::string name) {
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, gTypeInfo.size());
+    gTypesByName.emplace(type_info.name_, &type_info);
+    return type_info;
+}
+
 void initialize_native_types() {
     // Initialize native types if not already done
     if (!gNativeTypes.empty()) {
@@ -322,6 +328,7 @@ static std::string type_to_string(Type type, TypeQualifier qualifier) {
         case Type::Auto: result += "auto"; break;
         case Type::Function: result += "function"; break;
         case Type::Struct: result += "struct"; break;
+        case Type::Enum: result += "enum"; break;
     }
 
     return result;

@@ -161,6 +161,18 @@ ParseResult Parser::parse_top_level_node()
 		return result;
 	}
 
+	// Check if it's an enum declaration
+	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "enum") {
+		auto result = parse_enum_declaration();
+		if (!result.is_error()) {
+			if (auto node = result.node()) {
+				ast_nodes_.push_back(*node);
+			}
+			return saved_position.success();
+		}
+		return result;
+	}
+
 	// Attempt to parse a function definition, variable declaration, or typedef
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
@@ -1353,6 +1365,162 @@ ParseResult Parser::parse_struct_declaration()
 	return saved_position.success(struct_node);
 }
 
+ParseResult Parser::parse_enum_declaration()
+{
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'enum' keyword
+	auto enum_keyword = consume_token();
+	if (!enum_keyword.has_value() || enum_keyword->value() != "enum") {
+		return ParseResult::error("Expected 'enum' keyword", enum_keyword.value_or(Token()));
+	}
+
+	// Check for 'class' or 'struct' keyword (enum class / enum struct)
+	bool is_scoped = false;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+	    (peek_token()->value() == "class" || peek_token()->value() == "struct")) {
+		is_scoped = true;
+		consume_token(); // consume 'class' or 'struct'
+	}
+
+	// Parse enum name
+	auto name_token = consume_token();
+	if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected enum name", name_token.value_or(Token()));
+	}
+
+	std::string_view enum_name = name_token->value();
+
+	// Register the enum type in the global type system EARLY
+	TypeInfo& enum_type_info = add_enum_type(std::string(enum_name));
+
+	// Create enum declaration node
+	auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
+
+	// Check for underlying type specification (: type)
+	if (peek_token().has_value() && peek_token()->value() == ":") {
+		consume_token(); // consume ':'
+
+		// Parse the underlying type
+		auto underlying_type_result = parse_type_specifier();
+		if (underlying_type_result.is_error()) {
+			return underlying_type_result;
+		}
+
+		if (auto type_node = underlying_type_result.node()) {
+			enum_ref.set_underlying_type(*type_node);
+		}
+	}
+
+	// Expect opening brace
+	if (!consume_punctuator("{")) {
+		return ParseResult::error("Expected '{' after enum name", *peek_token());
+	}
+
+	// Create enum type info
+	auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name), is_scoped);
+
+	// Determine underlying type (default is int)
+	Type underlying_type = Type::Int;
+	unsigned char underlying_size = 32;
+	if (enum_ref.has_underlying_type()) {
+		const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+		underlying_type = type_spec.type();
+		underlying_size = type_spec.size_in_bits();
+	}
+	enum_info->underlying_type = underlying_type;
+	enum_info->underlying_size = underlying_size;
+
+	// Parse enumerators
+	long long next_value = 0;
+	while (peek_token().has_value() && peek_token()->value() != "}") {
+		// Parse enumerator name
+		auto enumerator_name_token = consume_token();
+		if (!enumerator_name_token.has_value() || enumerator_name_token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected enumerator name", enumerator_name_token.value_or(Token()));
+		}
+
+		std::string_view enumerator_name = enumerator_name_token->value();
+		std::optional<ASTNode> enumerator_value;
+		long long value = next_value;
+
+		// Check for explicit value (= expression)
+		if (peek_token().has_value() && peek_token()->value() == "=") {
+			consume_token(); // consume '='
+
+			// Parse the value expression
+			auto value_result = parse_expression();
+			if (value_result.is_error()) {
+				return value_result;
+			}
+
+			if (auto value_node = value_result.node()) {
+				enumerator_value = *value_node;
+
+				// Try to evaluate constant expression
+				// For now, we only handle numeric literals
+				if (value_node->is<ExpressionNode>()) {
+					const auto& expr = value_node->as<ExpressionNode>();
+					if (std::holds_alternative<NumericLiteralNode>(expr)) {
+						const auto& literal = std::get<NumericLiteralNode>(expr);
+						const auto& literal_value = literal.value();
+						if (std::holds_alternative<unsigned long long>(literal_value)) {
+							value = static_cast<long long>(std::get<unsigned long long>(literal_value));
+						} else if (std::holds_alternative<double>(literal_value)) {
+							value = static_cast<long long>(std::get<double>(literal_value));
+						}
+					}
+				}
+			}
+		}
+
+		// Create enumerator node
+		auto enumerator_node = emplace_node<EnumeratorNode>(*enumerator_name_token, enumerator_value);
+		enum_ref.add_enumerator(enumerator_node);
+
+		// Add enumerator to enum type info
+		enum_info->addEnumerator(std::string(enumerator_name), value);
+
+		// For unscoped enums, add enumerator to current scope as a constant
+		if (!is_scoped) {
+			// Create a constant declaration for the enumerator
+			// This allows unscoped enum values to be used without qualification
+			auto enum_type_node = emplace_node<TypeSpecifierNode>(
+				underlying_type, TypeQualifier::None, underlying_size, *enumerator_name_token);
+			auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, *enumerator_name_token);
+			gSymbolTable.insert(enumerator_name, enumerator_decl);
+		}
+
+		next_value = value + 1;
+
+		// Check for comma or closing brace
+		if (peek_token().has_value() && peek_token()->value() == ",") {
+			consume_token(); // consume ','
+			// Allow trailing comma before '}'
+			if (peek_token().has_value() && peek_token()->value() == "}") {
+				break;
+			}
+		} else if (peek_token().has_value() && peek_token()->value() == "}") {
+			break;
+		} else {
+			return ParseResult::error("Expected ',' or '}' after enumerator", *peek_token());
+		}
+	}
+
+	// Expect closing brace
+	if (!consume_punctuator("}")) {
+		return ParseResult::error("Expected '}' after enum body", *peek_token());
+	}
+
+	// Optional semicolon
+	consume_punctuator(";");
+
+	// Store enum info in type info
+	enum_type_info.setEnumInfo(std::move(enum_info));
+
+	return saved_position.success(enum_node);
+}
+
 ParseResult Parser::parse_namespace() {
 	ScopedTokenPosition saved_position(*this);
 
@@ -1392,6 +1560,10 @@ ParseResult Parser::parse_namespace() {
 		else if (peek_token()->type() == Token::Type::Keyword &&
 			(peek_token()->value() == "class" || peek_token()->value() == "struct")) {
 			decl_result = parse_struct_declaration();
+		}
+		// Check if it's an enum declaration
+		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "enum") {
+			decl_result = parse_enum_declaration();
 		}
 		// Otherwise, parse as function or variable declaration
 		else {
@@ -1658,6 +1830,22 @@ ParseResult Parser::parse_type_specifier()
 			}
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
 				Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+		}
+
+		// Check if this is a registered enum type
+		if (type_it != gTypesByName.end() && type_it->second->isEnum()) {
+			// This is an enum type
+			const TypeInfo* enum_type_info = type_it->second;
+			const EnumTypeInfo* enum_info = enum_type_info->getEnumInfo();
+
+			if (enum_info) {
+				type_size = enum_info->underlying_size;
+			} else {
+				// Enum is being defined but not yet finalized
+				type_size = 32;  // Default to int size
+			}
+			return ParseResult::success(emplace_node<TypeSpecifierNode>(
+				Type::Enum, enum_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 		}
 
 		// Otherwise, treat as generic user-defined type
