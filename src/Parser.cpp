@@ -65,14 +65,14 @@ std::optional<Token> Parser::peek_token() {
 
 TokenPosition Parser::save_token_position() {
     TokenPosition cur_pos = lexer_.save_token_position();
-    saved_tokens_[cur_pos.cursor_] = { ast_nodes_.size() };
+    saved_tokens_[cur_pos.cursor_] = { current_token_, ast_nodes_.size() };
     return cur_pos;
 }
 
 void Parser::restore_token_position(const TokenPosition& saved_token_pos) {
     lexer_.restore_token_position(saved_token_pos);
     SavedToken saved_token = saved_tokens_.at(saved_token_pos.cursor_);
-    current_token_.reset();
+    current_token_ = saved_token.current_token_;
     ast_nodes_.erase(ast_nodes_.begin() + saved_token.ast_nodes_size_,
         ast_nodes_.end());
     saved_tokens_.erase(saved_token_pos.cursor_);
@@ -492,10 +492,12 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// Check for constructor (identifier matching struct name followed by '(')
+		// Save position BEFORE checking to allow restoration if not a constructor
+		TokenPosition saved_pos = save_token_position();
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
 		    peek_token()->value() == struct_name) {
-			// Save position to check if this is a constructor
-			TokenPosition saved_pos = save_token_position();
+			// Look ahead to see if this is a constructor (next token is '(')
+			// We need to consume the struct name token and check the next token
 			auto name_token_opt = consume_token();
 			if (!name_token_opt.has_value()) {
 				return ParseResult::error("Expected constructor name", Token());
@@ -504,6 +506,8 @@ ParseResult Parser::parse_struct_declaration()
 			std::string_view ctor_name = name_token.value();  // Get the string_view from the token
 
 			if (peek_token().has_value() && peek_token()->value() == "(") {
+				// Discard saved position since we're using this as a constructor
+				discard_saved_token(saved_pos);
 				// This is a constructor
 				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(struct_name, ctor_name);
 
@@ -634,6 +638,9 @@ ParseResult Parser::parse_struct_declaration()
 				// Not a constructor, restore position and parse as normal member
 				restore_token_position(saved_pos);
 			}
+		} else {
+			// Token doesn't match struct name, discard saved position
+			discard_saved_token(saved_pos);
 		}
 
 		// Check for destructor (~StructName followed by '(')

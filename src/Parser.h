@@ -200,7 +200,7 @@ private:
         };
 
         struct SavedToken {
-                // Token current_token_;
+                std::optional<Token> current_token_;
                 size_t ast_nodes_size_ = 0;
         };
         std::unordered_map<size_t, SavedToken> saved_tokens_;
