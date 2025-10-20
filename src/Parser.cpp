@@ -214,6 +214,23 @@ ParseResult Parser::parse_type_and_name() {
         type_spec.add_pointer_level(ptr_cv);
     }
 
+    // Parse reference declarators: & or &&
+    // Example: int& ref or int&& rvalue_ref
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+        peek_token()->value() == "&") {
+        consume_token(); // consume first '&'
+
+        // Check for && (rvalue reference)
+        bool is_rvalue = false;
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+            peek_token()->value() == "&") {
+            consume_token(); // consume second '&'
+            is_rvalue = true;
+        }
+
+        type_spec.set_reference(is_rvalue);
+    }
+
     // Check for alignas specifier before the identifier (if not already specified)
     if (!custom_alignment.has_value()) {
         custom_alignment = parse_alignas_specifier();

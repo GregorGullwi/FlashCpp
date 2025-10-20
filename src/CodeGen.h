@@ -124,7 +124,13 @@ private:
 			// Add parameter type, size, and pointer depth to function declaration
 			funcDeclOperands.emplace_back(param_type.type());
 			funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
-			funcDeclOperands.emplace_back(static_cast<int>(param_type.pointer_depth()));  // Add pointer depth
+
+			// References are treated like pointers in the IR (they're both addresses)
+			int pointer_depth = static_cast<int>(param_type.pointer_depth());
+			if (param_type.is_reference()) {
+				pointer_depth = 1;  // Treat reference as pointer depth 1
+			}
+			funcDeclOperands.emplace_back(pointer_depth);
 			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
 
 			//paramCount++;
@@ -1488,6 +1494,12 @@ private:
 	std::string getTypeCodeForMangling(const TypeSpecifierNode& type_node) {
 		std::string code;
 
+		// Handle references - they're treated as pointers in MSVC mangling
+		// References add one level of pointer indirection
+		if (type_node.is_reference()) {
+			code += "PE";  // Pointer prefix for reference
+		}
+
 		// Add pointer prefix for each level of indirection
 		for (int i = 0; i < type_node.pointer_depth(); ++i) {
 			code += "PE";  // Pointer prefix in MSVC mangling
@@ -1506,7 +1518,7 @@ private:
 			case Type::Long: code += "J"; break;   // long
 			case Type::UnsignedLong: code += "K"; break;  // unsigned long
 			case Type::LongLong: code += "_J"; break;  // long long
-			case Type::UnsignedLongLong: code += "K"; break;  // unsigned long long
+			case Type::UnsignedLongLong: code += "_K"; break;  // unsigned long long
 			case Type::Float: code += "M"; break;  // float
 			case Type::Double: code += "N"; break;  // double
 			case Type::LongDouble: code += "O"; break;  // long double

@@ -433,6 +433,12 @@ private:
 	std::string getTypeCode(const TypeSpecifierNode& type_node) const {
 		std::string code;
 
+		// Handle references - they're treated as pointers in MSVC mangling
+		// References add one level of pointer indirection
+		if (type_node.is_reference()) {
+			code += "PE";  // Pointer prefix for reference
+		}
+
 		// Add pointer prefix for each level of indirection
 		for (size_t i = 0; i < type_node.pointer_depth(); ++i) {
 			code += "PE";  // Pointer prefix in MSVC mangling

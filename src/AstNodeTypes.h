@@ -376,6 +376,14 @@ public:
 	const std::vector<PointerLevel>& pointer_levels() const { return pointer_levels_; }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
 
+	// Reference support
+	bool is_reference() const { return is_reference_; }
+	bool is_rvalue_reference() const { return is_rvalue_reference_; }
+	void set_reference(bool is_rvalue = false) {
+		is_reference_ = true;
+		is_rvalue_reference_ = is_rvalue;
+	}
+
 	// Get readable string representation
 	std::string getReadableString() const;
 
@@ -387,6 +395,8 @@ private:
 	Token token_;
 	TypeIndex type_index_;      // Index into gTypeInfo for user-defined types (structs, etc.)
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
+	bool is_reference_ = false;  // True if this is a reference type (&)
+	bool is_rvalue_reference_ = false;  // True if this is an rvalue reference (&&)
 };
 
 class DeclarationNode {
