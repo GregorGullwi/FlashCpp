@@ -1830,5 +1830,9 @@ TEST_CASE("RTTI") {
 }
 
 TEST_CASE("Global variables") {
-	run_test_from_file("global_variables.cpp", "Global variables", true);
+	run_test_from_file("global_variables.cpp", "Global variables", false);
+}
+
+TEST_CASE("Static variables") {
+	run_test_from_file("static_local.cpp", "Static variables", false);
 }

@@ -2176,8 +2176,14 @@ ParseResult Parser::parse_statement_or_declaration()
 			return (this->*(keyword_iter->second))();
 		}
 		else {
+			// Check if it's a storage class specifier (static, extern, etc.)
+			if (current_token.value() == "static" || current_token.value() == "extern" ||
+			    current_token.value() == "register" || current_token.value() == "mutable") {
+				// Parse as variable declaration with storage class
+				return parse_variable_declaration();
+			}
 			// Check if it's a type specifier keyword (int, float, etc.) or CV-qualifier or alignas
-			if (type_keywords.find(current_token.value()) != type_keywords.end()) {
+			else if (type_keywords.find(current_token.value()) != type_keywords.end()) {
 				// Parse as variable declaration with optional initialization
 				return parse_variable_declaration();
 			}
@@ -2229,6 +2235,25 @@ ParseResult Parser::parse_statement_or_declaration()
 
 ParseResult Parser::parse_variable_declaration()
 {
+	// Check for storage class specifier (static, extern, etc.)
+	StorageClass storage_class = StorageClass::None;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view keyword = peek_token()->value();
+		if (keyword == "static") {
+			storage_class = StorageClass::Static;
+			consume_token();
+		} else if (keyword == "extern") {
+			storage_class = StorageClass::Extern;
+			consume_token();
+		} else if (keyword == "register") {
+			storage_class = StorageClass::Register;
+			consume_token();
+		} else if (keyword == "mutable") {
+			storage_class = StorageClass::Mutable;
+			consume_token();
+		}
+	}
+
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
@@ -2246,10 +2271,11 @@ ParseResult Parser::parse_variable_declaration()
 		const Token& identifier_token = decl.identifier_token();
 		gSymbolTable.insert(identifier_token.value(), emplace_node<DeclarationNode>(decl));
 
-		// Create and return a VariableDeclarationNode
+		// Create and return a VariableDeclarationNode with storage class
 		ASTNode var_decl_node = emplace_node<VariableDeclarationNode>(
 			emplace_node<DeclarationNode>(decl),
-			init_expr
+			init_expr,
+			storage_class
 		);
 
 		const VariableDeclarationNode& var_decl = var_decl_node.as<VariableDeclarationNode>();

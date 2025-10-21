@@ -1320,18 +1320,29 @@ private:
 	std::vector<ASTNode> initializers_;
 };
 
+// Storage class specifiers
+enum class StorageClass {
+	None,      // No storage class specified (automatic for local, external for global)
+	Static,    // static keyword
+	Extern,    // extern keyword
+	Register,  // register keyword (deprecated in C++17)
+	Mutable    // mutable keyword (for class members)
+};
+
 class VariableDeclarationNode {
 public:
-	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt)
-		: declaration_node_(declaration_node), initializer_(initializer) {}
+	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None)
+		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class) {}
 
 	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
 	const ASTNode& declaration_node() const { return declaration_node_; }
 	const std::optional<ASTNode>& initializer() const { return initializer_; }
+	StorageClass storage_class() const { return storage_class_; }
 
 private:
 	ASTNode declaration_node_;
 	std::optional<ASTNode> initializer_;
+	StorageClass storage_class_;
 };
 
 class IfStatementNode {

@@ -2535,7 +2535,14 @@ public:
 			// global_var [Type][Size] @name [is_initialized] [init_value?]
 			// Format: [type, size_in_bits, var_name, is_initialized, init_value?]
 			assert((getOperandCount() == 4 || getOperandCount() == 5) && "GlobalVariableDecl must have 4 or 5 operands");
-			oss << "global_var " << getOperandAsTypeString(0) << getOperandAs<int>(1) << " @" << getOperandAs<std::string_view>(2);
+			// var_name can be either std::string (for static locals) or std::string_view (for regular globals)
+			std::string var_name;
+			if (std::holds_alternative<std::string>(operands_[2])) {
+				var_name = std::get<std::string>(operands_[2]);
+			} else {
+				var_name = std::string(std::get<std::string_view>(operands_[2]));
+			}
+			oss << "global_var " << getOperandAsTypeString(0) << getOperandAs<int>(1) << " @" << var_name;
 			if (getOperandCount() >= 4) {
 				oss << " " << (getOperandAs<bool>(3) ? "initialized" : "uninitialized");
 				if (getOperandCount() == 5 && getOperandAs<bool>(3)) {
@@ -2550,7 +2557,14 @@ public:
 			// %result = global_load @global_name
 			// Format: [result_temp, global_name]
 			assert(getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
-			oss << '%' << getOperandAs<TempVar>(0).index << " = global_load @" << getOperandAs<std::string_view>(1);
+			// global_name can be either std::string (for static locals) or std::string_view (for regular globals)
+			std::string global_name;
+			if (std::holds_alternative<std::string>(operands_[1])) {
+				global_name = std::get<std::string>(operands_[1]);
+			} else {
+				global_name = std::string(std::get<std::string_view>(operands_[1]));
+			}
+			oss << '%' << getOperandAs<TempVar>(0).index << " = global_load @" << global_name;
 		}
 		break;
 

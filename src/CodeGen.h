@@ -247,7 +247,13 @@ private:
 		// Reset the temporary variable counter for each new function
 		var_counter = TempVar();
 
+		// Set current function name for static local variable mangling
 		const DeclarationNode& func_decl = node.decl_node();
+		current_function_name_ = std::string(func_decl.identifier_token().value());
+
+		// Clear static local names map for new function
+		static_local_names_.clear();
+
 		const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 
 		// Create function declaration with return type and name
@@ -430,6 +436,10 @@ private:
 
 		// Reset the temporary variable counter for each new constructor
 		var_counter = TempVar();
+
+		// Set current function name for static local variable mangling
+		current_function_name_ = std::string(node.name());
+		static_local_names_.clear();
 
 		// Create constructor declaration with struct name
 		std::vector<IrOperand> ctorDeclOperands;
@@ -673,6 +683,10 @@ private:
 
 		// Reset the temporary variable counter for each new destructor
 		var_counter = TempVar();
+
+		// Set current function name for static local variable mangling
+		current_function_name_ = std::string(node.name());
+		static_local_names_.clear();
 
 		// Create destructor declaration with struct name
 		std::vector<IrOperand> dtorDeclOperands;
@@ -1172,13 +1186,25 @@ private:
 		// Check if this is a global variable (declared at global scope)
 		bool is_global = (symbol_table.get_current_scope_type() == ScopeType::Global);
 
-		if (is_global) {
-			// Handle global variable
+		// Check if this is a static local variable
+		bool is_static_local = (node.storage_class() == StorageClass::Static && !is_global);
+
+		if (is_global || is_static_local) {
+			// Handle global variable or static local variable
+			// For static locals, mangle the name to include the function name
+			std::string var_name;
+			if (is_static_local) {
+				// Mangle name as: function_name.variable_name
+				var_name = std::string(current_function_name_) + "." + std::string(decl.identifier_token().value());
+			} else {
+				var_name = std::string(decl.identifier_token().value());
+			}
+
 			// Format: [type, size_in_bits, var_name, is_initialized, init_value?]
 			std::vector<IrOperand> operands;
 			operands.emplace_back(type_node.type());
 			operands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-			operands.emplace_back(decl.identifier_token().value());
+			operands.emplace_back(var_name);
 
 			// Check if initialized
 			if (node.initializer()) {
@@ -1200,6 +1226,17 @@ private:
 			}
 
 			ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(operands), decl.identifier_token());
+
+			// For static locals, store the mapping from local name to mangled name and type info
+			// (The parser already added it to the symbol table)
+			if (is_static_local) {
+				StaticLocalInfo info;
+				info.mangled_name = var_name;
+				info.type = type_node.type();
+				info.size_in_bits = static_cast<int>(type_node.size_in_bits());
+				static_local_names_[std::string(decl.identifier_token().value())] = info;
+			}
+
 			return;
 		}
 
@@ -1446,6 +1483,23 @@ private:
 	}
 
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
+		// Check if this is a static local variable FIRST (before symbol table lookup)
+		auto static_local_it = static_local_names_.find(std::string(identifierNode.name()));
+		if (static_local_it != static_local_names_.end()) {
+			// This is a static local - generate GlobalLoad with mangled name
+			const StaticLocalInfo& info = static_local_it->second;
+
+			// Generate GlobalLoad with mangled name
+			TempVar result_temp = var_counter.next();
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_temp);
+			operands.emplace_back(info.mangled_name);  // Use mangled name
+			ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+
+			// Return the temp variable that will hold the loaded value
+			return { info.type, info.size_in_bits, result_temp };
+		}
+
 		// First try local symbol table
 		std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
 		bool is_global = false;
@@ -3064,4 +3118,18 @@ private:
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags
+
+	// Current function name (for mangling static local variables)
+	std::string current_function_name_;
+
+	// Static local variable information
+	struct StaticLocalInfo {
+		std::string mangled_name;
+		Type type;
+		int size_in_bits;
+	};
+
+	// Map from local static variable name to info
+	// Key: local variable name, Value: static local info
+	std::unordered_map<std::string, StaticLocalInfo> static_local_names_;
 };

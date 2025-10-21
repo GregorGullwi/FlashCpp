@@ -2591,14 +2591,20 @@ private:
 
 		Type var_type = instruction.getOperandAs<Type>(0);
 		int size_in_bits = instruction.getOperandAs<int>(1);
-		std::string_view var_name = instruction.getOperandAs<std::string_view>(2);
+		// var_name can be either std::string (for static locals) or std::string_view (for regular globals)
+		std::string var_name;
+		if (std::holds_alternative<std::string>(instruction.getOperand(2))) {
+			var_name = instruction.getOperandAs<std::string>(2);
+		} else {
+			var_name = std::string(instruction.getOperandAs<std::string_view>(2));
+		}
 		bool is_initialized = instruction.getOperandAs<bool>(3);
 
 		// Store global variable info for later use
 		// We'll need to create .data or .bss sections and add symbols
 		// For now, just track the global variable
 		GlobalVariableInfo global_info;
-		global_info.name = std::string(var_name);
+		global_info.name = var_name;  // Already a std::string
 		global_info.type = var_type;
 		global_info.size_in_bytes = size_in_bits / 8;
 		global_info.is_initialized = is_initialized;
@@ -2621,7 +2627,13 @@ private:
 		assert(instruction.getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
 
 		TempVar result_temp = instruction.getOperandAs<TempVar>(0);
-		std::string_view global_name = instruction.getOperandAs<std::string_view>(1);
+		// Global name can be either std::string (for static locals) or std::string_view (for regular globals)
+		std::string global_name;
+		if (std::holds_alternative<std::string>(instruction.getOperand(1))) {
+			global_name = instruction.getOperandAs<std::string>(1);
+		} else {
+			global_name = std::string(instruction.getOperandAs<std::string_view>(1));
+		}
 
 		// Load global variable using RIP-relative addressing
 		// MOV EAX, [RIP + displacement]
