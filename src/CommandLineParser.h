@@ -55,6 +55,10 @@ public:
 							context.addIncludeDir(nextArg);
 						}
 					}
+					else if (isKnownFlag(arg.substr(1))) {
+						// Known flags don't take a value
+						optionValues_[arg.substr(1)] = std::monostate{};
+					}
 					else if (i + 1 >= argc) {
 						optionValues_[arg.substr(1)] = std::monostate{};
 					}
@@ -90,6 +94,14 @@ public:
 	}
 
 private:
+	// Helper to check if an option is a known flag (doesn't take a value)
+	static bool isKnownFlag(std::string_view flag) {
+		return flag == "v" || flag == "verbose" ||
+		       flag == "E" ||
+		       flag == "perf-stats" || flag == "stats" ||
+		       flag == "time" || flag == "timing";
+	}
+
 	std::map<std::string_view, std::variant<std::monostate, std::string_view>> optionValues_;
 	std::vector<std::string_view> inputFileArgs_;
 };
