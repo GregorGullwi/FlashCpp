@@ -15,9 +15,9 @@ class Parser;
 
 class AstToIr {
 public:
-	AstToIr() : global_symbol_table_(nullptr), context_(nullptr) {}
-	AstToIr(SymbolTable* global_symbol_table, CompileContext* context = nullptr)
-		: global_symbol_table_(global_symbol_table), context_(context) {}
+	AstToIr() = delete;  // Require valid references
+	AstToIr(SymbolTable& global_symbol_table, CompileContext& context)
+		: global_symbol_table_(&global_symbol_table), context_(&context) {}
 
 	void visit(const ASTNode& node) {
 		// Skip empty nodes (e.g., from forward declarations)
@@ -106,7 +106,7 @@ private:
 		}
 
 		// If access control is disabled, allow all access
-		if (context_ && context_->isAccessControlDisabled()) {
+		if (context_->isAccessControlDisabled()) {
 			return true;
 		}
 
@@ -204,7 +204,7 @@ private:
 		}
 
 		// If access control is disabled, allow all access
-		if (context_ && context_->isAccessControlDisabled()) {
+		if (context_->isAccessControlDisabled()) {
 			return true;
 		}
 
