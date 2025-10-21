@@ -137,6 +137,13 @@ struct StructMemberFunction {
 	bool is_operator_overload; // True if this is an operator overload (operator=, operator+, etc.)
 	std::string_view operator_symbol; // The operator symbol (e.g., "=", "+", "==") if is_operator_overload is true
 
+	// Virtual function support (Phase 2)
+	bool is_virtual = false;        // True if declared with 'virtual' keyword
+	bool is_pure_virtual = false;   // True if pure virtual (= 0)
+	bool is_override = false;       // True if declared with 'override' keyword
+	bool is_final = false;          // True if declared with 'final' keyword
+	int vtable_index = -1;          // Index in vtable, -1 if not virtual
+
 	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
 	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
 		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
@@ -154,6 +161,10 @@ struct StructTypeInfo {
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
 	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
+
+	// Virtual function support (Phase 2)
+	bool has_vtable = false;    // True if this struct has virtual functions
+	std::vector<const StructMemberFunction*> vtable;  // Virtual function table (pointers to member functions)
 
 	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public)
 		: name(std::move(n)), default_access(default_acc) {}
@@ -177,28 +188,53 @@ struct StructTypeInfo {
 		alignment = std::max(alignment, effective_alignment);
 	}
 
-	void addMemberFunction(const std::string& function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		member_functions.emplace_back(function_name, function_decl, access, false, false);
+	void addMemberFunction(const std::string& function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
+	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
+		auto& func = member_functions.emplace_back(function_name, function_decl, access, false, false);
+		func.is_virtual = is_virtual;
+		func.is_pure_virtual = is_pure_virtual;
+		func.is_override = is_override;
+		func.is_final = is_final;
 	}
 
 	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
 		member_functions.emplace_back(name, constructor_decl, access, true, false);
 	}
 
-	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		member_functions.emplace_back("~" + name, destructor_decl, access, false, true, false, "");
+	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public, bool is_virtual = false) {
+		auto& dtor = member_functions.emplace_back("~" + name, destructor_decl, access, false, true, false, "");
+		dtor.is_virtual = is_virtual;
 	}
 
-	void addOperatorOverload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public) {
+	void addOperatorOverload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
+	                         bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
 		std::string op_name = "operator";
 		op_name += operator_symbol;
-		member_functions.emplace_back(op_name, function_decl, access, false, false, true, operator_symbol);
+		auto& func = member_functions.emplace_back(op_name, function_decl, access, false, false, true, operator_symbol);
+		func.is_virtual = is_virtual;
+		func.is_pure_virtual = is_pure_virtual;
+		func.is_override = is_override;
+		func.is_final = is_final;
 	}
 
 	void finalize() {
+		// Build vtable first (if struct has virtual functions)
+		buildVTable();
+
 		// If custom alignment is specified, use it instead of natural alignment
 		if (custom_alignment > 0) {
 			alignment = custom_alignment;
+		}
+
+		// Add vptr if this struct has virtual functions
+		if (has_vtable) {
+			// vptr is at offset 0, size 8 (pointer size on x64)
+			// Shift all existing members by 8 bytes
+			for (auto& member : members) {
+				member.offset += 8;
+			}
+			total_size += 8;
+			alignment = std::max(alignment, size_t(8));  // At least pointer alignment
 		}
 
 		// Pad struct to its alignment
@@ -207,6 +243,9 @@ struct StructTypeInfo {
 
 	// Finalize with base classes - computes layout including base class subobjects
 	void finalizeWithBases();
+
+	// Build vtable for virtual functions (called during finalization)
+	void buildVTable();
 
 	// Add a base class
 	void addBaseClass(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access) {
@@ -832,6 +871,12 @@ struct StructMemberFunctionDecl {
 	bool is_operator_overload;
 	std::string_view operator_symbol;  // The operator symbol (e.g., "=", "+") if is_operator_overload is true
 
+	// Virtual function support (Phase 2)
+	bool is_virtual = false;        // True if declared with 'virtual' keyword
+	bool is_pure_virtual = false;   // True if pure virtual (= 0)
+	bool is_override = false;       // True if declared with 'override' keyword
+	bool is_final = false;          // True if declared with 'final' keyword
+
 	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false,
 	                         bool is_op_overload = false, std::string_view op_symbol = "")
 		: function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
@@ -860,20 +905,33 @@ public:
 		base_classes_.emplace_back(base_name, base_type_index, access, 0);
 	}
 
-	void add_member_function(ASTNode function_decl, AccessSpecifier access) {
-		member_functions_.emplace_back(function_decl, access, false, false);
+	void add_member_function(ASTNode function_decl, AccessSpecifier access,
+	                         bool is_virtual = false, bool is_pure_virtual = false,
+	                         bool is_override = false, bool is_final = false) {
+		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false);
+		func_decl.is_virtual = is_virtual;
+		func_decl.is_pure_virtual = is_pure_virtual;
+		func_decl.is_override = is_override;
+		func_decl.is_final = is_final;
 	}
 
 	void add_constructor(ASTNode constructor_decl, AccessSpecifier access) {
 		member_functions_.emplace_back(constructor_decl, access, true, false);
 	}
 
-	void add_destructor(ASTNode destructor_decl, AccessSpecifier access) {
-		member_functions_.emplace_back(destructor_decl, access, false, true, false, "");
+	void add_destructor(ASTNode destructor_decl, AccessSpecifier access, bool is_virtual = false) {
+		auto& dtor_decl = member_functions_.emplace_back(destructor_decl, access, false, true, false, "");
+		dtor_decl.is_virtual = is_virtual;
 	}
 
-	void add_operator_overload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access) {
-		member_functions_.emplace_back(function_decl, access, false, false, true, operator_symbol);
+	void add_operator_overload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access,
+	                           bool is_virtual = false, bool is_pure_virtual = false,
+	                           bool is_override = false, bool is_final = false) {
+		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false, true, operator_symbol);
+		func_decl.is_virtual = is_virtual;
+		func_decl.is_pure_virtual = is_pure_virtual;
+		func_decl.is_override = is_override;
+		func_decl.is_final = is_final;
 	}
 
 private:

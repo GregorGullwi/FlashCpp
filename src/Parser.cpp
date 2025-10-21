@@ -791,6 +791,14 @@ ParseResult Parser::parse_struct_declaration()
 			discard_saved_token(saved_pos);
 		}
 
+		// Check for 'virtual' keyword (for virtual destructors and virtual member functions)
+		bool is_virtual = false;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    peek_token()->value() == "virtual") {
+			is_virtual = true;
+			consume_token();  // consume 'virtual'
+		}
+
 		// Check for destructor (~StructName followed by '(')
 		if (peek_token().has_value() && peek_token()->value() == "~") {
 			consume_token();  // consume '~'
@@ -812,6 +820,27 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(struct_name, dtor_name);
+
+			// Parse override/final specifiers for destructors
+			bool is_override = false;
+			bool is_final = false;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view keyword = peek_token()->value();
+				if (keyword == "override") {
+					is_override = true;
+					consume_token();
+				} else if (keyword == "final") {
+					is_final = true;
+					consume_token();
+				} else {
+					break;  // Not a destructor specifier
+				}
+			}
+
+			// In C++, 'override' or 'final' on destructor implies 'virtual'
+			if (is_override || is_final) {
+				is_virtual = true;
+			}
 
 			// Check for = default or = delete
 			bool is_defaulted = false;
@@ -888,12 +917,13 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Add destructor to struct (unless deleted)
 			if (!is_deleted) {
-				struct_ref.add_destructor(dtor_node, current_access);
+				struct_ref.add_destructor(dtor_node, current_access, is_virtual);
 			}
 			continue;
 		}
 
 		// Parse member declaration (could be data member or member function)
+		// Note: is_virtual was already checked above (line 794)
 		auto member_result = parse_type_and_name();
 		if (member_result.is_error()) {
 			return member_result;
@@ -936,46 +966,74 @@ ParseResult Parser::parse_struct_declaration()
 				member_func_ref.add_parameter_node(param);
 			}
 
-			// Check for = default or = delete
+			// Check for override, final, = 0, = default, or = delete after parameters
+			bool is_override = false;
+			bool is_final = false;
+			bool is_pure_virtual = false;
 			bool is_defaulted = false;
 			bool is_deleted = false;
+
+			// Parse override/final specifiers
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view keyword = peek_token()->value();
+				if (keyword == "override") {
+					is_override = true;
+					consume_token();
+				} else if (keyword == "final") {
+					is_final = true;
+					consume_token();
+				} else {
+					break;  // Not a function specifier
+				}
+			}
+
+			// Check for = 0 (pure virtual), = default, or = delete
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
 			    peek_token()->value() == "=") {
 				consume_token(); // consume '='
 
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-					if (peek_token()->value() == "default") {
-						consume_token(); // consume 'default'
-						is_defaulted = true;
-
-						// Expect ';'
-						if (!consume_punctuator(";")) {
-							return ParseResult::error("Expected ';' after '= default'", *peek_token());
+				if (peek_token().has_value()) {
+					if (peek_token()->type() == Token::Type::Literal && peek_token()->value() == "0") {
+						// Pure virtual function (= 0)
+						consume_token();  // consume '0'
+						is_pure_virtual = true;
+						if (!is_virtual) {
+							return ParseResult::error("Pure virtual function must be declared with 'virtual' keyword", *peek_token());
 						}
+					} else if (peek_token()->type() == Token::Type::Keyword) {
+						if (peek_token()->value() == "default") {
+							consume_token(); // consume 'default'
+							is_defaulted = true;
 
-						// Mark as implicit (same behavior as compiler-generated)
-						member_func_ref.set_is_implicit(true);
+							// Expect ';'
+							if (!consume_punctuator(";")) {
+								return ParseResult::error("Expected ';' after '= default'", *peek_token());
+							}
 
-						// Create an empty block for the function body
-						auto [block_node, block_ref] = create_node_ref(BlockNode());
-						member_func_ref.set_definition(block_ref);
-					} else if (peek_token()->value() == "delete") {
-						consume_token(); // consume 'delete'
-						is_deleted = true;
+							// Mark as implicit (same behavior as compiler-generated)
+							member_func_ref.set_is_implicit(true);
 
-						// Expect ';'
-						if (!consume_punctuator(";")) {
-							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+							// Create an empty block for the function body
+							auto [block_node, block_ref] = create_node_ref(BlockNode());
+							member_func_ref.set_definition(block_ref);
+						} else if (peek_token()->value() == "delete") {
+							consume_token(); // consume 'delete'
+							is_deleted = true;
+
+							// Expect ';'
+							if (!consume_punctuator(";")) {
+								return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+							}
+
+							// For now, we'll just skip deleted functions
+							// TODO: Track deleted functions to prevent their use
+							continue; // Don't add deleted function to struct
+						} else {
+							return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
 						}
-
-						// For now, we'll just skip deleted functions
-						// TODO: Track deleted functions to prevent their use
-						continue; // Don't add deleted function to struct
 					} else {
-						return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+						return ParseResult::error("Expected '0', 'default', or 'delete' after '='", *peek_token());
 					}
-				} else {
-					return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
 				}
 			}
 
@@ -1030,15 +1088,22 @@ ParseResult Parser::parse_struct_declaration()
 				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after member function declaration", *peek_token());
 			}
 
+			// In C++, 'override' implies 'virtual'
+			if (is_override || is_final) {
+				is_virtual = true;
+			}
+
 			// Check if this is an operator overload
 			std::string_view func_name = decl_node.identifier_token().value();
 			if (func_name.starts_with("operator")) {
 				// Extract the operator symbol (e.g., "operator=" -> "=")
 				std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
-				struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access);
+				struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access,
+				                                 is_virtual, is_pure_virtual, is_override, is_final);
 			} else {
 				// Add regular member function to struct
-				struct_ref.add_member_function(member_func_node, current_access);
+				struct_ref.add_member_function(member_func_node, current_access,
+				                               is_virtual, is_pure_virtual, is_override, is_final);
 			}
 		} else {
 			// This is a data member
@@ -1135,7 +1200,8 @@ ParseResult Parser::parse_struct_declaration()
 			// Add destructor to struct type info
 			struct_info->addDestructor(
 				func_decl.function_declaration,
-				func_decl.access
+				func_decl.access,
+				func_decl.is_virtual
 			);
 			has_user_defined_destructor = true;
 		} else if (func_decl.is_operator_overload) {
@@ -1143,7 +1209,11 @@ ParseResult Parser::parse_struct_declaration()
 			struct_info->addOperatorOverload(
 				func_decl.operator_symbol,
 				func_decl.function_declaration,
-				func_decl.access
+				func_decl.access,
+				func_decl.is_virtual,
+				func_decl.is_pure_virtual,
+				func_decl.is_override,
+				func_decl.is_final
 			);
 
 			// Check if this is a copy or move assignment operator
@@ -1170,7 +1240,11 @@ ParseResult Parser::parse_struct_declaration()
 			struct_info->addMemberFunction(
 				std::string(decl.identifier_token().value()),
 				func_decl.function_declaration,
-				func_decl.access
+				func_decl.access,
+				func_decl.is_virtual,
+				func_decl.is_pure_virtual,
+				func_decl.is_override,
+				func_decl.is_final
 			);
 		}
 	}

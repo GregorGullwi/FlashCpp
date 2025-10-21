@@ -466,8 +466,33 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
 
 // Finalize struct layout with base classes
 void StructTypeInfo::finalizeWithBases() {
+    // Step 0: Build vtable first (before layout)
+    buildVTable();
+
     size_t current_offset = 0;
     size_t max_alignment = 1;
+
+    // Step 0.5: Add vptr if this struct has virtual functions
+    // Note: If base class has vtable, we inherit its vptr (at offset 0 in base subobject)
+    // Only add vptr if we introduce virtual functions and have no polymorphic base
+    bool base_has_vtable = false;
+    for (const auto& base : base_classes) {
+        if (base.type_index < gTypeInfo.size()) {
+            const TypeInfo& base_type = gTypeInfo[base.type_index];
+            const StructTypeInfo* base_info = base_type.getStructInfo();
+            if (base_info && base_info->has_vtable) {
+                base_has_vtable = true;
+                break;
+            }
+        }
+    }
+
+    // If we have virtual functions but no polymorphic base, add vptr
+    if (has_vtable && !base_has_vtable) {
+        // vptr is at offset 0, size 8 (pointer size on x64)
+        current_offset = 8;
+        max_alignment = 8;  // Pointer alignment
+    }
 
     // Step 1: Layout base class subobjects
     for (auto& base : base_classes) {
@@ -525,6 +550,82 @@ void StructTypeInfo::finalizeWithBases() {
     // Step 4: Pad to alignment
     alignment = max_alignment;
     total_size = (current_offset + alignment - 1) & ~(alignment - 1);
+}
+
+// Build vtable for virtual functions
+void StructTypeInfo::buildVTable() {
+    // Step 1: Copy base class vtable entries (if any)
+    for (const auto& base : base_classes) {
+        if (base.type_index >= gTypeInfo.size()) {
+            continue;
+        }
+
+        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const StructTypeInfo* base_info = base_type.getStructInfo();
+
+        if (base_info) {
+            if (base_info->has_vtable) {
+                // Copy all base vtable entries
+                for (const auto* base_func : base_info->vtable) {
+                    if (base_func != nullptr) {  // Safety check
+                        vtable.push_back(base_func);
+                    }
+                }
+                has_vtable = true;
+            }
+        }
+    }
+
+    // Step 2: Process this class's virtual functions
+    if (member_functions.empty()) {
+        return;  // No member functions to process
+    }
+
+    for (auto& func : member_functions) {
+        // Skip constructors (they can't be virtual in the vtable sense)
+        if (func.is_constructor) {
+            continue;
+        }
+
+        // Skip non-virtual functions
+        // Note: A function with 'override' is implicitly virtual even without 'virtual' keyword
+        if (!func.is_virtual && !func.is_override) {
+            continue;  // Not a virtual function
+        }
+
+        // Mark struct as having a vtable
+        has_vtable = true;
+
+        // Get function name for matching
+        const std::string& func_name = func.name;
+
+        // Check if this function overrides a base class virtual function
+        int override_index = -1;
+        for (size_t i = 0; i < vtable.size(); ++i) {
+            const StructMemberFunction* base_func = vtable[i];
+            if (base_func != nullptr && base_func->name == func_name) {
+                override_index = static_cast<int>(i);
+                break;
+            }
+        }
+
+        if (override_index >= 0) {
+            // Override existing vtable entry
+            vtable[override_index] = &func;
+            func.vtable_index = override_index;
+        } else {
+            // Add new vtable entry
+            func.vtable_index = static_cast<int>(vtable.size());
+            vtable.push_back(&func);
+        }
+
+        // Validate override keyword usage
+        if (func.is_override && override_index < 0) {
+            // Error: 'override' specified but no base function to override
+            // For now, we'll just ignore this - proper error handling would require
+            // access to the parser's error reporting mechanism
+        }
+    }
 }
 
 // Find member recursively through base classes
