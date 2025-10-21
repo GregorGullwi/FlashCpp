@@ -59,6 +59,7 @@ int main(int argc, char *argv[]) {
 
     context.setVerboseMode(argsparser.hasFlag("v") || argsparser.hasFlag("verbose"));
     context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
+    context.setDisableAccessControl(argsparser.hasFlag("fno-access-control") || argsparser.hasFlag("no-access-control"));
 
     bool show_perf_stats = argsparser.hasFlag("perf-stats") || argsparser.hasFlag("stats");
     bool show_timing = argsparser.hasFlag("time") || argsparser.hasFlag("timing") || show_perf_stats;
@@ -139,7 +140,7 @@ int main(int argc, char *argv[]) {
 
     const auto& ast = parser.get_nodes();
 
-    AstToIr converter(&gSymbolTable);
+    AstToIr converter(&gSymbolTable, &context);
     {
         PhaseTimer timer("AST to IR", show_timing);
         for (auto& node_handle : ast) {

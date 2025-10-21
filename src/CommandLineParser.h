@@ -99,7 +99,8 @@ private:
 		return flag == "v" || flag == "verbose" ||
 		       flag == "E" ||
 		       flag == "perf-stats" || flag == "stats" ||
-		       flag == "time" || flag == "timing";
+		       flag == "time" || flag == "timing" ||
+		       flag == "fno-access-control" || flag == "no-access-control";
 	}
 
 	std::map<std::string_view, std::variant<std::monostate, std::string_view>> optionValues_;

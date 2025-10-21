@@ -59,6 +59,15 @@ public:
 		preprocessorOnlyMode_ = preprocessorOnlyMode;
 	}
 
+	// Getter and setter for disabling access control checking
+	bool isAccessControlDisabled() const {
+		return disableAccessControl_;
+	}
+
+	void setDisableAccessControl(bool disable) {
+		disableAccessControl_ = disable;
+	}
+
 	// #pragma pack state management
 	// Returns the current pack alignment value (0 = no packing, use natural alignment)
 	size_t getCurrentPackAlignment() const {
@@ -119,6 +128,7 @@ private:
 	std::string outputFile_;
 	bool verboseMode_ = false;
 	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
+	bool disableAccessControl_ = false; // Disable access control checking (for debugging)
 	std::vector<std::string> dependencies_;
 
 	// #pragma pack state

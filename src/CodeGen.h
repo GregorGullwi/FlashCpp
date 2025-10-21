@@ -3,6 +3,7 @@
 #include "AstNodeTypes.h"
 #include "IRTypes.h"
 #include "SymbolTable.h"
+#include "CompileContext.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -14,8 +15,9 @@ class Parser;
 
 class AstToIr {
 public:
-	AstToIr() : global_symbol_table_(nullptr) {}
-	AstToIr(SymbolTable* global_symbol_table) : global_symbol_table_(global_symbol_table) {}
+	AstToIr() : global_symbol_table_(nullptr), context_(nullptr) {}
+	AstToIr(SymbolTable* global_symbol_table, CompileContext* context = nullptr)
+		: global_symbol_table_(global_symbol_table), context_(context) {}
 
 	void visit(const ASTNode& node) {
 		// Skip empty nodes (e.g., from forward declarations)
@@ -93,6 +95,150 @@ public:
 	const Ir& getIr() const { return ir_; }
 
 private:
+	// Helper function to check if access to a member is allowed
+	// Returns true if access is allowed, false otherwise
+	bool checkMemberAccess(const StructMember* member,
+	                       const StructTypeInfo* member_owner_struct,
+	                       const StructTypeInfo* accessing_struct,
+	                       const BaseClassSpecifier* inheritance_path = nullptr) const {
+		if (!member || !member_owner_struct) {
+			return false;
+		}
+
+		// If access control is disabled, allow all access
+		if (context_ && context_->isAccessControlDisabled()) {
+			return true;
+		}
+
+		// Public members are always accessible
+		if (member->access == AccessSpecifier::Public) {
+			return true;
+		}
+
+		// If we're not in a member function context, only public members are accessible
+		if (!accessing_struct) {
+			return false;
+		}
+
+		// Private members are only accessible from the same class
+		if (member->access == AccessSpecifier::Private) {
+			return accessing_struct == member_owner_struct;
+		}
+
+		// Protected members are accessible from:
+		// 1. The same class
+		// 2. Derived classes (if inherited as public or protected)
+		if (member->access == AccessSpecifier::Protected) {
+			// Same class
+			if (accessing_struct == member_owner_struct) {
+				return true;
+			}
+
+			// Check if accessing_struct is derived from member_owner_struct
+			return isAccessibleThroughInheritance(accessing_struct, member_owner_struct);
+		}
+
+		return false;
+	}
+
+	// Helper to check if derived_struct can access protected members of base_struct
+	bool isAccessibleThroughInheritance(const StructTypeInfo* derived_struct,
+	                                     const StructTypeInfo* base_struct) const {
+		if (!derived_struct || !base_struct) {
+			return false;
+		}
+
+		// Check direct base classes
+		for (const auto& base : derived_struct->base_classes) {
+			if (base.type_index >= gTypeInfo.size()) {
+				continue;
+			}
+
+			const TypeInfo& base_type = gTypeInfo[base.type_index];
+			const StructTypeInfo* base_info = base_type.getStructInfo();
+
+			if (!base_info) {
+				continue;
+			}
+
+			// Found the base class
+			if (base_info == base_struct) {
+				// Protected members are accessible if inherited as public or protected
+				return base.access == AccessSpecifier::Public ||
+				       base.access == AccessSpecifier::Protected;
+			}
+
+			// Recursively check base classes
+			if (isAccessibleThroughInheritance(base_info, base_struct)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	// Get the current struct context (which class we're currently in)
+	const StructTypeInfo* getCurrentStructContext() const {
+		// Check if we're in a member function by looking at the symbol table
+		// The 'this' pointer is only present in member function contexts
+		auto this_symbol = symbol_table.lookup("this");
+		if (this_symbol.has_value() && this_symbol->is<DeclarationNode>()) {
+			const DeclarationNode& this_decl = this_symbol->as<DeclarationNode>();
+			const TypeSpecifierNode& this_type = this_decl.type_node().as<TypeSpecifierNode>();
+
+			if (this_type.type() == Type::Struct && this_type.type_index() < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[this_type.type_index()];
+				return type_info.getStructInfo();
+			}
+		}
+
+		return nullptr;
+	}
+
+	// Helper function to check if access to a member function is allowed
+	bool checkMemberFunctionAccess(const StructMemberFunction* member_func,
+	                                const StructTypeInfo* member_owner_struct,
+	                                const StructTypeInfo* accessing_struct) const {
+		if (!member_func || !member_owner_struct) {
+			return false;
+		}
+
+		// If access control is disabled, allow all access
+		if (context_ && context_->isAccessControlDisabled()) {
+			return true;
+		}
+
+		// Public member functions are always accessible
+		if (member_func->access == AccessSpecifier::Public) {
+			return true;
+		}
+
+		// If we're not in a member function context, only public functions are accessible
+		if (!accessing_struct) {
+			return false;
+		}
+
+		// Private member functions are only accessible from the same class
+		if (member_func->access == AccessSpecifier::Private) {
+			return accessing_struct == member_owner_struct;
+		}
+
+		// Protected member functions are accessible from:
+		// 1. The same class
+		// 2. Derived classes
+		if (member_func->access == AccessSpecifier::Protected) {
+			// Same class
+			if (accessing_struct == member_owner_struct) {
+				return true;
+			}
+
+			// Check if accessing_struct is derived from member_owner_struct
+			return isAccessibleThroughInheritance(accessing_struct, member_owner_struct);
+		}
+
+		return false;
+	}
+
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		auto definition_block = node.get_definition();
 		if (!definition_block.has_value())
@@ -2073,20 +2219,46 @@ private:
 		int vtable_index = -1;
 
 		size_t struct_type_index = object_type.type_index();
+		const StructMemberFunction* called_member_func = nullptr;
+		const StructTypeInfo* struct_info = nullptr;
+
 		if (struct_type_index < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[struct_type_index];
-			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			struct_info = type_info.getStructInfo();
 
 			if (struct_info) {
 				// Find the member function in the struct
 				std::string_view func_name = func_decl_node.identifier_token().value();
 				for (const auto& member_func : struct_info->member_functions) {
-					if (member_func.name == func_name && member_func.is_virtual) {
-						is_virtual_call = true;
-						vtable_index = member_func.vtable_index;
+					if (member_func.name == func_name) {
+						called_member_func = &member_func;
+						if (member_func.is_virtual) {
+							is_virtual_call = true;
+							vtable_index = member_func.vtable_index;
+						}
 						break;
 					}
 				}
+			}
+		}
+
+		// Check access control for member function calls
+		if (called_member_func && struct_info) {
+			const StructTypeInfo* current_context = getCurrentStructContext();
+			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context)) {
+				std::cerr << "Error: Cannot access ";
+				if (called_member_func->access == AccessSpecifier::Private) {
+					std::cerr << "private";
+				} else if (called_member_func->access == AccessSpecifier::Protected) {
+					std::cerr << "protected";
+				}
+				std::cerr << " member function '" << called_member_func->name << "' of '" << struct_info->name << "'";
+				if (current_context) {
+					std::cerr << " from '" << current_context->name << "'";
+				}
+				std::cerr << "\n";
+				assert(false && "Access control violation");
+				return { Type::Int, 32, TempVar{0} };
 			}
 		}
 
@@ -2344,6 +2516,24 @@ private:
 
 		if (!member) {
 			assert(false && "Member not found in struct or base classes");
+			return {};
+		}
+
+		// Check access control
+		const StructTypeInfo* current_context = getCurrentStructContext();
+		if (!checkMemberAccess(member, struct_info, current_context)) {
+			std::cerr << "Error: Cannot access ";
+			if (member->access == AccessSpecifier::Private) {
+				std::cerr << "private";
+			} else if (member->access == AccessSpecifier::Protected) {
+				std::cerr << "protected";
+			}
+			std::cerr << " member '" << member_name << "' of '" << struct_info->name << "'";
+			if (current_context) {
+				std::cerr << " from '" << current_context->name << "'";
+			}
+			std::cerr << "\n";
+			assert(false && "Access control violation");
 			return {};
 		}
 
@@ -2712,4 +2902,5 @@ private:
 	TempVar var_counter{ 0 };
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
+	CompileContext* context_;  // Reference to compile context for flags
 };
