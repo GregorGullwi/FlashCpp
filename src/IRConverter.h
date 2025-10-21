@@ -912,6 +912,9 @@ public:
 			case IrOpcode::DestructorCall:
 				handleDestructorCall(instruction);
 				break;
+			case IrOpcode::VirtualCall:
+				handleVirtualCall(instruction);
+				break;
 			case IrOpcode::HeapAlloc:
 				handleHeapAlloc(instruction);
 				break;
@@ -1905,6 +1908,123 @@ private:
 		// Get the mangled name for the destructor (handles name mangling)
 		std::string mangled_name = writer.getMangledName(function_name);
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
+
+		regAlloc.reset();
+	}
+
+	void handleVirtualCall(const IrInstruction& instruction) {
+		// Virtual call format: [result_var, object_type, object_size, object_name, vtable_index, arg1_type, arg1_size, arg1_value, ...]
+		assert(instruction.getOperandCount() >= 5 && "VirtualCall must have at least 5 operands");
+
+		flushAllDirtyRegisters();
+
+		// Get operands
+		auto result_var = instruction.getOperand(0);
+		//auto object_type = instruction.getOperandAs<Type>(1);
+		//auto object_size = instruction.getOperandAs<int>(2);
+		auto object_name_operand = instruction.getOperand(3);
+		int vtable_index = instruction.getOperandAs<int>(4);
+
+		// Get result offset
+		int result_offset = 0;
+		if (std::holds_alternative<TempVar>(result_var)) {
+			const TempVar temp_var = std::get<TempVar>(result_var);
+			result_offset = getStackOffsetFromTempVar(temp_var);
+			variable_scopes.back().identifier_offset[temp_var.name()] = result_offset;
+		} else {
+			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
+		}
+
+		// Get object offset
+		int object_offset = 0;
+		if (std::holds_alternative<TempVar>(object_name_operand)) {
+			const TempVar temp_var = std::get<TempVar>(object_name_operand);
+			object_offset = getStackOffsetFromTempVar(temp_var);
+		} else if (std::holds_alternative<std::string>(object_name_operand)) {
+			const std::string& var_name_str = std::get<std::string>(object_name_operand);
+			std::string_view var_name(var_name_str);
+			object_offset = variable_scopes.back().identifier_offset[var_name];
+		} else {
+			std::string_view var_name = std::get<std::string_view>(object_name_operand);
+			object_offset = variable_scopes.back().identifier_offset[var_name];
+		}
+
+		// Virtual call sequence:
+		// 1. Load vptr from object: vptr = [object + 0]  (vptr is at offset 0)
+		// 2. Load function pointer from vtable: func_ptr = [vptr + vtable_index * 8]
+		// 3. Call through function pointer: call func_ptr(this, args...)
+
+		// Step 1: Load vptr from object into RAX
+		// MOV RAX, [RBP + object_offset]  ; Load vptr (first 8 bytes of object)
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		if (object_offset >= -128 && object_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(object_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(object_offset & 0xFF));
+				object_offset >>= 8;
+			}
+		}
+
+		// Step 2: Load function pointer from vtable into RAX
+		// MOV RAX, [RAX + vtable_index * 8]
+		int vtable_offset = vtable_index * 8;
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		if (vtable_offset >= -128 && vtable_offset <= 127) {
+			textSectionData.push_back(0x40); // ModR/M: [RAX + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(vtable_offset));
+		} else {
+			textSectionData.push_back(0x80); // ModR/M: [RAX + disp32], RAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(vtable_offset & 0xFF));
+				vtable_offset >>= 8;
+			}
+		}
+
+		// Step 3: Set up 'this' pointer in RCX (first parameter in Windows x64 calling convention)
+		// LEA RCX, [RBP + object_offset]
+		object_offset = 0; // Reset object_offset (we modified it in step 1)
+		if (std::holds_alternative<TempVar>(object_name_operand)) {
+			const TempVar temp_var = std::get<TempVar>(object_name_operand);
+			object_offset = getStackOffsetFromTempVar(temp_var);
+		} else if (std::holds_alternative<std::string>(object_name_operand)) {
+			const std::string& var_name_str = std::get<std::string>(object_name_operand);
+			std::string_view var_name(var_name_str);
+			object_offset = variable_scopes.back().identifier_offset[var_name];
+		} else {
+			std::string_view var_name = std::get<std::string_view>(object_name_operand);
+			object_offset = variable_scopes.back().identifier_offset[var_name];
+		}
+
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8D); // LEA opcode
+		if (object_offset >= -128 && object_offset <= 127) {
+			textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
+			textSectionData.push_back(static_cast<uint8_t>(object_offset));
+		} else {
+			textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(object_offset & 0xFF));
+				object_offset >>= 8;
+			}
+		}
+
+		// TODO: Handle additional function arguments (operands 5+)
+		// For now, we only support virtual calls with no additional arguments beyond 'this'
+
+		// Step 4: Call through function pointer in RAX
+		// CALL RAX
+		textSectionData.push_back(0xFF); // CALL r/m64
+		textSectionData.push_back(0xD0); // ModR/M: RAX
+
+		// Step 5: Store return value from RAX to result variable
+		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
 		regAlloc.reset();
 	}

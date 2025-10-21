@@ -382,6 +382,18 @@ private:
 
 					ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), node.name_token());
 				}
+
+				// Step 1.5: Initialize vptr if this class has virtual functions
+				// This must happen after base constructor calls (which set up base vptr)
+				// but before member initialization
+				if (struct_info->has_vtable) {
+					// TODO: Generate vptr initialization
+					// For now, we skip this - vtable generation is complex and requires:
+					// 1. Generating vtable data structure in .rdata section
+					// 2. Creating vtable symbol
+					// 3. Storing vtable address in vptr (first 8 bytes of object)
+					// This will be implemented in a future phase
+				}
 			}
 		}
 
@@ -1995,37 +2007,92 @@ private:
 		const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 		const DeclarationNode& func_decl_node = func_decl.decl_node();
 
-		// Always add the return variable and function name
+		// Check if this is a virtual function call
+		// Look up the struct type to check if the function is virtual
+		bool is_virtual_call = false;
+		int vtable_index = -1;
+
+		size_t struct_type_index = object_type.type_index();
+		if (struct_type_index < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[struct_type_index];
+			const StructTypeInfo* struct_info = type_info.getStructInfo();
+
+			if (struct_info) {
+				// Find the member function in the struct
+				std::string_view func_name = func_decl_node.identifier_token().value();
+				for (const auto& member_func : struct_info->member_functions) {
+					if (member_func.name == func_name && member_func.is_virtual) {
+						is_virtual_call = true;
+						vtable_index = member_func.vtable_index;
+						break;
+					}
+				}
+			}
+		}
+
 		TempVar ret_var = var_counter.next();
-		irOperands.emplace_back(ret_var);
-		irOperands.emplace_back(func_decl_node.identifier_token().value());
 
-		// Add the object as the first argument (this pointer)
-		// We need to pass the address of the object
-		irOperands.emplace_back(object_type.type());
-		irOperands.emplace_back(static_cast<int>(object_type.size_in_bits()));
-		irOperands.emplace_back(object_name);
+		if (is_virtual_call && vtable_index >= 0) {
+			// Generate virtual function call
+			// Format: [result_var, object_type, object_size, object_name, vtable_index, arg1_type, arg1_size, arg1_value, ...]
+			irOperands.emplace_back(ret_var);
+			irOperands.emplace_back(object_type.type());
+			irOperands.emplace_back(static_cast<int>(object_type.size_in_bits()));
+			irOperands.emplace_back(object_name);
+			irOperands.emplace_back(vtable_index);
 
-		// Generate IR for function arguments
-		memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-			// For variables, we need to add the type and size
-			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
-				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-				const auto& decl_node = symbol->as<DeclarationNode>();
-				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-				irOperands.emplace_back(type_node.type());
-				irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-				irOperands.emplace_back(identifier.name());
-			}
-			else {
-				irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
-			}
-		});
+			// Generate IR for function arguments
+			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+				auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+				// For variables, we need to add the type and size
+				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+					const auto& decl_node = symbol->as<DeclarationNode>();
+					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					irOperands.emplace_back(type_node.type());
+					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+					irOperands.emplace_back(identifier.name());
+				}
+				else {
+					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+				}
+			});
 
-		// Add the function call instruction
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+			// Add the virtual call instruction
+			ir_.addInstruction(IrInstruction(IrOpcode::VirtualCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+		} else {
+			// Generate regular (non-virtual) member function call
+			irOperands.emplace_back(ret_var);
+			irOperands.emplace_back(func_decl_node.identifier_token().value());
+
+			// Add the object as the first argument (this pointer)
+			// We need to pass the address of the object
+			irOperands.emplace_back(object_type.type());
+			irOperands.emplace_back(static_cast<int>(object_type.size_in_bits()));
+			irOperands.emplace_back(object_name);
+
+			// Generate IR for function arguments
+			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+				auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+				// For variables, we need to add the type and size
+				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+					const auto& decl_node = symbol->as<DeclarationNode>();
+					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					irOperands.emplace_back(type_node.type());
+					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+					irOperands.emplace_back(identifier.name());
+				}
+				else {
+					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+				}
+			});
+
+			// Add the function call instruction
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+		}
 
 		// Return the result variable with its type and size
 		const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();

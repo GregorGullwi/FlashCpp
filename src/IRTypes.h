@@ -106,6 +106,8 @@ enum class IrOpcode : int_fast16_t {
 	// Constructor/Destructor operations
 	ConstructorCall,
 	DestructorCall,
+	// Virtual function call
+	VirtualCall,
 	// String literal
 	StringLiteral,
 	// Heap allocation/deallocation (new/delete)
@@ -1935,6 +1937,49 @@ public:
 					oss << getOperandAs<std::string_view>(1);
 				else if (isOperandType<std::string>(1))
 					oss << getOperandAs<std::string>(1);
+			}
+		}
+		break;
+
+		case IrOpcode::VirtualCall:
+		{
+			// %result = virtual_call %object, vtable_index, [args...]
+			// Format: [result_var, object_type, object_size, object_name, vtable_index, arg1_type, arg1_size, arg1_value, ...]
+			if (getOperandCount() >= 5) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				else if (isOperandType<std::string_view>(0))
+					oss << getOperandAs<std::string_view>(0);
+
+				oss << " = virtual_call ";
+
+				// Object (this pointer)
+				oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " %";
+				if (isOperandType<TempVar>(3))
+					oss << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << getOperandAs<std::string_view>(3);
+
+				// VTable index
+				oss << ", vtable[" << getOperandAs<int>(4) << "]";
+
+				// Arguments (if any)
+				if (getOperandCount() > 5) {
+					oss << "(";
+					for (size_t i = 5; i < getOperandCount(); i += 3) {
+						if (i > 5) oss << ", ";
+						oss << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
+
+						if (isOperandType<unsigned long long>(i + 2))
+							oss << getOperandAs<unsigned long long>(i + 2);
+						else if (isOperandType<TempVar>(i + 2))
+							oss << '%' << getOperandAs<TempVar>(i + 2).index;
+						else if (isOperandType<std::string_view>(i + 2))
+							oss << '%' << getOperandAs<std::string_view>(i + 2);
+					}
+					oss << ")";
+				}
 			}
 		}
 		break;
