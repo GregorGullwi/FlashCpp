@@ -1810,5 +1810,5 @@ TEST_CASE("Virtual functions") {
 }
 
 TEST_CASE("Virtual class inheritance") {
-	//run_test_from_file("test_virtual_inheritance.cpp", "Virtual class inheritance", false);
+	run_test_from_file("test_virtual_inheritance.cpp", "Virtual class inheritance", false);
 }
