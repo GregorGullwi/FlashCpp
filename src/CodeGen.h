@@ -336,9 +336,58 @@ private:
 			symbol_table.insert(param_decl.identifier_token().value(), param);
 		}
 
-		// Generate IR for member initializers (executed before constructor body)
-		// Look up the struct type to get member information
+		// C++ construction order:
+		// 1. Base class constructors (in declaration order)
+		// 2. Member variables (in declaration order)
+		// 3. Constructor body
+
+		// Look up the struct type to get base class and member information
 		auto struct_type_it = gTypesByName.find(node.struct_name());
+		if (struct_type_it != gTypesByName.end()) {
+			const TypeInfo* struct_type_info = struct_type_it->second;
+			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+			if (struct_info) {
+				// Step 1: Call base class constructors (in declaration order)
+				for (const auto& base : struct_info->base_classes) {
+					// Check if there's an explicit base initializer
+					const BaseInitializer* base_init = nullptr;
+					for (const auto& init : node.base_initializers()) {
+						if (init.base_class_name == base.name) {
+							base_init = &init;
+							break;
+						}
+					}
+
+					// Get base class type info
+					if (base.type_index >= gTypeInfo.size()) {
+						continue;  // Invalid base type index
+					}
+					const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+
+					// Build constructor call: Base::Base(this, args...)
+					std::vector<IrOperand> ctor_operands;
+					ctor_operands.emplace_back(base_type_info.name_);  // Base class name
+					ctor_operands.emplace_back(std::string_view("this"));  // 'this' pointer (base subobject is at offset 0 for now)
+
+					// Add constructor arguments from base initializer
+					if (base_init) {
+						for (const auto& arg : base_init->arguments) {
+							auto arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
+							// Add the argument value (type, size, value)
+							ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+						}
+					}
+					// If no explicit initializer, call default constructor (no args)
+
+					ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), node.name_token());
+				}
+			}
+		}
+
+		// Step 2: Generate IR for member initializers (executed before constructor body)
+		// Look up the struct type to get member information
+		struct_type_it = gTypesByName.find(node.struct_name());
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -501,10 +550,44 @@ private:
 			}
 		}
 
-		// Visit the destructor body
+		// C++ destruction order:
+		// 1. Destructor body
+		// 2. Member variables destroyed (automatic for non-class types)
+		// 3. Base class destructors (in REVERSE declaration order)
+
+		// Step 1: Visit the destructor body
 		definition_block.value()->get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
+
+		// Step 2: Member destruction is automatic for primitive types (no action needed)
+
+		// Step 3: Call base class destructors in REVERSE order
+		auto struct_type_it = gTypesByName.find(node.struct_name());
+		if (struct_type_it != gTypesByName.end()) {
+			const TypeInfo* struct_type_info = struct_type_it->second;
+			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+			if (struct_info && !struct_info->base_classes.empty()) {
+				// Iterate through base classes in reverse order
+				for (auto it = struct_info->base_classes.rbegin(); it != struct_info->base_classes.rend(); ++it) {
+					const auto& base = *it;
+
+					// Get base class type info
+					if (base.type_index >= gTypeInfo.size()) {
+						continue;  // Invalid base type index
+					}
+					const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+
+					// Build destructor call: Base::~Base(this)
+					std::vector<IrOperand> dtor_operands;
+					dtor_operands.emplace_back(base_type_info.name_);  // Base class name
+					dtor_operands.emplace_back(std::string_view("this"));  // 'this' pointer (base subobject is at offset 0 for now)
+
+					ir_.addInstruction(IrOpcode::DestructorCall, std::move(dtor_operands), node.name_token());
+				}
+			}
+		}
 
 		// Add implicit return for destructor (destructors don't have explicit return statements)
 		// Format: [type, size, value] - for void return, value is 0
@@ -2129,10 +2212,11 @@ private:
 		}
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
-		const StructMember* member = struct_info->findMember(std::string(member_name));
+		// Use recursive lookup to find members in base classes as well
+		const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
 
 		if (!member) {
-			assert(false && "Member not found in struct");
+			assert(false && "Member not found in struct or base classes");
 			return {};
 		}
 

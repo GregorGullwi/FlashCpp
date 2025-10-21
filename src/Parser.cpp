@@ -3059,8 +3059,9 @@ ParseResult Parser::parse_primary_expression()
 				const auto& context = member_function_context_stack_.back();
 				const StructDeclarationNode* struct_node = context.struct_node;
 
-				// Check if this identifier matches any data member in the struct
+				// Check if this identifier matches any data member in the struct (including inherited members)
 				if (struct_node) {
+					// First check direct members
 					for (const auto& member_decl : struct_node->members()) {
 						const ASTNode& member_node = member_decl.declaration;
 						if (member_node.is<DeclarationNode>()) {
@@ -3079,6 +3080,35 @@ ParseResult Parser::parse_primary_expression()
 
 								// Identifier already consumed at line 1621
 								return ParseResult::success(*result);
+							}
+						}
+					}
+
+					// Also check base class members
+					for (const auto& base : struct_node->base_classes()) {
+						// Look up the base class type
+						auto base_type_it = gTypesByName.find(base.name);
+						if (base_type_it != gTypesByName.end()) {
+							const TypeInfo* base_type_info = base_type_it->second;
+							const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+
+							if (base_struct_info) {
+								// Check if the identifier is a member of the base class (recursively)
+								const StructMember* member = base_struct_info->findMemberRecursive(std::string(idenfifier_token.value()));
+								if (member) {
+									// This is an inherited member variable! Transform it into this->member
+									Token this_token(Token::Type::Keyword, "this",
+									                 idenfifier_token.line(), idenfifier_token.column(),
+									                 idenfifier_token.file_index());
+									auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+
+									// Create member access node: this->member
+									result = emplace_node<ExpressionNode>(
+										MemberAccessNode(this_ident, idenfifier_token));
+
+									// Identifier already consumed at line 1621
+									return ParseResult::success(*result);
+								}
 							}
 						}
 					}
