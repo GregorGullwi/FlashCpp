@@ -991,6 +991,12 @@ public:
 			case IrOpcode::PlacementNew:
 				handlePlacementNew(instruction);
 				break;
+			case IrOpcode::Typeid:
+				handleTypeid(instruction);
+				break;
+			case IrOpcode::DynamicCast:
+				handleDynamicCast(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -2415,6 +2421,145 @@ private:
 		int result_offset = getStackOffsetFromTempVar(result_var);
 
 		// MOV [RBP + result_offset], RAX
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		if (result_offset >= -128 && result_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(result_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
+				result_offset >>= 8;
+			}
+		}
+
+		regAlloc.reset();
+	}
+
+	void handleTypeid(const IrInstruction& instruction) {
+		// Typeid format: [result_var, type_name_or_expr, is_type]
+		// For now, we'll implement a simplified version that returns a pointer to static RTTI data
+		assert(instruction.getOperandCount() == 3 && "Typeid must have exactly 3 operands");
+
+		flushAllDirtyRegisters();
+
+		TempVar result_var = instruction.getOperandAs<TempVar>(0);
+		bool is_type = instruction.getOperandAs<bool>(2);
+
+		if (is_type) {
+			// typeid(Type) - compile-time constant
+			// For now, return a dummy pointer (in a full implementation, we'd have a .rdata section with type_info)
+			std::string type_name = instruction.getOperandAs<std::string>(1);
+
+			// Load address of type_info into RAX (using a placeholder address for now)
+			// In a real implementation, we'd have a symbol for each type's RTTI data
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0xB8); // MOV RAX, imm64
+
+			// Use a hash of the type name as a placeholder address
+			size_t type_hash = std::hash<std::string>{}(type_name);
+			for (int j = 0; j < 8; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>((type_hash >> (j * 8)) & 0xFF));
+			}
+		} else {
+			// typeid(expr) - may need runtime lookup for polymorphic types
+			// For polymorphic types, RTTI pointer is at vtable[-1]
+			// For non-polymorphic types, return compile-time constant
+
+			// Load the expression result (should be a pointer to object)
+			TempVar expr_var = instruction.getOperandAs<TempVar>(1);
+			int expr_offset = getStackOffsetFromTempVar(expr_var);
+
+			// Load object pointer into RAX
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			if (expr_offset >= -128 && expr_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
+				textSectionData.push_back(static_cast<uint8_t>(expr_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
+				for (int j = 0; j < 4; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(expr_offset & 0xFF));
+					expr_offset >>= 8;
+				}
+			}
+
+			// Load vtable pointer from object (first 8 bytes)
+			// MOV RAX, [RAX]
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			textSectionData.push_back(0x00); // ModR/M: RAX, [RAX]
+
+			// Load RTTI pointer from vtable[-1] (8 bytes before vtable)
+			// MOV RAX, [RAX - 8]
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			textSectionData.push_back(0x40); // ModR/M: RAX, [RAX + disp8]
+			textSectionData.push_back(static_cast<uint8_t>(-8)); // -8 offset
+		}
+
+		// Store result to stack
+		int result_offset = getStackOffsetFromTempVar(result_var);
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		if (result_offset >= -128 && result_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+			textSectionData.push_back(static_cast<uint8_t>(result_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
+				result_offset >>= 8;
+			}
+		}
+
+		regAlloc.reset();
+	}
+
+	void handleDynamicCast(const IrInstruction& instruction) {
+		// DynamicCast format: [result_var, source_ptr, target_type_name, is_reference]
+		// Returns nullptr for failed pointer casts, throws for failed reference casts
+		assert(instruction.getOperandCount() == 4 && "DynamicCast must have exactly 4 operands");
+
+		flushAllDirtyRegisters();
+
+		TempVar result_var = instruction.getOperandAs<TempVar>(0);
+		TempVar source_var = instruction.getOperandAs<TempVar>(1);
+		std::string target_type = instruction.getOperandAs<std::string>(2);
+		bool is_reference = instruction.getOperandAs<bool>(3);
+
+		// Load source pointer into RAX
+		int source_offset = getStackOffsetFromTempVar(source_var);
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		if (source_offset >= -128 && source_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
+			textSectionData.push_back(static_cast<uint8_t>(source_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(source_offset & 0xFF));
+				source_offset >>= 8;
+			}
+		}
+
+		// For a full implementation, we would:
+		// 1. Check if source pointer is null (return null if so)
+		// 2. Load vtable pointer from object
+		// 3. Load RTTI pointer from vtable[-1]
+		// 4. Call isDerivedFrom() to check if cast is valid
+		// 5. Return source pointer if valid, nullptr if not
+
+		// Simplified implementation: just return the source pointer
+		// (assumes all casts succeed - this is a placeholder)
+		// In a real implementation, we'd generate a call to a runtime function
+
+		// For now, just copy source to result (optimistic cast)
+		// A proper implementation would check RTTI and potentially return nullptr
+
+		// Store result (RAX already contains source pointer)
+		int result_offset = getStackOffsetFromTempVar(result_var);
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0x89); // MOV r/m64, r64
 		if (result_offset >= -128 && result_offset <= 127) {

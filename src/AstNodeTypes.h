@@ -151,6 +151,29 @@ struct StructMemberFunction {
 		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
 };
 
+// Runtime Type Information (RTTI) structure
+struct RTTITypeInfo {
+	const char* type_name;           // Mangled type name
+	const char* demangled_name;      // Human-readable type name
+	size_t num_bases;                // Number of base classes
+	const RTTITypeInfo** base_types; // Array of pointers to base class type_info
+
+	RTTITypeInfo(const char* mangled, const char* demangled, size_t num_base = 0)
+		: type_name(mangled), demangled_name(demangled), num_bases(num_base), base_types(nullptr) {}
+
+	// Check if this type is derived from another type (for dynamic_cast)
+	bool isDerivedFrom(const RTTITypeInfo* base) const {
+		if (this == base) return true;
+
+		for (size_t i = 0; i < num_bases; ++i) {
+			if (base_types[i] && base_types[i]->isDerivedFrom(base)) {
+				return true;
+			}
+		}
+		return false;
+	}
+};
+
 // Struct type information
 struct StructTypeInfo {
 	std::string name;
@@ -170,6 +193,9 @@ struct StructTypeInfo {
 
 	// Virtual base class support (Phase 3)
 	std::vector<const BaseClassSpecifier*> virtual_bases;  // Virtual base classes (shared across inheritance paths)
+
+	// RTTI support (Phase 5)
+	RTTITypeInfo* rtti_info = nullptr;  // Runtime type information (for polymorphic classes)
 
 	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public)
 		: name(std::move(n)), default_access(default_acc) {}
@@ -254,6 +280,9 @@ struct StructTypeInfo {
 
 	// Update abstract flag based on pure virtual functions in vtable
 	void updateAbstractFlag();
+
+	// Build RTTI information for polymorphic classes (called during finalization)
+	void buildRTTI();
 
 	// Add a base class
 	void addBaseClass(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
@@ -1155,9 +1184,43 @@ private:
 	Token cast_token_;     // Token for error reporting
 };
 
+// Dynamic cast expression node: dynamic_cast<Type>(expr)
+class DynamicCastNode {
+public:
+	explicit DynamicCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+
+	const ASTNode& target_type() const { return target_type_; }
+	const ASTNode& expr() const { return expr_; }
+	const Token& cast_token() const { return cast_token_; }
+
+private:
+	ASTNode target_type_;  // TypeSpecifierNode - the type to cast to (must be pointer or reference)
+	ASTNode expr_;         // ExpressionNode - the expression to cast (must be polymorphic)
+	Token cast_token_;     // Token for error reporting
+};
+
+// Typeid expression node: typeid(expr) or typeid(Type)
+class TypeidNode {
+public:
+	// Constructor for typeid(expr)
+	explicit TypeidNode(ASTNode operand, bool is_type, Token typeid_token)
+		: operand_(operand), is_type_(is_type), typeid_token_(typeid_token) {}
+
+	const ASTNode& operand() const { return operand_; }
+	bool is_type() const { return is_type_; }  // true if operand is a type, false if expression
+	const Token& typeid_token() const { return typeid_token_; }
+
+private:
+	ASTNode operand_;      // Either TypeSpecifierNode or ExpressionNode
+	bool is_type_;         // true for typeid(Type), false for typeid(expr)
+	Token typeid_token_;   // Token for error reporting
+};
+
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
-	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode>;
+	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
+	DynamicCastNode, TypeidNode>;
 
 /*class FunctionDefinitionNode {
 public:

@@ -116,6 +116,9 @@ enum class IrOpcode : int_fast16_t {
 	HeapFree,        // delete ptr
 	HeapFreeArray,   // delete[] ptr
 	PlacementNew,    // new (address) Type or new (address) Type(args)
+	// RTTI operations
+	Typeid,          // typeid(expr) or typeid(Type) - returns pointer to type_info
+	DynamicCast,     // dynamic_cast<Type>(expr) - runtime type checking cast
 };
 
 enum class X64Register : uint8_t {

@@ -57,7 +57,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 
     const auto& ast = parser.get_nodes();
 
-    AstToIr converter(&gSymbolTable);
+    AstToIr converter(gSymbolTable, compile_context);
     for (auto& node_handle : ast) {
         converter.visit(node_handle);
     }
@@ -509,7 +509,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter;
+		AstToIr converter(gSymbolTable, compile_context);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -834,7 +834,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter;
+		AstToIr converter(gSymbolTable, compile_context);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -878,7 +878,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter;
+		AstToIr converter(gSymbolTable, compile_context);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -925,7 +925,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter;
+		AstToIr converter(gSymbolTable, compile_context);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -973,7 +973,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter;
+		AstToIr converter(gSymbolTable, compile_context);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1032,7 +1032,7 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 
 	const auto& ast = parser.get_nodes();
 
-	AstToIr converter;
+	AstToIr converter(gSymbolTable, compile_context);
 	for (auto& node_handle : ast) {
 		converter.visit(node_handle);
 	}
@@ -1286,7 +1286,7 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 			const auto& ast = parser.get_nodes();
 
 			// Convert to IR to verify the string literals are created correctly
-			AstToIr converter;
+			AstToIr converter(gSymbolTable, compile_context);
 			for (auto& node_handle : ast) {
 				converter.visit(node_handle);
 			}
@@ -1679,7 +1679,7 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter;
+		AstToIr converter(gSymbolTable, compile_context);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1724,7 +1724,7 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter;
+		AstToIr converter(gSymbolTable, compile_context);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1773,7 +1773,7 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter;
+		AstToIr converter(gSymbolTable, compile_context);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1823,4 +1823,8 @@ TEST_CASE("Abstract classes") {
 
 TEST_CASE("Virtual base classes") {
 	run_test_from_file("test_virtual_base_classes.cpp", "Virtual base classes", false);
+}
+
+TEST_CASE("RTTI") {
+	run_test_from_file("test_rtti_basics.cpp", "Dynamic cast", false);
 }

@@ -471,6 +471,9 @@ void StructTypeInfo::finalizeWithBases() {
     // Step 0: Build vtable first (before layout)
     buildVTable();
 
+    // Step 0.1: Build RTTI information (after vtable, before layout)
+    buildRTTI();
+
     size_t current_offset = 0;
     size_t max_alignment = 1;
 
@@ -743,4 +746,48 @@ const StructMember* StructTypeInfo::findMemberRecursive(const std::string& membe
     }
 
     return nullptr;  // Not found
+}
+
+// Build RTTI information for polymorphic classes
+void StructTypeInfo::buildRTTI() {
+    // Only build RTTI for polymorphic classes (those with vtables)
+    if (!has_vtable) {
+        return;
+    }
+
+    // Create RTTI info
+    // Note: In a real implementation, we'd allocate this properly
+    // For now, we'll use static storage
+    static std::vector<RTTITypeInfo> rtti_storage;
+
+    // Create mangled and demangled names
+    std::string mangled_name = "_ZTI" + name;  // Simple mangling: _ZTI + class name
+
+    // Allocate RTTI info
+    rtti_storage.emplace_back(mangled_name.c_str(), name.c_str(), base_classes.size());
+    rtti_info = &rtti_storage.back();
+
+    // Build array of base class type_info pointers
+    if (!base_classes.empty()) {
+        static std::vector<const RTTITypeInfo*> base_array_storage;
+        size_t base_array_start = base_array_storage.size();
+
+        for (const auto& base : base_classes) {
+            if (base.type_index >= gTypeInfo.size()) {
+                base_array_storage.push_back(nullptr);
+                continue;
+            }
+
+            const TypeInfo& base_type = gTypeInfo[base.type_index];
+            const StructTypeInfo* base_info = base_type.getStructInfo();
+
+            if (base_info && base_info->rtti_info) {
+                base_array_storage.push_back(base_info->rtti_info);
+            } else {
+                base_array_storage.push_back(nullptr);
+            }
+        }
+
+        rtti_info->base_types = &base_array_storage[base_array_start];
+    }
 }

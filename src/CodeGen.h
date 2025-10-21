@@ -1395,6 +1395,14 @@ private:
 			const auto& expr = std::get<StaticCastNode>(exprNode);
 			return generateStaticCastIr(expr);
 		}
+		else if (std::holds_alternative<DynamicCastNode>(exprNode)) {
+			const auto& expr = std::get<DynamicCastNode>(exprNode);
+			return generateDynamicCastIr(expr);
+		}
+		else if (std::holds_alternative<TypeidNode>(exprNode)) {
+			const auto& expr = std::get<TypeidNode>(exprNode);
+			return generateTypeidIr(expr);
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -2862,6 +2870,92 @@ private:
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
 		return { target_type, target_size, expr_operands[2] };
+	}
+
+	std::vector<IrOperand> generateTypeidIr(const TypeidNode& typeidNode) {
+		// typeid returns a reference to const std::type_info
+		// For polymorphic types, we need to get RTTI from the vtable
+		// For non-polymorphic types, we return a compile-time constant
+
+		TempVar result_temp = var_counter.next();
+
+		if (typeidNode.is_type()) {
+			// typeid(Type) - compile-time constant
+			const auto& type_node = typeidNode.operand().as<TypeSpecifierNode>();
+
+			// Get type information
+			std::string type_name;
+			if (type_node.type() == Type::Struct) {
+				TypeIndex type_idx = type_node.type_index();
+				if (type_idx < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_idx];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						type_name = struct_info->name;
+					}
+				}
+			}
+
+			// Generate IR to get compile-time type_info
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_temp);
+			operands.emplace_back(type_name);  // Type name for RTTI lookup
+			operands.emplace_back(true);       // is_type = true
+			ir_.addInstruction(IrOpcode::Typeid, std::move(operands), typeidNode.typeid_token());
+		}
+		else {
+			// typeid(expr) - may need runtime lookup for polymorphic types
+			auto expr_operands = visitExpressionNode(typeidNode.operand().as<ExpressionNode>());
+
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_temp);
+			operands.emplace_back(expr_operands[2]);  // Expression result
+			operands.emplace_back(false);             // is_type = false
+			ir_.addInstruction(IrOpcode::Typeid, std::move(operands), typeidNode.typeid_token());
+		}
+
+		// Return pointer to type_info (64-bit pointer)
+		// Use void* type for now (Type::Void with pointer depth)
+		return { Type::Void, 64, result_temp };
+	}
+
+	std::vector<IrOperand> generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
+		// dynamic_cast<Type>(expr) performs runtime type checking
+		// Returns nullptr (for pointers) or throws bad_cast (for references) on failure
+
+		// Evaluate the expression to cast
+		auto expr_operands = visitExpressionNode(dynamicCastNode.expr().as<ExpressionNode>());
+
+		// Get the target type
+		const auto& target_type_node = dynamicCastNode.target_type().as<TypeSpecifierNode>();
+
+		// Get target struct type information
+		std::string target_type_name;
+		if (target_type_node.type() == Type::Struct) {
+			TypeIndex type_idx = target_type_node.type_index();
+			if (type_idx < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_idx];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info) {
+					target_type_name = struct_info->name;
+				}
+			}
+		}
+
+		TempVar result_temp = var_counter.next();
+
+		// Generate dynamic_cast IR
+		std::vector<IrOperand> operands;
+		operands.emplace_back(result_temp);           // Result temporary
+		operands.emplace_back(expr_operands[2]);      // Source pointer
+		operands.emplace_back(target_type_name);      // Target type name
+		operands.emplace_back(target_type_node.is_reference());  // Is reference cast?
+		ir_.addInstruction(IrOpcode::DynamicCast, std::move(operands), dynamicCastNode.cast_token());
+
+		// Return the casted pointer/reference
+		Type result_type = target_type_node.type();
+		int result_size = static_cast<int>(target_type_node.size_in_bits());
+		return { result_type, result_size, result_temp };
 	}
 
 	// Structure to track variables that need destructors called

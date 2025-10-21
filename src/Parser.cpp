@@ -2528,6 +2528,52 @@ ParseResult Parser::parse_unary_expression()
 		return ParseResult::success(cast_expr);
 	}
 
+	// Check for 'dynamic_cast' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "dynamic_cast") {
+		Token cast_token = *current_token_;
+		consume_token(); // consume 'dynamic_cast'
+
+		// Expect '<'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+		    peek_token()->value() != "<") {
+			return ParseResult::error("Expected '<' after 'dynamic_cast'", *current_token_);
+		}
+		consume_token(); // consume '<'
+
+		// Parse the target type
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			return ParseResult::error("Expected type in dynamic_cast", *current_token_);
+		}
+
+		// Expect '>'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+		    peek_token()->value() != ">") {
+			return ParseResult::error("Expected '>' after type in dynamic_cast", *current_token_);
+		}
+		consume_token(); // consume '>'
+
+		// Expect '('
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after dynamic_cast<Type>", *current_token_);
+		}
+
+		// Parse the expression to cast
+		ParseResult expr_result = parse_expression();
+		if (expr_result.is_error() || !expr_result.node().has_value()) {
+			return ParseResult::error("Expected expression in dynamic_cast", *current_token_);
+		}
+
+		// Expect ')'
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after dynamic_cast expression", *current_token_);
+		}
+
+		auto cast_expr = emplace_node<ExpressionNode>(
+			DynamicCastNode(*type_result.node(), *expr_result.node(), cast_token));
+		return ParseResult::success(cast_expr);
+	}
+
 	// Check for 'new' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "new") {
 		consume_token(); // consume 'new'
@@ -3480,6 +3526,40 @@ ParseResult Parser::parse_primary_expression()
 			}
 			result = emplace_node<ExpressionNode>(
 				SizeofExprNode::from_expression(*expr_result.node(), sizeof_token));
+		}
+	}
+	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "typeid"sv) {
+		// Handle typeid operator: typeid(type) or typeid(expression)
+		Token typeid_token = *current_token_;
+		consume_token(); // consume 'typeid'
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after 'typeid'", *current_token_);
+		}
+
+		// Try to parse as a type first
+		TokenPosition saved_pos = save_token_position();
+		ParseResult type_result = parse_type_specifier();
+
+		if (!type_result.is_error() && type_result.node().has_value()) {
+			// Successfully parsed as type
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after typeid type", *current_token_);
+			}
+			discard_saved_token(saved_pos);
+			result = emplace_node<ExpressionNode>(TypeidNode(*type_result.node(), true, typeid_token));
+		}
+		else {
+			// Not a type, try parsing as expression
+			restore_token_position(saved_pos);
+			ParseResult expr_result = parse_expression();
+			if (expr_result.is_error()) {
+				return ParseResult::error("Expected type or expression after 'typeid('", *current_token_);
+			}
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after typeid expression", *current_token_);
+			}
+			result = emplace_node<ExpressionNode>(TypeidNode(*expr_result.node(), false, typeid_token));
 		}
 	}
 	else if (consume_punctuator("(")) {
