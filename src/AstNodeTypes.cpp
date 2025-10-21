@@ -1,5 +1,7 @@
 #include "AstNodeTypes.h"
 #include <sstream>
+#include <set>
+#include <functional>
 
 std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<std::string, const TypeInfo*, StringHash, StringEqual> gTypesByName;
@@ -477,6 +479,7 @@ void StructTypeInfo::finalizeWithBases() {
     // Only add vptr if we introduce virtual functions and have no polymorphic base
     bool base_has_vtable = false;
     for (const auto& base : base_classes) {
+        if (base.is_virtual) continue;  // Skip virtual bases for now
         if (base.type_index < gTypeInfo.size()) {
             const TypeInfo& base_type = gTypeInfo[base.type_index];
             const StructTypeInfo* base_info = base_type.getStructInfo();
@@ -494,8 +497,12 @@ void StructTypeInfo::finalizeWithBases() {
         max_alignment = 8;  // Pointer alignment
     }
 
-    // Step 1: Layout base class subobjects
+    // Step 1: Layout non-virtual base class subobjects
     for (auto& base : base_classes) {
+        if (base.is_virtual) {
+            continue;  // Virtual bases are laid out at the end
+        }
+
         if (base.type_index >= gTypeInfo.size()) {
             continue;  // Invalid base class index
         }
@@ -542,12 +549,72 @@ void StructTypeInfo::finalizeWithBases() {
         max_alignment = std::max(max_alignment, effective_alignment);
     }
 
-    // Step 3: Apply custom alignment if specified
+    // Step 3: Layout virtual base class subobjects (at the end, shared across inheritance paths)
+    // Collect all unique virtual bases (including those from base classes)
+    std::vector<BaseClassSpecifier*> all_virtual_bases;
+    std::set<TypeIndex> seen_virtual_bases;
+
+    // Helper function to collect virtual bases recursively
+    std::function<void(const StructTypeInfo*)> collectVirtualBases = [&](const StructTypeInfo* struct_info) {
+        if (!struct_info) return;
+
+        // Check direct base classes
+        for (auto& base : struct_info->base_classes) {
+            if (base.is_virtual && seen_virtual_bases.find(base.type_index) == seen_virtual_bases.end()) {
+                seen_virtual_bases.insert(base.type_index);
+                // Find the corresponding base in our base_classes list
+                for (auto& our_base : base_classes) {
+                    if (our_base.type_index == base.type_index && our_base.is_virtual) {
+                        all_virtual_bases.push_back(&our_base);
+                        break;
+                    }
+                }
+            }
+
+            // Recursively collect from non-virtual bases
+            if (!base.is_virtual && base.type_index < gTypeInfo.size()) {
+                const TypeInfo& base_type = gTypeInfo[base.type_index];
+                const StructTypeInfo* base_info = base_type.getStructInfo();
+                collectVirtualBases(base_info);
+            }
+        }
+    };
+
+    collectVirtualBases(this);
+
+    // Layout virtual bases
+    for (auto* vbase : all_virtual_bases) {
+        if (vbase->type_index >= gTypeInfo.size()) {
+            continue;
+        }
+
+        const TypeInfo& base_type = gTypeInfo[vbase->type_index];
+        const StructTypeInfo* base_info = base_type.getStructInfo();
+
+        if (!base_info) {
+            continue;
+        }
+
+        // Align to base class alignment
+        size_t base_alignment = base_info->alignment;
+        current_offset = (current_offset + base_alignment - 1) & ~(base_alignment - 1);
+
+        // Store virtual base class offset
+        vbase->offset = current_offset;
+
+        // Advance offset by base class size
+        current_offset += base_info->total_size;
+
+        // Track maximum alignment
+        max_alignment = std::max(max_alignment, base_alignment);
+    }
+
+    // Step 4: Apply custom alignment if specified
     if (custom_alignment > 0) {
         max_alignment = custom_alignment;
     }
 
-    // Step 4: Pad to alignment
+    // Step 5: Pad to alignment
     alignment = max_alignment;
     total_size = (current_offset + alignment - 1) & ~(alignment - 1);
 }
@@ -624,6 +691,22 @@ void StructTypeInfo::buildVTable() {
             // Error: 'override' specified but no base function to override
             // For now, we'll just ignore this - proper error handling would require
             // access to the parser's error reporting mechanism
+        }
+    }
+
+    // Update abstract flag after building vtable
+    updateAbstractFlag();
+}
+
+// Update abstract flag based on pure virtual functions in vtable
+void StructTypeInfo::updateAbstractFlag() {
+    is_abstract = false;
+
+    // Check if any function in the vtable is pure virtual
+    for (const auto* func : vtable) {
+        if (func && func->is_pure_virtual) {
+            is_abstract = true;
+            break;
         }
     }
 }

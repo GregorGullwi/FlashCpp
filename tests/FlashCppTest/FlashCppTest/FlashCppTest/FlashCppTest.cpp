@@ -1812,3 +1812,15 @@ TEST_CASE("Virtual functions") {
 TEST_CASE("Virtual class inheritance") {
 	run_test_from_file("test_virtual_inheritance.cpp", "Virtual class inheritance", false);
 }
+
+TEST_CASE("Diamond inheritance") {
+	run_test_from_file("test_diamond_inheritance.cpp", "Diamond inheritance", false);
+}
+
+TEST_CASE("Abstract classes") {
+	run_test_from_file("test_abstract_class.cpp", "Abstract classes", false);
+}
+
+TEST_CASE("Virtual base classes") {
+	run_test_from_file("test_virtual_base_classes.cpp", "Virtual base classes", false);
+}

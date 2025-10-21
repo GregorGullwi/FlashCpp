@@ -104,10 +104,11 @@ struct BaseClassSpecifier {
 	std::string name;           // Base class name
 	TypeIndex type_index;       // Index into gTypeInfo for base class type
 	AccessSpecifier access;     // Inheritance access (public/protected/private)
+	bool is_virtual;            // True for virtual inheritance (Phase 3)
 	size_t offset;              // Offset of base subobject in derived class
 
-	BaseClassSpecifier(std::string n, TypeIndex tidx, AccessSpecifier acc, size_t off = 0)
-		: name(std::move(n)), type_index(tidx), access(acc), offset(off) {}
+	BaseClassSpecifier(std::string n, TypeIndex tidx, AccessSpecifier acc, bool virt = false, size_t off = 0)
+		: name(std::move(n)), type_index(tidx), access(acc), is_virtual(virt), offset(off) {}
 };
 
 // Struct member information
@@ -164,7 +165,11 @@ struct StructTypeInfo {
 
 	// Virtual function support (Phase 2)
 	bool has_vtable = false;    // True if this struct has virtual functions
+	bool is_abstract = false;   // True if this struct has pure virtual functions
 	std::vector<const StructMemberFunction*> vtable;  // Virtual function table (pointers to member functions)
+
+	// Virtual base class support (Phase 3)
+	std::vector<const BaseClassSpecifier*> virtual_bases;  // Virtual base classes (shared across inheritance paths)
 
 	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public)
 		: name(std::move(n)), default_access(default_acc) {}
@@ -247,9 +252,12 @@ struct StructTypeInfo {
 	// Build vtable for virtual functions (called during finalization)
 	void buildVTable();
 
+	// Update abstract flag based on pure virtual functions in vtable
+	void updateAbstractFlag();
+
 	// Add a base class
-	void addBaseClass(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access) {
-		base_classes.emplace_back(base_name, base_type_index, access, 0);
+	void addBaseClass(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
+		base_classes.emplace_back(base_name, base_type_index, access, is_virtual, 0);
 	}
 
 	// Find member recursively through base classes
@@ -901,8 +909,8 @@ public:
 		members_.emplace_back(member, access);
 	}
 
-	void add_base_class(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access) {
-		base_classes_.emplace_back(base_name, base_type_index, access, 0);
+	void add_base_class(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
+		base_classes_.emplace_back(base_name, base_type_index, access, is_virtual, 0);
 	}
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access,

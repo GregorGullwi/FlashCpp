@@ -1065,6 +1065,13 @@ private:
 						const TypeInfo& type_info = gTypeInfo[type_index];
 						if (type_info.struct_info_) {
 							const StructTypeInfo& struct_info = *type_info.struct_info_;
+
+							// Check if this is an abstract class (only for non-pointer types)
+							if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
+								std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name_ << "'\n";
+								assert(false && "Cannot instantiate abstract class");
+							}
+
 							const auto& initializers = init_list.initializers();
 
 							if (struct_info.hasAnyConstructor()) {
@@ -1151,15 +1158,23 @@ private:
 			TypeIndex type_index = type_node.type_index();
 			if (type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index];
-				if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
-					// Generate constructor call
-					std::vector<IrOperand> ctor_operands;
-					ctor_operands.emplace_back(type_info.name_);  // Struct name (std::string)
-					ctor_operands.emplace_back(std::string(decl.identifier_token().value()));    // Object variable name
+				if (type_info.struct_info_) {
+					// Check if this is an abstract class (only for non-pointer types)
+					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
+						std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name_ << "'\n";
+						assert(false && "Cannot instantiate abstract class");
+					}
 
-					// TODO: Add support for constructor parameters from initializer
+					if (type_info.struct_info_->hasConstructor()) {
+						// Generate constructor call
+						std::vector<IrOperand> ctor_operands;
+						ctor_operands.emplace_back(type_info.name_);  // Struct name (std::string)
+						ctor_operands.emplace_back(std::string(decl.identifier_token().value()));    // Object variable name
 
-					ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), decl.identifier_token());
+						// TODO: Add support for constructor parameters from initializer
+
+						ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), decl.identifier_token());
+					}
 				}
 
 				// If this struct has a destructor, register it for automatic cleanup
@@ -2502,20 +2517,28 @@ private:
 				TypeIndex type_index = type_spec.type_index();
 				if (type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_index];
-					if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
-						// Generate constructor call on the placement address
-						std::vector<IrOperand> ctor_operands;
-						ctor_operands.emplace_back(type_info.name_);  // Struct name
-						ctor_operands.emplace_back(result_var);       // Pointer to object (placement address)
-
-						// Add constructor arguments
-						const auto& ctor_args = newExpr.constructor_args();
-						for (size_t i = 0; i < ctor_args.size(); ++i) {
-							auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-							ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+					if (type_info.struct_info_) {
+						// Check if this is an abstract class
+						if (type_info.struct_info_->is_abstract) {
+							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name_ << "'\n";
+							assert(false && "Cannot instantiate abstract class");
 						}
 
-						ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), Token());
+						if (type_info.struct_info_->hasConstructor()) {
+							// Generate constructor call on the placement address
+							std::vector<IrOperand> ctor_operands;
+							ctor_operands.emplace_back(type_info.name_);  // Struct name
+							ctor_operands.emplace_back(result_var);       // Pointer to object (placement address)
+
+							// Add constructor arguments
+							const auto& ctor_args = newExpr.constructor_args();
+							for (size_t i = 0; i < ctor_args.size(); ++i) {
+								auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
+								ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+							}
+
+							ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), Token());
+						}
 					}
 				}
 			}
@@ -2550,20 +2573,28 @@ private:
 				TypeIndex type_index = type_spec.type_index();
 				if (type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_index];
-					if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
-						// Generate constructor call on the newly allocated object
-						std::vector<IrOperand> ctor_operands;
-						ctor_operands.emplace_back(type_info.name_);  // Struct name
-						ctor_operands.emplace_back(result_var);       // Pointer to object
-
-						// Add constructor arguments
-						const auto& ctor_args = newExpr.constructor_args();
-						for (size_t i = 0; i < ctor_args.size(); ++i) {
-							auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-							ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+					if (type_info.struct_info_) {
+						// Check if this is an abstract class
+						if (type_info.struct_info_->is_abstract) {
+							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name_ << "'\n";
+							assert(false && "Cannot instantiate abstract class");
 						}
 
-						ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), Token());
+						if (type_info.struct_info_->hasConstructor()) {
+							// Generate constructor call on the newly allocated object
+							std::vector<IrOperand> ctor_operands;
+							ctor_operands.emplace_back(type_info.name_);  // Struct name
+							ctor_operands.emplace_back(result_var);       // Pointer to object
+
+							// Add constructor arguments
+							const auto& ctor_args = newExpr.constructor_args();
+							for (size_t i = 0; i < ctor_args.size(); ++i) {
+								auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
+								ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+							}
+
+							ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), Token());
+						}
 					}
 				}
 			}

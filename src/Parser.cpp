@@ -485,6 +485,13 @@ ParseResult Parser::parse_struct_declaration()
 		consume_token();  // consume ':'
 
 		do {
+			// Parse virtual keyword (optional, can appear before or after access specifier)
+			bool is_virtual_base = false;
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "virtual") {
+				is_virtual_base = true;
+				consume_token();
+			}
+
 			// Parse access specifier (optional, defaults to public for struct, private for class)
 			AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 
@@ -500,6 +507,12 @@ ParseResult Parser::parse_struct_declaration()
 					base_access = AccessSpecifier::Private;
 					consume_token();
 				}
+			}
+
+			// Check for virtual keyword after access specifier (e.g., "public virtual Base")
+			if (!is_virtual_base && peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "virtual") {
+				is_virtual_base = true;
+				consume_token();
 			}
 
 			// Parse base class name
@@ -522,8 +535,8 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Add base class to struct node and type info
-			struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access);
-			struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access);
+			struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+			struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
 
 		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 	}
