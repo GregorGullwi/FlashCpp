@@ -997,6 +997,15 @@ public:
 			case IrOpcode::DynamicCast:
 				handleDynamicCast(instruction);
 				break;
+			case IrOpcode::GlobalVariableDecl:
+				handleGlobalVariableDecl(instruction);
+				break;
+			case IrOpcode::GlobalLoad:
+				handleGlobalLoad(instruction);
+				break;
+			case IrOpcode::GlobalStore:
+				handleGlobalStore(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -2574,6 +2583,94 @@ private:
 		}
 
 		regAlloc.reset();
+	}
+
+	void handleGlobalVariableDecl(const IrInstruction& instruction) {
+		// Format: [type, size_in_bits, var_name, is_initialized, init_value?]
+		assert(instruction.getOperandCount() >= 4 && "GlobalVariableDecl must have at least 4 operands");
+
+		Type var_type = instruction.getOperandAs<Type>(0);
+		int size_in_bits = instruction.getOperandAs<int>(1);
+		std::string_view var_name = instruction.getOperandAs<std::string_view>(2);
+		bool is_initialized = instruction.getOperandAs<bool>(3);
+
+		// Store global variable info for later use
+		// We'll need to create .data or .bss sections and add symbols
+		// For now, just track the global variable
+		GlobalVariableInfo global_info;
+		global_info.name = std::string(var_name);
+		global_info.type = var_type;
+		global_info.size_in_bytes = size_in_bits / 8;
+		global_info.is_initialized = is_initialized;
+
+		if (is_initialized && instruction.getOperandCount() >= 5) {
+			// Get the initialization value
+			const IrOperand& init_operand = instruction.getOperand(4);
+			if (std::holds_alternative<unsigned long long>(init_operand)) {
+				global_info.init_value = std::get<unsigned long long>(init_operand);
+			} else if (std::holds_alternative<int>(init_operand)) {
+				global_info.init_value = static_cast<unsigned long long>(std::get<int>(init_operand));
+			}
+		}
+
+		global_variables_.push_back(global_info);
+	}
+
+	void handleGlobalLoad(const IrInstruction& instruction) {
+		// Format: [result_temp, global_name]
+		assert(instruction.getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
+
+		TempVar result_temp = instruction.getOperandAs<TempVar>(0);
+		std::string_view global_name = instruction.getOperandAs<std::string_view>(1);
+
+		// Load global variable using RIP-relative addressing
+		// MOV EAX, [RIP + displacement]
+		// Opcode: 8B 05 [4-byte displacement]
+		// The displacement will be filled in by a relocation
+
+		textSectionData.push_back(0x8B); // MOV r32, r/m32
+		textSectionData.push_back(0x05); // ModR/M: EAX, [RIP + disp32]
+
+		// Add a placeholder displacement (will be fixed by relocation)
+		uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// Add a pending relocation for this global variable reference
+		// We can't add it now because the symbol doesn't exist yet
+		// It will be added in finalizeSections() after globals are emitted
+		pending_global_relocations_.push_back({reloc_offset, std::string(global_name), IMAGE_REL_AMD64_REL32});
+
+		// Store the loaded value to the stack
+		int result_offset = getStackOffsetFromTempVar(result_temp);
+		textSectionData.push_back(0x89); // MOV r/m32, r32
+		if (result_offset >= -128 && result_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
+			textSectionData.push_back(static_cast<uint8_t>(result_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
+				result_offset >>= 8;
+			}
+		}
+	}
+
+	void handleGlobalStore(const IrInstruction& instruction) {
+		// Format: [global_name, source_temp]
+		assert(instruction.getOperandCount() == 2 && "GlobalStore must have exactly 2 operands");
+
+		std::string_view global_name = instruction.getOperandAs<std::string_view>(0);
+		TempVar source_temp = instruction.getOperandAs<TempVar>(1);
+
+		// Store to global variable using RIP-relative addressing
+		// MOV [RIP + offset_to_global], RAX
+		// We'll need to add a relocation for this
+
+		// For now, this is a placeholder
+		// TODO: Implement RIP-relative addressing and relocations
 	}
 
 	void handleVariableDecl(const IrInstruction& instruction) {
@@ -5592,6 +5689,17 @@ private:
 	}
 
 	void finalizeSections() {
+		// Emit global variables to .data or .bss sections FIRST
+		// This creates the symbols that relocations will reference
+		for (const auto& global : global_variables_) {
+			writer.add_global_variable(global.name, global.size_in_bytes, global.is_initialized, global.init_value);
+		}
+
+		// Now add pending global variable relocations (after symbols are created)
+		for (const auto& reloc : pending_global_relocations_) {
+			writer.add_text_relocation(reloc.offset, reloc.symbol_name, reloc.type);
+		}
+
 		// Patch all pending branches before finalizing
 		patchBranches();
 
@@ -5687,4 +5795,22 @@ private:
 		std::string loop_increment_label; // Label to jump to for continue
 	};
 	std::vector<LoopContext> loop_context_stack_;
+
+	// Global variable tracking
+	struct GlobalVariableInfo {
+		std::string name;
+		Type type;
+		size_t size_in_bytes;
+		bool is_initialized;
+		unsigned long long init_value = 0;
+	};
+	std::vector<GlobalVariableInfo> global_variables_;
+
+	// Pending global variable relocations (added after symbols are created)
+	struct PendingGlobalRelocation {
+		uint64_t offset;
+		std::string symbol_name;
+		uint32_t type;
+	};
+	std::vector<PendingGlobalRelocation> pending_global_relocations_;
 };

@@ -1828,3 +1828,7 @@ TEST_CASE("Virtual base classes") {
 TEST_CASE("RTTI") {
 	run_test_from_file("test_rtti_basics.cpp", "Dynamic cast", false);
 }
+
+TEST_CASE("Global variables") {
+	run_test_from_file("global_variables.cpp", "Global variables", true);
+}

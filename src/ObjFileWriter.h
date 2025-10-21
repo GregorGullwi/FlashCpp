@@ -561,6 +561,31 @@ public:
 		section_text->add_relocation_entry(&relocation);
 	}
 
+	// Add a relocation to the .text section with a custom relocation type
+	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type) {
+		// Look up the symbol (could be a global variable, function, etc.)
+		auto* symbol = coffi_.get_symbol(symbol_name);
+		if (!symbol) {
+			// Try mangled name
+			std::string mangled_name = getMangledName(symbol_name);
+			symbol = coffi_.get_symbol(mangled_name);
+			if (!symbol) {
+				std::cerr << "Warning: Symbol not found for relocation: " << symbol_name << std::endl;
+				return;
+			}
+		}
+
+		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+		COFFI::rel_entry_generic relocation;
+		relocation.virtual_address = offset;
+		relocation.symbol_table_index = symbol->get_index();
+		relocation.type = relocation_type;
+		section_text->add_relocation_entry(&relocation);
+
+		std::cerr << "Added text relocation at offset " << offset << " for symbol " << symbol_name
+		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
+	}
+
 	void add_pdata_relocations(uint32_t pdata_offset, const std::string& mangled_name, uint32_t xdata_offset) {
 		std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
@@ -798,6 +823,38 @@ public:
 		          << "' at offset " << offset << " with symbol " << symbol_name << std::endl;
 
 		return symbol_name;
+	}
+
+	// Add a global variable to .data or .bss section
+	void add_global_variable(const std::string& var_name, size_t size_in_bytes, bool is_initialized, unsigned long long init_value = 0) {
+		SectionType section_type = is_initialized ? SectionType::DATA : SectionType::BSS;
+		auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
+		uint32_t offset = static_cast<uint32_t>(section->get_data_size());
+
+		if (is_initialized) {
+			// Add initialized data to .data section
+			std::vector<char> data(size_in_bytes);
+			// Store init_value in little-endian format
+			for (size_t i = 0; i < size_in_bytes && i < 8; ++i) {
+				data[i] = static_cast<char>((init_value >> (i * 8)) & 0xFF);
+			}
+			add_data(data, SectionType::DATA);
+		} else {
+			// For .bss, we don't add actual data, just increase the section size
+			// BSS is uninitialized data that gets zero-initialized at load time
+			std::vector<char> zero_data(size_in_bytes, 0);
+			add_data(zero_data, SectionType::BSS);
+		}
+
+		// Add a symbol for this global variable
+		auto symbol = coffi_.add_symbol(var_name);
+		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);  // Global variables are external
+		symbol->set_section_number(section->get_index() + 1);
+		symbol->set_value(offset);
+
+		std::cerr << "Added global variable '" << var_name << "' at offset " << offset
+		          << " in " << (is_initialized ? ".data" : ".bss") << " section (size: " << size_in_bytes << " bytes)" << std::endl;
 	}
 
 protected:

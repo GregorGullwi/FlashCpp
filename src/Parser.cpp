@@ -418,14 +418,40 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 		}
 	}
-	// Attempt to parse a simple declaration (variable or typedef)
+	// Attempt to parse a simple declaration (global variable or typedef)
+	// Check for initialization
+	std::optional<ASTNode> initializer;
+	if (peek_token()->value() == "=") {
+		consume_token(); // consume '='
+		auto init_expr = parse_expression();
+		if (init_expr.is_error()) {
+			discard_saved_token(saved_position);
+			return init_expr;
+		}
+		initializer = init_expr.node();
+	}
+
 	if (!consume_punctuator(";")) {
 		discard_saved_token(saved_position);
 		return ParseResult::error("Expected ;", *current_token_);
 	}
 
+	// Create a global variable declaration node
+	// Reuse the existing decl_node from type_and_name_result
+	auto global_var_node = emplace_node<VariableDeclarationNode>(
+		type_and_name_result.node().value(),  // Use the existing DeclarationNode
+		initializer
+	);
+
+	// Add to symbol table
+	const Token& identifier_token = decl_node.identifier_token();
+	if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
+		discard_saved_token(saved_position);
+		return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+	}
+
 	discard_saved_token(saved_position);
-	return ParseResult::success();
+	return ParseResult::success(global_var_node);
 }
 
 ParseResult Parser::parse_struct_declaration()
@@ -3302,7 +3328,7 @@ ParseResult Parser::parse_primary_expression()
 				return ParseResult::error("Missing identifier", idenfifier_token);
 			}
 		}
-		else if (!identifierType->is<DeclarationNode>() && !identifierType->is<FunctionDeclarationNode>()) {
+		else if (!identifierType->is<DeclarationNode>() && !identifierType->is<FunctionDeclarationNode>() && !identifierType->is<VariableDeclarationNode>()) {
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
 		}
 		else {

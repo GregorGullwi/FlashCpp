@@ -1169,6 +1169,41 @@ private:
 		const auto& decl = node.declaration();
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 
+		// Check if this is a global variable (declared at global scope)
+		bool is_global = (symbol_table.get_current_scope_type() == ScopeType::Global);
+
+		if (is_global) {
+			// Handle global variable
+			// Format: [type, size_in_bits, var_name, is_initialized, init_value?]
+			std::vector<IrOperand> operands;
+			operands.emplace_back(type_node.type());
+			operands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+			operands.emplace_back(decl.identifier_token().value());
+
+			// Check if initialized
+			if (node.initializer()) {
+				const ASTNode& init_node = *node.initializer();
+				if (init_node.is<ExpressionNode>()) {
+					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+					// init_operands = [type, size, value]
+					if (init_operands.size() >= 3) {
+						operands.emplace_back(true);  // is_initialized
+						operands.emplace_back(init_operands[2]);  // init_value
+					} else {
+						operands.emplace_back(false);  // is_initialized
+					}
+				} else {
+					operands.emplace_back(false);  // is_initialized
+				}
+			} else {
+				operands.emplace_back(false);  // is_initialized
+			}
+
+			ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(operands), decl.identifier_token());
+			return;
+		}
+
+		// Handle local variable
 		// Create variable declaration operands
 		// Format: [type, size_in_bits, var_name, custom_alignment]
 		std::vector<IrOperand> operands;
@@ -1413,10 +1448,12 @@ private:
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
 		// First try local symbol table
 		std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
+		bool is_global = false;
 
-		// If not found locally, try global symbol table (for enum values, etc.)
+		// If not found locally, try global symbol table (for enum values, global variables, etc.)
 		if (!symbol.has_value() && global_symbol_table_) {
 			symbol = global_symbol_table_->lookup(identifierNode.name());
+			is_global = symbol.has_value();  // If found in global table, it's a global
 		}
 
 		if (!symbol.has_value()) {
@@ -1444,8 +1481,38 @@ private:
 				}
 			}
 
-			// Regular variable
+			// Check if this is a global variable
+			if (is_global) {
+				// Generate GlobalLoad IR instruction
+				TempVar result_temp = var_counter.next();
+				std::vector<IrOperand> operands;
+				operands.emplace_back(result_temp);
+				operands.emplace_back(identifierNode.name());
+				ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+
+				// Return the temp variable that will hold the loaded value
+				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
+			}
+
+			// Regular local variable
 			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), identifierNode.name() };
+		}
+
+		// Check if it's a VariableDeclarationNode (global variable)
+		if (symbol->is<VariableDeclarationNode>()) {
+			const auto& var_decl_node = symbol->as<VariableDeclarationNode>();
+			const auto& decl_node = var_decl_node.declaration();
+			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+
+			// This is a global variable - generate GlobalLoad
+			TempVar result_temp = var_counter.next();
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_temp);
+			operands.emplace_back(identifierNode.name());
+			ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+
+			// Return the temp variable that will hold the loaded value
+			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
 		}
 
 		// If we get here, the symbol is not a DeclarationNode

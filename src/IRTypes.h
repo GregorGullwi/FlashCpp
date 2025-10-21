@@ -119,6 +119,10 @@ enum class IrOpcode : int_fast16_t {
 	// RTTI operations
 	Typeid,          // typeid(expr) or typeid(Type) - returns pointer to type_info
 	DynamicCast,     // dynamic_cast<Type>(expr) - runtime type checking cast
+	// Static storage duration
+	GlobalVariableDecl,  // Global variable declaration: [type, size, name, is_initialized, init_value?]
+	GlobalLoad,          // Load from global variable: [result_temp, global_name]
+	GlobalStore,         // Store to global variable: [global_name, source_temp]
 };
 
 enum class X64Register : uint8_t {
@@ -2525,6 +2529,39 @@ public:
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
 			break;
+
+		case IrOpcode::GlobalVariableDecl:
+		{
+			// global_var [Type][Size] @name [is_initialized] [init_value?]
+			// Format: [type, size_in_bits, var_name, is_initialized, init_value?]
+			assert((getOperandCount() == 4 || getOperandCount() == 5) && "GlobalVariableDecl must have 4 or 5 operands");
+			oss << "global_var " << getOperandAsTypeString(0) << getOperandAs<int>(1) << " @" << getOperandAs<std::string_view>(2);
+			if (getOperandCount() >= 4) {
+				oss << " " << (getOperandAs<bool>(3) ? "initialized" : "uninitialized");
+				if (getOperandCount() == 5 && getOperandAs<bool>(3)) {
+					oss << " = " << getOperandAs<unsigned long long>(4);
+				}
+			}
+		}
+		break;
+
+		case IrOpcode::GlobalLoad:
+		{
+			// %result = global_load @global_name
+			// Format: [result_temp, global_name]
+			assert(getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
+			oss << '%' << getOperandAs<TempVar>(0).index << " = global_load @" << getOperandAs<std::string_view>(1);
+		}
+		break;
+
+		case IrOpcode::GlobalStore:
+		{
+			// global_store @global_name, %value
+			// Format: [global_name, value]
+			assert(getOperandCount() == 2 && "GlobalStore must have exactly 2 operands");
+			oss << "global_store @" << getOperandAs<std::string_view>(0) << ", %" << getOperandAs<TempVar>(1).index;
+		}
+		break;
 
 		default:
 			std::cerr << "Unhandled opcode: " << static_cast<std::underlying_type_t<IrOpcode>>(opcode_);
