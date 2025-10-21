@@ -57,7 +57,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 
     const auto& ast = parser.get_nodes();
 
-    AstToIr converter;
+    AstToIr converter(&gSymbolTable);
     for (auto& node_handle : ast) {
         converter.visit(node_handle);
     }
@@ -1245,7 +1245,7 @@ TEST_CASE("Namespace:Nested") {
 }
 
 TEST_CASE("Enums") {
-	//run_test_from_file("test_enum.cpp", "Enum and Enum class tests", false);
+	run_test_from_file("test_enum.cpp", "Enum and Enum class tests", false);
 }
 
 TEST_CASE("String literals and puts") {

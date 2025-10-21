@@ -312,6 +312,12 @@ public:
 		return "";
 	}
 
+	void clear() {
+		symbol_table_stack_.clear();
+		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
+		namespace_symbols_.clear();
+	}
+
 private:
 	std::vector<Scope> symbol_table_stack_ = { Scope(ScopeType::Global, 0 ) };
 	// Persistent map of namespace contents
