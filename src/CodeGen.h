@@ -1067,7 +1067,7 @@ private:
 							const StructTypeInfo& struct_info = *type_info.struct_info_;
 							const auto& initializers = init_list.initializers();
 
-							if (struct_info.hasConstructor()) {
+							if (struct_info.hasAnyConstructor()) {
 								// Generate constructor call with parameters from initializer list
 								std::vector<IrOperand> ctor_operands;
 								ctor_operands.emplace_back(type_info.name_);  // Struct name
@@ -1367,6 +1367,20 @@ private:
 				double value = std::get<double>(operands[2]);
 				return { toType, toSize, value };
 			}
+		}
+
+		// For non-literal values (variables, TempVars), check if conversion is needed
+		// If sizes are equal and only signedness differs, no actual conversion instruction is needed
+		// The value can be reinterpreted as the new type
+		if (fromSize == toSize) {
+			// Same size, different signedness - just change the type metadata
+			// Return the same value with the new type
+			std::vector<IrOperand> result;
+			result.push_back(toType);
+			result.push_back(toSize);
+			// Copy the value (TempVar or identifier)
+			result.insert(result.end(), operands.begin() + 2, operands.end());
+			return result;
 		}
 
 		// For non-literal values (variables, TempVars), create a conversion instruction
@@ -1794,8 +1808,14 @@ private:
 
 		ir_.addInstruction(IrInstruction(opcode, std::move(irOperands), binaryOperatorNode.get_token()));
 
-		// Return the result variable with its type and size
-		return { lhsIrOperands[0], lhsIrOperands[1], result_var };
+		// For comparison operations, return boolean type (1 bit)
+		// For other operations, return the common type
+		if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
+			return { Type::Bool, 1, result_var };
+		} else {
+			// Return the result variable with its type and size
+			return { commonType, get_type_size_bits(commonType), result_var };
+		}
 	}
 
 	// Helper function to generate Microsoft Visual C++ mangled name for function calls
@@ -2204,7 +2224,7 @@ private:
 
 				// Get the type_index from the nested result (if available)
 				if (nested_result.size() >= 4) {
-					base_type_index = std::get<size_t>(nested_result[3]);
+					base_type_index = std::get<unsigned long long>(nested_result[3]);
 				} else {
 					// Fallback: search through gTypeInfo (less reliable)
 					base_type_index = 0;

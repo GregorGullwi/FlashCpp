@@ -108,6 +108,56 @@ OpCodeWithSize generateMovFromFrame(X64Register destinationRegister, int32_t off
 }
 
 /**
+ * @brief Generates x86-64 binary opcodes for 'movss/movsd xmm, [rbp + offset]'.
+ *
+ * This function creates the byte sequence for loading a float/double value from
+ * a frame-relative address (RBP + offset) into an XMM register.
+ *
+ * @param destinationRegister The destination XMM register (XMM0-XMM3).
+ * @param offset The signed byte offset from RBP.
+ * @param is_float True for movss (float), false for movsd (double).
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_t offset, bool is_float) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// Prefix: F3 for movss (float), F2 for movsd (double)
+	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
+	result.size_in_bytes++;
+
+	// Opcode: 0F 10 for movss/movsd xmm, [mem]
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0x10;
+	result.size_in_bytes += 2;
+
+	// ModR/M byte
+	uint8_t xmm_reg = static_cast<uint8_t>(destinationRegister) - static_cast<uint8_t>(X64Register::XMM0);
+
+	if (offset >= -128 && offset <= 127) {
+		// 8-bit displacement
+		uint8_t modrm = 0x45 + (xmm_reg << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+		*current_byte_ptr++ = modrm;
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes += 2;
+	} else {
+		// 32-bit displacement
+		uint8_t modrm = 0x85 + (xmm_reg << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+		*current_byte_ptr++ = modrm;
+		result.size_in_bytes++;
+
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'mov [rbp + offset], source_register'.
  *
  * This function creates the byte sequence for moving a 64-bit value from a
@@ -488,6 +538,17 @@ struct RegisterAllocator
 			}
 		}
 		throw std::runtime_error("No registers available");
+	}
+
+	// Allocate an XMM register specifically for floating-point operations
+	AllocatedRegister& allocateXMM() {
+		for (size_t i = static_cast<size_t>(X64Register::XMM0); i < static_cast<size_t>(X64Register::Count); ++i) {
+			if (!registers[i].isAllocated) {
+				registers[i].isAllocated = true;
+				return registers[i];
+			}
+		}
+		throw std::runtime_error("No XMM registers available");
 	}
 
 	void allocateSpecific(X64Register reg, int32_t stackVariableOffset) {
@@ -1084,6 +1145,8 @@ private:
 			.type = instruction.getOperandAs<Type>(1),
 			.size_in_bits = instruction.getOperandAs<int>(2),
 			.result_operand = instruction.getOperand(0),
+			.result_physical_reg = X64Register::RAX,
+			.rhs_physical_reg = X64Register::RCX
 		};
 
 		// Support integer, boolean, and floating-point operations
@@ -1102,10 +1165,19 @@ private:
 				else {
 					assert(variable_scopes.back().scope_stack_space <= lhs_var_id->second);
 
-					ctx.result_physical_reg = regAlloc.allocate().reg;
-					auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
+					if (is_floating_point_type(ctx.type)) {
+						// For float/double, use XMM0 directly (parameters have been stored to stack)
+						ctx.result_physical_reg = X64Register::XMM0;
+						bool is_float = (ctx.type == Type::Float);
+						auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second, is_float);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					} else {
+						// For integers, use regular MOV
+						ctx.result_physical_reg = regAlloc.allocate().reg;
+						auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
+					}
 				}
 			}
 			else {
@@ -1121,10 +1193,19 @@ private:
 			else {
 				assert(variable_scopes.back().scope_stack_space <= lhs_stack_var_addr);
 
-				ctx.result_physical_reg = regAlloc.allocate().reg;
-				auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-				regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
+				if (is_floating_point_type(ctx.type)) {
+					// For float/double, use XMM0 directly (parameters have been stored to stack)
+					ctx.result_physical_reg = X64Register::XMM0;
+					bool is_float = (ctx.type == Type::Float);
+					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr, is_float);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				} else {
+					// For integers, use regular MOV
+					ctx.result_physical_reg = regAlloc.allocate().reg;
+					auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
+				}
 			}
 		}
 		else if (instruction.isOperandType<unsigned long long>(3)) {
@@ -1181,10 +1262,19 @@ private:
 				else {
 					assert(variable_scopes.back().scope_stack_space <= rhs_var_id->second);
 
-					ctx.rhs_physical_reg = regAlloc.allocate().reg;
-					auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
+					if (is_floating_point_type(ctx.type)) {
+						// For float/double, use XMM1 directly (parameters have been stored to stack)
+						ctx.rhs_physical_reg = X64Register::XMM1;
+						bool is_float = (ctx.type == Type::Float);
+						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second, is_float);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					} else {
+						// For integers, use regular MOV
+						ctx.rhs_physical_reg = regAlloc.allocate().reg;
+						auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
+					}
 				}
 			}
 			else {
@@ -1200,10 +1290,19 @@ private:
 			else {
 				assert(variable_scopes.back().scope_stack_space <= rhs_stack_var_addr);
 
-				ctx.rhs_physical_reg = regAlloc.allocate().reg;
-				auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-				regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
+				if (is_floating_point_type(ctx.type)) {
+					// For float/double, use XMM1 directly (parameters have been stored to stack)
+					ctx.rhs_physical_reg = X64Register::XMM1;
+					bool is_float = (ctx.type == Type::Float);
+					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				} else {
+					// For integers, use regular MOV
+					ctx.rhs_physical_reg = regAlloc.allocate().reg;
+					auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
+				}
 			}
 		}
 		else if (instruction.isOperandType<unsigned long long>(6)) {
@@ -1258,7 +1357,10 @@ private:
 			const TempVar temp_var = std::get<TempVar>(ctx.result_operand);
 			const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
 			variable_scopes.back().identifier_offset[temp_var.name()] = stack_offset;
-			regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset);
+			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
+			if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
+				regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset);
+			}
 		}
 
 		return ctx;
@@ -1382,7 +1484,7 @@ private:
 					if (instruction.isOperandType<TempVar>(i)) {
 						auto temp_var = instruction.getOperandAs<TempVar>(i);
 						auto stack_offset = getStackOffsetFromTempVar(temp_var);
-						min_stack_offset = std::min(min_stack_offset, stack_offset);
+						min_stack_offset = std::min(min_stack_offset, static_cast<int_fast32_t>(stack_offset));
 						var_scope.identifier_offset[temp_var.name()] = stack_offset;
 					}
 				}
@@ -2648,6 +2750,7 @@ private:
 			int paramNumber;
 			int offset;
 			X64Register src_reg;
+			int pointer_depth;
 		};
 		std::vector<ParameterInfo> parameters;
 
@@ -2700,23 +2803,57 @@ private:
 			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
 			if (paramNumber < static_cast<int>(INT_PARAM_REGS.size())) {
-				X64Register src_reg = INT_PARAM_REGS[paramNumber];
-				regAlloc.allocateSpecific(src_reg, offset);
+				// Determine if this is a float parameter
+				bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
+				X64Register src_reg = is_float_param ? FLOAT_PARAM_REGS[paramNumber] : INT_PARAM_REGS[paramNumber];
+
+				// Don't allocate XMM registers in the general register allocator
+				if (!is_float_param) {
+					regAlloc.allocateSpecific(src_reg, offset);
+				}
 
 				// Store parameter info for later processing
-				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg});
+				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth});
 			}
 
 			paramIndex += 4;  // Skip type, size, pointer depth, and name
 		}
 
 		// Second pass: generate parameter storage code in the correct order
-		
+
 		// Standard order for other functions
 		for (const auto& param : parameters) {
 			// MSVC-STYLE: Store parameters using RBP-relative addressing
-			auto mov_opcodes = generateMovToFrame(param.src_reg, param.offset);
-			textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+			bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && param.pointer_depth == 0;
+
+			if (is_float_param) {
+				// For floating-point parameters, use movss/movsd to store from XMM register
+				uint8_t prefix = (param.param_type == Type::Float) ? 0xF3 : 0xF2;
+				textSectionData.push_back(prefix);
+				textSectionData.push_back(0x0F);
+				textSectionData.push_back(0x11); // Store variant (movss/movsd [mem], xmm)
+
+				// ModR/M byte for [RBP + offset]
+				int32_t stack_offset = param.offset;
+				uint8_t xmm_reg = static_cast<uint8_t>(param.src_reg) - static_cast<uint8_t>(X64Register::XMM0);
+
+				if (stack_offset >= -128 && stack_offset <= 127) {
+					uint8_t modrm = 0x45 + (xmm_reg << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+					textSectionData.push_back(modrm);
+					textSectionData.push_back(static_cast<uint8_t>(stack_offset));
+				} else {
+					uint8_t modrm = 0x85 + (xmm_reg << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+					textSectionData.push_back(modrm);
+					for (int j = 0; j < 4; ++j) {
+						textSectionData.push_back(static_cast<uint8_t>(stack_offset & 0xFF));
+						stack_offset >>= 8;
+					}
+				}
+			} else {
+				// For integer parameters, use regular MOV
+				auto mov_opcodes = generateMovToFrame(param.src_reg, param.offset);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+			}
 		}
 	}
 
@@ -2995,7 +3132,12 @@ private:
 	}
 
 	void handleUnsignedDivide(const IrInstruction& instruction) {
+		flushAllDirtyRegisters();	// we do this so that RDX is free to use
+
+		regAlloc.release(X64Register::RAX);
 		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
+
+		regAlloc.release(X64Register::RDX);
 		regAlloc.allocateSpecific(X64Register::RDX, INT_MIN);
 
 		// Setup and load operands
@@ -3018,6 +3160,8 @@ private:
 
 		// Store the result from RAX (quotient) to the appropriate destination
 		storeArithmeticResult(ctx, X64Register::RAX);
+
+		regAlloc.release(X64Register::RDX);
 	}
 
 	void handleUnsignedShiftRight(const IrInstruction& instruction) {
@@ -3576,25 +3720,36 @@ private:
 
 		// Use SSE comiss/comisd for comparison
 		Type type = instruction.getOperandAs<Type>(1);
+		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
+		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
+		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
 			// comiss xmm1, xmm2 (0F 2F /r)
 			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
 		} else if (type == Type::Double) {
 			// comisd xmm1, xmm2 (66 0F 2F /r)
 			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
 		}
 
-		// Set result based on zero flag: sete r8
+		// Allocate a general-purpose register for the boolean result
+		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
+		X64Register bool_reg = bool_reg_alloc.reg;
+
+		// Set result based on zero flag: sete r8 (use AL for RAX)
 		std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, 0xC0 };
-		seteInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		seteInst[2] = 0xC0 + static_cast<uint8_t>(bool_reg);
 		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
 
+		// Update context for boolean result (1 byte)
+		ctx.type = Type::Bool;
+		ctx.size_in_bits = 8;
+
 		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		storeArithmeticResult(ctx, bool_reg);
 	}
 
 	void handleFloatNotEqual(const IrInstruction& instruction) {
@@ -3603,25 +3758,36 @@ private:
 
 		// Use SSE comiss/comisd for comparison
 		Type type = instruction.getOperandAs<Type>(1);
+		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
+		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
+		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
 			// comiss xmm1, xmm2 (0F 2F /r)
 			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
 		} else if (type == Type::Double) {
 			// comisd xmm1, xmm2 (66 0F 2F /r)
 			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
 		}
 
+		// Allocate a general-purpose register for the boolean result
+		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
+		X64Register bool_reg = bool_reg_alloc.reg;
+
 		// Set result based on zero flag: setne r8
 		std::array<uint8_t, 3> setneInst = { 0x0F, 0x95, 0xC0 };
-		setneInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		setneInst[2] = 0xC0 + static_cast<uint8_t>(bool_reg);
 		textSectionData.insert(textSectionData.end(), setneInst.begin(), setneInst.end());
 
+		// Update context for boolean result (1 byte)
+		ctx.type = Type::Bool;
+		ctx.size_in_bits = 8;
+
 		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		storeArithmeticResult(ctx, bool_reg);
 	}
 
 	void handleFloatLessThan(const IrInstruction& instruction) {
@@ -3630,25 +3796,36 @@ private:
 
 		// Use SSE comiss/comisd for comparison
 		Type type = instruction.getOperandAs<Type>(1);
+		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
+		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
+		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
 			// comiss xmm1, xmm2 (0F 2F /r)
 			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
 		} else if (type == Type::Double) {
 			// comisd xmm1, xmm2 (66 0F 2F /r)
 			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
 		}
 
+		// Allocate a general-purpose register for the boolean result
+		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
+		X64Register bool_reg = bool_reg_alloc.reg;
+
 		// Set result based on carry flag: setb r8 (below = less than for floating-point)
 		std::array<uint8_t, 3> setbInst = { 0x0F, 0x92, 0xC0 };
-		setbInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		setbInst[2] = 0xC0 + static_cast<uint8_t>(bool_reg);
 		textSectionData.insert(textSectionData.end(), setbInst.begin(), setbInst.end());
 
+		// Update context for boolean result (1 byte)
+		ctx.type = Type::Bool;
+		ctx.size_in_bits = 8;
+
 		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		storeArithmeticResult(ctx, bool_reg);
 	}
 
 	void handleFloatLessEqual(const IrInstruction& instruction) {
@@ -3657,25 +3834,36 @@ private:
 
 		// Use SSE comiss/comisd for comparison
 		Type type = instruction.getOperandAs<Type>(1);
+		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
+		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
+		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
 			// comiss xmm1, xmm2 (0F 2F /r)
 			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
 		} else if (type == Type::Double) {
 			// comisd xmm1, xmm2 (66 0F 2F /r)
 			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
 		}
 
+		// Allocate a general-purpose register for the boolean result
+		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
+		X64Register bool_reg = bool_reg_alloc.reg;
+
 		// Set result based on flags: setbe r8 (below or equal)
 		std::array<uint8_t, 3> setbeInst = { 0x0F, 0x96, 0xC0 };
-		setbeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		setbeInst[2] = 0xC0 + static_cast<uint8_t>(bool_reg);
 		textSectionData.insert(textSectionData.end(), setbeInst.begin(), setbeInst.end());
 
+		// Update context for boolean result (1 byte)
+		ctx.type = Type::Bool;
+		ctx.size_in_bits = 8;
+
 		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		storeArithmeticResult(ctx, bool_reg);
 	}
 
 	void handleFloatGreaterThan(const IrInstruction& instruction) {
@@ -3684,25 +3872,36 @@ private:
 
 		// Use SSE comiss/comisd for comparison
 		Type type = instruction.getOperandAs<Type>(1);
+		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
+		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
+		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
 			// comiss xmm1, xmm2 (0F 2F /r)
 			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
 		} else if (type == Type::Double) {
 			// comisd xmm1, xmm2 (66 0F 2F /r)
 			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
 		}
 
+		// Allocate a general-purpose register for the boolean result
+		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
+		X64Register bool_reg = bool_reg_alloc.reg;
+
 		// Set result based on flags: seta r8 (above = greater than for floating-point)
 		std::array<uint8_t, 3> setaInst = { 0x0F, 0x97, 0xC0 };
-		setaInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		setaInst[2] = 0xC0 + static_cast<uint8_t>(bool_reg);
 		textSectionData.insert(textSectionData.end(), setaInst.begin(), setaInst.end());
 
+		// Update context for boolean result (1 byte)
+		ctx.type = Type::Bool;
+		ctx.size_in_bits = 8;
+
 		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		storeArithmeticResult(ctx, bool_reg);
 	}
 
 	void handleFloatGreaterEqual(const IrInstruction& instruction) {
@@ -3711,25 +3910,36 @@ private:
 
 		// Use SSE comiss/comisd for comparison
 		Type type = instruction.getOperandAs<Type>(1);
+		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
+		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
+		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
 			// comiss xmm1, xmm2 (0F 2F /r)
 			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
 		} else if (type == Type::Double) {
 			// comisd xmm1, xmm2 (66 0F 2F /r)
 			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
 			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
 		}
 
+		// Allocate a general-purpose register for the boolean result
+		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
+		X64Register bool_reg = bool_reg_alloc.reg;
+
 		// Set result based on flags: setae r8 (above or equal)
 		std::array<uint8_t, 3> setaeInst = { 0x0F, 0x93, 0xC0 };
-		setaeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
+		setaeInst[2] = 0xC0 + static_cast<uint8_t>(bool_reg);
 		textSectionData.insert(textSectionData.end(), setaeInst.begin(), setaeInst.end());
 
+		// Update context for boolean result (1 byte)
+		ctx.type = Type::Bool;
+		ctx.size_in_bits = 8;
+
 		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		storeArithmeticResult(ctx, bool_reg);
 	}
 
 	void handleSignExtend(const IrInstruction& instruction) {
