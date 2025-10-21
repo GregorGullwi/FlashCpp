@@ -1073,9 +1073,25 @@ private:
 	bool is_array_;      // true for delete[], false for delete
 };
 
+// Static cast expression node: static_cast<Type>(expr)
+class StaticCastNode {
+public:
+	explicit StaticCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+
+	const ASTNode& target_type() const { return target_type_; }
+	const ASTNode& expr() const { return expr_; }
+	const Token& cast_token() const { return cast_token_; }
+
+private:
+	ASTNode target_type_;  // TypeSpecifierNode - the type to cast to
+	ASTNode expr_;         // ExpressionNode - the expression to cast
+	Token cast_token_;     // Token for error reporting
+};
+
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
-	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode>;
+	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode>;
 
 /*class FunctionDefinitionNode {
 public:

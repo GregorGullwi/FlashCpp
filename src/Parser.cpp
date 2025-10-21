@@ -2395,6 +2395,52 @@ ParseResult Parser::parse_return_statement()
 
 ParseResult Parser::parse_unary_expression()
 {
+	// Check for 'static_cast' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "static_cast") {
+		Token cast_token = *current_token_;
+		consume_token(); // consume 'static_cast'
+
+		// Expect '<'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+		    peek_token()->value() != "<") {
+			return ParseResult::error("Expected '<' after 'static_cast'", *current_token_);
+		}
+		consume_token(); // consume '<'
+
+		// Parse the target type
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			return ParseResult::error("Expected type in static_cast", *current_token_);
+		}
+
+		// Expect '>'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+		    peek_token()->value() != ">") {
+			return ParseResult::error("Expected '>' after type in static_cast", *current_token_);
+		}
+		consume_token(); // consume '>'
+
+		// Expect '('
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after static_cast<Type>", *current_token_);
+		}
+
+		// Parse the expression to cast
+		ParseResult expr_result = parse_expression();
+		if (expr_result.is_error() || !expr_result.node().has_value()) {
+			return ParseResult::error("Expected expression in static_cast", *current_token_);
+		}
+
+		// Expect ')'
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after static_cast expression", *current_token_);
+		}
+
+		auto cast_expr = emplace_node<ExpressionNode>(
+			StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+		return ParseResult::success(cast_expr);
+	}
+
 	// Check for 'new' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "new") {
 		consume_token(); // consume 'new'

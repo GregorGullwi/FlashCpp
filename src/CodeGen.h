@@ -1135,6 +1135,10 @@ private:
 			const auto& expr = std::get<DeleteExpressionNode>(exprNode);
 			return generateDeleteExpressionIr(expr);
 		}
+		else if (std::holds_alternative<StaticCastNode>(exprNode)) {
+			const auto& expr = std::get<StaticCastNode>(exprNode);
+			return generateStaticCastIr(expr);
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -1159,6 +1163,24 @@ private:
 		if (symbol->is<DeclarationNode>()) {
 			const auto& decl_node = symbol->as<DeclarationNode>();
 			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+
+			// Check if this is an enum value (constant)
+			if (type_node.type() == Type::Enum) {
+				// This is an enum value - look up its constant value
+				size_t enum_type_index = type_node.type_index();
+				if (enum_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[enum_type_index];
+					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+					if (enum_info) {
+						long long enum_value = enum_info->getEnumeratorValue(std::string(identifierNode.name()));
+						// Return the enum value as a constant (using the underlying type)
+						return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+						         static_cast<unsigned long long>(enum_value) };
+					}
+				}
+			}
+
+			// Regular variable
 			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), identifierNode.name() };
 		}
 
@@ -1168,6 +1190,24 @@ private:
 	}
 
 	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+		// Check if this is a scoped enum value (e.g., Direction::North)
+		const auto& namespaces = qualifiedIdNode.namespaces();
+		if (namespaces.size() == 1) {
+			// Could be EnumName::EnumeratorName
+			std::string enum_name(namespaces[0]);
+			auto type_it = gTypesByName.find(enum_name);
+			if (type_it != gTypesByName.end() && type_it->second->isEnum()) {
+				const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
+				if (enum_info && enum_info->is_scoped) {
+					// This is a scoped enum - look up the enumerator value
+					long long enum_value = enum_info->getEnumeratorValue(std::string(qualifiedIdNode.name()));
+					// Return the enum value as a constant
+					return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+					         static_cast<unsigned long long>(enum_value) };
+				}
+			}
+		}
+
 		// For now, treat qualified identifiers similarly to regular identifiers
 		// In a full implementation, we would use the namespace information for name mangling
 		// For external functions like std::print, we just use the identifier name
@@ -2369,6 +2409,42 @@ private:
 
 		// delete is a statement, not an expression, so return empty
 		return {};
+	}
+
+	std::vector<IrOperand> generateStaticCastIr(const StaticCastNode& staticCastNode) {
+		// Evaluate the expression to cast
+		auto expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>());
+
+		// Get the target type from the type specifier
+		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
+		Type target_type = target_type_node.type();
+		int target_size = static_cast<int>(target_type_node.size_in_bits());
+
+		// Get the source type
+		Type source_type = std::get<Type>(expr_operands[0]);
+		int source_size = std::get<int>(expr_operands[1]);
+
+		// For now, static_cast just changes the type metadata
+		// The actual value remains the same (this works for enum to int, int to enum, etc.)
+		// More complex casts (e.g., pointer casts, numeric conversions) would need additional logic
+
+		// If the types are the same, just return the expression as-is
+		if (source_type == target_type && source_size == target_size) {
+			return expr_operands;
+		}
+
+		// For enum to int or int to enum, we can just change the type
+		if ((source_type == Type::Enum && target_type == Type::Int) ||
+		    (source_type == Type::Int && target_type == Type::Enum) ||
+		    (source_type == Type::Enum && target_type == Type::UnsignedInt) ||
+		    (source_type == Type::UnsignedInt && target_type == Type::Enum)) {
+			// Return the value with the new type
+			return { target_type, target_size, expr_operands[2] };
+		}
+
+		// For numeric conversions, we might need to generate a conversion instruction
+		// For now, just change the type metadata (works for most cases)
+		return { target_type, target_size, expr_operands[2] };
 	}
 
 	// Structure to track variables that need destructors called
