@@ -1241,7 +1241,7 @@ TEST_CASE("Namespace:Nested") {
 }
 
 TEST_CASE("Enums") {
-	run_test_from_file("test_enums.cpp", "Enum and Enum class tests", false);
+	run_test_from_file("test_enum.cpp", "Enum and Enum class tests", false);
 }
 
 TEST_CASE("String literals and puts") {
@@ -1253,7 +1253,7 @@ void test_function() {
 	test_function_name = __FUNCTION__;
 }
 
-#if 0
+#if 0	// Disabled until we get a preprocessor refactor that works with source text and not just files
 TEST_CASE("Parser:FunctionNameIdentifiers") {
 	SUBCASE("__FUNCTION__, __func__, __PRETTY_FUNCTION__ inside function") {
 		// Test that these identifiers work inside a function and expand to the function name
@@ -1795,4 +1795,8 @@ TEST_SUITE("new and delete operators") {
 		CHECK(has_heap_alloc);
 		CHECK(has_constructor_call);
 	}
+}
+
+TEST_CASE("Basic class inheritance") {
+	run_test_from_file("test_inheritance_basic.cpp", "Class inheritance", false);
 }

@@ -99,6 +99,17 @@ enum class AccessSpecifier {
 	Private
 };
 
+// Base class specifier for inheritance
+struct BaseClassSpecifier {
+	std::string name;           // Base class name
+	TypeIndex type_index;       // Index into gTypeInfo for base class type
+	AccessSpecifier access;     // Inheritance access (public/protected/private)
+	size_t offset;              // Offset of base subobject in derived class
+
+	BaseClassSpecifier(std::string n, TypeIndex tidx, AccessSpecifier acc, size_t off = 0)
+		: name(std::move(n)), type_index(tidx), access(acc), offset(off) {}
+};
+
 // Struct member information
 struct StructMember {
 	std::string name;
@@ -137,6 +148,7 @@ struct StructTypeInfo {
 	std::string name;
 	std::vector<StructMember> members;
 	std::vector<StructMemberFunction> member_functions;
+	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
 	size_t total_size = 0;      // Total size of struct in bytes
 	size_t alignment = 1;       // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
@@ -192,6 +204,17 @@ struct StructTypeInfo {
 		// Pad struct to its alignment
 		total_size = (total_size + alignment - 1) & ~(alignment - 1);
 	}
+
+	// Finalize with base classes - computes layout including base class subobjects
+	void finalizeWithBases();
+
+	// Add a base class
+	void addBaseClass(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access) {
+		base_classes.emplace_back(base_name, base_type_index, access, 0);
+	}
+
+	// Find member recursively through base classes
+	const StructMember* findMemberRecursive(const std::string& member_name) const;
 
 	void set_custom_alignment(size_t align) {
 		custom_alignment = align;
@@ -706,6 +729,15 @@ struct MemberInitializer {
 		: member_name(name), initializer_expr(expr) {}
 };
 
+// Base class initializer for constructor initializer lists
+struct BaseInitializer {
+	std::string base_class_name;
+	std::vector<ASTNode> arguments;
+
+	BaseInitializer(std::string name, std::vector<ASTNode> args)
+		: base_class_name(std::move(name)), arguments(std::move(args)) {}
+};
+
 // Constructor declaration node
 class ConstructorDeclarationNode {
 public:
@@ -718,6 +750,7 @@ public:
 	Token name_token() const { return Token(Token::Type::Identifier, name_, 0, 0, 0); }  // Create token on demand
 	const std::vector<ASTNode>& parameter_nodes() const { return parameter_nodes_; }
 	const std::vector<MemberInitializer>& member_initializers() const { return member_initializers_; }
+	const std::vector<BaseInitializer>& base_initializers() const { return base_initializers_; }
 	bool is_implicit() const { return is_implicit_; }
 
 	void add_parameter_node(ASTNode parameter_node) {
@@ -726,6 +759,10 @@ public:
 
 	void add_member_initializer(std::string_view member_name, ASTNode initializer_expr) {
 		member_initializers_.emplace_back(member_name, initializer_expr);
+	}
+
+	void add_base_initializer(std::string base_name, std::vector<ASTNode> args) {
+		base_initializers_.emplace_back(std::move(base_name), std::move(args));
 	}
 
 	void set_is_implicit(bool implicit) {
@@ -746,6 +783,7 @@ private:
 	std::string_view name_;         // Points directly into source text from lexer token
 	std::vector<ASTNode> parameter_nodes_;
 	std::vector<MemberInitializer> member_initializers_;
+	std::vector<BaseInitializer> base_initializers_;  // Base class initializers
 	std::optional<BlockNode*> definition_block_;
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
 };
@@ -808,6 +846,7 @@ public:
 	std::string_view name() const { return name_; }
 	const std::vector<StructMemberDecl>& members() const { return members_; }
 	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
+	const std::vector<BaseClassSpecifier>& base_classes() const { return base_classes_; }
 	bool is_class() const { return is_class_; }
 	AccessSpecifier default_access() const {
 		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
@@ -815,6 +854,10 @@ public:
 
 	void add_member(ASTNode member, AccessSpecifier access) {
 		members_.emplace_back(member, access);
+	}
+
+	void add_base_class(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access) {
+		base_classes_.emplace_back(base_name, base_type_index, access, 0);
 	}
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access) {
@@ -837,6 +880,7 @@ private:
 	std::string_view name_;  // Points directly into source text from lexer token
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
+	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
 	bool is_class_;  // true for class, false for struct
 };
 

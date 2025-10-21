@@ -468,13 +468,70 @@ ParseResult Parser::parse_struct_declaration()
 		custom_alignment = parse_alignas_specifier();
 	}
 
-	// Expect opening brace
-	if (!consume_punctuator("{")) {
-		return ParseResult::error("Expected '{' after struct/class name", *peek_token());
-	}
-
 	// Create struct declaration node - string_view points directly into source text
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
+
+	// Create StructTypeInfo early so we can add base classes to it
+	auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), struct_ref.default_access());
+
+	// Apply pack alignment from #pragma pack BEFORE adding members
+	size_t pack_alignment = context_.getCurrentPackAlignment();
+	if (pack_alignment > 0) {
+		struct_info->set_pack_alignment(pack_alignment);
+	}
+
+	// Parse base class list (if present): : public Base1, private Base2
+	if (peek_token().has_value() && peek_token()->value() == ":") {
+		consume_token();  // consume ':'
+
+		do {
+			// Parse access specifier (optional, defaults to public for struct, private for class)
+			AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view keyword = peek_token()->value();
+				if (keyword == "public") {
+					base_access = AccessSpecifier::Public;
+					consume_token();
+				} else if (keyword == "protected") {
+					base_access = AccessSpecifier::Protected;
+					consume_token();
+				} else if (keyword == "private") {
+					base_access = AccessSpecifier::Private;
+					consume_token();
+				}
+			}
+
+			// Parse base class name
+			auto base_name_token = consume_token();
+			if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
+			}
+
+			std::string base_class_name(base_name_token->value());
+
+			// Look up base class type
+			auto base_type_it = gTypesByName.find(base_class_name);
+			if (base_type_it == gTypesByName.end()) {
+				return ParseResult::error("Base class '" + base_class_name + "' not found", *base_name_token);
+			}
+
+			const TypeInfo* base_type_info = base_type_it->second;
+			if (base_type_info->type_ != Type::Struct) {
+				return ParseResult::error("Base class '" + base_class_name + "' is not a struct/class", *base_name_token);
+			}
+
+			// Add base class to struct node and type info
+			struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access);
+			struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access);
+
+		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+	}
+
+	// Expect opening brace
+	if (!consume_punctuator("{")) {
+		return ParseResult::error("Expected '{' after struct/class name or base class list", *peek_token());
+	}
 
 	// Default access specifier (public for struct, private for class)
 	AccessSpecifier current_access = struct_ref.default_access();
@@ -558,7 +615,7 @@ ParseResult Parser::parse_struct_declaration()
 					}
 				}
 
-				// Parse member initializer list if present (: member(value), member(value), ...)
+				// Parse member initializer list if present (: Base(args), member(value), ...)
 				if (peek_token().has_value() && peek_token()->value() == ":") {
 					consume_token();  // consume ':'
 
@@ -566,31 +623,61 @@ ParseResult Parser::parse_struct_declaration()
 					while (peek_token().has_value() &&
 					       peek_token()->value() != "{" &&
 					       peek_token()->value() != ";") {
-						// Parse member name
-						auto member_name_token = consume_token();
-						if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
-							return ParseResult::error("Expected member name in initializer list", member_name_token.value_or(Token()));
+						// Parse initializer name (could be base class or member)
+						auto init_name_token = consume_token();
+						if (!init_name_token.has_value() || init_name_token->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected member or base class name in initializer list", init_name_token.value_or(Token()));
 						}
 
-						// Expect '('
-						if (!consume_punctuator("(")) {
-							return ParseResult::error("Expected '(' after member name in initializer list", *peek_token());
+						std::string_view init_name = init_name_token->value();
+
+						// Expect '(' or '{'
+						bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
+						bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
+
+						if (!is_paren && !is_brace) {
+							return ParseResult::error("Expected '(' or '{' after initializer name", *peek_token());
 						}
 
-						// Parse initializer expression
-						ParseResult init_expr_result = parse_expression();
-						if (init_expr_result.is_error()) {
-							return init_expr_result;
+						consume_token();  // consume '(' or '{'
+						std::string_view close_delim = is_paren ? ")" : "}";
+
+						// Parse initializer arguments
+						std::vector<ASTNode> init_args;
+						if (!peek_token().has_value() || peek_token()->value() != close_delim) {
+							do {
+								ParseResult arg_result = parse_expression();
+								if (arg_result.is_error()) {
+									return arg_result;
+								}
+								if (auto arg_node = arg_result.node()) {
+									init_args.push_back(*arg_node);
+								}
+							} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 						}
 
-						// Expect ')'
-						if (!consume_punctuator(")")) {
-							return ParseResult::error("Expected ')' after initializer expression", *peek_token());
+						// Expect closing delimiter
+						if (!consume_punctuator(close_delim)) {
+							return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
+							                         "' after initializer arguments", *peek_token());
 						}
 
-						// Add initializer to constructor
-						if (auto init_expr = init_expr_result.node()) {
-							ctor_ref.add_member_initializer(member_name_token->value(), *init_expr);
+						// Determine if this is a base class or member initializer
+						bool is_base_init = false;
+						for (const auto& base : struct_ref.base_classes()) {
+							if (base.name == init_name) {
+								is_base_init = true;
+								ctor_ref.add_base_initializer(std::string(init_name), std::move(init_args));
+								break;
+							}
+						}
+
+						if (!is_base_init) {
+							// It's a member initializer
+							// For simplicity, we'll use the first argument as the initializer expression
+							if (!init_args.empty()) {
+								ctor_ref.add_member_initializer(init_name, init_args[0]);
+							}
 						}
 
 						// Check for comma (more initializers) or '{'/';' (end of initializer list)
@@ -976,16 +1063,8 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	// struct_type_info was already registered early (before parsing members)
-	// Now create the StructTypeInfo to fill in the details
-	auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), struct_ref.default_access());
-
-	// Apply pack alignment from #pragma pack BEFORE adding members
-	size_t pack_alignment = context_.getCurrentPackAlignment();
-	if (pack_alignment > 0) {
-		struct_info->set_pack_alignment(pack_alignment);
-	}
-
-	// Process data members and calculate layout
+	// struct_info was created early (before parsing base classes and members)
+	// Now process data members and calculate layout
 	for (const auto& member_decl : struct_ref.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
@@ -1357,7 +1436,12 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	// Finalize struct layout (add padding)
-	struct_info->finalize();
+	// Use finalizeWithBases() if there are base classes, otherwise use finalize()
+	if (!struct_info->base_classes.empty()) {
+		struct_info->finalizeWithBases();
+	} else {
+		struct_info->finalize();
+	}
 
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
@@ -1482,11 +1566,10 @@ ParseResult Parser::parse_enum_declaration()
 		enum_info->addEnumerator(std::string(enumerator_name), value);
 
 		// For unscoped enums, add enumerator to current scope as a constant
+		// This allows unscoped enum values to be used without qualification
 		if (!is_scoped) {
-			// Create a constant declaration for the enumerator
-			// This allows unscoped enum values to be used without qualification
 			auto enum_type_node = emplace_node<TypeSpecifierNode>(
-				underlying_type, TypeQualifier::None, underlying_size, *enumerator_name_token);
+				Type::Enum, enum_type_info.type_index_, underlying_size, *enumerator_name_token);
 			auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, *enumerator_name_token);
 			gSymbolTable.insert(enumerator_name, enumerator_decl);
 		}
@@ -1999,11 +2082,11 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 	}
 	else if (current_token.type() == Token::Type::Identifier) {
-		// Check if this identifier is a registered struct/class type
+		// Check if this identifier is a registered struct/class/enum type
 		std::string type_name(current_token.value());
 		auto type_it = gTypesByName.find(type_name);
-		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-			// This is a struct type declaration
+		if (type_it != gTypesByName.end() && (type_it->second->isStruct() || type_it->second->isEnum())) {
+			// This is a struct/enum type declaration
 			return parse_variable_declaration();
 		}
 

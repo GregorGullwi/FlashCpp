@@ -463,3 +463,100 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
     }
     return nullptr;
 }
+
+// Finalize struct layout with base classes
+void StructTypeInfo::finalizeWithBases() {
+    size_t current_offset = 0;
+    size_t max_alignment = 1;
+
+    // Step 1: Layout base class subobjects
+    for (auto& base : base_classes) {
+        if (base.type_index >= gTypeInfo.size()) {
+            continue;  // Invalid base class index
+        }
+
+        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const StructTypeInfo* base_info = base_type.getStructInfo();
+
+        if (!base_info) {
+            continue;  // Not a struct type
+        }
+
+        // Align to base class alignment
+        size_t base_alignment = base_info->alignment;
+        current_offset = (current_offset + base_alignment - 1) & ~(base_alignment - 1);
+
+        // Store base class offset
+        base.offset = current_offset;
+
+        // Advance offset by base class size
+        current_offset += base_info->total_size;
+
+        // Track maximum alignment
+        max_alignment = std::max(max_alignment, base_alignment);
+    }
+
+    // Step 2: Layout derived class members
+    for (auto& member : members) {
+        // Apply pack alignment if specified
+        size_t effective_alignment = member.alignment;
+        if (pack_alignment > 0 && pack_alignment < member.alignment) {
+            effective_alignment = pack_alignment;
+        }
+
+        // Align to member alignment
+        current_offset = (current_offset + effective_alignment - 1) & ~(effective_alignment - 1);
+
+        // Update member offset
+        member.offset = current_offset;
+
+        // Advance offset by member size
+        current_offset += member.size;
+
+        // Track maximum alignment
+        max_alignment = std::max(max_alignment, effective_alignment);
+    }
+
+    // Step 3: Apply custom alignment if specified
+    if (custom_alignment > 0) {
+        max_alignment = custom_alignment;
+    }
+
+    // Step 4: Pad to alignment
+    alignment = max_alignment;
+    total_size = (current_offset + alignment - 1) & ~(alignment - 1);
+}
+
+// Find member recursively through base classes
+const StructMember* StructTypeInfo::findMemberRecursive(const std::string& member_name) const {
+    // First, check own members
+    for (const auto& member : members) {
+        if (member.name == member_name) {
+            return &member;
+        }
+    }
+
+    // Then, check base class members
+    for (const auto& base : base_classes) {
+        if (base.type_index >= gTypeInfo.size()) {
+            continue;
+        }
+
+        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const StructTypeInfo* base_info = base_type.getStructInfo();
+
+        if (base_info) {
+            const StructMember* base_member = base_info->findMemberRecursive(member_name);
+            if (base_member) {
+                // Found in base class - need to return adjusted member
+                // Note: We can't modify the base_member, so we use a thread_local static
+                static thread_local StructMember adjusted_member("", Type::Void, 0, 0, 0, 0);
+                adjusted_member = *base_member;
+                adjusted_member.offset += base.offset;  // Adjust offset by base class offset
+                return &adjusted_member;
+            }
+        }
+    }
+
+    return nullptr;  // Not found
+}

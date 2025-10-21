@@ -1143,7 +1143,14 @@ private:
 	}
 
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
-		const std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
+		// First try local symbol table
+		std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
+
+		// If not found locally, try global symbol table (for enum values, etc.)
+		if (!symbol.has_value() && global_symbol_table_) {
+			symbol = global_symbol_table_->lookup(identifierNode.name());
+		}
+
 		if (!symbol.has_value()) {
 			assert(false && "Expected symbol to exist");
 			return {};
