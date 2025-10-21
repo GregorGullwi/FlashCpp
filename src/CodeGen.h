@@ -1994,9 +1994,9 @@ private:
 		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 
 		// Get the object's type
-		// For now, we'll assume the object is an identifier
 		std::string_view object_name;
 		const DeclarationNode* object_decl = nullptr;
+		TypeSpecifierNode object_type;
 
 		if (std::holds_alternative<IdentifierNode>(object_expr)) {
 			const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
@@ -2006,6 +2006,33 @@ private:
 			const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
 			if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 				object_decl = &symbol->as<DeclarationNode>();
+				object_type = object_decl->type_node().as<TypeSpecifierNode>();
+			}
+		} else if (std::holds_alternative<UnaryOperatorNode>(object_expr)) {
+			// Handle dereference operator (from ptr->member transformation)
+			const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(object_expr);
+			if (unary_op.op() == "*") {
+				// This is a dereference - get the pointer operand
+				const ASTNode& operand_node = unary_op.get_operand();
+				if (operand_node.is<ExpressionNode>()) {
+					const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(operand_expr)) {
+						const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
+						object_name = ptr_ident.name();
+
+						// Look up the pointer in the symbol table
+						const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+						if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+							object_decl = &symbol->as<DeclarationNode>();
+							// Get the pointer type and remove one level of indirection
+							TypeSpecifierNode ptr_type = object_decl->type_node().as<TypeSpecifierNode>();
+							if (ptr_type.pointer_levels().size() > 0) {
+								object_type = ptr_type;
+								object_type.remove_pointer_level();
+							}
+						}
+					}
+				}
 			}
 		}
 
@@ -2014,8 +2041,6 @@ private:
 			assert(false && "Object not found for member function call");
 			return { Type::Int, 32, TempVar{0} };
 		}
-
-		const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
 
 		// Verify this is a struct type
 		if (object_type.type() != Type::Struct) {

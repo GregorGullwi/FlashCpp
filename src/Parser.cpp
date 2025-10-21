@@ -3528,78 +3528,85 @@ ParseResult Parser::parse_primary_expression()
 			}
 		}
 
-		// Check for member access operator .
+		// Check for member access operator . or ->
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
 			consume_token(); // consume '.'
-
-			// Expect an identifier (member name)
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected member name after '.'", *current_token_);
-			}
-
-			Token member_name_token = *peek_token();
-			consume_token(); // consume member name
-
-			// Check if this is a member function call (followed by '(')
-			if (peek_token().has_value() && peek_token()->value() == "("sv) {
-				// This is a member function call: obj.method(args)
-				// We need to find the member function in the struct type info
-
-				// For now, create a placeholder - we'll need to look up the function from struct type info
-				// The actual lookup will happen during code generation when we have type information
-
-				consume_token(); // consume '('
-
-				// Parse function arguments
-				ChunkedVector<ASTNode> args;
-				if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-					while (true) {
-						auto arg_result = parse_expression();
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
-						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
-						}
-
-						if (!peek_token().has_value()) {
-							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-						}
-
-						if (peek_token()->value() == ")") {
-							break;
-						}
-
-						if (!consume_punctuator(",")) {
-							return ParseResult::error("Expected ',' between function arguments", *current_token_);
-						}
-					}
-				}
-
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
-				}
-
-				// Create a temporary function declaration node for the member function
-				// We'll resolve the actual function during code generation
-				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_name_token);
-				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
-				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
-
-				// Create member function call node
-				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, func_ref, std::move(args), member_name_token));
-				continue;
-			}
-
-			// Regular member access (not a function call)
+		} else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
+			Token arrow_token = *peek_token();
+			consume_token(); // consume '->'
+			// Transform ptr->member to (*ptr).member
+			// Create a dereference node
+			Token deref_token(Token::Type::Operator, "*", arrow_token.line(), arrow_token.column(), arrow_token.file_index());
 			result = emplace_node<ExpressionNode>(
-				MemberAccessNode(*result, member_name_token));
-			continue;  // Check for more postfix operators (e.g., obj.member1.member2)
+				UnaryOperatorNode(deref_token, *result, true));
+		} else {
+			break;  // No more postfix operators
 		}
 
-		// No more postfix operators
-		break;
+		// Expect an identifier (member name)
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected member name after '.' or '->'", *current_token_);
+		}
+
+		Token member_name_token = *peek_token();
+		consume_token(); // consume member name
+
+		// Check if this is a member function call (followed by '(')
+		if (peek_token().has_value() && peek_token()->value() == "("sv) {
+			// This is a member function call: obj.method(args)
+			// We need to find the member function in the struct type info
+
+			// For now, create a placeholder - we'll need to look up the function from struct type info
+			// The actual lookup will happen during code generation when we have type information
+
+			consume_token(); // consume '('
+
+			// Parse function arguments
+			ChunkedVector<ASTNode> args;
+			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
+				while (true) {
+					auto arg_result = parse_expression();
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					if (auto arg = arg_result.node()) {
+						args.push_back(*arg);
+					}
+
+					if (!peek_token().has_value()) {
+						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+					}
+
+					if (peek_token()->value() == ")") {
+						break;
+					}
+
+					if (!consume_punctuator(",")) {
+						return ParseResult::error("Expected ',' between function arguments", *current_token_);
+					}
+				}
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			}
+
+			// Create a temporary function declaration node for the member function
+			// We'll resolve the actual function during code generation
+			auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_name_token);
+			auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
+			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+
+			// Create member function call node
+			result = emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(*result, func_ref, std::move(args), member_name_token));
+			continue;
+		}
+
+		// Regular member access (not a function call)
+		result = emplace_node<ExpressionNode>(
+			MemberAccessNode(*result, member_name_token));
+		continue;  // Check for more postfix operators (e.g., obj.member1.member2)
 	}
 
 	if (result.has_value())
