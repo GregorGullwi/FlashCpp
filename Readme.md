@@ -61,7 +61,8 @@
 - **Control flow**: `if`, `for`, `while`, `do-while`, `break`, `continue`, `return` statements
 - **C++20 support**: If-with-initializer syntax, `alignas` keyword
 - **Enums**: `enum` and `enum class` declarations
-- **Preprocessor**: Macro expansion, conditional compilation, file inclusion
+- **Namespaces**: Namespace declarations, nested namespaces, qualified name lookup (`A::B::func()`)
+- **Preprocessor**: Macro expansion, conditional compilation, file inclusion, `#pragma pack`
 
 ---
 
@@ -153,10 +154,10 @@ bool test_comparisons(double a, double b) {
 
 ## 🔮 **Roadmap** (Foundation-First Approach)
 
-### **Phase 1: Core Language Completeness** (8 weeks)
+### **Phase 1: Core Language Completeness** (7 weeks)
 - **Switch statements**: `switch`/`case`/`default` control flow with jump tables
 - **Goto and labels**: Label declarations and goto statements
-- **Namespaces**: Namespace declarations, nested namespaces, using directives
+- **Using directives**: `using namespace`, `using` declarations, namespace aliases (basic namespaces already done!)
 - **Lambda expressions**: Basic lambda support with value and reference captures
 
 ### **Phase 2: OOP Completeness** (2 weeks)
@@ -220,11 +221,13 @@ bool test_comparisons(double a, double b) {
   - [x] **Function nodes**: Function declarations and definitions
   - [x] **Declaration nodes**: Variable and function declarations
   - [x] **Class nodes**: Struct/class declarations with inheritance
+  - [x] **Namespace nodes**: Namespace declarations with qualified lookup
   - [x] **Type nodes**: Complete type system with promotions
 - [x] **Operator precedence**: Correct C++ operator precedence
 - [x] **Type system**: Integer, floating-point, pointer, and class types
 - [x] **OOP features**: Classes, inheritance, virtual functions, access control
-- [ ] **Remaining**: Templates, namespaces, lambda expressions, enhanced error handling
+- [x] **Namespace support**: Basic namespace declarations and qualified name lookup
+- [ ] **Remaining**: Templates, using directives, lambda expressions, switch statements, enhanced error handling
 
 ### **4. Type System & Semantic Analysis** ✅ **COMPLETE**
 - [x] **Type checking**: Comprehensive type validation
@@ -304,10 +307,10 @@ bool test_comparisons(double a, double b) {
 
 ## 🎯 **Implementation Plan** (Foundation-First Approach)
 
-### **Phase 1: Core Language Completeness** (Next 8 weeks)
+### **Phase 1: Core Language Completeness** (Next 7 weeks)
 1. [ ] **Switch statements** (2 weeks) - Essential control flow with jump tables
 2. [ ] **Goto and labels** (1 week) - Complete control flow support
-3. [ ] **Namespaces** (2 weeks) - Namespace declarations and qualified lookup
+3. [ ] **Using directives** (1 week) - `using namespace`, `using` declarations (basic namespaces done!)
 4. [ ] **Lambda expressions** (3 weeks) - Basic lambdas with captures
 
 ### **Phase 2: OOP Completeness** (Weeks 9-11)
@@ -332,7 +335,7 @@ bool test_comparisons(double a, double b) {
 15. [ ] **Advanced templates** (4 weeks) - Specialization, variadic templates
 
 **Total Timeline**: ~9 months to complete foundation + templates
-**Foundation Complete**: ~5 months (21 weeks)
+**Foundation Complete**: ~5 months (20 weeks)
 
 ---
 
