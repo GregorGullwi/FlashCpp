@@ -3131,7 +3131,7 @@ private:
 		functionSymbols[func_name] = func_offset;
 
 		// Track function for debug information
-		current_function_name_ = std::string(func_name);
+		current_function_name_ = func_name;  // Direct assignment, no temporary
 		current_function_mangled_name_ = mangled_name;
 		current_function_offset_ = func_offset;
 
@@ -3141,7 +3141,7 @@ private:
 
 		// Set up debug information for this function
 		// For now, use file ID 0 (first source file)
-		writer.set_current_function_for_debug(std::string(func_name), 0);
+		writer.set_current_function_for_debug(func_name, 0);
 
 		// Add line mapping for function declaration (now that current function is set)
 		if (instruction.getLineNumber() > 0) {

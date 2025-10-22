@@ -346,6 +346,9 @@ struct FunctionInfo {
     uint32_t prologue_size = 0;       // Size of function prologue
     uint32_t epilogue_size = 0;       // Size of function epilogue
     uint32_t stack_space = 0;
+
+    // Track if this function has been finalized to prevent double-finalization
+    bool is_finalized = false;
 };
 
 // Structure to track debug relocations

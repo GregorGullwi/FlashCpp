@@ -135,6 +135,9 @@ DebugInfoBuilder::DebugInfoBuilder() {
     // Initialize with empty string at offset 0
     string_table_.push_back(0);
     string_offsets_[""] = 0;
+
+    // Reserve space for functions to prevent reallocation issues
+    functions_.reserve(32);
 }
 
 uint32_t DebugInfoBuilder::addSourceFile(const std::filesystem::path& filename) {
@@ -156,27 +159,35 @@ uint32_t DebugInfoBuilder::addSourceFile(const std::filesystem::path& filename) 
 void DebugInfoBuilder::addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length, uint32_t stack_space) {
     // Add basic function info without line numbers
     FunctionInfo func_info;
-    func_info.name = name;
+    func_info.name = name;  // Direct assignment
     func_info.code_offset = code_offset;
     func_info.code_length = code_length;
     func_info.file_id = 0; // Default to first file
     func_info.stack_space = stack_space;
+    func_info.is_finalized = false;  // Initialize the flag
 
     functions_.push_back(func_info);
 }
 
 void DebugInfoBuilder::setCurrentFunction(const std::string& name, uint32_t file_id) {
-    // Finalize previous function if any
+    // Finalize previous function if any (but only if it hasn't been finalized already)
     if (!current_function_name_.empty()) {
         std::cerr << "DEBUG: Finalizing previous function: " << current_function_name_
                   << " with file_id=" << current_function_file_id_
                   << " and " << current_function_lines_.size() << " lines" << std::endl;
+
         // Find the function and update its line information
         for (auto& func : functions_) {
             if (func.name == current_function_name_) {
-                func.line_offsets = std::move(current_function_lines_);
-                func.file_id = current_function_file_id_;
-                std::cerr << "DEBUG: Updated function " << func.name << " with file_id=" << func.file_id << std::endl;
+                // Only update if not already finalized
+                if (!func.is_finalized) {
+                    func.line_offsets = std::move(current_function_lines_);
+                    func.file_id = current_function_file_id_;
+                    func.is_finalized = true;
+                    std::cerr << "DEBUG: Updated function " << func.name << " with file_id=" << func.file_id << std::endl;
+                } else {
+                    std::cerr << "DEBUG: Function " << func.name << " already finalized, skipping" << std::endl;
+                }
                 break;
             }
         }
@@ -272,9 +283,15 @@ void DebugInfoBuilder::finalizeCurrentFunction() {
         // Find the function and update its line information
         for (auto& func : functions_) {
             if (func.name == current_function_name_) {
-                func.line_offsets = std::move(current_function_lines_);
-                func.file_id = current_function_file_id_;
-                std::cerr << "DEBUG: finalizeCurrentFunction updated function " << func.name << " with file_id=" << func.file_id << std::endl;
+                // Only update if not already finalized
+                if (!func.is_finalized) {
+                    func.line_offsets = std::move(current_function_lines_);
+                    func.file_id = current_function_file_id_;
+                    func.is_finalized = true;
+                    std::cerr << "DEBUG: finalizeCurrentFunction updated function " << func.name << " with file_id=" << func.file_id << std::endl;
+                } else {
+                    std::cerr << "DEBUG: finalizeCurrentFunction: function " << func.name << " already finalized, skipping" << std::endl;
+                }
                 break;
             }
         }
