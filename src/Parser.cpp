@@ -2192,6 +2192,13 @@ ParseResult Parser::parse_statement_or_declaration()
 				// Parse as expression statement
 				return parse_expression();
 			}
+			// Check if it's a cast keyword - these are also expression keywords
+			else if (current_token.value() == "static_cast" || current_token.value() == "dynamic_cast" ||
+			         current_token.value() == "const_cast" || current_token.value() == "reinterpret_cast" ||
+			         current_token.value() == "typeid") {
+				// Parse as expression statement
+				return parse_expression();
+			}
 			else {
 				// Unknown keyword - consume token to avoid infinite loop and return error
 				consume_token();
@@ -2552,6 +2559,32 @@ ParseResult Parser::parse_unary_expression()
 			return ParseResult::error("Expected type in static_cast", *current_token_);
 		}
 
+		// Parse pointer declarators: * [const] [volatile] *...
+		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		       peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+
+			// Check for CV-qualifiers after the *
+			CVQualifier ptr_cv = CVQualifier::None;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view kw = peek_token()->value();
+				if (kw == "const") {
+					ptr_cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+					consume_token();
+				} else if (kw == "volatile") {
+					ptr_cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+					consume_token();
+				} else {
+					break;
+				}
+			}
+
+			type_spec.add_pointer_level(ptr_cv);
+		}
+
 		// Expect '>'
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
 		    peek_token()->value() != ">") {
@@ -2596,6 +2629,32 @@ ParseResult Parser::parse_unary_expression()
 		ParseResult type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
 			return ParseResult::error("Expected type in dynamic_cast", *current_token_);
+		}
+
+		// Parse pointer declarators: * [const] [volatile] *...
+		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		       peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+
+			// Check for CV-qualifiers after the *
+			CVQualifier ptr_cv = CVQualifier::None;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view kw = peek_token()->value();
+				if (kw == "const") {
+					ptr_cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+					consume_token();
+				} else if (kw == "volatile") {
+					ptr_cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+					consume_token();
+				} else {
+					break;
+				}
+			}
+
+			type_spec.add_pointer_level(ptr_cv);
 		}
 
 		// Expect '>'

@@ -2577,6 +2577,57 @@ private:
 					}
 				}
 			}
+			// Case 3: Pointer dereference (e.g., ptr->member, which is transformed to (*ptr).member)
+			else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+				const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(expr);
+
+				// This should be a dereference operator (*)
+				if (unary_op.op() != "*") {
+					assert(false && "Member access on non-dereference unary operator");
+					return {};
+				}
+
+				// Get the pointer operand
+				const ASTNode& operand_node = unary_op.get_operand();
+				if (!operand_node.is<ExpressionNode>()) {
+					assert(false && "Dereference operand is not an expression");
+					return {};
+				}
+
+				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
+				if (!std::holds_alternative<IdentifierNode>(operand_expr)) {
+					assert(false && "Dereference operand is not an identifier");
+					return {};
+				}
+
+				const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
+				std::string_view ptr_name = ptr_ident.name();
+
+				// Look up the pointer in the symbol table
+				const std::optional<ASTNode> symbol = symbol_table.lookup(ptr_name);
+				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
+					assert(false && "Pointer not found in symbol table");
+					return {};
+				}
+
+				const DeclarationNode& ptr_decl = symbol->as<DeclarationNode>();
+				const TypeSpecifierNode& ptr_type = ptr_decl.type_node().as<TypeSpecifierNode>();
+
+				// Verify this is a pointer to a struct type
+				if (ptr_type.pointer_depth() == 0) {
+					assert(false && "Member access on non-pointer type");
+					return {};
+				}
+
+				if (ptr_type.type() != Type::Struct && ptr_type.type() != Type::UserDefined) {
+					assert(false && "Member access on pointer to non-struct type");
+					return {};
+				}
+
+				base_object = ptr_name;
+				base_type = ptr_type.type();
+				base_type_index = ptr_type.type_index();
+			}
 			else {
 				assert(false && "Member access on unsupported expression type");
 				return {};

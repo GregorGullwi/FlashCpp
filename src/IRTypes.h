@@ -2070,6 +2070,60 @@ public:
 		}
 		break;
 
+		case IrOpcode::PlacementNew:
+		{
+			// %result = placement_new %address [Type][Size]
+			// Format: [result_var, address_var, type, size_in_bytes]
+			assert(getOperandCount() >= 4 && "PlacementNew instruction must have at least 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				oss << " = placement_new %";
+				if (isOperandType<TempVar>(1))
+					oss << getOperandAs<TempVar>(1).index;
+				oss << " [" << getOperandAsTypeString(2) << "][" << getOperandAs<int>(3) << "]";
+			}
+		}
+		break;
+
+		case IrOpcode::Typeid:
+		{
+			// %result = typeid [type_name_or_expr] [is_type]
+			// Format: [result_var, type_name_or_expr, is_type]
+			assert(getOperandCount() == 3 && "Typeid instruction must have exactly 3 operands");
+			if (getOperandCount() >= 3) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				oss << " = typeid ";
+				if (isOperandType<std::string>(1))
+					oss << getOperandAs<std::string>(1);
+				else if (isOperandType<std::string_view>(1))
+					oss << getOperandAs<std::string_view>(1);
+				oss << " [is_type=" << (getOperandAs<bool>(2) ? "true" : "false") << "]";
+			}
+		}
+		break;
+
+		case IrOpcode::DynamicCast:
+		{
+			// %result = dynamic_cast %source_ptr [target_type] [is_reference]
+			// Format: [result_var, source_ptr, target_type_name, is_reference]
+			assert(getOperandCount() == 4 && "DynamicCast instruction must have exactly 4 operands");
+			if (getOperandCount() >= 4) {
+				oss << '%';
+				if (isOperandType<TempVar>(0))
+					oss << getOperandAs<TempVar>(0).index;
+				oss << " = dynamic_cast %";
+				if (isOperandType<TempVar>(1))
+					oss << getOperandAs<TempVar>(1).index;
+				oss << " [" << getOperandAs<std::string>(2) << "]";
+				oss << " [is_ref=" << (getOperandAs<bool>(3) ? "true" : "false") << "]";
+			}
+		}
+		break;
+
 		case IrOpcode::PreIncrement:
 		{
 			// %result = pre_inc [Type][Size] %operand
