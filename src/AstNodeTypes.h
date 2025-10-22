@@ -1457,3 +1457,45 @@ public:
 private:
 	Token continue_token_;
 };
+
+// Case label node for switch statements
+class CaseLabelNode {
+public:
+	explicit CaseLabelNode(ASTNode case_value, std::optional<ASTNode> statement = std::nullopt)
+		: case_value_(case_value), statement_(statement) {}
+
+	auto get_case_value() const { return case_value_; }
+	auto get_statement() const { return statement_; }
+	bool has_statement() const { return statement_.has_value(); }
+
+private:
+	ASTNode case_value_;  // Constant expression for case value
+	std::optional<ASTNode> statement_;  // Optional statement (for fall-through cases)
+};
+
+// Default label node for switch statements
+class DefaultLabelNode {
+public:
+	explicit DefaultLabelNode(std::optional<ASTNode> statement = std::nullopt)
+		: statement_(statement) {}
+
+	auto get_statement() const { return statement_; }
+	bool has_statement() const { return statement_.has_value(); }
+
+private:
+	std::optional<ASTNode> statement_;  // Optional statement
+};
+
+// Switch statement node
+class SwitchStatementNode {
+public:
+	explicit SwitchStatementNode(ASTNode condition, ASTNode body)
+		: condition_(condition), body_(body) {}
+
+	auto get_condition() const { return condition_; }
+	auto get_body() const { return body_; }
+
+private:
+	ASTNode condition_;  // Expression to switch on
+	ASTNode body_;       // Body (typically a BlockNode containing case/default labels)
+};

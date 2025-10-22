@@ -48,10 +48,11 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
     Parser parser(lexer, compile_context);
     auto parse_result = parser.parse();
 
-	CHECK(!parse_result.is_error());
-
-    if (parse_result.is_error()) {
+	if (parse_result.is_error()) {
         std::printf("Parse error in %s: %s\n", test_name.c_str(), parse_result.error_message().c_str());
+    }
+	CHECK(!parse_result.is_error());
+    if (parse_result.is_error()) {
 		return;
     }
 
@@ -1138,6 +1139,10 @@ TEST_CASE("While loops") {
 
 TEST_CASE("Do-while loops") {
 	run_test_from_file("do_while_loops.cpp", "Do-while loops", false);
+}
+
+TEST_CASE("Switch statements") {
+	run_test_from_file("test_switch.cpp", "Switch statements", false);
 }
 
 TEST_CASE("Control flow comprehensive") {

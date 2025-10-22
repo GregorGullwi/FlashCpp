@@ -2165,6 +2165,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"for", &Parser::parse_for_loop},
 			{"while", &Parser::parse_while_loop},
 			{"do", &Parser::parse_do_while_loop},
+			{"switch", &Parser::parse_switch_statement},
 			{"return", &Parser::parse_return_statement},
 			{"break", &Parser::parse_break_statement},
 			{"continue", &Parser::parse_continue_statement},
@@ -4183,6 +4184,138 @@ ParseResult Parser::parse_if_statement() {
     }
 
     return ParseResult::error("Invalid if statement construction", *current_token_);
+}
+
+ParseResult Parser::parse_switch_statement() {
+    if (!consume_keyword("switch"sv)) {
+        return ParseResult::error("Expected 'switch' keyword", *current_token_);
+    }
+
+    if (!consume_punctuator("("sv)) {
+        return ParseResult::error("Expected '(' after 'switch'", *current_token_);
+    }
+
+    // Parse the switch condition expression
+    auto condition = parse_expression();
+    if (condition.is_error()) {
+        return condition;
+    }
+
+    if (!consume_punctuator(")"sv)) {
+        return ParseResult::error("Expected ')' after switch condition", *current_token_);
+    }
+
+    // Parse the switch body (must be a compound statement with braces)
+    if (!consume_punctuator("{"sv)) {
+        return ParseResult::error("Expected '{' for switch body", *current_token_);
+    }
+
+    // Create a block to hold case/default labels and their statements
+    auto [block_node, block_ref] = create_node_ref(BlockNode());
+
+    // Parse case and default labels
+    while (peek_token().has_value() && peek_token()->value() != "}") {
+        auto current = peek_token();
+
+        if (current->type() == Token::Type::Keyword && current->value() == "case") {
+            // Parse case label
+            consume_token(); // consume 'case'
+
+            // Parse case value (must be a constant expression)
+            auto case_value = parse_expression();
+            if (case_value.is_error()) {
+                return case_value;
+            }
+
+            if (!consume_punctuator(":"sv)) {
+                return ParseResult::error("Expected ':' after case value", *current_token_);
+            }
+
+            // Parse statements until next case/default/closing brace
+            // We collect all statements for this case into a sub-block
+            auto [case_block_node, case_block_ref] = create_node_ref(BlockNode());
+
+            while (peek_token().has_value() &&
+                   peek_token()->value() != "}" &&
+                   !(peek_token()->type() == Token::Type::Keyword &&
+                     (peek_token()->value() == "case" || peek_token()->value() == "default"))) {
+                // Skip stray semicolons (empty statements)
+                if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ";") {
+                    consume_token();
+                    continue;
+                }
+
+                auto stmt = parse_statement_or_declaration();
+                if (stmt.is_error()) {
+                    return stmt;
+                }
+                if (auto stmt_node = stmt.node()) {
+                    case_block_ref.add_statement_node(*stmt_node);
+                }
+            }
+
+            // Create case label node with the block of statements
+            auto case_label = emplace_node<CaseLabelNode>(*case_value.node(), case_block_node);
+            block_ref.add_statement_node(case_label);
+
+        } else if (current->type() == Token::Type::Keyword && current->value() == "default") {
+            // Parse default label
+            consume_token(); // consume 'default'
+
+            if (!consume_punctuator(":"sv)) {
+                return ParseResult::error("Expected ':' after 'default'", *current_token_);
+            }
+
+            // Parse statements until next case/default/closing brace
+            auto [default_block_node, default_block_ref] = create_node_ref(BlockNode());
+
+            while (peek_token().has_value() &&
+                   peek_token()->value() != "}" &&
+                   !(peek_token()->type() == Token::Type::Keyword &&
+                     (peek_token()->value() == "case" || peek_token()->value() == "default"))) {
+                // Skip stray semicolons (empty statements)
+                if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ";") {
+                    consume_token();
+                    continue;
+                }
+
+                auto stmt = parse_statement_or_declaration();
+                if (stmt.is_error()) {
+                    return stmt;
+                }
+                if (auto stmt_node = stmt.node()) {
+                    default_block_ref.add_statement_node(*stmt_node);
+                }
+            }
+
+            // Create default label node with the block of statements
+            auto default_label = emplace_node<DefaultLabelNode>(default_block_node);
+            block_ref.add_statement_node(default_label);
+
+        } else {
+            // If we're here, we have an unexpected token at the switch body level
+            std::string error_msg = "Expected 'case' or 'default' in switch body, but found: ";
+            if (current->type() == Token::Type::Keyword) {
+                error_msg += "keyword '" + std::string(current->value()) + "'";
+            } else if (current->type() == Token::Type::Identifier) {
+                error_msg += "identifier '" + std::string(current->value()) + "'";
+            } else {
+                error_msg += "'" + std::string(current->value()) + "'";
+            }
+            return ParseResult::error(error_msg, *current_token_);
+        }
+    }
+
+    if (!consume_punctuator("}"sv)) {
+        return ParseResult::error("Expected '}' to close switch body", *current_token_);
+    }
+
+    // Create switch statement node
+    if (auto cond_node = condition.node()) {
+        return ParseResult::success(emplace_node<SwitchStatementNode>(*cond_node, block_node));
+    }
+
+    return ParseResult::error("Invalid switch statement construction", *current_token_);
 }
 
 ParseResult Parser::parse_qualified_identifier() {

@@ -226,6 +226,7 @@ private:
         ParseResult parse_while_loop();  // Add while-loop parser
         ParseResult parse_do_while_loop();  // Add do-while-loop parser
         ParseResult parse_if_statement();  // Add if-statement parser
+        ParseResult parse_switch_statement();  // Add switch-statement parser
         ParseResult parse_return_statement();
         ParseResult parse_break_statement();  // Add break-statement parser
         ParseResult parse_continue_statement();  // Add continue-statement parser
