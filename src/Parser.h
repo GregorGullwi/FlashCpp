@@ -230,6 +230,8 @@ private:
         ParseResult parse_return_statement();
         ParseResult parse_break_statement();  // Add break-statement parser
         ParseResult parse_continue_statement();  // Add continue-statement parser
+        ParseResult parse_goto_statement();  // Add goto-statement parser
+        ParseResult parse_label_statement();  // Add label-statement parser
         ParseResult parse_statement();
         // Minimum precedence to accept all operators (assignment has lowest precedence = 3)
         static constexpr int MIN_PRECEDENCE = 0;

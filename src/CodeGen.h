@@ -58,6 +58,12 @@ public:
 		else if (node.is<ContinueStatementNode>()) {
 			visitContinueStatementNode(node.as<ContinueStatementNode>());
 		}
+		else if (node.is<GotoStatementNode>()) {
+			visitGotoStatementNode(node.as<GotoStatementNode>());
+		}
+		else if (node.is<LabelStatementNode>()) {
+			visitLabelStatementNode(node.as<LabelStatementNode>());
+		}
 		else if (node.is<BlockNode>()) {
 			visitBlockNode(node.as<BlockNode>());
 		}
@@ -1313,6 +1319,18 @@ private:
 	void visitContinueStatementNode(const ContinueStatementNode& node) {
 		// Generate Continue IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Continue, {}, node.continue_token());
+	}
+
+	void visitGotoStatementNode(const GotoStatementNode& node) {
+		// Generate Branch IR instruction (unconditional jump) with the target label name
+		std::string label_name(node.label_name());
+		ir_.addInstruction(IrOpcode::Branch, {label_name}, node.goto_token());
+	}
+
+	void visitLabelStatementNode(const LabelStatementNode& node) {
+		// Generate Label IR instruction with the label name
+		std::string label_name(node.label_name());
+		ir_.addInstruction(IrOpcode::Label, {label_name}, node.label_token());
 	}
 
 	void visitVariableDeclarationNode(const ASTNode& ast_node) {

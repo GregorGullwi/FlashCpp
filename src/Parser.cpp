@@ -2169,6 +2169,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"return", &Parser::parse_return_statement},
 			{"break", &Parser::parse_break_statement},
 			{"continue", &Parser::parse_continue_statement},
+			{"goto", &Parser::parse_goto_statement},
 			{"static", &Parser::parse_variable_declaration},
 			{"extern", &Parser::parse_variable_declaration},
 			{"register", &Parser::parse_variable_declaration},
@@ -2207,6 +2208,19 @@ ParseResult Parser::parse_statement_or_declaration()
 			current_token);
 	}
 	else if (current_token.type() == Token::Type::Identifier) {
+		// Check if this is a label (identifier followed by ':')
+		// We need to look ahead to see if there's a colon
+		TokenPosition saved_pos = save_token_position();
+		consume_token(); // consume the identifier
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+		    peek_token()->value() == ":") {
+			// This is a label statement
+			restore_token_position(saved_pos);
+			return parse_label_statement();
+		}
+		// Not a label, restore position and continue
+		restore_token_position(saved_pos);
+
 		// Check if this identifier is a registered struct/class/enum type
 		std::string type_name(current_token.value());
 		auto type_it = gTypesByName.find(type_name);
@@ -4132,6 +4146,49 @@ ParseResult Parser::parse_continue_statement() {
     }
 
     return ParseResult::success(emplace_node<ContinueStatementNode>(continue_token));
+}
+
+ParseResult Parser::parse_goto_statement() {
+    auto goto_token_opt = peek_token();
+    if (!goto_token_opt.has_value() || goto_token_opt->value() != "goto"sv) {
+        return ParseResult::error("Expected 'goto' keyword", *current_token_);
+    }
+
+    Token goto_token = goto_token_opt.value();
+    consume_token(); // Consume the 'goto' keyword
+
+    // Parse the label identifier
+    auto label_token_opt = peek_token();
+    if (!label_token_opt.has_value() || label_token_opt->type() != Token::Type::Identifier) {
+        return ParseResult::error("Expected label identifier after 'goto'", *current_token_);
+    }
+
+    Token label_token = label_token_opt.value();
+    consume_token(); // Consume the label identifier
+
+    if (!consume_punctuator(";"sv)) {
+        return ParseResult::error("Expected ';' after goto statement", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<GotoStatementNode>(label_token, goto_token));
+}
+
+ParseResult Parser::parse_label_statement() {
+    // This is called when we've detected identifier followed by ':'
+    // The identifier token should be the current token
+    auto label_token_opt = peek_token();
+    if (!label_token_opt.has_value() || label_token_opt->type() != Token::Type::Identifier) {
+        return ParseResult::error("Expected label identifier", *current_token_);
+    }
+
+    Token label_token = label_token_opt.value();
+    consume_token(); // Consume the label identifier
+
+    if (!consume_punctuator(":"sv)) {
+        return ParseResult::error("Expected ':' after label", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<LabelStatementNode>(label_token));
 }
 
 ParseResult Parser::parse_if_statement() {

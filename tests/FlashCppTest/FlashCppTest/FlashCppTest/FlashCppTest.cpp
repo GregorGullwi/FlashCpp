@@ -1149,6 +1149,10 @@ TEST_CASE("C-style casts") {
 	run_test_from_file("test_c_style_casts.cpp", "C-style casts", false);
 }
 
+TEST_CASE("Goto and labels") {
+	run_test_from_file("test_goto_labels.cpp", "Goto and labels", false);
+}
+
 TEST_CASE("Control flow comprehensive") {
 	run_test_from_file("control_flow_comprehensive.cpp", "Control flow comprehensive", false);
 }

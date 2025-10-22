@@ -1499,3 +1499,31 @@ private:
 	ASTNode condition_;  // Expression to switch on
 	ASTNode body_;       // Body (typically a BlockNode containing case/default labels)
 };
+
+// Label statement node (for goto targets)
+class LabelStatementNode {
+public:
+	explicit LabelStatementNode(Token label_token)
+		: label_token_(label_token) {}
+
+	std::string_view label_name() const { return label_token_.value(); }
+	const Token& label_token() const { return label_token_; }
+
+private:
+	Token label_token_;  // The label identifier
+};
+
+// Goto statement node
+class GotoStatementNode {
+public:
+	explicit GotoStatementNode(Token label_token, Token goto_token = Token())
+		: label_token_(label_token), goto_token_(goto_token) {}
+
+	std::string_view label_name() const { return label_token_.value(); }
+	const Token& label_token() const { return label_token_; }
+	const Token& goto_token() const { return goto_token_; }
+
+private:
+	Token label_token_;  // The target label identifier
+	Token goto_token_;   // The goto keyword token (for error reporting)
+};
