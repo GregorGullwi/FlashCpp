@@ -1869,3 +1869,8 @@ TEST_CASE("Static variables") {
 TEST_CASE("RegisterSpilling:ManyLocals") {
 	run_test_from_file("test_register_spilling.cpp", "Register spilling with many local variables", false);
 }
+
+// TODO: Re-enable when lambda transformation is complete
+// TEST_CASE("Lambda: No captures") {
+// 	run_test_from_file("test_lambda_no_capture.cpp", "Local lambdas without captures", false);
+// }

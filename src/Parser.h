@@ -234,6 +234,7 @@ private:
         ParseResult parse_goto_statement();  // Add goto-statement parser
         ParseResult parse_label_statement();  // Add label-statement parser
         ParseResult parse_lambda_expression();  // Add lambda expression parser
+        ParseResult transformLambdaToStruct(const LambdaExpressionNode& lambda);  // Transform lambda to struct with operator()
         ParseResult parse_statement();
 
         // Helper functions for auto type deduction

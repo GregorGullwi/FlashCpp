@@ -123,6 +123,9 @@ enum class IrOpcode : int_fast16_t {
 	GlobalVariableDecl,  // Global variable declaration: [type, size, name, is_initialized, init_value?]
 	GlobalLoad,          // Load from global variable: [result_temp, global_name]
 	GlobalStore,         // Store to global variable: [global_name, source_temp]
+	// Lambda support
+	FunctionAddress,     // Get address of a function: [result_temp, function_name]
+	IndirectCall,        // Call through function pointer: [result_temp, func_ptr, arg1, arg2, ...]
 };
 
 enum class X64Register : uint8_t {
@@ -2850,6 +2853,27 @@ public:
 			// Format: [global_name, value]
 			assert(getOperandCount() == 2 && "GlobalStore must have exactly 2 operands");
 			oss << "global_store @" << getOperandAs<std::string_view>(0) << ", %" << getOperandAs<TempVar>(1).index;
+		}
+		break;
+
+		case IrOpcode::FunctionAddress:
+		{
+			// %result = function_address @function_name
+			// Format: [result_temp, function_name]
+			assert(getOperandCount() == 2 && "FunctionAddress must have exactly 2 operands");
+			oss << '%' << getOperandAs<TempVar>(0).index << " = function_address @" << getOperandAs<std::string_view>(1);
+		}
+		break;
+
+		case IrOpcode::IndirectCall:
+		{
+			// %result = indirect_call %func_ptr, %arg1, %arg2, ...
+			// Format: [result_temp, func_ptr, arg1, arg2, ...]
+			assert(getOperandCount() >= 2 && "IndirectCall must have at least 2 operands");
+			oss << '%' << getOperandAs<TempVar>(0).index << " = indirect_call %" << getOperandAs<TempVar>(1).index;
+			for (size_t i = 2; i < getOperandCount(); ++i) {
+				oss << ", %" << getOperandAs<TempVar>(i).index;
+			}
 		}
 		break;
 

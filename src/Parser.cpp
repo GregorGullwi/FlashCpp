@@ -264,31 +264,45 @@ ParseResult Parser::parse_type_and_name() {
     // Parse the identifier (name) or operator overload
     Token identifier_token;
 
-    // Check for operator overload (e.g., operator=)
+    // Check for operator overload (e.g., operator=, operator())
     if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
         peek_token()->value() == "operator") {
 
         Token operator_keyword_token = *peek_token();
         consume_token(); // consume 'operator'
 
-        // Parse the operator symbol
-        if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator) {
+        std::string_view operator_name;
+
+        // Check for operator()
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+            peek_token()->value() == "(") {
+            consume_token(); // consume '('
+            if (!peek_token().has_value() || peek_token()->value() != ")") {
+                return ParseResult::error("Expected ')' after 'operator('", operator_keyword_token);
+            }
+            consume_token(); // consume ')'
+            static const std::string operator_call_name = "operator()";
+            operator_name = operator_call_name;
+        }
+        // Check for other operators
+        else if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+            Token operator_symbol_token = *peek_token();
+            std::string_view operator_symbol = operator_symbol_token.value();
+            consume_token(); // consume operator symbol
+
+            // For now, we support operator= and operator()
+            if (operator_symbol != "=") {
+                return ParseResult::error("Only operator= and operator() are currently supported", operator_symbol_token);
+            }
+            static const std::string operator_eq_name = "operator=";
+            operator_name = operator_eq_name;
+        }
+        else {
             return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
         }
 
-        Token operator_symbol_token = *peek_token();
-        std::string_view operator_symbol = operator_symbol_token.value();
-        consume_token(); // consume operator symbol
-
-        // For now, we only support operator=
-        if (operator_symbol != "=") {
-            return ParseResult::error("Only operator= is currently supported", operator_symbol_token);
-        }
-
-        // Create a synthetic identifier token for "operator="
-        // Use a static string so the string_view remains valid
-        static const std::string operator_eq_name = "operator=";
-        identifier_token = Token(Token::Type::Identifier, operator_eq_name,
+        // Create a synthetic identifier token for the operator
+        identifier_token = Token(Token::Type::Identifier, operator_name,
                                 operator_keyword_token.line(), operator_keyword_token.column(),
                                 operator_keyword_token.file_index());
     } else {
@@ -3650,7 +3664,12 @@ ParseResult Parser::parse_primary_expression()
 		else {
 			// Identifier already consumed at line 1621
 
-			if (consume_punctuator("("sv)) {
+			// Check if this looks like a function call
+			// Only consume '(' if the identifier is actually a function
+			bool is_function_call = peek_token().has_value() && peek_token()->value() == "(" &&
+			                        identifierType->is<FunctionDeclarationNode>();
+
+			if (is_function_call && consume_punctuator("("sv)) {
 				if (!peek_token().has_value())
 					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
@@ -3680,46 +3699,49 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 
-				// Perform overload resolution
-				// First, get all overloads of this function
-				auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
+				{
+					// Perform overload resolution
+					// First, get all overloads of this function
+					auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
 
-				// Extract argument types
-				std::vector<TypeSpecifierNode> arg_types;
-				for (size_t i = 0; i < args.size(); ++i) {
-					auto arg_type = get_expression_type(args[i]);
-					if (!arg_type.has_value()) {
-						// If we can't determine the type, fall back to old behavior
-						const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+					// Extract argument types
+					std::vector<TypeSpecifierNode> arg_types;
+					for (size_t i = 0; i < args.size(); ++i) {
+						auto arg_type = get_expression_type(args[i]);
+						if (!arg_type.has_value()) {
+							// If we can't determine the type, fall back to old behavior
+							const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+							if (!decl_ptr) {
+								return ParseResult::error("Invalid function declaration", idenfifier_token);
+							}
+							result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+							break;
+						}
+						arg_types.push_back(*arg_type);
+					}
+
+					// If we successfully extracted all argument types, perform overload resolution
+					if (!result.has_value() && arg_types.size() == args.size()) {
+						auto resolution_result = resolve_overload(all_overloads, arg_types);
+
+						if (!resolution_result.has_match) {
+							return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+						}
+
+						if (resolution_result.is_ambiguous) {
+							return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+						}
+
+						// Get the selected overload
+						const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
 						if (!decl_ptr) {
 							return ParseResult::error("Invalid function declaration", idenfifier_token);
 						}
+
 						result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
-						break;
 					}
-					arg_types.push_back(*arg_type);
 				}
 
-				// If we successfully extracted all argument types, perform overload resolution
-				if (!result.has_value() && arg_types.size() == args.size()) {
-					auto resolution_result = resolve_overload(all_overloads, arg_types);
-
-					if (!resolution_result.has_match) {
-						return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
-					}
-
-					if (resolution_result.is_ambiguous) {
-						return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
-					}
-
-					// Get the selected overload
-					const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
-					if (!decl_ptr) {
-						return ParseResult::error("Invalid function declaration", idenfifier_token);
-					}
-
-					result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
-				}
 			}
 			else {
 				// Regular identifier
@@ -3976,6 +3998,61 @@ ParseResult Parser::parse_primary_expression()
 					UnaryOperatorNode(operator_token, *result, false));
 				continue;  // Check for more postfix operators
 			}
+		}
+
+		// Check for function call operator () - for operator() overload
+		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+			// This could be operator() call on an object
+			// We need to check if the result is an object type (not a function)
+
+			Token paren_token = *peek_token();
+			consume_token(); // consume '('
+
+			// Parse function arguments
+			ChunkedVector<ASTNode> args;
+			if (!peek_token().has_value() || peek_token()->value() != ")") {
+				while (true) {
+					auto arg_result = parse_expression();
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					if (auto arg = arg_result.node()) {
+						args.push_back(*arg);
+					}
+
+					if (!peek_token().has_value()) {
+						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+					}
+
+					if (peek_token()->value() == ")") {
+						break;
+					}
+
+					if (!consume_punctuator(",")) {
+						return ParseResult::error("Expected ',' between function arguments", *current_token_);
+					}
+				}
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			}
+
+			// Create operator() call as a member function call
+			// The member function name is "operator()"
+			static const std::string operator_call_name = "operator()";
+			Token operator_token(Token::Type::Identifier, operator_call_name,
+			                     paren_token.line(), paren_token.column(), paren_token.file_index());
+
+			// Create a temporary function declaration for operator()
+			auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, operator_token);
+			auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
+			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+
+			// Create member function call node for operator()
+			result = emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(*result, func_ref, std::move(args), operator_token));
+			continue;
 		}
 
 		// Check for array subscript operator []
@@ -4532,7 +4609,29 @@ ParseResult Parser::parse_lambda_expression() {
         lambda_token
     );
 
+    // TODO: Transform lambda into struct with operator() (Clang-style)
+    // For now, return the lambda node as-is
+    // Code generation will handle it (or return an error)
     return saved_position.success(lambda_node);
+}
+
+ParseResult Parser::transformLambdaToStruct(const LambdaExpressionNode& lambda) {
+    // Transform lambda into a struct with operator() (Clang-style)
+    // This is Phase 1: Simple lambdas without captures
+
+    // For now, just return the lambda expression as-is
+    // The code generation will handle it
+    // TODO: Implement full transformation to struct
+
+    auto lambda_node = emplace_node<LambdaExpressionNode>(
+        lambda.captures(),
+        lambda.parameters(),
+        lambda.body(),
+        lambda.return_type(),
+        lambda.lambda_token()
+    );
+
+    return ParseResult::success(lambda_node);
 }
 
 ParseResult Parser::parse_if_statement() {
@@ -4923,6 +5022,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& func_call = std::get<FunctionCallNode>(expr);
 		const auto& decl = func_call.function_declaration();
 		return decl.type_node().as<TypeSpecifierNode>();
+	}
+	else if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+		// For lambda expressions, return a function pointer type
+		// For now, just return int as a placeholder
+		// TODO: Implement proper lambda type (function pointer or closure type)
+		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 64);  // Function pointer is 64-bit
 	}
 	// Add more cases as needed
 

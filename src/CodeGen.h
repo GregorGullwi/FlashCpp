@@ -3360,23 +3360,35 @@ private:
 	}
 
 	std::vector<IrOperand> generateLambdaExpressionIr(const LambdaExpressionNode& lambda) {
-		// For now, generate a simple error message
-		// Full lambda implementation requires:
-		// 1. Generate a closure struct type with captured variables
-		// 2. Generate a static function for the lambda body
-		// 3. Create an instance of the closure struct
-		// 4. Return a function pointer or callable object
+		try {
+			std::cerr << "DEBUG: Entered generateLambdaExpressionIr\n";
 
-		// TODO: Implement full lambda support
-		// For now, just return a placeholder
-		std::cerr << "Error: Lambda expressions are not yet fully implemented\n";
-		std::cerr << "Lambda at line " << lambda.lambda_token().line() << "\n";
+			// Lambda code generation is not yet fully implemented
+			// The challenge is that lambdas need to be generated as separate functions,
+			// but we're currently in the middle of generating another function.
+			// This requires either:
+			// 1. A two-pass approach (collect lambdas first, generate them before enclosing function)
+			// 2. Deferred generation (store lambda info, generate after current function)
+			// 3. Immediate generation with IR stream manipulation
+			//
+			// All approaches have architectural implications that need careful design.
 
-		// Return a dummy value for now
-		TempVar result = var_counter;
-		var_counter = TempVar(var_counter.index + 1);
-		return {result};
+			std::cerr << "Error: Lambda expressions are not yet fully implemented\n";
+			std::cerr << "Lambda at line " << lambda.lambda_token().line() << "\n";
+			std::cerr << "Lambda parsing works, but code generation requires architectural changes.\n";
+			std::cerr << "See LAMBDA_CODEGEN_PLAN.md for implementation details.\n";
+
+			// Return a dummy value
+			TempVar result = var_counter;
+			var_counter = TempVar(var_counter.index + 1);
+			return {result};
+		} catch (const std::exception& e) {
+			std::cerr << "Exception in generateLambdaExpressionIr: " << e.what() << "\n";
+			throw;
+		}
 	}
+
+
 
 	Ir ir_;
 	TempVar var_counter{ 0 };
