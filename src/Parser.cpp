@@ -9,6 +9,7 @@
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
 
+// Type keywords set - used for if-statement initializer detection
 static const std::unordered_set<std::string_view> type_keywords = {
 	"int"sv, "float"sv, "double"sv, "char"sv, "bool"sv, "void"sv,
 	"short"sv, "long"sv, "signed"sv, "unsigned"sv, "const"sv, "volatile"sv, "alignas"sv
@@ -2158,8 +2159,8 @@ ParseResult Parser::parse_statement_or_declaration()
 	}
 
 	if (current_token.type() == Token::Type::Keyword) {
-		static const std::unordered_map<std::string_view, ParsingFunction>
-			keyword_parsing_functions = {
+		// Keyword parsing function map - initialized once on first call
+		static const std::unordered_map<std::string_view, ParsingFunction> keyword_parsing_functions = {
 			{"if", &Parser::parse_if_statement},
 			{"for", &Parser::parse_for_loop},
 			{"while", &Parser::parse_while_loop},
@@ -2167,7 +2168,30 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"return", &Parser::parse_return_statement},
 			{"break", &Parser::parse_break_statement},
 			{"continue", &Parser::parse_continue_statement},
-			//{"struct", &Parser::parse_struct_declaration}
+			{"static", &Parser::parse_variable_declaration},
+			{"extern", &Parser::parse_variable_declaration},
+			{"register", &Parser::parse_variable_declaration},
+			{"mutable", &Parser::parse_variable_declaration},
+			{"int", &Parser::parse_variable_declaration},
+			{"float", &Parser::parse_variable_declaration},
+			{"double", &Parser::parse_variable_declaration},
+			{"char", &Parser::parse_variable_declaration},
+			{"bool", &Parser::parse_variable_declaration},
+			{"void", &Parser::parse_variable_declaration},
+			{"short", &Parser::parse_variable_declaration},
+			{"long", &Parser::parse_variable_declaration},
+			{"signed", &Parser::parse_variable_declaration},
+			{"unsigned", &Parser::parse_variable_declaration},
+			{"const", &Parser::parse_variable_declaration},
+			{"volatile", &Parser::parse_variable_declaration},
+			{"alignas", &Parser::parse_variable_declaration},
+			{"new", &Parser::parse_expression_statement},
+			{"delete", &Parser::parse_expression_statement},
+			{"static_cast", &Parser::parse_expression_statement},
+			{"dynamic_cast", &Parser::parse_expression_statement},
+			{"const_cast", &Parser::parse_expression_statement},
+			{"reinterpret_cast", &Parser::parse_expression_statement},
+			{"typeid", &Parser::parse_expression_statement},
 		};
 
 		auto keyword_iter = keyword_parsing_functions.find(current_token.value());
@@ -2175,37 +2199,11 @@ ParseResult Parser::parse_statement_or_declaration()
 			// Call the appropriate parsing function
 			return (this->*(keyword_iter->second))();
 		}
-		else {
-			// Check if it's a storage class specifier (static, extern, etc.)
-			if (current_token.value() == "static" || current_token.value() == "extern" ||
-			    current_token.value() == "register" || current_token.value() == "mutable") {
-				// Parse as variable declaration with storage class
-				return parse_variable_declaration();
-			}
-			// Check if it's a type specifier keyword (int, float, etc.) or CV-qualifier or alignas
-			else if (type_keywords.find(current_token.value()) != type_keywords.end()) {
-				// Parse as variable declaration with optional initialization
-				return parse_variable_declaration();
-			}
-			// Check if it's 'new' or 'delete' - these are expression keywords
-			else if (current_token.value() == "new" || current_token.value() == "delete") {
-				// Parse as expression statement
-				return parse_expression();
-			}
-			// Check if it's a cast keyword - these are also expression keywords
-			else if (current_token.value() == "static_cast" || current_token.value() == "dynamic_cast" ||
-			         current_token.value() == "const_cast" || current_token.value() == "reinterpret_cast" ||
-			         current_token.value() == "typeid") {
-				// Parse as expression statement
-				return parse_expression();
-			}
-			else {
-				// Unknown keyword - consume token to avoid infinite loop and return error
-				consume_token();
-				return ParseResult::error("Unknown keyword: " + std::string(current_token.value()),
-					current_token);
-			}
-		}
+
+		// Unknown keyword - consume token to avoid infinite loop and return error
+		consume_token();
+		return ParseResult::error("Unknown keyword: " + std::string(current_token.value()),
+			current_token);
 	}
 	else if (current_token.type() == Token::Type::Identifier) {
 		// Check if this identifier is a registered struct/class/enum type

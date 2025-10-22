@@ -233,6 +233,7 @@ private:
         // Minimum precedence to accept all operators (assignment has lowest precedence = 3)
         static constexpr int MIN_PRECEDENCE = 0;
         ParseResult parse_expression(int precedence = MIN_PRECEDENCE);
+        ParseResult parse_expression_statement() { return parse_expression(); }  // Wrapper for keyword map
         ParseResult parse_primary_expression();
         ParseResult parse_unary_expression();
         ParseResult parse_binary_expression(int min_precedence = 0);
