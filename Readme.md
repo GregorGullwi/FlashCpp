@@ -58,10 +58,11 @@
 - **Assignment operators**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - **Increment/decrement**: `++`, `--` prefix/postfix operators
 - **Function calls**: Complete function declaration and call support
-- **Control flow**: `if`, `for`, `while`, `do-while`, `break`, `continue`, `return` statements
+- **Control flow**: `if`, `for`, `while`, `do-while`, `switch`, `break`, `continue`, `return`, `goto`/labels 🆕
 - **C++20 support**: If-with-initializer syntax, `alignas` keyword
-- **Enums**: `enum` and `enum class` declarations
-- **Namespaces**: Namespace declarations, nested namespaces, qualified name lookup (`A::B::func()`)
+- **Enums**: `enum` and `enum class` declarations with switch support 🆕
+- **Namespaces**: Full namespace support with `using` directives, `using` declarations, namespace aliases, anonymous namespaces 🆕
+- **Type casts**: C-style casts `(Type)expr` and C++ casts `static_cast<Type>(expr)` 🆕
 - **Preprocessor**: Macro expansion, conditional compilation, file inclusion, `#pragma pack`
 
 ---
@@ -115,7 +116,7 @@
 - **Compile speed**: Optimized for fast compilation
 - **Code quality**: Generates efficient x86-64 assembly
 - **Type safety**: Comprehensive type checking and promotion
-- **Test coverage**: 100+ test cases across all operator categories
+- **Test coverage**: 102 test cases across all language features 🆕
 
 ---
 
@@ -155,10 +156,10 @@ bool test_comparisons(double a, double b) {
 ## 🔮 **Roadmap** (Foundation-First Approach)
 
 ### **Phase 1: Core Language Completeness** (7 weeks)
-- **Switch statements**: `switch`/`case`/`default` control flow with jump tables
-- **Goto and labels**: Label declarations and goto statements
-- **Using directives**: `using namespace`, `using` declarations, namespace aliases (basic namespaces already done!)
-- **Lambda expressions**: Basic lambda support with value and reference captures
+- ✅ **Switch statements**: `switch`/`case`/`default` control flow (COMPLETED) 🆕
+- ✅ **Goto and labels**: Label declarations and goto statements (COMPLETED) 🆕
+- ✅ **Using directives**: `using namespace`, `using` declarations, namespace aliases (COMPLETED) 🆕
+- **Lambda expressions**: Basic lambda support with value and reference captures ← **CURRENT**
 
 ### **Phase 2: OOP Completeness** (2 weeks)
 - **Friend declarations**: Friend classes and friend functions
@@ -226,8 +227,11 @@ bool test_comparisons(double a, double b) {
 - [x] **Operator precedence**: Correct C++ operator precedence
 - [x] **Type system**: Integer, floating-point, pointer, and class types
 - [x] **OOP features**: Classes, inheritance, virtual functions, access control
-- [x] **Namespace support**: Basic namespace declarations and qualified name lookup
-- [ ] **Remaining**: Templates, using directives, lambda expressions, switch statements, enhanced error handling
+- [x] **Namespace support**: Full namespace support with using directives, declarations, and aliases 🆕
+- [x] **Switch statements**: Complete switch/case/default with enum support 🆕
+- [x] **Goto/labels**: Label declarations and goto statements 🆕
+- [x] **C-style casts**: `(Type)expr` syntax support 🆕
+- [ ] **Remaining**: Templates, lambda expressions, enhanced error handling
 
 ### **4. Type System & Semantic Analysis** ✅ **COMPLETE**
 - [x] **Type checking**: Comprehensive type validation
@@ -264,13 +268,14 @@ bool test_comparisons(double a, double b) {
 - [x] **Assignment**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` (infrastructure)
 - [x] **Increment/Decrement**: `++`, `--` prefix/postfix (infrastructure)
 
-### **8. Control Flow** ✅ **COMPLETE**
+### **8. Control Flow** ✅ **COMPLETE** 🆕
 - [x] **If-statement support**: Complete implementation with C++20 if-with-initializer
 - [x] **Loop support**: For, while, do-while loops with break/continue
+- [x] **Switch statements**: Complete switch/case/default with enum support 🆕
+- [x] **Goto/labels**: Label declarations and goto statements 🆕
 - [x] **Control flow IR**: Branch, ConditionalBranch, Label, LoopBegin, LoopEnd, Break, Continue
 - [x] **Comprehensive tests**: All control flow constructs with edge cases
 - [x] **C++20 compatibility**: Modern C++ control flow features
-- [ ] **Remaining**: Switch statements, goto/labels
 
 ### **9. Object-Oriented Programming** ✅ **COMPLETE** 🆕
 - [x] **Classes and structs**: Complete class/struct declarations
@@ -287,11 +292,12 @@ bool test_comparisons(double a, double b) {
 - [ ] **Remaining**: Friend declarations, nested classes
 
 ### **10. Testing Infrastructure** ✅ **COMPLETE**
-- [x] **Comprehensive test suite**: 150+ test cases
+- [x] **Comprehensive test suite**: 102 test cases 🆕
 - [x] **External reference files**: Organized test categories
 - [x] **Operator testing**: All operators thoroughly tested
 - [x] **Type testing**: Integer, floating-point, and pointer type coverage
-- [x] **Control flow testing**: All control flow constructs with comprehensive scenarios
+- [x] **Control flow testing**: All control flow constructs including switch/goto 🆕
+- [x] **Namespace testing**: Using directives, declarations, and aliases 🆕
 - [x] **OOP testing**: Classes, inheritance, virtual functions, RTTI
 - [x] **Integration testing**: End-to-end compilation testing
 - [x] **Performance validation**: Assembly output verification
@@ -308,10 +314,10 @@ bool test_comparisons(double a, double b) {
 ## 🎯 **Implementation Plan** (Foundation-First Approach)
 
 ### **Phase 1: Core Language Completeness** (Next 7 weeks)
-1. [ ] **Switch statements** (2 weeks) - Essential control flow with jump tables
-2. [ ] **Goto and labels** (1 week) - Complete control flow support
-3. [ ] **Using directives** (1 week) - `using namespace`, `using` declarations (basic namespaces done!)
-4. [ ] **Lambda expressions** (3 weeks) - Basic lambdas with captures
+1. [x] **Switch statements** (COMPLETED) - Essential control flow with enum support 🆕
+2. [x] **Goto and labels** (COMPLETED) - Complete control flow support 🆕
+3. [x] **Using directives** (COMPLETED) - Full namespace support with symbol table integration 🆕
+4. [ ] **Lambda expressions** (3 weeks) - Basic lambdas with captures ← **CURRENT**
 
 ### **Phase 2: OOP Completeness** (Weeks 9-11)
 5. [ ] **Friend declarations** (1 week) - Friend classes and functions
