@@ -1870,6 +1870,10 @@ TEST_CASE("RegisterSpilling:ManyLocals") {
 	run_test_from_file("test_register_spilling.cpp", "Register spilling with many local variables", false);
 }
 
+TEST_CASE("opererator() call") {
+	run_test_from_file("test_operator_call.cpp", "Test of calling operator()", false);
+}
+
 // TODO: Re-enable when lambda code generation is complete
 // TEST_CASE("Lambda: No captures") {
 // 	run_test_from_file("test_lambda_no_capture.cpp", "Local lambdas without captures", false);
