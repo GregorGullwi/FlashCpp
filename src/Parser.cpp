@@ -3346,6 +3346,11 @@ ParseResult Parser::parse_primary_expression()
 {
 	std::optional<ASTNode> result;
 
+	// Check for lambda expression first (starts with '[')
+	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "[") {
+		return parse_lambda_expression();
+	}
+
 	// Check for offsetof builtin first (before general identifier handling)
 	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "offsetof") {
 		// Handle offsetof builtin: offsetof(struct_type, member)
@@ -4402,6 +4407,132 @@ ParseResult Parser::parse_label_statement() {
     }
 
     return ParseResult::success(emplace_node<LabelStatementNode>(label_token));
+}
+
+ParseResult Parser::parse_lambda_expression() {
+    ScopedTokenPosition saved_position(*this);
+
+    // Expect '['
+    if (!consume_punctuator("[")) {
+        return ParseResult::error("Expected '[' to start lambda expression", *current_token_);
+    }
+
+    Token lambda_token = *current_token_;
+
+    // Parse captures
+    std::vector<LambdaCaptureNode> captures;
+
+    // Check for empty capture list
+    if (!peek_token().has_value() || peek_token()->value() != "]") {
+        // Parse capture list
+        while (true) {
+            auto token = peek_token();
+            if (!token.has_value()) {
+                return ParseResult::error("Unexpected end of file in lambda capture list", *current_token_);
+            }
+
+            // Check for capture-all
+            if (token->value() == "=") {
+                consume_token();
+                captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::AllByValue));
+            } else if (token->value() == "&") {
+                consume_token();
+                // Check if this is capture-all by reference or a specific reference capture
+                auto next_token = peek_token();
+                if (next_token.has_value() && next_token->type() == Token::Type::Identifier) {
+                    // Specific reference capture: [&x]
+                    Token id_token = *next_token;
+                    consume_token();
+                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByReference, id_token));
+                } else {
+                    // Capture-all by reference: [&]
+                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::AllByReference));
+                }
+            } else if (token->type() == Token::Type::Identifier) {
+                // Capture by value: [x]
+                Token id_token = *token;
+                consume_token();
+                captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token));
+            } else {
+                return ParseResult::error("Expected capture specifier in lambda", *token);
+            }
+
+            // Check for comma (more captures) or closing bracket
+            if (peek_token().has_value() && peek_token()->value() == ",") {
+                consume_token(); // consume comma
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Expect ']'
+    if (!consume_punctuator("]")) {
+        return ParseResult::error("Expected ']' after lambda captures", *current_token_);
+    }
+
+    // Parse parameter list (optional)
+    std::vector<ASTNode> parameters;
+    if (peek_token().has_value() && peek_token()->value() == "(") {
+        consume_token(); // consume '('
+
+        // Parse parameters
+        if (!peek_token().has_value() || peek_token()->value() != ")") {
+            while (true) {
+                // Parse parameter declaration
+                ParseResult param_result = parse_variable_declaration();
+                if (param_result.is_error()) {
+                    return param_result;
+                }
+                if (param_result.node().has_value()) {
+                    parameters.push_back(*param_result.node());
+                }
+
+                // Check for comma (more parameters) or closing paren
+                if (peek_token().has_value() && peek_token()->value() == ",") {
+                    consume_token(); // consume comma
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Expect ')'
+        if (!consume_punctuator(")")) {
+            return ParseResult::error("Expected ')' after lambda parameters", *current_token_);
+        }
+    }
+
+    // Parse optional return type (-> type)
+    std::optional<ASTNode> return_type;
+    if (peek_token().has_value() && peek_token()->value() == "->") {
+        consume_token(); // consume '->'
+        ParseResult type_result = parse_type_specifier();
+        if (type_result.is_error()) {
+            return type_result;
+        }
+        return_type = type_result.node();
+    }
+
+    // Parse body (must be a compound statement)
+    if (!peek_token().has_value() || peek_token()->value() != "{") {
+        return ParseResult::error("Expected '{' for lambda body", *current_token_);
+    }
+
+    ParseResult body_result = parse_block();
+    if (body_result.is_error()) {
+        return body_result;
+    }
+
+    auto lambda_node = emplace_node<LambdaExpressionNode>(
+        std::move(captures),
+        std::move(parameters),
+        *body_result.node(),
+        return_type,
+        lambda_token
+    );
+
+    return saved_position.success(lambda_node);
 }
 
 ParseResult Parser::parse_if_statement() {

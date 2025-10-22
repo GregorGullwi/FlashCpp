@@ -233,6 +233,7 @@ private:
         ParseResult parse_continue_statement();  // Add continue-statement parser
         ParseResult parse_goto_statement();  // Add goto-statement parser
         ParseResult parse_label_statement();  // Add label-statement parser
+        ParseResult parse_lambda_expression();  // Add lambda expression parser
         ParseResult parse_statement();
 
         // Helper functions for auto type deduction

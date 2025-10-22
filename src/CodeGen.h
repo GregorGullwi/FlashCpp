@@ -1666,6 +1666,10 @@ private:
 			const auto& expr = std::get<TypeidNode>(exprNode);
 			return generateTypeidIr(expr);
 		}
+		else if (std::holds_alternative<LambdaExpressionNode>(exprNode)) {
+			const auto& expr = std::get<LambdaExpressionNode>(exprNode);
+			return generateLambdaExpressionIr(expr);
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -3353,6 +3357,25 @@ private:
 		if (!scope_stack_.empty()) {
 			scope_stack_.back().push_back({var_name, struct_name});
 		}
+	}
+
+	std::vector<IrOperand> generateLambdaExpressionIr(const LambdaExpressionNode& lambda) {
+		// For now, generate a simple error message
+		// Full lambda implementation requires:
+		// 1. Generate a closure struct type with captured variables
+		// 2. Generate a static function for the lambda body
+		// 3. Create an instance of the closure struct
+		// 4. Return a function pointer or callable object
+
+		// TODO: Implement full lambda support
+		// For now, just return a placeholder
+		std::cerr << "Error: Lambda expressions are not yet fully implemented\n";
+		std::cerr << "Lambda at line " << lambda.lambda_token().line() << "\n";
+
+		// Return a dummy value for now
+		TempVar result = var_counter;
+		var_counter = TempVar(var_counter.index + 1);
+		return {result};
 	}
 
 	Ir ir_;

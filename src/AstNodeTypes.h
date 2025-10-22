@@ -1278,10 +1278,74 @@ private:
 	Token typeid_token_;   // Token for error reporting
 };
 
+// Lambda capture node - represents a single capture in a lambda
+class LambdaCaptureNode {
+public:
+	enum class CaptureKind {
+		ByValue,      // [x]
+		ByReference,  // [&x]
+		AllByValue,   // [=]
+		AllByReference // [&]
+	};
+
+	explicit LambdaCaptureNode(CaptureKind kind, Token identifier = Token())
+		: kind_(kind), identifier_(identifier) {}
+
+	CaptureKind kind() const { return kind_; }
+	std::string_view identifier_name() const { return identifier_.value(); }
+	const Token& identifier_token() const { return identifier_; }
+	bool is_capture_all() const {
+		return kind_ == CaptureKind::AllByValue || kind_ == CaptureKind::AllByReference;
+	}
+
+private:
+	CaptureKind kind_;
+	Token identifier_;  // Empty for capture-all
+};
+
+// Lambda expression node
+class LambdaExpressionNode {
+public:
+	explicit LambdaExpressionNode(
+		std::vector<LambdaCaptureNode> captures,
+		std::vector<ASTNode> parameters,
+		ASTNode body,
+		std::optional<ASTNode> return_type = std::nullopt,
+		Token lambda_token = Token())
+		: captures_(std::move(captures)),
+		  parameters_(std::move(parameters)),
+		  body_(body),
+		  return_type_(return_type),
+		  lambda_token_(lambda_token),
+		  lambda_id_(next_lambda_id_++) {}
+
+	const std::vector<LambdaCaptureNode>& captures() const { return captures_; }
+	const std::vector<ASTNode>& parameters() const { return parameters_; }
+	const ASTNode& body() const { return body_; }
+	const std::optional<ASTNode>& return_type() const { return return_type_; }
+	const Token& lambda_token() const { return lambda_token_; }
+	size_t lambda_id() const { return lambda_id_; }
+
+	// Generate a unique name for the lambda's generated function
+	std::string generate_lambda_name() const {
+		return "__lambda_" + std::to_string(lambda_id_);
+	}
+
+private:
+	std::vector<LambdaCaptureNode> captures_;
+	std::vector<ASTNode> parameters_;
+	ASTNode body_;
+	std::optional<ASTNode> return_type_;  // Optional return type (e.g., -> int)
+	Token lambda_token_;  // For error reporting
+	size_t lambda_id_;    // Unique ID for this lambda
+
+	static inline size_t next_lambda_id_ = 0;  // Counter for generating unique IDs
+};
+
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, TypeidNode>;
+	DynamicCastNode, TypeidNode, LambdaExpressionNode>;
 
 /*class FunctionDefinitionNode {
 public:
