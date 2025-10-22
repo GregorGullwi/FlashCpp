@@ -112,6 +112,11 @@ public:
 
 	const Ir& getIr() const { return ir_; }
 
+	// Reserve space for IR instructions (optimization)
+	void reserveInstructions(size_t capacity) {
+		ir_.reserve(capacity);
+	}
+
 private:
 	// Helper function to check if access to a member is allowed
 	// Returns true if access is allowed, false otherwise

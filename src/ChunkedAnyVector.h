@@ -21,14 +21,14 @@
 
 #ifdef HAS_MEMORY_RESOURCE
 #include <memory_resource>
-#define LIST_SIZE_ANY sizeof(std::pmr::list<std::pmr::vector<char>>)
-#define LIST_SIZE_T sizeof(std::pmr::list<std::pmr::vector<T>>)
+#define DEQUE_SIZE_ANY sizeof(std::pmr::deque<std::pmr::vector<char>>)
+#define DEQUE_SIZE_T sizeof(std::pmr::deque<std::pmr::vector<T>>)
 #else
-#define LIST_SIZE_ANY sizeof(std::list<std::vector<char>>)
-#define LIST_SIZE_T sizeof(std::list<std::vector<T>>)
+#define DEQUE_SIZE_ANY sizeof(std::deque<std::vector<char>>)
+#define DEQUE_SIZE_T sizeof(std::deque<std::vector<T>>)
 #endif
 
-template<std::size_t ChunkSize = 64 * 1024 * 1024, std::size_t InternalBufferSize = LIST_SIZE_ANY + 4 * sizeof(void*)>
+template<std::size_t ChunkSize = 64 * 1024 * 1024, std::size_t InternalBufferSize = DEQUE_SIZE_ANY + 4 * sizeof(void*)>
 class ChunkedAnyVector {
 public:
 	ChunkedAnyVector()
@@ -72,15 +72,15 @@ private:
 	std::array<char, InternalBufferSize> internal_buffer;
 #ifdef HAS_MEMORY_RESOURCE
     std::pmr::monotonic_buffer_resource memory_resource;
-    std::pmr::list<std::pmr::vector<char>> data;
+    std::pmr::deque<std::pmr::vector<char>> data;
 #else
-    std::list<std::vector<char>> data;
+    std::deque<std::vector<char>> data;
 #endif
 	std::vector<void*> index_to_pointer;
 	std::vector<std::type_index> index_to_type;
 };
 
-template<typename T, std::size_t ChunkSize = sizeof(T) * 4, std::size_t InternalBufferSize = LIST_SIZE_T + ChunkSize>
+template<typename T, std::size_t ChunkSize = sizeof(T) * 4, std::size_t InternalBufferSize = DEQUE_SIZE_T + ChunkSize>
 class ChunkedVector {
 public:
 	ChunkedVector()
@@ -107,6 +107,8 @@ public:
 		data(&memory_resource)
 #endif
     {
+		// Note: std::deque doesn't have reserve(), but that's okay
+		// It will allocate blocks as needed
 		for (size_t i = 0, e = other.size(); i < e; ++i) {
 			push_back(other[i]);
 		}
@@ -124,6 +126,8 @@ public:
 	ChunkedVector& operator=(const ChunkedVector& other) {
 		if (this != &other) {
 			data.clear();
+			// Note: std::deque doesn't have reserve(), but that's okay
+			// It will allocate blocks as needed
 			for (size_t i = 0, e = other.size(); i < e; ++i) {
 				push_back(other[i]);
 			}
@@ -157,23 +161,23 @@ public:
 	}
 
 	T& operator[](std::size_t index) {
-		for (auto& chunk : data) {
-			if (index < chunk.size()) {
-				return chunk[index];
-			}
-			index -= chunk.size();
-		}
-		throw std::out_of_range("Index out of range");
+		// Precondition: data must not be empty and index must be valid
+		assert(!data.empty() && "ChunkedVector::operator[] called on empty container");
+
+		// O(1) access: calculate chunk and element indices directly
+		std::size_t chunk_idx = index / ChunkSize;
+		std::size_t elem_idx = index % ChunkSize;
+		return data[chunk_idx][elem_idx];
 	}
 
 	const T& operator[](std::size_t index) const {
-		for (const auto& chunk : data) {
-			if (index < chunk.size()) {
-				return chunk[index];
-			}
-			index -= chunk.size();
-		}
-		throw std::out_of_range("Index out of range");
+		// Precondition: data must not be empty and index must be valid
+		assert(!data.empty() && "ChunkedVector::operator[] called on empty container");
+
+		// O(1) access: calculate chunk and element indices directly
+		std::size_t chunk_idx = index / ChunkSize;
+		std::size_t elem_idx = index % ChunkSize;
+		return data[chunk_idx][elem_idx];
 	}
 
 	size_t size() const {
@@ -203,9 +207,9 @@ private:
 	std::array<char, InternalBufferSize> internal_buffer;
 #ifdef HAS_MEMORY_RESOURCE
 	std::pmr::monotonic_buffer_resource memory_resource;
-	std::pmr::list<std::pmr::vector<T>> data;
+	std::pmr::deque<std::pmr::vector<T>> data;
 #else
-    std::list<std::vector<T>> data;
+    std::deque<std::vector<T>> data;
 #endif
 };
 

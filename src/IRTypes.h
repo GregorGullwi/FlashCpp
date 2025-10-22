@@ -226,17 +226,227 @@ struct TempVar
 
 using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type, TempVar>;
 
+// ============================================================================
+// OperandStorage - Abstraction for storing IR instruction operands
+// ============================================================================
+// Define to switch between storage strategies
+// Uncomment to use chunked storage instead of std::vector
+#define USE_GLOBAL_OPERAND_STORAGE
+
+#ifndef USE_GLOBAL_OPERAND_STORAGE
+
+// Vector-based storage (current implementation)
+class OperandStorage {
+public:
+	OperandStorage() = default;
+
+	// Constructor from vector (move semantics) - for backward compatibility
+	explicit OperandStorage(std::vector<IrOperand>&& operands)
+		: operands_(std::move(operands)) {}
+
+	// Add operand directly (for builder pattern)
+	void addOperand(IrOperand&& operand) {
+		operands_.push_back(std::move(operand));
+	}
+
+	// Reserve space for operands (optimization)
+	void reserve(size_t capacity) {
+		operands_.reserve(capacity);
+	}
+
+	// Get operand count
+	size_t size() const {
+		return operands_.size();
+	}
+
+	// Access operand by index
+	const IrOperand& operator[](size_t index) const {
+		return operands_[index];
+	}
+
+	// Safe access with optional
+	std::optional<IrOperand> getSafe(size_t index) const {
+		return index < operands_.size()
+			? std::optional<IrOperand>{ operands_[index] }
+			: std::optional<IrOperand>{};
+	}
+
+private:
+	std::vector<IrOperand> operands_;
+};
+
+#else // USE_GLOBAL_OPERAND_STORAGE
+
+// Chunked storage (optimized implementation)
+#include <vector>
+
+// Global operand storage - all operands from all instructions stored here
+class GlobalOperandStorage {
+public:
+	static GlobalOperandStorage& instance() {
+		static GlobalOperandStorage storage;
+		return storage;
+	}
+
+	// Reserve space for expected number of operands (optimization)
+	void reserve(size_t capacity) {
+		operands_.reserve(capacity);
+		reserved_capacity_ = capacity;
+	}
+
+	// Add operands from vector and return the start index (for backward compatibility)
+	size_t addOperands(std::vector<IrOperand>&& operands) {
+		size_t start_index = operands_.size();
+		for (auto&& op : operands) {
+			operands_.push_back(std::move(op));
+		}
+		return start_index;
+	}
+
+	// Add single operand and return its index (for builder pattern)
+	size_t addOperand(IrOperand&& operand) {
+		size_t index = operands_.size();
+		operands_.push_back(std::move(operand));
+		return index;
+	}
+
+	// Get operand by global index
+	const IrOperand& getOperand(size_t index) const {
+		return operands_[index];
+	}
+
+	// Get total number of operands stored
+	size_t totalOperands() const {
+		return operands_.size();
+	}
+
+	// Get reserved capacity
+	size_t reservedCapacity() const {
+		return reserved_capacity_;
+	}
+
+	// Get actual capacity
+	size_t actualCapacity() const {
+		return operands_.capacity();
+	}
+
+	// Clear all operands (useful for testing)
+	void clear() {
+		operands_.clear();
+		reserved_capacity_ = 0;
+	}
+
+	// Print statistics about operand storage
+	void printStats() const {
+		printf("\n=== GlobalOperandStorage Statistics ===\n");
+		printf("Reserved capacity: %zu operands\n", reserved_capacity_);
+		printf("Actual used:       %zu operands\n", operands_.size());
+		printf("Vector capacity:   %zu operands\n", operands_.capacity());
+		if (reserved_capacity_ > 0) {
+			double usage_percent = (operands_.size() * 100.0) / reserved_capacity_;
+			printf("Usage:             %.1f%% of reserved\n", usage_percent);
+			if (operands_.size() > reserved_capacity_) {
+				printf("WARNING: Exceeded reserved capacity by %zu operands\n",
+				       operands_.size() - reserved_capacity_);
+			}
+		}
+		printf("========================================\n\n");
+	}
+
+private:
+	GlobalOperandStorage() = default;
+
+	// Using vector for better performance with reserve()
+	std::vector<IrOperand> operands_;
+	size_t reserved_capacity_ = 0;
+};
+
+class OperandStorage {
+public:
+	OperandStorage() : start_index_(0), count_(0) {}
+
+	// Constructor from vector (move semantics) - for backward compatibility
+	explicit OperandStorage(std::vector<IrOperand>&& operands)
+		: count_(operands.size()) {
+		if (count_ > 0) {
+			start_index_ = GlobalOperandStorage::instance().addOperands(std::move(operands));
+		} else {
+			start_index_ = 0;
+		}
+	}
+
+	// Add operand directly (for builder pattern)
+	void addOperand(IrOperand&& operand) {
+		if (count_ == 0) {
+			// First operand - record the start index
+			start_index_ = GlobalOperandStorage::instance().addOperand(std::move(operand));
+		} else {
+			// Subsequent operands - they should be contiguous
+			GlobalOperandStorage::instance().addOperand(std::move(operand));
+		}
+		++count_;
+	}
+
+	// Reserve space (no-op for chunked storage, but kept for API compatibility)
+	void reserve(size_t capacity) {
+		// No-op: deque doesn't need reservation
+	}
+
+	// Get operand count
+	size_t size() const {
+		return count_;
+	}
+
+	// Access operand by index
+	const IrOperand& operator[](size_t index) const {
+		return GlobalOperandStorage::instance().getOperand(start_index_ + index);
+	}
+
+	// Safe access with optional
+	std::optional<IrOperand> getSafe(size_t index) const {
+		return index < count_
+			? std::optional<IrOperand>{ (*this)[index] }
+			: std::optional<IrOperand>{};
+	}
+
+private:
+	size_t start_index_;  // Index into global storage
+	size_t count_;        // Number of operands
+};
+
+#endif
+
 class IrInstruction {
 public:
+	// Constructor from vector (backward compatibility)
 	IrInstruction(IrOpcode opcode, std::vector<IrOperand>&& operands, Token first_token)
 		: opcode_(opcode), operands_(std::move(operands)), first_token_(first_token) {}
+
+	// Builder-style constructor (no temporary vector allocation)
+	IrInstruction(IrOpcode opcode, Token first_token, size_t expected_operand_count = 0)
+		: opcode_(opcode), operands_(), first_token_(first_token) {
+		if (expected_operand_count > 0) {
+			operands_.reserve(expected_operand_count);
+		}
+	}
+
+	// Add operand (builder pattern)
+	void addOperand(IrOperand&& operand) {
+		operands_.addOperand(std::move(operand));
+	}
+
+	// Convenience template for adding operands
+	template<typename T>
+	void addOperand(T&& value) {
+		operands_.addOperand(IrOperand(std::forward<T>(value)));
+	}
 
 	IrOpcode getOpcode() const { return opcode_; }
 	size_t getOperandCount() const { return operands_.size(); }
 	size_t getLineNumber() const { return first_token_.line(); }
 
 	std::optional<IrOperand> getOperandSafe(size_t index) const {
-		return index < operands_.size() ? std::optional<IrOperand>{ operands_[index] } : std::optional<IrOperand>{};
+		return operands_.getSafe(index);
 	}
 
 	const IrOperand& getOperand(size_t index) const {
@@ -2654,7 +2864,7 @@ public:
 
 private:
 	IrOpcode opcode_;
-	std::vector<IrOperand> operands_;
+	OperandStorage operands_;
 	Token first_token_;
 };
 
@@ -2663,14 +2873,64 @@ public:
 	void addInstruction(const IrInstruction& instruction) {
 		instructions.push_back(instruction);
 	}
+
+	void addInstruction(IrInstruction&& instruction) {
+		instructions.push_back(std::move(instruction));
+	}
+
+	// Backward compatibility
 	void addInstruction(IrOpcode&& opcode,
 		std::vector<IrOperand>&& operands, Token first_token) {
 		instructions.emplace_back(opcode, std::move(operands), first_token);
 	}
+
+	// Builder-style: start building an instruction
+	IrInstruction& beginInstruction(IrOpcode opcode, Token first_token, size_t expected_operand_count = 0) {
+		instructions.emplace_back(opcode, first_token, expected_operand_count);
+		return instructions.back();
+	}
+
 	const std::vector<IrInstruction>& getInstructions() const {
 		return instructions;
 	}
 
+	// Reserve space for instructions (optimization)
+	void reserve(size_t capacity) {
+		instructions.reserve(capacity);
+		reserved_capacity_ = capacity;
+	}
+
+	// Get statistics
+	size_t instructionCount() const {
+		return instructions.size();
+	}
+
+	size_t reservedCapacity() const {
+		return reserved_capacity_;
+	}
+
+	size_t actualCapacity() const {
+		return instructions.capacity();
+	}
+
+	// Print statistics
+	void printStats() const {
+		printf("\n=== IR Instruction Storage Statistics ===\n");
+		printf("Reserved capacity: %zu instructions\n", reserved_capacity_);
+		printf("Actual used:       %zu instructions\n", instructions.size());
+		printf("Vector capacity:   %zu instructions\n", instructions.capacity());
+		if (reserved_capacity_ > 0) {
+			double usage_percent = (instructions.size() * 100.0) / reserved_capacity_;
+			printf("Usage:             %.1f%% of reserved\n", usage_percent);
+			if (instructions.size() > reserved_capacity_) {
+				printf("WARNING: Exceeded reserved capacity by %zu instructions\n",
+				       instructions.size() - reserved_capacity_);
+			}
+		}
+		printf("==========================================\n\n");
+	}
+
 private:
 	std::vector<IrInstruction> instructions;
+	size_t reserved_capacity_ = 0;
 };

@@ -13,6 +13,12 @@
 #include "ObjFileWriter.h"
 #include "ProfilingTimer.h"
 
+// Enable detailed profiling by default in debug builds
+// Can be overridden by defining ENABLE_DETAILED_PROFILING=0 or =1
+#ifndef ENABLE_DETAILED_PROFILING
+#define ENABLE_DETAILED_PROFILING 0
+#endif
+
 /*
 	+ ---------------- +
 	| Parameter 2	| [rbp + 24] < -Positive offsets

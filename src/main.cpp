@@ -18,6 +18,7 @@
 // #include "LibClangIRGenerator.h"  // Disabled for now due to LLVM dependency
 #include "CodeGen.h"
 #include "StackString.h"
+#include "IRTypes.h"
 
 // Timing helper
 struct PhaseTimer {
@@ -125,7 +126,25 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    Lexer lexer(file_reader.get_result());
+    const std::string& preprocessed_source = file_reader.get_result();
+
+    // Count source lines for operand storage reservation
+    size_t source_line_count = std::count(preprocessed_source.begin(), preprocessed_source.end(), '\n');
+
+#ifdef USE_CHUNKED_OPERAND_STORAGE
+    // Reserve space in global operand storage
+    // Estimate: ~8 operands per source line (empirical heuristic)
+    // This accounts for complex expressions, function calls, and temporary values
+    size_t estimated_operands = source_line_count * 8;
+    GlobalOperandStorage::instance().reserve(estimated_operands);
+
+    if (show_perf_stats) {
+        printf("Source lines: %zu\n", source_line_count);
+        printf("Estimated operands: %zu (8 per line)\n", estimated_operands);
+    }
+#endif
+
+    Lexer lexer(preprocessed_source);
 
     Parser parser(lexer, context);
     {
@@ -141,6 +160,17 @@ int main(int argc, char *argv[]) {
     const auto& ast = parser.get_nodes();
 
     AstToIr converter(gSymbolTable, context);
+
+    // Reserve space for IR instructions
+    // Estimate: ~2 instructions per source line (empirical heuristic)
+    // This accounts for variable declarations, expressions, control flow, etc.
+    size_t estimated_instructions = source_line_count * 2;
+    converter.reserveInstructions(estimated_instructions);
+
+    if (show_perf_stats) {
+        printf("Estimated instructions: %zu (2 per line)\n", estimated_instructions);
+    }
+
     {
         PhaseTimer timer("AST to IR", show_timing);
         for (auto& node_handle : ast) {
@@ -199,6 +229,16 @@ int main(int argc, char *argv[]) {
 
     if (show_perf_stats) {
         StackStringStats::print_stats();
+
+#ifdef USE_GLOBAL_OPERAND_STORAGE
+        printf("\n");  // Add spacing
+        GlobalOperandStorage::instance().printStats();
+#else
+        printf("\nNote: Chunked operand storage is disabled. Enable USE_GLOBAL_OPERAND_STORAGE to see operand stats.\n\n");
+#endif
+
+        // Print IR instruction statistics
+        ir.printStats();
     }
 
     return 0;
