@@ -3673,16 +3673,59 @@ ParseResult Parser::parse_primary_expression()
 		}
 	}
 	else if (consume_punctuator("(")) {
-		// Parse parenthesized expression
-		ParseResult paren_result = parse_expression();
-		if (paren_result.is_error()) {
-			return paren_result;
+		// Could be either:
+		// 1. C-style cast: (Type)expression
+		// 2. Parenthesized expression: (expression)
+		// Try to parse as type first
+		TokenPosition saved_pos = save_token_position();
+		ParseResult type_result = parse_type_specifier();
+
+		if (!type_result.is_error() && type_result.node().has_value()) {
+			// Successfully parsed as type, check if followed by ')'
+			if (consume_punctuator(")")) {
+				// This is a C-style cast: (Type)expression
+				// Save the cast token for error reporting
+				Token cast_token = Token(Token::Type::Punctuator, "cast",
+				                        current_token_->line(), current_token_->column(),
+				                        current_token_->file_index());
+
+				// Parse the expression to cast
+				ParseResult expr_result = parse_unary_expression();
+				if (expr_result.is_error() || !expr_result.node().has_value()) {
+					return ParseResult::error("Expected expression after C-style cast", *current_token_);
+				}
+
+				discard_saved_token(saved_pos);
+				// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
+				auto cast_expr = emplace_node<ExpressionNode>(
+					StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+				result = cast_expr;
+			} else {
+				// Not a cast, restore and parse as parenthesized expression
+				restore_token_position(saved_pos);
+				ParseResult paren_result = parse_expression();
+				if (paren_result.is_error()) {
+					return paren_result;
+				}
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after parenthesized expression",
+						*current_token_);
+				}
+				result = paren_result.node();
+			}
+		} else {
+			// Not a type, parse as parenthesized expression
+			restore_token_position(saved_pos);
+			ParseResult paren_result = parse_expression();
+			if (paren_result.is_error()) {
+				return paren_result;
+			}
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after parenthesized expression",
+					*current_token_);
+			}
+			result = paren_result.node();
 		}
-		if (!consume_punctuator(")")) {
-			return ParseResult::error("Expected ')' after parenthesized expression",
-				*current_token_);
-		}
-		result = paren_result.node();
 	}
 	else {
 		return ParseResult::error("Expected primary expression", *current_token_);

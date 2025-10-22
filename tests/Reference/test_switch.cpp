@@ -135,22 +135,23 @@ int test_enum_fallthrough(Color c) {
     return result;
 }
 
-// Test 7: static_cast with enum to int
-int test_static_cast_enum() {
+// Test 7: C-style cast with enum to int
+int test_c_cast_enum() {
     Color c = Red;
-    int x = static_cast<int>(c);
+    int x = (int)c;
     return x;
 }
 
-// Test 8: static_cast in switch
-int test_static_cast_in_switch() {
+// Test 8: C-style cast in switch
+int test_c_cast_in_switch() {
     int x = 1;
+    Color c = (Color)x;
     int result = 0;
-    switch (x) {
-        case static_cast<int>(Red):
+    switch (c) {
+        case Red:
             result = 1;
             break;
-        case static_cast<int>(Green):
+        case Green:
             result = 2;
             break;
         default:
@@ -158,5 +159,12 @@ int test_static_cast_in_switch() {
             break;
     }
     return result;
+}
+
+// Test 9: static_cast with enum (for comparison)
+int test_static_cast_enum() {
+    Color c = Red;
+    int x = static_cast<int>(c);
+    return x;
 }
 

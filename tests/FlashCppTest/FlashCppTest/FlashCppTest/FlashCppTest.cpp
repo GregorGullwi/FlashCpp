@@ -1145,6 +1145,10 @@ TEST_CASE("Switch statements") {
 	run_test_from_file("test_switch.cpp", "Switch statements", false);
 }
 
+TEST_CASE("C-style casts") {
+	run_test_from_file("test_c_style_casts.cpp", "C-style casts", false);
+}
+
 TEST_CASE("Control flow comprehensive") {
 	run_test_from_file("control_flow_comprehensive.cpp", "Control flow comprehensive", false);
 }
