@@ -1,19 +1,33 @@
 ## Flash C++ Compiler
 
-**Flash C++ Compiler** is a modern, high-performance C++ compiler that focuses on compile speed while generating optimized machine code. The compiler features comprehensive operator support, floating-point arithmetic with SSE/AVX2 optimizations, and a robust type system.
+**Flash C++ Compiler** is a modern, high-performance C++ compiler that focuses on compile speed while generating optimized machine code. The compiler features comprehensive operator support, floating-point arithmetic with SSE/AVX2 optimizations, robust object-oriented programming support, and a complete type system.
 
 **🚀 Key Features:**
 - **Complete C++ operator support**: 98% of fundamental operators implemented
+- **Object-oriented programming**: Full class support with inheritance, virtual functions, and RTTI
 - **Floating-point arithmetic**: Full `float`, `double`, `long double` support with IEEE 754 semantics
 - **SSE/AVX2 optimizations**: Modern SIMD instruction generation for optimal performance
 - **Type-aware compilation**: Automatic optimization based on operand types
-- **Comprehensive testing**: External reference files ensure correctness
+- **Comprehensive testing**: 150+ test cases ensure correctness
 
 ---
 
 ## 🎯 **Current Status**
 
 ### ✅ **Fully Implemented Features**
+
+#### **Object-Oriented Programming** 🆕
+- **Classes and structs**: Complete class/struct declarations with member variables and functions
+- **Inheritance**: Single and multiple inheritance with proper memory layout
+- **Virtual functions**: Vtable-based virtual dispatch with `virtual`, `override`, and `final` keywords
+- **Abstract classes**: Pure virtual functions (`= 0`) with abstract class validation
+- **Virtual inheritance**: Diamond inheritance pattern with virtual base classes
+- **Constructors/Destructors**: Full constructor/destructor support with member initializer lists
+- **Access control**: `public`, `protected`, `private` access specifiers with validation
+- **Member access**: Dot (`.`) and arrow (`->`) operators for member access
+- **RTTI**: `typeid` and `dynamic_cast` for runtime type information
+- **Operator overloading**: Assignment operators and other operator overloads
+- **Memory management**: `new` and `delete` operators with constructor/destructor calls
 
 #### **Arithmetic Operators**
 - **Integer arithmetic**: `+`, `-`, `*`, `/`, `%` with signed/unsigned variants
@@ -35,16 +49,19 @@
 - **Integer types**: `char`, `short`, `int`, `long`, `long long` (signed/unsigned)
 - **Floating-point types**: `float` (32-bit), `double` (64-bit), `long double` (80-bit)
 - **Boolean type**: `bool` with `true`/`false` literals
+- **Pointer types**: Full pointer support with dereferencing and address-of operators
+- **Struct/class types**: User-defined types with proper layout and alignment
 - **Type promotions**: C++ compliant integer and floating-point promotions
 - **Common type resolution**: Proper type precedence in mixed expressions
 
 #### **Advanced Features**
-- **Assignment operators**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` (infrastructure)
-- **Increment/decrement**: `++`, `--` prefix/postfix operators (infrastructure)
+- **Assignment operators**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
+- **Increment/decrement**: `++`, `--` prefix/postfix operators
 - **Function calls**: Complete function declaration and call support
-- **Control flow infrastructure**: `if`, `for`, `while`, `do-while` statements (AST + IR ready)
-- **C++20 support**: If-with-initializer syntax foundation
-- **Loop control**: `break`, `continue` statements (infrastructure)
+- **Control flow**: `if`, `for`, `while`, `do-while`, `break`, `continue`, `return` statements
+- **C++20 support**: If-with-initializer syntax, `alignas` keyword
+- **Enums**: `enum` and `enum class` declarations
+- **Preprocessor**: Macro expansion, conditional compilation, file inclusion
 
 ---
 
@@ -134,22 +151,44 @@ bool test_comparisons(double a, double b) {
 
 ---
 
-## 🔮 **Roadmap**
+## 🔮 **Roadmap** (Foundation-First Approach)
 
-### **Immediate Goals**
-- **Control flow implementation**: Complete parser, code generation, and assembly for `if`, `for`, `while`, `do-while`
-- **C++20 if-with-initializer**: Complete `if (init; condition)` syntax support
-- **Assignment operators**: Complete IR → assembly pipeline
-- **Increment/decrement**: Finish prefix/postfix implementation
-- **Floating-point literals**: Parse `3.14f`, `2.718`, etc.
+### **Phase 1: Core Language Completeness** (8 weeks)
+- **Switch statements**: `switch`/`case`/`default` control flow with jump tables
+- **Goto and labels**: Label declarations and goto statements
+- **Namespaces**: Namespace declarations, nested namespaces, using directives
+- **Lambda expressions**: Basic lambda support with value and reference captures
 
-### **Advanced Features**
-- **Extended control flow**: `switch` statements, `goto`, labels
-- **Exception handling**: `try`, `catch`, `throw` statements
-- **AVX2 vectorization**: Packed operations for arrays
-- **FMA instructions**: Fused multiply-add optimization
-- **Object-oriented**: Classes, inheritance, virtual functions
-- **Templates**: Generic programming support
+### **Phase 2: OOP Completeness** (2 weeks)
+- **Friend declarations**: Friend classes and friend functions
+- **Nested classes**: Inner class declarations with proper scoping
+
+### **Phase 3: Type System & Semantic Analysis** (4 weeks)
+- **Auto type deduction**: `auto` keyword for variable declarations and return types
+- **Control flow analysis**: Unreachable code detection, return path validation
+- **Decltype**: Type queries for expressions
+
+### **Phase 4: Error Handling & Quality** (3 weeks)
+- **Enhanced error reporting**: Better error messages with source context and suggestions
+- **Preprocessor completion**: `#error` directive, built-in defines, `#pragma once`
+- **Multiple error reporting**: Collect and report multiple errors
+
+### **Phase 5: Advanced Features** (4 weeks)
+- **Range-based for loops**: `for (auto x : container)` syntax
+- **Constexpr functions**: Compile-time function evaluation
+- **Static assertions**: `static_assert` for compile-time checks
+
+### **Phase 6: Templates** (16 weeks) - After Foundation Complete
+- **Function templates**: Template functions with type deduction
+- **Class templates**: Template classes with instantiation
+- **Template specialization**: Full and partial specialization
+- **Variadic templates**: Parameter packs and fold expressions
+
+### **Future: Advanced C++20 Features**
+- **Concepts**: Template constraints
+- **Modules**: Module system
+- **Coroutines**: Coroutine support
+- **Ranges**: Range adaptors and views
 
 ---
 
@@ -177,13 +216,15 @@ bool test_comparisons(double a, double b) {
   - [x] **Identifier nodes**: Variable, function, class name support
   - [x] **Operator nodes**: Binary, unary, assignment operators
   - [x] **Expression nodes**: Arithmetic, logical, function call expressions
-  - [x] **Statement nodes**: Return statements, for loops
+  - [x] **Statement nodes**: Return, if, for, while, do-while statements
   - [x] **Function nodes**: Function declarations and definitions
   - [x] **Declaration nodes**: Variable and function declarations
+  - [x] **Class nodes**: Struct/class declarations with inheritance
   - [x] **Type nodes**: Complete type system with promotions
 - [x] **Operator precedence**: Correct C++ operator precedence
-- [x] **Type system**: Integer and floating-point type hierarchy
-- [ ] **Remaining**: Class definitions, namespaces, templates, enhanced error handling
+- [x] **Type system**: Integer, floating-point, pointer, and class types
+- [x] **OOP features**: Classes, inheritance, virtual functions, access control
+- [ ] **Remaining**: Templates, namespaces, lambda expressions, enhanced error handling
 
 ### **4. Type System & Semantic Analysis** ✅ **COMPLETE**
 - [x] **Type checking**: Comprehensive type validation
@@ -220,53 +261,78 @@ bool test_comparisons(double a, double b) {
 - [x] **Assignment**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` (infrastructure)
 - [x] **Increment/Decrement**: `++`, `--` prefix/postfix (infrastructure)
 
-### **8. Control Flow Infrastructure** ✅ **COMPLETE**
-- [x] **If-statement support**: Complete AST node with C++20 if-with-initializer
-- [x] **Loop support**: For, while, do-while AST nodes with all optional components
+### **8. Control Flow** ✅ **COMPLETE**
+- [x] **If-statement support**: Complete implementation with C++20 if-with-initializer
+- [x] **Loop support**: For, while, do-while loops with break/continue
 - [x] **Control flow IR**: Branch, ConditionalBranch, Label, LoopBegin, LoopEnd, Break, Continue
 - [x] **Comprehensive tests**: All control flow constructs with edge cases
-- [x] **C++20 compatibility**: Foundation for modern C++ control flow
-- [ ] **Implementation**: Parser, code generation, and assembly (next milestone)
+- [x] **C++20 compatibility**: Modern C++ control flow features
+- [ ] **Remaining**: Switch statements, goto/labels
 
-### **9. Testing Infrastructure** ✅ **COMPLETE**
+### **9. Object-Oriented Programming** ✅ **COMPLETE** 🆕
+- [x] **Classes and structs**: Complete class/struct declarations
+- [x] **Inheritance**: Single and multiple inheritance with proper layout
+- [x] **Virtual functions**: Vtable-based dispatch with override/final
+- [x] **Abstract classes**: Pure virtual functions with validation
+- [x] **Virtual inheritance**: Diamond pattern with virtual base classes
+- [x] **Constructors/Destructors**: Full support with initializer lists
+- [x] **Access control**: public/protected/private with validation
+- [x] **Member access**: Dot and arrow operators
+- [x] **RTTI**: typeid and dynamic_cast support
+- [x] **Operator overloading**: Assignment and other operators
+- [x] **Memory management**: new/delete with constructor/destructor calls
+- [ ] **Remaining**: Friend declarations, nested classes
+
+### **10. Testing Infrastructure** ✅ **COMPLETE**
 - [x] **Comprehensive test suite**: 150+ test cases
 - [x] **External reference files**: Organized test categories
 - [x] **Operator testing**: All operators thoroughly tested
-- [x] **Type testing**: Integer and floating-point type coverage
+- [x] **Type testing**: Integer, floating-point, and pointer type coverage
 - [x] **Control flow testing**: All control flow constructs with comprehensive scenarios
+- [x] **OOP testing**: Classes, inheritance, virtual functions, RTTI
 - [x] **Integration testing**: End-to-end compilation testing
 - [x] **Performance validation**: Assembly output verification
 
-### **10. Documentation** ✅ **UPDATED**
+### **11. Documentation** ✅ **UPDATED**
 - [x] **README**: Comprehensive feature documentation
 - [x] **Code documentation**: Inline comments and explanations
 - [x] **Test documentation**: Test case organization and coverage
 - [x] **Architecture documentation**: Component descriptions
-- [x] **Control flow documentation**: Complete infrastructure documentation
+- [x] **Implementation guides**: Inheritance, RTTI, alignment documentation
 
 ---
 
-## 🎯 **Remaining Work**
+## 🎯 **Implementation Plan** (Foundation-First Approach)
 
-### **High Priority**
-- [ ] **Control flow implementation**: Complete parser and code generation for `if`, `for`, `while`, `do-while`
-- [ ] **C++20 if-with-initializer**: Complete `if (init; condition)` syntax
-- [ ] **Assignment operators**: Complete IR → assembly implementation
-- [ ] **Increment/decrement**: Finish prefix/postfix semantics
-- [ ] **Floating-point literals**: Parse `3.14f`, `2.718`, scientific notation
+### **Phase 1: Core Language Completeness** (Next 8 weeks)
+1. [ ] **Switch statements** (2 weeks) - Essential control flow with jump tables
+2. [ ] **Goto and labels** (1 week) - Complete control flow support
+3. [ ] **Namespaces** (2 weeks) - Namespace declarations and qualified lookup
+4. [ ] **Lambda expressions** (3 weeks) - Basic lambdas with captures
 
-### **Medium Priority**
-- [ ] **Extended control flow**: `switch` statements, `goto`, labels
-- [ ] **Exception handling**: `try`, `catch`, `throw` statements
-- [ ] **Arrays**: Array declarations and subscript operations
-- [ ] **Pointers**: Pointer arithmetic and dereferencing
-- [ ] **Strings**: String operations and concatenation
+### **Phase 2: OOP Completeness** (Weeks 9-11)
+5. [ ] **Friend declarations** (1 week) - Friend classes and functions
+6. [ ] **Nested classes** (1 week) - Inner class declarations
 
-### **Low Priority**
-- [ ] **Object-oriented**: Classes, inheritance, virtual functions
-- [ ] **Templates**: Generic programming support
-- [ ] **Standard library**: Basic standard library implementation
-- [ ] **Optimization passes**: Advanced code optimization
+### **Phase 3: Type System & Semantic Analysis** (Weeks 12-15)
+7. [ ] **Auto type deduction** (2 weeks) - `auto` keyword and `decltype`
+8. [ ] **Control flow analysis** (2 weeks) - Unreachable code detection
+
+### **Phase 4: Error Handling & Quality** (Weeks 16-18)
+9. [ ] **Enhanced error reporting** (2 weeks) - Better error messages
+10. [ ] **Preprocessor completion** (1 week) - `#error`, built-in defines
+
+### **Phase 5: Advanced Features** (Weeks 19-22)
+11. [ ] **Range-based for loops** (2 weeks) - Modern for loop syntax
+12. [ ] **Constexpr functions** (2 weeks) - Compile-time evaluation
+
+### **Phase 6: Templates** (Weeks 23-38) - After Foundation Complete
+13. [ ] **Function templates** (6 weeks) - Template functions with deduction
+14. [ ] **Class templates** (6 weeks) - Template classes with instantiation
+15. [ ] **Advanced templates** (4 weeks) - Specialization, variadic templates
+
+**Total Timeline**: ~9 months to complete foundation + templates
+**Foundation Complete**: ~5 months (21 weeks)
 
 ---
 
@@ -306,10 +372,13 @@ This project is open source. See the repository for license details.
 **Flash C++ Compiler represents a significant achievement in compiler development:**
 
 - ✅ **98% operator coverage**: Nearly complete fundamental C++ operator support
+- ✅ **Full OOP support**: Classes, inheritance, virtual functions, and RTTI
 - ✅ **Modern instruction generation**: SSE/AVX2 optimizations for floating-point
 - ✅ **IEEE 754 compliance**: Proper floating-point semantics
 - ✅ **Type-aware compilation**: Automatic optimization based on operand types
-- ✅ **Comprehensive testing**: 100+ test cases ensuring correctness
-- ✅ **Production-ready**: Suitable for numerical computing and general-purpose applications
+- ✅ **Comprehensive testing**: 150+ test cases ensuring correctness
+- ✅ **Production-ready**: Suitable for object-oriented and numerical computing applications
 
-**The compiler has evolved from basic arithmetic to a comprehensive system capable of handling complex C++ expressions with proper type semantics and optimized assembly generation. With floating-point support and SSE/AVX2 optimizations, it's now at production-ready levels for numerical computing!** 🚀
+**The compiler has evolved from basic arithmetic to a comprehensive system capable of handling complex C++ programs with classes, inheritance, virtual functions, and proper type semantics. With full OOP support, SSE/AVX2 optimizations, and RTTI, it's now ready for real-world C++ development!** 🚀
+
+**Next major milestone: Template support for generic programming!**
