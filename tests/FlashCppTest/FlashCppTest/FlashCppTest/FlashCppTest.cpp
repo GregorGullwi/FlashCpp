@@ -1165,6 +1165,10 @@ TEST_CASE("Using directives and aliases") {
 	run_test_from_file("test_using_enhanced.cpp", "Using directives and aliases", false);
 }
 
+TEST_CASE("Auto type deduction") {
+	run_test_from_file("test_auto_simple.cpp", "Auto type deduction", false);
+}
+
 TEST_CASE("Control flow comprehensive") {
 	run_test_from_file("control_flow_comprehensive.cpp", "Control flow comprehensive", false);
 }

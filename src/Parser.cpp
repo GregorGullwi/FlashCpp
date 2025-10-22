@@ -2389,6 +2389,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"const", &Parser::parse_variable_declaration},
 			{"volatile", &Parser::parse_variable_declaration},
 			{"alignas", &Parser::parse_variable_declaration},
+			{"auto", &Parser::parse_variable_declaration},
 			{"new", &Parser::parse_expression_statement},
 			{"delete", &Parser::parse_expression_statement},
 			{"static_cast", &Parser::parse_expression_statement},
@@ -2564,6 +2565,16 @@ ParseResult Parser::parse_variable_declaration()
 				return init_expr_result;
 			}
 			first_init_expr = init_expr_result.node();
+
+			// If the type is auto, deduce the type from the initializer
+			if (type_specifier.type() == Type::Auto && first_init_expr.has_value()) {
+				// Get the type of the initializer expression
+				Type deduced_type = deduce_type_from_expression(*first_init_expr);
+				unsigned char deduced_size = get_type_size_bits(deduced_type);
+
+				// Update the type specifier with the deduced type
+				type_specifier = TypeSpecifierNode(deduced_type, 0, deduced_size, first_decl.identifier_token(), type_specifier.cv_qualifier());
+			}
 		}
 	}
 	else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
@@ -4700,7 +4711,7 @@ std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& 
 }
 
 // Helper to extract type from an expression for overload resolution
-std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) const {
+std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) {
 	if (!expr_node.is<ExpressionNode>()) {
 		return std::nullopt;
 	}
@@ -4785,4 +4796,44 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	// Add more cases as needed
 
 	return std::nullopt;
+}
+
+// Helper function to deduce the type of an expression for auto type deduction
+Type Parser::deduce_type_from_expression(const ASTNode& expr) const {
+	// For now, use a simple approach: use the existing get_expression_type function
+	// which returns TypeSpecifierNode, and extract the type from it
+	auto type_spec_opt = get_expression_type(expr);
+	if (type_spec_opt.has_value()) {
+		return type_spec_opt->type();
+	}
+
+	// Default to int if we can't determine the type
+	return Type::Int;
+}
+
+// Helper function to get the size of a type in bits
+unsigned char Parser::get_type_size_bits(Type type) {
+	switch (type) {
+		case Type::Bool:
+		case Type::Char:
+		case Type::UnsignedChar:
+			return 8;
+		case Type::Short:
+		case Type::UnsignedShort:
+			return 16;
+		case Type::Int:
+		case Type::UnsignedInt:
+		case Type::Float:
+			return 32;
+		case Type::Long:
+		case Type::UnsignedLong:
+		case Type::LongLong:
+		case Type::UnsignedLongLong:
+		case Type::Double:
+			return 64;
+		case Type::LongDouble:
+			return 80;
+		default:
+			return 32;  // Default to 32 bits
+	}
 }

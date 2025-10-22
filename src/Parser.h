@@ -234,6 +234,11 @@ private:
         ParseResult parse_goto_statement();  // Add goto-statement parser
         ParseResult parse_label_statement();  // Add label-statement parser
         ParseResult parse_statement();
+
+        // Helper functions for auto type deduction
+        Type deduce_type_from_expression(const ASTNode& expr) const;
+        static unsigned char get_type_size_bits(Type type);
+
         // Minimum precedence to accept all operators (assignment has lowest precedence = 3)
         static constexpr int MIN_PRECEDENCE = 0;
         ParseResult parse_expression(int precedence = MIN_PRECEDENCE);
@@ -254,7 +259,7 @@ private:
         std::optional<size_t> parse_alignas_specifier();  // Parse alignas(n) and return alignment value
 
         // Helper to extract type from an expression for overload resolution
-        std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node) const;
+        static std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
 
         TokenPosition save_token_position();
         void restore_token_position(const TokenPosition& token_position);
