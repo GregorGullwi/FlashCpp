@@ -1841,3 +1841,7 @@ TEST_CASE("Global variables") {
 TEST_CASE("Static variables") {
 	run_test_from_file("static_local.cpp", "Static variables", false);
 }
+
+TEST_CASE("RegisterSpilling:ManyLocals") {
+	run_test_from_file("test_register_spilling.cpp", "Register spilling with many local variables", false);
+}

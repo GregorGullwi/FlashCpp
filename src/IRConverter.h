@@ -158,6 +158,56 @@ OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_
 }
 
 /**
+ * @brief Generates x86-64 binary opcodes for 'movss/movsd [rbp + offset], xmm'.
+ *
+ * This function creates the byte sequence for storing a float/double value from
+ * an XMM register to a frame-relative address (RBP + offset).
+ *
+ * @param sourceRegister The source XMM register (XMM0-XMM15).
+ * @param offset The signed byte offset from RBP.
+ * @param is_float True for movss (float), false for movsd (double).
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offset, bool is_float) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// Prefix: F3 for movss (float), F2 for movsd (double)
+	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
+	result.size_in_bytes++;
+
+	// Opcode: 0F 11 for movss/movsd [mem], xmm - store variant
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0x11;
+	result.size_in_bytes += 2;
+
+	// ModR/M byte
+	uint8_t xmm_reg = static_cast<uint8_t>(sourceRegister) - static_cast<uint8_t>(X64Register::XMM0);
+
+	if (offset >= -128 && offset <= 127) {
+		// 8-bit displacement
+		uint8_t modrm = 0x45 + (xmm_reg << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+		*current_byte_ptr++ = modrm;
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes += 2;
+	} else {
+		// 32-bit displacement
+		uint8_t modrm = 0x85 + (xmm_reg << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+		*current_byte_ptr++ = modrm;
+		result.size_in_bytes++;
+
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'mov [rbp + offset], source_register'.
  *
  * This function creates the byte sequence for moving a 64-bit value from a
@@ -537,12 +587,65 @@ struct RegisterAllocator
 				return reg;
 			}
 		}
+		// No free registers - need to spill one
+		// Return a sentinel value to indicate spilling is needed
 		throw std::runtime_error("No registers available");
+	}
+
+	// Find a register to spill (prefer non-dirty registers, avoid RSP/RBP)
+	std::optional<X64Register> findRegisterToSpill() {
+		// Single pass: prefer non-dirty registers, but accept dirty ones if needed
+		X64Register best_candidate = X64Register::Count;
+		bool found_dirty = false;
+
+		// Iterate only over general-purpose registers (RAX to R15)
+		for (size_t i = static_cast<size_t>(X64Register::RAX); i <= static_cast<size_t>(X64Register::R15); ++i) {
+			if (registers[i].isAllocated &&
+			    registers[i].reg != X64Register::RSP &&
+			    registers[i].reg != X64Register::RBP) {
+
+				if (!registers[i].isDirty) {
+					// Found a clean register - best case, return immediately
+					return registers[i].reg;
+				} else if (best_candidate == X64Register::Count) {
+					// Found a dirty register - keep it as fallback
+					best_candidate = registers[i].reg;
+					found_dirty = true;
+				}
+			}
+		}
+
+		// Return the dirty register if we found one, otherwise nullopt
+		return (found_dirty) ? std::optional<X64Register>(best_candidate) : std::nullopt;
+	}
+
+	// Find an XMM register to spill (prefer non-dirty registers)
+	std::optional<X64Register> findXMMRegisterToSpill() {
+		// Single pass: prefer non-dirty registers, but accept dirty ones if needed
+		X64Register best_candidate = X64Register::Count;
+		bool found_dirty = false;
+
+		// Iterate only over XMM registers (XMM0 to XMM15)
+		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
+			if (registers[i].isAllocated) {
+				if (!registers[i].isDirty) {
+					// Found a clean register - best case, return immediately
+					return registers[i].reg;
+				} else if (best_candidate == X64Register::Count) {
+					// Found a dirty register - keep it as fallback
+					best_candidate = registers[i].reg;
+					found_dirty = true;
+				}
+			}
+		}
+
+		// Return the dirty register if we found one, otherwise nullopt
+		return (found_dirty) ? std::optional<X64Register>(best_candidate) : std::nullopt;
 	}
 
 	// Allocate an XMM register specifically for floating-point operations
 	AllocatedRegister& allocateXMM() {
-		for (size_t i = static_cast<size_t>(X64Register::XMM0); i < static_cast<size_t>(X64Register::Count); ++i) {
+		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
 			if (!registers[i].isAllocated) {
 				registers[i].isAllocated = true;
 				return registers[i];
@@ -1181,14 +1284,14 @@ private:
 					assert(variable_scopes.back().scope_stack_space <= lhs_var_id->second);
 
 					if (is_floating_point_type(ctx.type)) {
-						// For float/double, use XMM0 directly (parameters have been stored to stack)
-						ctx.result_physical_reg = X64Register::XMM0;
+						// For float/double, allocate an XMM register
+						ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 						bool is_float = (ctx.type == Type::Float);
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
 						// For integers, use regular MOV
-						ctx.result_physical_reg = regAlloc.allocate().reg;
+						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
@@ -1209,14 +1312,14 @@ private:
 				assert(variable_scopes.back().scope_stack_space <= lhs_stack_var_addr);
 
 				if (is_floating_point_type(ctx.type)) {
-					// For float/double, use XMM0 directly (parameters have been stored to stack)
-					ctx.result_physical_reg = X64Register::XMM0;
+					// For float/double, allocate an XMM register
+					ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (ctx.type == Type::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 					// For integers, use regular MOV
-					ctx.result_physical_reg = regAlloc.allocate().reg;
+					ctx.result_physical_reg = allocateRegisterWithSpilling();
 					auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
@@ -1226,7 +1329,7 @@ private:
 		else if (instruction.isOperandType<unsigned long long>(3)) {
 			// LHS is a literal value
 			auto lhs_value = instruction.getOperandAs<unsigned long long>(3);
-			ctx.result_physical_reg = regAlloc.allocate().reg;
+			ctx.result_physical_reg = allocateRegisterWithSpilling();
 
 			// Load the literal value into the register
 			// mov reg, imm64
@@ -1238,7 +1341,7 @@ private:
 		else if (instruction.isOperandType<double>(3)) {
 			// LHS is a floating-point literal value
 			auto lhs_value = instruction.getOperandAs<double>(3);
-			ctx.result_physical_reg = regAlloc.allocate().reg;
+			ctx.result_physical_reg = allocateRegisterWithSpilling();
 
 			// For floating-point, we need to load the value into an XMM register
 			// Strategy: Load the bit pattern as integer into a GPR, then move to XMM
@@ -1249,7 +1352,7 @@ private:
 			std::memcpy(&bits, &lhs_value, sizeof(bits));
 
 			// Allocate a temporary GPR for the bit pattern
-			X64Register temp_gpr = regAlloc.allocate().reg;
+			X64Register temp_gpr = allocateRegisterWithSpilling();
 
 			// movabs temp_gpr, imm64 (load bit pattern)
 			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -1278,14 +1381,14 @@ private:
 					assert(variable_scopes.back().scope_stack_space <= rhs_var_id->second);
 
 					if (is_floating_point_type(ctx.type)) {
-						// For float/double, use XMM1 directly (parameters have been stored to stack)
-						ctx.rhs_physical_reg = X64Register::XMM1;
+						// For float/double, allocate an XMM register
+						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling();
 						bool is_float = (ctx.type == Type::Float);
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
 						// For integers, use regular MOV
-						ctx.rhs_physical_reg = regAlloc.allocate().reg;
+						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 						auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
@@ -1306,14 +1409,14 @@ private:
 				assert(variable_scopes.back().scope_stack_space <= rhs_stack_var_addr);
 
 				if (is_floating_point_type(ctx.type)) {
-					// For float/double, use XMM1 directly (parameters have been stored to stack)
-					ctx.rhs_physical_reg = X64Register::XMM1;
+					// For float/double, allocate an XMM register
+					ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (ctx.type == Type::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 					// For integers, use regular MOV
-					ctx.rhs_physical_reg = regAlloc.allocate().reg;
+					ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 					auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
@@ -1323,7 +1426,7 @@ private:
 		else if (instruction.isOperandType<unsigned long long>(6)) {
 			// RHS is a literal value
 			auto rhs_value = instruction.getOperandAs<unsigned long long>(6);
-			ctx.rhs_physical_reg = regAlloc.allocate().reg;
+			ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
 			// Load the literal value into the register
 			// mov reg, imm64
@@ -1335,7 +1438,7 @@ private:
 		else if (instruction.isOperandType<double>(6)) {
 			// RHS is a floating-point literal value
 			auto rhs_value = instruction.getOperandAs<double>(6);
-			ctx.rhs_physical_reg = regAlloc.allocate().reg;
+			ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
 			// For floating-point, we need to load the value into an XMM register
 			// Strategy: Load the bit pattern as integer into a GPR, then move to XMM
@@ -1346,7 +1449,7 @@ private:
 			std::memcpy(&bits, &rhs_value, sizeof(bits));
 
 			// Allocate a temporary GPR for the bit pattern
-			X64Register temp_gpr = regAlloc.allocate().reg;
+			X64Register temp_gpr = allocateRegisterWithSpilling();
 
 			// movabs temp_gpr, imm64 (load bit pattern)
 			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -1365,7 +1468,7 @@ private:
 
 		// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
 		if (ctx.result_physical_reg == X64Register::Count) {
-			ctx.result_physical_reg = regAlloc.allocate().reg;
+			ctx.result_physical_reg = allocateRegisterWithSpilling();
 		}
 
 		if (std::holds_alternative<TempVar>(ctx.result_operand)) {
@@ -1561,6 +1664,72 @@ private:
 			});
 	}
 
+	// Allocate a register, spilling one to the stack if necessary
+	X64Register allocateRegisterWithSpilling() {
+		// Try to allocate a free register first
+		for (auto& reg : regAlloc.registers) {
+			if (!reg.isAllocated && reg.reg < X64Register::XMM0) {
+				reg.isAllocated = true;
+				return reg.reg;
+			}
+		}
+
+		// No free registers - need to spill one
+		auto reg_to_spill = regAlloc.findRegisterToSpill();
+		if (!reg_to_spill.has_value()) {
+			throw std::runtime_error("No registers available for spilling");
+		}
+
+		X64Register spill_reg = reg_to_spill.value();
+		auto& reg_info = regAlloc.registers[static_cast<int>(spill_reg)];
+
+		// If the register is dirty, write it back to the stack
+		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
+			auto store_opcodes = generateMovToFrame(spill_reg, reg_info.stackVariableOffset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		}
+
+		// Release the register and allocate it again
+		regAlloc.release(spill_reg);
+		reg_info.isAllocated = true;
+		return spill_reg;
+	}
+
+	// Allocate an XMM register, spilling one to the stack if necessary
+	X64Register allocateXMMRegisterWithSpilling() {
+		// Try to allocate a free XMM register first
+		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
+			if (!regAlloc.registers[i].isAllocated) {
+				regAlloc.registers[i].isAllocated = true;
+				return regAlloc.registers[i].reg;
+			}
+		}
+
+		// No free XMM registers - need to spill one
+		auto reg_to_spill = regAlloc.findXMMRegisterToSpill();
+		if (!reg_to_spill.has_value()) {
+			throw std::runtime_error("No XMM registers available for spilling");
+		}
+
+		X64Register spill_reg = reg_to_spill.value();
+		auto& reg_info = regAlloc.registers[static_cast<int>(spill_reg)];
+
+		// If the register is dirty, write it back to the stack
+		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
+			// For XMM registers, use float mov to frame
+			bool is_float = true;  // Assume float for now, could be improved
+			auto store_opcodes = generateFloatMovToFrame(spill_reg, reg_info.stackVariableOffset, is_float);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		}
+
+		// Release the register and allocate it again
+		regAlloc.release(spill_reg);
+		reg_info.isAllocated = true;
+		return spill_reg;
+	}
+
 	void handleFunctionCall(const IrInstruction& instruction) {
 		assert(instruction.getOperandCount() >= 2 && "Function call must have at least 2 ope rands (result, function name)");
 
@@ -1616,7 +1785,7 @@ private:
 				std::memcpy(&bits, &float_value, sizeof(bits));
 
 				// Allocate a temporary GPR for the bit pattern
-				X64Register temp_gpr = regAlloc.allocate().reg;
+				X64Register temp_gpr = allocateRegisterWithSpilling();
 
 				// movabs temp_gpr, imm64 (load bit pattern)
 				std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -2708,8 +2877,7 @@ private:
 
 			if (is_literal) {
 				// For literal initialization, allocate a register temporarily
-				auto allocated_reg = regAlloc.allocate();
-				allocated_reg_val = allocated_reg.reg;
+				allocated_reg_val = allocateRegisterWithSpilling();
 				// Load immediate value into register
 				if (instruction.isOperandType<double>(6)) {
 					// Handle double/float literals
@@ -2725,8 +2893,8 @@ private:
 
 					// MOV reg, imm64 (load bit pattern)
 					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
-					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg.reg) >> 3);
-					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg.reg) & 0x7);
+					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
+					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
 					std::memcpy(&movInst[2], &bits, sizeof(bits));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				} else if (instruction.isOperandType<unsigned long long>(6)) {
@@ -2734,8 +2902,8 @@ private:
 
 					// MOV reg, imm64
 					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
-					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg.reg) >> 3);
-					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg.reg) & 0x7);
+					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
+					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
 					std::memcpy(&movInst[2], &value, sizeof(value));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				} else if (instruction.isOperandType<int>(6)) {
@@ -2743,21 +2911,21 @@ private:
 
 					// MOV reg, imm32 (sign-extended to 64-bit)
 					std::array<uint8_t, 7> movInst = { 0x48, 0xC7, 0xC0, 0, 0, 0, 0 };
-					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg.reg) >> 3);
-					movInst[2] = 0xC0 + (static_cast<uint8_t>(allocated_reg.reg) & 0x7);
+					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
+					movInst[2] = 0xC0 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
 					std::memcpy(&movInst[3], &value, sizeof(value));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				}
 
 				// Store the value from register to stack
 				// This is necessary so that later accesses to the variable can read from the stack
-				auto store_opcodes = generateMovToFrame(allocated_reg.reg, dst_offset);
+				auto store_opcodes = generateMovToFrame(allocated_reg_val, dst_offset);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
 				// Release the register since the value is now in the stack
 				// This ensures future accesses will load from the stack instead of using a stale register value
-				regAlloc.release(allocated_reg.reg);
+				regAlloc.release(allocated_reg_val);
 			} else {
 				// Load from memory (TempVar or variable)
 				// For non-literal initialization, we don't allocate a register
@@ -2781,14 +2949,13 @@ private:
 					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
-					auto temp_reg = regAlloc.allocate();
-					allocated_reg_val = temp_reg.reg;
-					auto load_opcodes = generateMovFromFrame(temp_reg.reg, src_offset);
+					allocated_reg_val = allocateRegisterWithSpilling();
+					auto load_opcodes = generateMovFromFrame(allocated_reg_val, src_offset);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-					auto store_opcodes = generateMovToFrame(temp_reg.reg, dst_offset);
+					auto store_opcodes = generateMovToFrame(allocated_reg_val, dst_offset);
 					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-					regAlloc.release(temp_reg.reg);
+					regAlloc.release(allocated_reg_val);
 				}
 			} // end else (not literal)
 		} // end if (is_initialized)
@@ -2854,6 +3021,18 @@ private:
 			case X64Register::XMM1: return 155;  // CV_AMD64_XMM1
 			case X64Register::XMM2: return 156;  // CV_AMD64_XMM2
 			case X64Register::XMM3: return 157;  // CV_AMD64_XMM3
+			case X64Register::XMM4: return 158;  // CV_AMD64_XMM4
+			case X64Register::XMM5: return 159;  // CV_AMD64_XMM5
+			case X64Register::XMM6: return 160;  // CV_AMD64_XMM6
+			case X64Register::XMM7: return 161;  // CV_AMD64_XMM7
+			case X64Register::XMM8: return 162;  // CV_AMD64_XMM8
+			case X64Register::XMM9: return 163;  // CV_AMD64_XMM9
+			case X64Register::XMM10: return 164; // CV_AMD64_XMM10
+			case X64Register::XMM11: return 165; // CV_AMD64_XMM11
+			case X64Register::XMM12: return 166; // CV_AMD64_XMM12
+			case X64Register::XMM13: return 167; // CV_AMD64_XMM13
+			case X64Register::XMM14: return 168; // CV_AMD64_XMM14
+			case X64Register::XMM15: return 169; // CV_AMD64_XMM15
 			default: assert(false && "Unsupported X64Register"); return 0;
 		}
 	}
@@ -3732,7 +3911,7 @@ private:
 				if (auto var_reg = regAlloc.tryGetStackVariableRegister(var_id->second); var_reg.has_value()) {
 					result_physical_reg = var_reg.value();
 				} else {
-					result_physical_reg = regAlloc.allocate().reg;
+					result_physical_reg = allocateRegisterWithSpilling();
 					auto mov_opcodes = generateMovFromFrame(result_physical_reg, var_id->second);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(result_physical_reg);
@@ -3744,7 +3923,7 @@ private:
 			if (auto var_reg = regAlloc.tryGetStackVariableRegister(stack_var_addr); var_reg.has_value()) {
 				result_physical_reg = var_reg.value();
 			} else {
-				result_physical_reg = regAlloc.allocate().reg;
+				result_physical_reg = allocateRegisterWithSpilling();
 				auto mov_opcodes = generateMovFromFrame(result_physical_reg, stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(result_physical_reg);
@@ -3783,7 +3962,7 @@ private:
 				if (auto var_reg = regAlloc.tryGetStackVariableRegister(var_id->second); var_reg.has_value()) {
 					result_physical_reg = var_reg.value();
 				} else {
-					result_physical_reg = regAlloc.allocate().reg;
+					result_physical_reg = allocateRegisterWithSpilling();
 					auto mov_opcodes = generateMovFromFrame(result_physical_reg, var_id->second);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(result_physical_reg);
@@ -3795,7 +3974,7 @@ private:
 			if (auto var_reg = regAlloc.tryGetStackVariableRegister(stack_var_addr); var_reg.has_value()) {
 				result_physical_reg = var_reg.value();
 			} else {
-				result_physical_reg = regAlloc.allocate().reg;
+				result_physical_reg = allocateRegisterWithSpilling();
 				auto mov_opcodes = generateMovFromFrame(result_physical_reg, stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(result_physical_reg);
@@ -3829,7 +4008,7 @@ private:
 				if (auto var_reg = regAlloc.tryGetStackVariableRegister(var_id->second); var_reg.has_value()) {
 					result_physical_reg = var_reg.value();
 				} else {
-					result_physical_reg = regAlloc.allocate().reg;
+					result_physical_reg = allocateRegisterWithSpilling();
 					auto mov_opcodes = generateMovFromFrame(result_physical_reg, var_id->second);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(result_physical_reg);
@@ -3841,7 +4020,7 @@ private:
 			if (auto var_reg = regAlloc.tryGetStackVariableRegister(stack_var_addr); var_reg.has_value()) {
 				result_physical_reg = var_reg.value();
 			} else {
-				result_physical_reg = regAlloc.allocate().reg;
+				result_physical_reg = allocateRegisterWithSpilling();
 				auto mov_opcodes = generateMovFromFrame(result_physical_reg, stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(result_physical_reg);
@@ -3990,8 +4169,7 @@ private:
 		}
 
 		// Allocate a general-purpose register for the boolean result
-		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
-		X64Register bool_reg = bool_reg_alloc.reg;
+		X64Register bool_reg = allocateRegisterWithSpilling();
 
 		// Set result based on zero flag: sete r8 (use AL for RAX)
 		std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, 0xC0 };
@@ -4028,8 +4206,7 @@ private:
 		}
 
 		// Allocate a general-purpose register for the boolean result
-		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
-		X64Register bool_reg = bool_reg_alloc.reg;
+		X64Register bool_reg = allocateRegisterWithSpilling();
 
 		// Set result based on zero flag: setne r8
 		std::array<uint8_t, 3> setneInst = { 0x0F, 0x95, 0xC0 };
@@ -4066,8 +4243,7 @@ private:
 		}
 
 		// Allocate a general-purpose register for the boolean result
-		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
-		X64Register bool_reg = bool_reg_alloc.reg;
+		X64Register bool_reg = allocateRegisterWithSpilling();
 
 		// Set result based on carry flag: setb r8 (below = less than for floating-point)
 		std::array<uint8_t, 3> setbInst = { 0x0F, 0x92, 0xC0 };
@@ -4104,8 +4280,7 @@ private:
 		}
 
 		// Allocate a general-purpose register for the boolean result
-		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
-		X64Register bool_reg = bool_reg_alloc.reg;
+		X64Register bool_reg = allocateRegisterWithSpilling();
 
 		// Set result based on flags: setbe r8 (below or equal)
 		std::array<uint8_t, 3> setbeInst = { 0x0F, 0x96, 0xC0 };
@@ -4142,8 +4317,7 @@ private:
 		}
 
 		// Allocate a general-purpose register for the boolean result
-		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
-		X64Register bool_reg = bool_reg_alloc.reg;
+		X64Register bool_reg = allocateRegisterWithSpilling();
 
 		// Set result based on flags: seta r8 (above = greater than for floating-point)
 		std::array<uint8_t, 3> setaInst = { 0x0F, 0x97, 0xC0 };
@@ -4180,8 +4354,7 @@ private:
 		}
 
 		// Allocate a general-purpose register for the boolean result
-		RegisterAllocator::AllocatedRegister& bool_reg_alloc = regAlloc.allocate();
-		X64Register bool_reg = bool_reg_alloc.reg;
+		X64Register bool_reg = allocateRegisterWithSpilling();
 
 		// Set result based on flags: setae r8 (above or equal)
 		std::array<uint8_t, 3> setaeInst = { 0x0F, 0x93, 0xC0 };
