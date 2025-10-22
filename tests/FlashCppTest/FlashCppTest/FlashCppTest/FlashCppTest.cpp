@@ -1153,6 +1153,14 @@ TEST_CASE("Goto and labels") {
 	run_test_from_file("test_goto_labels.cpp", "Goto and labels", false);
 }
 
+TEST_CASE("Namespace features") {
+	run_test_from_file("test_using_directives.cpp", "Namespace features", false);
+}
+
+TEST_CASE("Anonymous namespace") {
+	run_test_from_file("test_anonymous_ns.cpp", "Anonymous namespace", false);
+}
+
 TEST_CASE("Control flow comprehensive") {
 	run_test_from_file("control_flow_comprehensive.cpp", "Control flow comprehensive", false);
 }

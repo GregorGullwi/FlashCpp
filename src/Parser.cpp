@@ -134,6 +134,19 @@ ParseResult Parser::parse_top_level_node()
 		}
 	}
 
+	// Check if it's a using directive, using declaration, or namespace alias
+	if (peek_token()->type() == Token::Type::Keyword &&
+		peek_token()->value() == "using") {
+		auto result = parse_using_directive_or_declaration();
+		if (!result.is_error()) {
+			if (auto node = result.node()) {
+				ast_nodes_.push_back(*node);
+			}
+			return saved_position.success();
+		}
+		return result;
+	}
+
 	// Check if it's a namespace declaration
 	if (peek_token()->type() == Token::Type::Keyword &&
 		peek_token()->value() == "namespace") {
@@ -1726,13 +1739,24 @@ ParseResult Parser::parse_namespace() {
 		return ParseResult::error("Expected 'namespace' keyword", *peek_token());
 	}
 
-	// Parse namespace name
-	auto name_token = consume_token();
-	if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected namespace name", name_token.value_or(Token()));
-	}
+	// Check if this is an anonymous namespace (namespace { ... })
+	std::string_view namespace_name = "";
+	bool is_anonymous = false;
 
-	std::string_view namespace_name = name_token->value();
+	if (peek_token().has_value() && peek_token()->value() == "{") {
+		// Anonymous namespace
+		is_anonymous = true;
+		// For anonymous namespaces, we'll use an empty name
+		// The symbol table will handle them specially
+		namespace_name = "";
+	} else {
+		// Named namespace - parse namespace name
+		auto name_token = consume_token();
+		if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected namespace name or '{'", name_token.value_or(Token()));
+		}
+		namespace_name = name_token->value();
+	}
 
 	// Expect opening brace
 	if (!consume_punctuator("{")) {
@@ -1740,10 +1764,23 @@ ParseResult Parser::parse_namespace() {
 	}
 
 	// Create namespace declaration node - string_view points directly into source text
-	auto [namespace_node, namespace_ref] = emplace_node_ref<NamespaceDeclarationNode>(namespace_name);
+	// For anonymous namespaces, use empty string_view
+	auto [namespace_node, namespace_ref] = emplace_node_ref<NamespaceDeclarationNode>(is_anonymous ? "" : namespace_name);
 
 	// Enter namespace scope
-	gSymbolTable.enter_namespace(namespace_name);
+	// For anonymous namespaces, we still need to enter a scope, but we use a generated unique name
+	// This ensures symbols are properly scoped but accessible from the parent scope
+	if (is_anonymous) {
+		// Generate a unique name for internal use
+		static size_t anon_counter = 0;
+		std::string anon_name = "__anon_ns_" + std::to_string(anon_counter++);
+		// For now, just enter the global scope again (symbols will be global)
+		// TODO: Implement proper anonymous namespace semantics
+		// Anonymous namespace symbols should be accessible without qualification
+		// but have internal linkage
+	} else {
+		gSymbolTable.enter_namespace(namespace_name);
+	}
 
 	// Parse declarations within the namespace
 	while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -1768,7 +1805,9 @@ ParseResult Parser::parse_namespace() {
 		}
 
 		if (decl_result.is_error()) {
-			gSymbolTable.exit_scope();
+			if (!is_anonymous) {
+				gSymbolTable.exit_scope();
+			}
 			return decl_result;
 		}
 
@@ -1779,14 +1818,142 @@ ParseResult Parser::parse_namespace() {
 
 	// Expect closing brace
 	if (!consume_punctuator("}")) {
-		gSymbolTable.exit_scope();
+		if (!is_anonymous) {
+			gSymbolTable.exit_scope();
+		}
 		return ParseResult::error("Expected '}' after namespace body", *peek_token());
 	}
 
-	// Exit namespace scope
-	gSymbolTable.exit_scope();
+	// Exit namespace scope (only if not anonymous)
+	if (!is_anonymous) {
+		gSymbolTable.exit_scope();
+	}
 
 	return saved_position.success(namespace_node);
+}
+
+ParseResult Parser::parse_using_directive_or_declaration() {
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'using' keyword
+	auto using_token_opt = peek_token();
+	if (!using_token_opt.has_value() || using_token_opt->value() != "using") {
+		return ParseResult::error("Expected 'using' keyword", using_token_opt.value_or(Token()));
+	}
+	Token using_token = using_token_opt.value();
+	consume_token(); // consume 'using'
+
+	// Check if this is a namespace alias: using identifier = namespace::path;
+	// We need to look ahead to see if there's an '=' after the first identifier
+	TokenPosition lookahead_pos = save_token_position();
+	auto first_token = peek_token();
+	if (first_token.has_value() && first_token->type() == Token::Type::Identifier) {
+		consume_token(); // consume identifier
+		auto next_token = peek_token();
+		if (next_token.has_value() && next_token->value() == "=") {
+			// This is a namespace alias: using alias = target::namespace;
+			restore_token_position(lookahead_pos);
+
+			// Parse alias name
+			auto alias_token = consume_token();
+			if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected alias name after 'using'", *current_token_);
+			}
+
+			// Consume '='
+			if (!consume_punctuator("=")) {
+				return ParseResult::error("Expected '=' after alias name", *current_token_);
+			}
+
+			// Parse target namespace path
+			std::vector<StringType<>> target_namespace;
+			while (true) {
+				auto ns_token = consume_token();
+				if (!ns_token.has_value() || ns_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected namespace name", ns_token.value_or(Token()));
+				}
+				target_namespace.emplace_back(StringType<>(ns_token->value()));
+
+				// Check for ::
+				if (peek_token().has_value() && peek_token()->value() == "::") {
+					consume_token(); // consume ::
+				} else {
+					break;
+				}
+			}
+
+			// Expect semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after namespace alias", *current_token_);
+			}
+
+			auto alias_node = emplace_node<NamespaceAliasNode>(*alias_token, std::move(target_namespace));
+			return saved_position.success(alias_node);
+		}
+	}
+	// Not a namespace alias, restore position
+	restore_token_position(lookahead_pos);
+
+	// Check if this is "using namespace" directive
+	if (peek_token().has_value() && peek_token()->value() == "namespace") {
+		consume_token(); // consume 'namespace'
+
+		// Parse namespace path (e.g., std::filesystem)
+		std::vector<StringType<>> namespace_path;
+		while (true) {
+			auto ns_token = consume_token();
+			if (!ns_token.has_value() || ns_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected namespace name", ns_token.value_or(Token()));
+			}
+			namespace_path.emplace_back(StringType<>(ns_token->value()));
+
+			// Check for ::
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume ::
+			} else {
+				break;
+			}
+		}
+
+		// Expect semicolon
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after using directive", *current_token_);
+		}
+
+		auto directive_node = emplace_node<UsingDirectiveNode>(std::move(namespace_path), using_token);
+		return saved_position.success(directive_node);
+	}
+
+	// Otherwise, this is a using declaration: using std::vector;
+	std::vector<StringType<>> namespace_path;
+	Token identifier_token;
+
+	// Parse qualified name (namespace::...::identifier)
+	while (true) {
+		auto token = consume_token();
+		if (!token.has_value() || token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected identifier in using declaration", token.value_or(Token()));
+		}
+
+		// Check if followed by ::
+		if (peek_token().has_value() && peek_token()->value() == "::") {
+			// This is a namespace part
+			namespace_path.emplace_back(StringType<>(token->value()));
+			consume_token(); // consume ::
+		} else {
+			// This is the final identifier
+			identifier_token = *token;
+			break;
+		}
+	}
+
+	// Expect semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after using declaration", *current_token_);
+	}
+
+	auto decl_node = emplace_node<UsingDeclarationNode>(std::move(namespace_path), identifier_token, using_token);
+	return saved_position.success(decl_node);
 }
 
 ParseResult Parser::parse_type_specifier()

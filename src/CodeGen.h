@@ -79,6 +79,15 @@ public:
 		else if (node.is<NamespaceDeclarationNode>()) {
 			visitNamespaceDeclarationNode(node.as<NamespaceDeclarationNode>());
 		}
+		else if (node.is<UsingDirectiveNode>()) {
+			visitUsingDirectiveNode(node.as<UsingDirectiveNode>());
+		}
+		else if (node.is<UsingDeclarationNode>()) {
+			visitUsingDeclarationNode(node.as<UsingDeclarationNode>());
+		}
+		else if (node.is<NamespaceAliasNode>()) {
+			visitNamespaceAliasNode(node.as<NamespaceAliasNode>());
+		}
 		else if (node.is<ConstructorDeclarationNode>()) {
 			visitConstructorDeclarationNode(node.as<ConstructorDeclarationNode>());
 		}
@@ -783,6 +792,27 @@ private:
 		for (const auto& decl : node.declarations()) {
 			visit(decl);
 		}
+	}
+
+	void visitUsingDirectiveNode(const UsingDirectiveNode& node) {
+		// Using directives don't generate IR - they affect name lookup in the symbol table
+		// The symbol table should be updated to include the namespace in the lookup path
+		// For now, we'll just note that this is a no-op for code generation
+		// TODO: Update symbol table to support using directives for name lookup
+	}
+
+	void visitUsingDeclarationNode(const UsingDeclarationNode& node) {
+		// Using declarations don't generate IR - they import a specific name into the current scope
+		// The symbol table should be updated to add the imported name to the current scope
+		// For now, we'll just note that this is a no-op for code generation
+		// TODO: Update symbol table to support using declarations
+	}
+
+	void visitNamespaceAliasNode(const NamespaceAliasNode& node) {
+		// Namespace aliases don't generate IR - they create an alias for a namespace
+		// The symbol table should be updated to map the alias to the target namespace
+		// For now, we'll just note that this is a no-op for code generation
+		// TODO: Update symbol table to support namespace aliases
 	}
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {

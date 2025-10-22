@@ -987,14 +987,75 @@ public:
 
 	std::string_view name() const { return name_; }
 	const std::vector<ASTNode>& declarations() const { return declarations_; }
+	bool is_anonymous() const { return name_.empty(); }
 
 	void add_declaration(ASTNode decl) {
 		declarations_.push_back(decl);
 	}
 
 private:
-	std::string_view name_;  // Points directly into source text from lexer token
+	std::string_view name_;  // Points directly into source text from lexer token (empty for anonymous namespaces)
 	std::vector<ASTNode> declarations_;  // Declarations within the namespace
+};
+
+// Using directive node: using namespace std;
+class UsingDirectiveNode {
+public:
+	explicit UsingDirectiveNode(std::vector<StringType<>> namespace_path, Token using_token)
+		: namespace_path_(std::move(namespace_path)), using_token_(using_token) {}
+
+	const std::vector<StringType<>>& namespace_path() const { return namespace_path_; }
+	const Token& using_token() const { return using_token_; }
+
+	// Get the full namespace name as a string (e.g., "std::filesystem")
+	std::string full_namespace_name() const {
+		std::string result;
+		for (size_t i = 0; i < namespace_path_.size(); ++i) {
+			if (i > 0) result += "::";
+#if USE_OLD_STRING_APPROACH
+			result += namespace_path_[i];
+#else
+			result += std::string(namespace_path_[i].view());
+#endif
+		}
+		return result;
+	}
+
+private:
+	std::vector<StringType<>> namespace_path_;  // e.g., ["std", "filesystem"] for "using namespace std::filesystem;"
+	Token using_token_;  // For error reporting
+};
+
+// Using declaration node: using std::vector;
+class UsingDeclarationNode {
+public:
+	explicit UsingDeclarationNode(std::vector<StringType<>> namespace_path, Token identifier, Token using_token)
+		: namespace_path_(std::move(namespace_path)), identifier_(identifier), using_token_(using_token) {}
+
+	const std::vector<StringType<>>& namespace_path() const { return namespace_path_; }
+	std::string_view identifier_name() const { return identifier_.value(); }
+	const Token& identifier_token() const { return identifier_; }
+	const Token& using_token() const { return using_token_; }
+
+private:
+	std::vector<StringType<>> namespace_path_;  // e.g., ["std"] for "using std::vector;"
+	Token identifier_;  // The identifier being imported (e.g., "vector")
+	Token using_token_;  // For error reporting
+};
+
+// Namespace alias node: namespace fs = std::filesystem;
+class NamespaceAliasNode {
+public:
+	explicit NamespaceAliasNode(Token alias_name, std::vector<StringType<>> target_namespace)
+		: alias_name_(alias_name), target_namespace_(std::move(target_namespace)) {}
+
+	std::string_view alias_name() const { return alias_name_.value(); }
+	const std::vector<StringType<>>& target_namespace() const { return target_namespace_; }
+	const Token& alias_token() const { return alias_name_; }
+
+private:
+	Token alias_name_;  // The alias (e.g., "fs")
+	std::vector<StringType<>> target_namespace_;  // e.g., ["std", "filesystem"]
 };
 
 // Enumerator node - represents a single enumerator in an enum

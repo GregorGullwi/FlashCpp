@@ -213,6 +213,7 @@ private:
         ParseResult parse_top_level_node();
         ParseResult parse_type_and_name();
         ParseResult parse_namespace();
+        ParseResult parse_using_directive_or_declaration();  // Parse using directive/declaration/alias
         ParseResult parse_type_specifier();
         ParseResult parse_declaration_or_function_definition();
         ParseResult parse_function_declaration(DeclarationNode& declaration_node);
