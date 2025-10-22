@@ -1161,6 +1161,10 @@ TEST_CASE("Anonymous namespace") {
 	run_test_from_file("test_anonymous_ns.cpp", "Anonymous namespace", false);
 }
 
+TEST_CASE("Using directives and aliases") {
+	run_test_from_file("test_using_enhanced.cpp", "Using directives and aliases", false);
+}
+
 TEST_CASE("Control flow comprehensive") {
 	run_test_from_file("control_flow_comprehensive.cpp", "Control flow comprehensive", false);
 }

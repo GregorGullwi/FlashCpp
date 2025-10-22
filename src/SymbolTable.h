@@ -70,6 +70,16 @@ struct Scope {
 	std::unordered_map<std::string_view, std::vector<ASTNode>> symbols;
 	ScopeHandle scope_handle;
 	StringType<> namespace_name;  // Only used for Namespace scopes
+
+	// Using directives: namespaces to search when looking up unqualified names
+	std::vector<NamespacePath> using_directives;
+
+	// Using declarations: specific symbols imported from namespaces
+	// Maps: local_name -> (namespace_path, original_name)
+	std::unordered_map<std::string_view, std::pair<NamespacePath, std::string_view>> using_declarations;
+
+	// Namespace aliases: Maps alias -> target namespace path
+	std::unordered_map<std::string_view, NamespacePath> namespace_aliases;
 };
 
 // Helper function to extract parameter types from a FunctionDeclarationNode
@@ -167,10 +177,31 @@ public:
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
+
+			// First, check direct symbols in this scope
 			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
 				// Return the first match for backward compatibility
 				return symbolIt->second[0];
+			}
+
+			// Second, check using declarations in this scope
+			auto usingIt = scope.using_declarations.find(identifier);
+			if (usingIt != scope.using_declarations.end()) {
+				const auto& [namespace_path, original_name] = usingIt->second;
+				// Look up the symbol in the target namespace
+				auto result = lookup_qualified(namespace_path, original_name);
+				if (result.has_value()) {
+					return result;
+				}
+			}
+
+			// Third, check using directives in this scope
+			for (const auto& using_ns : scope.using_directives) {
+				auto result = lookup_qualified(using_ns, identifier);
+				if (result.has_value()) {
+					return result;
+				}
 			}
 		}
 
@@ -246,6 +277,42 @@ public:
 		symbol_table_stack_.pop_back();
 	}
 
+	// Add a using directive to the current scope
+	void add_using_directive(const std::vector<StringType<>>& namespace_path) {
+		if (symbol_table_stack_.empty()) return;
+
+		Scope& current_scope = symbol_table_stack_.back();
+		current_scope.using_directives.push_back(namespace_path);
+	}
+
+	// Add a using declaration to the current scope
+	void add_using_declaration(std::string_view local_name, const std::vector<StringType<>>& namespace_path, std::string_view original_name) {
+		if (symbol_table_stack_.empty()) return;
+
+		Scope& current_scope = symbol_table_stack_.back();
+		current_scope.using_declarations[local_name] = std::make_pair(namespace_path, original_name);
+	}
+
+	// Add a namespace alias to the current scope
+	void add_namespace_alias(std::string_view alias, const std::vector<StringType<>>& target_namespace) {
+		if (symbol_table_stack_.empty()) return;
+
+		Scope& current_scope = symbol_table_stack_.back();
+		current_scope.namespace_aliases[alias] = target_namespace;
+	}
+
+	// Resolve a namespace alias (returns the target namespace path if alias exists)
+	std::optional<NamespacePath> resolve_namespace_alias(std::string_view alias) const {
+		// Search from current scope backwards
+		for (auto it = symbol_table_stack_.rbegin(); it != symbol_table_stack_.rend(); ++it) {
+			auto alias_it = it->namespace_aliases.find(alias);
+			if (alias_it != it->namespace_aliases.end()) {
+				return alias_it->second;
+			}
+		}
+		return std::nullopt;
+	}
+
 	// Build the current namespace path as a vector of components
 	// For nested namespaces A::B, returns ["A", "B"]
 	NamespacePath build_current_namespace_path() const {
@@ -270,8 +337,26 @@ public:
 		// For "A::B::func", namespaces = ["A", "B"]
 		NamespacePath ns_path;
 		ns_path.reserve(namespaces.size());
-		for (const auto& ns : namespaces) {
-			ns_path.emplace_back(StringType<>(std::string_view(ns)));
+
+		// Check if the first component is a namespace alias
+		if (!namespaces.empty()) {
+			std::string_view first_component(namespaces[0]);
+			auto alias_resolution = resolve_namespace_alias(first_component);
+			if (alias_resolution.has_value()) {
+				// Replace the first component with the resolved namespace path
+				for (const auto& component : *alias_resolution) {
+					ns_path.push_back(component);
+				}
+				// Add the remaining components
+				for (size_t i = 1; i < namespaces.size(); ++i) {
+					ns_path.emplace_back(StringType<>(std::string_view(namespaces[i])));
+				}
+			} else {
+				// No alias, use the components as-is
+				for (const auto& ns : namespaces) {
+					ns_path.emplace_back(StringType<>(std::string_view(ns)));
+				}
+			}
 		}
 
 		// Look up the namespace in our persistent namespace map

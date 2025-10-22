@@ -1756,6 +1756,39 @@ ParseResult Parser::parse_namespace() {
 			return ParseResult::error("Expected namespace name or '{'", name_token.value_or(Token()));
 		}
 		namespace_name = name_token->value();
+
+		// Check if this is a namespace alias: namespace alias = target;
+		if (peek_token().has_value() && peek_token()->value() == "=") {
+			// This is a namespace alias, not a namespace declaration
+			// Restore position and parse as namespace alias
+			Token alias_token = *name_token;
+			consume_token(); // consume '='
+
+			// Parse target namespace path
+			std::vector<StringType<>> target_namespace;
+			while (true) {
+				auto ns_token = consume_token();
+				if (!ns_token.has_value() || ns_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected namespace name", ns_token.value_or(Token()));
+				}
+				target_namespace.emplace_back(StringType<>(ns_token->value()));
+
+				// Check for ::
+				if (peek_token().has_value() && peek_token()->value() == "::") {
+					consume_token(); // consume ::
+				} else {
+					break;
+				}
+			}
+
+			// Expect semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after namespace alias", *current_token_);
+			}
+
+			auto alias_node = emplace_node<NamespaceAliasNode>(alias_token, std::move(target_namespace));
+			return saved_position.success(alias_node);
+		}
 	}
 
 	// Expect opening brace
@@ -2337,6 +2370,8 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"break", &Parser::parse_break_statement},
 			{"continue", &Parser::parse_continue_statement},
 			{"goto", &Parser::parse_goto_statement},
+			{"using", &Parser::parse_using_directive_or_declaration},
+			{"namespace", &Parser::parse_namespace},
 			{"static", &Parser::parse_variable_declaration},
 			{"extern", &Parser::parse_variable_declaration},
 			{"register", &Parser::parse_variable_declaration},
