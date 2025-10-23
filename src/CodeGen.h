@@ -3724,22 +3724,24 @@ private:
 		const TypeInfo* closure_type = type_it->second;
 
 		// Store lambda info for later generation (after we've used closure_type_name)
-		const LambdaInfo& lambda_info = collected_lambdas_.emplace_back(std::move(info));
+		collected_lambdas_.push_back(std::move(info));
+		const LambdaInfo& lambda_info = collected_lambdas_.back();
 
-		// Allocate the closure struct as a local variable
-		TempVar lambda_var = var_counter.next();
+		// Create a closure variable name
 		std::string closure_var_name = "__closure_" + std::to_string(lambda_info.lambda_id);
 
 		// Declare the closure variable
+		// Format: [type, size, name, custom_alignment]
 		std::vector<IrOperand> decl_operands;
 		decl_operands.emplace_back(Type::Struct);
 		decl_operands.emplace_back(static_cast<int>(closure_type->getStructInfo()->total_size * 8));
-		decl_operands.emplace_back(0);  // pointer depth
-		decl_operands.emplace_back(std::string_view(closure_var_name));
-		decl_operands.emplace_back(closure_type->type_index_);
+		decl_operands.emplace_back(std::string(closure_var_name));  // Use std::string
+		decl_operands.emplace_back(static_cast<unsigned long long>(0));  // custom_alignment
 		ir_.addInstruction(IrOpcode::VariableDecl, std::move(decl_operands), lambda.lambda_token());
 
-		// Initialize captured members
+		// Now initialize captured members
+		// The key insight: we need to generate the initialization code that will be
+		// executed during IR conversion, after the variable has been added to scope
 		if (!lambda_info.captures.empty()) {
 			const StructTypeInfo* struct_info = closure_type->getStructInfo();
 			if (struct_info) {
@@ -3755,30 +3757,44 @@ private:
 					if (member && capture_index < lambda_info.captured_var_decls.size()) {
 						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 							// By-reference: store the address of the variable
+							// Get the original variable type from captured_var_decls
+							const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
+							if (!var_decl.is<DeclarationNode>()) {
+								capture_index++;
+								continue;
+							}
+							const auto& decl = var_decl.as<DeclarationNode>();
+							const auto& orig_type = decl.type_node().as<TypeSpecifierNode>();
+
+							// Generate AddressOf: [result_var, type, size, operand]
 							TempVar addr_temp = var_counter.next();
 							std::vector<IrOperand> addr_operands;
 							addr_operands.emplace_back(addr_temp);
-							addr_operands.emplace_back(std::string_view(var_name));
+							addr_operands.emplace_back(orig_type.type());
+							addr_operands.emplace_back(static_cast<int>(orig_type.size_in_bits()));
+							addr_operands.emplace_back(std::string(var_name));  // Use std::string to avoid dangling reference
 							ir_.addInstruction(IrOpcode::AddressOf, std::move(addr_operands), lambda.lambda_token());
 
 							// Store the address in the closure member
+							// Format: [member_type, member_size, object_name, member_name, offset, value]
 							std::vector<IrOperand> store_operands;
 							store_operands.emplace_back(member->type);
 							store_operands.emplace_back(static_cast<int>(member->size * 8));
-							store_operands.emplace_back(std::string_view(closure_var_name));
-							store_operands.emplace_back(std::string_view(member->name));
+							store_operands.emplace_back(std::string(closure_var_name));  // Use std::string
+							store_operands.emplace_back(std::string(member->name));  // Use std::string
 							store_operands.emplace_back(static_cast<int>(member->offset));
 							store_operands.emplace_back(addr_temp);
 							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), lambda.lambda_token());
 						} else {
 							// By-value: copy the value
+							// Format: [member_type, member_size, object_name, member_name, offset, value]
 							std::vector<IrOperand> store_operands;
 							store_operands.emplace_back(member->type);
 							store_operands.emplace_back(static_cast<int>(member->size * 8));
-							store_operands.emplace_back(std::string_view(closure_var_name));
-							store_operands.emplace_back(std::string_view(member->name));
+							store_operands.emplace_back(std::string(closure_var_name));  // Use std::string
+							store_operands.emplace_back(std::string(member->name));  // Use std::string
 							store_operands.emplace_back(static_cast<int>(member->offset));
-							store_operands.emplace_back(std::string_view(var_name));
+							store_operands.emplace_back(std::string(var_name));  // Use std::string
 							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), lambda.lambda_token());
 						}
 
@@ -3788,6 +3804,8 @@ private:
 			}
 		}
 
+		// Return a temp var representing the lambda closure
+		TempVar lambda_var = var_counter.next();
 		return {Type::Struct, 8, closure_type->type_index_, lambda_var};
 	}
 

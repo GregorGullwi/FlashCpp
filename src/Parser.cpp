@@ -856,17 +856,17 @@ ParseResult Parser::parse_struct_declaration()
 				return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
 			}
 
-			std::string base_class_name(base_name_token->value());
+			std::string_view base_class_name = base_name_token->value();
 
 			// Look up base class type
 			auto base_type_it = gTypesByName.find(base_class_name);
 			if (base_type_it == gTypesByName.end()) {
-				return ParseResult::error("Base class '" + base_class_name + "' not found", *base_name_token);
+				return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
 			}
 
 			const TypeInfo* base_type_info = base_type_it->second;
 			if (base_type_info->type_ != Type::Struct) {
-				return ParseResult::error("Base class '" + base_class_name + "' is not a struct/class", *base_name_token);
+				return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
 			}
 
 			// Add base class to struct node and type info
@@ -5033,10 +5033,31 @@ ParseResult Parser::parse_lambda_expression() {
         closure_struct_info->total_size = 1;
         closure_struct_info->alignment = 1;
     } else {
+        // Check if we have capture-all
+        bool has_capture_all_by_value = false;
+        bool has_capture_all_by_ref = false;
+        for (const auto& capture : lambda_captures) {
+            if (capture.is_capture_all()) {
+                if (capture.kind() == LambdaCaptureNode::CaptureKind::AllByValue) {
+                    has_capture_all_by_value = true;
+                } else if (capture.kind() == LambdaCaptureNode::CaptureKind::AllByReference) {
+                    has_capture_all_by_ref = true;
+                }
+            }
+        }
+
+        // TODO: For capture-all, we should analyze the lambda body to find all referenced variables
+        // For now, we just skip capture-all and only handle explicit captures
+        // A full implementation would require:
+        // 1. Traversing the lambda body AST
+        // 2. Finding all identifier references
+        // 3. Looking up each identifier in the symbol table
+        // 4. Adding non-local variables to the capture list
+
         // Add captured variables as members to the closure struct
         for (const auto& capture : lambda_captures) {
             if (capture.is_capture_all()) {
-                // TODO: Handle capture-all [=] and [&]
+                // Skip capture-all for now
                 continue;
             }
 

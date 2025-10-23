@@ -1591,7 +1591,16 @@ private:
 
 			if (instruction.getOpcode() == IrOpcode::VariableDecl) {
 				auto size_in_bits = instruction.getOperandAs<int>(1);
-				auto var_name = instruction.getOperandAs<std::string_view>(2);
+				// Operand 2 can be string_view or string
+				std::string_view var_name;
+				if (instruction.isOperandType<std::string_view>(2)) {
+					var_name = instruction.getOperandAs<std::string_view>(2);
+				} else if (instruction.isOperandType<std::string>(2)) {
+					var_name = instruction.getOperandAs<std::string>(2);
+				} else {
+					assert(false && "VariableDecl operand 2 must be string_view or string");
+					continue;
+				}
 				size_t custom_alignment = instruction.getOperandAs<unsigned long long>(3);
 
 				// Check if this is an array declaration (has array size operand)
@@ -2868,10 +2877,19 @@ private:
 
 	void handleVariableDecl(const IrInstruction& instruction) {
 		auto var_type = instruction.getOperandAs<Type>(0);
-		auto var_name = instruction.getOperandAs<std::string_view>(2);
+		// Operand 2 can be string_view or string
+		std::string var_name_str;
+		if (instruction.isOperandType<std::string_view>(2)) {
+			var_name_str = std::string(instruction.getOperandAs<std::string_view>(2));
+		} else if (instruction.isOperandType<std::string>(2)) {
+			var_name_str = instruction.getOperandAs<std::string>(2);
+		} else {
+			assert(false && "VariableDecl operand 2 must be string_view or string");
+			return;
+		}
 		// Operand 3 is custom_alignment (added for alignas support)
 		StackVariableScope& current_scope = variable_scopes.back();
-		auto var_it = current_scope.identifier_offset.find(var_name);
+		auto var_it = current_scope.identifier_offset.find(var_name_str);
 		assert(var_it != current_scope.identifier_offset.end());
 
 		// Format: [type, size, name, custom_alignment] for uninitialized
@@ -3006,7 +3024,7 @@ private:
 			}
 
 			uint16_t flags = 0;
-			writer.add_local_variable(std::string(var_name), type_index, flags, locations);
+			writer.add_local_variable(var_name_str, type_index, flags, locations);
 		}
 	}
 
@@ -5384,6 +5402,9 @@ private:
 		} else if (instruction.isOperandType<std::string_view>(5)) {
 			is_variable = true;
 			variable_name = std::string(instruction.getOperandAs<std::string_view>(5));
+		} else if (instruction.isOperandType<std::string>(5)) {
+			is_variable = true;
+			variable_name = instruction.getOperandAs<std::string>(5);
 		} else {
 			assert(false && "Value must be TempVar, int/unsigned long long literal, or string_view");
 			return;
@@ -5394,11 +5415,25 @@ private:
 		bool is_pointer_access = false;  // true if object is 'this' (a pointer)
 		const StackVariableScope& current_scope = variable_scopes.back();
 
-		// Check if operand 2 is a string_view (variable name) or TempVar (nested access)
+		// Check if operand 2 is a string_view/string (variable name) or TempVar (nested access)
 		std::string object_name_str;
 		if (instruction.isOperandType<std::string_view>(2)) {
-			// Simple case: object is a variable name
+			// Simple case: object is a variable name (string_view)
 			object_name_str = std::string(instruction.getOperandAs<std::string_view>(2));
+			auto it = current_scope.identifier_offset.find(object_name_str);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Struct object not found in scope");
+				return;
+			}
+			object_base_offset = it->second;
+
+			// Check if this is the 'this' pointer
+			if (object_name_str == "this") {
+				is_pointer_access = true;
+			}
+		} else if (instruction.isOperandType<std::string>(2)) {
+			// Simple case: object is a variable name (std::string)
+			object_name_str = instruction.getOperandAs<std::string>(2);
 			auto it = current_scope.identifier_offset.find(object_name_str);
 			if (it == current_scope.identifier_offset.end()) {
 				assert(false && "Struct object not found in scope");
@@ -5769,10 +5804,19 @@ private:
 		// Operands: [result_var, type, size, operand]
 		assert(instruction.getOperandCount() == 4 && "AddressOf must have 4 operands");
 
-		// Get operand (variable to take address of)
-		auto operand = instruction.getOperandAs<std::string_view>(3);
+		// Get operand (variable to take address of) - can be string_view or string
+		std::string operand_str;
+		if (instruction.isOperandType<std::string_view>(3)) {
+			operand_str = std::string(instruction.getOperandAs<std::string_view>(3));
+		} else if (instruction.isOperandType<std::string>(3)) {
+			operand_str = instruction.getOperandAs<std::string>(3);
+		} else {
+			assert(false && "AddressOf operand must be string_view or string");
+			return;
+		}
+
 		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(operand);
+		auto it = current_scope.identifier_offset.find(operand_str);
 		if (it == current_scope.identifier_offset.end()) {
 			assert(false && "Variable not found in scope");
 			return;

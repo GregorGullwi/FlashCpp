@@ -88,8 +88,8 @@ enum class Type : int_fast16_t {
 	Function,
 	Struct,
 	Enum,
-	FunctionPointer,        // NEW: Regular function pointer type
-	MemberFunctionPointer,  // NEW: Member function pointer type
+	FunctionPointer,
+	MemberFunctionPointer,
 };
 
 using TypeIndex = size_t;
@@ -110,14 +110,14 @@ enum class AccessSpecifier {
 
 // Base class specifier for inheritance
 struct BaseClassSpecifier {
-	std::string name;           // Base class name
+	std::string_view name;           // Base class name
 	TypeIndex type_index;       // Index into gTypeInfo for base class type
 	AccessSpecifier access;     // Inheritance access (public/protected/private)
 	bool is_virtual;            // True for virtual inheritance (Phase 3)
 	size_t offset;              // Offset of base subobject in derived class
 
-	BaseClassSpecifier(std::string n, TypeIndex tidx, AccessSpecifier acc, bool virt = false, size_t off = 0)
-		: name(std::move(n)), type_index(tidx), access(acc), is_virtual(virt), offset(off) {}
+	BaseClassSpecifier(std::string_view n, TypeIndex tidx, AccessSpecifier acc, bool virt = false, size_t off = 0)
+		: name(n), type_index(tidx), access(acc), is_virtual(virt), offset(off) {}
 };
 
 // Function signature for function pointers
@@ -304,7 +304,7 @@ struct StructTypeInfo {
 	void buildRTTI();
 
 	// Add a base class
-	void addBaseClass(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
+	void addBaseClass(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
 		base_classes.emplace_back(base_name, base_type_index, access, is_virtual, 0);
 	}
 
@@ -972,7 +972,7 @@ public:
 		members_.emplace_back(member, access);
 	}
 
-	void add_base_class(const std::string& base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
+	void add_base_class(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
 		base_classes_.emplace_back(base_name, base_type_index, access, is_virtual, 0);
 	}
 
