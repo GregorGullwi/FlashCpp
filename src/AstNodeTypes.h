@@ -764,11 +764,11 @@ class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
-		: decl_node_(decl_node), is_member_function_(false), parent_struct_name_(""), is_implicit_(false), linkage_(Linkage::None) {}
+		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
-		: decl_node_(decl_node), is_member_function_(true), parent_struct_name_(parent_struct_name), is_implicit_(false), linkage_(Linkage::None) {}
+		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
-		: decl_node_(decl_node), is_member_function_(false), parent_struct_name_(""), is_implicit_(false), linkage_(linkage) {}
+		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -806,8 +806,8 @@ private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<BlockNode*> definition_block_;
-	bool is_member_function_;
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token
+	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
 };

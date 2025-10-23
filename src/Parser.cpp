@@ -5,15 +5,155 @@
 #include "OverloadResolution.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
+#include "ChunkedString.h"
 
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
+ChunkedStringAllocator gChunkedStringAllocator;
 
 // Type keywords set - used for if-statement initializer detection
 static const std::unordered_set<std::string_view> type_keywords = {
 	"int"sv, "float"sv, "double"sv, "char"sv, "bool"sv, "void"sv,
 	"short"sv, "long"sv, "signed"sv, "unsigned"sv, "const"sv, "volatile"sv, "alignas"sv
 };
+
+// Helper function to find all local variable declarations in an AST node
+static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<std::string>& var_names) {
+	if (node.is<VariableDeclarationNode>()) {
+		const auto& var_decl = node.as<VariableDeclarationNode>();
+		const auto& decl = var_decl.declaration();
+		var_names.insert(std::string(decl.identifier_token().value()));
+	} else if (node.is<BlockNode>()) {
+		const auto& block = node.as<BlockNode>();
+		const auto& stmts = block.get_statements();
+		for (size_t i = 0; i < stmts.size(); ++i) {
+			findLocalVariableDeclarations(stmts[i], var_names);
+		}
+	} else if (node.is<IfStatementNode>()) {
+		const auto& if_stmt = node.as<IfStatementNode>();
+		if (if_stmt.get_init_statement().has_value()) {
+			findLocalVariableDeclarations(*if_stmt.get_init_statement(), var_names);
+		}
+		findLocalVariableDeclarations(if_stmt.get_then_statement(), var_names);
+		if (if_stmt.get_else_statement().has_value()) {
+			findLocalVariableDeclarations(*if_stmt.get_else_statement(), var_names);
+		}
+	} else if (node.is<WhileStatementNode>()) {
+		const auto& while_stmt = node.as<WhileStatementNode>();
+		findLocalVariableDeclarations(while_stmt.get_body_statement(), var_names);
+	} else if (node.is<DoWhileStatementNode>()) {
+		const auto& do_while = node.as<DoWhileStatementNode>();
+		findLocalVariableDeclarations(do_while.get_body_statement(), var_names);
+	} else if (node.is<ForStatementNode>()) {
+		const auto& for_stmt = node.as<ForStatementNode>();
+		if (for_stmt.get_init_statement().has_value()) {
+			findLocalVariableDeclarations(*for_stmt.get_init_statement(), var_names);
+		}
+		findLocalVariableDeclarations(for_stmt.get_body_statement(), var_names);
+	}
+}
+
+// Helper function to find all identifiers referenced in an AST node
+static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<std::string>& identifiers) {
+	if (node.is<IdentifierNode>()) {
+		identifiers.insert(std::string(node.as<IdentifierNode>().name()));
+	} else if (node.is<ExpressionNode>()) {
+		// ExpressionNode is a variant, so we need to check each alternative
+		const auto& expr = node.as<ExpressionNode>();
+		std::visit([&](const auto& inner_node) {
+			using T = std::decay_t<decltype(inner_node)>;
+			if constexpr (std::is_same_v<T, IdentifierNode>) {
+				identifiers.insert(std::string(inner_node.name()));
+			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+				findReferencedIdentifiers(ASTNode(const_cast<BinaryOperatorNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				findReferencedIdentifiers(ASTNode(const_cast<UnaryOperatorNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+				findReferencedIdentifiers(ASTNode(const_cast<FunctionCallNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				findReferencedIdentifiers(ASTNode(const_cast<MemberAccessNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+				findReferencedIdentifiers(ASTNode(const_cast<MemberFunctionCallNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+				findReferencedIdentifiers(ASTNode(const_cast<ArraySubscriptNode*>(&inner_node)), identifiers);
+			}
+			// Add more types as needed
+		}, expr);
+	} else if (node.is<BinaryOperatorNode>()) {
+		const auto& binop = node.as<BinaryOperatorNode>();
+		findReferencedIdentifiers(binop.get_lhs(), identifiers);
+		findReferencedIdentifiers(binop.get_rhs(), identifiers);
+	} else if (node.is<UnaryOperatorNode>()) {
+		const auto& unop = node.as<UnaryOperatorNode>();
+		findReferencedIdentifiers(unop.get_operand(), identifiers);
+	} else if (node.is<FunctionCallNode>()) {
+		const auto& call = node.as<FunctionCallNode>();
+		// Don't add the function name itself, just the arguments
+		const auto& args = call.arguments();
+		for (size_t i = 0; i < args.size(); ++i) {
+			findReferencedIdentifiers(args[i], identifiers);
+		}
+	} else if (node.is<ReturnStatementNode>()) {
+		const auto& ret = node.as<ReturnStatementNode>();
+		if (ret.expression().has_value()) {
+			findReferencedIdentifiers(*ret.expression(), identifiers);
+		}
+	} else if (node.is<BlockNode>()) {
+		const auto& block = node.as<BlockNode>();
+		const auto& stmts = block.get_statements();
+		for (size_t i = 0; i < stmts.size(); ++i) {
+			findReferencedIdentifiers(stmts[i], identifiers);
+		}
+	} else if (node.is<IfStatementNode>()) {
+		const auto& if_stmt = node.as<IfStatementNode>();
+		findReferencedIdentifiers(if_stmt.get_condition(), identifiers);
+		findReferencedIdentifiers(if_stmt.get_then_statement(), identifiers);
+		if (if_stmt.get_else_statement().has_value()) {
+			findReferencedIdentifiers(*if_stmt.get_else_statement(), identifiers);
+		}
+	} else if (node.is<WhileStatementNode>()) {
+		const auto& while_stmt = node.as<WhileStatementNode>();
+		findReferencedIdentifiers(while_stmt.get_condition(), identifiers);
+		findReferencedIdentifiers(while_stmt.get_body_statement(), identifiers);
+	} else if (node.is<DoWhileStatementNode>()) {
+		const auto& do_while = node.as<DoWhileStatementNode>();
+		findReferencedIdentifiers(do_while.get_body_statement(), identifiers);
+		findReferencedIdentifiers(do_while.get_condition(), identifiers);
+	} else if (node.is<ForStatementNode>()) {
+		const auto& for_stmt = node.as<ForStatementNode>();
+		if (for_stmt.get_init_statement().has_value()) {
+			findReferencedIdentifiers(*for_stmt.get_init_statement(), identifiers);
+		}
+		if (for_stmt.get_condition().has_value()) {
+			findReferencedIdentifiers(*for_stmt.get_condition(), identifiers);
+		}
+		if (for_stmt.get_update_expression().has_value()) {
+			findReferencedIdentifiers(*for_stmt.get_update_expression(), identifiers);
+		}
+		findReferencedIdentifiers(for_stmt.get_body_statement(), identifiers);
+	} else if (node.is<MemberAccessNode>()) {
+		const auto& member = node.as<MemberAccessNode>();
+		findReferencedIdentifiers(member.object(), identifiers);
+		// Don't add the member name itself
+	} else if (node.is<MemberFunctionCallNode>()) {
+		const auto& member_call = node.as<MemberFunctionCallNode>();
+		findReferencedIdentifiers(member_call.object(), identifiers);
+		const auto& args = member_call.arguments();
+		for (size_t i = 0; i < args.size(); ++i) {
+			findReferencedIdentifiers(args[i], identifiers);
+		}
+	} else if (node.is<ArraySubscriptNode>()) {
+		const auto& subscript = node.as<ArraySubscriptNode>();
+		findReferencedIdentifiers(subscript.array_expr(), identifiers);
+		findReferencedIdentifiers(subscript.index_expr(), identifiers);
+	} else if (node.is<VariableDeclarationNode>()) {
+		const auto& var_decl = node.as<VariableDeclarationNode>();
+		if (var_decl.initializer().has_value()) {
+			findReferencedIdentifiers(*var_decl.initializer(), identifiers);
+		}
+	}
+	// Add more node types as needed
+}
 
 bool Parser::generate_coff(const std::string& outputFilename) {
 #ifdef USE_LLVM
@@ -5009,8 +5149,94 @@ ParseResult Parser::parse_lambda_expression() {
         return body_result;
     }
 
+    // Expand capture-all before creating the lambda node
+    std::vector<LambdaCaptureNode> expanded_captures;
+    std::vector<ASTNode> captured_var_decls_for_all;  // Store declarations for capture-all
+    bool has_capture_all = false;
+    LambdaCaptureNode::CaptureKind capture_all_kind = LambdaCaptureNode::CaptureKind::ByValue;
+
+    for (const auto& capture : captures) {
+        if (capture.is_capture_all()) {
+            has_capture_all = true;
+            capture_all_kind = capture.kind();
+        } else {
+            expanded_captures.push_back(capture);
+        }
+    }
+
+    if (has_capture_all) {
+        // Find all identifiers referenced in the lambda body
+        std::unordered_set<std::string> referenced_vars;
+        findReferencedIdentifiers(*body_result.node(), referenced_vars);
+
+        // Build a set of parameter names to exclude from captures
+        std::unordered_set<std::string> param_names;
+        for (const auto& param : parameters) {
+            if (param.is<DeclarationNode>()) {
+                param_names.insert(std::string(param.as<DeclarationNode>().identifier_token().value()));
+            }
+        }
+
+        // Build a set of local variable names declared inside the lambda body
+        std::unordered_set<std::string> local_vars;
+        findLocalVariableDeclarations(*body_result.node(), local_vars);
+
+        // Convert capture-all kind to specific capture kind
+        LambdaCaptureNode::CaptureKind specific_kind =
+            (capture_all_kind == LambdaCaptureNode::CaptureKind::AllByValue)
+            ? LambdaCaptureNode::CaptureKind::ByValue
+            : LambdaCaptureNode::CaptureKind::ByReference;
+
+        // For each referenced variable, check if it's a non-local variable
+        for (const auto& var_name : referenced_vars) {
+            // Skip empty names or placeholders
+            if (var_name.empty() || var_name == "_") {
+                continue;
+            }
+
+            // Skip if it's a parameter
+            if (param_names.find(var_name) != param_names.end()) {
+                continue;
+            }
+
+            // Skip if it's a local variable declared inside the lambda
+            if (local_vars.find(var_name) != local_vars.end()) {
+                continue;
+            }
+
+            // Look up the variable in the symbol table
+            // At this point, we're after the lambda body scope was exited,
+            // so any variable found in the symbol table is from an outer scope
+            std::optional<ASTNode> var_symbol = gSymbolTable.lookup(var_name);
+            if (var_symbol.has_value()) {
+                // Check if this is a variable (not a function or type)
+                // Variables are stored as DeclarationNode in the symbol table
+                if (var_symbol->is<DeclarationNode>()) {
+                    // Check if this variable is already explicitly captured
+                    bool already_captured = false;
+                    for (const auto& existing_capture : expanded_captures) {
+                        if (existing_capture.identifier_name() == var_name) {
+                            already_captured = true;
+                            break;
+                        }
+                    }
+
+                    if (!already_captured) {
+                        // Create a capture node for this variable with SPECIFIC kind (not AllByValue/AllByReference)
+                        // Use the identifier token from the declaration to ensure stable string_view
+                        const auto& decl = var_symbol->as<DeclarationNode>();
+                        Token var_token = decl.identifier_token();
+                        expanded_captures.emplace_back(specific_kind, var_token);  // Use ByValue or ByReference, not AllByValue/AllByReference
+                        // Store the declaration for later use
+                        captured_var_decls_for_all.push_back(*var_symbol);
+                    }
+                }
+            }
+        }
+    }
+
     auto lambda_node = emplace_node<LambdaExpressionNode>(
-        std::move(captures),
+        std::move(expanded_captures),
         std::move(parameters),
         *body_result.node(),
         return_type,
@@ -5033,31 +5259,10 @@ ParseResult Parser::parse_lambda_expression() {
         closure_struct_info->total_size = 1;
         closure_struct_info->alignment = 1;
     } else {
-        // Check if we have capture-all
-        bool has_capture_all_by_value = false;
-        bool has_capture_all_by_ref = false;
-        for (const auto& capture : lambda_captures) {
-            if (capture.is_capture_all()) {
-                if (capture.kind() == LambdaCaptureNode::CaptureKind::AllByValue) {
-                    has_capture_all_by_value = true;
-                } else if (capture.kind() == LambdaCaptureNode::CaptureKind::AllByReference) {
-                    has_capture_all_by_ref = true;
-                }
-            }
-        }
-
-        // TODO: For capture-all, we should analyze the lambda body to find all referenced variables
-        // For now, we just skip capture-all and only handle explicit captures
-        // A full implementation would require:
-        // 1. Traversing the lambda body AST
-        // 2. Finding all identifier references
-        // 3. Looking up each identifier in the symbol table
-        // 4. Adding non-local variables to the capture list
-
         // Add captured variables as members to the closure struct
         for (const auto& capture : lambda_captures) {
             if (capture.is_capture_all()) {
-                // Skip capture-all for now
+                // Capture-all should have been expanded before this point
                 continue;
             }
 

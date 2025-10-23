@@ -3072,22 +3072,24 @@ private:
 		assert(instruction.getOperandCount() >= 5 && "FunctionDecl must have at least 5 operands");
 
 		// Function name can be either std::string or std::string_view (now at index 3)
-		std::string func_name;
+		std::string func_name_str;
 		if (instruction.isOperandType<std::string>(3)) {
-			func_name = instruction.getOperandAs<std::string>(3);
+			func_name_str = instruction.getOperandAs<std::string>(3);
 		} else if (instruction.isOperandType<std::string_view>(3)) {
-			func_name = std::string(instruction.getOperandAs<std::string_view>(3));
+			func_name_str = std::string(instruction.getOperandAs<std::string_view>(3));
 		}
+		std::string_view func_name = func_name_str;
 
 		// Struct name can be either std::string or std::string_view (empty for non-member functions, now at index 4)
-		std::string struct_name;
+		std::string struct_name_str;
 		if (instruction.getOperandCount() > 4) {
 			if (instruction.isOperandType<std::string>(4)) {
-				struct_name = instruction.getOperandAs<std::string>(4);
+				struct_name_str = instruction.getOperandAs<std::string>(4);
 			} else if (instruction.isOperandType<std::string_view>(4)) {
-				struct_name = std::string(instruction.getOperandAs<std::string_view>(4));
+				struct_name_str = std::string(instruction.getOperandAs<std::string_view>(4));
 			}
 		}
+		std::string_view struct_name = struct_name_str;
 
 		// Extract function signature information for proper C++20 name mangling
 		auto return_base_type = instruction.getOperandAs<Type>(0);
@@ -3154,7 +3156,7 @@ private:
 
 		// Function debug info is now added in add_function_symbol() with length 0
 		StackVariableScope& var_scope = variable_scopes.emplace_back();
-		const auto func_stack_space = calculateFunctionStackSpace(func_name, var_scope);
+		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope);
 		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space + func_stack_space.temp_vars_size;
 		// Ensure stack alignment to 16 bytes
 		total_stack_space = (total_stack_space + 15) & -16;
@@ -3174,7 +3176,7 @@ private:
 
 		// Set up debug information for this function
 		// For now, use file ID 0 (first source file)
-		writer.set_current_function_for_debug(func_name, 0);
+		writer.set_current_function_for_debug(func_name_str, 0);
 
 		// Add line mapping for function declaration (now that current function is set)
 		if (instruction.getLineNumber() > 0) {

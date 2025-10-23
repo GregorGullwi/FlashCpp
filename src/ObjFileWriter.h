@@ -422,7 +422,7 @@ private:
 	mutable std::unordered_map<std::string, FunctionSignature> function_signatures_;
 
 	// Generate Microsoft Visual C++ mangled name
-	std::string generateMangledName(const std::string_view name, const FunctionSignature& sig) const {
+	std::string generateMangledName(std::string_view name, const FunctionSignature& sig) const {
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
@@ -521,7 +521,7 @@ private:
 public:
 	// Add function signature information for proper mangling
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None) {
+	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.linkage = linkage;
 		// Generate the mangled name and use it as the key
@@ -532,7 +532,7 @@ public:
 
 	// Add function signature information for member functions with class name
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, const std::string& class_name, Linkage linkage = Linkage::None) {
+	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.class_name = class_name;
 		sig.linkage = linkage;
