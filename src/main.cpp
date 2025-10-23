@@ -176,6 +176,9 @@ int main(int argc, char *argv[]) {
         for (auto& node_handle : ast) {
             converter.visit(node_handle);
         }
+
+        // Generate all collected lambdas after visiting all nodes
+        converter.generateCollectedLambdas();
     }
 
     const auto& ir = converter.getIr();

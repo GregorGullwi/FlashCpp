@@ -13,6 +13,21 @@
 
 class Parser;
 
+// Structure to hold lambda information for deferred generation
+struct LambdaInfo {
+	std::string closure_type_name;      // e.g., "__lambda_0"
+	std::string operator_call_name;     // e.g., "__lambda_0_operator_call"
+	std::string invoke_name;            // e.g., "__lambda_0_invoke"
+	std::string conversion_op_name;     // e.g., "__lambda_0_conversion"
+	Type return_type;
+	int return_size;
+	std::vector<std::tuple<Type, int, int, std::string>> parameters;  // type, size, pointer_depth, name
+	ASTNode lambda_body;                // Copy of the lambda body
+	std::vector<LambdaCaptureNode> captures;  // Copy of captures
+	size_t lambda_id;
+	Token lambda_token;
+};
+
 class AstToIr {
 public:
 	AstToIr() = delete;  // Require valid references
@@ -104,6 +119,16 @@ public:
 			// No code generation needed
 			return;
 		}
+		else if (node.is<ExpressionNode>()) {
+			// Expression statement (e.g., function call, lambda expression, etc.)
+			// Evaluate the expression but discard the result
+			visitExpressionNode(node.as<ExpressionNode>());
+		}
+		else if (node.is<LambdaExpressionNode>()) {
+			// Lambda expression as a statement
+			// Evaluate the lambda (creates closure instance) but discard the result
+			generateLambdaExpressionIr(node.as<LambdaExpressionNode>());
+		}
 		else {
 			puts(node.type_name());
 			assert(false && "Unhandled AST node type");
@@ -111,6 +136,13 @@ public:
 	}
 
 	const Ir& getIr() const { return ir_; }
+
+	// Generate all collected lambdas (must be called after visiting all nodes)
+	void generateCollectedLambdas() {
+		for (const auto& lambda_info : collected_lambdas_) {
+			generateLambdaFunctions(lambda_info);
+		}
+	}
 
 	// Reserve space for IR instructions (optimization)
 	void reserveInstructions(size_t capacity) {
@@ -1552,6 +1584,12 @@ private:
 					}
 				}
 				return; // Early return - we've already added the variable declaration
+			} else if (init_node.is<LambdaExpressionNode>()) {
+				// Lambda expression initializer
+				// For now, lambda variables are just empty structs (1 byte)
+				// The lambda __invoke function is generated separately
+				// TODO: Store function pointer or closure data in the variable
+				// For now, just declare the variable without initialization
 			} else {
 				// Regular expression initializer
 				auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
@@ -3454,35 +3492,123 @@ private:
 	}
 
 	std::vector<IrOperand> generateLambdaExpressionIr(const LambdaExpressionNode& lambda) {
-		try {
-			std::cerr << "DEBUG: Entered generateLambdaExpressionIr\n";
+		// Collect lambda information for deferred generation
+		// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
 
-			// Lambda code generation is not yet fully implemented
-			// The challenge is that lambdas need to be generated as separate functions,
-			// but we're currently in the middle of generating another function.
-			// This requires either:
-			// 1. A two-pass approach (collect lambdas first, generate them before enclosing function)
-			// 2. Deferred generation (store lambda info, generate after current function)
-			// 3. Immediate generation with IR stream manipulation
-			//
-			// All approaches have architectural implications that need careful design.
+		LambdaInfo info;
+		info.lambda_id = lambda.lambda_id();
+		info.closure_type_name = lambda.generate_lambda_name();
+		info.operator_call_name = info.closure_type_name + "_operator_call";
+		info.invoke_name = info.closure_type_name + "_invoke";
+		info.conversion_op_name = info.closure_type_name + "_conversion";
+		info.lambda_token = lambda.lambda_token();
 
-			std::cerr << "Error: Lambda expressions are not yet fully implemented\n";
-			std::cerr << "Lambda at line " << lambda.lambda_token().line() << "\n";
-			std::cerr << "Lambda parsing works, but code generation requires architectural changes.\n";
-			std::cerr << "See LAMBDA_CODEGEN_PLAN.md for implementation details.\n";
+		// Copy lambda body and captures (we need them later)
+		info.lambda_body = lambda.body();
+		info.captures = lambda.captures();
 
-			// Return a dummy value
-			TempVar result = var_counter;
-			var_counter = TempVar(var_counter.index + 1);
-			return {result};
-		} catch (const std::exception& e) {
-			std::cerr << "Exception in generateLambdaExpressionIr: " << e.what() << "\n";
-			throw;
+		// Determine return type
+		info.return_type = Type::Int;  // Default to int
+		info.return_size = 32;
+		if (lambda.return_type().has_value()) {
+			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
+			info.return_type = ret_type_node.type();
+			info.return_size = ret_type_node.size_in_bits();
 		}
+
+		// Collect parameters
+		for (const auto& param : lambda.parameters()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& param_decl = param.as<DeclarationNode>();
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				info.parameters.emplace_back(
+					param_type.type(),
+					param_type.size_in_bits(),
+					static_cast<int>(param_type.pointer_levels().size()),
+					std::string(param_decl.identifier_token().value())
+				);
+			}
+		}
+
+		// Store lambda info for later generation
+		collected_lambdas_.push_back(std::move(info));
+
+		// Look up the closure type (registered during parsing)
+		auto type_it = gTypesByName.find(info.closure_type_name);
+		if (type_it == gTypesByName.end()) {
+			std::cerr << "Error: Lambda closure type not found: " << info.closure_type_name << "\n";
+			TempVar dummy = var_counter.next();
+			return {Type::Int, 32, dummy};
+		}
+
+		const TypeInfo* closure_type = type_it->second;
+
+		// Create a lambda closure instance on the stack
+		// This is a 1-byte struct for non-capturing lambdas
+		TempVar lambda_var = var_counter.next();
+
+		// Allocate the closure on the stack
+		std::vector<IrOperand> alloc_operands;
+		alloc_operands.emplace_back(lambda_var);
+		alloc_operands.emplace_back(Type::Struct);
+		alloc_operands.emplace_back(8);  // 1 byte = 8 bits
+		alloc_operands.emplace_back(closure_type->type_index_);  // struct type index
+		ir_.addInstruction(IrOpcode::StackAlloc, std::move(alloc_operands), lambda.lambda_token());
+
+		// Return the closure instance
+		// Type: Struct, Size: 8 bits (1 byte), Value: temp var
+		return {Type::Struct, 8, closure_type->type_index_, lambda_var};
 	}
 
 
+
+	// Generate all functions for a lambda (following Clang's approach)
+	void generateLambdaFunctions(const LambdaInfo& lambda_info) {
+		// Following Clang's approach, we generate:
+		// 1. operator() - member function with lambda body
+		// 2. __invoke - static function that can be used as function pointer
+		// 3. conversion operator - returns pointer to __invoke
+
+		// For now, we'll generate a simplified version:
+		// Just generate the __invoke function that contains the lambda body
+		// This is sufficient for lambda-to-function-pointer decay
+
+		generateLambdaInvokeFunction(lambda_info);
+	}
+
+	// Generate the __invoke static function for a lambda
+	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info) {
+		// Generate function declaration for __invoke
+		std::vector<IrOperand> funcDeclOperands;
+		funcDeclOperands.emplace_back(lambda_info.return_type);
+		funcDeclOperands.emplace_back(lambda_info.return_size);
+		funcDeclOperands.emplace_back(0);  // pointer depth
+		funcDeclOperands.emplace_back(std::string_view(lambda_info.invoke_name));
+		funcDeclOperands.emplace_back(std::string_view(""));  // no struct name (static function)
+		funcDeclOperands.emplace_back(static_cast<int>(Linkage::None));  // C++ linkage
+
+		// Add parameters
+		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
+			funcDeclOperands.emplace_back(type);
+			funcDeclOperands.emplace_back(size);
+			funcDeclOperands.emplace_back(pointer_depth);
+			funcDeclOperands.emplace_back(std::string_view(name));
+		}
+
+		ir_.addInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), lambda_info.lambda_token);
+
+		symbol_table.enter_scope(ScopeType::Function);
+
+		// Generate the lambda body
+		if (lambda_info.lambda_body.is<BlockNode>()) {
+			const auto& body = lambda_info.lambda_body.as<BlockNode>();
+			body.get_statements().visit([&](const ASTNode& stmt) {
+				visit(stmt);
+			});
+		}
+
+		symbol_table.exit_scope();
+	}
 
 	Ir ir_;
 	TempVar var_counter{ 0 };
@@ -3503,4 +3629,7 @@ private:
 	// Map from local static variable name to info
 	// Key: local variable name, Value: static local info
 	std::unordered_map<std::string, StaticLocalInfo> static_local_names_;
+
+	// Collected lambdas for deferred generation
+	std::vector<LambdaInfo> collected_lambdas_;
 };

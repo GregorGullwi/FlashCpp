@@ -2890,12 +2890,17 @@ ParseResult Parser::parse_variable_declaration()
 
 			// If the type is auto, deduce the type from the initializer
 			if (type_specifier.type() == Type::Auto && first_init_expr.has_value()) {
-				// Get the type of the initializer expression
-				Type deduced_type = deduce_type_from_expression(*first_init_expr);
-				unsigned char deduced_size = get_type_size_bits(deduced_type);
-
-				// Update the type specifier with the deduced type
-				type_specifier = TypeSpecifierNode(deduced_type, 0, deduced_size, first_decl.identifier_token(), type_specifier.cv_qualifier());
+				// Get the full type specifier from the initializer expression
+				auto deduced_type_spec_opt = get_expression_type(*first_init_expr);
+				if (deduced_type_spec_opt.has_value()) {
+					// Use the full deduced type specifier (preserves struct type index, etc.)
+					type_specifier = *deduced_type_spec_opt;
+				} else {
+					// Fallback: deduce basic type
+					Type deduced_type = deduce_type_from_expression(*first_init_expr);
+					unsigned char deduced_size = get_type_size_bits(deduced_type);
+					type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, first_decl.identifier_token(), type_specifier.cv_qualifier());
+				}
 			}
 		}
 	}
@@ -3688,11 +3693,16 @@ ParseResult Parser::parse_primary_expression()
 
 	// Check for lambda expression first (starts with '[')
 	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "[") {
-		return parse_lambda_expression();
+		ParseResult lambda_result = parse_lambda_expression();
+		if (lambda_result.is_error()) {
+			return lambda_result;
+		}
+		result = lambda_result.node();
+		// Don't return here - continue to postfix operator handling
+		// This allows immediately invoked lambdas: []() { ... }()
 	}
-
 	// Check for offsetof builtin first (before general identifier handling)
-	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "offsetof") {
+	else if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "offsetof") {
 		// Handle offsetof builtin: offsetof(struct_type, member)
 		Token offsetof_token = *current_token_;
 		consume_token(); // consume 'offsetof'
@@ -4895,8 +4905,8 @@ ParseResult Parser::parse_lambda_expression() {
         // Parse parameters
         if (!peek_token().has_value() || peek_token()->value() != ")") {
             while (true) {
-                // Parse parameter declaration
-                ParseResult param_result = parse_variable_declaration();
+                // Parse parameter declaration (type + name only, no initializer)
+                ParseResult param_result = parse_type_and_name();
                 if (param_result.is_error()) {
                     return param_result;
                 }
@@ -4935,7 +4945,20 @@ ParseResult Parser::parse_lambda_expression() {
         return ParseResult::error("Expected '{' for lambda body", *current_token_);
     }
 
+    // Add parameters to symbol table before parsing body
+    gSymbolTable.enter_scope(ScopeType::Block);
+    for (const auto& param : parameters) {
+        if (param.is<DeclarationNode>()) {
+            const auto& decl = param.as<DeclarationNode>();
+            gSymbolTable.insert(decl.identifier_token().value(), param);
+        }
+    }
+
     ParseResult body_result = parse_block();
+
+    // Remove parameters from symbol table after parsing body
+    gSymbolTable.exit_scope();
+
     if (body_result.is_error()) {
         return body_result;
     }
@@ -4948,9 +4971,26 @@ ParseResult Parser::parse_lambda_expression() {
         lambda_token
     );
 
-    // TODO: Transform lambda into struct with operator() (Clang-style)
-    // For now, just return the lambda node as-is
-    // The code generation will need to handle it
+    // Register the lambda closure type in the type system immediately
+    // This allows auto type deduction to work
+    const auto& lambda = lambda_node.as<LambdaExpressionNode>();
+    std::string closure_name = lambda.generate_lambda_name();
+
+    TypeInfo& closure_type = add_struct_type(closure_name);
+    auto closure_struct_info = std::make_unique<StructTypeInfo>(closure_name, AccessSpecifier::Public);
+
+    // For non-capturing lambdas, create a 1-byte struct (like Clang does)
+    if (captures.empty()) {
+        closure_struct_info->total_size = 1;
+        closure_struct_info->alignment = 1;
+    } else {
+        // TODO: Calculate size based on captured variables
+        closure_struct_info->total_size = 1;
+        closure_struct_info->alignment = 1;
+    }
+
+    closure_type.struct_info_ = std::move(closure_struct_info);
+
     return ParseResult::success(lambda_node);
 }
 
@@ -5347,6 +5387,22 @@ std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& 
 
 // Helper to extract type from an expression for overload resolution
 std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) {
+	// Handle lambda expressions directly (not wrapped in ExpressionNode)
+	if (expr_node.is<LambdaExpressionNode>()) {
+		const auto& lambda = expr_node.as<LambdaExpressionNode>();
+		std::string closure_name = lambda.generate_lambda_name();
+
+		// Look up the closure type in the type system
+		auto type_it = gTypesByName.find(closure_name);
+		if (type_it != gTypesByName.end()) {
+			const TypeInfo* closure_type = type_it->second;
+			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, 8, lambda.lambda_token());
+		}
+
+		// Fallback: return a placeholder struct type
+		return TypeSpecifierNode(Type::Struct, 0, 8, lambda.lambda_token());
+	}
+
 	if (!expr_node.is<ExpressionNode>()) {
 		return std::nullopt;
 	}
@@ -5429,10 +5485,19 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		return decl.type_node().as<TypeSpecifierNode>();
 	}
 	else if (std::holds_alternative<LambdaExpressionNode>(expr)) {
-		// For lambda expressions, return a function pointer type
-		// For now, just return int as a placeholder
-		// TODO: Implement proper lambda type (function pointer or closure type)
-		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 64);  // Function pointer is 64-bit
+		// For lambda expressions, return the closure struct type
+		const auto& lambda = std::get<LambdaExpressionNode>(expr);
+		std::string closure_name = lambda.generate_lambda_name();
+
+		// Look up the closure type in the type system
+		auto type_it = gTypesByName.find(closure_name);
+		if (type_it != gTypesByName.end()) {
+			const TypeInfo* closure_type = type_it->second;
+			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, 8, lambda.lambda_token());
+		}
+
+		// Fallback: return a placeholder struct type
+		return TypeSpecifierNode(Type::Struct, 0, 8, lambda.lambda_token());
 	}
 	// Add more cases as needed
 

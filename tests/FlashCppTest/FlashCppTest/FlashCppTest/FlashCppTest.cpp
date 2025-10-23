@@ -1874,10 +1874,9 @@ TEST_CASE("opererator() call") {
 	run_test_from_file("test_operator_call.cpp", "Test of calling operator()", false);
 }
 
-// TODO: Re-enable when lambda code generation is complete
-// TEST_CASE("Lambda: No captures") {
-// 	run_test_from_file("test_lambda_no_capture.cpp", "Local lambdas without captures", false);
-// }
+TEST_CASE("Lambda: No captures") {
+	run_test_from_file("test_lambda_no_capture.cpp", "Local lambdas without captures", false);
+}
 
 TEST_CASE("FunctionPointer:BasicDeclaration") {
 	run_test_from_file("test_function_pointer_basic.cpp", "Basic function pointer declaration", false);
