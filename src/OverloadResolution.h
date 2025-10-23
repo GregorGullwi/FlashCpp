@@ -100,21 +100,21 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			// But we don't have a way to detect that here yet
 			return TypeConversionResult::no_match();
 		}
-		
+
 		// Pointer depth must match
 		if (from.pointer_depth() != to.pointer_depth()) {
 			return TypeConversionResult::no_match();
 		}
-		
+
 		// For now, require exact type match for pointers
 		// TODO: Handle pointer conversions (derived to base, void*, etc.)
 		if (from.type() == to.type()) {
 			return TypeConversionResult::exact_match();
 		}
-		
+
 		return TypeConversionResult::no_match();
 	}
-	
+
 	// Non-pointer types: use basic type conversion
 	return can_convert_type(from.type(), to.type());
 }
@@ -161,30 +161,11 @@ inline OverloadResolutionResult resolve_overload(
 		const FunctionDeclarationNode* func_decl = nullptr;
 		if (overload.is<FunctionDeclarationNode>()) {
 			func_decl = &overload.as<FunctionDeclarationNode>();
-		} else if (overload.is<DeclarationNode>()) {
-			// For backward compatibility, treat DeclarationNode as a function with no parameters
-			// This shouldn't happen for overloaded functions, but handle it anyway
-			const auto& decl = overload.as<DeclarationNode>();
-			// Check if this is a function type
-			if (decl.type_node().as<TypeSpecifierNode>().type() != Type::Function) {
-				continue;  // Not a function
-			}
-			// Assume no parameters for DeclarationNode
-			if (!argument_types.empty()) {
-				continue;  // Argument count mismatch
-			}
-			// This is a match with no arguments
-			if (best_match == nullptr) {
-				best_match = &overload;
-				num_best_matches = 1;
-			} else {
-				num_best_matches++;
-			}
-			continue;
 		} else {
-			continue;  // Not a function declaration
+			// Not a function declaration, skip it
+			continue;
 		}
-		
+
 		// Check parameter count
 		const auto& parameters = func_decl->parameter_nodes();
 		if (parameters.size() != argument_types.size()) {
@@ -194,11 +175,11 @@ inline OverloadResolutionResult resolve_overload(
 		// Check if all arguments can be converted to parameters
 		std::vector<ConversionRank> conversion_ranks;
 		bool all_convertible = true;
-		
+
 		for (size_t i = 0; i < argument_types.size(); ++i) {
 			const auto& param_type = parameters[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 			const auto& arg_type = argument_types[i];
-			
+
 			auto conversion = can_convert_type(arg_type, param_type);
 			if (!conversion.is_valid) {
 				all_convertible = false;
@@ -206,7 +187,7 @@ inline OverloadResolutionResult resolve_overload(
 			}
 			conversion_ranks.push_back(conversion.rank);
 		}
-		
+
 		if (!all_convertible) {
 			continue;  // This overload doesn't match
 		}

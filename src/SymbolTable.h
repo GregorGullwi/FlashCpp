@@ -136,7 +136,46 @@ public:
 
 			// For function declarations, allow overloading
 			// Check if a function with the same signature already exists
-			// (This will be enhanced when we have proper signature extraction)
+			if (node.is<FunctionDeclarationNode>()) {
+				const auto& new_func = node.as<FunctionDeclarationNode>();
+				const auto& new_params = new_func.parameter_nodes();
+
+				// Check if a function with the same signature already exists
+				for (size_t i = 0; i < existing_nodes.size(); ++i) {
+					if (existing_nodes[i].is<FunctionDeclarationNode>()) {
+						const auto& existing_func = existing_nodes[i].as<FunctionDeclarationNode>();
+						const auto& existing_params = existing_func.parameter_nodes();
+
+						// Check if parameter counts match
+						if (new_params.size() == existing_params.size()) {
+							// Check if all parameter types match
+							bool all_match = true;
+							for (size_t j = 0; j < new_params.size(); ++j) {
+								const auto& new_param_type = new_params[j].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								const auto& existing_param_type = existing_params[j].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+
+								if (new_param_type.type() != existing_param_type.type() ||
+								    new_param_type.pointer_depth() != existing_param_type.pointer_depth()) {
+									all_match = false;
+									break;
+								}
+							}
+
+							if (all_match) {
+								// Same signature found - replace forward declaration with definition if needed
+								// If the new one has a definition and the existing one doesn't, replace it
+								if (new_func.get_definition().has_value() && !existing_func.get_definition().has_value()) {
+									existing_nodes[i] = node;
+								}
+								// Otherwise, it's a duplicate declaration - just ignore it
+								return true;
+							}
+						}
+					}
+				}
+			}
+
+			// No matching signature found - add as new overload
 			existing_nodes.push_back(node);
 		}
 
