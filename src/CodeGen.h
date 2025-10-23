@@ -2610,12 +2610,72 @@ private:
 
 		// Get the object expression
 		ASTNode object_node = memberFunctionCallNode.object();
-		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 
+		// Special case: Immediate lambda invocation [](){}()
+		// Check if the object is a LambdaExpressionNode (either directly or wrapped in ExpressionNode)
+		const LambdaExpressionNode* lambda_ptr = nullptr;
+
+		if (object_node.is<LambdaExpressionNode>()) {
+			// Lambda stored directly
+			lambda_ptr = &object_node.as<LambdaExpressionNode>();
+		} else if (object_node.is<ExpressionNode>()) {
+			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+			if (std::holds_alternative<LambdaExpressionNode>(object_expr)) {
+				// Lambda wrapped in ExpressionNode
+				lambda_ptr = &std::get<LambdaExpressionNode>(object_expr);
+			}
+		}
+
+		if (lambda_ptr) {
+			const LambdaExpressionNode& lambda = *lambda_ptr;
+
+			// Get the lambda info
+			std::string closure_type_name = lambda.generate_lambda_name();
+			std::string invoke_name = closure_type_name + "_invoke";
+
+			// Generate a direct function call to __invoke
+			TempVar ret_var = var_counter.next();
+			irOperands.emplace_back(ret_var);
+			irOperands.emplace_back(invoke_name);
+
+			// Add arguments
+			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+				const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
+				auto argumentIrOperands = visitExpressionNode(arg_expr);
+				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+					const auto& identifier = std::get<IdentifierNode>(arg_expr);
+					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+					const auto& decl_node = symbol->as<DeclarationNode>();
+					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					irOperands.emplace_back(type_node.type());
+					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+					irOperands.emplace_back(identifier.name());
+				} else {
+					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+				}
+			});
+
+			// Add the function call instruction
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+
+			// Return the result
+			// TODO: Get actual return type from lambda
+			return { Type::Int, 32, ret_var };
+		}
+
+		// Regular member function call on an expression
 		// Get the object's type
 		std::string_view object_name;
 		const DeclarationNode* object_decl = nullptr;
 		TypeSpecifierNode object_type;
+
+		// The object must be an ExpressionNode for regular member function calls
+		if (!object_node.is<ExpressionNode>()) {
+			assert(false && "Member function call object must be an ExpressionNode");
+			return {};
+		}
+
+		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 
 		if (std::holds_alternative<IdentifierNode>(object_expr)) {
 			const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
@@ -2655,11 +2715,8 @@ private:
 			}
 		}
 
-		if (!object_decl) {
-			// Error: object not found
-			assert(false && "Object not found for member function call");
-			return { Type::Int, 32, TempVar{0} };
-		}
+		// For immediate lambda invocation, object_decl can be nullptr
+		// In that case, we still need object_type to be set correctly
 
 		// Verify this is a struct type
 		if (object_type.type() != Type::Struct) {

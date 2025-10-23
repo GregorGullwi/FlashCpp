@@ -4441,6 +4441,7 @@ ParseResult Parser::parse_primary_expression()
 			                     paren_token.line(), paren_token.column(), paren_token.file_index());
 
 			// Create a temporary function declaration for operator()
+			// This will be resolved during code generation
 			auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, operator_token);
 			auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
 			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
