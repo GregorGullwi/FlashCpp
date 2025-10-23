@@ -1878,6 +1878,10 @@ TEST_CASE("Lambda: No captures") {
 	run_test_from_file("test_lambda_no_capture.cpp", "Local lambdas without captures", false);
 }
 
+TEST_CASE("Lambda: Simple captures") {
+	run_test_from_file("test_lambda_capture_simple.cpp", "Lambda with simple by-value captures", false);
+}
+
 TEST_CASE("FunctionPointer:BasicDeclaration") {
 	run_test_from_file("test_function_pointer_basic.cpp", "Basic function pointer declaration", false);
 }

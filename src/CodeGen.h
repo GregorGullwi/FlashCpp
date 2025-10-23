@@ -25,6 +25,7 @@ struct LambdaInfo {
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
 	ASTNode lambda_body;                // Copy of the lambda body
 	std::vector<LambdaCaptureNode> captures;  // Copy of captures
+	std::vector<ASTNode> captured_var_decls;  // Declarations of captured variables (for symbol table)
 	size_t lambda_id;
 	Token lambda_token;
 };
@@ -1721,6 +1722,76 @@ private:
 	}
 
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
+		// Check if this is a captured variable in a lambda
+		std::string var_name_str(identifierNode.name());
+		if (!current_lambda_closure_type_.empty() &&
+		    current_lambda_captures_.find(var_name_str) != current_lambda_captures_.end()) {
+			// This is a captured variable - generate member access (this->x)
+			// Look up the closure struct type
+			auto type_it = gTypesByName.find(current_lambda_closure_type_);
+			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+				if (struct_info) {
+					// Find the member
+					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
+					if (member) {
+						// Check if this is a by-reference capture
+						auto kind_it = current_lambda_capture_kinds_.find(var_name_str);
+						bool is_reference = (kind_it != current_lambda_capture_kinds_.end() &&
+						                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+
+						if (is_reference) {
+							// By-reference capture: member is a pointer, need to dereference
+							// First, load the pointer from the closure
+							TempVar ptr_temp = var_counter.next();
+							std::vector<IrOperand> ptr_operands;
+							ptr_operands.emplace_back(ptr_temp);
+							ptr_operands.emplace_back(member->type);  // Base type (e.g., Int)
+							ptr_operands.emplace_back(64);  // pointer size in bits
+							ptr_operands.emplace_back(std::string_view("this"));
+							ptr_operands.emplace_back(std::string_view(member->name));
+							ptr_operands.emplace_back(static_cast<int>(member->offset));
+							ir_.addInstruction(IrOpcode::MemberAccess, std::move(ptr_operands), Token());
+
+							// The ptr_temp now contains the address of the captured variable
+							// We need to dereference it using PointerDereference
+							auto type_it = current_lambda_capture_types_.find(var_name_str);
+							if (type_it != current_lambda_capture_types_.end()) {
+								const TypeSpecifierNode& orig_type = type_it->second;
+
+								// Generate Dereference to load the value
+								TempVar result_temp = var_counter.next();
+								std::vector<IrOperand> deref_operands;
+								deref_operands.emplace_back(result_temp);
+								deref_operands.emplace_back(orig_type.type());
+								deref_operands.emplace_back(static_cast<int>(orig_type.size_in_bits()));
+								deref_operands.emplace_back(ptr_temp);  // Dereference this pointer
+								ir_.addInstruction(IrOpcode::Dereference, std::move(deref_operands), Token());
+
+								return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp };
+							}
+
+							// Fallback: return the pointer temp
+							return { member->type, 64, ptr_temp };
+						} else {
+							// By-value capture: direct member access
+							// Format: [result_var, member_type, member_size, object_name, member_name, offset]
+							TempVar result_temp = var_counter.next();
+							std::vector<IrOperand> operands;
+							operands.emplace_back(result_temp);
+							operands.emplace_back(member->type);
+							operands.emplace_back(static_cast<int>(member->size * 8));  // size in bits
+							operands.emplace_back(std::string_view("this"));  // implicit this pointer
+							operands.emplace_back(std::string_view(member->name));  // member name
+							operands.emplace_back(static_cast<int>(member->offset));
+							ir_.addInstruction(IrOpcode::MemberAccess, std::move(operands), Token());
+							return { member->type, static_cast<int>(member->size * 8), result_temp };
+						}
+					}
+				}
+			}
+		}
+
 		// Check if this is a static local variable FIRST (before symbol table lookup)
 		auto static_local_it = static_local_names_.find(std::string(identifierNode.name()));
 		if (static_local_it != static_local_names_.end()) {
@@ -3598,6 +3669,25 @@ private:
 		info.lambda_body = lambda.body();
 		info.captures = lambda.captures();
 
+		// Collect captured variable declarations from current scope
+		for (const auto& capture : lambda.captures()) {
+			if (capture.is_capture_all()) {
+				// TODO: Handle capture-all [=] and [&]
+				continue;
+			}
+
+			// Look up the captured variable in the current scope
+			std::string_view var_name = capture.identifier_name();
+			std::optional<ASTNode> var_symbol = symbol_table.lookup(var_name);
+
+			if (var_symbol.has_value()) {
+				// Store the variable declaration for later use
+				info.captured_var_decls.push_back(*var_symbol);
+			} else {
+				std::cerr << "Warning: Captured variable '" << var_name << "' not found in scope during lambda generation\n";
+			}
+		}
+
 		// Determine return type
 		info.return_type = Type::Int;  // Default to int
 		info.return_size = 32;
@@ -3634,12 +3724,70 @@ private:
 		const TypeInfo* closure_type = type_it->second;
 
 		// Store lambda info for later generation (after we've used closure_type_name)
-		collected_lambdas_.push_back(std::move(info));
+		const LambdaInfo& lambda_info = collected_lambdas_.emplace_back(std::move(info));
 
-		// For non-capturing lambdas, we don't need to allocate anything
-		// The lambda is stateless and can be represented by its type alone
-		// Return a dummy temp var (won't be used since lambda calls go through operator())
+		// Allocate the closure struct as a local variable
 		TempVar lambda_var = var_counter.next();
+		std::string closure_var_name = "__closure_" + std::to_string(lambda_info.lambda_id);
+
+		// Declare the closure variable
+		std::vector<IrOperand> decl_operands;
+		decl_operands.emplace_back(Type::Struct);
+		decl_operands.emplace_back(static_cast<int>(closure_type->getStructInfo()->total_size * 8));
+		decl_operands.emplace_back(0);  // pointer depth
+		decl_operands.emplace_back(std::string_view(closure_var_name));
+		decl_operands.emplace_back(closure_type->type_index_);
+		ir_.addInstruction(IrOpcode::VariableDecl, std::move(decl_operands), lambda.lambda_token());
+
+		// Initialize captured members
+		if (!lambda_info.captures.empty()) {
+			const StructTypeInfo* struct_info = closure_type->getStructInfo();
+			if (struct_info) {
+				size_t capture_index = 0;
+				for (const auto& capture : lambda_info.captures) {
+					if (capture.is_capture_all()) {
+						continue;
+					}
+
+					std::string var_name(capture.identifier_name());
+					const StructMember* member = struct_info->findMember(var_name);
+
+					if (member && capture_index < lambda_info.captured_var_decls.size()) {
+						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+							// By-reference: store the address of the variable
+							TempVar addr_temp = var_counter.next();
+							std::vector<IrOperand> addr_operands;
+							addr_operands.emplace_back(addr_temp);
+							addr_operands.emplace_back(std::string_view(var_name));
+							ir_.addInstruction(IrOpcode::AddressOf, std::move(addr_operands), lambda.lambda_token());
+
+							// Store the address in the closure member
+							std::vector<IrOperand> store_operands;
+							store_operands.emplace_back(member->type);
+							store_operands.emplace_back(static_cast<int>(member->size * 8));
+							store_operands.emplace_back(std::string_view(closure_var_name));
+							store_operands.emplace_back(std::string_view(member->name));
+							store_operands.emplace_back(static_cast<int>(member->offset));
+							store_operands.emplace_back(addr_temp);
+							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), lambda.lambda_token());
+						} else {
+							// By-value: copy the value
+							std::vector<IrOperand> store_operands;
+							store_operands.emplace_back(member->type);
+							store_operands.emplace_back(static_cast<int>(member->size * 8));
+							store_operands.emplace_back(std::string_view(closure_var_name));
+							store_operands.emplace_back(std::string_view(member->name));
+							store_operands.emplace_back(static_cast<int>(member->offset));
+							store_operands.emplace_back(std::string_view(var_name));
+							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), lambda.lambda_token());
+						}
+
+						capture_index++;
+					}
+				}
+			}
+		}
+
 		return {Type::Struct, 8, closure_type->type_index_, lambda_var};
 	}
 
@@ -3649,14 +3797,17 @@ private:
 	void generateLambdaFunctions(const LambdaInfo& lambda_info) {
 		// Following Clang's approach, we generate:
 		// 1. operator() - member function with lambda body
-		// 2. __invoke - static function that can be used as function pointer
-		// 3. conversion operator - returns pointer to __invoke
+		// 2. __invoke - static function that can be used as function pointer (only for non-capturing lambdas)
+		// 3. conversion operator - returns pointer to __invoke (only for non-capturing lambdas)
 
 		// Generate operator() member function
 		generateLambdaOperatorCallFunction(lambda_info);
 
-		// Generate __invoke static function
-		generateLambdaInvokeFunction(lambda_info);
+		// Generate __invoke static function only for non-capturing lambdas
+		// Capturing lambdas can't be converted to function pointers
+		if (lambda_info.captures.empty()) {
+			generateLambdaInvokeFunction(lambda_info);
+		}
 	}
 
 	// Generate the operator() member function for a lambda
@@ -3682,6 +3833,31 @@ private:
 
 		symbol_table.enter_scope(ScopeType::Function);
 
+		// Set lambda context for captured variable access
+		current_lambda_closure_type_ = lambda_info.closure_type_name;
+		current_lambda_captures_.clear();
+		current_lambda_capture_kinds_.clear();
+		current_lambda_capture_types_.clear();
+
+		size_t capture_index = 0;
+		for (const auto& capture : lambda_info.captures) {
+			if (!capture.is_capture_all()) {
+				std::string var_name(capture.identifier_name());
+				current_lambda_captures_.insert(var_name);
+				current_lambda_capture_kinds_[var_name] = capture.kind();
+
+				// Store the original type of the captured variable
+				if (capture_index < lambda_info.captured_var_decls.size()) {
+					const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
+					if (var_decl.is<DeclarationNode>()) {
+						const auto& decl = var_decl.as<DeclarationNode>();
+						current_lambda_capture_types_[var_name] = decl.type_node().as<TypeSpecifierNode>();
+					}
+				}
+				capture_index++;
+			}
+		}
+
 		// Add lambda parameters to symbol table
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
@@ -3690,6 +3866,10 @@ private:
 			}
 		}
 
+		// Add captured variables to symbol table
+		// These will be accessed through member access (this->x)
+		addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
+
 		// Generate the lambda body
 		if (lambda_info.lambda_body.is<BlockNode>()) {
 			const auto& body = lambda_info.lambda_body.as<BlockNode>();
@@ -3697,6 +3877,12 @@ private:
 				visit(stmt);
 			});
 		}
+
+		// Clear lambda context
+		current_lambda_closure_type_.clear();
+		current_lambda_captures_.clear();
+		current_lambda_capture_kinds_.clear();
+		current_lambda_capture_types_.clear();
 
 		symbol_table.exit_scope();
 	}
@@ -3732,6 +3918,9 @@ private:
 			}
 		}
 
+		// Add captured variables to symbol table
+		addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
+
 		// Generate the lambda body
 		if (lambda_info.lambda_body.is<BlockNode>()) {
 			const auto& body = lambda_info.lambda_body.as<BlockNode>();
@@ -3741,6 +3930,36 @@ private:
 		}
 
 		symbol_table.exit_scope();
+	}
+
+	// Helper function to add captured variables to symbol table
+	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
+	                                        const std::vector<ASTNode>& captured_var_decls) {
+		// Add captured variables to the symbol table
+		// We use the stored declarations from when the lambda was created
+		size_t capture_index = 0;
+		for (const auto& capture : captures) {
+			if (capture.is_capture_all()) {
+				// TODO: Handle capture-all [=] and [&]
+				continue;
+			}
+
+			if (capture_index >= captured_var_decls.size()) {
+				std::cerr << "Error: Mismatch between captures and captured variable declarations\n";
+				break;
+			}
+
+			// Get the stored variable declaration
+			const ASTNode& var_decl = captured_var_decls[capture_index];
+			std::string_view var_name = capture.identifier_name();
+
+			// Add the captured variable to the current scope
+			// For by-value captures, we create a copy
+			// For by-reference captures, we use the original
+			symbol_table.insert(var_name, var_decl);
+
+			capture_index++;
+		}
 	}
 
 	Ir ir_;
@@ -3765,4 +3984,11 @@ private:
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
+
+	// Current lambda context (for tracking captured variables)
+	// When generating lambda body, this contains the closure type name
+	std::string current_lambda_closure_type_;
+	std::unordered_set<std::string> current_lambda_captures_;
+	std::unordered_map<std::string, LambdaCaptureNode::CaptureKind> current_lambda_capture_kinds_;
+	std::unordered_map<std::string, TypeSpecifierNode> current_lambda_capture_types_;
 };

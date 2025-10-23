@@ -5022,17 +5022,78 @@ ParseResult Parser::parse_lambda_expression() {
     const auto& lambda = lambda_node.as<LambdaExpressionNode>();
     std::string closure_name = lambda.generate_lambda_name();
 
+    // Get captures from the lambda node (since we moved them above)
+    const auto& lambda_captures = lambda.captures();
+
     TypeInfo& closure_type = add_struct_type(closure_name);
     auto closure_struct_info = std::make_unique<StructTypeInfo>(closure_name, AccessSpecifier::Public);
 
     // For non-capturing lambdas, create a 1-byte struct (like Clang does)
-    if (captures.empty()) {
+    if (lambda_captures.empty()) {
         closure_struct_info->total_size = 1;
         closure_struct_info->alignment = 1;
     } else {
-        // TODO: Calculate size based on captured variables
-        closure_struct_info->total_size = 1;
-        closure_struct_info->alignment = 1;
+        // Add captured variables as members to the closure struct
+        for (const auto& capture : lambda_captures) {
+            if (capture.is_capture_all()) {
+                // TODO: Handle capture-all [=] and [&]
+                continue;
+            }
+
+            // Look up the captured variable in the current scope
+            std::string_view var_name = capture.identifier_name();
+            std::optional<ASTNode> var_symbol = gSymbolTable.lookup(var_name);
+
+            if (!var_symbol.has_value()) {
+                continue;
+            }
+
+            if (!var_symbol->is<DeclarationNode>()) {
+                continue;
+            }
+
+            const auto& var_decl = var_symbol->as<DeclarationNode>();
+            const auto& var_type = var_decl.type_node().as<TypeSpecifierNode>();
+
+            // Determine size and alignment based on capture kind
+            size_t member_size;
+            size_t member_alignment;
+            Type member_type;
+            TypeIndex type_index = 0;
+
+            if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+                // By-reference capture: store a pointer (8 bytes on x64)
+                // We store the base type (e.g., Int) but the member will be accessed as a pointer
+                member_size = 8;
+                member_alignment = 8;
+                member_type = var_type.type();
+                if (var_type.type() == Type::Struct) {
+                    type_index = var_type.type_index();
+                }
+            } else {
+                // By-value capture: store the actual value
+                member_size = var_type.size_in_bits() / 8;
+                member_alignment = member_size;  // Simple alignment = size
+                member_type = var_type.type();
+                if (var_type.type() == Type::Struct) {
+                    type_index = var_type.type_index();
+                }
+            }
+
+            closure_struct_info->addMember(
+                std::string(var_name),
+                member_type,
+                type_index,
+                member_size,
+                member_alignment,
+                AccessSpecifier::Public
+            );
+        }
+
+        // addMember() already updates total_size and alignment, but ensure minimum size of 1
+        if (closure_struct_info->total_size == 0) {
+            closure_struct_info->total_size = 1;
+        }
     }
 
     // Generate operator() member function for the lambda
