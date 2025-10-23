@@ -2763,17 +2763,21 @@ public:
 
 		case IrOpcode::Assignment:
 		{
-			// %var = %rhs (simple assignment a = b)
+			// assign %lhs = %rhs (simple assignment a = b)
+			// Format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
 			assert(getOperandCount() == 7 && "Assignment instruction must have exactly 7 operands");
 			if (getOperandCount() > 0) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
-				else if (isOperandType<std::string_view>(0))
-					oss << getOperandAs<std::string_view>(0);
+				oss << "assign ";
 
-				oss << " = " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+				// Print LHS (operand 3)
+				if (isOperandType<TempVar>(3))
+					oss << '%' << getOperandAs<TempVar>(3).index;
+				else if (isOperandType<std::string_view>(3))
+					oss << '%' << getOperandAs<std::string_view>(3);
 
+				oss << " = ";
+
+				// Print RHS (operand 6)
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
@@ -2867,12 +2871,28 @@ public:
 
 		case IrOpcode::IndirectCall:
 		{
-			// %result = indirect_call %func_ptr, %arg1, %arg2, ...
-			// Format: [result_temp, func_ptr, arg1, arg2, ...]
+			// %result = indirect_call %func_ptr, arg1_type, arg1_size, arg1_value, ...
+			// Format: [result_temp, func_ptr_var, arg1_type, arg1_size, arg1_value, ...]
 			assert(getOperandCount() >= 2 && "IndirectCall must have at least 2 operands");
-			oss << '%' << getOperandAs<TempVar>(0).index << " = indirect_call %" << getOperandAs<TempVar>(1).index;
-			for (size_t i = 2; i < getOperandCount(); ++i) {
-				oss << ", %" << getOperandAs<TempVar>(i).index;
+			oss << '%' << getOperandAs<TempVar>(0).index << " = indirect_call ";
+
+			// Function pointer can be either a TempVar or a variable name (string_view)
+			if (isOperandType<TempVar>(1)) {
+				oss << '%' << getOperandAs<TempVar>(1).index;
+			} else if (isOperandType<std::string_view>(1)) {
+				oss << '%' << getOperandAs<std::string_view>(1);
+			}
+
+			// Arguments come in groups of 3: type, size, value
+			for (size_t i = 2; i + 2 < getOperandCount(); i += 3) {
+				oss << ", " << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
+				if (isOperandType<TempVar>(i + 2)) {
+					oss << '%' << getOperandAs<TempVar>(i + 2).index;
+				} else if (isOperandType<std::string_view>(i + 2)) {
+					oss << '%' << getOperandAs<std::string_view>(i + 2);
+				} else if (isOperandType<unsigned long long>(i + 2)) {
+					oss << getOperandAs<unsigned long long>(i + 2);
+				}
 			}
 		}
 		break;

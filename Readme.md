@@ -50,14 +50,25 @@
 - **Floating-point types**: `float` (32-bit), `double` (64-bit), `long double` (80-bit)
 - **Boolean type**: `bool` with `true`/`false` literals
 - **Pointer types**: Full pointer support with dereferencing and address-of operators
+- **Function pointer types**: Function pointers with proper signature tracking 🆕
 - **Struct/class types**: User-defined types with proper layout and alignment
 - **Type promotions**: C++ compliant integer and floating-point promotions
 - **Common type resolution**: Proper type precedence in mixed expressions
+
+#### **Function Pointers** 🆕
+- **Declaration**: `int (*fp)(int, int);` - Function pointer declarations with parameter types
+- **Initialization**: `int (*fp)(int, int) = add;` - Initialize with function address
+- **Assignment**: `fp = add;` - Assign function addresses to pointers
+- **Indirect calls**: `int result = fp(10, 20);` - Call through function pointers
+- **Signature tracking**: Full parameter and return type information
+- **x64 code generation**: MOV with relocations for function addresses, CALL through register for indirect calls
+- **Status**: ✅ Fully working - declaration, initialization, assignment, and indirect calls all implemented
 
 #### **Advanced Features**
 - **Assignment operators**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 - **Increment/decrement**: `++`, `--` prefix/postfix operators
 - **Function calls**: Complete function declaration and call support
+- **Function pointers**: Declaration, initialization, and assignment 🆕
 - **Control flow**: `if`, `for`, `while`, `do-while`, `switch`, `break`, `continue`, `return`, `goto`/labels 🆕
 - **C++20 support**: If-with-initializer syntax, `alignas` keyword
 - **Enums**: `enum` and `enum class` declarations with switch support 🆕

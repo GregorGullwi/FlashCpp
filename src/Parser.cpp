@@ -214,6 +214,36 @@ ParseResult Parser::parse_type_and_name() {
     // Get the type specifier node to modify it with pointer levels
     TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
 
+    // Check if this might be a function pointer declaration
+    // Function pointers have the pattern: type (*identifier)(params)
+    // We need to check for '(' followed by '*' to detect this
+    if (peek_token().has_value() && peek_token()->value() == "(") {
+        // Save position in case this isn't a function pointer
+        TokenPosition saved_pos = save_token_position();
+        consume_token(); // consume '('
+
+        // Check if next token is '*' (function pointer pattern)
+        if (peek_token().has_value() && peek_token()->value() == "*") {
+            // This looks like a function pointer! Use parse_declarator
+            restore_token_position(saved_pos);
+            auto result = parse_declarator(type_spec, Linkage::None);
+            if (!result.is_error()) {
+                if (auto decl_node = result.node()) {
+                    if (custom_alignment.has_value()) {
+                        decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+                    }
+                }
+                return result;
+            }
+            // If parse_declarator fails, fall through to regular parsing
+            restore_token_position(saved_pos);
+        } else {
+            // Not a function pointer, restore and continue with regular parsing
+            restore_token_position(saved_pos);
+        }
+    }
+
+    // Regular pointer/reference/identifier parsing (existing code)
     // Parse pointer declarators: * [const] [volatile] *...
     // Example: int* const* volatile ptr
     while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
@@ -355,6 +385,184 @@ ParseResult Parser::parse_type_and_name() {
         return ParseResult::success(decl_node);
     }
     return ParseResult::error("Invalid type specifier node", identifier_token);
+}
+
+// NEW: Parse declarators (handles function pointers, arrays, etc.)
+ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linkage) {
+    // Check for parenthesized declarator: '(' '*' identifier ')'
+    // This is the pattern for function pointers: int (*fp)(int, int)
+    if (peek_token().has_value() && peek_token()->value() == "(") {
+        consume_token(); // consume '('
+
+        // Expect '*' for function pointer
+        if (!peek_token().has_value() || peek_token()->value() != "*") {
+            return ParseResult::error("Expected '*' in function pointer declarator", *current_token_);
+        }
+        consume_token(); // consume '*'
+
+        // Parse CV-qualifiers after the * (if any)
+        CVQualifier ptr_cv = CVQualifier::None;
+        while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+            std::string_view kw = peek_token()->value();
+            if (kw == "const") {
+                ptr_cv = static_cast<CVQualifier>(
+                    static_cast<uint8_t>(ptr_cv) |
+                    static_cast<uint8_t>(CVQualifier::Const));
+                consume_token();
+            } else if (kw == "volatile") {
+                ptr_cv = static_cast<CVQualifier>(
+                    static_cast<uint8_t>(ptr_cv) |
+                    static_cast<uint8_t>(CVQualifier::Volatile));
+                consume_token();
+            } else {
+                break;
+            }
+        }
+
+        // Parse identifier
+        if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+            return ParseResult::error("Expected identifier in function pointer declarator", *current_token_);
+        }
+        Token identifier_token = *peek_token();
+        consume_token();
+
+        // Expect closing ')'
+        if (!peek_token().has_value() || peek_token()->value() != ")") {
+            return ParseResult::error("Expected ')' after function pointer identifier", *current_token_);
+        }
+        consume_token(); // consume ')'
+
+        // Now parse the function parameters: '(' params ')'
+        return parse_postfix_declarator(base_type, identifier_token);
+    }
+
+    // Handle pointer prefix: * [const] [volatile] *...
+    while (peek_token().has_value() &&
+           peek_token()->type() == Token::Type::Operator &&
+           peek_token()->value() == "*") {
+        consume_token(); // consume '*'
+
+        // Parse CV-qualifiers after the *
+        CVQualifier ptr_cv = CVQualifier::None;
+        while (peek_token().has_value() &&
+               peek_token()->type() == Token::Type::Keyword) {
+            std::string_view kw = peek_token()->value();
+            if (kw == "const") {
+                ptr_cv = static_cast<CVQualifier>(
+                    static_cast<uint8_t>(ptr_cv) |
+                    static_cast<uint8_t>(CVQualifier::Const));
+                consume_token();
+            } else if (kw == "volatile") {
+                ptr_cv = static_cast<CVQualifier>(
+                    static_cast<uint8_t>(ptr_cv) |
+                    static_cast<uint8_t>(CVQualifier::Volatile));
+                consume_token();
+            } else {
+                break;
+            }
+        }
+
+        base_type.add_pointer_level(ptr_cv);
+    }
+
+    // Parse direct declarator (identifier, function, array)
+    Token identifier_token;
+    return parse_direct_declarator(base_type, identifier_token, linkage);
+}
+
+// NEW: Parse direct declarator (identifier, function, array)
+ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
+                                             Token& out_identifier,
+                                             Linkage linkage) {
+    // For now, we'll handle the simple case: identifier followed by optional function params
+    // TODO: Handle parenthesized declarators like (*fp)(params) for function pointers
+
+    // Parse identifier
+    if (!peek_token().has_value() ||
+        peek_token()->type() != Token::Type::Identifier) {
+        return ParseResult::error("Expected identifier in declarator",
+                                 *current_token_);
+    }
+
+    out_identifier = *peek_token();
+    consume_token();
+
+    // Parse postfix operators (function, array)
+    return parse_postfix_declarator(base_type, out_identifier);
+}
+
+// NEW: Parse postfix declarators (function, array)
+ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
+                                              const Token& identifier) {
+    // Check for function declarator: '(' params ')'
+    if (peek_token().has_value() && peek_token()->value() == "(") {
+        consume_token(); // consume '('
+
+        // Parse parameter list
+        std::vector<Type> param_types;
+
+        if (!peek_token().has_value() || peek_token()->value() != ")") {
+            while (true) {
+                // Parse parameter type
+                auto param_type_result = parse_type_specifier();
+                if (param_type_result.is_error()) {
+                    return param_type_result;
+                }
+
+                TypeSpecifierNode& param_type =
+                    param_type_result.node()->as<TypeSpecifierNode>();
+                param_types.push_back(param_type.type());
+
+                // Optional parameter name (we can ignore it for function pointers)
+                if (peek_token().has_value() &&
+                    peek_token()->type() == Token::Type::Identifier) {
+                    consume_token();
+                }
+
+                // Check for comma or closing paren
+                if (peek_token().has_value() && peek_token()->value() == ",") {
+                    consume_token();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if (!consume_punctuator(")")) {
+            return ParseResult::error("Expected ')' after function parameters",
+                                     *current_token_);
+        }
+
+        // This is a function pointer!
+        // The base_type is the return type
+        // We need to create a function pointer type
+
+        Type return_type = base_type.type();
+
+        // Create a new TypeSpecifierNode for the function pointer
+        // Function pointers are 64 bits (8 bytes) on x64
+        TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64);
+
+        FunctionSignature sig;
+        sig.return_type = return_type;
+        sig.parameter_types = param_types;
+        sig.linkage = Linkage::None;  // TODO: Use the linkage parameter
+        fp_type.set_function_signature(sig);
+
+        // Replace base_type with the function pointer type
+        base_type = fp_type;
+    }
+
+    // Check for array declarator: '[' size ']'
+    // TODO: Implement array support
+
+    // Create and return declaration node
+    return ParseResult::success(
+        emplace_node<DeclarationNode>(
+            emplace_node<TypeSpecifierNode>(base_type),
+            identifier
+        )
+    );
 }
 
 ParseResult Parser::parse_declaration_or_function_definition()
@@ -3109,10 +3317,28 @@ ParseResult Parser::parse_unary_expression()
 			}
 
 			if (auto operand_node = operand_result.node()) {
+				// Special handling for unary + on lambda: decay to function pointer
+				if (op == "+" && operand_node->is<LambdaExpressionNode>()) {
+					const auto& lambda = operand_node->as<LambdaExpressionNode>();
+
+					// Only captureless lambdas can decay to function pointers
+					if (!lambda.captures().empty()) {
+						return ParseResult::error("Cannot convert lambda with captures to function pointer", operator_token);
+					}
+
+					// For now, just return the lambda itself
+					// The code generator will handle the conversion to function pointer
+					// TODO: Create a proper function pointer type node
+					return ParseResult::success(*operand_node);
+				}
+
 				auto unary_op = emplace_node<ExpressionNode>(
 					UnaryOperatorNode(operator_token, *operand_node, true));
 				return ParseResult::success(unary_op);
 			}
+
+			// If operand_node is empty, return error
+			return ParseResult::error("Expected operand after unary operator", operator_token);
 		}
 	}
 
@@ -3685,9 +3911,16 @@ ParseResult Parser::parse_primary_expression()
 			// Identifier already consumed at line 1621
 
 			// Check if this looks like a function call
-			// Only consume '(' if the identifier is actually a function
+			// Only consume '(' if the identifier is actually a function OR a function pointer
+			bool is_function_decl = identifierType->is<FunctionDeclarationNode>();
+			bool is_function_pointer = false;
+			if (identifierType->is<DeclarationNode>()) {
+				const auto& decl = identifierType->as<DeclarationNode>();
+				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+				is_function_pointer = type_node.is_function_pointer();
+			}
 			bool is_function_call = peek_token().has_value() && peek_token()->value() == "(" &&
-			                        identifierType->is<FunctionDeclarationNode>();
+			                        (is_function_decl || is_function_pointer);
 
 			if (is_function_call && consume_punctuator("("sv)) {
 				if (!peek_token().has_value())
@@ -3719,8 +3952,16 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 
-				{
-					// Perform overload resolution
+				// For function pointers, skip overload resolution and create FunctionCallNode directly
+				if (is_function_pointer) {
+					const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+					if (!decl_ptr) {
+						return ParseResult::error("Invalid function pointer declaration", idenfifier_token);
+					}
+					result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+				}
+				else {
+					// Perform overload resolution for regular functions
 					// First, get all overloads of this function
 					auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
 
@@ -4507,8 +4748,6 @@ ParseResult Parser::parse_label_statement() {
 }
 
 ParseResult Parser::parse_lambda_expression() {
-    ScopedTokenPosition saved_position(*this);
-
     // Expect '['
     if (!consume_punctuator("[")) {
         return ParseResult::error("Expected '[' to start lambda expression", *current_token_);
@@ -4632,7 +4871,7 @@ ParseResult Parser::parse_lambda_expression() {
     // TODO: Transform lambda into struct with operator() (Clang-style)
     // For now, just return the lambda node as-is
     // The code generation will need to handle it
-    return saved_position.success(lambda_node);
+    return ParseResult::success(lambda_node);
 }
 
 ParseResult Parser::transformLambdaToStruct(const LambdaExpressionNode& lambda) {

@@ -88,9 +88,18 @@ enum class Type : int_fast16_t {
 	Function,
 	Struct,
 	Enum,
+	FunctionPointer,        // NEW: Regular function pointer type
+	MemberFunctionPointer,  // NEW: Member function pointer type
 };
 
 using TypeIndex = size_t;
+
+// Linkage specification for functions (C vs C++)
+enum class Linkage : uint8_t {
+	None,           // Default C++ linkage (with name mangling)
+	C,              // C linkage (no name mangling)
+	CPlusPlus,      // Explicit C++ linkage
+};
 
 // Access specifier for struct/class members
 enum class AccessSpecifier {
@@ -109,6 +118,16 @@ struct BaseClassSpecifier {
 
 	BaseClassSpecifier(std::string n, TypeIndex tidx, AccessSpecifier acc, bool virt = false, size_t off = 0)
 		: name(std::move(n)), type_index(tidx), access(acc), is_virtual(virt), offset(off) {}
+};
+
+// Function signature for function pointers
+struct FunctionSignature {
+	Type return_type;
+	std::vector<Type> parameter_types;
+	Linkage linkage = Linkage::None;           // C vs C++ linkage
+	std::optional<std::string> class_name;     // For member function pointers
+	bool is_const = false;                     // For const member functions
+	bool is_volatile = false;                  // For volatile member functions
 };
 
 // Struct member information
@@ -578,6 +597,13 @@ public:
 		is_rvalue_reference_ = is_rvalue;
 	}
 
+	// Function pointer support
+	bool is_function_pointer() const { return type_ == Type::FunctionPointer; }
+	bool is_member_function_pointer() const { return type_ == Type::MemberFunctionPointer; }
+	void set_function_signature(const FunctionSignature& sig) { function_signature_ = sig; }
+	const FunctionSignature& function_signature() const { return *function_signature_; }
+	bool has_function_signature() const { return function_signature_.has_value(); }
+
 	// Get readable string representation
 	std::string getReadableString() const;
 
@@ -591,6 +617,7 @@ private:
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
 	bool is_reference_ = false;  // True if this is a reference type (&)
 	bool is_rvalue_reference_ = false;  // True if this is an rvalue reference (&&)
+	std::optional<FunctionSignature> function_signature_;  // For function pointers
 };
 
 class DeclarationNode {

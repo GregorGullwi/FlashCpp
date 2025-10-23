@@ -1764,6 +1764,20 @@ private:
 			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
 		}
 
+		// Check if it's a FunctionDeclarationNode (function name used as value)
+		if (symbol->is<FunctionDeclarationNode>()) {
+			// This is a function name being used as a value (e.g., fp = add)
+			// Generate FunctionAddress IR instruction
+			TempVar func_addr_var = var_counter.next();
+			std::vector<IrOperand> func_addr_operands;
+			func_addr_operands.emplace_back(func_addr_var);
+			func_addr_operands.emplace_back(identifierNode.name());
+			ir_.addInstruction(IrOpcode::FunctionAddress, std::move(func_addr_operands), Token());
+
+			// Return the function address as a pointer (64 bits)
+			return { Type::FunctionPointer, 64, func_addr_var };
+		}
+
 		// If we get here, the symbol is not a DeclarationNode
 		assert(false && "Identifier is not a DeclarationNode");
 		return {};
@@ -2166,6 +2180,45 @@ private:
 			}
 		}
 
+		// Special handling for function pointer assignment
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
+				std::string_view lhs_name = lhs_ident.name();
+
+				// Look up the LHS in the symbol table
+				const std::optional<ASTNode> lhs_symbol = symbol_table.lookup(lhs_name);
+				if (lhs_symbol.has_value() && lhs_symbol->is<DeclarationNode>()) {
+					const auto& lhs_decl = lhs_symbol->as<DeclarationNode>();
+					const auto& lhs_type = lhs_decl.type_node().as<TypeSpecifierNode>();
+
+					// Check if LHS is a function pointer
+					if (lhs_type.is_function_pointer()) {
+						// This is a function pointer assignment
+						// Generate IR for the RHS (which should be a function address)
+						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+						// Generate Assignment IR
+						// Format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
+						TempVar result_var = var_counter.next();
+						std::vector<IrOperand> assign_operands;
+						assign_operands.emplace_back(result_var);  // result_var
+						assign_operands.emplace_back(lhs_type.type());  // lhs_type
+						assign_operands.emplace_back(static_cast<int>(lhs_type.size_in_bits()));  // lhs_size
+						assign_operands.emplace_back(lhs_name);  // lhs_value
+						assign_operands.emplace_back(rhsIrOperands[0]);  // rhs_type
+						assign_operands.emplace_back(rhsIrOperands[1]);  // rhs_size
+						assign_operands.emplace_back(rhsIrOperands[2]);  // rhs_value (TempVar with function address)
+						ir_.addInstruction(IrOpcode::Assignment, std::move(assign_operands), binaryOperatorNode.get_token());
+
+						// Return the result
+						return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), result_var };
+					}
+				}
+			}
+		}
+
 		// Generate IR for the left-hand side and right-hand side of the operation
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
@@ -2374,9 +2427,45 @@ private:
 		std::vector<IrOperand> irOperands;
 
 		const auto& decl_node = functionCallNode.function_declaration();
+		std::string_view func_name_view = decl_node.identifier_token().value();
+
+		// Check if this is a function pointer call
+		// Look up the identifier in the symbol table to see if it's a function pointer variable
+		const std::optional<ASTNode> func_symbol = symbol_table.lookup(func_name_view);
+		if (func_symbol.has_value() && func_symbol->is<DeclarationNode>()) {
+			const auto& func_decl = func_symbol->as<DeclarationNode>();
+			const auto& func_type = func_decl.type_node().as<TypeSpecifierNode>();
+
+			// Check if this is a function pointer
+			if (func_type.is_function_pointer()) {
+				// This is an indirect call through a function pointer
+				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
+				TempVar ret_var = var_counter.next();
+				irOperands.emplace_back(ret_var);
+				irOperands.emplace_back(func_name_view);  // The function pointer variable
+
+				// Generate IR for function arguments
+				functionCallNode.arguments().visit([&](ASTNode argument) {
+					auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+				});
+
+				// Add the indirect call instruction
+				ir_.addInstruction(IrOpcode::IndirectCall, std::move(irOperands), functionCallNode.called_from());
+
+				// Return the result variable with the return type from the function signature
+				if (func_type.has_function_signature()) {
+					const auto& sig = func_type.function_signature();
+					return { sig.return_type, 64, ret_var };  // 64 bits for return value
+				} else {
+					// Fallback to int if no signature
+					return { Type::Int, 32, ret_var };
+				}
+			}
+		}
 
 		// Get the function declaration to extract parameter types for mangling
-		std::string function_name = std::string(decl_node.identifier_token().value());
+		std::string function_name = std::string(func_name_view);
 
 		// Look up the function in the global symbol table to get all overloads
 		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table

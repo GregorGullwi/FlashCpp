@@ -1115,6 +1115,12 @@ public:
 			case IrOpcode::GlobalStore:
 				handleGlobalStore(instruction);
 				break;
+			case IrOpcode::FunctionAddress:
+				handleFunctionAddress(instruction);
+				break;
+			case IrOpcode::IndirectCall:
+				handleIndirectCall(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -4535,6 +4541,50 @@ private:
 		Type lhs_type = instruction.getOperandAs<Type>(1);
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
+		// Special handling for function pointer assignment
+		if (lhs_type == Type::FunctionPointer) {
+			// Get LHS destination
+			const IrOperand& lhs_operand = instruction.getOperand(3);
+			int32_t lhs_offset = -1;
+
+			if (std::holds_alternative<std::string_view>(lhs_operand)) {
+				std::string_view lhs_var_name = std::get<std::string_view>(lhs_operand);
+				auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
+				if (it != variable_scopes.back().identifier_offset.end()) {
+					lhs_offset = it->second;
+				}
+			} else if (std::holds_alternative<TempVar>(lhs_operand)) {
+				TempVar lhs_var = std::get<TempVar>(lhs_operand);
+				lhs_offset = getStackOffsetFromTempVar(lhs_var);
+			}
+
+			if (lhs_offset == -1) {
+				assert(false && "LHS variable not found in function pointer assignment");
+				return;
+			}
+
+			// Get RHS source (function address)
+			const IrOperand& rhs_operand = instruction.getOperand(6);
+			X64Register source_reg = X64Register::RAX;
+
+			if (std::holds_alternative<TempVar>(rhs_operand)) {
+				TempVar rhs_var = std::get<TempVar>(rhs_operand);
+				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
+
+				// Load function address from RHS stack location into RAX
+				auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
+				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			}
+
+			// Store RAX to LHS stack location (8 bytes for function pointer)
+			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+			return;
+		}
+
 		// Special handling for struct assignment
 		if (lhs_type == Type::Struct) {
 			// For struct assignment, we need to copy the entire struct value
@@ -5877,6 +5927,150 @@ private:
 		textSectionData.push_back(0x00);
 
 		pending_branches_.push_back({else_label, else_patch_position});
+	}
+
+	void handleFunctionAddress(const IrInstruction& instruction) {
+		// FunctionAddress: Load address of a function into a register
+		// Format: [result_temp, function_name]
+		assert(instruction.getOperandCount() == 2 && "FunctionAddress must have exactly 2 operands");
+
+		flushAllDirtyRegisters();
+
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		std::string_view func_name = instruction.getOperandAs<std::string_view>(1);
+
+		// Get result offset
+		int result_offset = getStackOffsetFromTempVar(result_var);
+
+		// Load the address of the function into RAX
+		// LEA RAX, [RIP + function_name]  (RIP-relative addressing for position-independent code)
+		// Or: MOV RAX, OFFSET function_name
+
+		// We'll use MOV RAX, OFFSET function_name with a relocation
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0xB8); // MOV RAX, imm64
+
+		// Add placeholder for the address (will be filled by relocation)
+		uint32_t reloc_position = static_cast<uint32_t>(textSectionData.size());
+		for (int i = 0; i < 8; ++i) {
+			textSectionData.push_back(0x00);
+		}
+
+		// Add relocation for the function address
+		std::string mangled_name = writer.getMangledName(std::string(func_name));
+		writer.add_relocation(reloc_position, mangled_name);
+
+		// Store RAX to result variable
+		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+		regAlloc.reset();
+	}
+
+	void handleIndirectCall(const IrInstruction& instruction) {
+		// IndirectCall: Call through function pointer
+		// Format: [result_temp, func_ptr_var, arg1_type, arg1_size, arg1_value, ...]
+		assert(instruction.getOperandCount() >= 2 && "IndirectCall must have at least 2 operands");
+
+		flushAllDirtyRegisters();
+
+		auto result_var = instruction.getOperand(0);
+		auto func_ptr_operand = instruction.getOperand(1);
+
+		// Get result offset
+		int result_offset = 0;
+		if (std::holds_alternative<TempVar>(result_var)) {
+			const TempVar temp_var = std::get<TempVar>(result_var);
+			result_offset = getStackOffsetFromTempVar(temp_var);
+			variable_scopes.back().identifier_offset[temp_var.name()] = result_offset;
+		} else {
+			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
+		}
+
+		// Load function pointer into RAX
+		X64Register func_ptr_reg = X64Register::RAX;
+		if (std::holds_alternative<TempVar>(func_ptr_operand)) {
+			const TempVar temp_var = std::get<TempVar>(func_ptr_operand);
+			int func_ptr_offset = getStackOffsetFromTempVar(temp_var);
+			auto load_opcodes = generateMovFromFrame(func_ptr_reg, func_ptr_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		} else if (std::holds_alternative<std::string_view>(func_ptr_operand)) {
+			std::string_view var_name = std::get<std::string_view>(func_ptr_operand);
+			int func_ptr_offset = variable_scopes.back().identifier_offset[var_name];
+			auto load_opcodes = generateMovFromFrame(func_ptr_reg, func_ptr_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		}
+
+		// Process arguments (if any)
+		const size_t first_arg_index = 2; // Start after result and function pointer
+		const size_t arg_stride = 3; // type, size, value
+		const size_t num_args = (instruction.getOperandCount() - first_arg_index) / arg_stride;
+		for (size_t i = 0; i < num_args && i < 4; ++i) {
+			size_t argIndex = first_arg_index + i * arg_stride;
+			Type argType = instruction.getOperandAs<Type>(argIndex);
+			// int argSize = instruction.getOperandAs<int>(argIndex + 1); // unused for now
+			auto argValue = instruction.getOperand(argIndex + 2);
+
+			// Determine if this is a floating-point argument
+			bool is_float_arg = is_floating_point_type(argType);
+
+			// Determine the target register for the argument
+			X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
+
+			// Load argument into target register
+			if (std::holds_alternative<TempVar>(argValue)) {
+				const TempVar temp_var = std::get<TempVar>(argValue);
+				int arg_offset = getStackOffsetFromTempVar(temp_var);
+				if (is_float_arg) {
+					bool is_float = (argType == Type::Float);
+					auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				} else {
+					auto load_opcodes = generateMovFromFrame(target_reg, arg_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
+			} else if (std::holds_alternative<std::string_view>(argValue)) {
+				std::string_view var_name = std::get<std::string_view>(argValue);
+				int arg_offset = variable_scopes.back().identifier_offset[var_name];
+				if (is_float_arg) {
+					bool is_float = (argType == Type::Float);
+					auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				} else {
+					auto load_opcodes = generateMovFromFrame(target_reg, arg_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
+			} else if (std::holds_alternative<unsigned long long>(argValue)) {
+				// Immediate value
+				unsigned long long value = std::get<unsigned long long>(argValue);
+				// MOV target_reg, imm64
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0xB8 + static_cast<uint8_t>(target_reg)); // MOV reg, imm64
+				for (size_t j = 0; j < 8; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
+					value >>= 8;
+				}
+			}
+		}
+
+		// Call through function pointer in RAX
+		// CALL RAX
+		textSectionData.push_back(0xFF); // CALL r/m64
+		textSectionData.push_back(0xD0); // ModR/M: RAX
+
+		// Store return value from RAX to result variable
+		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+		regAlloc.reset();
 	}
 
 	void finalizeSections() {

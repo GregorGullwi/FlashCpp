@@ -85,6 +85,12 @@ void initialize_native_types() {
 
     auto& auto_type = gTypeInfo.emplace_back("auto", Type::Auto, gTypeInfo.size());
     gNativeTypes[Type::Auto] = &auto_type;
+
+    auto& function_pointer_type = gTypeInfo.emplace_back("function_pointer", Type::FunctionPointer, gTypeInfo.size());
+    gNativeTypes[Type::FunctionPointer] = &function_pointer_type;
+
+    auto& member_function_pointer_type = gTypeInfo.emplace_back("member_function_pointer", Type::MemberFunctionPointer, gTypeInfo.size());
+    gNativeTypes[Type::MemberFunctionPointer] = &member_function_pointer_type;
 }
 
 bool is_integer_type(Type type) {
@@ -331,6 +337,8 @@ static std::string type_to_string(Type type, TypeQualifier qualifier) {
         case Type::Function: result += "function"; break;
         case Type::Struct: result += "struct"; break;
         case Type::Enum: result += "enum"; break;
+        case Type::FunctionPointer: result += "function_pointer"; break;
+        case Type::MemberFunctionPointer: result += "member_function_pointer"; break;
     }
 
     return result;
