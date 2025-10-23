@@ -3084,9 +3084,12 @@ private:
 
 		std::vector<TypeSpecifierNode> parameter_types;
 
+		// Extract linkage information (index 5)
+		Linkage linkage = static_cast<Linkage>(instruction.getOperandAs<int>(5));
+
 		// Extract parameter types from the instruction
-		// Now parameters start at index 5 (after return type, size, pointer depth, function name, and struct name)
-		size_t paramIndex = 5;
+		// Parameters start at index 6 (after return type, size, pointer depth, function name, struct name, and linkage)
+		size_t paramIndex = 6;
 		while (paramIndex + 4 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, and name
 			auto param_base_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
@@ -3107,10 +3110,10 @@ private:
 		std::string mangled_name;
 		if (!struct_name.empty()) {
 			// Member function - include struct name for mangling
-			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name));
+			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name), linkage);
 		} else {
 			// Regular function
-			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types);
+			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, linkage);
 		}
 
 		// Finalize previous function before starting new one
@@ -3217,14 +3220,14 @@ private:
 		}
 
 		// First pass: collect all parameter information
-		paramIndex = 5;  // Start after return type, size, pointer depth, function name, and struct name
+		paramIndex = 6;  // Start after return type, size, pointer depth, function name, struct name, and linkage
 		while (paramIndex + 4 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, and name
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
 			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + 2);
 
 			// Store parameter location based on addressing mode
-			int paramNumber = ((paramIndex - 5) / 4) + param_offset_adjustment;
+			int paramNumber = ((paramIndex - 6) / 4) + param_offset_adjustment;
 			int offset = (paramNumber + 1) * -8;
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 3);

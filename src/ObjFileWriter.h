@@ -377,6 +377,7 @@ private:
 		EFunctionCallingConv calling_convention = EFunctionCallingConv::cdecl;
 		std::string namespace_name;
 		std::string class_name;
+		Linkage linkage = Linkage::None;  // C vs C++ linkage
 
 		FunctionSignature() = default;
 		FunctionSignature(const TypeSpecifierNode& ret_type, std::vector<TypeSpecifierNode> params)
@@ -391,6 +392,11 @@ private:
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
+		}
+
+		// C linkage functions are not mangled
+		if (sig.linkage == Linkage::C) {
+			return std::string(name);
 		}
 
 		std::string mangled = "?";
@@ -470,8 +476,9 @@ private:
 public:
 	// Add function signature information for proper mangling
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types) {
+	std::string addFunctionSignature(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None) {
 		FunctionSignature sig(return_type, parameter_types);
+		sig.linkage = linkage;
 		// Generate the mangled name and use it as the key
 		std::string mangled_name = generateMangledName(name, sig);
 		function_signatures_[mangled_name] = sig;
@@ -480,9 +487,10 @@ public:
 
 	// Add function signature information for member functions with class name
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, const std::string& class_name) {
+	std::string addFunctionSignature(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, const std::string& class_name, Linkage linkage = Linkage::None) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.class_name = class_name;
+		sig.linkage = linkage;
 		// Generate the mangled name and use it as the key
 		std::string mangled_name = generateMangledName(name, sig);
 		function_signatures_[mangled_name] = sig;

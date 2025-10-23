@@ -293,6 +293,9 @@ private:
 			funcDeclOperands.emplace_back(std::string_view(""));  // Empty string_view for non-member functions
 		}
 
+		// Add linkage information (C vs C++)
+		funcDeclOperands.emplace_back(static_cast<int>(node.linkage()));
+
 		// Add parameter types to function declaration
 		//size_t paramCount = 0;
 		for (const auto& param : node.parameter_nodes()) {
@@ -2497,9 +2500,11 @@ private:
 					// Get return type (including pointer information)
 					const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 
-					// Generate the mangled name directly
+					// Generate the mangled name directly (unless C linkage)
 					// This ensures we call the correct overload
-					function_name = generateMangledNameForCall(function_name, return_type, param_types);
+					if (func_decl.linkage() != Linkage::C) {
+						function_name = generateMangledNameForCall(function_name, return_type, param_types);
+					}
 					break;
 				}
 			}

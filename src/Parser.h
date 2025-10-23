@@ -160,6 +160,9 @@ private:
         // Store pointer to the FunctionDeclarationNode which contains all the info we need
         const FunctionDeclarationNode* current_function_ = nullptr;
 
+        // Track current linkage for extern "C" blocks
+        Linkage current_linkage_ = Linkage::None;
+
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
                 std::string_view struct_name;  // Points directly into source text from lexer token
@@ -225,6 +228,7 @@ private:
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();
+        ParseResult parse_extern_block(Linkage linkage);  // Parse extern "C" { ... } block
         ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
         ParseResult parse_for_loop();  // Add this line
         ParseResult parse_while_loop();  // Add while-loop parser

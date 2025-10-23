@@ -187,6 +187,79 @@ ParseResult Parser::parse_top_level_node()
 		return result;
 	}
 
+	// Check for extern "C" linkage specification
+	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "extern") {
+		// Save position in case this is just a regular extern declaration
+		TokenPosition extern_saved_pos = save_token_position();
+		consume_token(); // consume 'extern'
+
+		// Check if this is extern "C" or extern "C++"
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::StringLiteral) {
+			std::string_view linkage_str = peek_token()->value();
+
+			// Remove quotes from string literal
+			if (linkage_str.size() >= 2 && linkage_str.front() == '"' && linkage_str.back() == '"') {
+				linkage_str = linkage_str.substr(1, linkage_str.size() - 2);
+			}
+
+			Linkage linkage = Linkage::None;
+			if (linkage_str == "C") {
+				linkage = Linkage::C;
+			} else if (linkage_str == "C++") {
+				linkage = Linkage::CPlusPlus;
+			} else {
+				return ParseResult::error("Unknown linkage specification: " + std::string(linkage_str), *current_token_);
+			}
+
+			consume_token(); // consume linkage string
+
+			// Discard the extern_saved_pos since we're handling extern "C"
+			discard_saved_token(extern_saved_pos);
+
+			// Check for block form: extern "C" { ... }
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				auto result = parse_extern_block(linkage);
+				if (!result.is_error()) {
+					if (auto node = result.node()) {
+						// The block contains multiple declarations, add them all
+						if (node->is<BlockNode>()) {
+							const BlockNode& block = node->as<BlockNode>();
+							block.get_statements().visit([&](const ASTNode& stmt) {
+								ast_nodes_.push_back(stmt);
+							});
+						}
+					}
+					return saved_position.success();
+				}
+				return result;
+			}
+
+			// Single declaration form: extern "C" int func();
+			// Set the current linkage and parse the declaration/function
+			Linkage saved_linkage = current_linkage_;
+			current_linkage_ = linkage;
+
+			ParseResult decl_result = parse_declaration_or_function_definition();
+
+			// Restore the previous linkage
+			current_linkage_ = saved_linkage;
+
+			if (decl_result.is_error()) {
+				return decl_result;
+			}
+
+			// Add the node to the AST if it exists
+			if (auto decl_node = decl_result.node()) {
+				ast_nodes_.push_back(*decl_node);
+			}
+
+			return saved_position.success();
+		} else {
+			// Regular extern without linkage specification, restore and continue
+			restore_token_position(extern_saved_pos);
+		}
+	}
+
 	// Attempt to parse a function definition, variable declaration, or typedef
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
@@ -2493,6 +2566,11 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 	auto [func_node, func_ref] =
 		create_node_ref<FunctionDeclarationNode>(declaration_node);
 
+	// Set linkage from current context (for extern "C" blocks)
+	if (current_linkage_ != Linkage::None) {
+		func_ref.set_linkage(current_linkage_);
+	}
+
 	while (!consume_punctuator(")"sv)) {
 		// Check for variadic parameter (...)
 		if (peek_token().has_value() && peek_token()->value() == "...") {
@@ -2702,6 +2780,8 @@ ParseResult Parser::parse_variable_declaration()
 {
 	// Check for storage class specifier (static, extern, etc.)
 	StorageClass storage_class = StorageClass::None;
+	Linkage linkage = Linkage::None;
+
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 		std::string_view keyword = peek_token()->value();
 		if (keyword == "static") {
@@ -5370,6 +5450,44 @@ Type Parser::deduce_type_from_expression(const ASTNode& expr) const {
 
 	// Default to int if we can't determine the type
 	return Type::Int;
+}
+
+// Parse extern "C" { ... } block
+ParseResult Parser::parse_extern_block(Linkage linkage) {
+	// Expect '{'
+	if (!consume_punctuator("{")) {
+		return ParseResult::error("Expected '{' after extern linkage specification", *current_token_);
+	}
+
+	// Create a block to hold all declarations
+	auto [block_node, block_ref] = create_node_ref(BlockNode());
+
+	// Save the current linkage and set the new one
+	Linkage saved_linkage = current_linkage_;
+	current_linkage_ = linkage;
+
+	// Parse declarations until '}'
+	while (peek_token().has_value() && peek_token()->value() != "}") {
+		// Parse a declaration or function definition
+		ParseResult decl_result = parse_declaration_or_function_definition();
+		if (decl_result.is_error()) {
+			current_linkage_ = saved_linkage;  // Restore linkage before returning error
+			return decl_result;
+		}
+
+		if (auto decl_node = decl_result.node()) {
+			block_ref.add_statement_node(*decl_node);
+		}
+	}
+
+	// Restore the previous linkage
+	current_linkage_ = saved_linkage;
+
+	if (!consume_punctuator("}")) {
+		return ParseResult::error("Expected '}' after extern block", *current_token_);
+	}
+
+	return ParseResult::success(block_node);
 }
 
 // Helper function to get the size of a type in bits
