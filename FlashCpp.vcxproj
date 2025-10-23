@@ -186,6 +186,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ChunkedAnyVector.h" />
+    <ClInclude Include="src\ChunkedString.h" />
     <ClInclude Include="src\CodeGen.h" />
     <ClInclude Include="src\CodeViewDebug.h" />
     <ClInclude Include="src\coffi\coffi.hpp" />
@@ -207,6 +208,7 @@
     <ClInclude Include="src\AstNodeTypes.h" />
     <ClInclude Include="src\ObjFileWriter.h" />
     <ClInclude Include="src\Parser.h" />
+    <ClInclude Include="src\StackString.h" />
     <ClInclude Include="src\SymbolTable.h" />
     <ClInclude Include="src\Token.h" />
   </ItemGroup>
