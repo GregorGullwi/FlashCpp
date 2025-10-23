@@ -22,6 +22,7 @@ struct LambdaInfo {
 	Type return_type;
 	int return_size;
 	std::vector<std::tuple<Type, int, int, std::string>> parameters;  // type, size, pointer_depth, name
+	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
 	ASTNode lambda_body;                // Copy of the lambda body
 	std::vector<LambdaCaptureNode> captures;  // Copy of captures
 	size_t lambda_id;
@@ -2756,13 +2757,20 @@ private:
 
 			// For member functions, include the struct name in the function name
 			// This allows proper name mangling (e.g., "__lambda_0::operator()")
-			std::string function_name;
 			if (func_decl.is_member_function() && !func_decl.parent_struct_name().empty()) {
-				function_name = std::string(func_decl.parent_struct_name()) + "::" + std::string(func_decl_node.identifier_token().value());
+				std::string_view struct_name = func_decl.parent_struct_name();
+				std::string_view func_name = func_decl_node.identifier_token().value();
+
+				// Reserve space to avoid reallocations
+				std::string function_name;
+				function_name.reserve(struct_name.size() + 2 + func_name.size());
+				function_name += struct_name;
+				function_name += "::";
+				function_name += func_name;
+				irOperands.emplace_back(std::move(function_name));
 			} else {
-				function_name = std::string(func_decl_node.identifier_token().value());
+				irOperands.emplace_back(std::string(func_decl_node.identifier_token().value()));
 			}
-			irOperands.emplace_back(function_name);
 
 			// Add the object as the first argument (this pointer)
 			// We need to pass the address of the object
@@ -3508,9 +3516,25 @@ private:
 		LambdaInfo info;
 		info.lambda_id = lambda.lambda_id();
 		info.closure_type_name = lambda.generate_lambda_name();
-		info.operator_call_name = info.closure_type_name + "_operator_call";
-		info.invoke_name = info.closure_type_name + "_invoke";
-		info.conversion_op_name = info.closure_type_name + "_conversion";
+
+		// Build derived names with reserve to avoid reallocations
+		size_t base_len = info.closure_type_name.size();
+
+		// Build operator_call_name: closure_type_name + "_operator_call"
+		info.operator_call_name.reserve(base_len + 14);
+		info.operator_call_name = info.closure_type_name;
+		info.operator_call_name += "_operator_call";
+
+		// Build invoke_name: closure_type_name + "_invoke"
+		info.invoke_name.reserve(base_len + 7);
+		info.invoke_name = info.closure_type_name;
+		info.invoke_name += "_invoke";
+
+		// Build conversion_op_name: closure_type_name + "_conversion"
+		info.conversion_op_name.reserve(base_len + 11);
+		info.conversion_op_name = info.closure_type_name;
+		info.conversion_op_name += "_conversion";
+
 		info.lambda_token = lambda.lambda_token();
 
 		// Copy lambda body and captures (we need them later)
@@ -3537,6 +3561,8 @@ private:
 					static_cast<int>(param_type.pointer_levels().size()),
 					std::string(param_decl.identifier_token().value())
 				);
+				// Also store the actual parameter node for symbol table
+				info.parameter_nodes.push_back(param);
 			}
 		}
 
@@ -3599,6 +3625,14 @@ private:
 
 		symbol_table.enter_scope(ScopeType::Function);
 
+		// Add lambda parameters to symbol table
+		for (const auto& param_node : lambda_info.parameter_nodes) {
+			if (param_node.is<DeclarationNode>()) {
+				const auto& param_decl = param_node.as<DeclarationNode>();
+				symbol_table.insert(param_decl.identifier_token().value(), param_node);
+			}
+		}
+
 		// Generate the lambda body
 		if (lambda_info.lambda_body.is<BlockNode>()) {
 			const auto& body = lambda_info.lambda_body.as<BlockNode>();
@@ -3632,6 +3666,14 @@ private:
 		ir_.addInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), lambda_info.lambda_token);
 
 		symbol_table.enter_scope(ScopeType::Function);
+
+		// Add lambda parameters to symbol table
+		for (const auto& param_node : lambda_info.parameter_nodes) {
+			if (param_node.is<DeclarationNode>()) {
+				const auto& param_decl = param_node.as<DeclarationNode>();
+				symbol_table.insert(param_decl.identifier_token().value(), param_node);
+			}
+		}
 
 		// Generate the lambda body
 		if (lambda_info.lambda_body.is<BlockNode>()) {

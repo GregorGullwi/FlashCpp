@@ -4,6 +4,7 @@
 #include "CodeViewDebug.h"
 #include "AstNodeTypes.h"
 #include <string>
+#include <string_view>
 #include <array>
 #include <chrono>
 #include <optional>
@@ -335,11 +336,44 @@ public:
 	}
 
 	// C++20 compatible name mangling system
-	std::string getMangledName(const std::string& name) const {
+	std::string getMangledName(std::string_view name) const {
 		// Check if the name is already a mangled name (starts with '?')
 		if (!name.empty() && name[0] == '?') {
 			// Already mangled, return as-is
-			return name;
+			return std::string(name);
+		}
+
+		// Check if this is a member function call (ClassName::FunctionName format)
+		size_t scope_pos = name.find("::");
+		if (scope_pos != std::string_view::npos) {
+			// Split into class name and function name using string_view (no allocation)
+			std::string_view class_name = name.substr(0, scope_pos);
+			std::string_view func_name = name.substr(scope_pos + 2);
+
+			// Search for a mangled name that matches this member function
+			// Format: ?FunctionName@ClassName@@...
+			for (const auto& [mangled, sig] : function_signatures_) {
+				if (mangled[0] == '?' &&
+				    mangled.substr(1, func_name.size()) == func_name &&
+				    mangled[1 + func_name.size()] == '@' &&
+				    mangled.substr(2 + func_name.size(), class_name.size()) == class_name) {
+					return mangled;
+				}
+			}
+
+			// If not found in function_signatures_, generate a basic mangled name
+			// This handles forward references to functions that haven't been processed yet
+			// Format: ?FunctionName@ClassName@@YAH@Z (assuming int return, no params for now)
+			// This is a simplified mangling - the actual signature will be added later
+			// Reserve space to avoid reallocations
+			std::string mangled;
+			mangled.reserve(1 + func_name.size() + 1 + class_name.size() + 7);
+			mangled += '?';
+			mangled += func_name;
+			mangled += '@';
+			mangled += class_name;
+			mangled += "@@YAH@Z";
+			return mangled;
 		}
 
 		// For overloaded functions, we can't determine which overload to use
@@ -358,7 +392,7 @@ public:
 			}
 		}
 
-		return name;  // Default: no mangling
+		return std::string(name);  // Default: no mangling
 	}
 
 private:
@@ -399,12 +433,23 @@ private:
 			return std::string(name);
 		}
 
-		std::string mangled = "?";
+		// Calculate approximate size and reserve to avoid reallocations
+		size_t estimated_size = 1 + name.size() + 2 + 2 + 2;  // '?' + name + "@@" + calling_conv + return_type
+		if (!sig.class_name.empty()) {
+			estimated_size += 1 + sig.class_name.size();  // '@' + class_name
+		}
+		estimated_size += sig.parameter_types.size() * 3;  // Rough estimate for param types
+		estimated_size += 2;  // "@Z"
+
+		std::string mangled;
+		mangled.reserve(estimated_size);
+
+		mangled += '?';
 		mangled += name;
 
 		// Add class name if this is a member function
 		if (!sig.class_name.empty()) {
-			mangled += "@";
+			mangled += '@';
 			mangled += sig.class_name;
 		}
 
