@@ -1586,10 +1586,11 @@ private:
 				return; // Early return - we've already added the variable declaration
 			} else if (init_node.is<LambdaExpressionNode>()) {
 				// Lambda expression initializer
+				// Generate the lambda functions (operator() and __invoke)
+				const auto& lambda = init_node.as<LambdaExpressionNode>();
+				generateLambdaExpressionIr(lambda);
 				// For now, lambda variables are just empty structs (1 byte)
-				// The lambda __invoke function is generated separately
 				// TODO: Store function pointer or closure data in the variable
-				// For now, just declare the variable without initialization
 			} else {
 				// Regular expression initializer
 				auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
@@ -2752,7 +2753,16 @@ private:
 		} else {
 			// Generate regular (non-virtual) member function call
 			irOperands.emplace_back(ret_var);
-			irOperands.emplace_back(func_decl_node.identifier_token().value());
+
+			// For member functions, include the struct name in the function name
+			// This allows proper name mangling (e.g., "__lambda_0::operator()")
+			std::string function_name;
+			if (func_decl.is_member_function() && !func_decl.parent_struct_name().empty()) {
+				function_name = std::string(func_decl.parent_struct_name()) + "::" + std::string(func_decl_node.identifier_token().value());
+			} else {
+				function_name = std::string(func_decl_node.identifier_token().value());
+			}
+			irOperands.emplace_back(function_name);
 
 			// Add the object as the first argument (this pointer)
 			// We need to pass the address of the object
@@ -3530,33 +3540,23 @@ private:
 			}
 		}
 
-		// Store lambda info for later generation
-		collected_lambdas_.push_back(std::move(info));
-
-		// Look up the closure type (registered during parsing)
+		// Look up the closure type (registered during parsing) BEFORE moving info
 		auto type_it = gTypesByName.find(info.closure_type_name);
 		if (type_it == gTypesByName.end()) {
-			std::cerr << "Error: Lambda closure type not found: " << info.closure_type_name << "\n";
+			// Error: closure type not found
 			TempVar dummy = var_counter.next();
 			return {Type::Int, 32, dummy};
 		}
 
 		const TypeInfo* closure_type = type_it->second;
 
-		// Create a lambda closure instance on the stack
-		// This is a 1-byte struct for non-capturing lambdas
+		// Store lambda info for later generation (after we've used closure_type_name)
+		collected_lambdas_.push_back(std::move(info));
+
+		// For non-capturing lambdas, we don't need to allocate anything
+		// The lambda is stateless and can be represented by its type alone
+		// Return a dummy temp var (won't be used since lambda calls go through operator())
 		TempVar lambda_var = var_counter.next();
-
-		// Allocate the closure on the stack
-		std::vector<IrOperand> alloc_operands;
-		alloc_operands.emplace_back(lambda_var);
-		alloc_operands.emplace_back(Type::Struct);
-		alloc_operands.emplace_back(8);  // 1 byte = 8 bits
-		alloc_operands.emplace_back(closure_type->type_index_);  // struct type index
-		ir_.addInstruction(IrOpcode::StackAlloc, std::move(alloc_operands), lambda.lambda_token());
-
-		// Return the closure instance
-		// Type: Struct, Size: 8 bits (1 byte), Value: temp var
 		return {Type::Struct, 8, closure_type->type_index_, lambda_var};
 	}
 
@@ -3569,11 +3569,45 @@ private:
 		// 2. __invoke - static function that can be used as function pointer
 		// 3. conversion operator - returns pointer to __invoke
 
-		// For now, we'll generate a simplified version:
-		// Just generate the __invoke function that contains the lambda body
-		// This is sufficient for lambda-to-function-pointer decay
+		// Generate operator() member function
+		generateLambdaOperatorCallFunction(lambda_info);
 
+		// Generate __invoke static function
 		generateLambdaInvokeFunction(lambda_info);
+	}
+
+	// Generate the operator() member function for a lambda
+	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info) {
+		// Generate function declaration for operator()
+		std::vector<IrOperand> funcDeclOperands;
+		funcDeclOperands.emplace_back(lambda_info.return_type);
+		funcDeclOperands.emplace_back(lambda_info.return_size);
+		funcDeclOperands.emplace_back(0);  // pointer depth
+		funcDeclOperands.emplace_back(std::string_view("operator()"));
+		funcDeclOperands.emplace_back(std::string_view(lambda_info.closure_type_name));  // struct name (member function)
+		funcDeclOperands.emplace_back(static_cast<int>(Linkage::None));  // C++ linkage
+
+		// Add parameters
+		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
+			funcDeclOperands.emplace_back(type);
+			funcDeclOperands.emplace_back(size);
+			funcDeclOperands.emplace_back(pointer_depth);
+			funcDeclOperands.emplace_back(std::string_view(name));
+		}
+
+		ir_.addInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), lambda_info.lambda_token);
+
+		symbol_table.enter_scope(ScopeType::Function);
+
+		// Generate the lambda body
+		if (lambda_info.lambda_body.is<BlockNode>()) {
+			const auto& body = lambda_info.lambda_body.as<BlockNode>();
+			body.get_statements().visit([&](const ASTNode& stmt) {
+				visit(stmt);
+			});
+		}
+
+		symbol_table.exit_scope();
 	}
 
 	// Generate the __invoke static function for a lambda

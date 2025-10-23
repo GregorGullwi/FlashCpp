@@ -4001,16 +4001,34 @@ ParseResult Parser::parse_primary_expression()
 			// Identifier already consumed at line 1621
 
 			// Check if this looks like a function call
-			// Only consume '(' if the identifier is actually a function OR a function pointer
+			// Only consume '(' if the identifier is actually a function OR a function pointer OR has operator()
 			bool is_function_decl = identifierType->is<FunctionDeclarationNode>();
 			bool is_function_pointer = false;
+			bool has_operator_call = false;
 			if (identifierType->is<DeclarationNode>()) {
 				const auto& decl = identifierType->as<DeclarationNode>();
 				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 				is_function_pointer = type_node.is_function_pointer();
+
+				// Check if this is a struct with operator()
+				if (type_node.type() == Type::Struct) {
+					TypeIndex type_index = type_node.type_index();
+					if (type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_info.struct_info_) {
+							// Check if struct has operator()
+							for (const auto& member_func : type_info.struct_info_->member_functions) {
+								if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
+									has_operator_call = true;
+									break;
+								}
+							}
+						}
+					}
+				}
 			}
 			bool is_function_call = peek_token().has_value() && peek_token()->value() == "(" &&
-			                        (is_function_decl || is_function_pointer);
+			                        (is_function_decl || is_function_pointer || has_operator_call);
 
 			if (is_function_call && consume_punctuator("("sv)) {
 				if (!peek_token().has_value())
@@ -4042,8 +4060,35 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 
+				// For operator() calls, create a member function call
+				if (has_operator_call) {
+					// Create a member function call: object.operator()(args)
+					auto object_expr = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+
+					// Find the operator() function declaration in the struct
+					const auto& decl = identifierType->as<DeclarationNode>();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					TypeIndex type_index = type_node.type_index();
+					const TypeInfo& type_info = gTypeInfo[type_index];
+
+					// Find operator() in member functions
+					FunctionDeclarationNode* operator_call_func = nullptr;
+					for (const auto& member_func : type_info.struct_info_->member_functions) {
+						if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
+							operator_call_func = &const_cast<FunctionDeclarationNode&>(member_func.function_decl.as<FunctionDeclarationNode>());
+							break;
+						}
+					}
+
+					if (!operator_call_func) {
+						return ParseResult::error("operator() not found in struct", idenfifier_token);
+					}
+
+					Token operator_token(Token::Type::Identifier, "operator()", idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					result = emplace_node<ExpressionNode>(MemberFunctionCallNode(object_expr, *operator_call_func, std::move(args), operator_token));
+				}
 				// For function pointers, skip overload resolution and create FunctionCallNode directly
-				if (is_function_pointer) {
+				else if (is_function_pointer) {
 					const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 					if (!decl_ptr) {
 						return ParseResult::error("Invalid function pointer declaration", idenfifier_token);
@@ -4988,6 +5033,44 @@ ParseResult Parser::parse_lambda_expression() {
         closure_struct_info->total_size = 1;
         closure_struct_info->alignment = 1;
     }
+
+    // Generate operator() member function for the lambda
+    // This allows lambda() calls to work
+    // Determine return type
+    TypeSpecifierNode return_type_spec(Type::Int, TypeQualifier::None, 32);
+    if (return_type.has_value()) {
+        return_type_spec = return_type->as<TypeSpecifierNode>();
+    }
+
+    // Create operator() declaration
+    DeclarationNode& operator_call_decl = emplace_node<DeclarationNode>(
+        emplace_node<TypeSpecifierNode>(return_type_spec),
+        Token(Token::Type::Identifier, "operator()", lambda_token.line(), lambda_token.column(), lambda_token.file_index())
+    ).as<DeclarationNode>();
+
+    // Create FunctionDeclarationNode for operator()
+    FunctionDeclarationNode& operator_call_func = emplace_node<FunctionDeclarationNode>(
+        operator_call_decl,
+        closure_name
+    ).as<FunctionDeclarationNode>();
+
+    // Add parameters from lambda to operator()
+    for (const auto& param : parameters) {
+        operator_call_func.add_parameter_node(param);
+    }
+
+    // Add operator() as a member function
+    StructMemberFunction operator_call_member(
+        "operator()",
+        emplace_node<FunctionDeclarationNode>(operator_call_func),
+        AccessSpecifier::Public,
+        false,  // not constructor
+        false,  // not destructor
+        true,   // is operator overload
+        "()"    // operator symbol
+    );
+
+    closure_struct_info->member_functions.push_back(operator_call_member);
 
     closure_type.struct_info_ = std::move(closure_struct_info);
 
