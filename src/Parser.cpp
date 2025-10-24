@@ -2506,6 +2506,12 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 ParseResult Parser::parse_type_specifier()
 {
 	auto current_token_opt = peek_token();
+
+	// Check for decltype FIRST, before any other checks
+	if (current_token_opt.has_value() && current_token_opt->value() == "decltype") {
+		return parse_decltype_specifier();
+	}
+
 	if (!current_token_opt.has_value() ||
 		(current_token_opt->type() != Token::Type::Keyword &&
 			current_token_opt->type() != Token::Type::Identifier)) {
@@ -2780,6 +2786,46 @@ ParseResult Parser::parse_type_specifier()
 		current_token_opt.value_or(Token()));
 }
 
+ParseResult Parser::parse_decltype_specifier()
+{
+	// Parse decltype(expr) type specifier
+	// Example: decltype(x + y) result = x + y;
+
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'decltype' keyword
+	auto decltype_token_opt = consume_token();
+	if (!decltype_token_opt.has_value()) {
+		return ParseResult::error("Expected 'decltype' keyword", *current_token_);
+	}
+	Token decltype_token = *decltype_token_opt;
+
+	// Expect '('
+	if (!consume_punctuator("(")) {
+		return ParseResult::error("Expected '(' after 'decltype'", *current_token_);
+	}
+
+	// Parse the expression
+	ParseResult expr_result = parse_expression();
+	if (expr_result.is_error()) {
+		return expr_result;
+	}
+
+	// Expect ')'
+	if (!consume_punctuator(")")) {
+		return ParseResult::error("Expected ')' after decltype expression", *current_token_);
+	}
+
+	// Deduce the type from the expression
+	auto type_spec_opt = get_expression_type(*expr_result.node());
+	if (!type_spec_opt.has_value()) {
+		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
+	}
+
+	// Return the deduced type specifier
+	return saved_position.success(emplace_node<TypeSpecifierNode>(*type_spec_opt));
+}
+
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node)
 {
 	// Parse parameters
@@ -2917,6 +2963,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"volatile", &Parser::parse_variable_declaration},
 			{"alignas", &Parser::parse_variable_declaration},
 			{"auto", &Parser::parse_variable_declaration},
+			{"decltype", &Parser::parse_variable_declaration},  // C++11 decltype type specifier
 			{"new", &Parser::parse_expression_statement},
 			{"delete", &Parser::parse_expression_statement},
 			{"static_cast", &Parser::parse_expression_statement},

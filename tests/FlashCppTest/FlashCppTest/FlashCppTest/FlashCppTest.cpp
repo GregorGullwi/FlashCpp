@@ -1897,3 +1897,7 @@ TEST_CASE("Functions:Extern C") {
 TEST_CASE("Typedef:Basic") {
 	run_test_from_file("test_typedef.cpp", "Basic typedef support", false);
 }
+
+TEST_CASE("Decltype") {
+	run_test_from_file("test_decltype.cpp", "Decltype type deduction", false);
+}
