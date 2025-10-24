@@ -4,6 +4,8 @@
 FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/FlashCppTest/...` with fixtures in `tests/Reference/`. Generated binaries belong in `x64/` or `Debug/` and stay untracked. Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workflows.
 
 ## Build, Test, and Development Commands
+- Use `make test CXX=clang++` — invokes all the tests in FlashCppTest.cpp
+- Use `make main CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, same as build_flashcpp.bat on a regular Windows terminal.
 - `build_flashcpp.bat` — invokes MSBuild to produce `x64\Debug\FlashCpp.exe`; run it whenever you change compiler sources.
 - Visual Studio IDE — open `FlashCpp.sln`, select `x64/Debug`, and build when you need MSVC debugging.
 - `build_flashcpp_debug.bat` — compiles `tests\FlashCppDebugTest\flashcpp_debug_test.cpp` using the freshly built FlashCpp compiler and links it with MSVC `link.exe`, emitting binaries into `Debug\`.
@@ -20,7 +22,7 @@ The doctest runner lives in `tests/FlashCppTest/FlashCppTest/FlashCppTest.cpp`. 
 Use focused commits with subjects under 72 characters; mirror the existing `[Gregor]` / `[AugmentCode]` tag format when appropriate. Mention the compiler or test command you ran in the commit body. Pull requests should link tracking issues, describe observable behaviour changes, and attach relevant logs or console output (especially from the batch scripts) so reviewers can reproduce results quickly.
 
 ## Workspace Hygiene
-Delete binaries, dumps, and logs before you push. Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
+Delete binaries, dumps, and logs before you stage. Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
 
 ## Debugging & Reference Tips
 `build_and_dump.bat` compares MSVC-generated objects against FlashCpp output via `dumpbin`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source.

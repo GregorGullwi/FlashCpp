@@ -35,7 +35,7 @@ endif
 CXX ?= clang++
 
 # Compiler flags - add -Wall -Wextra -pedantic for better warnings
-CXXFLAGS := -std=c++20 -Wall -Wextra -pedantic
+CXXFLAGS := -std=c++20
 
 # Directories
 SRCDIR := src
