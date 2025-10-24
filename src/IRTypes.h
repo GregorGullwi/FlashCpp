@@ -461,6 +461,15 @@ public:
 		return std::get<TClass>(operands_[index]);
 	}
 
+	// Safe version of getOperandAs for int - returns default value if not found or wrong type
+	int getOperandAsIntSafe(size_t index, int default_value = 0) const {
+		if (index >= operands_.size())
+			return default_value;
+		if (isOperandType<int>(index))
+			return getOperandAs<int>(index);
+		return default_value;
+	}
+
 	std::string_view getOperandAsTypeString(size_t index) const {
 		if (index >= operands_.size())
 			return "";
@@ -1728,20 +1737,23 @@ public:
 		{
 			// define [Type][SizeInBits][PointerDepth] [Name]
 			oss << "define "
-				<< getOperandAsTypeString(0) << getOperandAs<int>(1);
+				<< getOperandAsTypeString(0) << getOperandAsIntSafe(1);
 
 			// Add pointer depth indicator if present
-			int pointer_depth = getOperandAs<int>(2);
+			// Safely get pointer depth - it should be an int at index 2
+			int pointer_depth = getOperandAsIntSafe(2);
 			for (int i = 0; i < pointer_depth; ++i) {
 				oss << "*";
 			}
 			oss << " ";
 
 			// Function name can be either std::string or std::string_view (now at index 3)
-			if (isOperandType<std::string>(3))
-				oss << getOperandAs<std::string>(3);
-			else if (isOperandType<std::string_view>(3))
-				oss << getOperandAs<std::string_view>(3);
+			if (getOperandCount() > 3) {
+				if (isOperandType<std::string>(3))
+					oss << getOperandAs<std::string>(3);
+				else if (isOperandType<std::string_view>(3))
+					oss << getOperandAs<std::string_view>(3);
+			}
 		}
 		break;
 
@@ -1768,14 +1780,21 @@ public:
 					const size_t funcSymbolIndex = getOperandCount() - 1;
 					for (size_t i = 2; i < funcSymbolIndex; i += 3) {
 						if (i > 2) oss << ", ";
-						oss << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
+						oss << getOperandAsTypeString(i);
+						// Safely get size - should be int at i+1
+						if (i + 1 < getOperandCount() && isOperandType<int>(i + 1)) {
+							oss << getOperandAs<int>(i + 1);
+						}
+						oss << " ";
 
-						if (isOperandType<unsigned long long>(i + 2))
-							oss << getOperandAs<unsigned long long>(i + 2);
-						else if (isOperandType<TempVar>(i + 2))
-							oss << '%' << getOperandAs<TempVar>(i + 2).index;
-						else if (isOperandType<std::string_view>(i + 2))
-							oss << '%' << getOperandAs<std::string_view>(i + 2);
+						if (i + 2 < getOperandCount()) {
+							if (isOperandType<unsigned long long>(i + 2))
+								oss << getOperandAs<unsigned long long>(i + 2);
+							else if (isOperandType<TempVar>(i + 2))
+								oss << '%' << getOperandAs<TempVar>(i + 2).index;
+							else if (isOperandType<std::string_view>(i + 2))
+								oss << '%' << getOperandAs<std::string_view>(i + 2);
+						}
 					}
 
 					oss << ")";
@@ -1788,9 +1807,12 @@ public:
 		{
 			// %name = alloca [Type][SizeInBits]
 			oss << '%';
-			oss << getOperandAs<std::string_view>(2);
+			if (getOperandCount() > 2 && isOperandType<std::string_view>(2))
+				oss << getOperandAs<std::string_view>(2);
 			oss << " = alloca ";
-			oss << getOperandAsTypeString(0) << getOperandAs<int>(1);
+			oss << getOperandAsTypeString(0);
+			if (getOperandCount() > 1 && isOperandType<int>(1))
+				oss << getOperandAs<int>(1);
 		}
 		break;
 
@@ -1798,19 +1820,26 @@ public:
 		{
 			// store [Type][SizeInBits] [Value] to [Dest]
 			oss << "store ";
-			oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
-			
+			oss << getOperandAsTypeString(0);
+			if (getOperandCount() > 1 && isOperandType<int>(1))
+				oss << getOperandAs<int>(1);
+			oss << " ";
+
 			// Source register
-			X64Register srcReg = static_cast<X64Register>(getOperandAs<int>(3));
-			switch (srcReg) {
-			case X64Register::RCX: oss << "RCX"; break;
-			case X64Register::RDX: oss << "RDX"; break;
-			case X64Register::R8: oss << "R8"; break;
-			case X64Register::R9: oss << "R9"; break;
-			default: oss << "R" << static_cast<int>(srcReg); break;
+			if (getOperandCount() > 3 && isOperandType<int>(3)) {
+				X64Register srcReg = static_cast<X64Register>(getOperandAs<int>(3));
+				switch (srcReg) {
+				case X64Register::RCX: oss << "RCX"; break;
+				case X64Register::RDX: oss << "RDX"; break;
+				case X64Register::R8: oss << "R8"; break;
+				case X64Register::R9: oss << "R9"; break;
+				default: oss << "R" << static_cast<int>(srcReg); break;
+				}
 			}
-			
-			oss << " to %" << getOperandAs<std::string_view>(2);
+
+			oss << " to %";
+			if (getOperandCount() > 2 && isOperandType<std::string_view>(2))
+				oss << getOperandAs<std::string_view>(2);
 		}
 		break;
 
@@ -2083,7 +2112,7 @@ public:
 			assert(getOperandCount() == 6 && "MemberStore instruction must have exactly 6 operands");
 			if (getOperandCount() >= 6) {
 				oss << "member_store ";
-				oss << getOperandAsTypeString(0) << getOperandAs<int>(1) << " ";
+				oss << getOperandAsTypeString(0) << getOperandAsIntSafe(1) << " ";
 
 				// Object
 				if (isOperandType<TempVar>(2))
@@ -2091,8 +2120,10 @@ public:
 				else if (isOperandType<std::string_view>(2))
 					oss << '%' << getOperandAs<std::string_view>(2);
 
-				oss << "." << getOperandAs<std::string_view>(3);
-				oss << " (offset: " << getOperandAs<int>(4) << "), ";
+				oss << ".";
+				if (getOperandCount() > 3 && isOperandType<std::string_view>(3))
+					oss << getOperandAs<std::string_view>(3);
+				oss << " (offset: " << getOperandAsIntSafe(4) << "), ";
 
 				// Value
 				if (isOperandType<TempVar>(5))
@@ -2793,12 +2824,21 @@ public:
 			//         [type, size, name, custom_alignment, array_type, array_size_bits, array_size_value] or
 			//         [type, size, name, custom_alignment, init_type, init_size, init_value]
 			assert((getOperandCount() == 4 || getOperandCount() == 7) && "VariableDecl instruction must have exactly 4 or 7 operands");
-			oss << "%" << getOperandAs<std::string_view>(2) << " = alloc " << getOperandAsTypeString(0) << getOperandAs<int>(1);
-			if (getOperandAs<unsigned long long>(3) > 0) {
-				oss << " alignas(" << getOperandAs<unsigned long long>(3) << ")";
+			oss << "%";
+			if (getOperandCount() > 2 && isOperandType<std::string_view>(2))
+				oss << getOperandAs<std::string_view>(2);
+			oss << " = alloc " << getOperandAsTypeString(0) << getOperandAsIntSafe(1);
+			if (getOperandCount() > 3 && isOperandType<unsigned long long>(3)) {
+				unsigned long long alignment = getOperandAs<unsigned long long>(3);
+				if (alignment > 0) {
+					oss << " alignas(" << alignment << ")";
+				}
 			}
 			if (getOperandCount() == 7) {
-				oss << "\nassign %" << getOperandAs<std::string_view>(2) << " = ";
+				oss << "\nassign %";
+				if (isOperandType<std::string_view>(2))
+					oss << getOperandAs<std::string_view>(2);
+				oss << " = ";
 				// Check if operand 6 is a literal value or a variable/TempVar
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
