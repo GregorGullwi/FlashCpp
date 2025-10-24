@@ -1468,6 +1468,14 @@ public:
 
 	void add_initializer(ASTNode init_expr) {
 		initializers_.push_back(init_expr);
+		is_designated_.push_back(false);
+		member_names_.push_back("");  // Empty for positional initializers
+	}
+
+	void add_designated_initializer(std::string member_name, ASTNode init_expr) {
+		initializers_.push_back(init_expr);
+		is_designated_.push_back(true);
+		member_names_.push_back(std::move(member_name));
 	}
 
 	const std::vector<ASTNode>& initializers() const {
@@ -1478,8 +1486,22 @@ public:
 		return initializers_.size();
 	}
 
+	bool is_designated(size_t index) const {
+		return index < is_designated_.size() && is_designated_[index];
+	}
+
+	const std::string& member_name(size_t index) const {
+		if (index < member_names_.size()) {
+			return member_names_[index];
+		}
+		static const std::string empty;
+		return empty;
+	}
+
 private:
 	std::vector<ASTNode> initializers_;
+	std::vector<bool> is_designated_;
+	std::vector<std::string> member_names_;
 };
 
 // Storage class specifiers

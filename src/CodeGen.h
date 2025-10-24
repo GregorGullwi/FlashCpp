@@ -1549,19 +1549,27 @@ private:
 								ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), decl.identifier_token());
 							} else {
 								// No constructor - use direct member initialization
-								for (size_t i = 0; i < initializers.size() && i < struct_info.members.size(); ++i) {
-									const StructMember& member = struct_info.members[i];
-									const ASTNode& init_expr = initializers[i];
+								// Build a map of member names to initializer expressions
+								std::unordered_map<std::string, const ASTNode*> member_values;
+								size_t positional_index = 0;
 
-									// Generate IR for the initializer expression
-									std::vector<IrOperand> init_operands;
-									if (init_expr.is<ExpressionNode>()) {
-										init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+								for (size_t i = 0; i < initializers.size(); ++i) {
+									if (init_list.is_designated(i)) {
+										// Designated initializer - use member name
+										const std::string& member_name = init_list.member_name(i);
+										member_values[member_name] = &initializers[i];
 									} else {
-										assert(false && "Initializer must be an ExpressionNode");
+										// Positional initializer - map to member by index
+										if (positional_index < struct_info.members.size()) {
+											const std::string& member_name = struct_info.members[positional_index].name;
+											member_values[member_name] = &initializers[i];
+											positional_index++;
+										}
 									}
+								}
 
-									// Generate member store: struct.member = init_expr
+								// Generate member stores for each struct member
+								for (const StructMember& member : struct_info.members) {
 									std::vector<IrOperand> member_store_operands;
 									member_store_operands.emplace_back(member.type);
 									member_store_operands.emplace_back(static_cast<int>(member.size * 8));
@@ -1569,10 +1577,24 @@ private:
 									member_store_operands.emplace_back(std::string_view(member.name));
 									member_store_operands.emplace_back(static_cast<int>(member.offset));
 
-									if (init_operands.size() >= 3) {
-										member_store_operands.emplace_back(init_operands[2]);
+									// Check if this member has an initializer
+									if (member_values.count(member.name)) {
+										const ASTNode& init_expr = *member_values[member.name];
+										std::vector<IrOperand> init_operands;
+										if (init_expr.is<ExpressionNode>()) {
+											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+										} else {
+											assert(false && "Initializer must be an ExpressionNode");
+										}
+
+										if (init_operands.size() >= 3) {
+											member_store_operands.emplace_back(init_operands[2]);
+										} else {
+											assert(false && "Invalid initializer operands");
+										}
 									} else {
-										assert(false && "Invalid initializer operands");
+										// Zero-initialize unspecified members
+										member_store_operands.emplace_back(0);
 									}
 
 									ir_.addInstruction(IrOpcode::MemberStore, std::move(member_store_operands), decl.identifier_token());

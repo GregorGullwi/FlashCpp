@@ -3276,33 +3276,91 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 	const StructTypeInfo& struct_info = *type_info.struct_info_;
 
-	// Parse comma-separated initializer expressions
+	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;
+	bool has_designated = false;  // Track if we've seen any designated initializers
+	std::unordered_set<std::string_view> used_members;  // Track which members have been initialized
+
 	while (true) {
 		// Check if we've reached the end of the initializer list
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
 			break;
 		}
 
-		// Check if we have too many initializers
-		if (member_index >= struct_info.members.size()) {
-			return ParseResult::error("Too many initializers for struct", *current_token_);
-		}
+		// Check for designated initializer syntax: .member = value
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ".") {
+			has_designated = true;
+			consume_token();  // consume '.'
 
-		// Parse the initializer expression
-		ParseResult init_expr_result = parse_expression();
-		if (init_expr_result.is_error()) {
-			return init_expr_result;
-		}
+			// Parse member name
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected member name after '.' in designated initializer", *current_token_);
+			}
+			std::string_view member_name = peek_token()->value();
+			consume_token();
 
-		// Add the initializer to the list
-		if (init_expr_result.node().has_value()) {
-			init_list_ref.add_initializer(*init_expr_result.node());
+			// Validate member name exists in struct
+			bool member_found = false;
+			for (const auto& member : struct_info.members) {
+				if (member.name == member_name) {
+					member_found = true;
+					break;
+				}
+			}
+			if (!member_found) {
+				return ParseResult::error("Unknown member '" + std::string(member_name) + "' in designated initializer", *current_token_);
+			}
+
+			// Check for duplicate member initialization
+			if (used_members.count(member_name)) {
+				return ParseResult::error("Member '" + std::string(member_name) + "' already initialized", *current_token_);
+			}
+			used_members.insert(member_name);
+
+			// Expect '='
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator || peek_token()->value() != "=") {
+				return ParseResult::error("Expected '=' after member name in designated initializer", *current_token_);
+			}
+			consume_token();  // consume '='
+
+			// Parse the initializer expression
+			ParseResult init_expr_result = parse_expression();
+			if (init_expr_result.is_error()) {
+				return init_expr_result;
+			}
+
+			// Add the designated initializer to the list
+			if (init_expr_result.node().has_value()) {
+				init_list_ref.add_designated_initializer(std::string(member_name), *init_expr_result.node());
+			} else {
+				return ParseResult::error("Expected initializer expression", *current_token_);
+			}
 		} else {
-			return ParseResult::error("Expected initializer expression", *current_token_);
-		}
+			// Positional initializer
+			if (has_designated) {
+				return ParseResult::error("Positional initializers cannot follow designated initializers", *current_token_);
+			}
 
-		member_index++;
+			// Check if we have too many initializers
+			if (member_index >= struct_info.members.size()) {
+				return ParseResult::error("Too many initializers for struct", *current_token_);
+			}
+
+			// Parse the initializer expression
+			ParseResult init_expr_result = parse_expression();
+			if (init_expr_result.is_error()) {
+				return init_expr_result;
+			}
+
+			// Add the initializer to the list
+			if (init_expr_result.node().has_value()) {
+				init_list_ref.add_initializer(*init_expr_result.node());
+			} else {
+				return ParseResult::error("Expected initializer expression", *current_token_);
+			}
+
+			member_index++;
+		}
 
 		// Check for comma or end of list
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
