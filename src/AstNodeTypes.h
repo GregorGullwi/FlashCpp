@@ -451,6 +451,9 @@ struct TypeInfo
 	// For enum types, store additional information
 	std::unique_ptr<EnumTypeInfo> enum_info_;
 
+	// For typedef, store the size in bits (for primitive types)
+	unsigned char type_size_ = 0;
+
 	const char* name() { return name_.c_str(); };
 
 	// Helper methods for struct types
@@ -1685,4 +1688,19 @@ public:
 private:
 	Token label_token_;  // The target label identifier
 	Token goto_token_;   // The goto keyword token (for error reporting)
+};
+
+// Typedef declaration node: typedef existing_type new_name;
+class TypedefDeclarationNode {
+public:
+	explicit TypedefDeclarationNode(ASTNode type_node, Token alias_name)
+		: type_node_(type_node), alias_name_(alias_name) {}
+
+	const ASTNode& type_node() const { return type_node_; }
+	std::string_view alias_name() const { return alias_name_.value(); }
+	const Token& alias_token() const { return alias_name_; }
+
+private:
+	ASTNode type_node_;  // The underlying type (TypeSpecifierNode)
+	Token alias_name_;   // The new type alias name
 };

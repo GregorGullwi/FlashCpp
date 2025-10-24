@@ -225,6 +225,7 @@ private:
         ParseResult parse_function_declaration(DeclarationNode& declaration_node);
         ParseResult parse_struct_declaration();  // Add struct declaration parser
         ParseResult parse_enum_declaration();    // Add enum declaration parser
+        ParseResult parse_typedef_declaration(); // Add typedef declaration parser
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();

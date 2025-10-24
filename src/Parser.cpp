@@ -327,6 +327,18 @@ ParseResult Parser::parse_top_level_node()
 		return result;
 	}
 
+	// Check if it's a typedef declaration
+	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "typedef") {
+		auto result = parse_typedef_declaration();
+		if (!result.is_error()) {
+			if (auto node = result.node()) {
+				ast_nodes_.push_back(*node);
+			}
+			return saved_position.success();
+		}
+		return result;
+	}
+
 	// Check for extern "C" linkage specification
 	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "extern") {
 		// Save position in case this is just a regular extern declaration
@@ -2166,6 +2178,73 @@ ParseResult Parser::parse_enum_declaration()
 	return saved_position.success(enum_node);
 }
 
+ParseResult Parser::parse_typedef_declaration()
+{
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'typedef' keyword
+	auto typedef_keyword = consume_token();
+	if (!typedef_keyword.has_value() || typedef_keyword->value() != "typedef") {
+		return ParseResult::error("Expected 'typedef' keyword", typedef_keyword.value_or(Token()));
+	}
+
+	// Parse the underlying type
+	auto type_result = parse_type_specifier();
+	if (type_result.is_error()) {
+		return type_result;
+	}
+
+	if (!type_result.node().has_value()) {
+		return ParseResult::error("Expected type specifier after 'typedef'", *current_token_);
+	}
+
+	ASTNode type_node = *type_result.node();
+	TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
+
+	// Handle pointer declarators (e.g., typedef int* IntPtr;)
+	while (peek_token().has_value() && peek_token()->value() == "*") {
+		consume_token(); // consume '*'
+		type_spec.add_pointer_level();
+
+		// Skip const/volatile after * for now (TODO: handle properly)
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			if (peek_token()->value() == "const" || peek_token()->value() == "volatile") {
+				consume_token();
+			} else {
+				break;
+			}
+		}
+	}
+
+	// Parse the alias name (identifier)
+	auto alias_token = consume_token();
+	if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected identifier after type in typedef", alias_token.value_or(Token()));
+	}
+
+	std::string_view alias_name = alias_token->value();
+
+	// Expect semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after typedef declaration", *current_token_);
+	}
+
+	// Register the typedef alias in the type system
+	// The typedef should resolve to the underlying type, not be a new UserDefined type
+	// We create a TypeInfo entry that mirrors the underlying type
+	auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+	alias_type_info.type_index_ = type_spec.type_index();
+	alias_type_info.type_size_ = type_spec.size_in_bits();
+	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+
+	// Update the type_node with the modified type_spec (with pointers)
+	type_node = emplace_node<TypeSpecifierNode>(type_spec);
+
+	// Create and return typedef declaration node
+	auto typedef_node = emplace_node<TypedefDeclarationNode>(type_node, *alias_token);
+	return saved_position.success(typedef_node);
+}
+
 ParseResult Parser::parse_namespace() {
 	ScopedTokenPosition saved_position(*this);
 
@@ -2680,14 +2759,21 @@ ParseResult Parser::parse_type_specifier()
 				Type::Enum, enum_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 		}
 
-		// Otherwise, treat as generic user-defined type
+		// Otherwise, treat as generic user-defined type or typedef
 		// Look up the type_index if it's a registered type
 		TypeIndex user_type_index = 0;
+		Type resolved_type = Type::UserDefined;
 		if (type_it != gTypesByName.end()) {
 			user_type_index = type_it->second->type_index_;
+			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
+			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
+			if (is_typedef) {
+				resolved_type = type_it->second->type_;
+				type_size = type_it->second->type_size_;
+			}
 		}
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			Type::UserDefined, user_type_index, type_size, type_name_token, cv_qualifier));
+			resolved_type, user_type_index, type_size, type_name_token, cv_qualifier));
 	}
 
 	return ParseResult::error("Unexpected token in type specifier",
@@ -2812,6 +2898,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"goto", &Parser::parse_goto_statement},
 			{"using", &Parser::parse_using_directive_or_declaration},
 			{"namespace", &Parser::parse_namespace},
+			{"typedef", &Parser::parse_typedef_declaration},
 			{"static", &Parser::parse_variable_declaration},
 			{"extern", &Parser::parse_variable_declaration},
 			{"register", &Parser::parse_variable_declaration},
@@ -2864,12 +2951,16 @@ ParseResult Parser::parse_statement_or_declaration()
 		// Not a label, restore position and continue
 		restore_token_position(saved_pos);
 
-		// Check if this identifier is a registered struct/class/enum type
+		// Check if this identifier is a registered struct/class/enum/typedef type
 		std::string type_name(current_token.value());
 		auto type_it = gTypesByName.find(type_name);
-		if (type_it != gTypesByName.end() && (type_it->second->isStruct() || type_it->second->isEnum())) {
-			// This is a struct/enum type declaration
-			return parse_variable_declaration();
+		if (type_it != gTypesByName.end()) {
+			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
+			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
+			if (type_it->second->isStruct() || type_it->second->isEnum() || is_typedef) {
+				// This is a struct/enum/typedef type declaration
+				return parse_variable_declaration();
+			}
 		}
 
 		// If it starts with an identifier, it could be an assignment, expression,

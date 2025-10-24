@@ -121,6 +121,10 @@ public:
 			// No code generation needed
 			return;
 		}
+		else if (node.is<TypedefDeclarationNode>()) {
+			// Typedef declarations don't generate code - they're handled during parsing
+			return;
+		}
 		else if (node.is<ExpressionNode>()) {
 			// Expression statement (e.g., function call, lambda expression, etc.)
 			// Evaluate the expression but discard the result

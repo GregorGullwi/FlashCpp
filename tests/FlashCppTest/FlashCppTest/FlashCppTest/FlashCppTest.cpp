@@ -1893,3 +1893,7 @@ TEST_CASE("FunctionPointer:BasicDeclaration") {
 TEST_CASE("Functions:Extern C") {
 	run_test_from_file("test_extern_c_single.cpp", "Test of extern C declaration", false);
 }
+
+TEST_CASE("Typedef:Basic") {
+	run_test_from_file("test_typedef.cpp", "Basic typedef support", false);
+}
