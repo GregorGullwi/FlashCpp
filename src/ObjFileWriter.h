@@ -1,5 +1,11 @@
 #pragma once
 
+#if defined(__clang__)
+// Clang compiler
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winconsistent-missing-override"
+#endif
+
 #include "coffi/coffi.hpp"
 #include "CodeViewDebug.h"
 #include "AstNodeTypes.h"
