@@ -1962,11 +1962,11 @@ private:
 			return { info.type, info.size_in_bits, result_temp };
 		}
 
-		// First try local symbol table
+		// First try local symbol table (for local variables, parameters, etc.)
 		std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
 		bool is_global = false;
 
-		// If not found locally, try global symbol table (for enum values, global variables, etc.)
+		// If not found locally, try global symbol table (for enum values, global variables, namespace-scoped variables, etc.)
 		if (!symbol.has_value() && global_symbol_table_) {
 			symbol = global_symbol_table_->lookup(identifierNode.name());
 			is_global = symbol.has_value();  // If found in global table, it's a global
@@ -2069,24 +2069,72 @@ private:
 			}
 		}
 
-		// For now, treat qualified identifiers similarly to regular identifiers
-		// In a full implementation, we would use the namespace information for name mangling
-		// For external functions like std::print, we just use the identifier name
+		// Look up the qualified identifier in the symbol table
 		const std::optional<ASTNode> symbol = symbol_table.lookup_qualified(qualifiedIdNode.namespaces(), qualifiedIdNode.name());
-		if (!symbol.has_value()) {
+
+		// Also try global symbol table for namespace-qualified globals
+		std::optional<ASTNode> global_symbol;
+		if (!symbol.has_value() && global_symbol_table_) {
+			global_symbol = global_symbol_table_->lookup_qualified(qualifiedIdNode.namespaces(), qualifiedIdNode.name());
+		}
+
+		const std::optional<ASTNode>& found_symbol = symbol.has_value() ? symbol : global_symbol;
+
+		if (!found_symbol.has_value()) {
 			// For external functions (like std::print), we might not have them in our symbol table
 			// Return a placeholder - the actual linking will happen later
 			return { Type::Int, 32, qualifiedIdNode.name() };
 		}
 
-		if (symbol->is<DeclarationNode>()) {
-			const auto& decl_node = symbol->as<DeclarationNode>();
+		if (found_symbol->is<DeclarationNode>()) {
+			const auto& decl_node = found_symbol->as<DeclarationNode>();
 			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), qualifiedIdNode.name() };
+
+			// Check if this is a global variable (namespace-scoped)
+			// If found in global symbol table, it's a global variable
+			bool is_global = global_symbol.has_value();
+
+			if (is_global) {
+				// Generate GlobalLoad for namespace-qualified global variable
+				TempVar result_temp = var_counter.next();
+				std::vector<IrOperand> operands;
+				operands.emplace_back(result_temp);
+				operands.emplace_back(qualifiedIdNode.name());  // Use the identifier name
+				ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+
+				// Return the temp variable that will hold the loaded value
+				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
+			} else {
+				// Local variable - just return the name
+				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), qualifiedIdNode.name() };
+			}
 		}
 
-		// If we get here, the symbol is not a DeclarationNode
-		assert(false && "Qualified identifier is not a DeclarationNode");
+		if (found_symbol->is<VariableDeclarationNode>()) {
+			const auto& var_decl_node = found_symbol->as<VariableDeclarationNode>();
+			const auto& decl_node = var_decl_node.declaration_node().as<DeclarationNode>();
+			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+
+			// Namespace-scoped variables are always global
+			// Generate GlobalLoad for namespace-qualified global variable
+			TempVar result_temp = var_counter.next();
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_temp);
+			operands.emplace_back(qualifiedIdNode.name());  // Use the identifier name
+			ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+
+			// Return the temp variable that will hold the loaded value
+			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
+		}
+
+		if (found_symbol->is<FunctionDeclarationNode>()) {
+			// This is a function - just return the name for function calls
+			// The actual function call handling is done elsewhere
+			return { Type::Function, 64, qualifiedIdNode.name() };
+		}
+
+		// If we get here, the symbol is not a supported type
+		assert(false && "Qualified identifier is not a supported type");
 		return {};
 	}
 

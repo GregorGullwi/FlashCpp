@@ -214,6 +214,14 @@ public:
 	}
 
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
+		// Build the current namespace path once (for efficiency)
+		NamespacePath current_ns_path;
+		for (const auto& scope : symbol_table_stack_) {
+			if (scope.scope_type == ScopeType::Namespace) {
+				current_ns_path.push_back(scope.namespace_name);
+			}
+		}
+
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 
@@ -240,6 +248,25 @@ public:
 				auto result = lookup_qualified(using_ns, identifier);
 				if (result.has_value()) {
 					return result;
+				}
+			}
+		}
+
+		// If we're inside a namespace and haven't found the symbol yet,
+		// check the persistent namespace map for namespace-scoped variables
+		if (!current_ns_path.empty()) {
+			auto ns_it = namespace_symbols_.find(current_ns_path);
+			if (ns_it != namespace_symbols_.end()) {
+				for (const auto& [key, value_vec] : ns_it->second) {
+#if USE_OLD_STRING_APPROACH
+					if (key == std::string(identifier)) {
+#else
+					if (key.view() == identifier) {
+#endif
+						if (!value_vec.empty()) {
+							return value_vec[0];
+						}
+					}
 				}
 			}
 		}
