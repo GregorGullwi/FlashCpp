@@ -1966,4 +1966,8 @@ TEST_SUITE("Member initialization") {
 	TEST_CASE("Various member initialization forms") {
 		run_test_from_file("test_member_init_designated.cpp", "Member initialization: various forms", false);
 	}
+
+	TEST_CASE("Local struct declaration") {
+		run_test_from_file("test_local_struct.cpp", "Local struct declaration", false);
+	}
 }

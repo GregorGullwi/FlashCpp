@@ -3404,6 +3404,8 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"using", &Parser::parse_using_directive_or_declaration},
 			{"namespace", &Parser::parse_namespace},
 			{"typedef", &Parser::parse_typedef_declaration},
+			{"struct", &Parser::parse_struct_declaration},
+			{"class", &Parser::parse_struct_declaration},
 			{"static", &Parser::parse_variable_declaration},
 			{"extern", &Parser::parse_variable_declaration},
 			{"register", &Parser::parse_variable_declaration},
