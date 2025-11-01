@@ -332,7 +332,8 @@ struct ParameterInfo {
 
 // Function information structure (moved to public for access from ObjFileWriter)
 struct FunctionInfo {
-    std::string name;
+    std::string name;           // Unmangled name for display
+    std::string mangled_name;   // Mangled name for symbol lookup
     uint32_t code_offset;
     uint32_t code_length;
     uint32_t file_id;
@@ -366,7 +367,7 @@ public:
     uint32_t addSourceFile(const std::filesystem::path& filename);
 
     // Add a function symbol with line information
-    void addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length, uint32_t stack_space);
+    void addFunction(const std::string& name, const std::string& mangled_name, uint32_t code_offset, uint32_t code_length, uint32_t stack_space);
 
     // Add a line mapping for the current function
     void addLineMapping(uint32_t code_offset, uint32_t line_number);

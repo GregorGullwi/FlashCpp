@@ -568,8 +568,8 @@ public:
 		}
 
 		// Add function to debug info with length 0 - length will be calculated later
-		std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " at offset " << section_offset << std::endl;
-		debug_builder_.addFunction(unmangled_name, section_offset, 0, stack_space);
+		std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " (mangled: " << mangled_name << ") at offset " << section_offset << std::endl;
+		debug_builder_.addFunction(unmangled_name, mangled_name, section_offset, 0, stack_space);
 		std::cerr << "DEBUG: Function added to debug builder" << std::endl;
 
 		// Exception info is now handled directly in IRConverter finalization logic

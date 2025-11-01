@@ -156,10 +156,11 @@ uint32_t DebugInfoBuilder::addSourceFile(const std::filesystem::path& filename) 
     return file_id;
 }
 
-void DebugInfoBuilder::addFunction(const std::string& name, uint32_t code_offset, uint32_t code_length, uint32_t stack_space) {
+void DebugInfoBuilder::addFunction(const std::string& name, const std::string& mangled_name, uint32_t code_offset, uint32_t code_length, uint32_t stack_space) {
     // Add basic function info without line numbers
     FunctionInfo func_info;
-    func_info.name = name;  // Direct assignment
+    func_info.name = name;  // Unmangled name for display
+    func_info.mangled_name = mangled_name;  // Mangled name for symbol lookup
     func_info.code_offset = code_offset;
     func_info.code_length = code_length;
     func_info.file_id = 0; // Default to first file
@@ -854,8 +855,10 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
                         reinterpret_cast<const uint8_t*>(&zero_offset) + sizeof(zero_offset));
 
         // Add debug relocations for function offset (SECREL + SECTION pair)
-        addDebugRelocation(function_offset_position, func.name, IMAGE_REL_AMD64_SECREL);
-        addDebugRelocation(function_offset_position + 4, func.name, IMAGE_REL_AMD64_SECTION);
+        // Use mangled name for symbol lookup
+        const std::string& symbol_name = func.mangled_name.empty() ? func.name : func.mangled_name;
+        addDebugRelocation(function_offset_position, symbol_name, IMAGE_REL_AMD64_SECREL);
+        addDebugRelocation(function_offset_position + 4, symbol_name, IMAGE_REL_AMD64_SECTION);
 
         // Use section 0 to match MSVC/clang reference (not the actual section number)
         uint16_t section_number = 0;
