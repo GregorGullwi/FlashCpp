@@ -1705,29 +1705,98 @@ ParseResult Parser::parse_struct_declaration()
 			// This is a data member
 			std::optional<ASTNode> default_initializer;
 
-			// Check for member initialization (C++11 feature)
-			if (peek_token().has_value() && peek_token()->value() == "=") {
+			// Get the type from the member declaration
+			if (!member_result.node()->is<DeclarationNode>()) {
+				return ParseResult::error("Expected declaration node for member", *peek_token());
+			}
+			const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+			const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+
+			// Check for direct brace initialization: C c1{ 1 };
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+			    peek_token()->value() == "{") {
+				auto init_result = parse_brace_initializer(type_spec);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				if (init_result.node().has_value()) {
+					default_initializer = *init_result.node();
+				}
+			}
+			// Check for member initialization with '=' (C++11 feature)
+			else if (peek_token().has_value() && peek_token()->value() == "=") {
 				consume_token(); // consume '='
 
-				// Check if this is a brace initializer
+				// Check if this is a brace initializer: B b = { .a = 1 }
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
 				    peek_token()->value() == "{") {
-					// Parse brace initializer (e.g., B b = { .a = 1 })
-					// Get the type from the member declaration
-					if (!member_result.node()->is<DeclarationNode>()) {
-						return ParseResult::error("Expected declaration node for member with brace initializer", *peek_token());
-					}
-
-					const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-					const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
-
 					auto init_result = parse_brace_initializer(type_spec);
 					if (init_result.is_error()) {
 						return init_result;
 					}
-
 					if (init_result.node().has_value()) {
 						default_initializer = *init_result.node();
+					}
+				}
+				// Check if this is a type name followed by brace initializer: B b = B{ .a = 2 }
+				else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+					// Save position in case this isn't a type name
+					TokenPosition saved_pos = save_token_position();
+
+					// Try to parse as type specifier
+					ParseResult type_result = parse_type_specifier();
+					if (!type_result.is_error() && type_result.node().has_value() &&
+					    peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+					    (peek_token()->value() == "{" || peek_token()->value() == "(")) {
+						// This is a type name followed by initializer: B{...} or B(...)
+						const TypeSpecifierNode& init_type_spec = type_result.node()->as<TypeSpecifierNode>();
+
+						if (peek_token()->value() == "{") {
+							// Parse brace initializer
+							auto init_result = parse_brace_initializer(init_type_spec);
+							if (init_result.is_error()) {
+								return init_result;
+							}
+							if (init_result.node().has_value()) {
+								default_initializer = *init_result.node();
+							}
+						} else {
+							// Parse parenthesized initializer: B(args)
+							consume_token(); // consume '('
+							std::vector<ASTNode> init_args;
+							if (!peek_token().has_value() || peek_token()->value() != ")") {
+								do {
+									ParseResult arg_result = parse_expression();
+									if (arg_result.is_error()) {
+										return arg_result;
+									}
+									if (auto arg_node = arg_result.node()) {
+										init_args.push_back(*arg_node);
+									}
+								} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+							}
+							if (!consume_punctuator(")")) {
+								return ParseResult::error("Expected ')' after initializer arguments", *current_token_);
+							}
+
+							// Create an InitializerListNode with the arguments
+							auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+							for (auto& arg : init_args) {
+								init_list_ref.add_initializer(arg);
+							}
+							default_initializer = init_list_node;
+						}
+						discard_saved_token(saved_pos);
+					} else {
+						// Not a type name, restore and parse as expression
+						restore_token_position(saved_pos);
+						auto init_result = parse_expression();
+						if (init_result.is_error()) {
+							return init_result;
+						}
+						if (init_result.node().has_value()) {
+							default_initializer = *init_result.node();
+						}
 					}
 				} else {
 					// Parse regular expression initializer
@@ -1735,8 +1804,6 @@ ParseResult Parser::parse_struct_declaration()
 					if (init_result.is_error()) {
 						return init_result;
 					}
-
-					// Store the initializer for use in constructor generation
 					if (init_result.node().has_value()) {
 						default_initializer = *init_result.node();
 					}

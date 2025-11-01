@@ -1963,7 +1963,7 @@ TEST_SUITE("Member initialization") {
 		run_test_from_file("test_member_init_mixed.cpp", "Member initialization: mixed", false);
 	}
 
-	TEST_CASE("Designated initializer in member initialization") {
-		run_test_from_file("test_member_init_designated.cpp", "Member initialization: designated", false);
+	TEST_CASE("Various member initialization forms") {
+		run_test_from_file("test_member_init_designated.cpp", "Member initialization: various forms", false);
 	}
 }
