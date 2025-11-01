@@ -1709,15 +1709,37 @@ ParseResult Parser::parse_struct_declaration()
 			if (peek_token().has_value() && peek_token()->value() == "=") {
 				consume_token(); // consume '='
 
-				// Parse the initializer expression
-				auto init_result = parse_expression();
-				if (init_result.is_error()) {
-					return init_result;
-				}
+				// Check if this is a brace initializer
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+				    peek_token()->value() == "{") {
+					// Parse brace initializer (e.g., B b = { .a = 1 })
+					// Get the type from the member declaration
+					if (!member_result.node()->is<DeclarationNode>()) {
+						return ParseResult::error("Expected declaration node for member with brace initializer", *peek_token());
+					}
 
-				// Store the initializer for use in constructor generation
-				if (init_result.node().has_value()) {
-					default_initializer = *init_result.node();
+					const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+					const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+
+					auto init_result = parse_brace_initializer(type_spec);
+					if (init_result.is_error()) {
+						return init_result;
+					}
+
+					if (init_result.node().has_value()) {
+						default_initializer = *init_result.node();
+					}
+				} else {
+					// Parse regular expression initializer
+					auto init_result = parse_expression();
+					if (init_result.is_error()) {
+						return init_result;
+					}
+
+					// Store the initializer for use in constructor generation
+					if (init_result.node().has_value()) {
+						default_initializer = *init_result.node();
+					}
 				}
 			}
 
