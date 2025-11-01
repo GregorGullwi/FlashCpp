@@ -2498,7 +2498,6 @@ ParseResult Parser::parse_enum_declaration()
 		if (peek_token().has_value() && peek_token()->value() == "=") {
 			consume_token(); // consume '='
 
-			// Parse the value expression
 			auto value_result = parse_expression();
 			if (value_result.is_error()) {
 				return value_result;
@@ -3631,7 +3630,6 @@ ParseResult Parser::parse_variable_declaration()
 				break;
 			}
 
-			// Parse the argument expression
 			ParseResult arg_result = parse_expression();
 			if (arg_result.is_error()) {
 				return arg_result;
@@ -3733,7 +3731,9 @@ ParseResult Parser::parse_variable_declaration()
 					}
 					init_expr = init_list_result.node();
 				} else {
-					ParseResult init_expr_result = parse_expression();
+					// Parse expression with precedence > comma operator (precedence 1)
+					// This prevents comma from being treated as an operator in declaration lists
+					ParseResult init_expr_result = parse_expression(2);
 					if (init_expr_result.is_error()) {
 						return init_expr_result;
 					}
@@ -3830,8 +3830,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			}
 			consume_token();  // consume '='
 
-			// Parse the initializer expression
-			ParseResult init_expr_result = parse_expression();
+			// Parse the initializer expression with precedence > comma operator (precedence 1)
+			// This prevents comma from being treated as an operator in initializer lists
+			ParseResult init_expr_result = parse_expression(2);
 			if (init_expr_result.is_error()) {
 				return init_expr_result;
 			}
@@ -3853,8 +3854,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				return ParseResult::error("Too many initializers for struct", *current_token_);
 			}
 
-			// Parse the initializer expression
-			ParseResult init_expr_result = parse_expression();
+			// Parse the initializer expression with precedence > comma operator (precedence 1)
+			// This prevents comma from being treated as an operator in initializer lists
+			ParseResult init_expr_result = parse_expression(2);
 			if (init_expr_result.is_error()) {
 				return init_expr_result;
 			}
@@ -4282,8 +4284,11 @@ ParseResult Parser::parse_expression(int precedence)
 	}
 
 	while (true) {
-		// Check if the current token is a binary operator
-		if (peek_token()->type() != Token::Type::Operator) {
+		// Check if the current token is a binary operator or comma (which can be an operator)
+		bool is_operator = peek_token()->type() == Token::Type::Operator;
+		bool is_comma = peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",";
+
+		if (!is_operator && !is_comma) {
 			break;
 		}
 
@@ -4441,6 +4446,8 @@ int Parser::get_operator_precedence(const std::string_view& op)
 			{"=", 3}, {"+=", 3}, {"-=", 3}, {"*=", 3}, {"/=", 3},
 			{"%=", 3}, {"&=", 3}, {"|=", 3}, {"^=", 3},
 			{"<<=", 3}, {">>=", 3},
+			// Comma operator (precedence 1, lowest precedence)
+			{",", 1},
 	};
 
 	auto it = precedence_map.find(op);
@@ -5197,7 +5204,8 @@ ParseResult Parser::parse_primary_expression()
 			} else {
 				// Not a cast, restore and parse as parenthesized expression
 				restore_token_position(saved_pos);
-				ParseResult paren_result = parse_expression();
+				// Allow comma operator in parenthesized expressions
+				ParseResult paren_result = parse_expression(MIN_PRECEDENCE);
 				if (paren_result.is_error()) {
 					return paren_result;
 				}
@@ -5210,7 +5218,8 @@ ParseResult Parser::parse_primary_expression()
 		} else {
 			// Not a type, parse as parenthesized expression
 			restore_token_position(saved_pos);
-			ParseResult paren_result = parse_expression();
+			// Allow comma operator in parenthesized expressions
+			ParseResult paren_result = parse_expression(MIN_PRECEDENCE);
 			if (paren_result.is_error()) {
 				return paren_result;
 			}

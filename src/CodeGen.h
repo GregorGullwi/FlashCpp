@@ -2259,6 +2259,19 @@ private:
 
 		const auto& op = binaryOperatorNode.op();
 
+		// Special handling for comma operator
+		// The comma operator evaluates both operands left-to-right and returns the right operand
+		if (op == ",") {
+			// Generate IR for the left-hand side (evaluate for side effects, discard result)
+			auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
+
+			// Generate IR for the right-hand side (this is the result)
+			auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+			// Return the right-hand side result
+			return rhsIrOperands;
+		}
+
 		// Special handling for assignment to array subscript
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();

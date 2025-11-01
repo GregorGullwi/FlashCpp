@@ -1917,6 +1917,10 @@ TEST_CASE("Nested classes") {
 	run_test_from_file("test_nested_classes.cpp", "Nested classes", false);
 }
 
+TEST_CASE("Comma operator") {
+	run_test_from_file("test_comma_comprehensive.cpp", "Nested classes", false);
+}
+
 TEST_SUITE("Delayed parsing - forward references in member functions") {
 	// C++20 Rule: Inline member function bodies are parsed in complete-class context
 	// This means they can reference members declared later in the class
