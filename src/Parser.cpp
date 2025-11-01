@@ -342,6 +342,11 @@ ParseResult Parser::parse_top_level_node()
 			if (auto node = result.node()) {
 				ast_nodes_.push_back(*node);
 			}
+			// Add any pending variable declarations from the struct definition
+			for (auto& var_node : pending_struct_variables_) {
+				ast_nodes_.push_back(var_node);
+			}
+			pending_struct_variables_.clear();
 			return saved_position.success();
 		}
 		return result;
@@ -1825,7 +1830,38 @@ ParseResult Parser::parse_struct_declaration()
 		return ParseResult::error("Expected '}' at end of struct/class definition", *peek_token());
 	}
 
-	// Expect semicolon after struct definition
+	// Check for variable declarations after struct definition: struct Point { ... } p, q;
+	std::vector<ASTNode> struct_variables;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+		// Parse variable declarators
+		do {
+			auto var_name_token = consume_token();
+			if (!var_name_token.has_value()) {
+				return ParseResult::error("Expected variable name after struct definition", *current_token_);
+			}
+
+			// Create a variable declaration node for this variable
+			auto var_type_spec = emplace_node<TypeSpecifierNode>(
+				Type::Struct,
+				struct_type_info.type_index_,
+				static_cast<unsigned char>(0),  // Size will be set later
+				Token(Token::Type::Identifier, struct_name, var_name_token->line(), var_name_token->column(), var_name_token->file_index())
+			);
+
+			auto var_decl = emplace_node<DeclarationNode>(var_type_spec, *var_name_token);
+
+			// Add to symbol table so it can be referenced later in the code
+			gSymbolTable.insert(var_name_token->value(), var_decl);
+
+			// Wrap in VariableDeclarationNode so it gets processed properly by code generator
+			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, std::nullopt);
+
+			struct_variables.push_back(var_decl_node);
+
+		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+	}
+
+	// Expect semicolon after struct definition (and optional variable declarations)
 	if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after struct/class definition", *peek_token());
 	}
@@ -2371,6 +2407,10 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Pop struct parsing context
 	struct_parsing_context_stack_.pop_back();
+
+	// Store variable declarations for later processing
+	// They will be added to the AST by the caller
+	pending_struct_variables_ = std::move(struct_variables);
 
 	return saved_position.success(struct_node);
 }
@@ -3365,6 +3405,12 @@ ParseResult Parser::parse_block()
 		if (auto node = parse_result.node()) {
 			block_ref.add_statement_node(*node);  // Unwrap optional before passing
 		}
+
+		// Add any pending variable declarations from struct definitions
+		for (auto& var_node : pending_struct_variables_) {
+			block_ref.add_statement_node(var_node);
+		}
+		pending_struct_variables_.clear();
 
 		consume_punctuator(";");
 	}

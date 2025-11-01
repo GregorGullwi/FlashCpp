@@ -531,11 +531,18 @@ private:
 	void visitStructDeclarationNode(const StructDeclarationNode& node) {
 		// Struct declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
-		// However, we need to visit member functions, constructors, and destructors to generate IR for them
-		for (const auto& member_func : node.member_functions()) {
-			// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
-			visit(member_func.function_declaration);
+
+		// Only visit member functions if we're at the top level (not inside a function)
+		// Local struct declarations inside functions should not generate member function IR
+		// because the member functions are already generated when the struct type is registered
+		if (current_function_name_.empty()) {
+			// We're at the top level, visit member functions
+			for (const auto& member_func : node.member_functions()) {
+				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
+				visit(member_func.function_declaration);
+			}
 		}
+		// If we're inside a function, just skip - the struct type is already registered
 	}
 
 	void visitEnumDeclarationNode(const EnumDeclarationNode& node) {

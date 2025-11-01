@@ -200,6 +200,9 @@ private:
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
+        // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
+        std::vector<ASTNode> pending_struct_variables_;
+
         template <typename T>
         std::pair<ASTNode, T&> create_node_ref(T&& node) {
                 return emplace_node_ref<T>(node);
