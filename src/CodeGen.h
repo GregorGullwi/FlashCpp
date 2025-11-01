@@ -572,6 +572,9 @@ private:
 		ctorDeclOperands.emplace_back(std::string(node.struct_name()) + "::" + std::string(node.struct_name()));
 		ctorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
 
+		// Add linkage information (C++ linkage for constructors)
+		ctorDeclOperands.emplace_back(static_cast<int>(Linkage::CPlusPlus));
+
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
 
@@ -753,26 +756,26 @@ private:
 									// Default initializer exists but isn't an expression, zero-initialize
 									if (member.type == Type::Int || member.type == Type::Long ||
 									    member.type == Type::Short || member.type == Type::Char) {
-										store_operands.emplace_back(0);
+										store_operands.emplace_back(0ULL);
 									} else if (member.type == Type::Float || member.type == Type::Double) {
 										store_operands.emplace_back(0.0);
 									} else if (member.type == Type::Bool) {
 										store_operands.emplace_back(false);
 									} else {
-										store_operands.emplace_back(0);
+										store_operands.emplace_back(0ULL);
 									}
 								}
 							} else {
 								// Zero-initialize based on type
 								if (member.type == Type::Int || member.type == Type::Long ||
 								    member.type == Type::Short || member.type == Type::Char) {
-									store_operands.emplace_back(0);  // Zero for integer types
+									store_operands.emplace_back(0ULL);  // Zero for integer types
 								} else if (member.type == Type::Float || member.type == Type::Double) {
 									store_operands.emplace_back(0.0);  // Zero for floating-point types
 								} else if (member.type == Type::Bool) {
 									store_operands.emplace_back(false);  // False for bool
 								} else {
-									store_operands.emplace_back(0);  // Default to zero
+									store_operands.emplace_back(0ULL);  // Default to zero
 								}
 							}
 
@@ -816,26 +819,26 @@ private:
 								// Default initializer exists but isn't an expression, zero-initialize
 								if (member.type == Type::Int || member.type == Type::Long ||
 								    member.type == Type::Short || member.type == Type::Char) {
-									store_operands.emplace_back(0);
+									store_operands.emplace_back(0ULL);
 								} else if (member.type == Type::Float || member.type == Type::Double) {
 									store_operands.emplace_back(0.0);
 								} else if (member.type == Type::Bool) {
 									store_operands.emplace_back(false);
 								} else {
-									store_operands.emplace_back(0);
+									store_operands.emplace_back(0ULL);
 								}
 							}
 						} else {
 							// Zero-initialize based on type
 							if (member.type == Type::Int || member.type == Type::Long ||
 							    member.type == Type::Short || member.type == Type::Char) {
-								store_operands.emplace_back(0);  // Zero for integer types
+								store_operands.emplace_back(0ULL);  // Zero for integer types
 							} else if (member.type == Type::Float || member.type == Type::Double) {
 								store_operands.emplace_back(0.0);  // Zero for floating-point types
 							} else if (member.type == Type::Bool) {
 								store_operands.emplace_back(false);  // False for bool
 							} else {
-								store_operands.emplace_back(0);  // Default to zero
+								store_operands.emplace_back(0ULL);  // Default to zero
 							}
 						}
 
@@ -876,6 +879,9 @@ private:
 		dtorDeclOperands.emplace_back(0);  // Pointer depth is 0 for void
 		dtorDeclOperands.emplace_back(std::string(node.struct_name()) + "::~" + std::string(node.struct_name()));
 		dtorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
+
+		// Add linkage information (C++ linkage for destructors)
+		dtorDeclOperands.emplace_back(static_cast<int>(Linkage::CPlusPlus));
 
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -1641,11 +1647,15 @@ private:
 
 							const auto& initializers = init_list.initializers();
 
-							if (struct_info.hasAnyConstructor()) {
+							// Check if this is a designated initializer list or aggregate initialization
+							// Designated initializers always use direct member initialization
+							bool use_direct_member_init = init_list.has_any_designated();
+
+							if (struct_info.hasAnyConstructor() && !use_direct_member_init) {
 								// Generate constructor call with parameters from initializer list
 								std::vector<IrOperand> ctor_operands;
 								ctor_operands.emplace_back(type_info.name_);  // Struct name
-								ctor_operands.emplace_back(std::string(decl.identifier_token().value()));  // Object name
+								ctor_operands.emplace_back(decl.identifier_token().value());  // Object name (string_view)
 
 								// Add each initializer as a constructor parameter
 								for (const ASTNode& init_expr : initializers) {
@@ -1711,7 +1721,7 @@ private:
 										}
 									} else {
 										// Zero-initialize unspecified members
-										member_store_operands.emplace_back(0);
+										member_store_operands.emplace_back(0ULL);
 									}
 
 									ir_.addInstruction(IrOpcode::MemberStore, std::move(member_store_operands), decl.identifier_token());
@@ -1765,7 +1775,7 @@ private:
 						// Generate constructor call
 						std::vector<IrOperand> ctor_operands;
 						ctor_operands.emplace_back(type_info.name_);  // Struct name (std::string)
-						ctor_operands.emplace_back(std::string(decl.identifier_token().value()));    // Object variable name
+						ctor_operands.emplace_back(decl.identifier_token().value());    // Object variable name (string_view)
 
 						// TODO: Add support for constructor parameters from initializer
 

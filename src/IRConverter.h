@@ -3068,8 +3068,8 @@ private:
 	}
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
-		// Verify we have at least the minimum operands: return type, size, pointer depth, function name, struct name
-		assert(instruction.getOperandCount() >= 5 && "FunctionDecl must have at least 5 operands");
+		// Verify we have at least the minimum operands: return type, size, pointer depth, function name, struct name, linkage
+		assert(instruction.getOperandCount() >= 6 && "FunctionDecl must have at least 6 operands");
 
 		// Function name can be either std::string or std::string_view (now at index 3)
 		std::string func_name_str;
@@ -3332,24 +3332,36 @@ private:
 			addLineMapping(instruction.getLineNumber());
 		}
 
-		assert(instruction.getOperandCount() >= 3);
-		if (instruction.isOperandType<unsigned long long>(2)) {
-			unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
-			if (returnValue > std::numeric_limits<uint32_t>::max()) {
-				throw std::runtime_error("Return value exceeds 32-bit limit");
+		if (instruction.getOperandCount() >= 3) {
+			if (instruction.isOperandType<int>(2)) {
+				int returnValue = instruction.getOperandAs<int>(2);
+				// mov eax, immediate instruction has a fixed size of 5 bytes
+				std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
+
+				// Fill in the return value
+				for (size_t i = 0; i < 4; ++i) {
+					movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+				}
+
+				textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 			}
+			else if (instruction.isOperandType<unsigned long long>(2)) {
+				unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
+				if (returnValue > std::numeric_limits<uint32_t>::max()) {
+					throw std::runtime_error("Return value exceeds 32-bit limit");
+				}
 
-			// mov eax, immediate instruction has a fixed size of 5 bytes
-			std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
+				// mov eax, immediate instruction has a fixed size of 5 bytes
+				std::array<uint8_t, 5> movEaxImmedInst = { 0xB8, 0, 0, 0, 0 };
 
-			// Fill in the return value
-			for (size_t i = 0; i < 4; ++i) {
-				movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+				// Fill in the return value
+				for (size_t i = 0; i < 4; ++i) {
+					movEaxImmedInst[i + 1] = (returnValue >> (8 * i)) & 0xFF;
+				}
+
+				textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 			}
-
-			textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
-		}
-		else if (instruction.isOperandType<TempVar>(2)) {
+			else if (instruction.isOperandType<TempVar>(2)) {
 			// Handle temporary variable (stored on stack)
 			auto size_it_bits = instruction.getOperandAs<int>(1);
 			auto return_var = instruction.getOperandAs<TempVar>(2);
@@ -3410,9 +3422,10 @@ private:
 				}
 			}
 		}
+	}
 
-		// MSVC-style epilogue
-		int32_t total_stack_space = variable_scopes.back().scope_stack_space;
+	// MSVC-style epilogue
+	int32_t total_stack_space = variable_scopes.back().scope_stack_space;
 
 		if (total_stack_space != 0) {
 			// Function had a prologue, use MSVC-style epilogue
@@ -3430,7 +3443,11 @@ private:
 	}
 
 	void handleStackAlloc(const IrInstruction& instruction) {
-		assert(false && "Not implemented");
+		// StackAlloc is not used in the current implementation
+		// Variables are allocated in handleVariableDecl instead
+		// Just return without doing anything
+		return;
+
 		// Get the size of the allocation
 		/*auto sizeInBytes = instruction.getOperandAs<int>(1) / 8;
 
@@ -5386,10 +5403,12 @@ private:
 		//auto member_name = instruction.getOperandAs<std::string_view>(3);
 		auto member_offset = instruction.getOperandAs<int>(4);
 
-		// Get the value - it could be a TempVar, a literal (int or unsigned long long), or a string_view (variable name)
+		// Get the value - it could be a TempVar, a literal (int, unsigned long long, bool, double), or a string_view (variable name)
 		TempVar value_var;
 		bool is_literal = false;
 		int64_t literal_value = 0;
+		double literal_double_value = 0.0;
+		bool is_double_literal = false;
 		bool is_variable = false;
 		std::string variable_name;
 
@@ -5401,6 +5420,16 @@ private:
 		} else if (instruction.isOperandType<unsigned long long>(5)) {
 			is_literal = true;
 			literal_value = static_cast<int64_t>(instruction.getOperandAs<unsigned long long>(5));
+		} else if (instruction.isOperandType<bool>(5)) {
+			is_literal = true;
+			literal_value = instruction.getOperandAs<bool>(5) ? 1 : 0;
+		} else if (instruction.isOperandType<char>(5)) {
+			is_literal = true;
+			literal_value = static_cast<int64_t>(instruction.getOperandAs<char>(5));
+		} else if (instruction.isOperandType<double>(5)) {
+			is_literal = true;
+			is_double_literal = true;
+			literal_double_value = instruction.getOperandAs<double>(5);
 		} else if (instruction.isOperandType<std::string_view>(5)) {
 			is_variable = true;
 			variable_name = std::string(instruction.getOperandAs<std::string_view>(5));
@@ -5408,7 +5437,7 @@ private:
 			is_variable = true;
 			variable_name = instruction.getOperandAs<std::string>(5);
 		} else {
-			assert(false && "Value must be TempVar, int/unsigned long long literal, or string_view");
+			assert(false && "Value must be TempVar, int/unsigned long long/bool/double literal, or string_view");
 			return;
 		}
 
@@ -5476,13 +5505,25 @@ private:
 		X64Register value_reg = X64Register::RAX;
 
 		if (is_literal) {
-			// MOV RAX, immediate
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg)); // MOV RAX, imm64
-			// For simplicity, use 64-bit immediate even for smaller values
-			uint64_t imm64 = static_cast<uint64_t>(literal_value);
-			for (int i = 0; i < 8; i++) {
-				textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
+			if (is_double_literal) {
+				// For double literals, convert to bit pattern and load
+				uint64_t bits;
+				std::memcpy(&bits, &literal_double_value, sizeof(bits));
+				// MOV RAX, immediate
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg)); // MOV RAX, imm64
+				for (int i = 0; i < 8; i++) {
+					textSectionData.push_back((bits >> (i * 8)) & 0xFF);
+				}
+			} else {
+				// MOV RAX, immediate
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg)); // MOV RAX, imm64
+				// For simplicity, use 64-bit immediate even for smaller values
+				uint64_t imm64 = static_cast<uint64_t>(literal_value);
+				for (int i = 0; i < 8; i++) {
+					textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
+				}
 			}
 		} else if (is_variable) {
 			// Load from variable's stack location

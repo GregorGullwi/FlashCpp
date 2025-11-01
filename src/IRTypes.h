@@ -474,6 +474,9 @@ public:
 		if (index >= operands_.size())
 			return "";
 
+		if (!isOperandType<Type>(index))
+			return "<not-a-type>";
+
 		const Type type = getOperandAs<Type>(index);
 		auto type_info = gNativeTypes.find(type);
 		if (type_info == gNativeTypes.end())

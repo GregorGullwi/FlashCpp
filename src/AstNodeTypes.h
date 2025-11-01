@@ -1639,6 +1639,13 @@ public:
 		return empty;
 	}
 
+	bool has_any_designated() const {
+		for (bool is_des : is_designated_) {
+			if (is_des) return true;
+		}
+		return false;
+	}
+
 private:
 	std::vector<ASTNode> initializers_;
 	std::vector<bool> is_designated_;
