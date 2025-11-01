@@ -146,9 +146,10 @@ struct StructMember {
 	size_t size;            // Size in bytes
 	size_t alignment;       // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
+	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
 
-	StructMember(std::string n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public)
-		: name(std::move(n)), type(t), type_index(tidx), offset(off), size(sz), alignment(align), access(acc) {}
+	StructMember(std::string n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public, std::optional<ASTNode> init = std::nullopt)
+		: name(std::move(n)), type(t), type_index(tidx), offset(off), size(sz), alignment(align), access(acc), default_initializer(std::move(init)) {}
 };
 
 // Forward declaration for member function support
@@ -236,7 +237,8 @@ struct StructTypeInfo {
 		: name(std::move(n)), default_access(default_acc) {}
 
 	void addMember(const std::string& member_name, Type member_type, TypeIndex type_index,
-	               size_t member_size, size_t member_alignment, AccessSpecifier access = AccessSpecifier::Public) {
+	               size_t member_size, size_t member_alignment, AccessSpecifier access = AccessSpecifier::Public,
+	               std::optional<ASTNode> default_initializer = std::nullopt) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members
 		size_t effective_alignment = member_alignment;
@@ -247,7 +249,7 @@ struct StructTypeInfo {
 		// Calculate offset with effective alignment
 		size_t offset = (total_size + effective_alignment - 1) & ~(effective_alignment - 1);
 
-		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment, access);
+		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment, access, std::move(default_initializer));
 
 		// Update struct size and alignment
 		total_size = offset + member_size;
@@ -1002,9 +1004,10 @@ private:
 struct StructMemberDecl {
 	ASTNode declaration;
 	AccessSpecifier access;
+	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
 
-	StructMemberDecl(ASTNode decl, AccessSpecifier acc)
-		: declaration(decl), access(acc) {}
+	StructMemberDecl(ASTNode decl, AccessSpecifier acc, std::optional<ASTNode> init = std::nullopt)
+		: declaration(decl), access(acc), default_initializer(std::move(init)) {}
 };
 
 // Struct member function with access specifier
@@ -1068,8 +1071,8 @@ public:
 		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
 	}
 
-	void add_member(ASTNode member, AccessSpecifier access) {
-		members_.emplace_back(member, access);
+	void add_member(ASTNode member, AccessSpecifier access, std::optional<ASTNode> default_initializer = std::nullopt) {
+		members_.emplace_back(member, access, std::move(default_initializer));
 	}
 
 	void add_base_class(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {

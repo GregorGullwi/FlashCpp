@@ -723,9 +723,9 @@ private:
 							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
 						}
 					} else {
-						// Implicit default constructor: zero-initialize all members
+						// Implicit default constructor: use default member initializers or zero-initialize
 						for (const auto& member : struct_info->members) {
-							// Generate MemberStore IR to zero-initialize the member
+							// Generate MemberStore IR to initialize the member
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
 							std::vector<IrOperand> store_operands;
 							store_operands.emplace_back(member.type);  // member type
@@ -734,6 +734,91 @@ private:
 							store_operands.emplace_back(std::string_view(member.name));  // member name
 							store_operands.emplace_back(static_cast<int>(member.offset));  // member offset
 
+							// Check if member has a default initializer (C++11 feature)
+							if (member.default_initializer.has_value()) {
+								const ASTNode& init_node = member.default_initializer.value();
+								if (init_node.has_value() && init_node.is<ExpressionNode>()) {
+									// Use the default member initializer
+									auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+									// Add just the value (third element of init_operands)
+									store_operands.emplace_back(init_operands[2]);
+								} else {
+									// Default initializer exists but isn't an expression, zero-initialize
+									if (member.type == Type::Int || member.type == Type::Long ||
+									    member.type == Type::Short || member.type == Type::Char) {
+										store_operands.emplace_back(0);
+									} else if (member.type == Type::Float || member.type == Type::Double) {
+										store_operands.emplace_back(0.0);
+									} else if (member.type == Type::Bool) {
+										store_operands.emplace_back(false);
+									} else {
+										store_operands.emplace_back(0);
+									}
+								}
+							} else {
+								// Zero-initialize based on type
+								if (member.type == Type::Int || member.type == Type::Long ||
+								    member.type == Type::Short || member.type == Type::Char) {
+									store_operands.emplace_back(0);  // Zero for integer types
+								} else if (member.type == Type::Float || member.type == Type::Double) {
+									store_operands.emplace_back(0.0);  // Zero for floating-point types
+								} else if (member.type == Type::Bool) {
+									store_operands.emplace_back(false);  // False for bool
+								} else {
+									store_operands.emplace_back(0);  // Default to zero
+								}
+							}
+
+							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+						}
+					}
+				} else {
+					// User-defined constructor: initialize all members
+					// Precedence: explicit initializer > default initializer > zero-initialize
+
+					// Build a map of explicit member initializers for quick lookup
+					std::unordered_map<std::string, const MemberInitializer*> explicit_inits;
+					for (const auto& initializer : node.member_initializers()) {
+						explicit_inits[std::string(initializer.member_name)] = &initializer;
+					}
+
+					// Initialize all members
+					for (const auto& member : struct_info->members) {
+						// Generate MemberStore IR to initialize the member
+						// Format: [member_type, member_size, object_name, member_name, offset, value]
+						std::vector<IrOperand> store_operands;
+						store_operands.emplace_back(member.type);  // member type
+						store_operands.emplace_back(static_cast<int>(member.size * 8));  // member size in bits
+						store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
+						store_operands.emplace_back(std::string_view(member.name));  // member name
+						store_operands.emplace_back(static_cast<int>(member.offset));  // member offset
+
+						// Check for explicit initializer first (highest precedence)
+						auto explicit_it = explicit_inits.find(member.name);
+						if (explicit_it != explicit_inits.end()) {
+							// Use explicit initializer from constructor initializer list
+							auto init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
+							store_operands.emplace_back(init_operands[2]);
+						} else if (member.default_initializer.has_value()) {
+							const ASTNode& init_node = member.default_initializer.value();
+							if (init_node.has_value() && init_node.is<ExpressionNode>()) {
+								// Use default member initializer (C++11 feature)
+								auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+								store_operands.emplace_back(init_operands[2]);
+							} else {
+								// Default initializer exists but isn't an expression, zero-initialize
+								if (member.type == Type::Int || member.type == Type::Long ||
+								    member.type == Type::Short || member.type == Type::Char) {
+									store_operands.emplace_back(0);
+								} else if (member.type == Type::Float || member.type == Type::Double) {
+									store_operands.emplace_back(0.0);
+								} else if (member.type == Type::Bool) {
+									store_operands.emplace_back(false);
+								} else {
+									store_operands.emplace_back(0);
+								}
+							}
+						} else {
 							// Zero-initialize based on type
 							if (member.type == Type::Int || member.type == Type::Long ||
 							    member.type == Type::Short || member.type == Type::Char) {
@@ -745,34 +830,7 @@ private:
 							} else {
 								store_operands.emplace_back(0);  // Default to zero
 							}
-
-							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
 						}
-					}
-				} else {
-					// Process explicit member initializers
-					for (const auto& initializer : node.member_initializers()) {
-						// Find the member in the struct to get its type, size, and offset
-						const StructMember* member = struct_info->findMember(std::string(initializer.member_name));
-						if (!member) {
-							// Member not found - this should be a compile error, but for now just skip
-							continue;
-						}
-
-						// Generate IR for the initializer expression
-						// This returns [type, size, value]
-						auto init_operands = visitExpressionNode(initializer.initializer_expr.as<ExpressionNode>());
-
-						// Generate MemberStore IR to store the value in the member
-						// Format: [member_type, member_size, object_name, member_name, offset, value]
-						std::vector<IrOperand> store_operands;
-						store_operands.emplace_back(member->type);  // member type
-						store_operands.emplace_back(static_cast<int>(member->size * 8));  // member size in bits
-						store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
-						store_operands.emplace_back(std::string_view(member->name));  // member name
-						store_operands.emplace_back(static_cast<int>(member->offset));  // member offset
-						// Add just the value (third element of init_operands)
-						store_operands.emplace_back(init_operands[2]);
 
 						ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
 					}

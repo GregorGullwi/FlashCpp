@@ -1916,3 +1916,50 @@ TEST_CASE("Friend classes") {
 TEST_CASE("Nested classes") {
 	run_test_from_file("test_nested_classes.cpp", "Nested classes", false);
 }
+
+TEST_SUITE("Delayed parsing - forward references in member functions") {
+	// C++20 Rule: Inline member function bodies are parsed in complete-class context
+	// This means they can reference members declared later in the class
+
+	TEST_CASE("Member function references later member variable") {
+		run_test_from_file("test_delayed_parsing_member_var.cpp", "Delayed parsing: member variable forward reference", false);
+	}
+
+	TEST_CASE("Member function calls later member function") {
+		run_test_from_file("test_delayed_parsing_member_func.cpp", "Delayed parsing: member function forward reference", false);
+	}
+
+	TEST_CASE("Constructor references later member variable") {
+		run_test_from_file("test_delayed_parsing_constructor.cpp", "Delayed parsing: constructor forward reference", false);
+	}
+
+	TEST_CASE("Destructor references member variables") {
+		run_test_from_file("test_delayed_parsing_destructor.cpp", "Delayed parsing: destructor forward reference", false);
+	}
+
+	TEST_CASE("Multiple member functions with forward references") {
+		run_test_from_file("test_delayed_parsing_multiple.cpp", "Delayed parsing: multiple forward references", false);
+	}
+}
+
+TEST_SUITE("Member initialization") {
+	TEST_CASE("Simple member initialization") {
+		run_test_from_file("test_member_init_simple.cpp", "Member initialization: simple", false);
+	}
+
+	TEST_CASE("Member initialization with explicit constructor") {
+		run_test_from_file("test_member_init_explicit_ctor.cpp", "Member initialization: explicit constructor", false);
+	}
+
+	TEST_CASE("Constructor initializer overrides default") {
+		run_test_from_file("test_member_init_override.cpp", "Member initialization: override", false);
+	}
+
+	TEST_CASE("Nested struct with member initialization") {
+		run_test_from_file("test_member_init_nested.cpp", "Member initialization: nested", false);
+	}
+
+	TEST_CASE("Mixed initialization") {
+		run_test_from_file("test_member_init_mixed.cpp", "Member initialization: mixed", false);
+	}
+}

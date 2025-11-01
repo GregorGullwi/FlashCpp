@@ -1703,6 +1703,8 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		} else {
 			// This is a data member
+			std::optional<ASTNode> default_initializer;
+
 			// Check for member initialization (C++11 feature)
 			if (peek_token().has_value() && peek_token()->value() == "=") {
 				consume_token(); // consume '='
@@ -1713,8 +1715,10 @@ ParseResult Parser::parse_struct_declaration()
 					return init_result;
 				}
 
-				// TODO: Store the initializer for use in default constructor generation
-				// For now, we just parse and discard it
+				// Store the initializer for use in constructor generation
+				if (init_result.node().has_value()) {
+					default_initializer = *init_result.node();
+				}
 			}
 
 			// Expect semicolon after member declaration
@@ -1722,8 +1726,8 @@ ParseResult Parser::parse_struct_declaration()
 				return ParseResult::error("Expected ';' after struct member declaration", *peek_token());
 			}
 
-			// Add member to struct with current access level
-			struct_ref.add_member(*member_result.node(), current_access);
+			// Add member to struct with current access level and default initializer
+			struct_ref.add_member(*member_result.node(), current_access, default_initializer);
 		}
 	}
 
@@ -1765,14 +1769,15 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
-		// Add member to struct layout
+		// Add member to struct layout with default initializer
 		struct_info->addMember(
 			std::string(decl.identifier_token().value()),
 			type_spec.type(),
 			type_spec.type_index(),
 			member_size,
 			member_alignment,
-			member_decl.access
+			member_decl.access,
+			member_decl.default_initializer
 		);
 	}
 
