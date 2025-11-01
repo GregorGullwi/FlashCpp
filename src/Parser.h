@@ -186,6 +186,20 @@ private:
         };
         std::vector<StructParsingContext> struct_parsing_context_stack_;
 
+        // Delayed function body parsing for inline member functions
+        struct DelayedFunctionBody {
+                FunctionDeclarationNode* func_node;      // The function node to attach body to
+                TokenPosition body_start;                 // Position of the '{'
+                std::string_view struct_name;            // For member function context
+                size_t struct_type_index;                // For member function context
+                StructDeclarationNode* struct_node;      // Pointer to struct being parsed
+                bool is_constructor;                      // Special handling for constructors
+                bool is_destructor;                       // Special handling for destructors
+                ConstructorDeclarationNode* ctor_node;   // For constructors (nullptr for regular functions)
+                DestructorDeclarationNode* dtor_node;    // For destructors (nullptr for regular functions)
+        };
+        std::vector<DelayedFunctionBody> delayed_function_bodies_;
+
         template <typename T>
         std::pair<ASTNode, T&> create_node_ref(T&& node) {
                 return emplace_node_ref<T>(node);
@@ -288,6 +302,9 @@ private:
         TokenPosition save_token_position();
         void restore_token_position(const TokenPosition& token_position);
         void discard_saved_token(const TokenPosition& token_position);
+
+        // Helper for delayed parsing
+        void skip_balanced_braces();  // Skip over a balanced brace block
 };
 
 struct TypedNumeric {

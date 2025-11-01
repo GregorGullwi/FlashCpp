@@ -232,6 +232,22 @@ void Parser::discard_saved_token(const TokenPosition& saved_token_pos) {
 	saved_tokens_.erase(saved_token_pos.cursor_);
 }
 
+void Parser::skip_balanced_braces() {
+	int brace_depth = 0;
+	consume_token();  // consume opening '{'
+	brace_depth = 1;
+
+	while (brace_depth > 0 && peek_token().has_value()) {
+		auto token = peek_token();
+		if (token->value() == "{") {
+			brace_depth++;
+		} else if (token->value() == "}") {
+			brace_depth--;
+		}
+		consume_token();
+	}
+}
+
 ParseResult Parser::parse_top_level_node()
 {
 	// Save the current token's position to restore later in case of a parsing
@@ -1339,9 +1355,8 @@ ParseResult Parser::parse_struct_declaration()
 
 				// Parse constructor body if present (and not defaulted/deleted)
 				if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
-					// We already entered a scope for the initializer list, so we don't need to enter again
-					// Just set up the member function context
-					current_function_ = nullptr;  // Constructors don't have a return type
+					// DELAYED PARSING: Save the current position (start of '{')
+					TokenPosition body_start = save_token_position();
 
 					// Look up the struct type
 					auto type_it = gTypesByName.find(struct_name);
@@ -1350,25 +1365,25 @@ ParseResult Parser::parse_struct_declaration()
 						struct_type_index = type_it->second->type_index_;
 					}
 
-					member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
+					// Skip over the constructor body by counting braces
+					skip_balanced_braces();
 
-					// Parameters are already in the symbol table from the initializer list parsing
-
-					auto block_result = parse_block();
-					if (block_result.is_error()) {
-						current_function_ = nullptr;
-						member_function_context_stack_.pop_back();
-						gSymbolTable.exit_scope();
-						return block_result;
-					}
-
-					current_function_ = nullptr;
-					member_function_context_stack_.pop_back();
+					// Exit the scope we entered for the initializer list
+					// We'll re-enter it when we parse the delayed body
 					gSymbolTable.exit_scope();
 
-					if (auto block = block_result.node()) {
-						ctor_ref.set_definition(block->as<BlockNode>());
-					}
+					// Record this for delayed parsing
+					delayed_function_bodies_.push_back({
+						nullptr,  // func_node (not used for constructors)
+						body_start,
+						struct_name,
+						struct_type_index,
+						&struct_ref,
+						true,  // is_constructor
+						false,  // is_destructor
+						&ctor_ref,  // ctor_node
+						nullptr   // dtor_node
+					});
 				} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
 					// No constructor body, just exit the scope we entered for the initializer list
 					gSymbolTable.exit_scope();
@@ -1483,8 +1498,8 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Parse destructor body if present (and not defaulted/deleted)
 			if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
-				gSymbolTable.enter_scope(ScopeType::Function);
-				current_function_ = nullptr;
+				// DELAYED PARSING: Save the current position (start of '{')
+				TokenPosition body_start = save_token_position();
 
 				// Look up the struct type
 				auto type_it = gTypesByName.find(struct_name);
@@ -1493,23 +1508,21 @@ ParseResult Parser::parse_struct_declaration()
 					struct_type_index = type_it->second->type_index_;
 				}
 
-				member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
+				// Skip over the destructor body by counting braces
+				skip_balanced_braces();
 
-				auto block_result = parse_block();
-				if (block_result.is_error()) {
-					current_function_ = nullptr;
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
-					return block_result;
-				}
-
-				current_function_ = nullptr;
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
-
-				if (auto block = block_result.node()) {
-					dtor_ref.set_definition(block->as<BlockNode>());
-				}
+				// Record this for delayed parsing
+				delayed_function_bodies_.push_back({
+					nullptr,  // func_node (not used for destructors)
+					body_start,
+					struct_name,
+					struct_type_index,
+					&struct_ref,
+					false,  // is_constructor
+					true,   // is_destructor
+					nullptr,  // ctor_node
+					&dtor_ref   // dtor_node
+				});
 			} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
 				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after destructor declaration", *peek_token());
 			}
@@ -1638,53 +1651,37 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Parse function body if present (and not defaulted/deleted)
 			if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
-				// Enter function scope for parsing the body
-				gSymbolTable.enter_scope(ScopeType::Function);
-
-				// Set current function pointer for __func__, __PRETTY_FUNCTION__
-				// The FunctionDeclarationNode persists in the AST, so the pointer is safe
-				current_function_ = &member_func_ref;
+				// DELAYED PARSING: Save the current position (start of '{')
+				TokenPosition body_start = save_token_position();
 
 				// Look up the struct type to get its type index
-				// Use string_view directly - gTypesByName supports heterogeneous lookup
 				auto type_it = gTypesByName.find(struct_name);
 				size_t struct_type_index = 0;
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
 
-				// Push member function context so we can resolve member variables
-				// Store a pointer to the struct node so we can access members during parsing
-				// Pass string_view directly - MemberFunctionContext stores it as string_view
-				member_function_context_stack_.push_back({struct_name, struct_type_index, &struct_ref});
+				// Skip over the function body by counting braces
+				skip_balanced_braces();
 
-				// Add parameters to symbol table
-				for (const auto& param : member_func_ref.parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& param_decl_node = param.as<DeclarationNode>();
-						const Token& param_token = param_decl_node.identifier_token();
-						gSymbolTable.insert(param_token.value(), param);
-					}
+				// Record this for delayed parsing
+				delayed_function_bodies_.push_back({
+					&member_func_ref,
+					body_start,
+					struct_name,
+					struct_type_index,
+					&struct_ref,
+					false,  // is_constructor
+					false,  // is_destructor
+					nullptr,  // ctor_node
+					nullptr   // dtor_node
+				});
+				// Inline function body consumed, no semicolon needed
+			} else if (!is_defaulted && !is_deleted) {
+				// Function declaration without body - expect semicolon
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected '{', ';', '= default', or '= delete' after member function declaration", *peek_token());
 				}
-
-				// Parse function body
-				auto block_result = parse_block();
-				if (block_result.is_error()) {
-					//current_function_ = nullptr;
-					//member_function_context_stack_.pop_back();
-					//gSymbolTable.exit_scope();
-					return block_result;
-				}
-
-				current_function_ = nullptr;
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
-
-				if (auto block = block_result.node()) {
-					member_func_ref.set_definition(block->as<BlockNode>());
-				}
-			} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
-				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after member function declaration", *peek_token());
 			}
 
 			// In C++, 'override' implies 'virtual'
@@ -1706,6 +1703,20 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		} else {
 			// This is a data member
+			// Check for member initialization (C++11 feature)
+			if (peek_token().has_value() && peek_token()->value() == "=") {
+				consume_token(); // consume '='
+
+				// Parse the initializer expression
+				auto init_result = parse_expression();
+				if (init_result.is_error()) {
+					return init_result;
+				}
+
+				// TODO: Store the initializer for use in default constructor generation
+				// For now, we just parse and discard it
+			}
+
 			// Expect semicolon after member declaration
 			if (!consume_punctuator(";")) {
 				return ParseResult::error("Expected ';' after struct member declaration", *peek_token());
@@ -2128,6 +2139,141 @@ ParseResult Parser::parse_struct_declaration()
 			gTypesByName.emplace(qualified_name, &struct_type_info);
 		}
 	}
+
+	// Now parse all delayed inline function bodies
+	// At this point, all members are visible in the complete-class context
+
+	// Save the current token position (right after the struct definition)
+	// We'll restore this after parsing all delayed bodies
+	TokenPosition position_after_struct = save_token_position();
+
+	for (auto& delayed : delayed_function_bodies_) {
+		// Restore token position to the start of the function body
+		restore_token_position(delayed.body_start);
+
+		if (delayed.is_constructor) {
+			// Parse constructor body
+			// Re-enter the scope for the constructor (we exited it when we delayed parsing)
+			gSymbolTable.enter_scope(ScopeType::Function);
+
+			// Set up member function context
+			current_function_ = nullptr;  // Constructors don't have a return type
+			member_function_context_stack_.push_back({
+				delayed.struct_name,
+				delayed.struct_type_index,
+				delayed.struct_node
+			});
+
+			// Add parameters to symbol table
+			for (const auto& param : delayed.ctor_node->parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					const auto& param_decl = param.as<DeclarationNode>();
+					gSymbolTable.insert(param_decl.identifier_token().value(), param);
+				}
+			}
+
+			// Parse the constructor body
+			auto block_result = parse_block();
+			if (block_result.is_error()) {
+				current_function_ = nullptr;
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+				struct_parsing_context_stack_.pop_back();
+				return block_result;
+			}
+
+			// Attach body to constructor node
+			if (auto block = block_result.node()) {
+				delayed.ctor_node->set_definition(block->as<BlockNode>());
+			}
+
+			// Clean up context
+			current_function_ = nullptr;
+			member_function_context_stack_.pop_back();
+			gSymbolTable.exit_scope();
+
+		} else if (delayed.is_destructor) {
+			// Parse destructor body
+			gSymbolTable.enter_scope(ScopeType::Function);
+			current_function_ = nullptr;
+
+			// Set up member function context
+			member_function_context_stack_.push_back({
+				delayed.struct_name,
+				delayed.struct_type_index,
+				delayed.struct_node
+			});
+
+			// Parse the destructor body
+			auto block_result = parse_block();
+			if (block_result.is_error()) {
+				current_function_ = nullptr;
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+				struct_parsing_context_stack_.pop_back();
+				return block_result;
+			}
+
+			// Attach body to destructor node
+			if (auto block = block_result.node()) {
+				delayed.dtor_node->set_definition(block->as<BlockNode>());
+			}
+
+			// Clean up context
+			current_function_ = nullptr;
+			member_function_context_stack_.pop_back();
+			gSymbolTable.exit_scope();
+
+		} else {
+			// Parse regular member function body
+			gSymbolTable.enter_scope(ScopeType::Function);
+
+			// Set current function pointer for __func__, __PRETTY_FUNCTION__
+			current_function_ = delayed.func_node;
+
+			// Set up member function context
+			member_function_context_stack_.push_back({
+				delayed.struct_name,
+				delayed.struct_type_index,
+				delayed.struct_node
+			});
+
+			// Add parameters to symbol table
+			for (const auto& param : delayed.func_node->parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					const auto& param_decl = param.as<DeclarationNode>();
+					gSymbolTable.insert(param_decl.identifier_token().value(), param);
+				}
+			}
+
+			// Parse the function body
+			auto block_result = parse_block();
+			if (block_result.is_error()) {
+				current_function_ = nullptr;
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+				struct_parsing_context_stack_.pop_back();
+				return block_result;
+			}
+
+			// Attach body to function node
+			if (auto block = block_result.node()) {
+				delayed.func_node->set_definition(block->as<BlockNode>());
+			}
+
+			// Clean up context
+			current_function_ = nullptr;
+			member_function_context_stack_.pop_back();
+			gSymbolTable.exit_scope();
+		}
+	}
+
+	// Clear the delayed bodies list for the next struct
+	delayed_function_bodies_.clear();
+
+	// Restore token position to right after the struct definition
+	// This ensures the parser continues from the correct position
+	restore_token_position(position_after_struct);
 
 	// Pop struct parsing context
 	struct_parsing_context_stack_.pop_back();
