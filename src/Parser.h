@@ -18,6 +18,10 @@
 #include "SymbolTable.h"
 #include "CompileContext.h"
 
+#ifndef WITH_DEBUG_INFO
+#define WITH_DEBUG_INFO 0
+#endif // WITH_DEBUG_INFO
+
 using namespace std::literals::string_view_literals;
 
 enum class ParserError {
@@ -149,6 +153,10 @@ public:
         bool generate_coff(const std::string& outputFilename);
         std::string get_last_error() const { return last_error_; }
 
+#if WITH_DEBUG_INFO
+        std::optional<int> break_at_line_;
+#endif // WITH_DEBUG_INFO
+
 private:
         Lexer& lexer_;
         CompileContext& context_;
@@ -170,6 +178,13 @@ private:
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
         };
         std::vector<MemberFunctionContext> member_function_context_stack_;
+
+        // Track current struct being parsed (for nested class support)
+        struct StructParsingContext {
+                std::string_view struct_name;  // Points directly into source text from lexer token
+                StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
+        };
+        std::vector<StructParsingContext> struct_parsing_context_stack_;
 
         template <typename T>
         std::pair<ASTNode, T&> create_node_ref(T&& node) {
@@ -227,6 +242,7 @@ private:
         ParseResult parse_struct_declaration();  // Add struct declaration parser
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser
+        ParseResult parse_friend_declaration();  // NEW: Parse friend declarations
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();
@@ -244,7 +260,6 @@ private:
         ParseResult parse_label_statement();  // Add label-statement parser
         ParseResult parse_lambda_expression();  // Add lambda expression parser
         ParseResult transformLambdaToStruct(const LambdaExpressionNode& lambda);  // Transform lambda to struct with operator()
-        ParseResult parse_statement();
 
         // Helper functions for auto type deduction
         Type deduce_type_from_expression(const ASTNode& expr) const;
@@ -256,8 +271,6 @@ private:
         ParseResult parse_expression_statement() { return parse_expression(); }  // Wrapper for keyword map
         ParseResult parse_primary_expression();
         ParseResult parse_unary_expression();
-        ParseResult parse_binary_expression(int min_precedence = 0);
-        ParseResult parse_parenthesized_expression();
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
 
         // Utility functions

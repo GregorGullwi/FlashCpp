@@ -35,7 +35,7 @@ std::string read_test_file(const std::string& filename) {
 }
 
 // Helper function to run a test with a given source file
-void run_test_from_file(const std::string& filename, const std::string& test_name, bool generate_obj = true) {
+void run_test_from_file(const std::string& filename, const std::string& test_name, bool generate_obj, std::optional<int> break_at_line = {}) {
 	std::cout << "run_test_from_file: " << test_name.c_str() << std::endl;
     std::string code = read_test_file(filename);
 
@@ -46,6 +46,9 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 	gTypesByName.clear();  // Clear types by name map as well
 	compile_context.setInputFile(filename);
     Parser parser(lexer, compile_context);
+#if WITH_DEBUG_INFO
+	parser.break_at_line_ = break_at_line;
+#endif
     auto parse_result = parser.parse();
 
 	if (parse_result.is_error()) {
@@ -1903,5 +1906,13 @@ TEST_CASE("Decltype") {
 }
 
 TEST_CASE("DesignatedInitializers") {
-	run_test_from_file("test_designated_init_minimal.cpp", "Designated initializers", false);
+	run_test_from_file("test_designated_init.cpp", "Designated initializers", false);
+}
+
+TEST_CASE("Friend classes") {
+	run_test_from_file("test_friend_declarations.cpp", "Friend declarations", false);
+}
+
+TEST_CASE("Nested classes") {
+	run_test_from_file("test_nested_classes.cpp", "Nested classes", false);
 }

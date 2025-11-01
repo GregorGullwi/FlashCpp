@@ -108,6 +108,13 @@ enum class AccessSpecifier {
 	Private
 };
 
+// Friend declaration types
+enum class FriendKind {
+	Function,      // friend void func();
+	Class,         // friend class ClassName;
+	MemberFunction // friend void Class::func();
+};
+
 // Base class specifier for inheritance
 struct BaseClassSpecifier {
 	std::string_view name;           // Base class name
@@ -215,6 +222,15 @@ struct StructTypeInfo {
 
 	// RTTI support (Phase 5)
 	RTTITypeInfo* rtti_info = nullptr;  // Runtime type information (for polymorphic classes)
+
+	// Friend declarations support (Phase 2)
+	std::vector<std::string> friend_functions_;      // Friend function names
+	std::vector<std::string> friend_classes_;        // Friend class names
+	std::vector<std::pair<std::string, std::string>> friend_member_functions_;  // (class, function)
+
+	// Nested class support (Phase 2)
+	std::vector<StructTypeInfo*> nested_classes_;    // Nested classes
+	StructTypeInfo* enclosing_class_ = nullptr;      // Enclosing class (if this is nested)
 
 	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public)
 		: name(std::move(n)), default_access(default_acc) {}
@@ -335,6 +351,61 @@ struct StructTypeInfo {
 			}
 		}
 		return nullptr;
+	}
+
+	// Friend declaration support methods
+	void addFriendFunction(const std::string& func_name) {
+		friend_functions_.push_back(func_name);
+	}
+
+	void addFriendClass(const std::string& class_name) {
+		friend_classes_.push_back(class_name);
+	}
+
+	void addFriendMemberFunction(const std::string& class_name, const std::string& func_name) {
+		friend_member_functions_.emplace_back(class_name, func_name);
+	}
+
+	bool isFriendFunction(const std::string& func_name) const {
+		return std::find(friend_functions_.begin(), friend_functions_.end(), func_name) != friend_functions_.end();
+	}
+
+	bool isFriendClass(const std::string& class_name) const {
+		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name) != friend_classes_.end();
+	}
+
+	bool isFriendMemberFunction(const std::string& class_name, const std::string& func_name) const {
+		auto it = std::find(friend_member_functions_.begin(), friend_member_functions_.end(),
+		                    std::make_pair(class_name, func_name));
+		return it != friend_member_functions_.end();
+	}
+
+	// Nested class support methods
+	void addNestedClass(StructTypeInfo* nested) {
+		if (nested) {
+			nested_classes_.push_back(nested);
+			nested->enclosing_class_ = this;
+		}
+	}
+
+	bool isNested() const {
+		return enclosing_class_ != nullptr;
+	}
+
+	StructTypeInfo* getEnclosingClass() const {
+		return enclosing_class_;
+	}
+
+	const std::vector<StructTypeInfo*>& getNestedClasses() const {
+		return nested_classes_;
+	}
+
+	// Get fully qualified name (e.g., "Outer::Inner")
+	std::string getQualifiedName() const {
+		if (enclosing_class_) {
+			return enclosing_class_->getQualifiedName() + "::" + name;
+		}
+		return name;
 	}
 
 	// Find default constructor (no parameters)
@@ -957,6 +1028,32 @@ struct StructMemberFunctionDecl {
 		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
 };
 
+// Friend declaration node
+class FriendDeclarationNode {
+public:
+	// Friend class declaration: friend class ClassName;
+	explicit FriendDeclarationNode(FriendKind kind, std::string_view name)
+		: kind_(kind), name_(name), class_name_("") {}
+
+	// Friend member function declaration: friend void ClassName::functionName();
+	FriendDeclarationNode(FriendKind kind, std::string_view name, std::string_view class_name)
+		: kind_(kind), name_(name), class_name_(class_name) {}
+
+	FriendKind kind() const { return kind_; }
+	std::string_view name() const { return name_; }
+	std::string_view class_name() const { return class_name_; }
+
+	// For friend functions, store the function declaration
+	void set_function_declaration(ASTNode decl) { function_decl_ = decl; }
+	std::optional<ASTNode> function_declaration() const { return function_decl_; }
+
+private:
+	FriendKind kind_;
+	std::string_view name_;           // Function or class name
+	std::string_view class_name_;     // For member functions: the class name
+	std::optional<ASTNode> function_decl_;  // For friend functions
+};
+
 class StructDeclarationNode {
 public:
 	explicit StructDeclarationNode(std::string_view name, bool is_class = false)
@@ -1008,11 +1105,52 @@ public:
 		func_decl.is_final = is_final;
 	}
 
+	// Friend declaration support
+	void add_friend(ASTNode friend_decl) {
+		friend_declarations_.push_back(friend_decl);
+	}
+
+	const std::vector<ASTNode>& friend_declarations() const {
+		return friend_declarations_;
+	}
+
+	// Nested class support
+	void add_nested_class(ASTNode nested_class) {
+		nested_classes_.push_back(nested_class);
+	}
+
+	const std::vector<ASTNode>& nested_classes() const {
+		return nested_classes_;
+	}
+
+	void set_enclosing_class(StructDeclarationNode* enclosing) {
+		enclosing_class_ = enclosing;
+	}
+
+	StructDeclarationNode* enclosing_class() const {
+		return enclosing_class_;
+	}
+
+	bool is_nested() const {
+		return enclosing_class_ != nullptr;
+	}
+
+	// Get fully qualified name (e.g., "Outer::Inner")
+	std::string qualified_name() const {
+		if (enclosing_class_) {
+			return enclosing_class_->qualified_name() + "::" + std::string(name_);
+		}
+		return std::string(name_);
+	}
+
 private:
 	std::string_view name_;  // Points directly into source text from lexer token
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
+	std::vector<ASTNode> friend_declarations_;  // Friend declarations
+	std::vector<ASTNode> nested_classes_;  // Nested classes
+	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
 };
 

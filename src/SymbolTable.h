@@ -436,6 +436,28 @@ public:
 		return "";
 	}
 
+	// Lookup a nested class by qualified name (e.g., "Outer::Inner")
+	std::optional<ASTNode> lookup_nested_class(std::string_view outer_class, std::string_view inner_class) const {
+		// First find the outer class
+		auto outer = lookup(outer_class);
+		if (!outer.has_value() || !outer->is<StructDeclarationNode>()) {
+			return std::nullopt;
+		}
+
+		// Search nested classes
+		const auto& struct_node = outer->as<StructDeclarationNode>();
+		for (const auto& nested : struct_node.nested_classes()) {
+			if (nested.is<StructDeclarationNode>()) {
+				const auto& nested_struct = nested.as<StructDeclarationNode>();
+				if (nested_struct.name() == inner_class) {
+					return nested;
+				}
+			}
+		}
+
+		return std::nullopt;
+	}
+
 	void clear() {
 		symbol_table_stack_.clear();
 		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));

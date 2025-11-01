@@ -7,6 +7,15 @@
 #include <unordered_set> // Include unordered_set header
 #include "ChunkedString.h"
 
+// Break into the debugger only on Windows
+#if defined(_WIN32) || defined(_WIN64)
+    #include <windows.h>
+    #define DEBUG_BREAK() if (IsDebuggerPresent()) { DebugBreak(); }
+#else
+    // On non-Windows platforms, define as a no-op (does nothing)
+    #define DEBUG_BREAK() ((void)0)
+#endif
+
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
 ChunkedStringAllocator gChunkedStringAllocator;
@@ -216,11 +225,11 @@ void Parser::restore_token_position(const TokenPosition& saved_token_pos) {
     current_token_ = saved_token.current_token_;
     ast_nodes_.erase(ast_nodes_.begin() + saved_token.ast_nodes_size_,
         ast_nodes_.end());
-    saved_tokens_.erase(saved_token_pos.cursor_);
+    //saved_tokens_.erase(saved_token_pos.cursor_);
 }
 
 void Parser::discard_saved_token(const TokenPosition& saved_token_pos) {
-    saved_tokens_.erase(saved_token_pos.cursor_);
+	saved_tokens_.erase(saved_token_pos.cursor_);
 }
 
 ParseResult Parser::parse_top_level_node()
@@ -228,6 +237,13 @@ ParseResult Parser::parse_top_level_node()
 	// Save the current token's position to restore later in case of a parsing
 	// error
 	ScopedTokenPosition saved_position(*this);
+
+#if WITH_DEBUG_INFO
+	if (break_at_line_.has_value() && peek_token()->line() == break_at_line_)
+	{
+		DEBUG_BREAK();
+	}
+#endif
 
 	// Check for #pragma pack directives
 	if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "#") {
@@ -948,7 +964,23 @@ ParseResult Parser::parse_struct_declaration()
 	// Register the struct type in the global type system EARLY
 	// This allows member functions (like constructors) to reference the struct type
 	// We'll fill in the struct info later after parsing all members
-	TypeInfo& struct_type_info = add_struct_type(std::string(struct_name));
+	// For nested classes, we register with the qualified name to avoid conflicts
+	std::string type_name = std::string(struct_name);
+	bool is_nested_class = !struct_parsing_context_stack_.empty();
+	if (is_nested_class) {
+		// We're inside a struct, so this is a nested class
+		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
+		const auto& context = struct_parsing_context_stack_.back();
+		type_name = std::string(context.struct_name) + "::" + type_name;
+	}
+
+	TypeInfo& struct_type_info = add_struct_type(type_name);
+
+	// For nested classes, also register with the simple name so it can be referenced
+	// from within the nested class itself (e.g., in constructors)
+	if (is_nested_class) {
+		gTypesByName.emplace(std::string(struct_name), &struct_type_info);
+	}
 
 	// Check for alignas specifier after struct name (if not already specified)
 	if (!custom_alignment.has_value()) {
@@ -957,6 +989,9 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Create struct declaration node - string_view points directly into source text
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
+
+	// Push struct parsing context for nested class support
+	struct_parsing_context_stack_.push_back({struct_name, &struct_ref});
 
 	// Create StructTypeInfo early so we can add base classes to it
 	auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), struct_ref.default_access());
@@ -1056,6 +1091,70 @@ ParseResult Parser::parse_struct_declaration()
 					current_access = AccessSpecifier::Private;
 				}
 				continue;
+			}
+
+			// Check for 'friend' keyword
+			if (keyword == "friend") {
+				auto friend_result = parse_friend_declaration();
+				if (friend_result.is_error()) {
+					return friend_result;
+				}
+
+				// Add friend declaration to struct
+				if (auto friend_node = friend_result.node()) {
+					struct_ref.add_friend(*friend_node);
+
+					// Add to StructTypeInfo
+					const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
+					if (friend_decl.kind() == FriendKind::Class) {
+						struct_info->addFriendClass(std::string(friend_decl.name()));
+					} else if (friend_decl.kind() == FriendKind::Function) {
+						struct_info->addFriendFunction(std::string(friend_decl.name()));
+					} else if (friend_decl.kind() == FriendKind::MemberFunction) {
+						struct_info->addFriendMemberFunction(
+							std::string(friend_decl.class_name()),
+							std::string(friend_decl.name()));
+					}
+				}
+
+				continue;  // Skip to next member
+			}
+
+			// Check for nested class/struct declaration
+			if (keyword == "class" || keyword == "struct") {
+				// Parse nested class
+				auto nested_result = parse_struct_declaration();
+				if (nested_result.is_error()) {
+					return nested_result;
+				}
+
+				if (auto nested_node = nested_result.node()) {
+					// Set enclosing class relationship
+					auto& nested_struct = nested_node->as<StructDeclarationNode>();
+					nested_struct.set_enclosing_class(&struct_ref);
+
+					// Add to outer class
+					struct_ref.add_nested_class(*nested_node);
+
+					// Update type info
+					auto nested_type_it = gTypesByName.find(nested_struct.name());
+					if (nested_type_it != gTypesByName.end()) {
+						const StructTypeInfo* nested_info_const = nested_type_it->second->getStructInfo();
+						if (nested_info_const) {
+							// Cast away const for adding to nested classes
+							StructTypeInfo* nested_info = const_cast<StructTypeInfo*>(nested_info_const);
+							struct_info->addNestedClass(nested_info);
+						}
+
+						// Now that enclosing class is set, register the qualified name
+						std::string qualified_name = nested_struct.qualified_name();
+						if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
+							gTypesByName.emplace(qualified_name, nested_type_it->second);
+						}
+					}
+				}
+
+				continue;  // Skip to next member
 			}
 		}
 
@@ -1571,9 +1670,9 @@ ParseResult Parser::parse_struct_declaration()
 				// Parse function body
 				auto block_result = parse_block();
 				if (block_result.is_error()) {
-					current_function_ = nullptr;
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
+					//current_function_ = nullptr;
+					//member_function_context_stack_.pop_back();
+					//gSymbolTable.exit_scope();
 					return block_result;
 				}
 
@@ -2020,6 +2119,19 @@ ParseResult Parser::parse_struct_declaration()
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
 
+	// If this is a nested class, also register it with its qualified name
+	if (struct_ref.is_nested()) {
+		std::string qualified_name = struct_ref.qualified_name();
+		// Register the qualified name as an alias in gTypesByName
+		// It points to the same TypeInfo as the simple name
+		if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
+			gTypesByName.emplace(qualified_name, &struct_type_info);
+		}
+	}
+
+	// Pop struct parsing context
+	struct_parsing_context_stack_.pop_back();
+
 	return saved_position.success(struct_node);
 }
 
@@ -2243,6 +2355,100 @@ ParseResult Parser::parse_typedef_declaration()
 	// Create and return typedef declaration node
 	auto typedef_node = emplace_node<TypedefDeclarationNode>(type_node, *alias_token);
 	return saved_position.success(typedef_node);
+}
+
+ParseResult Parser::parse_friend_declaration()
+{
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'friend' keyword
+	auto friend_keyword = consume_token();
+	if (!friend_keyword.has_value() || friend_keyword->value() != "friend") {
+		return ParseResult::error("Expected 'friend' keyword", friend_keyword.value_or(Token()));
+	}
+
+	// Check for 'class' keyword (friend class declaration)
+	if (peek_token().has_value() && peek_token()->value() == "class") {
+		consume_token();  // consume 'class'
+
+		// Parse class name
+		auto class_name_token = consume_token();
+		if (!class_name_token.has_value() || class_name_token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected class name after 'friend class'", *current_token_);
+		}
+
+		// Expect semicolon
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after friend class declaration", *current_token_);
+		}
+
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, class_name_token->value());
+		return saved_position.success(friend_node);
+	}
+
+	// Otherwise, parse as friend function or friend member function
+	// For now, we'll parse a simplified version that just captures the name
+	// Full function signature parsing would require more complex logic
+
+	// Parse return type (simplified - just consume tokens until we find identifier or ::)
+	auto type_result = parse_type_specifier();
+	if (type_result.is_error()) {
+		return type_result;
+	}
+
+	// Parse function name (may be qualified: ClassName::functionName)
+	// We only need to track the last qualifier (the class name) for friend member functions
+	std::string_view last_qualifier;
+	std::string_view function_name;
+
+	while (peek_token().has_value()) {
+		auto name_token = consume_token();
+		if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected function name in friend declaration", *current_token_);
+		}
+
+		// Check for :: (qualified name)
+		if (peek_token().has_value() && peek_token()->value() == "::") {
+			consume_token();  // consume '::'
+			last_qualifier = name_token->value();
+		} else {
+			function_name = name_token->value();
+			break;
+		}
+	}
+
+	// Parse function parameters
+	if (!consume_punctuator("(")) {
+		return ParseResult::error("Expected '(' after friend function name", *current_token_);
+	}
+
+	// Parse parameter list (simplified - just skip to closing paren)
+	int paren_depth = 1;
+	while (paren_depth > 0 && peek_token().has_value()) {
+		auto token = consume_token();
+		if (token->value() == "(") {
+			paren_depth++;
+		} else if (token->value() == ")") {
+			paren_depth--;
+		}
+	}
+
+	// Expect semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
+	}
+
+	// Create friend declaration node
+	ASTNode friend_node;
+	if (last_qualifier.empty()) {
+		// Friend function
+		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, function_name);
+	} else {
+		// Friend member function
+		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::MemberFunction, function_name, std::string(last_qualifier));
+	}
+
+	return saved_position.success(friend_node);
 }
 
 ParseResult Parser::parse_namespace() {
@@ -2730,6 +2936,19 @@ ParseResult Parser::parse_type_specifier()
 		std::string type_name(current_token_opt->value());
 		Token type_name_token = *current_token_opt;  // Save the token before consuming it
 		consume_token();
+
+		// Check for qualified name (e.g., Outer::Inner for nested classes)
+		while (peek_token().has_value() && peek_token()->value() == "::") {
+			consume_token();  // consume '::'
+
+			auto next_token = peek_token();
+			if (!next_token.has_value() || next_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after '::'", next_token.value_or(Token()));
+			}
+
+			type_name += "::" + std::string(next_token->value());
+			consume_token();
+		}
 
 		// Check if this is a registered struct type
 		auto type_it = gTypesByName.find(type_name);
@@ -4327,6 +4546,7 @@ ParseResult Parser::parse_primary_expression()
 			}
 			else {
 				// Not a function call, but identifier not found - this is an error
+				std::cerr << "DEBUG: Missing identifier: " << idenfifier_token.value() << "\n";
 				return ParseResult::error("Missing identifier", idenfifier_token);
 			}
 		}

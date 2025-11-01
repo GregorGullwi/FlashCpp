@@ -161,7 +161,8 @@ private:
 	bool checkMemberAccess(const StructMember* member,
 	                       const StructTypeInfo* member_owner_struct,
 	                       const StructTypeInfo* accessing_struct,
-	                       const BaseClassSpecifier* inheritance_path = nullptr) const {
+	                       const BaseClassSpecifier* inheritance_path = nullptr,
+	                       const std::string& accessing_function = "") const {
 		if (!member || !member_owner_struct) {
 			return false;
 		}
@@ -176,14 +177,30 @@ private:
 			return true;
 		}
 
+		// Check if accessing function is a friend function of the member owner
+		if (!accessing_function.empty() && member_owner_struct->isFriendFunction(accessing_function)) {
+			return true;
+		}
+
+		// Check if accessing class is a friend class of the member owner
+		if (accessing_struct && member_owner_struct->isFriendClass(accessing_struct->name)) {
+			return true;
+		}
+
 		// If we're not in a member function context, only public members are accessible
 		if (!accessing_struct) {
 			return false;
 		}
 
-		// Private members are only accessible from the same class
+		// Private members are only accessible from:
+		// 1. The same class
+		// 2. Nested classes within the same class
 		if (member->access == AccessSpecifier::Private) {
-			return accessing_struct == member_owner_struct;
+			if (accessing_struct == member_owner_struct) {
+				return true;
+			}
+			// Check if accessing_struct is nested within member_owner_struct
+			return isNestedWithin(accessing_struct, member_owner_struct);
 		}
 
 		// Protected members are accessible from:
@@ -197,6 +214,25 @@ private:
 
 			// Check if accessing_struct is derived from member_owner_struct
 			return isAccessibleThroughInheritance(accessing_struct, member_owner_struct);
+		}
+
+		return false;
+	}
+
+	// Helper to check if accessing_struct is nested within member_owner_struct
+	bool isNestedWithin(const StructTypeInfo* accessing_struct,
+	                     const StructTypeInfo* member_owner_struct) const {
+		if (!accessing_struct || !member_owner_struct) {
+			return false;
+		}
+
+		// Check if accessing_struct is nested within member_owner_struct
+		StructTypeInfo* current = accessing_struct->getEnclosingClass();
+		while (current) {
+			if (current == member_owner_struct) {
+				return true;
+			}
+			current = current->getEnclosingClass();
 		}
 
 		return false;
@@ -256,10 +292,16 @@ private:
 		return nullptr;
 	}
 
+	// Get the current function name
+	std::string getCurrentFunctionName() const {
+		return current_function_name_;
+	}
+
 	// Helper function to check if access to a member function is allowed
 	bool checkMemberFunctionAccess(const StructMemberFunction* member_func,
 	                                const StructTypeInfo* member_owner_struct,
-	                                const StructTypeInfo* accessing_struct) const {
+	                                const StructTypeInfo* accessing_struct,
+	                                const std::string& accessing_function = "") const {
 		if (!member_func || !member_owner_struct) {
 			return false;
 		}
@@ -271,6 +313,16 @@ private:
 
 		// Public member functions are always accessible
 		if (member_func->access == AccessSpecifier::Public) {
+			return true;
+		}
+
+		// Check if accessing function is a friend function of the member owner
+		if (!accessing_function.empty() && member_owner_struct->isFriendFunction(accessing_function)) {
+			return true;
+		}
+
+		// Check if accessing class is a friend class of the member owner
+		if (accessing_struct && member_owner_struct->isFriendClass(accessing_struct->name)) {
 			return true;
 		}
 
@@ -2857,7 +2909,8 @@ private:
 		// Check access control for member function calls
 		if (called_member_func && struct_info) {
 			const StructTypeInfo* current_context = getCurrentStructContext();
-			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context)) {
+			std::string current_function = getCurrentFunctionName();
+			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context, current_function)) {
 				std::cerr << "Error: Cannot access ";
 				if (called_member_func->access == AccessSpecifier::Private) {
 					std::cerr << "private";
@@ -3184,7 +3237,32 @@ private:
 			}
 		}
 
+		// If still not found, try looking up by type_index in gTypeInfo directly
+		// This handles cases where the type_index is valid but the lookup above failed
+		if (!type_info && base_type_index > 0 && base_type_index < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[base_type_index];
+			if (ti.type_ == Type::Struct && ti.getStructInfo()) {
+				type_info = &ti;
+			}
+		}
+
 		if (!type_info || !type_info->getStructInfo()) {
+			std::cerr << "Error: Struct type info not found for type_index=" << base_type_index << "\n";
+			if (std::holds_alternative<std::string_view>(base_object)) {
+				std::cerr << "  Object name: " << std::get<std::string_view>(base_object) << "\n";
+			}
+			std::cerr << "  Available struct types in gTypeInfo:\n";
+			for (const auto& ti : gTypeInfo) {
+				if (ti.type_ == Type::Struct && ti.getStructInfo()) {
+					std::cerr << "    - " << ti.name_ << " (type_index=" << ti.type_index_ << ")\n";
+				}
+			}
+			std::cerr << "  Available types in gTypesByName:\n";
+			for (const auto& [name, ti] : gTypesByName) {
+				if (ti->type_ == Type::Struct) {
+					std::cerr << "    - " << name << " (type_index=" << ti->type_index_ << ")\n";
+				}
+			}
 			assert(false && "Struct type info not found");
 			return {};
 		}
@@ -3194,13 +3272,19 @@ private:
 		const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
 
 		if (!member) {
+			std::cerr << "Error: Member '" << member_name << "' not found in struct '" << type_info->name_ << "' (type_index=" << type_info->type_index_ << ")\n";
+			std::cerr << "  Available members:\n";
+			for (const auto& m : struct_info->members) {
+				std::cerr << "    - " << m.name << " (type=" << static_cast<int>(m.type) << ", offset=" << m.offset << ")\n";
+			}
 			assert(false && "Member not found in struct or base classes");
 			return {};
 		}
 
 		// Check access control
 		const StructTypeInfo* current_context = getCurrentStructContext();
-		if (!checkMemberAccess(member, struct_info, current_context)) {
+		std::string current_function = getCurrentFunctionName();
+		if (!checkMemberAccess(member, struct_info, current_context, nullptr, current_function)) {
 			std::cerr << "Error: Cannot access ";
 			if (member->access == AccessSpecifier::Private) {
 				std::cerr << "private";
@@ -3237,11 +3321,16 @@ private:
 		// Add the member access instruction
 		ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());
 
-		// Return the result variable with its type and size (standard 3-operand format)
-		// Format: [type, size_bits, temp_var]
-		// Note: type_index is not returned because it's not needed for arithmetic operations
-		// and would break binary operators that expect exactly 3 operands per side
-		return { member->type, static_cast<int>(member->size * 8), result_var };
+		// Return the result variable with its type, size, and optionally type_index
+		// For struct types, we need to include type_index for nested member access (e.g., obj.inner.member)
+		// For primitive types, we only return 3 operands to maintain compatibility with binary operators
+		if (member->type == Type::Struct) {
+			// Format: [type, size_bits, temp_var, type_index]
+			return { member->type, static_cast<int>(member->size * 8), result_var, static_cast<unsigned long long>(member->type_index) };
+		} else {
+			// Format: [type, size_bits, temp_var]
+			return { member->type, static_cast<int>(member->size * 8), result_var };
+		}
 	}
 
 	std::vector<IrOperand> generateSizeofIr(const SizeofExprNode& sizeofNode) {
