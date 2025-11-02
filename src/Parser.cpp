@@ -4870,6 +4870,13 @@ ParseResult Parser::parse_primary_expression()
 		else {
 			// Identifier already consumed at line 1621
 
+			// Check for explicit template arguments: identifier<type1, type2>(args)
+			std::optional<std::vector<Type>> explicit_template_args;
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				explicit_template_args = parse_explicit_template_arguments();
+				// If parsing failed, it might be a less-than operator, so continue normally
+			}
+
 			// Check if this looks like a function call
 			// Only consume '(' if the identifier is actually a function OR a function pointer OR has operator()
 			bool is_function_decl = identifierType->is<FunctionDeclarationNode>();
@@ -4898,7 +4905,7 @@ ParseResult Parser::parse_primary_expression()
 				}
 			}
 			bool is_function_call = peek_token().has_value() && peek_token()->value() == "(" &&
-			                        (is_function_decl || is_function_pointer || has_operator_call);
+			                        (is_function_decl || is_function_pointer || has_operator_call || explicit_template_args.has_value());
 
 			if (is_function_call && consume_punctuator("("sv)) {
 				if (!peek_token().has_value())
@@ -4988,11 +4995,9 @@ ParseResult Parser::parse_primary_expression()
 
 					// If we successfully extracted all argument types, perform overload resolution
 					if (!result.has_value() && arg_types.size() == args.size()) {
-						auto resolution_result = resolve_overload(all_overloads, arg_types);
-
-						if (!resolution_result.has_match) {
-							// No matching regular function found - try template instantiation
-							auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+						// If explicit template arguments were provided, use them directly
+						if (explicit_template_args.has_value()) {
+							auto instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *explicit_template_args);
 							if (instantiated_func.has_value()) {
 								// Successfully instantiated template
 								const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
@@ -5001,18 +5006,36 @@ ParseResult Parser::parse_primary_expression()
 								}
 								result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 							} else {
-								return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+								return ParseResult::error("No matching template for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 							}
-						} else if (resolution_result.is_ambiguous) {
-							return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 						} else {
-							// Get the selected overload
-							const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
-							if (!decl_ptr) {
-								return ParseResult::error("Invalid function declaration", idenfifier_token);
-							}
+							// No explicit template arguments - try overload resolution first
+							auto resolution_result = resolve_overload(all_overloads, arg_types);
 
-							result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+							if (!resolution_result.has_match) {
+								// No matching regular function found - try template instantiation with deduction
+								auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+								if (instantiated_func.has_value()) {
+									// Successfully instantiated template
+									const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
+									if (!decl_ptr) {
+										return ParseResult::error("Invalid template instantiation", idenfifier_token);
+									}
+									result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+								} else {
+									return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+								}
+							} else if (resolution_result.is_ambiguous) {
+								return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+							} else {
+								// Get the selected overload
+								const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
+								if (!decl_ptr) {
+									return ParseResult::error("Invalid function declaration", idenfifier_token);
+								}
+
+								result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+							}
 						}
 					}
 				}
@@ -6868,6 +6891,161 @@ ParseResult Parser::parse_template_parameter() {
 	// TODO: Handle default arguments (e.g., int N = 10)
 
 	return saved_position.success(param_node);
+}
+
+// Parse explicit template arguments: <int, float, ...>
+// Returns a vector of types if successful, nullopt otherwise
+std::optional<std::vector<Type>> Parser::parse_explicit_template_arguments() {
+	// Save position in case this isn't template arguments
+	auto saved_pos = save_token_position();
+
+	// Check for '<'
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return std::nullopt;
+	}
+	consume_token(); // consume '<'
+
+	std::vector<Type> template_args;
+
+	// Parse template arguments
+	while (true) {
+		// Parse a type
+		auto type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			// Not a valid type - this might not be template arguments
+			restore_token_position(saved_pos);
+			return std::nullopt;
+		}
+
+		const TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
+		template_args.push_back(type_node.type());
+
+		// Check for ',' or '>'
+		if (!peek_token().has_value()) {
+			restore_token_position(saved_pos);
+			return std::nullopt;
+		}
+
+		if (peek_token()->value() == ">") {
+			consume_token(); // consume '>'
+			break;
+		}
+
+		if (peek_token()->value() == ",") {
+			consume_token(); // consume ','
+			continue;
+		}
+
+		// Unexpected token
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	// Success - discard saved position
+	discard_saved_token(saved_pos);
+	return template_args;
+}
+
+// Try to instantiate a template with explicit template arguments
+std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<Type>& explicit_types) {
+	// Look up the template in the registry
+	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+	if (!template_opt.has_value()) {
+		return std::nullopt;  // No template with this name
+	}
+
+	const ASTNode& template_node = *template_opt;
+	if (!template_node.is<TemplateFunctionDeclarationNode>()) {
+		return std::nullopt;  // Not a function template
+	}
+
+	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
+	const std::vector<ASTNode>& template_params = template_func.template_parameters();
+	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+
+	// Verify we have the right number of template arguments
+	if (explicit_types.size() != template_params.size()) {
+		return std::nullopt;  // Wrong number of template arguments
+	}
+
+	// Build template argument list
+	std::vector<TemplateArgument> template_args;
+	for (const auto& type : explicit_types) {
+		template_args.push_back(TemplateArgument::makeType(type));
+	}
+
+	// Check if we already have this instantiation
+	TemplateInstantiationKey key;
+	key.template_name = std::string(template_name);
+	for (const auto& arg : template_args) {
+		if (arg.kind == TemplateArgument::Kind::Type) {
+			key.type_arguments.push_back(arg.type_value);
+		} else {
+			key.value_arguments.push_back(arg.int_value);
+		}
+	}
+
+	auto existing_inst = gTemplateRegistry.getInstantiation(key);
+	if (existing_inst.has_value()) {
+		return *existing_inst;  // Return existing instantiation
+	}
+
+	// Instantiate the template (same logic as try_instantiate_template)
+	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+
+	const DeclarationNode& orig_decl = func_decl.decl_node();
+
+	// Create a token for the mangled name
+	Token mangled_token(Token::Type::Identifier, mangled_name,
+	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
+	                    orig_decl.identifier_token().file_index());
+
+	// Create return type with the first template argument
+	ASTNode return_type = emplace_node<TypeSpecifierNode>(
+		template_args[0].type_value,
+		TypeQualifier::None,
+		get_type_size_bits(template_args[0].type_value),
+		Token()
+	);
+
+	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
+	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
+
+	// Add parameters with concrete types
+	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
+		const auto& param = func_decl.parameter_nodes()[i];
+		if (param.is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+
+			// Use the deduced type (simplified - assumes all params are T)
+			ASTNode param_type = emplace_node<TypeSpecifierNode>(
+				template_args[0].type_value,
+				TypeQualifier::None,
+				get_type_size_bits(template_args[0].type_value),
+				Token()
+			);
+
+			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+			new_func_ref.add_parameter_node(new_param_decl);
+		}
+	}
+
+	// Copy the function body if it exists
+	auto orig_body = func_decl.get_definition();
+	if (orig_body.has_value()) {
+		new_func_ref.set_definition(**orig_body);
+	}
+
+	// Register the instantiation
+	gTemplateRegistry.registerInstantiation(key, new_func_node);
+
+	// Add to symbol table
+	gSymbolTable.insert(mangled_token.value(), new_func_node);
+
+	// Add to top-level AST so it gets visited by the code generator
+	ast_nodes_.push_back(new_func_node);
+
+	return new_func_node;
 }
 
 // Try to instantiate a function template with the given argument types
