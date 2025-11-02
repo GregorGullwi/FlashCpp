@@ -6844,7 +6844,18 @@ ParseResult Parser::parse_template_declaration() {
 		parsing_template_class_ = false;
 		current_template_param_names_.clear();
 	} else {
-		// Parse function template
+		// Could be:
+		// 1. Function template: template<typename T> T max(T a, T b) { ... }
+		// 2. Out-of-line member function: template<typename T> void Vector<T>::push_back(T v) { ... }
+
+		// Try to detect out-of-line member function definition
+		// Pattern: ReturnType ClassName<TemplateArgs>::FunctionName(...)
+		auto out_of_line_result = try_parse_out_of_line_template_member(template_params, template_param_names);
+		if (out_of_line_result.has_value()) {
+			return saved_position.success();  // Successfully parsed out-of-line definition
+		}
+
+		// Otherwise, parse as function template
 		decl_result = parse_declaration_or_function_definition();
 	}
 
@@ -7598,6 +7609,159 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		ast_nodes_.push_back(new_func_node);
 	}
 
+	// Process out-of-line member function definitions
+	auto out_of_line_members = gTemplateRegistry.getOutOfLineMembers(template_name);
+	for (const auto& out_of_line_member : out_of_line_members) {
+		// Re-parse the out-of-line member function body with concrete types
+		// Similar to how we handle inline member functions above
+
+		const FunctionDeclarationNode& func_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>();
+		const DeclarationNode& decl = func_decl.decl_node();
+
+		// Generate instantiated function name
+		std::string instantiated_func_name = std::string(decl.identifier_token().value()) + "_" + std::string(instantiated_name);
+
+		// Substitute template parameters in return type
+		const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+		Type return_type = return_type_spec.type();
+		TypeIndex return_type_index = return_type_spec.type_index();
+
+		// Check if return type is a template parameter
+		if (return_type == Type::UserDefined) {
+			if (return_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[return_type_index];
+				std::string_view type_name = type_info.name_;
+
+				// Try to find which template parameter this is
+				for (size_t i = 0; i < out_of_line_member.template_param_names.size() && i < template_args.size(); ++i) {
+					if (out_of_line_member.template_param_names[i] == type_name) {
+						return_type = template_args[i];
+						return_type_index = 0;
+						break;
+					}
+				}
+			}
+		}
+
+		// Create the substituted return type specifier
+		ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
+			return_type,
+			TypeQualifier::None,
+			get_type_size_bits(return_type),
+			Token()
+		);
+
+		// Create the new function declaration as a member function
+		auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, decl.identifier_token());
+		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, instantiated_name);  // instantiated_name is the struct name
+
+		// Copy and substitute parameters
+		for (const auto& param : func_decl.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param.as<DeclarationNode>();
+				const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+				// Substitute template parameters in parameter type
+				Type param_type = param_type_spec.type();
+				TypeIndex param_type_index = param_type_spec.type_index();
+
+				if (param_type == Type::UserDefined) {
+					if (param_type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[param_type_index];
+						std::string_view type_name = type_info.name_;
+
+						// Try to find which template parameter this is
+						for (size_t i = 0; i < out_of_line_member.template_param_names.size() && i < template_args.size(); ++i) {
+							if (out_of_line_member.template_param_names[i] == type_name) {
+								param_type = template_args[i];
+								param_type_index = 0;
+								break;
+							}
+						}
+					}
+				}
+
+				// Create substituted parameter
+				ASTNode substituted_param_type = emplace_node<TypeSpecifierNode>(
+					param_type,
+					param_type_spec.qualifier(),
+					get_type_size_bits(param_type),
+					Token()  // Empty token
+				);
+
+				ASTNode substituted_param = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
+				new_func_ref.add_parameter_node(substituted_param);
+			}
+		}
+
+		// Re-parse the function body with concrete types
+		TokenPosition current_pos = save_token_position();
+
+		// Restore to the body start position
+		restore_token_position(out_of_line_member.body_start);
+
+		// Temporarily add the concrete types to the type system with template parameter names
+		std::vector<TypeInfo*> temp_type_infos;
+		for (size_t i = 0; i < out_of_line_member.template_param_names.size() && i < template_args.size(); ++i) {
+			std::string_view param_name = out_of_line_member.template_param_names[i];
+			Type concrete_type = template_args[i];
+
+			// Create a temporary TypeInfo that maps the template parameter name to the concrete type
+			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			gTypesByName.emplace(type_info.name_, &type_info);
+			temp_type_infos.push_back(&type_info);
+		}
+
+		// Set up function context for parsing the body
+		current_function_ = &new_func_ref;
+		member_function_context_stack_.push_back({
+			instantiated_name,
+			struct_type_info.type_index_,
+			&new_struct_ref
+		});
+		gSymbolTable.enter_scope(ScopeType::Function);
+
+		// Add parameters to symbol table
+		for (const auto& param : new_func_ref.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& param_decl = param.as<DeclarationNode>();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param);
+			}
+		}
+
+		// Re-parse the function body
+		auto block_result = parse_block();
+		if (!block_result.is_error() && block_result.node().has_value()) {
+			new_func_ref.set_definition(block_result.node()->as<BlockNode>());
+		}
+
+		// Clean up context
+		current_function_ = nullptr;
+		member_function_context_stack_.pop_back();
+		gSymbolTable.exit_scope();
+
+		// Restore original lexer position (but keep the AST nodes we just created)
+		restore_lexer_position_only(current_pos);
+
+		// Remove temporary type infos
+		for (const auto* type_info : temp_type_infos) {
+			gTypesByName.erase(type_info->name_);
+		}
+
+		// Add the instantiated function to the struct
+		new_struct_ref.add_member_function(
+			new_func_node,
+			AccessSpecifier::Public,  // TODO: Get actual access specifier
+			false,  // is_virtual
+			false,  // is_pure_virtual
+			false,  // is_override
+			false   // is_final
+		);
+
+		// Add to top-level AST so it gets visited by the code generator
+		ast_nodes_.push_back(new_func_node);
+	}
+
 	// Finalize the struct layout
 	struct_info->finalize();
 
@@ -7608,4 +7772,124 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	ast_nodes_.push_back(new_struct_node);
 
 	return new_struct_node;
+}
+
+// Try to parse an out-of-line template member function definition
+// Pattern: template<typename T> ReturnType ClassName<T>::functionName(...) { ... }
+// Returns true if successfully parsed, false if not an out-of-line definition
+std::optional<bool> Parser::try_parse_out_of_line_template_member(
+	const std::vector<ASTNode>& template_params,
+	const std::vector<std::string_view>& template_param_names) {
+
+	// Save position in case this isn't an out-of-line definition
+	TokenPosition saved_pos = save_token_position();
+
+	// Try to parse return type
+	auto return_type_result = parse_type_specifier();
+	if (return_type_result.is_error() || !return_type_result.node().has_value()) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	ASTNode return_type_node = *return_type_result.node();
+
+	// Check for class name (identifier)
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	Token class_name_token = *peek_token();
+	std::string_view class_name = class_name_token.value();
+	consume_token();
+
+	// Check for template arguments: <T>, <K, V>, etc.
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	// Parse template arguments (these should match the template parameters)
+	// For now, we'll just skip over them - we know they're template parameters
+	consume_token();  // consume '<'
+
+	// Skip template arguments until we find '>'
+	int angle_bracket_depth = 1;
+	while (angle_bracket_depth > 0 && peek_token().has_value()) {
+		if (peek_token()->value() == "<") {
+			angle_bracket_depth++;
+		} else if (peek_token()->value() == ">") {
+			angle_bracket_depth--;
+		}
+		consume_token();
+	}
+
+	// Check for '::'
+	if (!peek_token().has_value() || peek_token()->value() != "::") {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+	consume_token();  // consume '::'
+
+	// This IS an out-of-line template member function definition!
+	// Discard the saved position - we're committed to parsing this
+	discard_saved_token(saved_pos);
+
+	// Parse function name
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		return std::nullopt;  // Error - expected function name
+	}
+
+	Token function_name_token = *peek_token();
+	consume_token();
+
+	// Parse parameter list
+	if (!peek_token().has_value() || peek_token()->value() != "(") {
+		return std::nullopt;  // Error - expected '('
+	}
+
+	// Create a function declaration node
+	auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, function_name_token.value());
+
+	// Parse parameters
+	consume_token();  // consume '('
+	while (peek_token().has_value() && peek_token()->value() != ")") {
+		auto param_result = parse_type_and_name();
+		if (param_result.is_error()) {
+			return std::nullopt;
+		}
+
+		if (param_result.node().has_value()) {
+			func_ref.add_parameter_node(*param_result.node());
+		}
+
+		if (peek_token().has_value() && peek_token()->value() == ",") {
+			consume_token();
+		}
+	}
+
+	if (!peek_token().has_value() || peek_token()->value() != ")") {
+		return std::nullopt;  // Error - expected ')'
+	}
+	consume_token();  // consume ')'
+
+	// Save the position of the function body
+	TokenPosition body_start = save_token_position();
+
+	// Skip the function body for now (we'll re-parse it during instantiation)
+	if (peek_token().has_value() && peek_token()->value() == "{") {
+		skip_balanced_braces();
+	}
+
+	// Register this out-of-line member function in the template registry
+	OutOfLineMemberFunction out_of_line_member;
+	out_of_line_member.template_params = template_params;
+	out_of_line_member.function_node = func_node;
+	out_of_line_member.body_start = body_start;
+	out_of_line_member.template_param_names = template_param_names;
+
+	gTemplateRegistry.registerOutOfLineMember(class_name, std::move(out_of_line_member));
+
+	return true;  // Successfully parsed out-of-line definition
 }

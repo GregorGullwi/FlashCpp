@@ -282,6 +282,7 @@ private:
         std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<Type>& explicit_types);  // NEW: Instantiate with explicit args
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<Type>& template_args);  // NEW: Instantiate class template
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<Type>& template_args);  // NEW: Get mangled name for instantiated class
+        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<std::string_view>& template_param_names);  // NEW: Parse out-of-line template member function
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();

@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "ChunkedString.h"
+#include "Lexer.h"  // For TokenPosition
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,6 +60,14 @@ struct TemplateArgument {
 		arg.int_value = v;
 		return arg;
 	}
+};
+
+// Out-of-line template member function definition
+struct OutOfLineMemberFunction {
+	std::vector<ASTNode> template_params;  // Template parameters (e.g., <typename T>)
+	ASTNode function_node;                  // FunctionDeclarationNode
+	TokenPosition body_start;               // Position of function body for re-parsing
+	std::vector<std::string_view> template_param_names;  // Names of template parameters
 };
 
 // Template registry - stores template declarations and manages instantiations
@@ -136,10 +145,26 @@ public:
 		return mangled.commit();
 	}
 
+	// Register an out-of-line template member function definition
+	void registerOutOfLineMember(std::string_view class_name, OutOfLineMemberFunction member_func) {
+		std::string key(class_name);
+		out_of_line_members_[key].push_back(std::move(member_func));
+	}
+
+	// Get all out-of-line member functions for a class template
+	std::vector<OutOfLineMemberFunction> getOutOfLineMembers(std::string_view class_name) const {
+		auto it = out_of_line_members_.find(std::string(class_name));
+		if (it != out_of_line_members_.end()) {
+			return it->second;
+		}
+		return {};
+	}
+
 	// Clear all templates and instantiations
 	void clear() {
 		templates_.clear();
 		instantiations_.clear();
+		out_of_line_members_.clear();
 	}
 
 private:
@@ -148,6 +173,9 @@ private:
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
+
+	// Map from class name to out-of-line member function definitions
+	std::unordered_map<std::string, std::vector<OutOfLineMemberFunction>> out_of_line_members_;
 };
 
 // Global template registry
