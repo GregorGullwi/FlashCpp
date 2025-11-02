@@ -342,6 +342,18 @@ ParseResult Parser::parse_top_level_node()
 		return result;
 	}
 
+	// Check if it's a template declaration (must come before struct/class check)
+	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
+		auto result = parse_template_declaration();
+		if (!result.is_error()) {
+			if (auto node = result.node()) {
+				ast_nodes_.push_back(*node);
+			}
+			return saved_position.success();
+		}
+		return result;
+	}
+
 	// Check if it's a class or struct declaration
 	// Note: alignas can appear before struct, but we handle that in parse_struct_declaration
 	// If alignas appears before a variable declaration, it will be handled by parse_declaration_or_function_definition
@@ -377,18 +389,6 @@ ParseResult Parser::parse_top_level_node()
 	// Check if it's a typedef declaration
 	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "typedef") {
 		auto result = parse_typedef_declaration();
-		if (!result.is_error()) {
-			if (auto node = result.node()) {
-				ast_nodes_.push_back(*node);
-			}
-			return saved_position.success();
-		}
-		return result;
-	}
-
-	// Check if it's a template declaration
-	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
-		auto result = parse_template_declaration();
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
 				ast_nodes_.push_back(*node);
@@ -2016,7 +2016,8 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	// Generate default constructor if no user-defined constructor exists
-	if (!has_user_defined_constructor) {
+	// Skip implicit function generation for template classes (they'll be generated during instantiation)
+	if (!has_user_defined_constructor && !parsing_template_class_) {
 		// Create a default constructor node
 		auto [default_ctor_node, default_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 			struct_name,
@@ -2044,7 +2045,8 @@ ParseResult Parser::parse_struct_declaration()
 	// According to C++ rules, copy constructor is implicitly generated unless:
 	// - User declared a move constructor or move assignment operator
 	// - User declared a copy constructor
-	if (!has_user_defined_copy_constructor && !has_user_defined_move_constructor) {
+	// Skip implicit function generation for template classes (they'll be generated during instantiation)
+	if (!has_user_defined_copy_constructor && !has_user_defined_move_constructor && !parsing_template_class_) {
 		// Create a copy constructor node: Type(const Type& other)
 		auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 			struct_name,
@@ -2094,7 +2096,8 @@ ParseResult Parser::parse_struct_declaration()
 	// According to C++ rules, copy assignment operator is implicitly generated unless:
 	// - User declared a move constructor or move assignment operator
 	// - User declared a copy assignment operator
-	if (!has_user_defined_copy_assignment && !has_user_defined_move_assignment) {
+	// Skip implicit function generation for template classes (they'll be generated during instantiation)
+	if (!has_user_defined_copy_assignment && !has_user_defined_move_assignment && !parsing_template_class_) {
 		// Create a copy assignment operator node: Type& operator=(const Type& other)
 
 		// Create return type: Type& (reference to struct type)
@@ -2160,8 +2163,9 @@ ParseResult Parser::parse_struct_declaration()
 	// Generate move constructor if no user-defined special member functions exist
 	// According to C++ rules, move constructor is implicitly generated unless:
 	// - User declared a copy constructor, copy assignment, move assignment, or destructor
+	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
-	    !has_user_defined_move_assignment && !has_user_defined_destructor) {
+	    !has_user_defined_move_assignment && !has_user_defined_destructor && !parsing_template_class_) {
 		// Create a move constructor node: Type(Type&& other)
 		auto [move_ctor_node, move_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 			struct_name,
@@ -2206,8 +2210,9 @@ ParseResult Parser::parse_struct_declaration()
 	// Generate move assignment operator if no user-defined special member functions exist
 	// According to C++ rules, move assignment operator is implicitly generated unless:
 	// - User declared a copy constructor, copy assignment, move constructor, or destructor
+	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
-	    !has_user_defined_move_constructor && !has_user_defined_destructor) {
+	    !has_user_defined_move_constructor && !has_user_defined_destructor && !parsing_template_class_) {
 		// Create a move assignment operator node: Type& operator=(Type&& other)
 
 		// Create return type: Type& (reference to struct type)
@@ -2314,7 +2319,7 @@ ParseResult Parser::parse_struct_declaration()
 		}
 		// Clear the delayed bodies list
 		delayed_function_bodies_.clear();
-		return ParseResult::success(struct_node);
+		return saved_position.success(struct_node);
 	}
 
 
@@ -3281,26 +3286,23 @@ ParseResult Parser::parse_type_specifier()
 			// If parsing succeeded, try to instantiate the class template
 			if (template_args.has_value()) {
 				auto instantiated_class = try_instantiate_class_template(type_name, *template_args);
-				if (instantiated_class.has_value()) {
-					// Successfully instantiated class template
-					// The instantiated class is now registered as a struct type
-					// Look it up and return it
-					std::string_view instantiated_name = get_instantiated_class_name(type_name, *template_args);
-					auto inst_type_it = gTypesByName.find(instantiated_name);
-					if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
-						const TypeInfo* struct_type_info = inst_type_it->second;
-						const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+				// Whether instantiation succeeded or returned nullopt (for specializations),
+				// the type should now be registered. Look it up.
+				std::string_view instantiated_name = get_instantiated_class_name(type_name, *template_args);
+				auto inst_type_it = gTypesByName.find(instantiated_name);
+				if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
+					const TypeInfo* struct_type_info = inst_type_it->second;
+					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
-						if (struct_info) {
-							type_size = static_cast<unsigned char>(struct_info->total_size * 8);
-						} else {
-							type_size = 0;
-						}
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+					if (struct_info) {
+						type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+					} else {
+						type_size = 0;
 					}
+					return ParseResult::success(emplace_node<TypeSpecifierNode>(
+						Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 				}
-				// If instantiation failed, fall through to error handling below
+				// If type not found, fall through to error handling below
 			}
 		}
 
@@ -6790,19 +6792,28 @@ ParseResult Parser::parse_template_declaration() {
 	}
 	consume_token(); // consume '<'
 
-	// Parse template parameter list
-	std::vector<ASTNode> template_params;
-	auto param_list_result = parse_template_parameter_list(template_params);
-	if (param_list_result.is_error()) {
-		return param_list_result;
+	// Check if this is a template specialization (template<>)
+	bool is_specialization = false;
+	if (peek_token().has_value() && peek_token()->value() == ">") {
+		is_specialization = true;
+		consume_token(); // consume '>'
 	}
 
-	// Expect '>' to end template parameter list
-	// Note: '>' is an operator, not a punctuator
-	if (!peek_token().has_value() || peek_token()->value() != ">") {
-		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+	// Parse template parameter list (unless it's a specialization)
+	std::vector<ASTNode> template_params;
+	if (!is_specialization) {
+		auto param_list_result = parse_template_parameter_list(template_params);
+		if (param_list_result.is_error()) {
+			return param_list_result;
+		}
+
+		// Expect '>' to end template parameter list
+		// Note: '>' is an operator, not a punctuator
+		if (!peek_token().has_value() || peek_token()->value() != ">") {
+			return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+		}
+		consume_token(); // consume '>'
 	}
-	consume_token(); // consume '>'
 
 	// Now parse what comes after the template parameter list
 	// We support function templates and class templates
@@ -6832,6 +6843,220 @@ ParseResult Parser::parse_template_declaration() {
 
 	ParseResult decl_result;
 	if (is_class_template) {
+		// Handle template specialization
+		if (is_specialization) {
+			// Parse: class ClassName<TemplateArgs> { ... }
+			// We need to parse the class keyword, name, template arguments, and body separately
+
+			bool is_class = consume_keyword("class");
+			if (!is_class) {
+				consume_keyword("struct");  // Try struct instead
+			}
+
+			// Parse class name
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected class name after 'class' keyword", *current_token_);
+			}
+
+			Token class_name_token = *peek_token();
+			std::string_view template_name = class_name_token.value();
+			consume_token();
+
+			// Parse template arguments: <int>, <float>, etc.
+			auto template_args_opt = parse_explicit_template_arguments();
+			if (!template_args_opt.has_value()) {
+				return ParseResult::error("Expected template arguments in specialization", *current_token_);
+			}
+
+			std::vector<Type> template_args = *template_args_opt;
+
+			// Now parse the class body as a regular struct
+			// But we need to give it a unique name that includes the template arguments
+			std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+
+			// Create a struct node with the instantiated name
+			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
+				instantiated_name,
+				is_class
+			);
+
+			// Parse base classes if any
+			if (peek_token().has_value() && peek_token()->value() == ":") {
+				// TODO: Handle base classes in specializations
+				// For now, skip this
+			}
+
+			// Expect opening brace
+			if (!consume_punctuator("{")) {
+				return ParseResult::error("Expected '{' after class name in specialization", *peek_token());
+			}
+
+			// Create struct type info first so we can reference it
+			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+
+			// Parse class members (simplified - reuse struct parsing logic)
+			// For now, we'll parse a simple class body
+			AccessSpecifier current_access = struct_ref.default_access();
+
+			// Set up member function context so functions know they're in a class
+			member_function_context_stack_.push_back({
+				instantiated_name,
+				struct_type_info.type_index_,
+				&struct_ref
+			});
+
+			while (peek_token().has_value() && peek_token()->value() != "}") {
+				// Check for access specifiers
+				if (peek_token()->type() == Token::Type::Keyword) {
+					if (peek_token()->value() == "public") {
+						consume_token();
+						if (!consume_punctuator(":")) {
+							return ParseResult::error("Expected ':' after 'public'", *peek_token());
+						}
+						current_access = AccessSpecifier::Public;
+						continue;
+					} else if (peek_token()->value() == "private") {
+						consume_token();
+						if (!consume_punctuator(":")) {
+							return ParseResult::error("Expected ':' after 'private'", *peek_token());
+						}
+						current_access = AccessSpecifier::Private;
+						continue;
+					} else if (peek_token()->value() == "protected") {
+						consume_token();
+						if (!consume_punctuator(":")) {
+							return ParseResult::error("Expected ':' after 'protected'", *peek_token());
+						}
+						current_access = AccessSpecifier::Protected;
+						continue;
+					}
+				}
+
+				// Parse member declaration
+				auto member_result = parse_declaration_or_function_definition();
+				if (member_result.is_error()) {
+					return member_result;
+				}
+
+				// Add member to struct
+				if (member_result.node().has_value()) {
+					ASTNode member_node = *member_result.node();
+
+					// Check if it's a function or variable
+					if (member_node.is<FunctionDeclarationNode>()) {
+						// This is a member function - we need to create a new FunctionDeclarationNode
+						// with the struct name to make it a proper member function
+						FunctionDeclarationNode& func_decl = member_node.as<FunctionDeclarationNode>();
+						DeclarationNode& decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
+
+						// Create a new FunctionDeclarationNode with member function info
+						auto [member_func_node, member_func_ref] =
+							emplace_node_ref<FunctionDeclarationNode>(decl_node, instantiated_name);
+
+						// Copy parameters from the parsed function
+						for (const auto& param : func_decl.parameter_nodes()) {
+							member_func_ref.add_parameter_node(param);
+						}
+
+						// Copy function body if it exists
+						auto definition_opt = func_decl.get_definition();
+						if (definition_opt.has_value()) {
+							member_func_ref.set_definition(**definition_opt);
+						}
+
+						// Add to struct
+						struct_ref.add_member_function(
+							member_func_node,
+							current_access,
+							false,  // is_virtual
+							false,  // is_pure_virtual
+							false,  // is_override
+							false   // is_final
+						);
+					} else if (member_node.is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_node = member_node.as<VariableDeclarationNode>();
+						struct_ref.add_member(var_node.declaration_node(), current_access);
+					}
+				}
+
+				// Consume optional semicolon
+				consume_punctuator(";");
+			}
+
+			// Expect closing brace
+			if (!consume_punctuator("}")) {
+				return ParseResult::error("Expected '}' after class body", *peek_token());
+			}
+
+			// Pop member function context
+			member_function_context_stack_.pop_back();
+
+			// Expect semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after class declaration", *peek_token());
+			}
+
+			// struct_type_info was already created above
+			// Now create the StructTypeInfo with member information
+			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+
+			// Add members to struct info
+			for (const auto& member_decl : struct_ref.members()) {
+				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+				// Calculate member size and alignment
+				size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+				size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+
+				struct_info->addMember(
+					std::string(decl.identifier_token().value()),
+					type_spec.type(),
+					type_spec.type_index(),
+					member_size,
+					member_alignment,
+					member_decl.access,
+					member_decl.default_initializer
+				);
+			}
+
+			// Add member functions to struct info
+			for (const auto& member_func_decl : struct_ref.member_functions()) {
+				const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+				const DeclarationNode& decl = func_decl.decl_node();
+
+				struct_info->addMemberFunction(
+					std::string(decl.identifier_token().value()),
+					member_func_decl.function_declaration,
+					member_func_decl.access,
+					member_func_decl.is_virtual,
+					member_func_decl.is_pure_virtual,
+					member_func_decl.is_override,
+					member_func_decl.is_final
+				);
+			}
+
+			// Finalize the struct layout
+			struct_info->finalize();
+
+			// Store struct info in type info
+			struct_type_info.setStructInfo(std::move(struct_info));
+
+			// Register the specialization
+			gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
+
+			// Create a template class node
+			auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
+				std::vector<ASTNode>{},  // Empty template params for specialization
+				struct_node
+			);
+
+			// Add to top-level AST so it gets visited by the code generator
+			ast_nodes_.push_back(struct_node);
+
+			return saved_position.success(template_class_node);
+		}
+
 		// Set flag to indicate we're parsing a template class
 		// This will prevent delayed function bodies from being parsed immediately
 		parsing_template_class_ = true;
@@ -7323,7 +7548,16 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 // Try to instantiate a class template with explicit template arguments
 // Returns the instantiated StructDeclarationNode if successful
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<Type>& template_args) {
-	// Look up the template in the registry
+	// First, check if there's a specialization for these exact template arguments
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args);
+	if (specialization_opt.has_value()) {
+		// Found a specialization - it's already fully instantiated and registered
+		// Return nullopt to indicate the type is already available
+		// The caller will look it up in gTypesByName
+		return std::nullopt;
+	}
+
+	// No specialization found - use the primary template
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 	if (!template_opt.has_value()) {
 		return std::nullopt;  // No template with this name

@@ -70,6 +70,27 @@ struct OutOfLineMemberFunction {
 	std::vector<std::string_view> template_param_names;  // Names of template parameters
 };
 
+// Key for template specializations
+struct SpecializationKey {
+	std::string template_name;
+	std::vector<Type> template_args;
+
+	bool operator==(const SpecializationKey& other) const {
+		return template_name == other.template_name && template_args == other.template_args;
+	}
+};
+
+// Hash function for SpecializationKey
+struct SpecializationKeyHash {
+	size_t operator()(const SpecializationKey& key) const {
+		size_t hash = std::hash<std::string>{}(key.template_name);
+		for (const auto& arg : key.template_args) {
+			hash ^= std::hash<int>{}(static_cast<int>(arg)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		return hash;
+	}
+};
+
 // Template registry - stores template declarations and manages instantiations
 class TemplateRegistry {
 public:
@@ -160,11 +181,28 @@ public:
 		return {};
 	}
 
+	// Register a template specialization
+	void registerSpecialization(std::string_view template_name, const std::vector<Type>& template_args, ASTNode specialized_node) {
+		SpecializationKey key{std::string(template_name), template_args};
+		specializations_[key] = specialized_node;
+	}
+
+	// Look up a template specialization
+	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<Type>& template_args) const {
+		SpecializationKey key{std::string(template_name), template_args};
+		auto it = specializations_.find(key);
+		if (it != specializations_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+
 	// Clear all templates and instantiations
 	void clear() {
 		templates_.clear();
 		instantiations_.clear();
 		out_of_line_members_.clear();
+		specializations_.clear();
 	}
 
 private:
@@ -176,6 +214,9 @@ private:
 
 	// Map from class name to out-of-line member function definitions
 	std::unordered_map<std::string, std::vector<OutOfLineMemberFunction>> out_of_line_members_;
+
+	// Map from (template_name, template_args) to specialized class node
+	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
 };
 
 // Global template registry

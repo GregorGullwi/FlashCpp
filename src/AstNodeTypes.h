@@ -882,7 +882,7 @@ private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<BlockNode*> definition_block_;
-	std::string_view parent_struct_name_;  // Points directly into source text from lexer token
+	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
