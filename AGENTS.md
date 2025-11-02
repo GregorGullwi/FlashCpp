@@ -18,9 +18,6 @@ Target warning-clean builds under both MSVC and clang. Use four-space indentatio
 ## Testing Guidelines
 The doctest runner lives in `tests/FlashCppTest/FlashCppTest/FlashCppTest.cpp`. Add coverage with `TEST_CASE` blocks (e.g., `"Parser:IfWithInit"`). Run `link_and_run_test_debug.bat` for MSVC smoke tests, or `make test && ./x64/test` under clang. Shared expectations belong in `tests/Reference/`; document intentional skips inline.
 
-## Commit & Pull Request Guidelines
-Use focused commits with subjects under 72 characters; mirror the existing `[Gregor]` / `[AugmentCode]` tag format when appropriate. Mention the compiler or test command you ran in the commit body. Pull requests should link tracking issues, describe observable behaviour changes, and attach relevant logs or console output (especially from the batch scripts) so reviewers can reproduce results quickly.
-
 ## Workspace Hygiene
 Delete binaries, dumps, and logs before you stage. Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
 
