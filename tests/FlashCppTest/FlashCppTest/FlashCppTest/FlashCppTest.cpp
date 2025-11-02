@@ -63,7 +63,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 
     const auto& ast = parser.get_nodes();
 
-    AstToIr converter(gSymbolTable, compile_context);
+    AstToIr converter(gSymbolTable, compile_context, parser);
     for (auto& node_handle : ast) {
         converter.visit(node_handle);
     }
@@ -515,7 +515,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -840,7 +840,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -884,7 +884,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -931,7 +931,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -979,7 +979,7 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1038,7 +1038,7 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 
 	const auto& ast = parser.get_nodes();
 
-	AstToIr converter(gSymbolTable, compile_context);
+	AstToIr converter(gSymbolTable, compile_context, parser);
 	for (auto& node_handle : ast) {
 		converter.visit(node_handle);
 	}
@@ -1713,7 +1713,7 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1758,7 +1758,7 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1807,7 +1807,7 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}

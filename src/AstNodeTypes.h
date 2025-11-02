@@ -15,6 +15,7 @@
 #include "Token.h"
 #include "ChunkedAnyVector.h"
 #include "StackString.h"
+#include "Lexer.h"
 
 class ASTNode {
 public:
@@ -878,6 +879,14 @@ public:
 	void set_linkage(Linkage linkage) { linkage_ = linkage; }
 	Linkage linkage() const { return linkage_; }
 
+	// Template body position support (for delayed parsing of template bodies)
+	void set_template_body_position(TokenPosition pos) { 
+		has_template_body_ = true;
+		template_body_position_ = pos;
+	}
+	bool has_template_body_position() const { return has_template_body_; }
+	TokenPosition template_body_position() const { return template_body_position_; }
+
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
@@ -886,6 +895,8 @@ private:
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
+	bool has_template_body_ = false;
+	TokenPosition template_body_position_;  // Position of template body for delayed parsing
 };
 
 class FunctionCallNode {

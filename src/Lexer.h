@@ -98,6 +98,19 @@ public:
 	}
 
 	std::string_view get_source() const { return source_; }
+	
+	// Get current position for later restoration
+	TokenPosition getCurrentPosition() const {
+		return TokenPosition{cursor_, line_, column_, current_file_index_};
+	}
+	
+	// Restore lexer to a previously saved position
+	void restorePosition(const TokenPosition& pos) {
+		cursor_ = pos.cursor_;
+		line_ = pos.line_;
+		column_ = pos.column_;
+		current_file_index_ = pos.current_file_index_;
+	}
 
 private:
 	std::string_view source_;

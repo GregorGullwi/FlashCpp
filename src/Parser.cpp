@@ -7331,8 +7331,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		// Just a declaration, consume the semicolon
 		consume_token();
 	} else if (peek_token().has_value() && peek_token()->value() == "{") {
-		// Has a body - for now, skip it
-		// TODO: Parse and store the body for later instantiation
+		// Has a body - save position BEFORE consuming the '{'
+		// This way when we restore, current_token_ will be '{' and we can parse normally
+		TokenPosition body_start = save_token_position();
+		
+		// Store the body position in the function declaration so we can re-parse it later
+		func_decl.set_template_body_position(body_start);
+		
+		// Now consume the '{' and skip over the body
+		consume_token();
 		skip_balanced_braces();
 	}
 
@@ -8259,4 +8266,58 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	gTemplateRegistry.registerOutOfLineMember(class_name, std::move(out_of_line_member));
 
 	return true;  // Successfully parsed out-of-line definition
+}
+
+// Parse a template function body with concrete type bindings
+// This is called during code generation to instantiate member function templates
+std::optional<ASTNode> Parser::parseTemplateBody(
+	TokenPosition body_pos,
+	const std::vector<std::string_view>& template_param_names,
+	const std::vector<Type>& concrete_types
+) {
+	// Save current parser state using save_token_position so we can restore properly
+	TokenPosition saved_cursor = save_token_position();
+
+	// Store types we add so we can clean them up
+	std::vector<TypeInfo*> temp_type_infos;
+
+	// Bind template parameters to concrete types
+	for (size_t i = 0; i < template_param_names.size() && i < concrete_types.size(); ++i) {
+		Type concrete_type = concrete_types[i];
+		std::string_view param_name = template_param_names[i];
+
+		// Add a TypeInfo for this concrete type with the template parameter name
+		auto& type_info = gTypeInfo.emplace_back(
+			std::string(param_name),
+			concrete_type,
+			gTypeInfo.size()
+		);
+
+		// Register in global type lookup
+		gTypesByName[std::string(param_name)] = &type_info;
+		temp_type_infos.push_back(&type_info);
+	}
+
+	// Restore to template body position (this sets current_token_ to the saved token)
+	restore_lexer_position_only(body_pos);
+
+	// The current token should now be '{' (the token that was saved)
+	// parse_block() will consume it, so don't consume it here
+
+	// Parse the block body
+	auto block_result = parse_block();
+
+	// Clean up temporary type bindings
+	for (auto* type_info : temp_type_infos) {
+		gTypesByName.erase(type_info->name_);
+	}
+
+	// Restore original parser state
+	restore_lexer_position_only(saved_cursor);
+
+	if (block_result.is_error() || !block_result.node().has_value()) {
+		return std::nullopt;
+	}
+
+	return block_result.node();
 }

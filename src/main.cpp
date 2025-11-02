@@ -159,7 +159,7 @@ int main(int argc, char *argv[]) {
 
     const auto& ast = parser.get_nodes();
 
-    AstToIr converter(gSymbolTable, context);
+    AstToIr converter(gSymbolTable, context, parser);
 
     // Reserve space for IR instructions
     // Estimate: ~2 instructions per source line (empirical heuristic)
@@ -179,6 +179,9 @@ int main(int argc, char *argv[]) {
 
         // Generate all collected lambdas after visiting all nodes
         converter.generateCollectedLambdas();
+        
+        // Generate all collected template instantiations
+        converter.generateCollectedTemplateInstantiations();
     }
 
     const auto& ir = converter.getIr();

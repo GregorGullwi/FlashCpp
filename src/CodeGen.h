@@ -5,6 +5,7 @@
 #include "SymbolTable.h"
 #include "CompileContext.h"
 #include "TemplateRegistry.h"
+#include "ChunkedString.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -34,8 +35,8 @@ struct LambdaInfo {
 class AstToIr {
 public:
 	AstToIr() = delete;  // Require valid references
-	AstToIr(SymbolTable& global_symbol_table, CompileContext& context)
-		: global_symbol_table_(&global_symbol_table), context_(&context) {}
+	AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
+		: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {}
 
 	void visit(const ASTNode& node) {
 		// Skip empty nodes (e.g., from forward declarations)
@@ -158,6 +159,13 @@ public:
 	void generateCollectedLambdas() {
 		for (const auto& lambda_info : collected_lambdas_) {
 			generateLambdaFunctions(lambda_info);
+		}
+	}
+	
+	// Generate all collected template instantiations (must be called after visiting all nodes)
+	void generateCollectedTemplateInstantiations() {
+		for (const auto& inst_info : collected_template_instantiations_) {
+			generateTemplateInstantiation(inst_info);
 		}
 	}
 
@@ -3127,11 +3135,36 @@ private:
 					
 					auto existing_inst = gTemplateRegistry.getInstantiation(inst_key);
 					if (!existing_inst.has_value()) {
-						// Create new instantiation
-						// For now, just register that we have this instantiation
-						// The actual instantiated function will be handled by the code generator
-						// DEBUG removed
+						// Create new instantiation - collect it for deferred generation
 						gTemplateRegistry.registerInstantiation(inst_key, template_func.function_declaration());
+						
+						// Get template parameter names
+						std::vector<std::string_view> param_names;
+						for (const auto& tparam_node : template_func.template_parameters()) {
+							if (tparam_node.is<TemplateParameterNode>()) {
+								param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+							}
+						}
+						
+						// Generate the mangled name
+						std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
+						
+						// Collect this instantiation for deferred generation
+						const FunctionDeclarationNode& template_func_decl = template_func.function_decl_node();
+						if (template_func_decl.has_template_body_position()) {
+							TemplateInstantiationInfo inst_info;
+							inst_info.qualified_template_name = qualified_template_name;
+							inst_info.mangled_name = std::string(mangled_func_name);
+							inst_info.struct_name = std::string(struct_info->name);
+							for (const auto& arg_type : arg_types) {
+								inst_info.template_args.push_back(arg_type);
+							}
+							inst_info.body_position = template_func_decl.template_body_position();
+							inst_info.template_param_names = param_names;
+							inst_info.template_node_ptr = &template_func;
+							
+							collected_template_instantiations_.push_back(std::move(inst_info));
+						}
 					}
 				}
 				} else {
@@ -4375,11 +4408,13 @@ private:
 		}
 	}
 
+
 	Ir ir_;
 	TempVar var_counter{ 0 };
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags
+	Parser* parser_;  // Reference to parser for template instantiation
 
 	// Current function name (for mangling static local variables)
 	std::string current_function_name_;
@@ -4397,6 +4432,20 @@ private:
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
+	
+	// Structure to hold template instantiation info for deferred generation
+	struct TemplateInstantiationInfo {
+		std::string qualified_template_name;  // e.g., "Container::insert"
+		std::string mangled_name;  // e.g., "insert_int"
+		std::string struct_name;   // e.g., "Container"
+		std::vector<Type> template_args;  // Concrete types
+		TokenPosition body_position;  // Where the template body starts
+		std::vector<std::string_view> template_param_names;  // e.g., ["U"]
+		const TemplateFunctionDeclarationNode* template_node_ptr;  // Pointer to the template
+	};
+	
+	// Collected template instantiations for deferred generation
+	std::vector<TemplateInstantiationInfo> collected_template_instantiations_;
 
 	// Current lambda context (for tracking captured variables)
 	// When generating lambda body, this contains the closure type name
@@ -4404,4 +4453,136 @@ private:
 	std::unordered_set<std::string> current_lambda_captures_;
 	std::unordered_map<std::string, LambdaCaptureNode::CaptureKind> current_lambda_capture_kinds_;
 	std::unordered_map<std::string, TypeSpecifierNode> current_lambda_capture_types_;
+
+	// Generate an instantiated member function template
+	void generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info) {
+		// Get the template function declaration
+		const FunctionDeclarationNode& template_func_decl = inst_info.template_node_ptr->function_decl_node();
+		const DeclarationNode& template_decl = template_func_decl.decl_node();
+
+		// Create mangled name token
+		Token mangled_token(
+			Token::Type::Identifier,
+			inst_info.mangled_name,
+			template_decl.identifier_token().line(),
+			template_decl.identifier_token().column(),
+			template_decl.identifier_token().file_index()
+		);
+
+		// Build function name - use StringBuilder to create persistent string_view
+		StringBuilder func_name_builder;
+		func_name_builder.append(inst_info.mangled_name);
+		std::string_view full_func_name = func_name_builder.commit();
+		
+		// Also create persistent string_view for struct name
+		StringBuilder struct_name_builder;
+		struct_name_builder.append(inst_info.struct_name);
+		std::string_view struct_name_view = struct_name_builder.commit();
+
+		// Generate function declaration IR
+		// Format: [return_type, return_size, return_pointer_depth, func_name, struct_name, linkage, params...]
+		std::vector<IrOperand> funcDeclOperands;
+
+		// Add return type
+		const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
+		funcDeclOperands.emplace_back(return_type.type());
+		funcDeclOperands.emplace_back(static_cast<int>(return_type.size_in_bits()));
+		funcDeclOperands.emplace_back(static_cast<int>(return_type.pointer_depth()));  // Add pointer depth
+		
+		// Add function name (use string_view from StringBuilder)
+		funcDeclOperands.emplace_back(full_func_name);
+		
+		// Add struct name for member functions (use string_view from StringBuilder)
+		funcDeclOperands.emplace_back(struct_name_view);
+		
+		// Add linkage (C++)
+		funcDeclOperands.emplace_back(static_cast<int>(Linkage::None));
+
+		// Add function parameters with concrete types
+		// Note: The IR converter will handle the implicit 'this' parameter for member functions
+		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
+			const auto& param_node = template_func_decl.parameter_nodes()[i];
+			if (param_node.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+
+				// Use concrete type if this parameter uses a template parameter
+				// For simplicity, if we have template args, use them in order
+				if (i < inst_info.template_args.size()) {
+					Type concrete_type = inst_info.template_args[i];
+					funcDeclOperands.emplace_back(concrete_type);
+					funcDeclOperands.emplace_back(static_cast<int>(get_type_size_bits(concrete_type)));
+					funcDeclOperands.emplace_back(static_cast<int>(0));  // pointer depth
+					funcDeclOperands.emplace_back(param_decl.identifier_token().value());  // string_view
+				} else {
+					// Use original parameter type
+					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					funcDeclOperands.emplace_back(param_type.type());
+					funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
+					funcDeclOperands.emplace_back(static_cast<int>(param_type.pointer_depth()));
+					funcDeclOperands.emplace_back(param_decl.identifier_token().value());  // string_view
+				}
+			}
+		}
+
+		// Emit function declaration IR
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), mangled_token));
+
+		// Enter function scope
+		symbol_table.enter_scope(ScopeType::Function);
+
+		// The IR converter will add 'this' to variable_scopes automatically for member functions
+		// We just need to add the parameters to the symbol table for name resolution during parsing
+
+		// Add function parameters to symbol table
+		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
+			const auto& param_node = template_func_decl.parameter_nodes()[i];
+			if (param_node.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+
+				// Create declaration with concrete type
+				if (i < inst_info.template_args.size()) {
+					Type concrete_type = inst_info.template_args[i];
+					auto concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+						concrete_type, 
+						TypeQualifier::None, 
+						get_type_size_bits(concrete_type),
+						param_decl.identifier_token()
+					);
+					auto concrete_param_decl = ASTNode::emplace_node<DeclarationNode>(concrete_type_node, param_decl.identifier_token());
+					symbol_table.insert(param_decl.identifier_token().value(), concrete_param_decl);
+				} else {
+					symbol_table.insert(param_decl.identifier_token().value(), param_node);
+				}
+			}
+		}
+
+		// Parse the template body with concrete types
+		auto body_node_opt = parser_->parseTemplateBody(
+			inst_info.body_position,
+			inst_info.template_param_names,
+			inst_info.template_args
+		);
+
+		if (body_node_opt.has_value()) {
+			if (body_node_opt->is<BlockNode>()) {
+				const BlockNode& block = body_node_opt->as<BlockNode>();
+				const auto& stmts = block.get_statements();
+				
+				// Visit each statement in the block to generate IR
+				// Use index-based iteration to avoid potential issues with visit()
+				for (size_t i = 0; i < stmts.size(); ++i) {
+					visit(stmts[i]);
+				}
+			}
+		}
+
+		// Add implicit return for void functions
+		if (return_type.type() == Type::Void) {
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, {}, mangled_token));
+		}
+
+		// Exit function scope
+		symbol_table.exit_scope();
+	}
+
 };
