@@ -4874,6 +4874,51 @@ ParseResult Parser::parse_primary_expression()
 							}
 						}
 					}
+				} else if (context.struct_type_index != 0) {
+					// struct_node is null, but we have struct_type_index
+					// This happens during template body parsing where we don't have access to struct_node
+					// Look up the struct type from the type system
+					if (context.struct_type_index < gTypeInfo.size()) {
+						const TypeInfo& struct_type_info = gTypeInfo[context.struct_type_index];
+						const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+						
+						if (struct_info) {
+							// Check if the identifier is a member of this struct
+							for (const auto& member : struct_info->members) {
+								if (member.name == idenfifier_token.value()) {
+									// This is a member variable! Transform it into this->member
+									Token this_token(Token::Type::Keyword, "this",
+									                 idenfifier_token.line(), idenfifier_token.column(),
+									                 idenfifier_token.file_index());
+									auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+
+									// Create member access node: this->member
+									result = emplace_node<ExpressionNode>(
+										MemberAccessNode(this_ident, idenfifier_token));
+
+									// Identifier already consumed at line 1621
+									return ParseResult::success(*result);
+								}
+							}
+							
+							// Also check base class members
+							const StructMember* member = struct_info->findMemberRecursive(std::string(idenfifier_token.value()));
+							if (member) {
+								// This is an inherited member variable! Transform it into this->member
+								Token this_token(Token::Type::Keyword, "this",
+								                 idenfifier_token.line(), idenfifier_token.column(),
+								                 idenfifier_token.file_index());
+								auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+
+								// Create member access node: this->member
+								result = emplace_node<ExpressionNode>(
+									MemberAccessNode(this_ident, idenfifier_token));
+
+								// Identifier already consumed at line 1621
+								return ParseResult::success(*result);
+							}
+						}
+					}
 				}
 			}
 
@@ -8273,7 +8318,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 std::optional<ASTNode> Parser::parseTemplateBody(
 	TokenPosition body_pos,
 	const std::vector<std::string_view>& template_param_names,
-	const std::vector<Type>& concrete_types
+	const std::vector<Type>& concrete_types,
+	std::string_view struct_name,
+	TypeIndex struct_type_index
 ) {
 	// Save current parser state using save_token_position so we can restore properly
 	TokenPosition saved_cursor = save_token_position();
@@ -8298,6 +8345,50 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 		temp_type_infos.push_back(&type_info);
 	}
 
+	// If this is a member function, set up member function context
+	bool setup_member_context = !struct_name.empty() && struct_type_index != 0;
+	ASTNode this_decl_node;  // Need to keep this alive for the duration of parsing
+	if (setup_member_context) {
+		// Find the struct in the type system
+		auto struct_type_it = gTypesByName.find(std::string(struct_name));
+		if (struct_type_it != gTypesByName.end()) {
+			const TypeInfo* type_info = struct_type_it->second;
+			
+			// Add 'this' pointer to global symbol table
+			// Create a token for 'this'
+			Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+			
+			// Create type node for 'this' (pointer to struct)
+			auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+				Type::UserDefined,
+				struct_type_index,
+				64,  // Pointer size
+				this_token
+			);
+			this_type_node.as<TypeSpecifierNode>().add_pointer_level(CVQualifier::None);
+			
+			// Create declaration for 'this'
+			this_decl_node = ASTNode::emplace_node<DeclarationNode>(this_type_node, this_token);
+			
+			// Add to global symbol table
+			gSymbolTable.insert("this", this_decl_node);
+			
+			// Also push member function context for good measure
+			// Try to find the StructDeclarationNode in the symbol table
+			auto struct_symbol_opt = gSymbolTable.lookup(struct_name);
+			StructDeclarationNode* struct_node_ptr = nullptr;
+			if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
+				struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
+			}
+			
+			MemberFunctionContext ctx;
+			ctx.struct_name = struct_name;
+			ctx.struct_type_index = struct_type_index;
+			ctx.struct_node = struct_node_ptr;
+			member_function_context_stack_.push_back(ctx);
+		}
+	}
+
 	// Restore to template body position (this sets current_token_ to the saved token)
 	restore_lexer_position_only(body_pos);
 
@@ -8306,6 +8397,14 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 
 	// Parse the block body
 	auto block_result = parse_block();
+
+	// Clean up member function context if we set it up
+	if (setup_member_context && !member_function_context_stack_.empty()) {
+		member_function_context_stack_.pop_back();
+		// Remove 'this' from global symbol table
+		// Note: gSymbolTable doesn't have a remove method, but since we're about to restore
+		// the parser state anyway, the symbol table will revert to its previous state
+	}
 
 	// Clean up temporary type bindings
 	for (auto* type_info : temp_type_infos) {

@@ -2423,7 +2423,7 @@ private:
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
-						if (type_node.type() != Type::Struct) {
+						if (type_node.type() != Type::Struct && type_node.type() != Type::UserDefined) {
 							// Error: not a struct type
 							return { Type::Int, 32, TempVar{0} };
 						}
@@ -3163,6 +3163,8 @@ private:
 							inst_info.template_param_names = param_names;
 							inst_info.template_node_ptr = &template_func;
 							
+							// Collect the instantiation - it will be generated later at the top level
+							// This ensures the FunctionDecl IR appears before any calls to it
 							collected_template_instantiations_.push_back(std::move(inst_info));
 						}
 					}
@@ -4454,9 +4456,10 @@ private:
 	std::unordered_map<std::string, LambdaCaptureNode::CaptureKind> current_lambda_capture_kinds_;
 	std::unordered_map<std::string, TypeSpecifierNode> current_lambda_capture_types_;
 
-	// Generate an instantiated member function template
-	void generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info) {
-		// Get the template function declaration
+	// Generate just the function declaration for a template instantiation (without body)
+	// This is called immediately when a template call is detected, so the IR converter
+	// knows the full function signature before the call is converted to object code
+	void generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst_info) {
 		const FunctionDeclarationNode& template_func_decl = inst_info.template_node_ptr->function_decl_node();
 		const DeclarationNode& template_decl = template_func_decl.decl_node();
 
@@ -4487,53 +4490,102 @@ private:
 		const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
 		funcDeclOperands.emplace_back(return_type.type());
 		funcDeclOperands.emplace_back(static_cast<int>(return_type.size_in_bits()));
-		funcDeclOperands.emplace_back(static_cast<int>(return_type.pointer_depth()));  // Add pointer depth
+		funcDeclOperands.emplace_back(static_cast<int>(return_type.pointer_depth()));
 		
-		// Add function name (use string_view from StringBuilder)
+		// Add function name
 		funcDeclOperands.emplace_back(full_func_name);
 		
-		// Add struct name for member functions (use string_view from StringBuilder)
+		// Add struct name for member functions
 		funcDeclOperands.emplace_back(struct_name_view);
 		
 		// Add linkage (C++)
 		funcDeclOperands.emplace_back(static_cast<int>(Linkage::None));
 
 		// Add function parameters with concrete types
-		// Note: The IR converter will handle the implicit 'this' parameter for member functions
 		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
 			const auto& param_node = template_func_decl.parameter_nodes()[i];
 			if (param_node.is<DeclarationNode>()) {
 				const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
 
 				// Use concrete type if this parameter uses a template parameter
-				// For simplicity, if we have template args, use them in order
 				if (i < inst_info.template_args.size()) {
 					Type concrete_type = inst_info.template_args[i];
 					funcDeclOperands.emplace_back(concrete_type);
 					funcDeclOperands.emplace_back(static_cast<int>(get_type_size_bits(concrete_type)));
 					funcDeclOperands.emplace_back(static_cast<int>(0));  // pointer depth
-					funcDeclOperands.emplace_back(param_decl.identifier_token().value());  // string_view
+					funcDeclOperands.emplace_back(param_decl.identifier_token().value());
 				} else {
 					// Use original parameter type
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					funcDeclOperands.emplace_back(param_type.type());
 					funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
 					funcDeclOperands.emplace_back(static_cast<int>(param_type.pointer_depth()));
-					funcDeclOperands.emplace_back(param_decl.identifier_token().value());  // string_view
+					funcDeclOperands.emplace_back(param_decl.identifier_token().value());
 				}
 			}
 		}
 
-		// Emit function declaration IR
+		// Emit function declaration IR (declaration only, no body)
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), mangled_token));
+	}
+
+	// Generate an instantiated member function template
+	void generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info) {
+		// First, generate the FunctionDecl IR for the template instantiation
+		// This must be done at the top level, BEFORE any function bodies that might call it
+		generateTemplateFunctionDecl(inst_info);
+		
+		// Get the template function declaration
+		const FunctionDeclarationNode& template_func_decl = inst_info.template_node_ptr->function_decl_node();
+		const DeclarationNode& template_decl = template_func_decl.decl_node();
+
+		// Create mangled name token
+		Token mangled_token(
+			Token::Type::Identifier,
+			inst_info.mangled_name,
+			template_decl.identifier_token().line(),
+			template_decl.identifier_token().column(),
+			template_decl.identifier_token().file_index()
+		);
 
 		// Enter function scope
 		symbol_table.enter_scope(ScopeType::Function);
 
-		// The IR converter will add 'this' to variable_scopes automatically for member functions
-		// We just need to add the parameters to the symbol table for name resolution during parsing
+		// Get struct type info for member functions
+		const TypeInfo* struct_type_info = nullptr;
+		if (!inst_info.struct_name.empty()) {
+			auto struct_type_it = gTypesByName.find(inst_info.struct_name);
+			if (struct_type_it != gTypesByName.end()) {
+				struct_type_info = struct_type_it->second;
+			}
+		}
 
-		// Add function parameters to symbol table
+		// For member functions, add implicit 'this' pointer to symbol table
+		// This is needed so member variable access works during template body parsing
+		if (struct_type_info) {
+			// Create a 'this' pointer type (pointer to the struct)
+			auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+				Type::UserDefined,
+				struct_type_info->type_index_,
+				64,  // Pointer size in bits
+				template_decl.identifier_token()
+			);
+			
+			// Set pointer depth to 1 (this is a pointer)
+			this_type_node.as<TypeSpecifierNode>().add_pointer_level(CVQualifier::None);
+			
+			// Create 'this' declaration
+			Token this_token(Token::Type::Identifier, "this", 
+				template_decl.identifier_token().line(),
+				template_decl.identifier_token().column(),
+				template_decl.identifier_token().file_index());
+			auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type_node, this_token);
+			
+			// Add 'this' to symbol table
+			symbol_table.insert("this", this_decl);
+		}
+
+		// Add function parameters to symbol table for name resolution during body parsing
 		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
 			const auto& param_node = template_func_decl.parameter_nodes()[i];
 			if (param_node.is<DeclarationNode>()) {
@@ -4557,10 +4609,13 @@ private:
 		}
 
 		// Parse the template body with concrete types
+		// Pass the struct name and type index so the parser can set up member function context
 		auto body_node_opt = parser_->parseTemplateBody(
 			inst_info.body_position,
 			inst_info.template_param_names,
-			inst_info.template_args
+			inst_info.template_args,
+			inst_info.struct_name,  // Pass struct name
+			struct_type_info ? struct_type_info->type_index_ : 0  // Pass type index
 		);
 
 		if (body_node_opt.has_value()) {
@@ -4569,7 +4624,6 @@ private:
 				const auto& stmts = block.get_statements();
 				
 				// Visit each statement in the block to generate IR
-				// Use index-based iteration to avoid potential issues with visit()
 				for (size_t i = 0; i < stmts.size(); ++i) {
 					visit(stmts[i]);
 				}
@@ -4577,6 +4631,7 @@ private:
 		}
 
 		// Add implicit return for void functions
+		const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
 		if (return_type.type() == Type::Void) {
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, {}, mangled_token));
 		}
