@@ -6748,11 +6748,10 @@ ParseResult Parser::parse_template_declaration() {
 	consume_token(); // consume '>'
 
 	// Now parse what comes after the template parameter list
-	// For now, we only support function templates
-	// TODO: Add support for class templates, variable templates, etc.
+	// We support function templates and class templates
 
 	// Add template parameters to the type system temporarily
-	// This allows them to be used in the function body
+	// This allows them to be used in the function body or class members
 	std::vector<TypeInfo*> template_type_infos;
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
@@ -6767,8 +6766,19 @@ ParseResult Parser::parse_template_declaration() {
 		}
 	}
 
-	// Check if it's a function declaration
-	auto decl_result = parse_declaration_or_function_definition();
+	// Check if it's a class/struct template
+	bool is_class_template = peek_token().has_value() &&
+	                         peek_token()->type() == Token::Type::Keyword &&
+	                         (peek_token()->value() == "class" || peek_token()->value() == "struct");
+
+	ParseResult decl_result;
+	if (is_class_template) {
+		// Parse class template
+		decl_result = parse_struct_declaration();
+	} else {
+		// Parse function template
+		decl_result = parse_declaration_or_function_definition();
+	}
 
 	// Remove template parameters from type system
 	for (const auto* type_info : template_type_infos) {
@@ -6782,28 +6792,40 @@ ParseResult Parser::parse_template_declaration() {
 	}
 
 	if (!decl_result.node().has_value()) {
-		return ParseResult::error("Expected function declaration after template parameter list", *current_token_);
+		return ParseResult::error("Expected function or class declaration after template parameter list", *current_token_);
 	}
 
 	ASTNode decl_node = *decl_result.node();
 
-	// The declaration should be a FunctionDeclarationNode
-	if (!decl_node.is<FunctionDeclarationNode>()) {
-		return ParseResult::error("Only function templates are currently supported", *current_token_);
+	// Create appropriate template node based on what was parsed
+	if (decl_node.is<FunctionDeclarationNode>()) {
+		// Create a TemplateFunctionDeclarationNode
+		auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
+			std::move(template_params),
+			decl_node
+		);
+
+		// Register the template in the template registry
+		const FunctionDeclarationNode& func_decl = decl_node.as<FunctionDeclarationNode>();
+		const DeclarationNode& func_decl_node = func_decl.decl_node();
+		gTemplateRegistry.registerTemplate(func_decl_node.identifier_token().value(), template_func_node);
+
+		return saved_position.success(template_func_node);
+	} else if (decl_node.is<StructDeclarationNode>()) {
+		// Create a TemplateClassDeclarationNode
+		auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
+			std::move(template_params),
+			decl_node
+		);
+
+		// Register the template in the template registry
+		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
+		gTemplateRegistry.registerTemplate(struct_decl.name(), template_class_node);
+
+		return saved_position.success(template_class_node);
+	} else {
+		return ParseResult::error("Unsupported template declaration type", *current_token_);
 	}
-
-	// Create a TemplateFunctionDeclarationNode
-	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-		std::move(template_params),
-		decl_node
-	);
-
-	// Register the template in the global template registry
-	const FunctionDeclarationNode& func_decl = decl_node.as<FunctionDeclarationNode>();
-	std::string_view template_name = func_decl.decl_node().identifier_token().value();
-	gTemplateRegistry.registerTemplate(template_name, template_func_node);
-
-	return saved_position.success(template_func_node);
 }
 
 // Parse template parameter list: typename T, int N, ...
@@ -7165,7 +7187,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			// For template<typename T, typename U> T func(T a, U b):
 			//   - parameter 0 uses template_args[0] (T)
 			//   - parameter 1 uses template_args[1] (U)
-			size_t template_arg_index = std::min(i, template_args.size() - 1);
+			size_t template_arg_index = (i < template_args.size()) ? i : (template_args.size() - 1);
 			ASTNode param_type = emplace_node<TypeSpecifierNode>(
 				template_args[template_arg_index].type_value,
 				TypeQualifier::None,

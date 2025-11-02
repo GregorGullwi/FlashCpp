@@ -968,6 +968,9 @@ private:
 	ASTNode function_declaration_;  // FunctionDeclarationNode
 };
 
+// Forward declaration for TemplateClassDeclarationNode (defined after StructDeclarationNode)
+class TemplateClassDeclarationNode;
+
 // Member initializer for constructor initializer lists
 struct MemberInitializer {
 	std::string_view member_name;
@@ -1217,6 +1220,29 @@ private:
 	std::vector<ASTNode> nested_classes_;  // Nested classes
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
+};
+
+// Template class declaration node - represents a class template
+class TemplateClassDeclarationNode {
+public:
+	TemplateClassDeclarationNode() = delete;
+	TemplateClassDeclarationNode(std::vector<ASTNode> template_params, ASTNode class_decl)
+		: template_parameters_(std::move(template_params)), class_declaration_(class_decl) {}
+
+	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	ASTNode class_declaration() const { return class_declaration_; }
+
+	// Get the underlying StructDeclarationNode
+	StructDeclarationNode& class_decl_node() {
+		return class_declaration_.as<StructDeclarationNode>();
+	}
+	const StructDeclarationNode& class_decl_node() const {
+		return class_declaration_.as<StructDeclarationNode>();
+	}
+
+private:
+	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
+	ASTNode class_declaration_;  // StructDeclarationNode
 };
 
 // Namespace declaration node

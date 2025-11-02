@@ -130,6 +130,11 @@ public:
 			// TODO: Implement template instantiation in Phase 2
 			return;
 		}
+		else if (node.is<TemplateClassDeclarationNode>()) {
+			// Template class declarations don't generate code yet - they're stored for later instantiation
+			// TODO: Implement class template instantiation in Phase 6
+			return;
+		}
 		else if (node.is<ExpressionNode>()) {
 			// Expression statement (e.g., function call, lambda expression, etc.)
 			// Evaluate the expression but discard the result
