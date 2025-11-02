@@ -4,6 +4,7 @@
 #include "IRTypes.h"
 #include "SymbolTable.h"
 #include "CompileContext.h"
+#include "TemplateRegistry.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -3052,6 +3053,95 @@ private:
 			}
 		}
 
+		// Check if this is a member function template that needs instantiation
+		if (struct_info) {
+			std::string_view func_name = func_decl_node.identifier_token().value();
+			std::string qualified_template_name = std::string(struct_info->name) + "::" + std::string(func_name);
+			
+			// DEBUG removed
+			
+			// Look up if this is a template
+			auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
+			if (template_opt.has_value()) {
+				// DEBUG removed
+				if (template_opt->is<TemplateFunctionDeclarationNode>()) {
+					// DEBUG removed
+				// This is a member function template - we need to instantiate it
+				
+				// Deduce template argument types from call arguments
+				std::vector<Type> arg_types;
+				// DEBUG removed
+				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+					// DEBUG removed
+					if (!argument.is<ExpressionNode>()) {
+						std::cerr << "NO\n";
+						return;
+					}
+					std::cerr << "YES\n";
+					
+					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
+					
+					// DEBUG removed
+					
+					// Get type of argument - for literals, use the literal type
+					if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
+						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
+						// DEBUG removed
+						arg_types.push_back(lit.type());
+					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+						// Look up variable type
+						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
+						// DEBUG removed
+						auto symbol_opt = symbol_table.lookup(ident.name());
+						if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
+							const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
+							const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
+							// DEBUG removed
+							arg_types.push_back(type.type());
+						}
+					} else {
+						// DEBUG removed
+					}
+				});
+				
+				// DEBUG removed
+
+				// Try to instantiate the template with deduced argument types
+				if (!arg_types.empty()) {
+					// Build instantiation key
+					const TemplateFunctionDeclarationNode& template_func = template_opt->as<TemplateFunctionDeclarationNode>();
+					
+					std::vector<TemplateArgument> template_args;
+					for (const auto& arg_type : arg_types) {
+						template_args.push_back(TemplateArgument::makeType(arg_type));
+					}
+					
+					// Check if we already have this instantiation
+					TemplateInstantiationKey inst_key;
+					inst_key.template_name = qualified_template_name;
+					for (const auto& arg : template_args) {
+						if (arg.kind == TemplateArgument::Kind::Type) {
+							inst_key.type_arguments.push_back(arg.type_value);
+						}
+					}
+					
+					auto existing_inst = gTemplateRegistry.getInstantiation(inst_key);
+					if (!existing_inst.has_value()) {
+						// Create new instantiation
+						// For now, just register that we have this instantiation
+						// The actual instantiated function will be handled by the code generator
+						// DEBUG removed
+						gTemplateRegistry.registerInstantiation(inst_key, template_func.function_declaration());
+					}
+				}
+				} else {
+					// DEBUG removed
+				}
+			} else {
+				// DEBUG removed
+			}
+		}
+
 		// Check access control for member function calls
 		if (called_member_func && struct_info) {
 			const StructTypeInfo* current_context = getCurrentStructContext();
@@ -3108,22 +3198,66 @@ private:
 			// Generate regular (non-virtual) member function call
 			irOperands.emplace_back(ret_var);
 
-			// For member functions, include the struct name in the function name
-			// This allows proper name mangling (e.g., "__lambda_0::operator()")
-			if (func_decl.is_member_function() && !func_decl.parent_struct_name().empty()) {
-				std::string_view struct_name = func_decl.parent_struct_name();
-				std::string_view func_name = func_decl_node.identifier_token().value();
-
-				// Reserve space to avoid reallocations
-				std::string function_name;
-				function_name.reserve(struct_name.size() + 2 + func_name.size());
-				function_name += struct_name;
-				function_name += "::";
-				function_name += func_name;
-				irOperands.emplace_back(std::move(function_name));
+			// Check if this is an instantiated template function
+			std::string function_name;
+			std::string_view func_name = func_decl_node.identifier_token().value();
+			
+			// Check if this is a member function - use struct_info to determine
+			if (struct_info) {
+				std::string_view struct_name = struct_info->name;
+				std::string qualified_template_name = std::string(struct_name) + "::" + std::string(func_name);
+				
+				// DEBUG removed
+				
+				// Check if this is a template that has been instantiated
+				auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
+				if (template_opt.has_value() && template_opt->is<TemplateFunctionDeclarationNode>()) {
+					// DEBUG removed
+					// This is a member function template - use the mangled name
+					
+					// Deduce template arguments from call arguments
+					std::vector<TemplateArgument> template_args;
+					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+						if (!argument.is<ExpressionNode>()) return;
+						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
+						
+						// Get type of argument
+						if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
+							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
+							template_args.push_back(TemplateArgument::makeType(lit.type()));
+						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
+							auto symbol_opt = symbol_table.lookup(ident.name());
+							if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
+								const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
+								const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
+								template_args.push_back(TemplateArgument::makeType(type.type()));
+							}
+						}
+					});
+					
+					// Generate the mangled name
+					std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
+					// DEBUG removed
+					
+					// Build qualified function name with mangled template name
+					function_name.reserve(struct_name.size() + 2 + mangled_func_name.size());
+					function_name += struct_name;
+					function_name += "::";
+					function_name += mangled_func_name;
+				} else {
+					// Regular member function (not a template)
+					function_name.reserve(struct_name.size() + 2 + func_name.size());
+					function_name += struct_name;
+					function_name += "::";
+					function_name += func_name;
+				}
 			} else {
-				irOperands.emplace_back(std::string(func_decl_node.identifier_token().value()));
+				// Non-member function or fallback
+				function_name = std::string(func_name);
 			}
+			
+			irOperands.emplace_back(std::move(function_name));
 
 			// Add the object as the first argument (this pointer)
 			// We need to pass the address of the object

@@ -1140,6 +1140,15 @@ ParseResult Parser::parse_struct_declaration()
 				continue;
 			}
 
+			// Check for 'template' keyword - member function template
+			if (keyword == "template") {
+				auto template_result = parse_member_function_template(struct_ref, current_access);
+				if (template_result.is_error()) {
+					return template_result;
+				}
+				continue;
+			}
+
 			// Check for 'friend' keyword
 			if (keyword == "friend") {
 				auto friend_result = parse_friend_declaration();
@@ -7217,6 +7226,130 @@ ParseResult Parser::parse_template_parameter() {
 	// TODO: Handle default arguments (e.g., int N = 10)
 
 	return saved_position.success(param_node);
+}
+
+// Parse member function template inside a class
+// Pattern: template<typename U> ReturnType functionName(U param) { ... }
+ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access) {
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'template' keyword
+	if (!consume_keyword("template")) {
+		return ParseResult::error("Expected 'template' keyword", *peek_token());
+	}
+
+	// Expect '<' to start template parameter list
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+	}
+	consume_token(); // consume '<'
+
+	// Parse template parameter list
+	std::vector<ASTNode> template_params;
+	std::vector<std::string_view> template_param_names;
+
+	auto param_list_result = parse_template_parameter_list(template_params);
+	if (param_list_result.is_error()) {
+		return param_list_result;
+	}
+
+	// Expect '>' to close template parameter list
+	if (!peek_token().has_value() || peek_token()->value() != ">") {
+		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+	}
+	consume_token(); // consume '>'
+
+	// Extract template parameter names
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			template_param_names.push_back(tparam.name());
+		}
+	}
+
+	// Temporarily add template parameters to type system
+	std::vector<TypeInfo*> template_type_infos;
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name_, &type_info);
+				template_type_infos.push_back(&type_info);
+			}
+		}
+	}
+
+	// Parse the member function declaration
+	auto member_result = parse_type_and_name();
+	if (member_result.is_error()) {
+		// Clean up template parameters
+		for (const auto* type_info : template_type_infos) {
+			gTypesByName.erase(type_info->name_);
+		}
+		return member_result;
+	}
+
+	if (!member_result.node().has_value() || !member_result.node()->is<DeclarationNode>()) {
+		// Clean up template parameters
+		for (const auto* type_info : template_type_infos) {
+			gTypesByName.erase(type_info->name_);
+		}
+		return ParseResult::error("Expected declaration node for member function template", *peek_token());
+	}
+
+	DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+
+	// Parse function declaration with parameters
+	auto func_result = parse_function_declaration(decl_node);
+	if (func_result.is_error()) {
+		// Clean up template parameters
+		for (const auto* type_info : template_type_infos) {
+			gTypesByName.erase(type_info->name_);
+		}
+		return func_result;
+	}
+
+	if (!func_result.node().has_value()) {
+		// Clean up template parameters
+		for (const auto* type_info : template_type_infos) {
+			gTypesByName.erase(type_info->name_);
+		}
+		return ParseResult::error("Failed to create function declaration node", *peek_token());
+	}
+
+	FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+
+	// Create a template function declaration node
+	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
+		std::move(template_params),
+		*func_result.node()
+	);
+
+	// Check if there's a function body or just a semicolon
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		// Just a declaration, consume the semicolon
+		consume_token();
+	} else if (peek_token().has_value() && peek_token()->value() == "{") {
+		// Has a body - for now, skip it
+		// TODO: Parse and store the body for later instantiation
+		skip_balanced_braces();
+	}
+
+	// Add to struct as a member function template
+	// Register the template in the global registry with qualified name (ClassName::functionName)
+	std::string qualified_name = std::string(struct_node.name()) + "::" + std::string(decl_node.identifier_token().value());
+	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
+
+	// Also store the underlying function node as a member for backwards compatibility
+	struct_node.add_member_function(*func_result.node(), access, false, false, false, false);
+
+	// Clean up template parameters
+	for (const auto* type_info : template_type_infos) {
+		gTypesByName.erase(type_info->name_);
+	}
+
+	return saved_position.success();
 }
 
 // Parse explicit template arguments: <int, float, ...>
