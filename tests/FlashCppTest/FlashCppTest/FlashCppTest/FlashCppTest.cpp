@@ -7,6 +7,7 @@
 #include "CodeGen.h"
 #include "IRConverter.h"
 #include "ChunkedAnyVector.h"
+#include "TemplateRegistry.h"
 #include <string>
 #include <algorithm>
 #include <cctype>
@@ -44,6 +45,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 	gTypeInfo.clear();
 	gNativeTypes.clear();  // Clear native types map before reinitializing
 	gTypesByName.clear();  // Clear types by name map as well
+	gTemplateRegistry.clear();
 	compile_context.setInputFile(filename);
     Parser parser(lexer, compile_context);
 #if WITH_DEBUG_INFO

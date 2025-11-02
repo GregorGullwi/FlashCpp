@@ -3,6 +3,7 @@
 #include "LibClangIRGenerator.h"
 #endif
 #include "OverloadResolution.h"
+#include "TemplateRegistry.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include "ChunkedString.h"
@@ -19,6 +20,7 @@
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
 ChunkedStringAllocator gChunkedStringAllocator;
+TemplateRegistry gTemplateRegistry;
 
 // Type keywords set - used for if-statement initializer detection
 static const std::unordered_set<std::string_view> type_keywords = {
@@ -4989,20 +4991,29 @@ ParseResult Parser::parse_primary_expression()
 						auto resolution_result = resolve_overload(all_overloads, arg_types);
 
 						if (!resolution_result.has_match) {
-							return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
-						}
-
-						if (resolution_result.is_ambiguous) {
+							// No matching regular function found - try template instantiation
+							auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+							if (instantiated_func.has_value()) {
+								// Successfully instantiated template
+								const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
+								if (!decl_ptr) {
+									return ParseResult::error("Invalid template instantiation", idenfifier_token);
+								}
+								result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+							} else {
+								return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+							}
+						} else if (resolution_result.is_ambiguous) {
 							return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
-						}
+						} else {
+							// Get the selected overload
+							const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
+							if (!decl_ptr) {
+								return ParseResult::error("Invalid function declaration", idenfifier_token);
+							}
 
-						// Get the selected overload
-						const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
-						if (!decl_ptr) {
-							return ParseResult::error("Invalid function declaration", idenfifier_token);
+							result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 						}
-
-						result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 					}
 				}
 
@@ -6740,9 +6751,10 @@ ParseResult Parser::parse_template_declaration() {
 		decl_node
 	);
 
-	// For now, we just store the template without instantiating it
-	// Template instantiation will be implemented in Phase 2
-	// TODO: Store template in a template registry for later instantiation
+	// Register the template in the global template registry
+	const FunctionDeclarationNode& func_decl = decl_node.as<FunctionDeclarationNode>();
+	std::string_view template_name = func_decl.decl_node().identifier_token().value();
+	gTemplateRegistry.registerTemplate(template_name, template_func_node);
 
 	return saved_position.success(template_func_node);
 }
@@ -6832,4 +6844,141 @@ ParseResult Parser::parse_template_parameter() {
 	// TODO: Handle default arguments (e.g., int N = 10)
 
 	return saved_position.success(param_node);
+}
+
+// Try to instantiate a function template with the given argument types
+// Returns the instantiated function declaration node if successful
+std::optional<ASTNode> Parser::try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types) {
+	// Look up the template in the registry
+	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+	if (!template_opt.has_value()) {
+		return std::nullopt;  // No template with this name
+	}
+
+	const ASTNode& template_node = *template_opt;
+	if (!template_node.is<TemplateFunctionDeclarationNode>()) {
+		return std::nullopt;  // Not a function template
+	}
+
+	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
+	const std::vector<ASTNode>& template_params = template_func.template_parameters();
+	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+
+	// Step 1: Deduce template arguments from function call arguments
+	// For now, we only support simple type parameter deduction
+	// We'll deduce from the first argument and verify all arguments match
+	// TODO: Add support for non-type parameters and more complex deduction
+
+	if (arg_types.empty()) {
+		return std::nullopt;  // No arguments to deduce from
+	}
+
+	// For simple templates like template<typename T> T max(T a, T b),
+	// we deduce T from the first argument
+	// TODO: Implement full template argument deduction algorithm
+
+	// Build template argument list
+	std::vector<TemplateArgument> template_args;
+
+	// For now, assume all template parameters are type parameters
+	// and deduce from the first argument
+	for (const auto& template_param_node : template_params) {
+		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
+
+		if (param.kind() == TemplateParameterKind::Type) {
+			// Type parameter - deduce from first argument
+			template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+		} else {
+			// Non-type parameter - not yet supported in deduction
+			// TODO: Implement non-type parameter deduction
+			return std::nullopt;
+		}
+	}
+
+	// Step 2: Check if we already have this instantiation
+	TemplateInstantiationKey key;
+	key.template_name = std::string(template_name);
+	for (const auto& arg : template_args) {
+		if (arg.kind == TemplateArgument::Kind::Type) {
+			key.type_arguments.push_back(arg.type_value);
+		} else {
+			key.value_arguments.push_back(arg.int_value);
+		}
+	}
+
+	auto existing_inst = gTemplateRegistry.getInstantiation(key);
+	if (existing_inst.has_value()) {
+		return *existing_inst;  // Return existing instantiation
+	}
+
+	// Step 3: Instantiate the template
+	// For Phase 2, we'll create a simplified instantiation
+	// We'll just use the original function with a mangled name
+	// Full AST cloning and substitution will be implemented later
+
+	// Generate mangled name for the instantiation
+	std::string mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+
+	// For now, we'll create a simple wrapper that references the original function
+	// This is a temporary solution - proper instantiation requires:
+	// 1. Cloning the entire AST subtree
+	// 2. Substituting all template parameter references
+	// 3. Type checking the instantiated code
+
+	// Get the original function's declaration
+	const DeclarationNode& orig_decl = func_decl.decl_node();
+
+	// Create a token for the mangled name
+	// We need to allocate the string in the chunked allocator
+	char* mangled_str = gChunkedStringAllocator.allocate(mangled_name.size() + 1);
+	std::memcpy(mangled_str, mangled_name.c_str(), mangled_name.size());
+	mangled_str[mangled_name.size()] = '\0';
+
+	Token mangled_token(Token::Type::Identifier, std::string_view(mangled_str, mangled_name.size()),
+	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
+	                    orig_decl.identifier_token().file_index());
+
+	// For now, create a simple function declaration with the deduced types
+	// Create return type from first argument type (simplified - assumes T max(T, T) pattern)
+	ASTNode return_type = emplace_node<TypeSpecifierNode>(
+		template_args[0].type_value,
+		TypeQualifier::None,
+		get_type_size_bits(template_args[0].type_value),
+		Token()
+	);
+
+	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
+	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
+
+	// Add parameters with concrete types
+	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
+		const auto& param = func_decl.parameter_nodes()[i];
+		if (param.is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+
+			// Use the deduced type (simplified - assumes all params are T)
+			ASTNode param_type = emplace_node<TypeSpecifierNode>(
+				template_args[0].type_value,
+				TypeQualifier::None,
+				get_type_size_bits(template_args[0].type_value),
+				Token()
+			);
+
+			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+			new_func_ref.add_parameter_node(new_param_decl);
+		}
+	}
+
+	// Store reference to original template for code generation
+	// The code generator will need to instantiate the body
+	// For now, we'll mark this as needing instantiation
+	// TODO: Implement proper body cloning and substitution
+
+	// Register the instantiation
+	gTemplateRegistry.registerInstantiation(key, new_func_node);
+
+	// Add to symbol table
+	gSymbolTable.insert(mangled_token.value(), new_func_node);
+
+	return new_func_node;
 }
