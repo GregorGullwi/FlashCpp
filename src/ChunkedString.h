@@ -38,7 +38,7 @@ private:
 
 class ChunkedStringAllocator {
 public:
-    explicit ChunkedStringAllocator(size_t chunk_size = 8 * 1024 * 1024) // 8 MB chunks
+    explicit ChunkedStringAllocator(size_t chunk_size = 64 * 1024 * 1024) // 64 MB chunks
         : chunk_size_(chunk_size) {
         chunks_.emplace_back(std::make_unique<Chunk>(chunk_size_));
     }
