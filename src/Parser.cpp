@@ -3258,7 +3258,7 @@ ParseResult Parser::parse_type_specifier()
 					// Successfully instantiated class template
 					// The instantiated class is now registered as a struct type
 					// Look it up and return it
-					std::string instantiated_name = get_instantiated_class_name(type_name, *template_args);
+					std::string_view instantiated_name = get_instantiated_class_name(type_name, *template_args);
 					auto inst_type_it = gTypesByName.find(instantiated_name);
 					if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
 						const TypeInfo* struct_type_info = inst_type_it->second;
@@ -7258,16 +7258,17 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 // Get the mangled name for an instantiated class template
 // Example: Container<int> -> Container_int
-std::string Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<Type>& template_args) {
-	std::string result(template_name);
-	result += "_";
+std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<Type>& template_args) {
+	StringBuilder& result = StringBuilder().append(template_name);
+	result.append("_");
 
 	for (size_t i = 0; i < template_args.size(); ++i) {
-		if (i > 0) result += "_";
-		result += TemplateRegistry::typeToString(template_args[i]);
+		if (i > 0) result.append("_");
+
+		result.append(TemplateRegistry::typeToString(template_args[i]));
 	}
 
-	return result;
+	return result.commit();
 }
 
 // Try to instantiate a class template with explicit template arguments
@@ -7294,7 +7295,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Generate the instantiated class name
-	std::string instantiated_name = get_instantiated_class_name(template_name, template_args);
+	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
 
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
@@ -7306,22 +7307,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Create a new struct type for the instantiation
-	TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 
 	// Create a new StructDeclarationNode for the instantiation
-	// Allocate the name in the chunked allocator
-	char* name_ptr = gChunkedStringAllocator.allocate(instantiated_name.size() + 1);
-	std::memcpy(name_ptr, instantiated_name.data(), instantiated_name.size());
-	name_ptr[instantiated_name.size()] = '\0';
-	std::string_view instantiated_name_view(name_ptr, instantiated_name.size());
-
 	auto [new_struct_node, new_struct_ref] = emplace_node_ref<StructDeclarationNode>(
-		instantiated_name_view,
+		instantiated_name,
 		class_decl.is_class()
 	);
 
 	// Create StructTypeInfo
-	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, new_struct_ref.default_access());
+	auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), new_struct_ref.default_access());
 
 	// Copy members from the template, substituting template parameters with concrete types
 	for (const auto& member_decl : class_decl.members()) {
