@@ -7067,29 +7067,35 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
 	// Step 1: Deduce template arguments from function call arguments
-	// For now, we only support simple type parameter deduction
-	// We'll deduce from the first argument and verify all arguments match
+	// For now, we support simple type parameter deduction
+	// We deduce template parameters in order from function arguments
 	// TODO: Add support for non-type parameters and more complex deduction
 
 	if (arg_types.empty()) {
 		return std::nullopt;  // No arguments to deduce from
 	}
 
-	// For simple templates like template<typename T> T max(T a, T b),
-	// we deduce T from the first argument
-	// TODO: Implement full template argument deduction algorithm
-
 	// Build template argument list
 	std::vector<TemplateArgument> template_args;
 
-	// For now, assume all template parameters are type parameters
-	// and deduce from the first argument
+	// Deduce template parameters in order from function arguments
+	// For template<typename T, typename U> T func(T a, U b):
+	//   - T is deduced from first argument
+	//   - U is deduced from second argument
+	size_t arg_index = 0;
 	for (const auto& template_param_node : template_params) {
 		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
 
 		if (param.kind() == TemplateParameterKind::Type) {
-			// Type parameter - deduce from first argument
-			template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+			// Type parameter - deduce from corresponding argument
+			if (arg_index < arg_types.size()) {
+				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+				arg_index++;
+			} else {
+				// Not enough arguments to deduce all template parameters
+				// Fall back to first argument for remaining parameters
+				template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+			}
 		} else {
 			// Non-type parameter - not yet supported in deduction
 			// TODO: Implement non-type parameter deduction
@@ -7148,16 +7154,22 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
 	// Add parameters with concrete types
+	// For multiple template parameters, we deduce in order from arguments
+	// So parameter i uses template_args[i % template_args.size()]
 	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 		const auto& param = func_decl.parameter_nodes()[i];
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 
-			// Use the deduced type (simplified - assumes all params are T)
+			// Use the deduced type for this parameter
+			// For template<typename T, typename U> T func(T a, U b):
+			//   - parameter 0 uses template_args[0] (T)
+			//   - parameter 1 uses template_args[1] (U)
+			size_t template_arg_index = std::min(i, template_args.size() - 1);
 			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				template_args[0].type_value,
+				template_args[template_arg_index].type_value,
 				TypeQualifier::None,
-				get_type_size_bits(template_args[0].type_value),
+				get_type_size_bits(template_args[template_arg_index].type_value),
 				Token()
 			);
 
