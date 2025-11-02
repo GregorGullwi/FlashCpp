@@ -260,6 +260,9 @@ private:
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser
         ParseResult parse_friend_declaration();  // NEW: Parse friend declarations
+        ParseResult parse_template_declaration();  // NEW: Parse template declarations
+        ParseResult parse_template_parameter_list(std::vector<ASTNode>& out_params);  // NEW: Parse template parameter list
+        ParseResult parse_template_parameter();  // NEW: Parse a single template parameter
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();

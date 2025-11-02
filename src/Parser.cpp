@@ -376,6 +376,18 @@ ParseResult Parser::parse_top_level_node()
 		return result;
 	}
 
+	// Check if it's a template declaration
+	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
+		auto result = parse_template_declaration();
+		if (!result.is_error()) {
+			if (auto node = result.node()) {
+				ast_nodes_.push_back(*node);
+			}
+			return saved_position.success();
+		}
+		return result;
+	}
+
 	// Check for extern "C" linkage specification
 	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "extern") {
 		// Save position in case this is just a regular extern declaration
@@ -877,6 +889,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 		// Is only function declaration
 		if (consume_punctuator(";")) {
+			// Return the function declaration node (needed for templates)
+			if (auto func_node = function_definition_result.node()) {
+				return ParseResult::success(*func_node);
+			}
 			return ParseResult::success();
 		}
 
@@ -3449,6 +3465,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"using", &Parser::parse_using_directive_or_declaration},
 			{"namespace", &Parser::parse_namespace},
 			{"typedef", &Parser::parse_typedef_declaration},
+			{"template", &Parser::parse_template_declaration},
 			{"struct", &Parser::parse_struct_declaration},
 			{"class", &Parser::parse_struct_declaration},
 			{"static", &Parser::parse_variable_declaration},
@@ -6664,4 +6681,155 @@ unsigned char Parser::get_type_size_bits(Type type) {
 		default:
 			return 32;  // Default to 32 bits
 	}
+}
+
+// Parse template declaration: template<typename T> ...
+ParseResult Parser::parse_template_declaration() {
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'template' keyword
+	if (!consume_keyword("template")) {
+		return ParseResult::error("Expected 'template' keyword", *peek_token());
+	}
+
+	// Expect '<' to start template parameter list
+	// Note: '<' is an operator, not a punctuator
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+	}
+	consume_token(); // consume '<'
+
+	// Parse template parameter list
+	std::vector<ASTNode> template_params;
+	auto param_list_result = parse_template_parameter_list(template_params);
+	if (param_list_result.is_error()) {
+		return param_list_result;
+	}
+
+	// Expect '>' to end template parameter list
+	// Note: '>' is an operator, not a punctuator
+	if (!peek_token().has_value() || peek_token()->value() != ">") {
+		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+	}
+	consume_token(); // consume '>'
+
+	// Now parse what comes after the template parameter list
+	// For now, we only support function templates
+	// TODO: Add support for class templates, variable templates, etc.
+
+	// Check if it's a function declaration
+	auto decl_result = parse_declaration_or_function_definition();
+	if (decl_result.is_error()) {
+		return decl_result;
+	}
+
+	if (!decl_result.node().has_value()) {
+		return ParseResult::error("Expected function declaration after template parameter list", *current_token_);
+	}
+
+	ASTNode decl_node = *decl_result.node();
+
+	// The declaration should be a FunctionDeclarationNode
+	if (!decl_node.is<FunctionDeclarationNode>()) {
+		return ParseResult::error("Only function templates are currently supported", *current_token_);
+	}
+
+	// Create a TemplateFunctionDeclarationNode
+	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
+		std::move(template_params),
+		decl_node
+	);
+
+	// For now, we just store the template without instantiating it
+	// Template instantiation will be implemented in Phase 2
+	// TODO: Store template in a template registry for later instantiation
+
+	return saved_position.success(template_func_node);
+}
+
+// Parse template parameter list: typename T, int N, ...
+ParseResult Parser::parse_template_parameter_list(std::vector<ASTNode>& out_params) {
+	// Parse first parameter
+	auto param_result = parse_template_parameter();
+	if (param_result.is_error()) {
+		return param_result;
+	}
+
+	if (param_result.node().has_value()) {
+		out_params.push_back(*param_result.node());
+	}
+
+	// Parse additional parameters separated by commas
+	while (peek_token().has_value() && peek_token()->value() == ",") {
+		consume_token(); // consume ','
+
+		param_result = parse_template_parameter();
+		if (param_result.is_error()) {
+			return param_result;
+		}
+
+		if (param_result.node().has_value()) {
+			out_params.push_back(*param_result.node());
+		}
+	}
+
+	return ParseResult::success();
+}
+
+// Parse a single template parameter: typename T, class T, int N, etc.
+ParseResult Parser::parse_template_parameter() {
+	ScopedTokenPosition saved_position(*this);
+
+	// Check for type parameter: typename or class
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view keyword = peek_token()->value();
+
+		if (keyword == "typename" || keyword == "class") {
+			Token keyword_token = *peek_token();
+			consume_token(); // consume 'typename' or 'class'
+
+			// Expect identifier (parameter name)
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after 'typename' or 'class'", *current_token_);
+			}
+
+			Token param_name_token = *peek_token();
+			std::string_view param_name = param_name_token.value();
+			consume_token(); // consume parameter name
+
+			// Create type parameter node
+			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
+
+			// TODO: Handle default arguments (e.g., typename T = int)
+
+			return saved_position.success(param_node);
+		}
+	}
+
+	// Check for non-type parameter: int N, bool B, etc.
+	// Parse type specifier
+	auto type_result = parse_type_specifier();
+	if (type_result.is_error()) {
+		return type_result;
+	}
+
+	if (!type_result.node().has_value()) {
+		return ParseResult::error("Expected type specifier for non-type template parameter", *current_token_);
+	}
+
+	// Expect identifier (parameter name)
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected identifier for non-type template parameter", *current_token_);
+	}
+
+	Token param_name_token = *peek_token();
+	std::string_view param_name = param_name_token.value();
+	consume_token(); // consume parameter name
+
+	// Create non-type parameter node
+	auto param_node = emplace_node<TemplateParameterNode>(param_name, *type_result.node(), param_name_token);
+
+	// TODO: Handle default arguments (e.g., int N = 10)
+
+	return saved_position.success(param_node);
 }

@@ -125,6 +125,11 @@ public:
 			// Typedef declarations don't generate code - they're handled during parsing
 			return;
 		}
+		else if (node.is<TemplateFunctionDeclarationNode>()) {
+			// Template declarations don't generate code yet - they're stored for later instantiation
+			// TODO: Implement template instantiation in Phase 2
+			return;
+		}
 		else if (node.is<ExpressionNode>()) {
 			// Expression statement (e.g., function call, lambda expression, etc.)
 			// Evaluate the expression but discard the result

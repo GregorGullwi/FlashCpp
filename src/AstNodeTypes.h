@@ -906,6 +906,68 @@ private:
 	Token called_from_;
 };
 
+// Template parameter kinds
+enum class TemplateParameterKind {
+	Type,      // typename T or class T
+	NonType,   // int N, bool B, etc.
+	Template   // template<typename> class Container (template template parameter)
+};
+
+// Template parameter node - represents a single template parameter
+class TemplateParameterNode {
+public:
+	// Type parameter: template<typename T> or template<class T>
+	TemplateParameterNode(std::string_view name, Token token)
+		: kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
+
+	// Non-type parameter: template<int N>
+	TemplateParameterNode(std::string_view name, ASTNode type_node, Token token)
+		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
+
+	TemplateParameterKind kind() const { return kind_; }
+	std::string_view name() const { return name_; }
+	Token token() const { return token_; }
+
+	// For non-type parameters
+	bool has_type() const { return type_node_.has_value(); }
+	ASTNode type_node() const { return type_node_.value(); }
+
+	// For default arguments (future enhancement)
+	bool has_default() const { return default_value_.has_value(); }
+	ASTNode default_value() const { return default_value_.value(); }
+	void set_default_value(ASTNode value) { default_value_ = value; }
+
+private:
+	TemplateParameterKind kind_;
+	std::string_view name_;  // Points directly into source text from lexer token
+	std::optional<ASTNode> type_node_;  // For non-type parameters (e.g., int N)
+	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
+	Token token_;  // For error reporting
+};
+
+// Template function declaration node - represents a function template
+class TemplateFunctionDeclarationNode {
+public:
+	TemplateFunctionDeclarationNode() = delete;
+	TemplateFunctionDeclarationNode(std::vector<ASTNode> template_params, ASTNode function_decl)
+		: template_parameters_(std::move(template_params)), function_declaration_(function_decl) {}
+
+	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	ASTNode function_declaration() const { return function_declaration_; }
+
+	// Get the underlying FunctionDeclarationNode
+	FunctionDeclarationNode& function_decl_node() {
+		return function_declaration_.as<FunctionDeclarationNode>();
+	}
+	const FunctionDeclarationNode& function_decl_node() const {
+		return function_declaration_.as<FunctionDeclarationNode>();
+	}
+
+private:
+	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
+	ASTNode function_declaration_;  // FunctionDeclarationNode
+};
+
 // Member initializer for constructor initializer lists
 struct MemberInitializer {
 	std::string_view member_name;

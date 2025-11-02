@@ -1975,3 +1975,17 @@ TEST_SUITE("Member initialization") {
 		run_test_from_file("test_local_struct.cpp", "Local struct declaration", false);
 	}
 }
+
+TEST_SUITE("Templates") {
+	TEST_CASE("Templates:Simple") {
+		run_test_from_file("template_simple.cpp", "Templates:Simple", false);
+	}
+
+	TEST_CASE("Templates:ParsingTest") {
+		run_test_from_file("template_parsing_test.cpp", "Templates:ParsingTest", false);
+	}
+
+	TEST_CASE("Templates:Declaration") {
+		run_test_from_file("template_declaration.cpp", "Templates:Declaration", false);
+	}
+}
