@@ -53,6 +53,16 @@ public:
         return chunk->allocate(size);
     }
 
+    char* peek_allocate(size_t size) {
+        Chunk* chunk = current_chunk();
+        if (!chunk->has_space(size)) {
+            chunks_.emplace_back(std::make_unique<Chunk>(
+                std::max(chunk_size_, size)));
+            chunk = chunks_.back().get();
+        }
+        return chunk->current_ptr();
+    }
+
     Chunk* current_chunk() { return chunks_.back().get(); }
 
 private:
@@ -67,7 +77,7 @@ extern ChunkedStringAllocator gChunkedStringAllocator;
 class StringBuilder {
 public:
     explicit StringBuilder(ChunkedStringAllocator& allocator = gChunkedStringAllocator)
-        : alloc_(allocator), chunk_(allocator.current_chunk()), buf_start_(chunk_->current_ptr()) {}
+        : alloc_(allocator), chunk_(allocator.current_chunk()), buf_start_(chunk_->current_ptr()), write_ptr_(buf_start_) {}
 
     StringBuilder& append(std::string_view sv) {
         ensure_capacity(sv.size());
@@ -102,25 +112,22 @@ public:
 
     std::string_view commit() {
         size_t len = write_ptr_ - buf_start_;
+        append('\0');
+        chunk_->allocate(len + 1);
         return std::string_view(buf_start_, len);
     }
 
 private:
     void ensure_capacity(size_t needed) {
-        size_t remaining = chunk_->remaining();
-        if (remaining < needed) {
-            // allocate a new chunk and continue writing
+        size_t len = write_ptr_ - buf_start_;
+        size_t new_len = len + needed;
+        if (chunk_->remaining() < new_len)
+        {
+            char* new_buf_start = alloc_.peek_allocate(new_len);
+            std::memcpy(new_buf_start, buf_start_, len);
+            write_ptr_ = new_buf_start + len;
+            buf_start_ = new_buf_start;
             chunk_ = alloc_.current_chunk();
-            if (!chunk_->has_space(needed)) {
-                alloc_.chunks_.emplace_back(std::make_unique<Chunk>(
-                    std::max(alloc_.chunk_size_, needed)));
-                chunk_ = alloc_.chunks_.back().get();
-            }
-            buf_start_ = chunk_->current_ptr();
-            write_ptr_ = buf_start_;
-        }
-        else if (write_ptr_ == nullptr) {
-            write_ptr_ = chunk_->current_ptr();
         }
     }
 
