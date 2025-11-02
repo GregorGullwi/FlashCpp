@@ -69,23 +69,35 @@ public:
     explicit StringBuilder(ChunkedStringAllocator& allocator = gChunkedStringAllocator)
         : alloc_(allocator), chunk_(allocator.current_chunk()), buf_start_(chunk_->current_ptr()) {}
 
-    void append(std::string_view sv) {
+    StringBuilder& append(std::string_view sv) {
         ensure_capacity(sv.size());
         std::memcpy(write_ptr_, sv.data(), sv.size());
         write_ptr_ += sv.size();
+        return *this;
     }
 
-    void append(char c) {
+    StringBuilder& append(char c) {
         ensure_capacity(1);
         *write_ptr_++ = c;
+        return *this;
     }
 
-    void append(int value) {
+    StringBuilder& append(int value) {
         char buf[32];
         auto [ptr, ec] = std::to_chars(std::begin(buf), std::end(buf), value);
         if (ec == std::errc{}) {
             append(std::string_view(buf, ptr - buf));
         }
+        return *this;
+    }
+
+    StringBuilder& append(int64_t value) {
+        char buf[32];
+        auto [ptr, ec] = std::to_chars(std::begin(buf), std::end(buf), value);
+        if (ec == std::errc{}) {
+            append(std::string_view(buf, ptr - buf));
+        }
+        return *this;
     }
 
     std::string_view commit() {

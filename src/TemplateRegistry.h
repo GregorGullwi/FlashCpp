@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "ChunkedString.h"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -99,21 +100,20 @@ public:
 	
 	// Generate a mangled name for a template instantiation
 	// Example: max<int> -> max_int, max<int, 5> -> max_int_5
-	static std::string mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
-		std::string mangled(base_name);
-		mangled += "_";
+	static std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
+		StringBuilder& mangled = StringBuilder().append(base_name).append("_");
 		
 		for (size_t i = 0; i < args.size(); ++i) {
-			if (i > 0) mangled += "_";
+			if (i > 0) mangled.append("_");
 			
 			if (args[i].kind == TemplateArgument::Kind::Type) {
-				mangled += typeToString(args[i].type_value);
+				mangled.append(typeToString(args[i].type_value));
 			} else {
-				mangled += std::to_string(args[i].int_value);
+				mangled.append(args[i].int_value);
 			}
 		}
 		
-		return mangled;
+		return mangled.commit();
 	}
 	
 	// Clear all templates and instantiations
@@ -124,7 +124,7 @@ public:
 	
 private:
 	// Helper to convert Type to string for mangling
-	static std::string typeToString(Type type) {
+	static std::string_view typeToString(Type type) {
 		switch (type) {
 			case Type::Int: return "int";
 			case Type::Float: return "float";

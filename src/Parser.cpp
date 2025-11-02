@@ -6917,7 +6917,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Full AST cloning and substitution will be implemented later
 
 	// Generate mangled name for the instantiation
-	std::string mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
 
 	// For now, we'll create a simple wrapper that references the original function
 	// This is a temporary solution - proper instantiation requires:
@@ -6929,12 +6929,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 
 	// Create a token for the mangled name
-	// We need to allocate the string in the chunked allocator
-	char* mangled_str = gChunkedStringAllocator.allocate(mangled_name.size() + 1);
-	std::memcpy(mangled_str, mangled_name.c_str(), mangled_name.size());
-	mangled_str[mangled_name.size()] = '\0';
-
-	Token mangled_token(Token::Type::Identifier, std::string_view(mangled_str, mangled_name.size()),
+	Token mangled_token(Token::Type::Identifier, mangled_name,
 	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
 	                    orig_decl.identifier_token().file_index());
 
