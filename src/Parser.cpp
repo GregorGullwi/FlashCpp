@@ -6728,8 +6728,32 @@ ParseResult Parser::parse_template_declaration() {
 	// For now, we only support function templates
 	// TODO: Add support for class templates, variable templates, etc.
 
+	// Add template parameters to the type system temporarily
+	// This allows them to be used in the function body
+	std::vector<TypeInfo*> template_type_infos;
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				// Register the template parameter as a user-defined type temporarily
+				// Create a TypeInfo entry for the template parameter
+				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name_, &type_info);
+				template_type_infos.push_back(&type_info);
+			}
+		}
+	}
+
 	// Check if it's a function declaration
 	auto decl_result = parse_declaration_or_function_definition();
+
+	// Remove template parameters from type system
+	for (const auto* type_info : template_type_infos) {
+		gTypesByName.erase(type_info->name_);
+		// Note: We don't remove from gTypeInfo because it's a deque and removing would invalidate pointers
+		// The entries will just be unused after this point
+	}
+
 	if (decl_result.is_error()) {
 		return decl_result;
 	}
@@ -6964,16 +6988,28 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		}
 	}
 
-	// Store reference to original template for code generation
-	// The code generator will need to instantiate the body
-	// For now, we'll mark this as needing instantiation
-	// TODO: Implement proper body cloning and substitution
+	// Copy the function body if it exists
+	auto orig_body = func_decl.get_definition();
+	if (orig_body.has_value()) {
+		// For now, we'll just reference the same body
+		// This is a simplification - proper instantiation requires:
+		// 1. Cloning the entire AST subtree
+		// 2. Substituting all template parameter references with concrete types
+		// TODO: Implement proper body cloning and substitution
+
+		// For simple cases where the body doesn't reference template parameters
+		// in complex ways, this will work
+		new_func_ref.set_definition(**orig_body);
+	}
 
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
 	// Add to symbol table
 	gSymbolTable.insert(mangled_token.value(), new_func_node);
+
+	// Add to top-level AST so it gets visited by the code generator
+	ast_nodes_.push_back(new_func_node);
 
 	return new_func_node;
 }
