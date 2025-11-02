@@ -3247,6 +3247,36 @@ ParseResult Parser::parse_type_specifier()
 			consume_token();
 		}
 
+		// Check for template arguments: Container<int>
+		std::optional<std::vector<Type>> template_args;
+		if (peek_token().has_value() && peek_token()->value() == "<") {
+			template_args = parse_explicit_template_arguments();
+			// If parsing succeeded, try to instantiate the class template
+			if (template_args.has_value()) {
+				auto instantiated_class = try_instantiate_class_template(type_name, *template_args);
+				if (instantiated_class.has_value()) {
+					// Successfully instantiated class template
+					// The instantiated class is now registered as a struct type
+					// Look it up and return it
+					std::string instantiated_name = get_instantiated_class_name(type_name, *template_args);
+					auto inst_type_it = gTypesByName.find(instantiated_name);
+					if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
+						const TypeInfo* struct_type_info = inst_type_it->second;
+						const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+						if (struct_info) {
+							type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+						} else {
+							type_size = 0;
+						}
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+					}
+				}
+				// If instantiation failed, fall through to error handling below
+			}
+		}
+
 		// Check if this is a registered struct type
 		auto type_it = gTypesByName.find(type_name);
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
@@ -7224,4 +7254,143 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	ast_nodes_.push_back(new_func_node);
 
 	return new_func_node;
+}
+
+// Get the mangled name for an instantiated class template
+// Example: Container<int> -> Container_int
+std::string Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<Type>& template_args) {
+	std::string result(template_name);
+	result += "_";
+
+	for (size_t i = 0; i < template_args.size(); ++i) {
+		if (i > 0) result += "_";
+		result += TemplateRegistry::typeToString(template_args[i]);
+	}
+
+	return result;
+}
+
+// Try to instantiate a class template with explicit template arguments
+// Returns the instantiated StructDeclarationNode if successful
+std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<Type>& template_args) {
+	// Look up the template in the registry
+	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+	if (!template_opt.has_value()) {
+		return std::nullopt;  // No template with this name
+	}
+
+	const ASTNode& template_node = *template_opt;
+	if (!template_node.is<TemplateClassDeclarationNode>()) {
+		return std::nullopt;  // Not a class template
+	}
+
+	const TemplateClassDeclarationNode& template_class = template_node.as<TemplateClassDeclarationNode>();
+	const std::vector<ASTNode>& template_params = template_class.template_parameters();
+	const StructDeclarationNode& class_decl = template_class.class_decl_node();
+
+	// Verify we have the right number of template arguments
+	if (template_args.size() != template_params.size()) {
+		return std::nullopt;  // Wrong number of template arguments
+	}
+
+	// Generate the instantiated class name
+	std::string instantiated_name = get_instantiated_class_name(template_name, template_args);
+
+	// Check if we already have this instantiation
+	auto existing_type = gTypesByName.find(instantiated_name);
+	if (existing_type != gTypesByName.end()) {
+		// Already instantiated, return the existing struct node
+		// We need to find the struct node in the AST
+		// For now, just return nullopt and let the type lookup handle it
+		return std::nullopt;
+	}
+
+	// Create a new struct type for the instantiation
+	TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+
+	// Create a new StructDeclarationNode for the instantiation
+	// Allocate the name in the chunked allocator
+	char* name_ptr = gChunkedStringAllocator.allocate(instantiated_name.size() + 1);
+	std::memcpy(name_ptr, instantiated_name.data(), instantiated_name.size());
+	name_ptr[instantiated_name.size()] = '\0';
+	std::string_view instantiated_name_view(name_ptr, instantiated_name.size());
+
+	auto [new_struct_node, new_struct_ref] = emplace_node_ref<StructDeclarationNode>(
+		instantiated_name_view,
+		class_decl.is_class()
+	);
+
+	// Create StructTypeInfo
+	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, new_struct_ref.default_access());
+
+	// Copy members from the template, substituting template parameters with concrete types
+	for (const auto& member_decl : class_decl.members()) {
+		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+		// Check if the member type is a template parameter
+		// For now, assume the first template parameter (T) maps to the first template argument
+		// TODO: Implement proper template parameter substitution
+		Type member_type = type_spec.type();
+		TypeIndex member_type_index = type_spec.type_index();
+
+		// If the type is UserDefined, check if it's a template parameter
+		if (member_type == Type::UserDefined) {
+			// Look up the type name using type_index
+			if (member_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[member_type_index];
+				std::string_view type_name = type_info.name_;
+
+				// Try to find which template parameter this is
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.name() == type_name) {
+						// This is a template parameter - substitute with concrete type
+						member_type = template_args[i];
+						member_type_index = 0;  // Primitive types don't have type_index
+						break;
+					}
+				}
+			}
+		}
+
+		// Create the substituted type specifier
+		ASTNode substituted_type = emplace_node<TypeSpecifierNode>(
+			member_type,
+			TypeQualifier::None,
+			get_type_size_bits(member_type),
+			Token()
+		);
+
+		// Create the new member declaration
+		auto new_member_decl = emplace_node<DeclarationNode>(substituted_type, decl.identifier_token());
+
+		// Add to the instantiated struct
+		new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
+
+		// Add to struct layout
+		size_t member_size = get_type_size_bits(member_type) / 8;
+		size_t member_alignment = get_type_alignment(member_type, member_size);
+
+		struct_info->addMember(
+			std::string(decl.identifier_token().value()),
+			member_type,
+			member_type_index,
+			member_size,
+			member_alignment,
+			member_decl.access,
+			member_decl.default_initializer
+		);
+	}
+
+	// Finalize the struct layout
+	struct_info->finalize();
+
+	// Store struct info in type info
+	struct_type_info.setStructInfo(std::move(struct_info));
+
+	// Add to top-level AST so it gets visited by the code generator
+	ast_nodes_.push_back(new_struct_node);
+
+	return new_struct_node;
 }

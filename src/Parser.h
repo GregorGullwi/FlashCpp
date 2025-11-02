@@ -266,6 +266,8 @@ private:
         std::optional<std::vector<Type>> parse_explicit_template_arguments();  // NEW: Parse explicit template arguments like <int, float>
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
         std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<Type>& explicit_types);  // NEW: Instantiate with explicit args
+        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<Type>& template_args);  // NEW: Instantiate class template
+        std::string get_instantiated_class_name(std::string_view template_name, const std::vector<Type>& template_args);  // NEW: Get mangled name for instantiated class
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();

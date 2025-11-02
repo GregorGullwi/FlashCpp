@@ -98,31 +98,6 @@ public:
 		instantiations_[key] = instantiated_node;
 	}
 	
-	// Generate a mangled name for a template instantiation
-	// Example: max<int> -> max_int, max<int, 5> -> max_int_5
-	static std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
-		StringBuilder& mangled = StringBuilder().append(base_name).append("_");
-		
-		for (size_t i = 0; i < args.size(); ++i) {
-			if (i > 0) mangled.append("_");
-			
-			if (args[i].kind == TemplateArgument::Kind::Type) {
-				mangled.append(typeToString(args[i].type_value));
-			} else {
-				mangled.append(args[i].int_value);
-			}
-		}
-		
-		return mangled.commit();
-	}
-	
-	// Clear all templates and instantiations
-	void clear() {
-		templates_.clear();
-		instantiations_.clear();
-	}
-	
-private:
 	// Helper to convert Type to string for mangling
 	static std::string_view typeToString(Type type) {
 		switch (type) {
@@ -142,10 +117,35 @@ private:
 			default: return "unknown";
 		}
 	}
-	
+
+	// Generate a mangled name for a template instantiation
+	// Example: max<int> -> max_int, max<int, 5> -> max_int_5
+	static std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
+		StringBuilder& mangled = StringBuilder().append(base_name).append("_");
+
+		for (size_t i = 0; i < args.size(); ++i) {
+			if (i > 0) mangled.append("_");
+
+			if (args[i].kind == TemplateArgument::Kind::Type) {
+				mangled.append(typeToString(args[i].type_value));
+			} else {
+				mangled.append(args[i].int_value);
+			}
+		}
+
+		return mangled.commit();
+	}
+
+	// Clear all templates and instantiations
+	void clear() {
+		templates_.clear();
+		instantiations_.clear();
+	}
+
+private:
 	// Map from template name to template declaration node
 	std::unordered_map<std::string, ASTNode> templates_;
-	
+
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
 };
