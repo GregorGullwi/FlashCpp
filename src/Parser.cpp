@@ -230,6 +230,14 @@ void Parser::restore_token_position(const TokenPosition& saved_token_pos) {
     //saved_tokens_.erase(saved_token_pos.cursor_);
 }
 
+void Parser::restore_lexer_position_only(const TokenPosition& saved_token_pos) {
+    // Restore lexer position and current token, but keep AST nodes
+    lexer_.restore_token_position(saved_token_pos);
+    SavedToken saved_token = saved_tokens_.at(saved_token_pos.cursor_);
+    current_token_ = saved_token.current_token_;
+    // Don't erase AST nodes - they were intentionally created during re-parsing
+}
+
 void Parser::discard_saved_token(const TokenPosition& saved_token_pos) {
 	saved_tokens_.erase(saved_token_pos.cursor_);
 }
@@ -2290,6 +2298,25 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Now parse all delayed inline function bodies
 	// At this point, all members are visible in the complete-class context
+
+	// If we're parsing a template class, don't parse the bodies now
+	// Instead, store them for later instantiation
+	if (parsing_template_class_) {
+		// Store template member function bodies for later instantiation
+		for (auto& delayed : delayed_function_bodies_) {
+			if (!delayed.is_constructor && !delayed.is_destructor && delayed.func_node) {
+				template_member_function_bodies_[delayed.func_node] = {
+					delayed.body_start,
+					current_template_param_names_,
+					delayed.func_node
+				};
+			}
+		}
+		// Clear the delayed bodies list
+		delayed_function_bodies_.clear();
+		return ParseResult::success(struct_node);
+	}
+
 
 	// Save the current token position (right after the struct definition)
 	// We'll restore this after parsing all delayed bodies
@@ -6783,6 +6810,7 @@ ParseResult Parser::parse_template_declaration() {
 	// Add template parameters to the type system temporarily
 	// This allows them to be used in the function body or class members
 	std::vector<TypeInfo*> template_type_infos;
+	std::vector<std::string_view> template_param_names;  // string_view from Token storage
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
@@ -6792,6 +6820,7 @@ ParseResult Parser::parse_template_declaration() {
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name_, &type_info);
 				template_type_infos.push_back(&type_info);
+				template_param_names.push_back(tparam.name());  // string_view from Token
 			}
 		}
 	}
@@ -6803,8 +6832,17 @@ ParseResult Parser::parse_template_declaration() {
 
 	ParseResult decl_result;
 	if (is_class_template) {
+		// Set flag to indicate we're parsing a template class
+		// This will prevent delayed function bodies from being parsed immediately
+		parsing_template_class_ = true;
+		current_template_param_names_ = template_param_names;
+
 		// Parse class template
 		decl_result = parse_struct_declaration();
+
+		// Reset flag
+		parsing_template_class_ = false;
+		current_template_param_names_.clear();
 	} else {
 		// Parse function template
 		decl_result = parse_declaration_or_function_definition();
@@ -7376,6 +7414,188 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_decl.access,
 			member_decl.default_initializer
 		);
+	}
+
+	// Copy member functions from the template, substituting template parameters with concrete types
+	for (const auto& member_func_decl : class_decl.member_functions()) {
+		// Skip constructors and destructors for now
+		if (member_func_decl.is_constructor || member_func_decl.is_destructor) {
+			continue;
+		}
+
+		// Only handle regular member functions
+		if (!member_func_decl.function_declaration.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+
+		const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+		const DeclarationNode& decl = func_decl.decl_node();
+		const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+		// Substitute template parameters in return type
+		Type return_type = return_type_spec.type();
+		TypeIndex return_type_index = return_type_spec.type_index();
+
+		if (return_type == Type::UserDefined) {
+			// Look up the type name using type_index
+			if (return_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[return_type_index];
+				std::string_view type_name = type_info.name_;
+
+				// Try to find which template parameter this is
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.name() == type_name) {
+						// This is a template parameter - substitute with concrete type
+						return_type = template_args[i];
+						return_type_index = 0;
+						break;
+					}
+				}
+			}
+		}
+
+		// Create the substituted return type specifier
+		ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
+			return_type,
+			TypeQualifier::None,
+			get_type_size_bits(return_type),
+			Token()
+		);
+
+		// Create the new function declaration
+		auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, decl.identifier_token());
+		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, instantiated_name);
+
+		// Copy and substitute parameters
+		for (const auto& param : func_decl.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param.as<DeclarationNode>();
+				const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+				// Substitute template parameters in parameter type
+				Type param_type = param_type_spec.type();
+				TypeIndex param_type_index = param_type_spec.type_index();
+
+				if (param_type == Type::UserDefined) {
+					// Look up the type name using type_index
+					if (param_type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[param_type_index];
+						std::string_view type_name = type_info.name_;
+
+						// Try to find which template parameter this is
+						for (size_t i = 0; i < template_params.size(); ++i) {
+							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+							if (tparam.name() == type_name) {
+								// This is a template parameter - substitute with concrete type
+								param_type = template_args[i];
+								param_type_index = 0;
+								break;
+							}
+						}
+					}
+				}
+
+				// Create the substituted parameter type specifier
+				ASTNode substituted_param_type = emplace_node<TypeSpecifierNode>(
+					param_type,
+					TypeQualifier::None,
+					get_type_size_bits(param_type),
+					Token()
+				);
+
+				// Create the new parameter declaration
+				auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
+				new_func_ref.add_parameter_node(new_param_decl);
+			}
+		}
+
+		// Handle the function body
+		// Check if this template function has a stored body position for re-parsing
+		auto body_it = template_member_function_bodies_.find(const_cast<FunctionDeclarationNode*>(&func_decl));
+		if (body_it != template_member_function_bodies_.end()) {
+			// Re-parse the function body with template parameters substituted
+			const TemplateMemberFunctionBody& template_body = body_it->second;
+
+			// Temporarily add the concrete types to the type system with template parameter names
+			std::vector<TypeInfo*> temp_type_infos;
+			for (size_t i = 0; i < template_body.template_param_names.size() && i < template_args.size(); ++i) {
+				std::string_view param_name = template_body.template_param_names[i];
+				Type concrete_type = template_args[i];
+
+				// Create a temporary TypeInfo that maps the template parameter name to the concrete type
+				auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name_, &type_info);
+				temp_type_infos.push_back(&type_info);
+			}
+
+			// Save current position
+			TokenPosition current_pos = save_token_position();
+
+			// Restore to the function body start
+			restore_token_position(template_body.body_start);
+
+			// Set up parsing context for the member function
+			gSymbolTable.enter_scope(ScopeType::Function);
+			current_function_ = &new_func_ref;
+			member_function_context_stack_.push_back({
+				instantiated_name,
+				struct_type_info.type_index_,
+				&new_struct_ref
+			});
+
+			// Add parameters to symbol table
+			for (const auto& param : new_func_ref.parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					const auto& param_decl = param.as<DeclarationNode>();
+					gSymbolTable.insert(param_decl.identifier_token().value(), param);
+				}
+			}
+
+			// Parse the function body
+			auto block_result = parse_block();
+			if (!block_result.is_error() && block_result.node().has_value()) {
+				new_func_ref.set_definition(block_result.node()->as<BlockNode>());
+			}
+
+			// Clean up context
+			current_function_ = nullptr;
+			member_function_context_stack_.pop_back();
+			gSymbolTable.exit_scope();
+
+			// Restore original lexer position (but keep the AST nodes we just created)
+			restore_lexer_position_only(current_pos);
+
+			// Remove temporary type infos
+			for (const auto* type_info : temp_type_infos) {
+				gTypesByName.erase(type_info->name_);
+			}
+		} else {
+			// Fallback: copy the function body pointer directly (old behavior)
+			auto orig_body = func_decl.get_definition();
+			if (orig_body.has_value()) {
+				new_func_ref.set_definition(**orig_body);
+			}
+		}
+
+		// Add to the instantiated struct
+		new_struct_ref.add_member_function(new_func_node, member_func_decl.access,
+		                                   member_func_decl.is_virtual, member_func_decl.is_pure_virtual,
+		                                   member_func_decl.is_override, member_func_decl.is_final);
+
+		// Add to struct type info
+		struct_info->addMemberFunction(
+			std::string(decl.identifier_token().value()),
+			new_func_node,
+			member_func_decl.access,
+			member_func_decl.is_virtual,
+			member_func_decl.is_pure_virtual,
+			member_func_decl.is_override,
+			member_func_decl.is_final
+		);
+
+		// Add to top-level AST so it gets visited by the code generator
+		ast_nodes_.push_back(new_func_node);
 	}
 
 	// Finalize the struct layout

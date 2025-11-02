@@ -200,6 +200,20 @@ private:
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
+        // Template member function body for delayed instantiation
+        // This stores the token position and template parameter info for re-parsing
+        struct TemplateMemberFunctionBody {
+                TokenPosition body_start;                           // Position of the '{'
+                std::vector<std::string_view> template_param_names; // Names of template parameters (e.g., "T", "U") - from Token storage
+                FunctionDeclarationNode* template_func_node;        // The original template function node
+        };
+        // Map from template function to its body info
+        std::unordered_map<FunctionDeclarationNode*, TemplateMemberFunctionBody> template_member_function_bodies_;
+
+        // Track if we're currently parsing a template class (to skip delayed body parsing)
+        bool parsing_template_class_ = false;
+        std::vector<std::string_view> current_template_param_names_;  // Names of current template parameters - from Token storage
+
         // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
         std::vector<ASTNode> pending_struct_variables_;
 
@@ -315,6 +329,7 @@ private:
 
         TokenPosition save_token_position();
         void restore_token_position(const TokenPosition& token_position);
+        void restore_lexer_position_only(const TokenPosition& token_position);  // Restore lexer without erasing AST nodes
         void discard_saved_token(const TokenPosition& token_position);
 
         // Helper for delayed parsing
