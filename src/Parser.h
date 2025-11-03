@@ -282,6 +282,7 @@ private:
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
         std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<Type>& explicit_types);  // NEW: Instantiate with explicit args
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<Type>& template_args);  // NEW: Instantiate class template
+        std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<Type>& template_args);  // NEW: Get mangled name for instantiated class
         std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<std::string_view>& template_param_names);  // NEW: Parse out-of-line template member function
         

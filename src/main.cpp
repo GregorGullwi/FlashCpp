@@ -20,6 +20,9 @@
 #include "StackString.h"
 #include "IRTypes.h"
 
+// Global debug flag
+bool g_enable_debug_output = false;
+
 // Timing helper
 struct PhaseTimer {
     std::chrono::high_resolution_clock::time_point start;
@@ -62,8 +65,12 @@ int main(int argc, char *argv[]) {
     context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
     context.setDisableAccessControl(argsparser.hasFlag("fno-access-control") || argsparser.hasFlag("no-access-control"));
 
+    bool show_debug = argsparser.hasFlag("d") || argsparser.hasFlag("debug");
     bool show_perf_stats = argsparser.hasFlag("perf-stats") || argsparser.hasFlag("stats");
     bool show_timing = argsparser.hasFlag("time") || argsparser.hasFlag("timing") || show_perf_stats;
+
+    // Set global debug flag
+    g_enable_debug_output = show_debug;
 
     // Process input file arguments here...
     const auto& inputFileArgs = argsparser.inputFileArgs();
@@ -146,6 +153,9 @@ int main(int argc, char *argv[]) {
 
     Lexer lexer(preprocessed_source);
 
+    std::cerr << "===== FLASHCPP VERSION " << __DATE__ << " " << __TIME__ << " =====\n";
+    std::cerr << "===== STDERR TEST - THIS SHOULD ALWAYS PRINT =====\n";
+
     Parser parser(lexer, context);
     {
         PhaseTimer timer("Lexing + Parsing", show_timing);
@@ -158,6 +168,9 @@ int main(int argc, char *argv[]) {
     }
 
     const auto& ast = parser.get_nodes();
+    if (show_debug) {
+        std::cerr << "DEBUG: After parsing, AST has " << ast.size() << " nodes\n";
+    }
 
     AstToIr converter(gSymbolTable, context, parser);
 
@@ -173,15 +186,28 @@ int main(int argc, char *argv[]) {
 
     {
         PhaseTimer timer("AST to IR", show_timing);
+        if (show_debug) {
+            std::cerr << "DEBUG: Visiting " << ast.size() << " AST nodes\n";
+        }
         for (auto& node_handle : ast) {
+            if (show_debug && node_handle.is<FunctionDeclarationNode>()) {
+                const auto& func = node_handle.as<FunctionDeclarationNode>();
+                bool has_def = func.get_definition().has_value();
+                std::cerr << "DEBUG: Found FunctionDeclarationNode: " << func.decl_node().identifier_token().value() 
+                          << " has_definition=" << has_def << "\n";
+                if (has_def) {
+                    const BlockNode* def_block = *func.get_definition();
+                    std::cerr << "  -> Block has " << def_block->get_statements().size() << " statements\n";
+                }
+            }
             converter.visit(node_handle);
         }
 
         // Generate all collected lambdas after visiting all nodes
         converter.generateCollectedLambdas();
         
-        // Generate all collected template instantiations
-        converter.generateCollectedTemplateInstantiations();
+        // Template instantiations now happen during parsing
+        // converter.generateCollectedTemplateInstantiations();
     }
 
     const auto& ir = converter.getIr();

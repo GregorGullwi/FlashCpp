@@ -383,6 +383,28 @@ private:
 		const DeclarationNode& func_decl = node.decl_node();
 		current_function_name_ = std::string(func_decl.identifier_token().value());
 
+		// DEBUG: Check what we're receiving
+		const TypeSpecifierNode& debug_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
+		std::cerr << "\n===== CODEGEN visitFunctionDeclarationNode: " << func_decl.identifier_token().value() << " =====\n";
+		std::cerr << "  return_type: " << (int)debug_ret_type.type() << " size: " << (int)debug_ret_type.size_in_bits() << " ptr_depth: " << debug_ret_type.pointer_depth() << "\n";
+		std::cerr << "  is_member_function: " << node.is_member_function() << "\n";
+		if (node.is_member_function()) {
+			std::cerr << "  parent_struct_name: " << node.parent_struct_name() << "\n";
+		}
+		std::cerr << "  parameter_count: " << node.parameter_nodes().size() << "\n";
+		for (size_t i = 0; i < node.parameter_nodes().size(); ++i) {
+			const auto& param = node.parameter_nodes()[i];
+			if (param.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param.as<DeclarationNode>();
+				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				std::cerr << "  param[" << i << "]: name='" << param_decl.identifier_token().value() 
+				          << "' type=" << (int)param_type.type() 
+				          << " size=" << (int)param_type.size_in_bits()
+				          << " ptr_depth=" << param_type.pointer_depth() << "\n";
+			}
+		}
+		std::cerr << "=====\n";
+
 		// Clear static local names map for new function
 		static_local_names_.clear();
 
@@ -422,6 +444,11 @@ private:
 			}
 			funcDeclOperands.emplace_back(pointer_depth);
 			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
+			
+			// Add reference and CV-qualifier information for proper mangling
+			funcDeclOperands.emplace_back(param_type.is_reference());
+			funcDeclOperands.emplace_back(param_type.is_rvalue_reference());
+			funcDeclOperands.emplace_back(static_cast<int>(param_type.cv_qualifier()));
 
 			//paramCount++;
 			var_counter.next();
@@ -539,9 +566,17 @@ private:
 			}
 		} else {
 			// User-defined function body
+			std::cerr << "DEBUG: About to visit " << (*definition_block)->get_statements().size() 
+			          << " statements in function " << func_decl.identifier_token().value() << "\n";
 			(*definition_block)->get_statements().visit([&](ASTNode statement) {
+				std::cerr << "DEBUG: Visiting statement in " << func_decl.identifier_token().value() << "\n";
 				visit(statement);
 			});
+		}
+
+		// Add implicit return for void functions if no explicit return was added
+		if (ret_type.type() == Type::Void) {
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, {}, func_decl.identifier_token()));
 		}
 
 		symbol_table.exit_scope();
@@ -606,6 +641,11 @@ private:
 			ctorDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
 			ctorDeclOperands.emplace_back(static_cast<int>(param_type.pointer_depth()));  // Add pointer depth
 			ctorDeclOperands.emplace_back(param_decl.identifier_token().value());
+			
+			// Add reference and CV-qualifier information for proper mangling
+			ctorDeclOperands.emplace_back(param_type.is_reference());
+			ctorDeclOperands.emplace_back(param_type.is_rvalue_reference());
+			ctorDeclOperands.emplace_back(static_cast<int>(param_type.cv_qualifier()));
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctorDeclOperands), node.name_token()));
@@ -3149,7 +3189,12 @@ private:
 						// Generate the mangled name
 						std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
 						
-						// Collect this instantiation for deferred generation
+						// Template instantiation now happens during parsing
+						// The instantiated function should already be in the AST
+						// We just use the mangled name for the call
+						
+						/*
+						// OLD: Collect this instantiation for deferred generation
 						const FunctionDeclarationNode& template_func_decl = template_func.function_decl_node();
 						if (template_func_decl.has_template_body_position()) {
 							TemplateInstantiationInfo inst_info;
@@ -3167,6 +3212,7 @@ private:
 							// This ensures the FunctionDecl IR appears before any calls to it
 							collected_template_instantiations_.push_back(std::move(inst_info));
 						}
+						*/
 					}
 				}
 				} else {
@@ -4619,15 +4665,20 @@ private:
 		);
 
 		if (body_node_opt.has_value()) {
+			std::cerr << "DEBUG: Template body has value, is BlockNode=" << body_node_opt->is<BlockNode>() << "\n";
 			if (body_node_opt->is<BlockNode>()) {
 				const BlockNode& block = body_node_opt->as<BlockNode>();
 				const auto& stmts = block.get_statements();
+				std::cerr << "DEBUG: Template body has " << stmts.size() << " statements\n";
 				
 				// Visit each statement in the block to generate IR
 				for (size_t i = 0; i < stmts.size(); ++i) {
+					std::cerr << "DEBUG: Visiting template body statement " << i << "\n";
 					visit(stmts[i]);
 				}
 			}
+		} else {
+			std::cerr << "DEBUG: Template body does NOT have value!\n";
 		}
 
 		// Add implicit return for void functions
@@ -4641,3 +4692,5 @@ private:
 	}
 
 };
+
+

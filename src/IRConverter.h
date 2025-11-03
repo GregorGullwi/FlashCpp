@@ -1541,18 +1541,31 @@ private:
 		function_instructions.clear();
 		std::string current_func_name;
 
+		std::cerr << "DEBUG [groupInstructionsByFunction]: Processing " << ir.getInstructions().size() << " instructions\n";
+		int func_decl_count = 0;
 		for (const auto& instruction : ir.getInstructions()) {
 			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
+				func_decl_count++;
 				// Function name can be either std::string or std::string_view (now at index 3)
 				if (instruction.isOperandType<std::string>(3)) {
 					current_func_name = instruction.getOperandAs<std::string>(3);
 				} else if (instruction.isOperandType<std::string_view>(3)) {
 					current_func_name = std::string(instruction.getOperandAs<std::string_view>(3));
 				}
-				function_instructions[current_func_name] = std::vector<IrInstruction>();
+				std::cerr << "DEBUG [groupInstructionsByFunction]: Found FunctionDecl for '" << current_func_name << "'\n";
+				// Only create a new vector if this function name doesn't exist yet
+				if (function_instructions.find(current_func_name) == function_instructions.end()) {
+					function_instructions[current_func_name] = std::vector<IrInstruction>();
+				}
+				// If it already exists, we'll just continue appending to it
 			} else if (!current_func_name.empty()) {
 				function_instructions[current_func_name].push_back(instruction);
 			}
+		}
+		std::cerr << "DEBUG [groupInstructionsByFunction]: Processed " << func_decl_count << " functions\n";
+		std::cerr << "DEBUG [groupInstructionsByFunction]: function_instructions map has " << function_instructions.size() << " entries\n";
+		for (const auto& [fname, instrs] : function_instructions) {
+			std::cerr << "  - '" << fname << "': " << instrs.size() << " instructions\n";
 		}
 	}
 
@@ -1848,7 +1861,31 @@ private:
 				std::string_view var_name = std::get<std::string_view>(argValue);
 				int var_offset = variable_scopes.back().identifier_offset[var_name];
 
-				if (is_float_arg) {
+				// Special case: For Struct type arguments, we need the ADDRESS (this pointer), not the value
+				if (argType == Type::Struct) {
+					// Load the address of the object using LEA
+					// LEA target_reg, [RBP + var_offset]
+					textSectionData.push_back(0x48); // REX.W prefix for 64-bit
+					if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+						textSectionData.back() |= (1 << 2); // Set REX.R bit for R8-R15
+					}
+					textSectionData.push_back(0x8D); // LEA opcode
+					
+					// ModR/M byte
+					uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
+					if (var_offset >= -128 && var_offset <= 127) {
+						// Use disp8
+						textSectionData.push_back(0x45 | (reg_bits << 3)); // Mod=01, Reg=target, R/M=101 (RBP)
+						textSectionData.push_back(static_cast<uint8_t>(var_offset));
+					} else {
+						// Use disp32
+						textSectionData.push_back(0x85 | (reg_bits << 3)); // Mod=10, Reg=target, R/M=101 (RBP)
+						for (int j = 0; j < 4; ++j) {
+							textSectionData.push_back(static_cast<uint8_t>(var_offset & 0xFF));
+							var_offset >>= 8;
+						}
+					}
+				} else if (is_float_arg) {
 					// For floating-point arguments, use movsd xmm, [rbp+offset] (F2 0F 10 /r)
 					// or movss for float (F3 0F 10 /r)
 					uint8_t prefix = (argType == Type::Float) ? 0xF3 : 0xF2;
@@ -2022,9 +2059,13 @@ private:
 		std::string mangled_name;
 		if (!function_name.empty() && function_name[0] == '?') {
 			mangled_name = function_name;  // Already mangled
+			std::cerr << "DEBUG handleFunctionCall: function_name already mangled: " << mangled_name << "\n";
 		} else {
+			std::cerr << "DEBUG handleFunctionCall: function_name needs mangling: " << function_name << "\n";
 			mangled_name = writer.getMangledName(function_name);  // Need to mangle
+			std::cerr << "DEBUG handleFunctionCall: after getMangledName: " << mangled_name << "\n";
 		}
+		std::cerr << "DEBUG handleFunctionCall: about to add_relocation with: " << mangled_name << "\n";
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
 		// REFERENCE COMPATIBILITY: Don't add closing brace line mappings
@@ -2154,7 +2195,10 @@ private:
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		// Get the mangled name for the constructor (handles name mangling)
+		std::cerr << "DEBUG handleConstructorCall: function_name = " << function_name << "\n";
 		std::string mangled_name = writer.getMangledName(function_name);
+		std::cerr << "DEBUG handleConstructorCall: after getMangledName = " << mangled_name << "\n";
+		std::cerr << "DEBUG handleConstructorCall: about to add_relocation with: " << mangled_name << "\n";
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
 		regAlloc.reset();
@@ -3110,19 +3154,30 @@ private:
 		// Extract parameter types from the instruction
 		// Parameters start at index 6 (after return type, size, pointer depth, function name, struct name, and linkage)
 		size_t paramIndex = 6;
-		while (paramIndex + 4 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, and name
+		while (paramIndex + 7 <= instruction.getOperandCount()) {  // Need type, size, pointer depth, name, is_ref, is_rvalue, cv_qual
 			auto param_base_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
 			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + 2);
+			// paramIndex + 3 is the parameter name (not needed for signature)
+			bool is_reference = instruction.getOperandAs<bool>(paramIndex + 4);
+			bool is_rvalue_reference = instruction.getOperandAs<bool>(paramIndex + 5);
+			CVQualifier cv_qual = static_cast<CVQualifier>(instruction.getOperandAs<int>(paramIndex + 6));
 
-			// Construct parameter TypeSpecifierNode
-			TypeSpecifierNode param_type(param_base_type, TypeQualifier::None, static_cast<unsigned char>(param_size));
+			// Construct parameter TypeSpecifierNode with CV-qualifier
+			TypeSpecifierNode param_type(param_base_type, TypeQualifier::None, static_cast<unsigned char>(param_size), Token{}, cv_qual);
+			
+			// Set reference information
+			if (is_reference) {
+				param_type.set_reference(is_rvalue_reference);
+			}
+			
+			// Add pointer levels
 			for (int i = 0; i < param_pointer_depth; ++i) {
 				param_type.add_pointer_level();
 			}
 
 			parameter_types.push_back(param_type);
-			paramIndex += 4;  // Skip type, size, pointer depth, and name
+			paramIndex += 7;  // Skip type, size, pointer depth, name, is_ref, is_rvalue, cv_qual
 		}
 
 		// Add function signature to the object file writer for proper mangling
@@ -3158,8 +3213,28 @@ private:
 		StackVariableScope& var_scope = variable_scopes.emplace_back();
 		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope);
 		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space + func_stack_space.temp_vars_size;
+		
+		// Windows x64 calling convention: Functions must provide home space for parameters
+		// Even if parameters stay in registers, we need space to spill them if needed
+		// Member functions have implicit 'this' pointer as first parameter
+		size_t param_count = parameter_types.size();
+		if (!struct_name.empty()) {
+			param_count++;  // Count 'this' pointer for member functions
+		}
+		if (param_count > 0 && total_stack_space < param_count * 8) {
+			total_stack_space = static_cast<uint32_t>(param_count * 8);
+		}
+		
 		// Ensure stack alignment to 16 bytes
 		total_stack_space = (total_stack_space + 15) & -16;
+		
+		// DEBUG: Check if we're skipping the prologue
+		if (total_stack_space == 0 && func_name_str.find("insert") != std::string::npos) {
+			std::cerr << "WARNING: Function " << func_name_str << " has total_stack_space=0!\n";
+			std::cerr << "  named_vars_size=" << func_stack_space.named_vars_size << "\n";
+			std::cerr << "  shadow_stack_space=" << func_stack_space.shadow_stack_space << "\n";
+			std::cerr << "  temp_vars_size=" << func_stack_space.temp_vars_size << "\n";
+		}
 
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
 		writer.add_function_symbol(mangled_name, func_offset, total_stack_space);
@@ -3188,11 +3263,11 @@ private:
 		regAlloc.reset();
 
 		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
+		// Always generate prologue - even if total_stack_space is 0, we need RBP for parameter access
+		textSectionData.push_back(0x55); // push rbp
+		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
+
 		if (total_stack_space > 0) {
-
-			textSectionData.push_back(0x55); // push rbp
-			textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
-
 			// Generate stack allocation instruction
 			if (total_stack_space <= 127) {
 				// Use 8-bit immediate: sub rsp, imm8
@@ -3241,13 +3316,13 @@ private:
 
 		// First pass: collect all parameter information
 		paramIndex = 6;  // Start after return type, size, pointer depth, function name, struct name, and linkage
-		while (paramIndex + 4 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, and name
+		while (paramIndex + 7 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, name, is_reference, is_rvalue_reference, cv_qualifier
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
 			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + 2);
 
 			// Store parameter location based on addressing mode
-			int paramNumber = ((paramIndex - 6) / 4) + param_offset_adjustment;
+			int paramNumber = ((paramIndex - 6) / 7) + param_offset_adjustment;
 			int offset = (paramNumber + 1) * -8;
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 3);
@@ -3284,7 +3359,7 @@ private:
 				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth});
 			}
 
-			paramIndex += 4;  // Skip type, size, pointer depth, and name
+			paramIndex += 7;  // Skip type, size, pointer depth, name, is_reference, is_rvalue_reference, cv_qualifier
 		}
 
 		// Second pass: generate parameter storage code in the correct order
@@ -3427,16 +3502,14 @@ private:
 	// MSVC-style epilogue
 	int32_t total_stack_space = variable_scopes.back().scope_stack_space;
 
-		if (total_stack_space != 0) {
-			// Function had a prologue, use MSVC-style epilogue
-			// mov rsp, rbp (restore stack pointer)
-			textSectionData.push_back(0x48);
-			textSectionData.push_back(0x89);
-			textSectionData.push_back(0xEC);
+		// Always generate epilogue since we always generate prologue
+		// mov rsp, rbp (restore stack pointer)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(0xEC);
 
-			// pop rbp (restore caller's base pointer)
-			textSectionData.push_back(0x5D);
-		}
+		// pop rbp (restore caller's base pointer)
+		textSectionData.push_back(0x5D);
 
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);

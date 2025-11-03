@@ -5521,17 +5521,19 @@ ParseResult Parser::parse_primary_expression()
 		consume_token(); // consume member name
 
 		// Check if this is a member function call (followed by '(')
+		std::cerr << ">>>>> Checking member: " << member_name_token.value() 
+		          << " peek=" << (peek_token().has_value() ? peek_token()->value() : "NONE") << "\n";
 		if (peek_token().has_value() && peek_token()->value() == "("sv) {
 			// This is a member function call: obj.method(args)
-			// We need to find the member function in the struct type info
-
-			// For now, create a placeholder - we'll need to look up the function from struct type info
-			// The actual lookup will happen during code generation when we have type information
+			std::cerr << ">>>>> IS MEMBER FUNCTION CALL: " << member_name_token.value() << "\n";
 
 			consume_token(); // consume '('
 
 			// Parse function arguments
 			ChunkedVector<ASTNode> args;
+			std::vector<TypeSpecifierNode> arg_types;  // Collect argument types for template deduction
+			
+			std::cerr << ">>>>> About to parse arguments\n";
 			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 				while (true) {
 					auto arg_result = parse_expression();
@@ -5540,6 +5542,26 @@ ParseResult Parser::parse_primary_expression()
 					}
 					if (auto arg = arg_result.node()) {
 						args.push_back(*arg);
+						
+						// Try to deduce the argument type for template instantiation
+						// For now, we'll deduce from literals and identifiers
+						Type arg_type = Type::Int;  // Default
+						if (arg->is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg->as<ExpressionNode>();
+							if (std::holds_alternative<NumericLiteralNode>(expr)) {
+								const auto& lit = std::get<NumericLiteralNode>(expr);
+								arg_type = lit.type();
+							} else if (std::holds_alternative<IdentifierNode>(expr)) {
+								// Look up identifier type from symbol table
+								const auto& ident = std::get<IdentifierNode>(expr);
+								auto symbol = gSymbolTable.lookup(ident.name());
+								if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+									const auto& decl = symbol->as<DeclarationNode>();
+									arg_type = decl.type_node().as<TypeSpecifierNode>().type();
+								}
+							}
+						}
+						arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
 					}
 
 					if (!peek_token().has_value()) {
@@ -5560,15 +5582,61 @@ ParseResult Parser::parse_primary_expression()
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 			}
 
-			// Create a temporary function declaration node for the member function
-			// We'll resolve the actual function during code generation
-			auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_name_token);
-			auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
-			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+			// Try to get the object's type to check for member function templates
+			std::optional<std::string_view> object_struct_name;
+			
+			// Try to deduce the object type from the result expression
+			if (result->is<ExpressionNode>()) {
+				const ExpressionNode& expr = result->as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					const auto& ident = std::get<IdentifierNode>(expr);
+					auto symbol = gSymbolTable.lookup(ident.name());
+					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+						const auto& decl = symbol->as<DeclarationNode>();
+						const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+						if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
+							TypeIndex type_idx = type_spec.type_index();
+							if (type_idx < gTypeInfo.size()) {
+								object_struct_name = gTypeInfo[type_idx].name_;
+							}
+						}
+					}
+				}
+			}
+
+			// Try to instantiate member function template if applicable
+			std::optional<ASTNode> instantiated_func;
+			std::cerr << "DEBUG: object_struct_name.has_value()=" << object_struct_name.has_value()
+			          << " arg_types.empty()=" << arg_types.empty() << " arg_types.size()=" << arg_types.size() << "\n";
+			if (object_struct_name.has_value() && !arg_types.empty()) {
+				std::cerr << "DEBUG: Calling try_instantiate_member_function_template("
+				          << *object_struct_name << ", " << member_name_token.value()
+				          << ", " << arg_types.size() << " arg_types)\n";
+				instantiated_func = try_instantiate_member_function_template(
+					*object_struct_name,
+					member_name_token.value(),
+					arg_types
+				);
+				std::cerr << "DEBUG: try_instantiate returned, has_value=" << instantiated_func.has_value() << "\n";
+			}
+
+			// Use the instantiated function if available, otherwise create temporary placeholder
+			FunctionDeclarationNode* func_ref_ptr = nullptr;
+			if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+				func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+				std::cerr << ">>>>> Using instantiated function, has_definition=" 
+				          << func_ref_ptr->get_definition().has_value() << "\n";
+			} else {
+				// Create a temporary function declaration node for the member function
+				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_name_token);
+				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
+				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+				func_ref_ptr = &func_ref;
+			}
 
 			// Create member function call node
 			result = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(*result, func_ref, std::move(args), member_name_token));
+				MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
 			continue;
 		}
 
@@ -6806,6 +6874,8 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 // Helper function to get the size of a type in bits
 unsigned char Parser::get_type_size_bits(Type type) {
 	switch (type) {
+		case Type::Void:
+			return 0;
 		case Type::Bool:
 		case Type::Char:
 		case Type::UnsignedChar:
@@ -7554,6 +7624,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	gSymbolTable.insert(mangled_token.value(), new_func_node);
 
 	// Add to top-level AST so it gets visited by the code generator
+	std::cerr << "DEBUG [7619 try_instantiate_template]: Adding function: " << mangled_token.value() << "\n";
 	ast_nodes_.push_back(new_func_node);
 
 	return new_func_node;
@@ -8025,6 +8096,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		);
 
 		// Add to top-level AST so it gets visited by the code generator
+		std::cerr << "DEBUG [8090 try_instantiate_class_template]: Adding member function: " 
+		          << decl.identifier_token().value() << "\n";
 		ast_nodes_.push_back(new_func_node);
 	}
 
@@ -8178,6 +8251,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		);
 
 		// Add to top-level AST so it gets visited by the code generator
+		std::cerr << "DEBUG [8246 try_instantiate_class_template out-of-line]: Adding member function\n";
 		ast_nodes_.push_back(new_func_node);
 	}
 
@@ -8191,6 +8265,290 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	ast_nodes_.push_back(new_struct_node);
 
 	return new_struct_node;
+}
+
+// Try to instantiate a member function template during a member function call
+// This is called when parsing obj.method(args) where method is a template
+std::optional<ASTNode> Parser::try_instantiate_member_function_template(
+	std::string_view struct_name,
+	std::string_view member_name,
+	const std::vector<TypeSpecifierNode>& arg_types) {
+	
+	// Build the qualified template name
+	std::string qualified_name = std::string(struct_name) + "::" + std::string(member_name);
+	
+	// Look up the template in the registry
+	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+	if (!template_opt.has_value()) {
+		return std::nullopt;  // Not a template
+	}
+
+	const ASTNode& template_node = *template_opt;
+	if (!template_node.is<TemplateFunctionDeclarationNode>()) {
+		return std::nullopt;  // Not a function template
+	}
+
+	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
+	const std::vector<ASTNode>& template_params = template_func.template_parameters();
+	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+
+	// Deduce template arguments from function call arguments
+	if (arg_types.empty()) {
+		return std::nullopt;  // Can't deduce without arguments
+	}
+	
+	std::cerr << "DEBUG: Template found! func_decl has_definition=" << func_decl.get_definition().has_value() << "\n";
+
+	// Build template argument list
+	std::vector<TemplateArgument> template_args;
+	
+	// Deduce template parameters in order from function arguments
+	size_t arg_index = 0;
+	for (const auto& template_param_node : template_params) {
+		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
+
+		if (param.kind() == TemplateParameterKind::Type) {
+			if (arg_index < arg_types.size()) {
+				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+				arg_index++;
+			} else {
+				// Not enough arguments - use first argument type
+				template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+			}
+		} else {
+			// Non-type parameter - not yet supported
+			return std::nullopt;
+		}
+	}
+
+	// Check if we already have this instantiation
+	TemplateInstantiationKey key;
+	key.template_name = qualified_name;
+	for (const auto& arg : template_args) {
+		if (arg.kind == TemplateArgument::Kind::Type) {
+			key.type_arguments.push_back(arg.type_value);
+		} else {
+			key.value_arguments.push_back(arg.int_value);
+		}
+	}
+
+	auto existing_inst = gTemplateRegistry.getInstantiation(key);
+	if (existing_inst.has_value()) {
+		return *existing_inst;  // Return existing instantiation
+	}
+
+	// Generate mangled name for the instantiation
+	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(member_name, template_args);
+
+	// Get the original function's declaration
+	const DeclarationNode& orig_decl = func_decl.decl_node();
+
+	// Substitute the return type if it's a template parameter
+	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
+	Type return_type = return_type_spec.type();
+	TypeIndex return_type_index = return_type_spec.type_index();
+
+	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[return_type_index];
+		std::string_view type_name = type_info.name_;
+
+		// Try to find which template parameter this is
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+			if (tparam.name() == type_name) {
+				return_type = template_args[i].type_value;
+				return_type_index = 0;
+				break;
+			}
+		}
+	}
+
+	// Create mangled token
+	Token mangled_token(Token::Type::Identifier, mangled_name,
+	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
+	                    orig_decl.identifier_token().file_index());
+
+	// Create return type node
+	ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
+		return_type,
+		TypeQualifier::None,
+		get_type_size_bits(return_type),
+		Token()
+	);
+
+	// Create the new function declaration
+	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
+	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, struct_name);
+
+	// Copy and substitute parameters
+	for (const auto& param : func_decl.parameter_nodes()) {
+		if (param.is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+			Type param_type = param_type_spec.type();
+			TypeIndex param_type_index = param_type_spec.type_index();
+
+			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[param_type_index];
+				std::string_view type_name = type_info.name_;
+
+				// Try to find which template parameter this is
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.name() == type_name) {
+						param_type = template_args[i].type_value;
+						param_type_index = 0;
+						break;
+					}
+				}
+			}
+
+			// Create the substituted parameter type specifier
+			ASTNode substituted_param_type = emplace_node<TypeSpecifierNode>(
+				param_type,
+				TypeQualifier::None,
+				get_type_size_bits(param_type),
+				Token()
+			);
+
+			// Create the new parameter declaration
+			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
+			new_func_ref.add_parameter_node(new_param_decl);
+		}
+	}
+
+	// Check if the template has a body position stored
+	if (!func_decl.has_template_body_position()) {
+		std::cerr << ">>>>> Template has NO body position!\n";
+		// No body to parse - return function without definition
+		ast_nodes_.push_back(new_func_node);
+		gTemplateRegistry.registerInstantiation(key, new_func_node);
+		return new_func_node;
+	}
+
+	std::cerr << ">>>>> Template HAS body position, proceeding to parse body\n";
+	
+	// Temporarily add the concrete types to the type system with template parameter names
+	std::vector<TypeInfo*> temp_type_infos;
+	std::vector<std::string_view> param_names;
+	for (const auto& tparam_node : template_params) {
+		if (tparam_node.is<TemplateParameterNode>()) {
+			param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+		}
+	}
+	
+	for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+		std::string_view param_name = param_names[i];
+		Type concrete_type = template_args[i].type_value;
+
+		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+		gTypesByName.emplace(type_info.name_, &type_info);
+		temp_type_infos.push_back(&type_info);
+	}
+
+	// Save current position
+	TokenPosition current_pos = save_token_position();
+
+	// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
+	restore_lexer_position_only(func_decl.template_body_position());
+
+		// Look up the struct type info
+		auto struct_type_it = gTypesByName.find(struct_name);
+		if (struct_type_it == gTypesByName.end()) {
+			// Clean up and return error
+			for (const auto* type_info : temp_type_infos) {
+				gTypesByName.erase(type_info->name_);
+			}
+			restore_token_position(current_pos);
+			return std::nullopt;
+		}
+
+		const TypeInfo* struct_type_info = struct_type_it->second;
+		TypeIndex struct_type_index = struct_type_info->type_index_;
+
+		// Set up parsing context for the member function
+		gSymbolTable.enter_scope(ScopeType::Function);
+		current_function_ = &new_func_ref;
+		
+		// Find the struct node
+		StructDeclarationNode* struct_node_ptr = nullptr;
+		for (auto& node : ast_nodes_) {
+			if (node.is<StructDeclarationNode>()) {
+				auto& sn = node.as<StructDeclarationNode>();
+				if (sn.name() == struct_name) {
+					struct_node_ptr = &sn;
+					break;
+				}
+			}
+		}
+		
+		member_function_context_stack_.push_back({
+			struct_name,
+			struct_type_index,
+			struct_node_ptr
+		});
+
+		// Add 'this' pointer to symbol table
+		ASTNode this_type = emplace_node<TypeSpecifierNode>(
+			Type::UserDefined,
+			struct_type_index,
+			64,  // Pointer size
+			Token()
+		);
+
+		Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+		auto this_decl = emplace_node<DeclarationNode>(this_type, this_token);
+		gSymbolTable.insert("this", this_decl);
+
+		// Add parameters to symbol table
+		for (const auto& param : new_func_ref.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& param_decl = param.as<DeclarationNode>();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param);
+			}
+		}
+
+		// Parse the function body
+		auto block_result = parse_block();
+		std::cerr << "DEBUG: parse_block() error=" << block_result.is_error() 
+		          << " has_value=" << block_result.node().has_value() << "\n";
+		if (!block_result.is_error() && block_result.node().has_value()) {
+			new_func_ref.set_definition(block_result.node()->as<BlockNode>());
+			std::cerr << "DEBUG: set_definition called for " << mangled_name << "\n";
+		}
+
+	// Clean up context
+	std::cerr << "DEBUG [8522]: Cleaning up context\n";
+	current_function_ = nullptr;
+	std::cerr << "DEBUG [8524]: Popping member_function_context_stack_\n";
+	member_function_context_stack_.pop_back();
+	std::cerr << "DEBUG [8526]: Exiting scope\n";
+	gSymbolTable.exit_scope();
+
+	// Restore original position (lexer only - keep AST nodes we created)
+	std::cerr << "DEBUG [8529]: Restoring token position\n";
+	restore_lexer_position_only(current_pos);
+
+	// Remove temporary type infos
+	std::cerr << "DEBUG [8532]: Removing " << temp_type_infos.size() << " temp type infos\n";
+	for (const auto* type_info : temp_type_infos) {
+		gTypesByName.erase(type_info->name_);
+	}
+
+	// Add the instantiated function to the AST
+	std::cerr << "DEBUG [8538]: Adding function to ast_nodes_: " << mangled_name << " (current size=" << ast_nodes_.size() << ")\n";
+	ast_nodes_.push_back(new_func_node);
+	std::cerr << "DEBUG [8540]: After push, ast_nodes_.size()=" << ast_nodes_.size() << "\n";
+
+	// Update the saved position to include this new node so it doesn't get erased
+	// when we restore position in the caller
+	saved_tokens_[current_pos.cursor_].ast_nodes_size_ = ast_nodes_.size();
+
+	// Register the instantiation
+	gTemplateRegistry.registerInstantiation(key, new_func_node);
+
+	return new_func_node;
 }
 
 // Try to parse an out-of-line template member function definition

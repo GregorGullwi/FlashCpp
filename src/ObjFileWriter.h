@@ -357,19 +357,44 @@ public:
 			std::string_view func_name = name.substr(scope_pos + 2);
 
 			// Search for a mangled name that matches this member function
-			// Format: ?FunctionName@ClassName@@...
+			// The function name in the mangled name might include the class prefix (e.g., "Container::Container")
+			// So we need to search for both patterns:
+			// 1. ?FunctionName@ClassName@@... (func_name without class prefix)
+			// 2. ?ClassName::FunctionName@ClassName@@... (func_name with class prefix, for constructors)
 			for (const auto& [mangled, sig] : function_signatures_) {
-				if (mangled[0] == '?' &&
+				if (mangled[0] != '?') continue;
+				
+				// Pattern 1: ?FunctionName@ClassName@@...
+				if (mangled.size() > 1 + func_name.size() + 1 + class_name.size() &&
 				    mangled.substr(1, func_name.size()) == func_name &&
 				    mangled[1 + func_name.size()] == '@' &&
 				    mangled.substr(2 + func_name.size(), class_name.size()) == class_name) {
+					std::cerr << "DEBUG: getMangledName found match (pattern 1) for " << name << " -> " << mangled << "\n";
+					return mangled;
+				}
+				
+				// Pattern 2: ?ClassName::FunctionName@ClassName@@... (for constructors/destructors)
+				std::string full_func_name = std::string(class_name) + "::" + std::string(func_name);
+				if (mangled.size() > 1 + full_func_name.size() + 1 + class_name.size() &&
+				    mangled.substr(1, full_func_name.size()) == full_func_name &&
+				    mangled[1 + full_func_name.size()] == '@' &&
+				    mangled.substr(2 + full_func_name.size(), class_name.size()) == class_name) {
+					std::cerr << "DEBUG: getMangledName found match (pattern 2) for " << name << " -> " << mangled << "\n";
 					return mangled;
 				}
 			}
 
 			// If not found in function_signatures_, generate a basic mangled name
+			std::cerr << "DEBUG: getMangledName fallback for " << name << " (func=" << func_name << " class=" << class_name << ")\n";
+			std::cerr << "DEBUG: function_signatures_ has " << function_signatures_.size() << " entries:\n";
+			for (const auto& [mangled, sig] : function_signatures_) {
+				std::cerr << "  " << mangled << "\n";
+			}
+
+			// If not found in function_signatures_, generate a basic mangled name
 			// This handles forward references to functions that haven't been processed yet
 			// Format: ?FunctionName@ClassName@@YAH@Z (assuming int return, no params for now)
+			// For constructors (FunctionName == ClassName), use YAX (void return)
 			// This is a simplified mangling - the actual signature will be added later
 			// Reserve space to avoid reallocations
 			std::string mangled;
@@ -378,7 +403,12 @@ public:
 			mangled += func_name;
 			mangled += '@';
 			mangled += class_name;
-			mangled += "@@YAH@Z";
+			// Check if this is a constructor (function name == class name)
+			if (func_name == class_name) {
+				mangled += "@@YAX@Z";  // void return, no params
+			} else {
+				mangled += "@@YAH@Z";  // int return, no params (default for regular functions)
+			}
 			return mangled;
 		}
 
@@ -490,10 +520,28 @@ private:
 	std::string getTypeCode(const TypeSpecifierNode& type_node) const {
 		std::string code;
 
-		// Handle references - they're treated as pointers in MSVC mangling
-		// References add one level of pointer indirection
+		// Handle CV-qualifiers for references
+		// In MSVC mangling, CV-qualifiers come before the reference/pointer markers
+		auto cv_val = static_cast<uint8_t>(type_node.cv_qualifier());
+		bool has_const = (cv_val & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+		bool has_volatile = (cv_val & static_cast<uint8_t>(CVQualifier::Volatile)) != 0;
+		
+		// Handle references - they need special encoding
 		if (type_node.is_reference()) {
-			code += "PE";  // Pointer prefix for reference
+			if (type_node.is_rvalue_reference()) {
+				// Rvalue reference: $$Q + CV qualifiers + base type
+				code += "$$Q";
+				if (has_const && has_volatile) code += "EA";
+				else if (has_const) code += "EB";
+				else if (has_volatile) code += "EC";
+				else code += "EA";  // Non-const, non-volatile rvalue ref
+			} else {
+				// Lvalue reference: A/B + CV qualifiers
+				if (has_const && has_volatile) code += "AED";
+				else if (has_const) code += "AEB";  // const lvalue reference
+				else if (has_volatile) code += "AEC";
+				else code += "AEA";  // Non-const lvalue reference
+			}
 		}
 
 		// Add pointer prefix for each level of indirection
@@ -518,6 +566,7 @@ private:
 			case Type::Float: code += "M"; break;
 			case Type::Double: code += "N"; break;
 			case Type::LongDouble: code += "O"; break;
+			case Type::Struct: code += "V"; break;  // Struct/class type
 			default: code += "H"; break;  // Default to int for unknown types
 		}
 
@@ -568,9 +617,9 @@ public:
 		}
 
 		// Add function to debug info with length 0 - length will be calculated later
-		std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " (mangled: " << mangled_name << ") at offset " << section_offset << std::endl;
+		std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " (mangled: " << mangled_name << ") at offset " << section_offset << "\n";
 		debug_builder_.addFunction(unmangled_name, mangled_name, section_offset, 0, stack_space);
-		std::cerr << "DEBUG: Function added to debug builder" << std::endl;
+		std::cerr << "DEBUG: Function added to debug builder \n";
 
 		// Exception info is now handled directly in IRConverter finalization logic
 
@@ -593,7 +642,9 @@ public:
 
 	void add_relocation(uint64_t offset, std::string_view symbol_name) {
 		// Get the function symbol using mangled name
+		std::cerr << "DEBUG add_relocation: input symbol_name = " << symbol_name << "\n";
 		std::string mangled_name = getMangledName(std::string(symbol_name));
+		std::cerr << "DEBUG add_relocation: after getMangledName = " << mangled_name << "\n";
 		auto* symbol = coffi_.get_symbol(std::string(mangled_name));
 		if (!symbol) {
 			// Symbol not found - add it as an external symbol (for C library functions like puts, printf, etc.)
@@ -805,7 +856,7 @@ public:
 		// Set the correct text section number for symbol references
 		uint16_t text_section_number = static_cast<uint16_t>(sectiontype_to_index[SectionType::TEXT] + 1);
 		debug_builder_.setTextSectionNumber(text_section_number);
-		std::cerr << "DEBUG: Set text section number to " << text_section_number << std::endl;
+		std::cerr << "DEBUG: Set text section number to " << text_section_number << "\n";
 
 		// Generate debug sections
 		auto debug_s_data = debug_builder_.generateDebugS();
@@ -816,7 +867,7 @@ public:
 		for (const auto& reloc : debug_relocations) {
 			add_debug_relocation(reloc.offset, reloc.symbol_name, reloc.relocation_type);
 		}
-		std::cerr << "DEBUG: Added " << debug_relocations.size() << " debug relocations" << std::endl;
+		std::cerr << "DEBUG: Added " << debug_relocations.size() << " debug relocations\n";
 
 		// Add debug data to sections
 		if (!debug_s_data.empty()) {
