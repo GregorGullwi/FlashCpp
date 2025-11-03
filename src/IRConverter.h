@@ -33,7 +33,7 @@
 
 // Maximum possible size for 'mov destination_register, [rbp + offset]' instruction:
 // REX (1 byte) + Opcode (1 byte) + ModR/M (1 byte) + SIB (1 byte) + Disp32 (4 bytes) = 8 bytes
-constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 8;
+static constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 8;
 
 struct OpCodeWithSize {
 	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes;
@@ -491,14 +491,14 @@ OpCodeWithSize generateMovFromRsp(X64Register destinationRegister, int32_t offse
 }
 
 // Win64 calling convention register mapping
-constexpr std::array<X64Register, 4> INT_PARAM_REGS = {
+static constexpr std::array<X64Register, 4> INT_PARAM_REGS = {
 	X64Register::RCX,  // First integer/pointer argument
 	X64Register::RDX,  // Second integer/pointer argument
 	X64Register::R8,   // Third integer/pointer argument
 	X64Register::R9    // Fourth integer/pointer argument
 };
 
-constexpr std::array<X64Register, 4> FLOAT_PARAM_REGS = {
+static constexpr std::array<X64Register, 4> FLOAT_PARAM_REGS = {
 	X64Register::XMM0, // First floating point argument
 	X64Register::XMM1, // Second floating point argument
 	X64Register::XMM2, // Third floating point argument
