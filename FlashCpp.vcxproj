@@ -157,7 +157,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <AdditionalOptions>-fms-compatibility -fms-extensions -fdelayed-template-parsing %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>-fms-compatibility -fms-extensions -fdelayed-template-parsing /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <OutputFile>$(OutDir)test.exe</OutputFile>
