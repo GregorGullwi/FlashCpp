@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <string_view>
+#include <source_location>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
@@ -234,7 +235,8 @@ private:
 
         class ScopedTokenPosition {
         public:
-                explicit ScopedTokenPosition(class Parser& parser);
+                explicit ScopedTokenPosition(class Parser& parser, 
+                                            const std::source_location location = std::source_location::current());
 
                 ~ScopedTokenPosition();
 
@@ -246,6 +248,7 @@ private:
                 class Parser& parser_;
                 TokenPosition saved_position_;
                 bool discarded_ = false;
+                std::source_location location_;
         };
 
         struct SavedToken {
@@ -341,7 +344,7 @@ public:  // Public methods for template instantiation
         static std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
 
         TokenPosition save_token_position();
-        void restore_token_position(const TokenPosition& token_position);
+        void restore_token_position(const TokenPosition& token_position, const std::source_location location = std::source_location::current());
         void restore_lexer_position_only(const TokenPosition& token_position);  // Restore lexer without erasing AST nodes
         void discard_saved_token(const TokenPosition& token_position);
 

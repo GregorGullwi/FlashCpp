@@ -180,11 +180,14 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
     ast_nodes_.reserve(default_ast_tree_size_);
 }
 
-Parser::ScopedTokenPosition::ScopedTokenPosition(class Parser& parser)
-    : parser_(parser), saved_position_(parser.save_token_position()) {}
+Parser::ScopedTokenPosition::ScopedTokenPosition(class Parser& parser, const std::source_location location)
+    : parser_(parser), saved_position_(parser.save_token_position()), location_(location) {}
 
 Parser::ScopedTokenPosition::~ScopedTokenPosition() {
     if (!discarded_) {
+        std::cerr << "DEBUG ~ScopedTokenPosition: Calling restore from "
+                  << location_.file_name() << ":" << location_.line() 
+                  << " in function " << location_.function_name() << "\n";
         parser_.restore_token_position(saved_position_);
     }
 }
@@ -221,10 +224,25 @@ TokenPosition Parser::save_token_position() {
     return cur_pos;
 }
 
-void Parser::restore_token_position(const TokenPosition& saved_token_pos) {
+void Parser::restore_token_position(const TokenPosition& saved_token_pos, const std::source_location location) {
     lexer_.restore_token_position(saved_token_pos);
     SavedToken saved_token = saved_tokens_.at(saved_token_pos.cursor_);
     current_token_ = saved_token.current_token_;
+    size_t old_size = ast_nodes_.size();
+    std::cerr << "DEBUG restore_token_position: Restoring from ast size " << old_size << " to " << saved_token.ast_nodes_size_ << "\n";
+    std::cerr << "  Called from " << location.file_name() << ":" << location.line() 
+              << " in function " << location.function_name() << "\n";
+    if (saved_token.ast_nodes_size_ < old_size && old_size - saved_token.ast_nodes_size_ > 0) {
+        std::cerr << "  WARNING: About to erase " << (old_size - saved_token.ast_nodes_size_) << " nodes!\n";
+        // Print what's being erased
+        for (size_t i = saved_token.ast_nodes_size_; i < old_size; ++i) {
+            std::cerr << "    Erasing node " << i << ": " << ast_nodes_[i].type_name();
+            if (ast_nodes_[i].is<StructDeclarationNode>()) {
+                std::cerr << " (struct: " << ast_nodes_[i].as<StructDeclarationNode>().name() << ")";
+            }
+            std::cerr << "\n";
+        }
+    }
     ast_nodes_.erase(ast_nodes_.begin() + saved_token.ast_nodes_size_,
         ast_nodes_.end());
     //saved_tokens_.erase(saved_token_pos.cursor_);
@@ -260,6 +278,8 @@ void Parser::skip_balanced_braces() {
 
 ParseResult Parser::parse_top_level_node()
 {
+	std::cerr << "DEBUG ===== parse_top_level_node() called, ast_nodes_.size()=" << ast_nodes_.size() << " =====\n";
+	
 	// Save the current token's position to restore later in case of a parsing
 	// error
 	ScopedTokenPosition saved_position(*this);
@@ -347,10 +367,17 @@ ParseResult Parser::parse_top_level_node()
 		auto result = parse_template_declaration();
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
+				std::cerr << "DEBUG parse_statement_or_declaration: Adding template node to ast_nodes_ (size before=" << ast_nodes_.size() << ")\n";
+				std::cerr << "  Node type: " << node->type_name() << "\n";
 				ast_nodes_.push_back(*node);
+				std::cerr << "DEBUG parse_statement_or_declaration: ast_nodes_ size after=" << ast_nodes_.size() << "\n";
+			} else {
+				std::cerr << "DEBUG parse_statement_or_declaration: template result has no node (primary template)\n";
 			}
+			std::cerr << "DEBUG parse_top_level_node: Template parsed successfully, calling saved_position.success()\n";
 			return saved_position.success();
 		}
+		std::cerr << "DEBUG parse_top_level_node: Template parse failed, returning error\n";
 		return result;
 	}
 
@@ -7163,22 +7190,22 @@ ParseResult Parser::parse_template_declaration() {
 			// Finalize the struct layout
 			struct_info->finalize();
 
-			// Store struct info in type info
-			struct_type_info.setStructInfo(std::move(struct_info));
+		// Store struct info in type info
+		struct_type_info.setStructInfo(std::move(struct_info));
 
-			// Register the specialization
-			gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
+		// Register the specialization
+		std::cerr << "DEBUG: Registering specialization for " << template_name << " with " << template_args.size() << " args\n";
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			std::cerr << "  Arg " << i << ": type=" << static_cast<int>(template_args[i]) << "\n";
+		}
+		gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
 
-			// Create a template class node
-			auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
-				std::vector<ASTNode>{},  // Empty template params for specialization
-				struct_node
-			);
-
-			// Add to top-level AST so it gets visited by the code generator
-			ast_nodes_.push_back(struct_node);
-
-			return saved_position.success(template_class_node);
+		// Don't create a TemplateClassDeclarationNode for specializations
+		// Just return the struct_node directly so it gets added to AST by the caller
+		// This avoids the issue where the struct gets added to ast_nodes_ here
+		// but then the wrapping TemplateClassDeclarationNode gets added by the caller
+		std::cerr << "DEBUG: Returning specialization struct node directly\n";
+		return saved_position.success(struct_node);
 		}
 
 		// Set flag to indicate we're parsing a template class
@@ -7250,7 +7277,10 @@ ParseResult Parser::parse_template_declaration() {
 		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
 		gTemplateRegistry.registerTemplate(struct_decl.name(), template_class_node);
 
-		return saved_position.success(template_class_node);
+		// Primary templates shouldn't be added to AST - only instantiations and specializations
+		// Return success with no node so the caller doesn't add it to ast_nodes_
+		std::cerr << "DEBUG: Registered primary template " << struct_decl.name() << ", returning no node\n";
+		return saved_position.success();
 	} else {
 		return ParseResult::error("Unsupported template declaration type", *current_token_);
 	}
@@ -7805,13 +7835,19 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 // Returns the instantiated StructDeclarationNode if successful
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<Type>& template_args) {
 	// First, check if there's a specialization for these exact template arguments
+	std::cerr << "DEBUG: Looking up specialization for " << template_name << " with " << template_args.size() << " args\n";
+	for (size_t i = 0; i < template_args.size(); ++i) {
+		std::cerr << "  Arg " << i << ": type=" << static_cast<int>(template_args[i]) << "\n";
+	}
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args);
 	if (specialization_opt.has_value()) {
+		std::cerr << "DEBUG: Found specialization!\n";
 		// Found a specialization - it's already fully instantiated and registered
 		// Return nullopt to indicate the type is already available
 		// The caller will look it up in gTypesByName
 		return std::nullopt;
 	}
+	std::cerr << "DEBUG: No specialization found, using primary template\n";
 
 	// No specialization found - use the primary template
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
@@ -8028,24 +8064,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name_, &type_info);
 				temp_type_infos.push_back(&type_info);
-			}
+		}
 
-			// Save current position
-			TokenPosition current_pos = save_token_position();
+		// Save current position
+		TokenPosition current_pos = save_token_position();
 
-			// Restore to the function body start
-			restore_token_position(template_body.body_start);
+		// Restore to the function body start (lexer only, don't erase AST nodes)
+		restore_lexer_position_only(template_body.body_start);
 
-			// Set up parsing context for the member function
-			gSymbolTable.enter_scope(ScopeType::Function);
-			current_function_ = &new_func_ref;
-			member_function_context_stack_.push_back({
-				instantiated_name,
-				struct_type_info.type_index_,
-				&new_struct_ref
-			});
-
-			// Add parameters to symbol table
+		// Set up parsing context for the member function
+		gSymbolTable.enter_scope(ScopeType::Function);
+		current_function_ = &new_func_ref;
+		member_function_context_stack_.push_back({
+			instantiated_name,
+			struct_type_info.type_index_,
+			&new_struct_ref
+		});			// Add parameters to symbol table
 			for (const auto& param : new_func_ref.parameter_nodes()) {
 				if (param.is<DeclarationNode>()) {
 					const auto& param_decl = param.as<DeclarationNode>();

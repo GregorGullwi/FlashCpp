@@ -188,6 +188,16 @@ int main(int argc, char *argv[]) {
         PhaseTimer timer("AST to IR", show_timing);
         if (show_debug) {
             std::cerr << "DEBUG: Visiting " << ast.size() << " AST nodes\n";
+            for (size_t i = 0; i < ast.size(); ++i) {
+                const auto& node = ast[i];
+                std::cerr << "  Node " << i << ": type=" << node.type_name();
+                if (node.is<StructDeclarationNode>()) {
+                    std::cerr << " (struct: " << node.as<StructDeclarationNode>().name() << ")";
+                } else if (node.is<FunctionDeclarationNode>()) {
+                    std::cerr << " (function: " << node.as<FunctionDeclarationNode>().decl_node().identifier_token().value() << ")";
+                }
+                std::cerr << "\n";
+            }
         }
         for (auto& node_handle : ast) {
             if (show_debug && node_handle.is<FunctionDeclarationNode>()) {
