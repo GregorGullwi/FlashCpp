@@ -6,7 +6,7 @@ FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit i
 ## Build, Test, and Development Commands
 - Use `make test CXX=clang++` — invokes all the tests in FlashCppTest.cpp
 - Use `make main CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, same as build_flashcpp.bat on a regular Windows terminal.
-- `build_flashcpp.bat` — invokes MSBuild to produce `x64\Debug\FlashCpp.exe`; run it whenever you change compiler sources.
+- `.\build_flashcpp.bat` — invokes MSBuild to produce `x64\Debug\FlashCpp.exe`; run it whenever you change compiler sources.
 - Visual Studio IDE — open `FlashCpp.sln`, select `x64/Debug`, and build when you need MSVC debugging.
 - `build_flashcpp_debug.bat` — compiles `tests\FlashCppDebugTest\flashcpp_debug_test.cpp` using the freshly built FlashCpp compiler and links it with MSVC `link.exe`, emitting binaries into `Debug\`.
 - `link_and_run_add.bat`, `link_and_run_arithmetic.bat`, and `link_and_run_test_debug.bat` — build with FlashCpp, link via MSVC, and run quick regression checks.
