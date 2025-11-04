@@ -7232,7 +7232,51 @@ ParseResult Parser::parse_template_declaration() {
 		}
 
 		// Otherwise, parse as function template
-		decl_result = parse_declaration_or_function_definition();
+		// For function templates, we need to use delayed parsing for the body
+		// instead of parsing it immediately like regular functions
+		
+		// Parse the function declaration manually to handle delayed body parsing
+		auto type_and_name_result = parse_type_and_name();
+		if (type_and_name_result.is_error()) {
+			return type_and_name_result;
+		}
+
+		if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
+			return ParseResult::error("Expected function declaration after template parameter list", *current_token_);
+		}
+
+		DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
+
+		// Parse function declaration with parameters
+		auto func_result = parse_function_declaration(decl_node);
+		if (func_result.is_error()) {
+			return func_result;
+		}
+
+		if (!func_result.node().has_value()) {
+			return ParseResult::error("Failed to create function declaration node", *current_token_);
+		}
+
+		FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+
+		// Check if there's a function body or just a semicolon
+		if (peek_token().has_value() && peek_token()->value() == ";") {
+			// Just a declaration, consume the semicolon
+			consume_token();
+		} else if (peek_token().has_value() && peek_token()->value() == "{") {
+			// Has a body - save position BEFORE consuming the '{'
+			// This way when we restore, current_token_ will be '{' and we can parse normally
+			TokenPosition body_start = save_token_position();
+			
+			// Store the body position in the function declaration so we can re-parse it later
+			func_decl.set_template_body_position(body_start);
+			
+			// Now consume the '{' and skip over the body
+			consume_token();
+			skip_balanced_braces();
+		}
+
+		decl_result = ParseResult::success(*func_result.node());
 	}
 
 	// Remove template parameters from type system
@@ -7790,18 +7834,71 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		}
 	}
 
-	// Copy the function body if it exists
-	auto orig_body = func_decl.get_definition();
-	if (orig_body.has_value()) {
-		// For now, we'll just reference the same body
-		// This is a simplification - proper instantiation requires:
-		// 1. Cloning the entire AST subtree
-		// 2. Substituting all template parameter references with concrete types
-		// TODO: Implement proper body cloning and substitution
+	// Handle the function body
+	// Check if the template has a body position stored for re-parsing
+	if (func_decl.has_template_body_position()) {
+		// Re-parse the function body with template parameters substituted
+		const std::vector<ASTNode>& template_params = template_func.template_parameters();
+		
+		// Temporarily add the concrete types to the type system with template parameter names
+		std::vector<TypeInfo*> temp_type_infos;
+		std::vector<std::string_view> param_names;
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			}
+		}
+		
+		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+			std::string_view param_name = param_names[i];
+			Type concrete_type = template_args[i].type_value;
 
-		// For simple cases where the body doesn't reference template parameters
-		// in complex ways, this will work
-		new_func_ref.set_definition(**orig_body);
+			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			gTypesByName.emplace(type_info.name_, &type_info);
+			temp_type_infos.push_back(&type_info);
+		}
+
+		// Save current position
+		TokenPosition current_pos = save_token_position();
+
+		// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
+		restore_lexer_position_only(func_decl.template_body_position());
+
+		// Set up parsing context for the function
+		gSymbolTable.enter_scope(ScopeType::Function);
+		current_function_ = &new_func_ref;
+
+		// Add parameters to symbol table
+		for (const auto& param : new_func_ref.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& param_decl = param.as<DeclarationNode>();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param);
+			}
+		}
+
+		// Parse the function body
+		auto block_result = parse_block();
+		if (!block_result.is_error() && block_result.node().has_value()) {
+			new_func_ref.set_definition(block_result.node()->as<BlockNode>());
+		}
+
+		// Clean up context
+		current_function_ = nullptr;
+		gSymbolTable.exit_scope();
+
+		// Restore original position (lexer only - keep AST nodes we created)
+		restore_lexer_position_only(current_pos);
+
+		// Remove temporary type infos
+		for (const auto* type_info : temp_type_infos) {
+			gTypesByName.erase(type_info->name_);
+		}
+	} else {
+		// Fallback: copy the function body pointer directly (old behavior)
+		auto orig_body = func_decl.get_definition();
+		if (orig_body.has_value()) {
+			new_func_ref.set_definition(**orig_body);
+		}
 	}
 
 	// Register the instantiation
