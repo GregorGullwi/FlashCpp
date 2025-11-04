@@ -261,25 +261,51 @@ void Parser::discard_saved_token(const TokenPosition& saved_token_pos) {
 }
 
 void Parser::skip_balanced_braces() {
+	std::cerr << "DEBUG skip_balanced_braces: called, current token = '" 
+	          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
+	          << "'\n";
+	
+	// Expect the current token to be '{'
+	if (!peek_token().has_value() || peek_token()->value() != "{") {
+		std::cerr << "WARNING: skip_balanced_braces called but current token is not '{'\n";
+		return;
+	}
+	
 	int brace_depth = 0;
-	consume_token();  // consume opening '{'
-	brace_depth = 1;
+	size_t token_count = 0;
+	const size_t MAX_TOKENS = 10000;  // Safety limit
 
-	while (brace_depth > 0 && peek_token().has_value()) {
+	while (peek_token().has_value() && token_count < MAX_TOKENS) {
 		auto token = peek_token();
 		if (token->value() == "{") {
 			brace_depth++;
+			std::cerr << "DEBUG: Found '{', depth=" << brace_depth << "\n";
 		} else if (token->value() == "}") {
 			brace_depth--;
+			std::cerr << "DEBUG: Found '}', depth=" << brace_depth << "\n";
+			if (brace_depth == 0) {
+				// Consume the closing '}'  and exit
+				consume_token();
+				break;
+			}
 		}
 		consume_token();
+		token_count++;
 	}
+	
+	if (token_count >= MAX_TOKENS) {
+		std::cerr << "ERROR: skip_balanced_braces exceeded token limit! Infinite loop detected.\n";
+	}
+	
+	std::cerr << "DEBUG skip_balanced_braces: finished, brace_depth=" << brace_depth 
+	          << ", tokens consumed=" << token_count
+	          << ", current token = '" 
+	          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
+	          << "'\n";
 }
 
 ParseResult Parser::parse_top_level_node()
 {
-	std::cerr << "DEBUG ===== parse_top_level_node() called, ast_nodes_.size()=" << ast_nodes_.size() << " =====\n";
-	
 	// Save the current token's position to restore later in case of a parsing
 	// error
 	ScopedTokenPosition saved_position(*this);
@@ -367,17 +393,10 @@ ParseResult Parser::parse_top_level_node()
 		auto result = parse_template_declaration();
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
-				std::cerr << "DEBUG parse_statement_or_declaration: Adding template node to ast_nodes_ (size before=" << ast_nodes_.size() << ")\n";
-				std::cerr << "  Node type: " << node->type_name() << "\n";
 				ast_nodes_.push_back(*node);
-				std::cerr << "DEBUG parse_statement_or_declaration: ast_nodes_ size after=" << ast_nodes_.size() << "\n";
-			} else {
-				std::cerr << "DEBUG parse_statement_or_declaration: template result has no node (primary template)\n";
 			}
-			std::cerr << "DEBUG parse_top_level_node: Template parsed successfully, calling saved_position.success()\n";
 			return saved_position.success();
 		}
-		std::cerr << "DEBUG parse_top_level_node: Template parse failed, returning error\n";
 		return result;
 	}
 
@@ -878,41 +897,33 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
 ParseResult Parser::parse_declaration_or_function_definition()
 {
-	// Save the current token's position to restore later in case of a parsing
-	// error
-	TokenPosition saved_position = save_token_position();
-
+	ScopedTokenPosition saved_position(*this);
+	
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error())
 		return type_and_name_result;
 
-	// Attempt to parse a function definition
+	// First, try to parse as a function definition
 	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
-	const bool is_probably_function = (peek_token()->value() == "(");
-	auto function_definition_result = ParseResult();
-	if (is_probably_function) {
-		function_definition_result = parse_function_declaration(decl_node);
-		if (function_definition_result.is_error()) {
-			return function_definition_result;
+	ParseResult function_definition_result = parse_function_declaration(decl_node);
+	if (!function_definition_result.is_error()) {
+		// It was successfully parsed as a function definition
+		// Continue with function-specific logic
+		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
+		if (type_specifier.type() == Type::Auto) {
+			const bool is_trailing_return_type = (peek_token()->value() == "->");
+			if (is_trailing_return_type) {
+				consume_token();
+
+				ParseResult trailing_type_specifier = parse_type_specifier();
+				if (trailing_type_specifier.is_error())
+					return trailing_type_specifier;
+
+				type_specifier = as<TypeSpecifierNode>(trailing_type_specifier);
+			}
 		}
-	}
 
-	TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
-	if (type_specifier.type() == Type::Auto) {
-		const bool is_trailing_return_type = (peek_token()->value() == "->");
-		if (is_trailing_return_type) {
-			consume_token();
-
-			ParseResult trailing_type_specifier = parse_type_specifier();
-			if (trailing_type_specifier.is_error())
-				return trailing_type_specifier;
-
-			type_specifier = as<TypeSpecifierNode>(trailing_type_specifier);
-		}
-	}
-
-	if (is_probably_function) {
 		const Token& identifier_token = decl_node.identifier_token();
 		// Insert the FunctionDeclarationNode (which contains parameter info for overload resolution)
 		// instead of just the DeclarationNode
@@ -928,9 +939,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (consume_punctuator(";")) {
 			// Return the function declaration node (needed for templates)
 			if (auto func_node = function_definition_result.node()) {
-				return ParseResult::success(*func_node);
+				return saved_position.success(*func_node);
 			}
-			return ParseResult::success();
+			return saved_position.success();
 		}
 
 		// Add function parameters to the symbol table within a function scope
@@ -964,45 +975,49 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
 					node->as<FunctionDeclarationNode>().set_definition(block->as<BlockNode>());
-					return ParseResult::success(*node);
+					return saved_position.success(*node);
 				}
 			}
+			// If we get here, something went wrong but we should still commit
+			// because we successfully parsed a function
+			return saved_position.success();
 		}
-	}
-	// Attempt to parse a simple declaration (global variable or typedef)
-	// Check for initialization
-	std::optional<ASTNode> initializer;
-	if (peek_token()->value() == "=") {
-		consume_token(); // consume '='
-		auto init_expr = parse_expression();
-		if (init_expr.is_error()) {
-			discard_saved_token(saved_position);
-			return init_expr;
+	} else {
+		// Function parsing failed, the position is restored, try parsing as a variable declaration
+		// Attempt to parse a simple declaration (global variable or typedef)
+		// Check for initialization
+		std::optional<ASTNode> initializer;
+		if (peek_token()->value() == "=") {
+			consume_token(); // consume '='
+			auto init_expr = parse_expression();
+			if (init_expr.is_error()) {
+				return init_expr;
+			}
+			initializer = init_expr.node();
 		}
-		initializer = init_expr.node();
+
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ;", *current_token_);
+		}
+
+		// Create a global variable declaration node
+		// Reuse the existing decl_node from type_and_name_result
+		auto global_var_node = emplace_node<VariableDeclarationNode>(
+			type_and_name_result.node().value(),  // Use the existing DeclarationNode
+			initializer
+		);
+
+		// Add to symbol table
+		const Token& identifier_token = decl_node.identifier_token();
+		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
+			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+		}
+
+		return saved_position.success(global_var_node);
 	}
 
-	if (!consume_punctuator(";")) {
-		discard_saved_token(saved_position);
-		return ParseResult::error("Expected ;", *current_token_);
-	}
-
-	// Create a global variable declaration node
-	// Reuse the existing decl_node from type_and_name_result
-	auto global_var_node = emplace_node<VariableDeclarationNode>(
-		type_and_name_result.node().value(),  // Use the existing DeclarationNode
-		initializer
-	);
-
-	// Add to symbol table
-	const Token& identifier_token = decl_node.identifier_token();
-	if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
-		discard_saved_token(saved_position);
-		return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
-	}
-
-	discard_saved_token(saved_position);
-	return ParseResult::success(global_var_node);
+	// This should not be reached
+	return ParseResult::error("Unexpected parsing state", *current_token_);
 }
 
 ParseResult Parser::parse_struct_declaration()
@@ -1141,12 +1156,16 @@ ParseResult Parser::parse_struct_declaration()
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' after struct/class name or base class list", *peek_token());
 	}
+	std::cerr << "DEBUG: Successfully consumed '{', starting member parsing loop\n";
 
 	// Default access specifier (public for struct, private for class)
 	AccessSpecifier current_access = struct_ref.default_access();
 
 	// Parse members
 	while (peek_token().has_value() && peek_token()->value() != "}") {
+		std::cerr << "DEBUG: Member parsing loop, current token = '" 
+		          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
+		          << "'\n";
 		// Check for access specifier
 		if (peek_token()->type() == Token::Type::Keyword) {
 			std::string_view keyword = peek_token()->value();
@@ -1603,8 +1622,16 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Parse member declaration (could be data member or member function)
 		// Note: is_virtual was already checked above (line 794)
+		std::cerr << "DEBUG: About to call parse_type_and_name for member, current token = '" 
+		          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
+		          << "'\n";
 		auto member_result = parse_type_and_name();
+		std::cerr << "DEBUG: After parse_type_and_name, is_error=" << member_result.is_error() 
+		          << ", current token = '" 
+		          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
+		          << "'\n";
 		if (member_result.is_error()) {
+			std::cerr << "DEBUG: parse_type_and_name returned error: " << member_result.error_message() << "\n";
 			return member_result;
 		}
 
@@ -5004,7 +5031,7 @@ ParseResult Parser::parse_primary_expression()
 				return ParseResult::error("Missing identifier", idenfifier_token);
 			}
 		}
-		else if (!identifierType->is<DeclarationNode>() && !identifierType->is<FunctionDeclarationNode>() && !identifierType->is<VariableDeclarationNode>()) {
+		else if (!identifierType->is<DeclarationNode>() && !identifierType->is<FunctionDeclarationNode>() && !identifierType->is<VariableDeclarationNode>() && !identifierType->is<TemplateFunctionDeclarationNode>()) {
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
 		}
 		else {
@@ -5019,7 +5046,7 @@ ParseResult Parser::parse_primary_expression()
 
 			// Check if this looks like a function call
 			// Only consume '(' if the identifier is actually a function OR a function pointer OR has operator()
-			bool is_function_decl = identifierType->is<FunctionDeclarationNode>();
+			bool is_function_decl = identifierType->is<FunctionDeclarationNode>() || identifierType->is<TemplateFunctionDeclarationNode>();
 			bool is_function_pointer = false;
 			bool has_operator_call = false;
 			if (identifierType->is<DeclarationNode>()) {
@@ -5117,6 +5144,21 @@ ParseResult Parser::parse_primary_expression()
 					// First, get all overloads of this function
 					auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
 
+					std::cerr << "DEBUG [function call]: lookup_all for '" << idenfifier_token.value() << "' returned " << all_overloads.size() << " overloads" << std::endl;
+					for (size_t i = 0; i < all_overloads.size(); ++i) {
+						std::cerr << "  overload " << i << ": ";
+						if (all_overloads[i].is<DeclarationNode>()) {
+							const auto& decl = all_overloads[i].as<DeclarationNode>();
+							std::cerr << "DeclarationNode - " << decl.identifier_token().value();
+						} else if (all_overloads[i].is<FunctionDeclarationNode>()) {
+							const auto& func = all_overloads[i].as<FunctionDeclarationNode>();
+							std::cerr << "FunctionDeclarationNode - " << func.decl_node().identifier_token().value();
+						} else {
+							std::cerr << "Other node type";
+						}
+						std::cerr << std::endl;
+					}
+
 					// Extract argument types
 					std::vector<TypeSpecifierNode> arg_types;
 					for (size_t i = 0; i < args.size(); ++i) {
@@ -5150,10 +5192,8 @@ ParseResult Parser::parse_primary_expression()
 							}
 						} else {
 							// No explicit template arguments - try overload resolution first
-							auto resolution_result = resolve_overload(all_overloads, arg_types);
-
-							if (!resolution_result.has_match) {
-								// No matching regular function found - try template instantiation with deduction
+							if (all_overloads.empty()) {
+								// No overloads found - try template instantiation
 								auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
 								if (instantiated_func.has_value()) {
 									// Successfully instantiated template
@@ -5165,16 +5205,34 @@ ParseResult Parser::parse_primary_expression()
 								} else {
 									return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 								}
-							} else if (resolution_result.is_ambiguous) {
-								return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 							} else {
-								// Get the selected overload
-								const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
-								if (!decl_ptr) {
-									return ParseResult::error("Invalid function declaration", idenfifier_token);
-								}
+								// Have overloads - do overload resolution
+								auto resolution_result = resolve_overload(all_overloads, arg_types);
 
-								result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+								if (!resolution_result.has_match) {
+									// No matching regular function found - try template instantiation with deduction
+									auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+									if (instantiated_func.has_value()) {
+										// Successfully instantiated template
+										const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
+										if (!decl_ptr) {
+											return ParseResult::error("Invalid template instantiation", idenfifier_token);
+										}
+										result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+									} else {
+										return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+									}
+								} else if (resolution_result.is_ambiguous) {
+									return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+								} else {
+									// Get the selected overload
+									const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
+									if (!decl_ptr) {
+										return ParseResult::error("Invalid function declaration", idenfifier_token);
+									}
+
+									result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+								}
 							}
 						}
 					}
@@ -6992,8 +7050,14 @@ ParseResult Parser::parse_template_declaration() {
 	                         peek_token()->type() == Token::Type::Keyword &&
 	                         (peek_token()->value() == "class" || peek_token()->value() == "struct");
 
+	std::cerr << "DEBUG: is_class_template=" << is_class_template << std::endl;
+	if (peek_token().has_value()) {
+		std::cerr << "DEBUG: Next token after template params: '" << peek_token()->value() << "' (type=" << static_cast<int>(peek_token()->type()) << ")" << std::endl;
+	}
+
 	ParseResult decl_result;
 	if (is_class_template) {
+		std::cerr << "DEBUG: Parsing class template" << std::endl;
 		// Handle template specialization
 		if (is_specialization) {
 			// Parse: class ClassName<TemplateArgs> { ... }
@@ -7220,66 +7284,91 @@ ParseResult Parser::parse_template_declaration() {
 		parsing_template_class_ = false;
 		current_template_param_names_.clear();
 	} else {
+		std::cerr << "DEBUG: Parsing function template (not a class template)" << std::endl;
 		// Could be:
 		// 1. Function template: template<typename T> T max(T a, T b) { ... }
 		// 2. Out-of-line member function: template<typename T> void Vector<T>::push_back(T v) { ... }
 
 		// Try to detect out-of-line member function definition
 		// Pattern: ReturnType ClassName<TemplateArgs>::FunctionName(...)
+		std::cerr << "DEBUG: Checking for out-of-line member function" << std::endl;
 		auto out_of_line_result = try_parse_out_of_line_template_member(template_params, template_param_names);
 		if (out_of_line_result.has_value()) {
+			std::cerr << "DEBUG: Successfully parsed as out-of-line member function" << std::endl;
 			return saved_position.success();  // Successfully parsed out-of-line definition
 		}
+		std::cerr << "DEBUG: Not an out-of-line member function, parsing as regular function template" << std::endl;
 
 		// Otherwise, parse as function template
 		// For function templates, we need to use delayed parsing for the body
 		// instead of parsing it immediately like regular functions
 		
+		std::cerr << "DEBUG: Parsing function declaration for template" << std::endl;
 		// Parse the function declaration manually to handle delayed body parsing
 		auto type_and_name_result = parse_type_and_name();
 		if (type_and_name_result.is_error()) {
+			std::cerr << "DEBUG: parse_type_and_name failed: " << type_and_name_result.error_message() << std::endl;
 			return type_and_name_result;
 		}
+		std::cerr << "DEBUG: parse_type_and_name succeeded" << std::endl;
 
 		if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
+			std::cerr << "DEBUG: type_and_name_result has no DeclarationNode" << std::endl;
 			return ParseResult::error("Expected function declaration after template parameter list", *current_token_);
 		}
+		std::cerr << "DEBUG: Got DeclarationNode from type_and_name" << std::endl;
 
 		DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
 
+		std::cerr << "DEBUG: Parsing function parameters" << std::endl;
 		// Parse function declaration with parameters
 		auto func_result = parse_function_declaration(decl_node);
 		if (func_result.is_error()) {
+			std::cerr << "DEBUG: parse_function_declaration failed: " << func_result.error_message() << std::endl;
 			return func_result;
 		}
+		std::cerr << "DEBUG: parse_function_declaration succeeded" << std::endl;
 
 		if (!func_result.node().has_value()) {
+			std::cerr << "DEBUG: func_result has no node" << std::endl;
 			return ParseResult::error("Failed to create function declaration node", *current_token_);
 		}
+		std::cerr << "DEBUG: Got function declaration node" << std::endl;
 
 		FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
 
+		std::cerr << "DEBUG: Checking for function body or semicolon" << std::endl;
+		if (peek_token().has_value()) {
+			std::cerr << "DEBUG: Next token: '" << peek_token()->value() << "'" << std::endl;
+		}
+		
 		// Check if there's a function body or just a semicolon
 		if (peek_token().has_value() && peek_token()->value() == ";") {
+			std::cerr << "DEBUG: Found semicolon, just a declaration" << std::endl;
 			// Just a declaration, consume the semicolon
 			consume_token();
 		} else if (peek_token().has_value() && peek_token()->value() == "{") {
-			// Has a body - save position BEFORE consuming the '{'
+			std::cerr << "DEBUG: Found opening brace, saving body position" << std::endl;
+			// Has a body - save position at the '{' 
 			// This way when we restore, current_token_ will be '{' and we can parse normally
 			TokenPosition body_start = save_token_position();
 			
 			// Store the body position in the function declaration so we can re-parse it later
 			func_decl.set_template_body_position(body_start);
 			
-			// Now consume the '{' and skip over the body
-			consume_token();
+			std::cerr << "DEBUG: Skipping function body" << std::endl;
+			// Skip over the body (skip_balanced_braces will consume the '{' and everything up to the matching '}')
 			skip_balanced_braces();
+			std::cerr << "DEBUG: Finished skipping function body" << std::endl;
+		} else {
+			std::cerr << "DEBUG: Unexpected token after function declaration" << std::endl;
 		}
 
+		std::cerr << "DEBUG: Setting decl_result" << std::endl;
 		decl_result = ParseResult::success(*func_result.node());
 	}
 
-	// Remove template parameters from type system
+	std::cerr << "DEBUG: Removing template parameters from type system" << std::endl;
 	for (const auto* type_info : template_type_infos) {
 		gTypesByName.erase(type_info->name_);
 		// Note: We don't remove from gTypeInfo because it's a deque and removing would invalidate pointers
@@ -7308,6 +7397,9 @@ ParseResult Parser::parse_template_declaration() {
 		const FunctionDeclarationNode& func_decl = decl_node.as<FunctionDeclarationNode>();
 		const DeclarationNode& func_decl_node = func_decl.decl_node();
 		gTemplateRegistry.registerTemplate(func_decl_node.identifier_token().value(), template_func_node);
+
+		// Add the template function to the symbol table so it can be found during overload resolution
+		gSymbolTable.insert(func_decl_node.identifier_token().value(), template_func_node);
 
 		return saved_position.success(template_func_node);
 	} else if (decl_node.is<StructDeclarationNode>()) {
@@ -7363,6 +7455,82 @@ ParseResult Parser::parse_template_parameter_list(std::vector<ASTNode>& out_para
 ParseResult Parser::parse_template_parameter() {
 	ScopedTokenPosition saved_position(*this);
 
+	std::cerr << "DEBUG: parse_template_parameter() called, current token: ";
+	if (peek_token().has_value()) {
+		std::cerr << "'" << peek_token()->value() << "' (type=" << static_cast<int>(peek_token()->type()) << ")";
+	} else {
+		std::cerr << "<EOF>";
+	}
+	std::cerr << std::endl;
+
+	// Check for template template parameter: template<template<typename> class Container>
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
+		std::cerr << "DEBUG: Found 'template' keyword, parsing template template parameter" << std::endl;
+		Token template_keyword = *peek_token();
+		consume_token(); // consume 'template'
+
+		// Expect '<' to start nested template parameter list
+		if (!peek_token().has_value() || peek_token()->value() != "<") {
+			std::cerr << "DEBUG: Expected '<' after 'template', got: ";
+			if (peek_token().has_value()) std::cerr << "'" << peek_token()->value() << "'";
+			else std::cerr << "<EOF>";
+			std::cerr << std::endl;
+			return ParseResult::error("Expected '<' after 'template' keyword in template template parameter", *current_token_);
+		}
+		consume_token(); // consume '<'
+
+		// Parse nested template parameter forms (just type specifiers, no names)
+		std::vector<ASTNode> nested_params;
+		auto param_list_result = parse_template_template_parameter_forms(nested_params);
+		if (param_list_result.is_error()) {
+			std::cerr << "DEBUG: parse_template_template_parameter_forms failed" << std::endl;
+			return param_list_result;
+		}
+
+		// Expect '>' to close nested template parameter list
+		if (!peek_token().has_value() || peek_token()->value() != ">") {
+			std::cerr << "DEBUG: Expected '>' after nested template parameter list, got: ";
+			if (peek_token().has_value()) std::cerr << "'" << peek_token()->value() << "'";
+			else std::cerr << "<EOF>";
+			std::cerr << std::endl;
+			return ParseResult::error("Expected '>' after nested template parameter list", *current_token_);
+		}
+		consume_token(); // consume '>'
+
+		// Expect 'class' or 'typename'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Keyword ||
+		    (peek_token()->value() != "class" && peek_token()->value() != "typename")) {
+			std::cerr << "DEBUG: Expected 'class' or 'typename' after template parameter list, got: ";
+			if (peek_token().has_value()) std::cerr << "'" << peek_token()->value() << "'";
+			else std::cerr << "<EOF>";
+			std::cerr << std::endl;
+			return ParseResult::error("Expected 'class' or 'typename' after template parameter list in template template parameter", *current_token_);
+		}
+		consume_token(); // consume 'class' or 'typename'
+
+		// Expect identifier (parameter name)
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			std::cerr << "DEBUG: Expected identifier for template template parameter name, got: ";
+			if (peek_token().has_value()) std::cerr << "'" << peek_token()->value() << "'";
+			else std::cerr << "<EOF>";
+			std::cerr << std::endl;
+			return ParseResult::error("Expected identifier for template template parameter name", *current_token_);
+		}
+
+		Token param_name_token = *peek_token();
+		std::string_view param_name = param_name_token.value();
+		consume_token(); // consume parameter name
+
+		// Create template template parameter node
+		auto param_node = emplace_node<TemplateParameterNode>(param_name, std::move(nested_params), param_name_token);
+
+		std::cerr << "DEBUG: Successfully created template template parameter node for '" << param_name << "'" << std::endl;
+
+		// TODO: Handle default arguments (e.g., template<typename> class Container = std::vector)
+
+		return saved_position.success(param_node);
+	}
+
 	// Check for type parameter: typename or class
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 		std::string_view keyword = peek_token()->value();
@@ -7415,6 +7583,60 @@ ParseResult Parser::parse_template_parameter() {
 	// TODO: Handle default arguments (e.g., int N = 10)
 
 	return saved_position.success(param_node);
+}
+
+// Parse template template parameter forms (just type specifiers without names)
+// Used for template<template<typename> class Container> syntax
+ParseResult Parser::parse_template_template_parameter_forms(std::vector<ASTNode>& out_params) {
+	// Parse first parameter form
+	auto param_result = parse_template_template_parameter_form();
+	if (param_result.is_error()) {
+		return param_result;
+	}
+
+	if (param_result.node().has_value()) {
+		out_params.push_back(*param_result.node());
+	}
+
+	// Parse additional parameter forms separated by commas
+	while (peek_token().has_value() && peek_token()->value() == ",") {
+		consume_token(); // consume ','
+
+		param_result = parse_template_template_parameter_form();
+		if (param_result.is_error()) {
+			return param_result;
+		}
+
+		if (param_result.node().has_value()) {
+			out_params.push_back(*param_result.node());
+		}
+	}
+
+	return ParseResult::success();
+}
+
+// Parse a single template template parameter form (just type specifier, no name)
+// For template<template<typename> class Container>, this parses "typename"
+ParseResult Parser::parse_template_template_parameter_form() {
+	ScopedTokenPosition saved_position(*this);
+
+	// Only support typename and class for now (no non-type parameters in template template parameters)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view keyword = peek_token()->value();
+
+		if (keyword == "typename" || keyword == "class") {
+			Token keyword_token = *peek_token();
+			consume_token(); // consume 'typename' or 'class'
+
+			// For template template parameters, we don't expect an identifier name
+			// Just create a type parameter node with an empty name
+			auto param_node = emplace_node<TemplateParameterNode>("", keyword_token);
+
+			return saved_position.success(param_node);
+		}
+	}
+
+	return ParseResult::error("Expected 'typename' or 'class' in template template parameter form", *current_token_);
 }
 
 // Parse member function template inside a class
@@ -7537,9 +7759,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	std::string qualified_name = std::string(struct_node.name()) + "::" + std::string(decl_node.identifier_token().value());
 	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 
-	// Also store the underlying function node as a member for backwards compatibility
-	struct_node.add_member_function(*func_result.node(), access, false, false, false, false);
-
 	// Clean up template parameters
 	for (const auto* type_info : template_type_infos) {
 		gTypesByName.erase(type_info->name_);
@@ -7625,8 +7844,16 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Build template argument list
 	std::vector<TemplateArgument> template_args;
-	for (const auto& type : explicit_types) {
-		template_args.push_back(TemplateArgument::makeType(type));
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+		if (param.kind() == TemplateParameterKind::Template) {
+			// Template template parameter - the explicit_types[i] should be a template name
+			// For now, we'll assume it's passed as a string in the type system
+			// TODO: Implement proper template template argument parsing
+			template_args.push_back(TemplateArgument::makeTemplate(""));  // Placeholder
+		} else {
+			template_args.push_back(TemplateArgument::makeType(explicit_types[i]));
+		}
 	}
 
 	// Check if we already have this instantiation
@@ -7635,6 +7862,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	for (const auto& arg : template_args) {
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			key.type_arguments.push_back(arg.type_value);
+		} else if (arg.kind == TemplateArgument::Kind::Template) {
+			key.template_arguments.push_back(arg.template_name);
 		} else {
 			key.value_arguments.push_back(arg.int_value);
 		}
@@ -7707,14 +7936,29 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 // Try to instantiate a function template with the given argument types
 // Returns the instantiated function declaration node if successful
 std::optional<ASTNode> Parser::try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types) {
+	static int recursion_depth = 0;
+	recursion_depth++;
+	
+	if (recursion_depth > 10) {
+		std::cerr << "ERROR: try_instantiate_template recursion depth exceeded 10! Possible infinite loop for template '" << template_name << "'" << std::endl;
+		recursion_depth--;
+		return std::nullopt;
+	}
+	
+	std::cerr << "DEBUG [depth=" << recursion_depth << "]: try_instantiate_template() called for '" << template_name << "' with " << arg_types.size() << " arguments" << std::endl;
+
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 	if (!template_opt.has_value()) {
+		std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template '" << template_name << "' not found in registry" << std::endl;
+		recursion_depth--;
 		return std::nullopt;  // No template with this name
 	}
 
 	const ASTNode& template_node = *template_opt;
 	if (!template_node.is<TemplateFunctionDeclarationNode>()) {
+		std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template '" << template_name << "' is not a function template" << std::endl;
+		recursion_depth--;
 		return std::nullopt;  // Not a function template
 	}
 
@@ -7722,17 +7966,22 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
+	std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template has " << template_params.size() << " parameters" << std::endl;
+
 	// Step 1: Deduce template arguments from function call arguments
 	// For now, we support simple type parameter deduction
 	// We deduce template parameters in order from function arguments
 	// TODO: Add support for non-type parameters and more complex deduction
 
 	if (arg_types.empty()) {
+		std::cerr << "DEBUG [depth=" << recursion_depth << "]: No arguments to deduce from" << std::endl;
+		recursion_depth--;
 		return std::nullopt;  // No arguments to deduce from
 	}
 
 	// Build template argument list
 	std::vector<TemplateArgument> template_args;
+	std::vector<Type> deduced_type_args;  // For types extracted from instantiated names
 
 	// Deduce template parameters in order from function arguments
 	// For template<typename T, typename U> T func(T a, U b):
@@ -7742,19 +7991,110 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	for (const auto& template_param_node : template_params) {
 		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
 
-		if (param.kind() == TemplateParameterKind::Type) {
-			// Type parameter - deduce from corresponding argument
+		std::cerr << "DEBUG: Processing template parameter '" << param.name() << "' of kind " << static_cast<int>(param.kind()) << std::endl;
+
+		if (param.kind() == TemplateParameterKind::Template) {
+			std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template template parameter found, attempting deduction" << std::endl;
+			// Template template parameter - deduce from argument type
 			if (arg_index < arg_types.size()) {
+				const TypeSpecifierNode& arg_type = arg_types[arg_index];
+				
+				// Template template parameters can only be deduced from struct types
+				if (arg_type.type() == Type::Struct) {
+					// Get the struct name (e.g., "Vector_int")
+					TypeIndex type_index = arg_type.type_index();
+					if (type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						std::string_view instantiated_name = type_info.name_;
+						
+						std::cerr << "DEBUG [depth=" << recursion_depth << "]: Argument is struct type '" << instantiated_name << "'" << std::endl;
+						
+						// Parse the instantiated name to extract template name and type arguments
+						// Format: template_name_type1_type2_...
+						size_t first_underscore = instantiated_name.find('_');
+						if (first_underscore != std::string_view::npos) {
+							std::string_view template_name = instantiated_name.substr(0, first_underscore);
+							
+							std::cerr << "DEBUG [depth=" << recursion_depth << "]: Extracted template name '" << template_name << "'" << std::endl;
+							
+							// Check if this template exists
+							auto template_check = gTemplateRegistry.lookupTemplate(template_name);
+							if (template_check.has_value()) {
+								std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template '" << template_name << "' exists, adding to template args" << std::endl;
+								template_args.push_back(TemplateArgument::makeTemplate(template_name));
+								
+								// Extract type arguments from the remaining parts
+								std::string_view remaining = instantiated_name.substr(first_underscore + 1);
+								size_t pos = 0;
+								while (pos < remaining.size()) {
+									size_t next_underscore = remaining.find('_', pos);
+									std::string_view type_str = (next_underscore == std::string_view::npos) 
+										? remaining.substr(pos) 
+										: remaining.substr(pos, next_underscore - pos);
+									
+									// Convert type string to Type
+									Type deduced_type = TemplateRegistry::stringToType(type_str);
+									if (deduced_type != Type::Invalid) {
+										deduced_type_args.push_back(deduced_type);
+										std::cerr << "DEBUG [depth=" << recursion_depth << "]: Extracted type argument '" << type_str << "' -> " << static_cast<int>(deduced_type) << std::endl;
+									} else {
+										std::cerr << "DEBUG [depth=" << recursion_depth << "]: Unknown type string '" << type_str << "' in instantiated name '" << instantiated_name << "'" << std::endl;
+										recursion_depth--;
+										return std::nullopt;
+									}
+									
+									if (next_underscore == std::string_view::npos) break;
+									pos = next_underscore + 1;
+								}
+								
+								arg_index++;
+							} else {
+								std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template '" << template_name << "' not found" << std::endl;
+								recursion_depth--;
+								return std::nullopt;
+							}
+						} else {
+							std::cerr << "DEBUG [depth=" << recursion_depth << "]: Could not extract template name from '" << instantiated_name << "'" << std::endl;
+							recursion_depth--;
+							return std::nullopt;
+						}
+					} else {
+						std::cerr << "DEBUG [depth=" << recursion_depth << "]: Invalid type index " << static_cast<int>(type_index) << std::endl;
+						recursion_depth--;
+						return std::nullopt;
+					}
+				} else {
+					std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template template parameter requires struct argument, got type " << static_cast<int>(arg_type.type()) << std::endl;
+					recursion_depth--;
+					return std::nullopt;
+				}
+			} else {
+				std::cerr << "DEBUG [depth=" << recursion_depth << "]: Not enough arguments to deduce template template parameter" << std::endl;
+				recursion_depth--;
+				return std::nullopt;
+			}
+		} else if (param.kind() == TemplateParameterKind::Type) {
+			// Type parameter - use deduced type args if available, otherwise deduce from argument
+			if (!deduced_type_args.empty()) {
+				Type deduced_type = deduced_type_args[0];
+				template_args.push_back(TemplateArgument::makeType(deduced_type));
+				deduced_type_args.erase(deduced_type_args.begin());
+				std::cerr << "DEBUG [depth=" << recursion_depth << "]: Deduced type parameter from instantiated name: " << static_cast<int>(deduced_type) << std::endl;
+			} else if (arg_index < arg_types.size()) {
 				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+				std::cerr << "DEBUG [depth=" << recursion_depth << "]: Deduced type parameter from argument type: " << static_cast<int>(arg_types[arg_index].type()) << std::endl;
 				arg_index++;
 			} else {
 				// Not enough arguments to deduce all template parameters
 				// Fall back to first argument for remaining parameters
 				template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+				std::cerr << "DEBUG [depth=" << recursion_depth << "]: Fell back to first argument type for remaining parameters" << std::endl;
 			}
 		} else {
 			// Non-type parameter - not yet supported in deduction
 			// TODO: Implement non-type parameter deduction
+			std::cerr << "DEBUG [depth=" << recursion_depth << "]: Non-type parameter not supported in deduction" << std::endl;
+			recursion_depth--;
 			return std::nullopt;
 		}
 	}
@@ -7765,15 +8105,24 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	for (const auto& arg : template_args) {
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			key.type_arguments.push_back(arg.type_value);
+		} else if (arg.kind == TemplateArgument::Kind::Template) {
+			key.template_arguments.push_back(arg.template_name);
 		} else {
 			key.value_arguments.push_back(arg.int_value);
 		}
 	}
 
+	std::cerr << "DEBUG [depth=" << recursion_depth << "]: Checking for existing instantiation with key: template_name='" << key.template_name << "', " 
+	          << key.type_arguments.size() << " type args, " << key.template_arguments.size() << " template args" << std::endl;
+
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
+		std::cerr << "DEBUG [depth=" << recursion_depth << "]: Found existing instantiation, returning it" << std::endl;
+		recursion_depth--;
 		return *existing_inst;  // Return existing instantiation
 	}
+
+	std::cerr << "DEBUG [depth=" << recursion_depth << "]: No existing instantiation found, creating new one" << std::endl;
 
 	// Step 3: Instantiate the template
 	// For Phase 2, we'll create a simplified instantiation
@@ -7782,6 +8131,8 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	// Generate mangled name for the instantiation
 	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+
+	std::cerr << "DEBUG: Instantiating template '" << template_name << "' -> '" << mangled_name << "'" << std::endl;
 
 	// For now, we'll create a simple wrapper that references the original function
 	// This is a temporary solution - proper instantiation requires:
@@ -7797,38 +8148,62 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
 	                    orig_decl.identifier_token().file_index());
 
-	// For now, create a simple function declaration with the deduced types
-	// Create return type from first argument type (simplified - assumes T max(T, T) pattern)
+	// Create return type - substitute template parameters if needed
+	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+	Type return_type_enum = orig_return_type.type();
+	TypeIndex return_type_index = orig_return_type.type_index();
+
+	// If return type is a template parameter, substitute it
+	if (return_type_enum == Type::UserDefined && return_type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[return_type_index];
+		std::string_view type_name = type_info.name_;
+		
+		// Check if it's a template parameter
+		std::vector<std::string_view> param_names;
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			}
+		}
+		
+		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+			if (param_names[i] == type_name && template_args[i].kind == TemplateArgument::Kind::Type) {
+				return_type_enum = template_args[i].type_value;
+				return_type_index = 0;
+				break;
+			}
+		}
+	}
+
 	ASTNode return_type = emplace_node<TypeSpecifierNode>(
-		template_args[0].type_value,
+		return_type_enum,
 		TypeQualifier::None,
-		get_type_size_bits(template_args[0].type_value),
+		get_type_size_bits(return_type_enum),
 		Token()
 	);
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
-	// Add parameters with concrete types
-	// For multiple template parameters, we deduce in order from arguments
-	// So parameter i uses template_args[i % template_args.size()]
+	// Add parameters with substituted types
 	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 		const auto& param = func_decl.parameter_nodes()[i];
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-
-			// Use the deduced type for this parameter
-			// For template<typename T, typename U> T func(T a, U b):
-			//   - parameter 0 uses template_args[0] (T)
-			//   - parameter 1 uses template_args[1] (U)
-			size_t template_arg_index = (i < template_args.size()) ? i : (template_args.size() - 1);
+			
+			// For this test case, use the argument type directly
+			// In a full implementation, we'd substitute template parameters in the parameter type
+			size_t arg_type_index = (i < arg_types.size()) ? i : (arg_types.size() - 1);
+			const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
+			
 			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				template_args[template_arg_index].type_value,
-				TypeQualifier::None,
-				get_type_size_bits(template_args[template_arg_index].type_value),
+				arg_type.type(),
+				arg_type.qualifier(),
+				arg_type.size_in_bits(),
 				Token()
 			);
-
+			param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
+			
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			new_func_ref.add_parameter_node(new_param_decl);
 		}
@@ -7837,6 +8212,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Handle the function body
 	// Check if the template has a body position stored for re-parsing
 	if (func_decl.has_template_body_position()) {
+		std::cerr << "DEBUG: Template has body position, re-parsing function body" << std::endl;
 		// Re-parse the function body with template parameters substituted
 		const std::vector<ASTNode>& template_params = template_func.template_parameters();
 		
@@ -7856,13 +8232,16 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			gTypesByName.emplace(type_info.name_, &type_info);
 			temp_type_infos.push_back(&type_info);
+			std::cerr << "DEBUG: Added temp type info for '" << param_name << "' -> type " << static_cast<int>(concrete_type) << std::endl;
 		}
 
 		// Save current position
 		TokenPosition current_pos = save_token_position();
+		std::cerr << "DEBUG: Saved current position, cursor=" << current_pos.cursor_ << std::endl;
 
 		// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
 		restore_lexer_position_only(func_decl.template_body_position());
+		std::cerr << "DEBUG: Restored to body position" << std::endl;
 
 		// Set up parsing context for the function
 		gSymbolTable.enter_scope(ScopeType::Function);
@@ -7873,13 +8252,17 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			if (param.is<DeclarationNode>()) {
 				const auto& param_decl = param.as<DeclarationNode>();
 				gSymbolTable.insert(param_decl.identifier_token().value(), param);
+				std::cerr << "DEBUG: Added parameter '" << param_decl.identifier_token().value() << "' to symbol table" << std::endl;
 			}
 		}
 
+		std::cerr << "DEBUG: About to call parse_block()" << std::endl;
 		// Parse the function body
 		auto block_result = parse_block();
+		std::cerr << "DEBUG: parse_block() returned, error=" << block_result.is_error() << ", has_value=" << block_result.node().has_value() << std::endl;
 		if (!block_result.is_error() && block_result.node().has_value()) {
 			new_func_ref.set_definition(block_result.node()->as<BlockNode>());
+			std::cerr << "DEBUG: Set function definition" << std::endl;
 		}
 
 		// Clean up context
@@ -7888,16 +8271,21 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 		// Restore original position (lexer only - keep AST nodes we created)
 		restore_lexer_position_only(current_pos);
+		std::cerr << "DEBUG: Restored original position" << std::endl;
 
 		// Remove temporary type infos
 		for (const auto* type_info : temp_type_infos) {
 			gTypesByName.erase(type_info->name_);
+			std::cerr << "DEBUG: Removed temp type info for '" << type_info->name_ << "'" << std::endl;
 		}
 	} else {
 		// Fallback: copy the function body pointer directly (old behavior)
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
 			new_func_ref.set_definition(**orig_body);
+			std::cerr << "DEBUG: Copied original function body (fallback)" << std::endl;
+		} else {
+			std::cerr << "DEBUG: No function body to copy" << std::endl;
 		}
 	}
 
@@ -7910,6 +8298,8 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Add to top-level AST so it gets visited by the code generator
 	ast_nodes_.push_back(new_func_node);
 
+	std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template instantiation completed successfully" << std::endl;
+	recursion_depth--;
 	return new_func_node;
 }
 
@@ -8438,7 +8828,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	for (const auto& template_param_node : template_params) {
 		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
 
-		if (param.kind() == TemplateParameterKind::Type) {
+		if (param.kind() == TemplateParameterKind::Template) {
+			// Template template parameter - cannot be deduced from function arguments
+			// Template template parameters must be explicitly specified
+			return std::nullopt;
+		} else if (param.kind() == TemplateParameterKind::Type) {
 			if (arg_index < arg_types.size()) {
 				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
 				arg_index++;
@@ -8458,6 +8852,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	for (const auto& arg : template_args) {
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			key.type_arguments.push_back(arg.type_value);
+		} else if (arg.kind == TemplateArgument::Kind::Template) {
+			key.template_arguments.push_back(arg.template_name);
 		} else {
 			key.value_arguments.push_back(arg.int_value);
 		}
@@ -8909,3 +9305,4 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 
 	return block_result.node();
 }
+

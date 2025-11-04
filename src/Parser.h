@@ -281,6 +281,8 @@ private:
         ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member function templates
         ParseResult parse_template_parameter_list(std::vector<ASTNode>& out_params);  // NEW: Parse template parameter list
         ParseResult parse_template_parameter();  // NEW: Parse a single template parameter
+        ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
+        ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
         std::optional<std::vector<Type>> parse_explicit_template_arguments();  // NEW: Parse explicit template arguments like <int, float>
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
         std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<Type>& explicit_types);  // NEW: Instantiate with explicit args

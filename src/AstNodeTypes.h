@@ -91,6 +91,7 @@ enum class Type : int_fast16_t {
 	Enum,
 	FunctionPointer,
 	MemberFunctionPointer,
+	Invalid,
 };
 
 using TypeIndex = size_t;
@@ -681,6 +682,8 @@ public:
 	const FunctionSignature& function_signature() const { return *function_signature_; }
 	bool has_function_signature() const { return function_signature_.has_value(); }
 
+	void set_type_index(TypeIndex index) { type_index_ = index; }
+
 	// Get readable string representation
 	std::string getReadableString() const;
 
@@ -935,6 +938,10 @@ public:
 	TemplateParameterNode(std::string_view name, ASTNode type_node, Token token)
 		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
+	// Template template parameter: template<template<typename> class Container>
+	TemplateParameterNode(std::string_view name, std::vector<ASTNode> nested_params, Token token)
+		: kind_(TemplateParameterKind::Template), name_(name), nested_params_(std::move(nested_params)), token_(token) {}
+
 	TemplateParameterKind kind() const { return kind_; }
 	std::string_view name() const { return name_; }
 	Token token() const { return token_; }
@@ -942,6 +949,9 @@ public:
 	// For non-type parameters
 	bool has_type() const { return type_node_.has_value(); }
 	ASTNode type_node() const { return type_node_.value(); }
+
+	// For template template parameters
+	const std::vector<ASTNode>& nested_parameters() const { return nested_params_; }
 
 	// For default arguments (future enhancement)
 	bool has_default() const { return default_value_.has_value(); }
@@ -952,6 +962,7 @@ private:
 	TemplateParameterKind kind_;
 	std::string_view name_;  // Points directly into source text from lexer token
 	std::optional<ASTNode> type_node_;  // For non-type parameters (e.g., int N)
+	std::vector<ASTNode> nested_params_;  // For template template parameters (nested template parameters)
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
 	Token token_;  // For error reporting
 };

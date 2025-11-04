@@ -1990,4 +1990,61 @@ TEST_SUITE("Templates") {
 	TEST_CASE("Templates:Declaration") {
 		run_test_from_file("template_declaration.cpp", "Templates:Declaration", false);
 	}
+
+	// Template instantiation tests (Phase 2)
+	TEST_CASE("Templates:InstantiationDecl") {
+		run_test_from_file("template_inst_decl.cpp", "Templates:InstantiationDecl", false);
+	}
+
+	TEST_CASE("Templates:InstantiationSimple") {
+		run_test_from_file("template_inst_simple.cpp", "Templates:InstantiationSimple", false);
+	}
+
+	TEST_CASE("Templates:InstantiationMultipleTypes") {
+		run_test_from_file("template_inst_multi.cpp", "Templates:InstantiationMultipleTypes", false);
+	}
+
+	// Template function body tests (Phase 3)
+	TEST_CASE("Templates:WithBody") {
+		run_test_from_file("template_with_body.cpp", "Templates:WithBody", false);
+	}
+
+	TEST_CASE("Templates:BodyTest") {
+		run_test_from_file("template_body_test.cpp", "Templates:BodyTest", false);
+	}
+
+	// Explicit template arguments tests (Phase 4)
+	TEST_CASE("Templates:ExplicitArgs") {
+		run_test_from_file("template_explicit_args.cpp", "Templates:ExplicitArgs", false);
+	}
+
+	// Multiple template parameters tests (Phase 5)
+	TEST_CASE("Templates:MultipleParams") {
+		run_test_from_file("template_multi_param.cpp", "Templates:MultipleParams", false);
+	}
+
+	// Class template tests (Phase 6)
+	TEST_CASE("Templates:ClassSimple") {
+		run_test_from_file("template_class_simple.cpp", "Templates:ClassSimple", false);
+	}
+
+	// Class template instantiation tests (Phase 7)
+	TEST_CASE("Templates:ClassInst") {
+		run_test_from_file("template_class_inst.cpp", "Templates:ClassInst", false);
+	}
+
+	// Class template member function tests (Phase 8)
+	TEST_CASE("Templates:ClassMethods") {
+		run_test_from_file("template_class_methods.cpp", "Templates:ClassMethods", false);
+	}
+
+	// Out-of-line template member function definitions
+	TEST_CASE("Templates:OutOfLine") {
+		run_test_from_file("template_out_of_line.cpp", "Templates:OutOfLine", false);
+	}
+
+	// Template template parameter tests
+	TEST_CASE("Templates:TemplateTemplateParams") {
+		run_test_from_file("template_template_params.cpp", "Templates:TemplateTemplateParams", false);
+	}
 }

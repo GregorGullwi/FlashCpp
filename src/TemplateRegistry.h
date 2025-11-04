@@ -14,11 +14,13 @@ struct TemplateInstantiationKey {
 	std::string template_name;
 	std::vector<Type> type_arguments;  // For type parameters
 	std::vector<int64_t> value_arguments;  // For non-type parameters
+	std::vector<std::string> template_arguments;  // For template template parameters
 	
 	bool operator==(const TemplateInstantiationKey& other) const {
 		return template_name == other.template_name &&
 		       type_arguments == other.type_arguments &&
-		       value_arguments == other.value_arguments;
+		       value_arguments == other.value_arguments &&
+		       template_arguments == other.template_arguments;
 	}
 };
 
@@ -32,20 +34,25 @@ struct TemplateInstantiationKeyHash {
 		for (const auto& value : key.value_arguments) {
 			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
+		for (const auto& tmpl : key.template_arguments) {
+			hash ^= std::hash<std::string>{}(tmpl) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
 		return hash;
 	}
 };
 
-// Template argument - can be a type or a value
+// Template argument - can be a type, a value, or a template
 struct TemplateArgument {
 	enum class Kind {
 		Type,
-		Value
+		Value,
+		Template   // For template template parameters
 	};
 	
 	Kind kind;
 	Type type_value;  // For type arguments
 	int64_t int_value;  // For non-type integer arguments
+	std::string template_name;  // For template template arguments (name of the template)
 	
 	static TemplateArgument makeType(Type t) {
 		TemplateArgument arg;
@@ -58,6 +65,13 @@ struct TemplateArgument {
 		TemplateArgument arg;
 		arg.kind = Kind::Value;
 		arg.int_value = v;
+		return arg;
+	}
+	
+	static TemplateArgument makeTemplate(std::string_view template_name) {
+		TemplateArgument arg;
+		arg.kind = Kind::Template;
+		arg.template_name = std::string(template_name);
 		return arg;
 	}
 };
@@ -148,8 +162,26 @@ public:
 		}
 	}
 
+	// Helper to convert string to Type for parsing mangled names
+	static Type stringToType(std::string_view str) {
+		if (str == "int") return Type::Int;
+		if (str == "float") return Type::Float;
+		if (str == "double") return Type::Double;
+		if (str == "bool") return Type::Bool;
+		if (str == "char") return Type::Char;
+		if (str == "long") return Type::Long;
+		if (str == "longlong") return Type::LongLong;
+		if (str == "short") return Type::Short;
+		if (str == "uint") return Type::UnsignedInt;
+		if (str == "ulong") return Type::UnsignedLong;
+		if (str == "ulonglong") return Type::UnsignedLongLong;
+		if (str == "ushort") return Type::UnsignedShort;
+		if (str == "uchar") return Type::UnsignedChar;
+		return Type::Invalid;
+	}
+
 	// Generate a mangled name for a template instantiation
-	// Example: max<int> -> max_int, max<int, 5> -> max_int_5
+	// Example: max<int> -> max_int, max<int, 5> -> max_int_5, max<vector> -> max_vector
 	static std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
 		StringBuilder& mangled = StringBuilder().append(base_name).append("_");
 
@@ -158,8 +190,11 @@ public:
 
 			if (args[i].kind == TemplateArgument::Kind::Type) {
 				mangled.append(typeToString(args[i].type_value));
-			} else {
+			} else if (args[i].kind == TemplateArgument::Kind::Value) {
 				mangled.append(args[i].int_value);
+			} else if (args[i].kind == TemplateArgument::Kind::Template) {
+				// For template template arguments, use the template name
+				mangled.append(args[i].template_name);
 			}
 		}
 

@@ -203,7 +203,7 @@ int main(int argc, char *argv[]) {
             if (show_debug && node_handle.is<FunctionDeclarationNode>()) {
                 const auto& func = node_handle.as<FunctionDeclarationNode>();
                 bool has_def = func.get_definition().has_value();
-                std::cerr << "DEBUG: Found FunctionDeclarationNode: " << func.decl_node().identifier_token().value() 
+                std::cerr << "DEBUG: Visiting FunctionDeclarationNode: " << func.decl_node().identifier_token().value() 
                           << " has_definition=" << has_def << "\n";
                 if (has_def) {
                     const BlockNode* def_block = *func.get_definition();
