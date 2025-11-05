@@ -2206,9 +2206,12 @@ private:
 		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
-		// Reset the register allocator since we've saved the return value to memory
-		// Don't keep RAX allocated - it will be overwritten by subsequent operations
-		regAlloc.reset();
+		// NOTE: We used to call regAlloc.reset() here, but that was causing issues
+		// with register allocation across multiple function calls. The register allocator
+		// should track register state properly without needing a full reset after each call.
+		// Just flush dirty registers before the call (which we already do above) and
+		// let the register allocator manage state naturally.
+		// regAlloc.reset();  // REMOVED - was causing bugs with multiple function calls
 	}
 
 	void handleConstructorCall(const IrInstruction& instruction) {
