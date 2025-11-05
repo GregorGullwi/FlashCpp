@@ -1345,8 +1345,16 @@ private:
 
 			// Load the literal value into the register
 			// mov reg, imm64
-			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 }; // movabs rax, imm64
-			movInst[1] = 0xB8 + static_cast<uint8_t>(ctx.result_physical_reg);
+			uint8_t rex_prefix = 0x48; // REX.W
+			uint8_t reg_num = static_cast<uint8_t>(ctx.result_physical_reg);
+			
+			// For R8-R15, set REX.B bit
+			if (reg_num >= 8) {
+				rex_prefix |= 0x01; // Set REX.B
+				reg_num &= 0x07; // Use lower 3 bits for opcode
+			}
+			
+			std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
 			std::memcpy(&movInst[2], &lhs_value, sizeof(lhs_value));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
@@ -1367,8 +1375,16 @@ private:
 			X64Register temp_gpr = allocateRegisterWithSpilling();
 
 			// movabs temp_gpr, imm64 (load bit pattern)
-			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
-			movInst[1] = 0xB8 + static_cast<uint8_t>(temp_gpr);
+			uint8_t rex_prefix = 0x48; // REX.W
+			uint8_t reg_num = static_cast<uint8_t>(temp_gpr);
+			
+			// For R8-R15, set REX.B bit
+			if (reg_num >= 8) {
+				rex_prefix |= 0x01; // Set REX.B
+				reg_num &= 0x07; // Use lower 3 bits for opcode
+			}
+			
+			std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
 			std::memcpy(&movInst[2], &bits, sizeof(bits));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 
@@ -1442,8 +1458,16 @@ private:
 
 			// Load the literal value into the register
 			// mov reg, imm64
-			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 }; // movabs rax, imm64
-			movInst[1] = 0xB8 + static_cast<uint8_t>(ctx.rhs_physical_reg);
+			uint8_t rex_prefix = 0x48; // REX.W
+			uint8_t reg_num = static_cast<uint8_t>(ctx.rhs_physical_reg);
+			
+			// For R8-R15, set REX.B bit
+			if (reg_num >= 8) {
+				rex_prefix |= 0x01; // Set REX.B
+				reg_num &= 0x07; // Use lower 3 bits for opcode
+			}
+			
+			std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
 			std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
@@ -1464,8 +1488,16 @@ private:
 			X64Register temp_gpr = allocateRegisterWithSpilling();
 
 			// movabs temp_gpr, imm64 (load bit pattern)
-			std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
-			movInst[1] = 0xB8 + static_cast<uint8_t>(temp_gpr);
+			uint8_t rex_prefix = 0x48; // REX.W
+			uint8_t reg_num = static_cast<uint8_t>(temp_gpr);
+			
+			// For R8-R15, set REX.B bit
+			if (reg_num >= 8) {
+				rex_prefix |= 0x01; // Set REX.B
+				reg_num &= 0x07; // Use lower 3 bits for opcode
+			}
+			
+			std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
 			std::memcpy(&movInst[2], &bits, sizeof(bits));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 
@@ -3581,9 +3613,24 @@ private:
 	void handleAdd(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "addition");
 
-		// Perform the addition operation
-		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xC0 }; // add r/m64, r64. 0x01 is opcode, 0xC0 is ModR/M for reg, reg
-		addInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		// Perform the addition operation: ADD r/m64, r64
+		uint8_t rex_prefix = 0x48; // REX.W
+		
+		// Set REX.R if source (rhs) register is R8-R15
+		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
+			rex_prefix |= 0x04; // Set REX.R
+		}
+		
+		// Set REX.B if destination (result) register is R8-R15
+		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
+			rex_prefix |= 0x01; // Set REX.B
+		}
+		
+		uint8_t modrm = 0xC0 + 
+			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
+			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
+		
+		std::array<uint8_t, 3> addInst = { rex_prefix, 0x01, modrm };
 		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
 
 		// Store the result to the appropriate destination
@@ -3594,9 +3641,24 @@ private:
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtraction");
 
-		// Perform the subtraction operation
-		std::array<uint8_t, 3> subInst = { 0x48, 0x29, 0xC0 }; // sub r/m64, r64. 0x29 is opcode, 0xC0 is ModR/M for reg, reg
-		subInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		// Perform the subtraction operation: SUB r/m64, r64
+		uint8_t rex_prefix = 0x48; // REX.W
+		
+		// Set REX.R if source (rhs) register is R8-R15
+		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
+			rex_prefix |= 0x04; // Set REX.R
+		}
+		
+		// Set REX.B if destination (result) register is R8-R15
+		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
+			rex_prefix |= 0x01; // Set REX.B
+		}
+		
+		uint8_t modrm = 0xC0 + 
+			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
+			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
+		
+		std::array<uint8_t, 3> subInst = { rex_prefix, 0x29, modrm };
 		textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
 
 		// Store the result to the appropriate destination
@@ -3607,10 +3669,24 @@ private:
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "multiplication");
 
-		// Perform the multiplication operation
-		std::array<uint8_t, 4> mulInst = { 0x48, 0x0F, 0xAF, 0x00 }; // REX.W (0x48) + Opcode (0x0F 0xAF) + ModR/M (initially 0x00)
-		// ModR/M: Mod=11 (register-to-register), Reg=result_physical_reg, R/M=rhs_physical_reg
-		mulInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		// Perform the multiplication operation: IMUL r64, r/m64
+		uint8_t rex_prefix = 0x48; // REX.W
+		
+		// Set REX.R if destination (result) register is R8-R15
+		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
+			rex_prefix |= 0x04; // Set REX.R
+		}
+		
+		// Set REX.B if source (rhs) register is R8-R15
+		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
+			rex_prefix |= 0x01; // Set REX.B
+		}
+		
+		uint8_t modrm = 0xC0 + 
+			((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + 
+			(static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
+		
+		std::array<uint8_t, 4> mulInst = { rex_prefix, 0x0F, 0xAF, modrm };
 		textSectionData.insert(textSectionData.end(), mulInst.begin(), mulInst.end());
 
 		// Store the result to the appropriate destination
@@ -3765,9 +3841,24 @@ private:
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise AND");
 
-		// Perform the bitwise AND operation
-		std::array<uint8_t, 3> andInst = { 0x48, 0x21, 0xC0 }; // and r/m64, r64. 0x21 is opcode, 0xC0 is ModR/M for reg, reg
-		andInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		// Perform the bitwise AND operation: AND r/m64, r64
+		uint8_t rex_prefix = 0x48; // REX.W
+		
+		// Set REX.R if source (rhs) register is R8-R15
+		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
+			rex_prefix |= 0x04; // Set REX.R
+		}
+		
+		// Set REX.B if destination (result) register is R8-R15
+		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
+			rex_prefix |= 0x01; // Set REX.B
+		}
+		
+		uint8_t modrm = 0xC0 + 
+			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
+			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
+		
+		std::array<uint8_t, 3> andInst = { rex_prefix, 0x21, modrm };
 		textSectionData.insert(textSectionData.end(), andInst.begin(), andInst.end());
 
 		// Store the result to the appropriate destination
@@ -3778,9 +3869,24 @@ private:
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise OR");
 
-		// Perform the bitwise OR operation
-		std::array<uint8_t, 3> orInst = { 0x48, 0x09, 0xC0 }; // or r/m64, r64. 0x09 is opcode, 0xC0 is ModR/M for reg, reg
-		orInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		// Perform the bitwise OR operation: OR r/m64, r64
+		uint8_t rex_prefix = 0x48; // REX.W
+		
+		// Set REX.R if source (rhs) register is R8-R15
+		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
+			rex_prefix |= 0x04; // Set REX.R
+		}
+		
+		// Set REX.B if destination (result) register is R8-R15
+		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
+			rex_prefix |= 0x01; // Set REX.B
+		}
+		
+		uint8_t modrm = 0xC0 + 
+			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
+			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
+		
+		std::array<uint8_t, 3> orInst = { rex_prefix, 0x09, modrm };
 		textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
 
 		// Store the result to the appropriate destination
@@ -3791,9 +3897,24 @@ private:
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise XOR");
 
-		// Perform the bitwise XOR operation
-		std::array<uint8_t, 3> xorInst = { 0x48, 0x31, 0xC0 }; // xor r/m64, r64. 0x31 is opcode, 0xC0 is ModR/M for reg, reg
-		xorInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		// Perform the bitwise XOR operation: XOR r/m64, r64
+		uint8_t rex_prefix = 0x48; // REX.W
+		
+		// Set REX.R if source (rhs) register is R8-R15
+		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
+			rex_prefix |= 0x04; // Set REX.R
+		}
+		
+		// Set REX.B if destination (result) register is R8-R15
+		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
+			rex_prefix |= 0x01; // Set REX.B
+		}
+		
+		uint8_t modrm = 0xC0 + 
+			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
+			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
+		
+		std::array<uint8_t, 3> xorInst = { rex_prefix, 0x31, modrm };
 		textSectionData.insert(textSectionData.end(), xorInst.begin(), xorInst.end());
 
 		// Store the result to the appropriate destination
@@ -4838,11 +4959,96 @@ private:
 			return;
 		}
 
-		// For non-struct types, use the standard arithmetic operation handling
-		auto ctx = setupAndLoadArithmeticOperation(instruction, "assignment");
-		// The value is already in the result register from setupAndLoadArithmeticOperation
-		// We just need to store it
-		storeArithmeticResult(ctx);
+		// For non-struct types, we need to copy the value from RHS to LHS
+		// Get LHS destination (operand 3)
+		const IrOperand& lhs_operand = instruction.getOperand(3);
+		int32_t lhs_offset = -1;
+
+		if (std::holds_alternative<std::string_view>(lhs_operand)) {
+			std::string_view lhs_var_name = std::get<std::string_view>(lhs_operand);
+			auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
+			if (it != variable_scopes.back().identifier_offset.end()) {
+				lhs_offset = it->second;
+			}
+		} else if (std::holds_alternative<TempVar>(lhs_operand)) {
+			TempVar lhs_var = std::get<TempVar>(lhs_operand);
+			lhs_offset = getStackOffsetFromTempVar(lhs_var);
+		}
+
+		if (lhs_offset == -1) {
+			assert(false && "LHS variable not found in assignment");
+			return;
+		}
+
+		// Get RHS source (operand 6)
+		const IrOperand& rhs_operand = instruction.getOperand(6);
+		Type rhs_type = instruction.getOperandAs<Type>(4);
+		X64Register source_reg = X64Register::RAX;
+
+		// Load RHS value into a register
+		if (std::holds_alternative<std::string_view>(rhs_operand)) {
+			std::string_view rhs_var_name = std::get<std::string_view>(rhs_operand);
+			auto it = variable_scopes.back().identifier_offset.find(rhs_var_name);
+			if (it != variable_scopes.back().identifier_offset.end()) {
+				int32_t rhs_offset = it->second;
+				
+				if (is_floating_point_type(rhs_type)) {
+					source_reg = allocateXMMRegisterWithSpilling();
+					bool is_float = (rhs_type == Type::Float);
+					auto load_opcodes = generateFloatMovFromFrame(source_reg, rhs_offset, is_float);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				} else {
+					// Load from RHS stack location into RAX
+					auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
+			}
+		} else if (std::holds_alternative<TempVar>(rhs_operand)) {
+			TempVar rhs_var = std::get<TempVar>(rhs_operand);
+			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
+
+			// Check if the value is already in a register
+			if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
+				source_reg = rhs_reg.value();
+			} else {
+				if (is_floating_point_type(rhs_type)) {
+					source_reg = allocateXMMRegisterWithSpilling();
+					bool is_float = (rhs_type == Type::Float);
+					auto load_opcodes = generateFloatMovFromFrame(source_reg, rhs_offset, is_float);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				} else {
+					// Load from RHS stack location into RAX
+					auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
+			}
+		} else if (std::holds_alternative<unsigned long long>(rhs_operand)) {
+			// RHS is an immediate value
+			unsigned long long rhs_value = std::get<unsigned long long>(rhs_operand);
+			// MOV RAX, imm64
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0xB8); // MOV RAX, imm64
+			for (size_t i = 0; i < 8; ++i) {
+				textSectionData.push_back(static_cast<uint8_t>(rhs_value & 0xFF));
+				rhs_value >>= 8;
+			}
+		}
+
+		// Store source register to LHS stack location
+		if (is_floating_point_type(rhs_type)) {
+			bool is_float = (rhs_type == Type::Float);
+			auto store_opcodes = generateFloatMovToFrame(source_reg, lhs_offset, is_float);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		} else {
+			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		}
 	}
 
 	void handleLabel(const IrInstruction& instruction) {
