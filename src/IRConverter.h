@@ -1266,6 +1266,62 @@ private:
 	};
 
 	// Setup and load operands for arithmetic operations - validates operands, extracts common data, and loads into registers
+	// Helper function to generate REX prefix and ModR/M byte for register-to-register operations
+	// Used by arithmetic, bitwise, and comparison operations with R8-R15 support
+	struct RegToRegEncoding {
+		uint8_t rex_prefix;
+		uint8_t modrm_byte;
+	};
+	
+	RegToRegEncoding encodeRegToRegInstruction(X64Register reg_field, X64Register rm_field, bool include_rex_w = true) {
+		RegToRegEncoding result;
+		
+		// Start with base REX prefix
+		result.rex_prefix = include_rex_w ? 0x48 : 0x40; // REX.W or base REX
+		
+		// Set REX.R if reg_field (source in Reg field of ModR/M) is R8-R15
+		if (static_cast<uint8_t>(reg_field) >= 8) {
+			result.rex_prefix |= 0x04; // Set REX.R bit
+		}
+		
+		// Set REX.B if rm_field (destination in R/M field of ModR/M) is R8-R15
+		if (static_cast<uint8_t>(rm_field) >= 8) {
+			result.rex_prefix |= 0x01; // Set REX.B bit
+		}
+		
+		// Build ModR/M byte: Mod=11 (register-to-register), Reg=reg_field[2:0], R/M=rm_field[2:0]
+		result.modrm_byte = 0xC0 + 
+			((static_cast<uint8_t>(reg_field) & 0x07) << 3) + 
+			(static_cast<uint8_t>(rm_field) & 0x07);
+		
+		return result;
+	}
+	
+	// Helper function to emit a comparison instruction (CMP + SETcc + MOVZX)
+	void emitComparisonInstruction(const ArithmeticOperationContext& ctx, uint8_t setcc_opcode) {
+		// Compare operands: cmp r/m64, r64
+		auto cmp_encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> cmpInst = { cmp_encoding.rex_prefix, 0x39, cmp_encoding.modrm_byte };
+		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
+
+		// Set result based on condition: setcc r8
+		// SETcc instructions need REX prefix for R8-R15 (REX without W bit)
+		uint8_t setcc_rex = (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) ? 0x41 : 0x00;
+		if (setcc_rex) {
+			textSectionData.push_back(setcc_rex);
+		}
+		std::array<uint8_t, 3> setccInst = { 0x0F, setcc_opcode, static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) & 0x07)) };
+		textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
+
+		// Zero-extend the low byte to full register: movzx r64, r8
+		auto movzx_encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 4> movzxInst = { movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte };
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
+		// Store the result to the appropriate destination
+		storeArithmeticResult(ctx);
+	}
+
 	ArithmeticOperationContext setupAndLoadArithmeticOperation(const IrInstruction& instruction, const char* operation_name) {
 		assert(instruction.getOperandCount() == 7 &&
 			   (std::string(operation_name) + " instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val").c_str());
@@ -3614,23 +3670,8 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "addition");
 
 		// Perform the addition operation: ADD r/m64, r64
-		uint8_t rex_prefix = 0x48; // REX.W
-		
-		// Set REX.R if source (rhs) register is R8-R15
-		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
-			rex_prefix |= 0x04; // Set REX.R
-		}
-		
-		// Set REX.B if destination (result) register is R8-R15
-		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
-			rex_prefix |= 0x01; // Set REX.B
-		}
-		
-		uint8_t modrm = 0xC0 + 
-			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
-			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
-		
-		std::array<uint8_t, 3> addInst = { rex_prefix, 0x01, modrm };
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> addInst = { encoding.rex_prefix, 0x01, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
 
 		// Store the result to the appropriate destination
@@ -3642,23 +3683,8 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtraction");
 
 		// Perform the subtraction operation: SUB r/m64, r64
-		uint8_t rex_prefix = 0x48; // REX.W
-		
-		// Set REX.R if source (rhs) register is R8-R15
-		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
-			rex_prefix |= 0x04; // Set REX.R
-		}
-		
-		// Set REX.B if destination (result) register is R8-R15
-		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
-			rex_prefix |= 0x01; // Set REX.B
-		}
-		
-		uint8_t modrm = 0xC0 + 
-			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
-			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
-		
-		std::array<uint8_t, 3> subInst = { rex_prefix, 0x29, modrm };
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> subInst = { encoding.rex_prefix, 0x29, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
 
 		// Store the result to the appropriate destination
@@ -3670,23 +3696,8 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "multiplication");
 
 		// Perform the multiplication operation: IMUL r64, r/m64
-		uint8_t rex_prefix = 0x48; // REX.W
-		
-		// Set REX.R if destination (result) register is R8-R15
-		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
-			rex_prefix |= 0x04; // Set REX.R
-		}
-		
-		// Set REX.B if source (rhs) register is R8-R15
-		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
-			rex_prefix |= 0x01; // Set REX.B
-		}
-		
-		uint8_t modrm = 0xC0 + 
-			((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + 
-			(static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-		
-		std::array<uint8_t, 4> mulInst = { rex_prefix, 0x0F, 0xAF, modrm };
+		auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg);
+		std::array<uint8_t, 4> mulInst = { encoding.rex_prefix, 0x0F, 0xAF, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), mulInst.begin(), mulInst.end());
 
 		// Store the result to the appropriate destination
@@ -3842,23 +3853,8 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise AND");
 
 		// Perform the bitwise AND operation: AND r/m64, r64
-		uint8_t rex_prefix = 0x48; // REX.W
-		
-		// Set REX.R if source (rhs) register is R8-R15
-		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
-			rex_prefix |= 0x04; // Set REX.R
-		}
-		
-		// Set REX.B if destination (result) register is R8-R15
-		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
-			rex_prefix |= 0x01; // Set REX.B
-		}
-		
-		uint8_t modrm = 0xC0 + 
-			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
-			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
-		
-		std::array<uint8_t, 3> andInst = { rex_prefix, 0x21, modrm };
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> andInst = { encoding.rex_prefix, 0x21, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), andInst.begin(), andInst.end());
 
 		// Store the result to the appropriate destination
@@ -3870,23 +3866,8 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise OR");
 
 		// Perform the bitwise OR operation: OR r/m64, r64
-		uint8_t rex_prefix = 0x48; // REX.W
-		
-		// Set REX.R if source (rhs) register is R8-R15
-		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
-			rex_prefix |= 0x04; // Set REX.R
-		}
-		
-		// Set REX.B if destination (result) register is R8-R15
-		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
-			rex_prefix |= 0x01; // Set REX.B
-		}
-		
-		uint8_t modrm = 0xC0 + 
-			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
-			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
-		
-		std::array<uint8_t, 3> orInst = { rex_prefix, 0x09, modrm };
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> orInst = { encoding.rex_prefix, 0x09, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
 
 		// Store the result to the appropriate destination
@@ -3898,23 +3879,8 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise XOR");
 
 		// Perform the bitwise XOR operation: XOR r/m64, r64
-		uint8_t rex_prefix = 0x48; // REX.W
-		
-		// Set REX.R if source (rhs) register is R8-R15
-		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
-			rex_prefix |= 0x04; // Set REX.R
-		}
-		
-		// Set REX.B if destination (result) register is R8-R15
-		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
-			rex_prefix |= 0x01; // Set REX.B
-		}
-		
-		uint8_t modrm = 0xC0 + 
-			((static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07) << 3) + 
-			(static_cast<uint8_t>(ctx.result_physical_reg) & 0x07);
-		
-		std::array<uint8_t, 3> xorInst = { rex_prefix, 0x31, modrm };
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> xorInst = { encoding.rex_prefix, 0x31, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), xorInst.begin(), xorInst.end());
 
 		// Store the result to the appropriate destination
@@ -3951,234 +3917,53 @@ private:
 	}
 
 	void handleEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "equal comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on zero flag: sete r8
-		std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, 0xC0 }; // sete r8
-		seteInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x94); // SETE
 	}
 
 	void handleNotEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "not equal comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on zero flag: setne r8
-		std::array<uint8_t, 3> setneInst = { 0x0F, 0x95, 0xC0 }; // setne r8
-		setneInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setneInst.begin(), setneInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x95); // SETNE
 	}
 
 	void handleLessThan(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "less than comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on sign flag: setl r8 (signed less than)
-		std::array<uint8_t, 3> setlInst = { 0x0F, 0x9C, 0xC0 }; // setl r8
-		setlInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setlInst.begin(), setlInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x9C); // SETL
 	}
 
 	void handleLessEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "less than or equal comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on flags: setle r8 (signed less than or equal)
-		std::array<uint8_t, 3> setleInst = { 0x0F, 0x9E, 0xC0 }; // setle r8
-		setleInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setleInst.begin(), setleInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x9E); // SETLE
 	}
 
 	void handleGreaterThan(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "greater than comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on flags: setg r8 (signed greater than)
-		// This only sets the low byte, leaving upper bytes unchanged
-		std::array<uint8_t, 3> setgInst = { 0x0F, 0x9F, 0xC0 }; // setg r8
-		setgInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setgInst.begin(), setgInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x9F); // SETG
 	}
 
 	void handleGreaterEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "greater than or equal comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on flags: setge r8 (signed greater than or equal)
-		std::array<uint8_t, 3> setgeInst = { 0x0F, 0x9D, 0xC0 }; // setge r8
-		setgeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setgeInst.begin(), setgeInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x9D); // SETGE
 	}
 
 	void handleUnsignedLessThan(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned less than comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on carry flag: setb r8 (unsigned less than)
-		std::array<uint8_t, 3> setbInst = { 0x0F, 0x92, 0xC0 }; // setb r8
-		setbInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setbInst.begin(), setbInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x92); // SETB
 	}
 
 	void handleUnsignedLessEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned less than or equal comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on flags: setbe r8 (unsigned less than or equal)
-		std::array<uint8_t, 3> setbeInst = { 0x0F, 0x96, 0xC0 }; // setbe r8
-		setbeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setbeInst.begin(), setbeInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x96); // SETBE
 	}
 
 	void handleUnsignedGreaterThan(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned greater than comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on flags: seta r8 (unsigned greater than)
-		std::array<uint8_t, 3> setaInst = { 0x0F, 0x97, 0xC0 }; // seta r8
-		setaInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setaInst.begin(), setaInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x97); // SETA
 	}
 
 	void handleUnsignedGreaterEqual(const IrInstruction& instruction) {
-		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned greater than or equal comparison");
-
-		// Compare operands: cmp r/m64, r64
-		std::array<uint8_t, 3> cmpInst = { 0x48, 0x39, 0xC0 }; // cmp r/m64, r64
-		cmpInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
-
-		// Set result based on flags: setae r8 (unsigned greater than or equal)
-		std::array<uint8_t, 3> setaeInst = { 0x0F, 0x93, 0xC0 }; // setae r8
-		setaeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), setaeInst.begin(), setaeInst.end());
-
-		// Zero-extend the low byte to full register: movzx r64, r8
-		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
-		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
-
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+		emitComparisonInstruction(ctx, 0x93); // SETAE
 	}
 
 	void handleLogicalAnd(const IrInstruction& instruction) {
@@ -4187,8 +3972,8 @@ private:
 
 		// For logical AND, we need to implement short-circuit evaluation
 		// For now, implement as bitwise AND on boolean values
-		std::array<uint8_t, 3> andInst = { 0x48, 0x21, 0xC0 }; // and r/m64, r64
-		andInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> andInst = { encoding.rex_prefix, 0x21, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), andInst.begin(), andInst.end());
 
 		// Store the result to the appropriate destination
@@ -4201,8 +3986,8 @@ private:
 
 		// For logical OR, we need to implement short-circuit evaluation
 		// For now, implement as bitwise OR on boolean values
-		std::array<uint8_t, 3> orInst = { 0x48, 0x09, 0xC0 }; // or r/m64, r64
-		orInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> orInst = { encoding.rex_prefix, 0x09, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
 
 		// Store the result to the appropriate destination
