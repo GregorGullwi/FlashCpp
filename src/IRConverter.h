@@ -3245,6 +3245,11 @@ private:
 		current_function_mangled_name_ = mangled_name;
 		current_function_offset_ = func_offset;
 
+		// Patch pending branches from previous function before clearing
+		if (!pending_branches_.empty()) {
+			patchBranches();
+		}
+
 		// Clear control flow tracking for new function
 		label_positions_.clear();
 		pending_branches_.clear();
@@ -6083,7 +6088,7 @@ private:
 	}
 
 	void handleConditionalBranch(const IrInstruction& instruction) {
-		// Conditional branch: test condition, jump if true to then_label, otherwise fall through to else_label
+		// Conditional branch: test condition, jump if false to else_label, fall through to then_label
 		// Operands: [type, size, condition_value, then_label, else_label]
 		assert(instruction.getOperandCount() >= 5 && "ConditionalBranch must have at least 5 operands");
 
@@ -6132,21 +6137,9 @@ private:
 		std::array<uint8_t, 3> testInst = { 0x48, 0x85, 0xC0 }; // test rax, rax
 		textSectionData.insert(textSectionData.end(), testInst.begin(), testInst.end());
 
-		// Jump if not zero (JNZ) to then_label
+		// Jump if ZERO (JZ/JE) to else_label - inverted logic for better code layout
 		textSectionData.push_back(0x0F); // Two-byte opcode prefix
-		textSectionData.push_back(0x85); // JNZ rel32
-
-		uint32_t then_patch_position = static_cast<uint32_t>(textSectionData.size());
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-
-		pending_branches_.push_back({then_label, then_patch_position});
-
-		// Fall through or jump to else_label
-		// If else_label is different from the next instruction, we need an unconditional jump
-		textSectionData.push_back(0xE9); // JMP rel32
+		textSectionData.push_back(0x84); // JZ/JE rel32
 
 		uint32_t else_patch_position = static_cast<uint32_t>(textSectionData.size());
 		textSectionData.push_back(0x00);
@@ -6155,6 +6148,8 @@ private:
 		textSectionData.push_back(0x00);
 
 		pending_branches_.push_back({else_label, else_patch_position});
+
+		// Fall through to then block - then_label will be placed right after this
 	}
 
 	void handleFunctionAddress(const IrInstruction& instruction) {
