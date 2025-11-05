@@ -1011,7 +1011,15 @@ private:
 			std::string include_file(include_dir);
 			include_file.append("/");
 			include_file.append(filename);
-			if (readFile(include_file)) {
+			// Check if the file exists before trying to read it
+			// This distinguishes between "file not found" and "file found but had preprocessing error"
+			if (std::filesystem::exists(include_file)) {
+				// File exists, try to read and preprocess it
+				if (!readFile(include_file)) {
+					// Preprocessing failed (e.g., #error directive)
+					// Return false to propagate the error up
+					return false;
+				}
 				tree_.addDependency(current_file, include_file);
 				found = true;
 				break;
