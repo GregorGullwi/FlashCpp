@@ -251,8 +251,15 @@ public:
 		if (proccessedHeaders_.find(std::string(file)) != proccessedHeaders_.end())
 			return true;
 
+		// Check for excessive include nesting depth (prevents infinite recursion)
+		constexpr size_t MAX_INCLUDE_DEPTH = 200;
+		if (filestack_.size() >= MAX_INCLUDE_DEPTH) {
+			std::cerr << "Error: Include nesting depth exceeded " << MAX_INCLUDE_DEPTH << " (possible circular include)" << std::endl;
+			return false;
+		}
+
 		if (settings_.isVerboseMode()) {
-			std::cout << "readFile " << file << std::endl;
+			std::cout << "readFile " << file << " (depth: " << filestack_.size() << ")" << std::endl;
 		}
 
 		ScopedFileStack filestack(filestack_, file);
@@ -288,7 +295,12 @@ public:
 		long& line_number = !filestack_.empty() ? filestack_.top().line_number : line_number_fallback;
 		long prev_line_number = -1;
 		const bool isPreprocessorOnlyMode = settings_.isPreprocessorOnlyMode();
+		size_t line_counter = 0;  // Add counter for debugging
 		while (std::getline(stream, line)) {
+			line_counter++;
+			if (settings_.isVerboseMode() && line_counter % 100 == 0) {
+				std::cout << "Processing line " << line_counter << " in " << filestack_.top().file_name << std::endl;
+			}
 			size_t first_none_tab = line.find_first_not_of('\t');
 			if (first_none_tab != std::string::npos && first_none_tab != 0)
 				line.erase(line.begin(), line.begin() + first_none_tab);
@@ -373,8 +385,9 @@ public:
 				else if (line.find("#elif", 0) == 0) {
 					// If we're skipping and haven't found a true condition yet, evaluate #elif
 					if (!condition_was_true_stack.top()) {
-						std::istringstream iss(line);
-						iss.seekg("#elif"sv.length());
+						std::string condition = line.substr(5);  // Skip "#elif"
+						condition = expandMacros(condition);
+						std::istringstream iss(condition);
 						long expression_result = evaluate_expression(iss);
 						if (expression_result != 0) {
 							skipping_stack.top() = false;  // Stop skipping
@@ -432,8 +445,10 @@ public:
 				condition_was_true_stack.push(!is_defined);
 			}
 			else if (line.find("#if", 0) == 0) {
-				std::istringstream iss(line);
-				iss.seekg("#if"sv.length());
+				// Extract and expand macros in the condition before evaluation
+				std::string condition = line.substr(3);  // Skip "#if"
+				condition = expandMacros(condition);
+				std::istringstream iss(condition);
 				long expression_result = evaluate_expression(iss);
 				bool condition_true = (expression_result != 0);
 				skipping_stack.push(!condition_true);
@@ -450,8 +465,9 @@ public:
 				}
 				else {
 					// Evaluate the #elif condition
-					std::istringstream iss(line);
-					iss.seekg("#elif"sv.length());
+					std::string condition = line.substr(5);  // Skip "#elif"
+					condition = expandMacros(condition);
+					std::istringstream iss(condition);
 					long expression_result = evaluate_expression(iss);
 					if (expression_result != 0) {
 						skipping_stack.top() = false;  // Stop skipping
@@ -620,7 +636,7 @@ private:
 		return inside_string || inside_raw_string;
 	}
 
-	std::string expandMacros(const std::string& input) {
+	std::string expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros = {}) {
 		std::string output = input;
 
 		// Check if we're inside a multiline raw string from a previous line
@@ -660,11 +676,16 @@ private:
 		}
 
 		bool expanded = true;
-		size_t loop_guard = 100'000'000;
+		size_t loop_guard = 1000;  // Reduced from 100M to catch infinite loops faster
 		while (expanded && loop_guard-- > 0) {
 			expanded = false;
 			size_t last_char_index = output.size() - 1;
 			for (const auto& [pattern, directive] : defines_) {
+				// Skip if this macro is currently being expanded (prevent recursion)
+				if (expanding_macros.count(pattern) > 0) {
+					continue;
+				}
+				
 				// Search for all occurrences of the pattern and find the first one
 				// that's not inside a string literal and has proper separators
 				size_t search_pos = 0;
@@ -784,12 +805,23 @@ private:
 						replace_str = function_directive->getBody();
 					}
 
+					// Add this macro to the expanding set to prevent recursion
+					auto new_expanding = expanding_macros;
+					new_expanding.insert(pattern);
+					
+					// Recursively expand macros in the replacement text
+					replace_str = expandMacros(replace_str, new_expanding);
+
 					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
 					last_char_index = output.size() - 1;
 					expanded = true;
 					break;
 				}
 			}
+		}
+
+		if (loop_guard == 0) {
+			std::cerr << "Warning: Macro expansion limit reached for line (possible infinite recursion): " << input.substr(0, 100) << std::endl;
 		}
 
 		// Handle token-pasting operator (##) after replacing all the arguments
@@ -874,8 +906,9 @@ private:
 		std::stack<Operator> ops;
 
 		std::string op_str;
+		size_t eval_loop_guard = 10000;  // Add loop guard
 
-		while (iss) {
+		while (iss && eval_loop_guard-- > 0) {
 			char c = iss.peek();
 			if (isdigit(c)) {
 				std::string str_value;
@@ -987,6 +1020,11 @@ private:
 
 		while (!ops.empty()) {
 			apply_operator(values, ops);
+		}
+
+		if (eval_loop_guard == 0) {
+			std::cerr << "Error: Expression evaluation loop limit reached (possible infinite loop in #if)" << std::endl;
+			return 0;
 		}
 
 		if (values.size() == 0) {
@@ -1245,10 +1283,15 @@ private:
 
 	void addBuiltinDefines() {
 		// Add __cplusplus with the value corresponding to the C++ standard in use
-		defines_["__cplusplus"] = DefineDirective{ "201703L", {} };
+		defines_["__cplusplus"] = DefineDirective{ "202002L", {} };  // C++20
 		defines_["__STDC_HOSTED__"] = DefineDirective{ "1", {} };
 		defines_["__STDCPP_THREADS__"] = DefineDirective{ "1", {} };
 		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
+		
+		// MSVC C++ standard version feature flags (cumulative)
+		defines_["_HAS_CXX17"] = DefineDirective{ "1", {} };  // C++17 features available
+		defines_["_HAS_CXX20"] = DefineDirective{ "1", {} };  // C++20 features available
+		defines_["_MSVC_LANG"] = DefineDirective{ "202002L", {} };  // MSVC language version (C++20)
 
 		// FlashCpp compiler identification
 		defines_["__FLASHCPP__"] = DefineDirective{ "1", {} };
@@ -1264,6 +1307,17 @@ private:
 		defines_["_MSC_FULL_VER"] = DefineDirective{ "194435217", {} };  // MSVC 2022 full version
 		defines_["_MSC_BUILD"] = DefineDirective{ "1", {} };
 		defines_["_MSC_EXTENSIONS"] = DefineDirective{ "1", {} };  // Enable MSVC extensions
+		
+		// MSVC STL macros
+		defines_["_HAS_EXCEPTIONS"] = DefineDirective{ "1", {} };  // Exception handling enabled
+		defines_["_CPPRTTI"] = DefineDirective{ "1", {} };  // RTTI enabled
+		defines_["_NATIVE_WCHAR_T_DEFINED"] = DefineDirective{ "1", {} };  // wchar_t is native type
+		defines_["_WCHAR_T_DEFINED"] = DefineDirective{ "1", {} };
+		
+		// Additional common MSVC macros
+		defines_["_INTEGRAL_MAX_BITS"] = DefineDirective{ "64", {} };
+		defines_["_MT"] = DefineDirective{ "1", {} };  // Multithreaded
+		defines_["_DLL"] = DefineDirective{ "1", {} };  // Using DLL runtime
 
 		// Architecture macros
 		defines_["__x86_64__"] = DefineDirective{ "1", {} };
