@@ -363,9 +363,12 @@ public:
 					condition_was_true_stack.pop();
 				}
 				else if (line.find("#if", 0) == 0) {
-					// Nesting, push a new skipping state
+					// Nesting: #if, #ifdef, #ifndef all start with "#if"
+					// Push a new skipping state for any nested conditional
+					// Mark condition_was_true as true to prevent #else/#elif from activating
+					// (since we're skipping due to an outer condition, not this one)
 					skipping_stack.push(true);
-					condition_was_true_stack.push(false);
+					condition_was_true_stack.push(true);  // Changed from false
 				}
 				else if (line.find("#elif", 0) == 0) {
 					// If we're skipping and haven't found a true condition yet, evaluate #elif
@@ -1257,8 +1260,10 @@ private:
 		// Windows platform macros
 		defines_["_WIN32"] = DefineDirective{ "1", {} };
 		defines_["_WIN64"] = DefineDirective{ "1", {} };
-		defines_["_MSC_VER"] = DefineDirective{ "1900", {} };  // Pretend to be MSVC 2015 for compatibility
-		defines_["_MSC_FULL_VER"] = DefineDirective{ "190023026", {} };
+		defines_["_MSC_VER"] = DefineDirective{ "1944", {} };  // MSVC 2022 (match clang behavior)
+		defines_["_MSC_FULL_VER"] = DefineDirective{ "194435217", {} };  // MSVC 2022 full version
+		defines_["_MSC_BUILD"] = DefineDirective{ "1", {} };
+		defines_["_MSC_EXTENSIONS"] = DefineDirective{ "1", {} };  // Enable MSVC extensions
 
 		// Architecture macros
 		defines_["__x86_64__"] = DefineDirective{ "1", {} };
