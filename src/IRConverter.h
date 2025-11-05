@@ -1344,11 +1344,12 @@ private:
 		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
 
 		// Set result based on condition: setcc r8
-		// SETcc instructions need REX prefix for R8-R15 (REX without W bit)
-		uint8_t setcc_rex = (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) ? 0x41 : 0x00;
-		if (setcc_rex) {
-			textSectionData.push_back(setcc_rex);
-		}
+		// IMPORTANT: Always use REX prefix (at least 0x40) for byte operations
+		// Without REX, registers 4-7 map to AH, CH, DH, BH (high bytes)
+		// With REX, registers 4-7 map to SPL, BPL, SIL, DIL (low bytes)
+		// For registers 8-15, we need REX.B (0x41)
+		uint8_t setcc_rex = (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) ? 0x41 : 0x40;
+		textSectionData.push_back(setcc_rex);
 		std::array<uint8_t, 3> setccInst = { 0x0F, setcc_opcode, static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) & 0x07)) };
 		textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
 

@@ -1852,7 +1852,9 @@ public:
 			assert(getOperandCount() == 1 && "Branch instruction must have exactly 1 operand");
 			if (getOperandCount() > 0) {
 				oss << "br label %";
-				if (isOperandType<std::string_view>(0))
+				if (isOperandType<std::string>(0))
+					oss << getOperandAs<std::string>(0);
+				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 			}
 		}
@@ -1895,7 +1897,9 @@ public:
 			// label_name:
 			assert(getOperandCount() == 1 && "Label instruction must have exactly 1 operand");
 			if (getOperandCount() > 0) {
-				if (isOperandType<std::string_view>(0))
+				if (isOperandType<std::string>(0))
+					oss << getOperandAs<std::string>(0) << ":";
+				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0) << ":";
 			}
 		}
@@ -1907,13 +1911,19 @@ public:
 			assert(getOperandCount() == 3 && "LoopBegin instruction must have exactly 3 operands");
 			if (getOperandCount() >= 3) {
 				oss << "loop_begin %";
-				if (isOperandType<std::string_view>(0))
+				if (isOperandType<std::string>(0))
+					oss << getOperandAs<std::string>(0);
+				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 				oss << " %";
-				if (isOperandType<std::string_view>(1))
+				if (isOperandType<std::string>(1))
+					oss << getOperandAs<std::string>(1);
+				else if (isOperandType<std::string_view>(1))
 					oss << getOperandAs<std::string_view>(1);
 				oss << " %";
-				if (isOperandType<std::string_view>(2))
+				if (isOperandType<std::string>(2))
+					oss << getOperandAs<std::string>(2);
+				else if (isOperandType<std::string_view>(2))
 					oss << getOperandAs<std::string_view>(2);
 			}
 		}
