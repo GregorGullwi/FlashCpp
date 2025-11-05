@@ -1267,6 +1267,26 @@ private:
 
 	// Setup and load operands for arithmetic operations - validates operands, extracts common data, and loads into registers
 	// Helper function to generate REX prefix and ModR/M byte for register-to-register operations
+	// x86-64 opcode extensions for instructions that encode the operation in the reg field of ModR/M
+	enum class X64OpcodeExtension : uint8_t {
+		ROL = 0,  // Rotate left
+		ROR = 1,  // Rotate right
+		RCL = 2,  // Rotate through carry left
+		RCR = 3,  // Rotate through carry right
+		SHL = 4,  // Shift left (same as SAL)
+		SHR = 5,  // Shift right logical
+		SAL = 6,  // Shift arithmetic left (same as SHL)
+		SAR = 7,  // Shift arithmetic right
+		
+		TEST = 0, // TEST instruction (F6/F7)
+		NOT = 2,  // NOT instruction
+		NEG = 3,  // NEG instruction
+		MUL = 4,  // Unsigned multiply
+		IMUL = 5, // Signed multiply
+		DIV = 6,  // Unsigned divide
+		IDIV = 7  // Signed divide
+	};
+
 	// Used by arithmetic, bitwise, and comparison operations with R8-R15 support
 	struct RegToRegEncoding {
 		uint8_t rex_prefix;
@@ -1293,6 +1313,25 @@ private:
 		result.modrm_byte = 0xC0 + 
 			((static_cast<uint8_t>(reg_field) & 0x07) << 3) + 
 			(static_cast<uint8_t>(rm_field) & 0x07);
+		
+		return result;
+	}
+	
+	// Helper for instructions with opcode extension (reg field is a constant, rm is the register)
+	// Used by shift instructions and division which encode the operation in the reg field
+	RegToRegEncoding encodeOpcodeExtInstruction(X64OpcodeExtension opcode_ext, X64Register rm_field, bool include_rex_w = true) {
+		RegToRegEncoding result;
+		
+		result.rex_prefix = include_rex_w ? 0x48 : 0x40;
+		
+		// Check if rm_field needs REX.B (registers R8-R15)
+		if (static_cast<uint8_t>(rm_field) >= 8) {
+			result.rex_prefix |= 0x01; // Set REX.B
+		}
+		
+		// Build ModR/M byte: 11 (register mode) + opcode extension in reg field + rm bits
+		uint8_t ext_value = static_cast<uint8_t>(opcode_ext);
+		result.modrm_byte = 0xC0 | ((ext_value & 0x07) << 3) | (static_cast<uint8_t>(rm_field) & 0x07);
 		
 		return result;
 	}
@@ -3766,9 +3805,8 @@ private:
 		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
 
 		// Perform the shift left operation: shl r/m64, cl
-		std::array<uint8_t, 3> shlInst = { 0x48, 0xD3, 0x00 }; // REX.W (0x48) + Opcode (0xD3) + ModR/M (initially 0x00)
-		// ModR/M: Mod=11 (register-to-register), Reg=4 (opcode extension for shl), R/M=result_physical_reg
-		shlInst[2] = 0xC0 + (0x04 << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		auto encoding = encodeOpcodeExtInstruction(X64OpcodeExtension::SHL, ctx.result_physical_reg);
+		std::array<uint8_t, 3> shlInst = { encoding.rex_prefix, 0xD3, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), shlInst.begin(), shlInst.end());
 
 		// Store the result to the appropriate destination
@@ -3786,9 +3824,8 @@ private:
 
 		// Perform the shift right operation: sar r/m64, cl (arithmetic right shift)
 		// Note: Using SAR (arithmetic) instead of SHR (logical) to preserve sign for signed integers
-		std::array<uint8_t, 3> sarInst = { 0x48, 0xD3, 0x00 }; // REX.W (0x48) + Opcode (0xD3) + ModR/M (initially 0x00)
-		// ModR/M: Mod=11 (register-to-register), Reg=7 (opcode extension for sar), R/M=result_physical_reg
-		sarInst[2] = 0xC0 + (0x07 << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		auto encoding = encodeOpcodeExtInstruction(X64OpcodeExtension::SAR, ctx.result_physical_reg);
+		std::array<uint8_t, 3> sarInst = { encoding.rex_prefix, 0xD3, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), sarInst.begin(), sarInst.end());
 
 		// Store the result to the appropriate destination
@@ -3817,9 +3854,8 @@ private:
 		textSectionData.insert(textSectionData.end(), xorEdxInst.begin(), xorEdxInst.end());
 
 		// div rhs_physical_reg (unsigned division)
-		std::array<uint8_t, 3> divInst = { 0x48, 0xF7, 0x00 }; // REX.W (0x48) + Opcode (0xF7) + ModR/M (initially 0x00)
-		// ModR/M: Mod=11 (register-to-register), Reg=6 (opcode extension for div), R/M=rhs_physical_reg
-		divInst[2] = 0xC0 + (0x06 << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		auto encoding = encodeOpcodeExtInstruction(X64OpcodeExtension::DIV, ctx.rhs_physical_reg);
+		std::array<uint8_t, 3> divInst = { encoding.rex_prefix, 0xF7, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
 
 		// Store the result from RAX (quotient) to the appropriate destination
@@ -3839,9 +3875,8 @@ private:
 
 		// Perform the unsigned shift right operation: shr r/m64, cl (logical right shift)
 		// Note: Using SHR (logical) instead of SAR (arithmetic) for unsigned integers
-		std::array<uint8_t, 3> shrInst = { 0x48, 0xD3, 0x00 }; // REX.W (0x48) + Opcode (0xD3) + ModR/M (initially 0x00)
-		// ModR/M: Mod=11 (register-to-register), Reg=5 (opcode extension for shr), R/M=result_physical_reg
-		shrInst[2] = 0xC0 + (0x05 << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		auto encoding = encodeOpcodeExtInstruction(X64OpcodeExtension::SHR, ctx.result_physical_reg);
+		std::array<uint8_t, 3> shrInst = { encoding.rex_prefix, 0xD3, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), shrInst.begin(), shrInst.end());
 
 		// Store the result to the appropriate destination
@@ -3901,14 +3936,14 @@ private:
 		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end() - 1);
 
 		// Perform signed division: idiv r/m64
-		std::array<uint8_t, 3> idivInst = { 0x48, 0xF7, 0xF8 }; // idiv r64
-		idivInst[2] = 0xF8 + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		auto encoding = encodeOpcodeExtInstruction(X64OpcodeExtension::IDIV, ctx.rhs_physical_reg);
+		std::array<uint8_t, 3> idivInst = { encoding.rex_prefix, 0xF7, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), idivInst.begin(), idivInst.end());
 
 		// Move remainder from RDX to result register
 		if (ctx.result_physical_reg != X64Register::RDX) {
-			std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xD0 }; // mov r64, rdx
-			movInst[2] = 0xD0 + static_cast<uint8_t>(ctx.result_physical_reg);
+			auto mov_encoding = encodeRegToRegInstruction(X64Register::RDX, ctx.result_physical_reg);
+			std::array<uint8_t, 3> movInst = { mov_encoding.rex_prefix, 0x89, mov_encoding.modrm_byte };
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
 
