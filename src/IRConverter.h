@@ -3422,8 +3422,22 @@ private:
 			}
 			else if (instruction.isOperandType<unsigned long long>(2)) {
 				unsigned long long returnValue = instruction.getOperandAs<unsigned long long>(2);
+				
+				// Check if this is actually a negative number stored as unsigned long long
+				// (happens when unary minus is applied to a literal)
+				// Values like 0xFFFFFFFFFFFFFFFF (-1) should be treated as signed
 				if (returnValue > std::numeric_limits<uint32_t>::max()) {
-					throw std::runtime_error("Return value exceeds 32-bit limit");
+					// Could be a negative 32-bit value stored as 64-bit unsigned
+					// Check if the lower 32 bits represent a valid signed value
+					uint32_t lower32 = static_cast<uint32_t>(returnValue);
+					// If upper 32 bits are all 1s (sign extension of negative number),
+					// treat it as a signed 32-bit value
+					if ((returnValue >> 32) == 0xFFFFFFFF) {
+						// This is a negative number, use the lower 32 bits
+						returnValue = lower32;
+					} else {
+						throw std::runtime_error("Return value exceeds 32-bit limit");
+					}
 				}
 
 				// mov eax, immediate instruction has a fixed size of 5 bytes
@@ -3824,6 +3838,11 @@ private:
 		seteInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
 
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
 	}
@@ -3841,6 +3860,11 @@ private:
 		std::array<uint8_t, 3> setneInst = { 0x0F, 0x95, 0xC0 }; // setne r8
 		setneInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setneInst.begin(), setneInst.end());
+
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -3860,6 +3884,11 @@ private:
 		setlInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setlInst.begin(), setlInst.end());
 
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
 	}
@@ -3878,6 +3907,11 @@ private:
 		setleInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setleInst.begin(), setleInst.end());
 
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
 	}
@@ -3892,9 +3926,15 @@ private:
 		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
 
 		// Set result based on flags: setg r8 (signed greater than)
+		// This only sets the low byte, leaving upper bytes unchanged
 		std::array<uint8_t, 3> setgInst = { 0x0F, 0x9F, 0xC0 }; // setg r8
 		setgInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setgInst.begin(), setgInst.end());
+
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -3914,6 +3954,11 @@ private:
 		setgeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setgeInst.begin(), setgeInst.end());
 
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
 	}
@@ -3931,6 +3976,11 @@ private:
 		std::array<uint8_t, 3> setbInst = { 0x0F, 0x92, 0xC0 }; // setb r8
 		setbInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setbInst.begin(), setbInst.end());
+
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -3950,6 +4000,11 @@ private:
 		setbeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setbeInst.begin(), setbeInst.end());
 
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
 	}
@@ -3968,6 +4023,11 @@ private:
 		setaInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setaInst.begin(), setaInst.end());
 
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
+
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
 	}
@@ -3985,6 +4045,11 @@ private:
 		std::array<uint8_t, 3> setaeInst = { 0x0F, 0x93, 0xC0 }; // setae r8
 		setaeInst[2] = 0xC0 + static_cast<uint8_t>(ctx.result_physical_reg);
 		textSectionData.insert(textSectionData.end(), setaeInst.begin(), setaeInst.end());
+
+		// Zero-extend the low byte to full register: movzx r64, r8
+		std::array<uint8_t, 4> movzxInst = { 0x48, 0x0F, 0xB6, 0xC0 }; // movzx r64, r8
+		movzxInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
