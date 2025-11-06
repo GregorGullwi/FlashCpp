@@ -1112,6 +1112,17 @@ private:
 			std::cerr << "Evaluating expression: '" << debug_expr << "'" << std::endl;
 		}
 		
+		// Check if expression is empty (all whitespace) - treat as 0
+		auto start_pos = iss.tellg();
+		iss >> std::ws;  // Skip whitespace
+		if (iss.eof() || iss.peek() == EOF) {
+			if (settings_.isVerboseMode()) {
+				std::cerr << "  Empty expression, returning 0" << std::endl;
+			}
+			return 0;
+		}
+		iss.seekg(start_pos);  // Reset to start
+		
 		std::stack<long> values;
 		std::stack<Operator> ops;
 
