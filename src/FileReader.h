@@ -21,6 +21,27 @@
 
 using namespace std::string_view_literals;
 
+// List of all separator characters for the preprocessor
+// These are characters that can appear before/after identifiers without being part of them
+constexpr char separator_chars[] = {
+	' ', '\t', '\n', '\r',                      // Whitespace
+	'!', '#', '%', '&', '(', ')', '*', '+',     // Operators and delimiters
+	',', '-', '/', ':', ';', '<', '=', '>',     // More operators
+	'?', '[', ']', '^', '{', '|', '}', '~'      // Brackets, braces, and bitwise
+};
+
+// Constexpr function to build the separator bitset at compile-time
+constexpr uint64_t build_separator_bitset_chunk(int chunk_index) {
+	uint64_t result = 0;
+	for (char c : separator_chars) {
+		unsigned char uc = static_cast<unsigned char>(c);
+		if (uc >= chunk_index * 64 && uc < (chunk_index + 1) * 64) {
+			result |= (1ULL << (uc % 64));
+		}
+	}
+	return result;
+}
+
 struct DefineDirective {
 	std::string body;
 	std::vector<std::string> args;
@@ -386,7 +407,7 @@ public:
 					// If we're skipping and haven't found a true condition yet, evaluate #elif
 					if (!condition_was_true_stack.top()) {
 						std::string condition = line.substr(5);  // Skip "#elif"
-						condition = expandMacros(condition);
+						condition = expandMacrosForConditional(condition);
 						std::istringstream iss(condition);
 						long expression_result = evaluate_expression(iss);
 						if (expression_result != 0) {
@@ -447,7 +468,7 @@ public:
 			else if (line.find("#if", 0) == 0) {
 				// Extract and expand macros in the condition before evaluation
 				std::string condition = line.substr(3);  // Skip "#if"
-				condition = expandMacros(condition);
+				condition = expandMacrosForConditional(condition);
 				std::istringstream iss(condition);
 				long expression_result = evaluate_expression(iss);
 				bool condition_true = (expression_result != 0);
@@ -466,7 +487,7 @@ public:
 				else {
 					// Evaluate the #elif condition
 					std::string condition = line.substr(5);  // Skip "#elif"
-					condition = expandMacros(condition);
+					condition = expandMacrosForConditional(condition);
 					std::istringstream iss(condition);
 					long expression_result = evaluate_expression(iss);
 					if (expression_result != 0) {
@@ -560,8 +581,18 @@ public:
 	}
 
 private:
-	static bool is_seperator_character(char c) {
-		return ((c == ' ') | (c == ',') | (c == '#') | (c == ')') | (c == '(')) != 0;
+	// Separator bitset - 32 bytes (4 × uint64_t), one bit per character
+	// Generated at compile-time by looping over separator_chars array
+	static constexpr std::array<uint64_t, 4> separator_bitset = {
+		build_separator_bitset_chunk(0),  // Chars 0-63
+		build_separator_bitset_chunk(1),  // Chars 64-127
+		build_separator_bitset_chunk(2),  // Chars 128-191
+		build_separator_bitset_chunk(3)   // Chars 192-255
+	};
+
+	static constexpr bool is_seperator_character(char c) {
+		unsigned char uc = static_cast<unsigned char>(c);
+		return (separator_bitset[uc >> 6] >> (uc & 0x3F)) & 1;
 	}
 	// Helper function to check if a position is inside a string literal (static version)
 	// Handles both regular strings "..." and raw strings R"(...)" or R"delim(...)delim"
@@ -636,6 +667,102 @@ private:
 		return inside_string || inside_raw_string;
 	}
 
+	// Expand macros for #if/#elif expressions, preserving identifiers inside defined()
+	std::string expandMacrosForConditional(const std::string& input) {
+		if (settings_.isVerboseMode()) {
+			std::cerr << "expandMacrosForConditional input: '" << input << "'" << std::endl;
+		}
+		
+		std::string result;
+		size_t pos = 0;
+		
+		while (pos < input.size()) {
+			// Look for "defined" keyword
+			size_t defined_pos = input.find("defined", pos);
+			
+			if (defined_pos == std::string::npos) {
+				// No more "defined" keywords, expand the rest
+				if (settings_.isVerboseMode() && pos < input.size()) {
+					std::cerr << "  Expanding rest: '" << input.substr(pos) << "'" << std::endl;
+				}
+				result += expandMacros(input.substr(pos));
+				break;
+			}
+			
+			// Check if this is actually the "defined" keyword (not part of another identifier)
+			bool is_keyword = true;
+			if (defined_pos > 0) {
+				char prev = input[defined_pos - 1];
+				if (std::isalnum(prev) || prev == '_') {
+					is_keyword = false;
+				}
+			}
+			if (is_keyword && defined_pos + 7 < input.size()) {
+				char next = input[defined_pos + 7];
+				if (std::isalnum(next) || next == '_') {
+					is_keyword = false;
+				}
+			}
+			
+			if (!is_keyword) {
+				// Not actually "defined" keyword, just expand and continue
+				result += expandMacros(input.substr(pos, defined_pos - pos + 1));
+				pos = defined_pos + 1;
+				continue;
+			}
+			
+			// Expand everything before "defined"
+			if (settings_.isVerboseMode() && defined_pos > pos) {
+				std::cerr << "  Expanding before 'defined': '" << input.substr(pos, defined_pos - pos) << "'" << std::endl;
+			}
+			result += expandMacros(input.substr(pos, defined_pos - pos));
+			result += "defined";  // Add the keyword itself
+			
+			// Skip past "defined"
+			pos = defined_pos + 7; // length of "defined"
+			
+			// Skip whitespace
+			while (pos < input.size() && std::isspace(input[pos])) {
+				result += input[pos++];
+			}
+			
+			// Check if there's a '('
+			bool has_paren = (pos < input.size() && input[pos] == '(');
+			if (has_paren) {
+				result += "(";
+				pos++;
+				// Skip whitespace after '('
+				while (pos < input.size() && std::isspace(input[pos])) {
+					result += input[pos++];
+				}
+			}
+			
+			// Extract the identifier (don't expand it!)
+			size_t ident_start = pos;
+			while (pos < input.size() && (std::isalnum(input[pos]) || input[pos] == '_')) {
+				pos++;
+			}
+			result += input.substr(ident_start, pos - ident_start);
+			
+			// Skip whitespace
+			while (pos < input.size() && std::isspace(input[pos])) {
+				result += input[pos++];
+			}
+			
+			// If there was a '(', expect a ')'
+			if (has_paren && pos < input.size() && input[pos] == ')') {
+				result += ")";
+				pos++;
+			}
+		}
+		
+		if (settings_.isVerboseMode()) {
+			std::cerr << "expandMacrosForConditional output: '" << result << "'" << std::endl;
+		}
+		
+		return result;
+	}
+
 	std::string expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros = {}) {
 		std::string output = input;
 
@@ -676,19 +803,41 @@ private:
 		}
 
 		bool expanded = true;
-		size_t loop_guard = 1000;  // Reduced from 100M to catch infinite loops faster
-		while (expanded && loop_guard-- > 0) {
+		size_t loop_guard = 1000;
+		size_t scan_pos = 0;  // Track where we are in the scan
+		
+		// Debug counter for tracking iterations
+		size_t iteration_count = 0;
+		size_t last_debug_pos = 0;
+		
+		while (scan_pos < output.size() && loop_guard-- > 0) {
+			iteration_count++;
+			
+			// Debug: Print every 100 iterations or when scan_pos jumps significantly
+			if (settings_.isVerboseMode() && (iteration_count % 100 == 0 || scan_pos - last_debug_pos > 1000)) {
+				std::cerr << "Expansion iteration " << iteration_count << " at scan_pos " << scan_pos 
+				          << " / " << output.size() << " (loop_guard=" << loop_guard << ")" << std::endl;
+				std::cerr << "  Context: " << output.substr(scan_pos, std::min<size_t>(80, output.size() - scan_pos)) << std::endl;
+				last_debug_pos = scan_pos;
+			}
+			
 			expanded = false;
 			size_t last_char_index = output.size() - 1;
+			
+			// Try to find any macro starting from scan_pos
+			size_t best_pos = std::string::npos;
+			std::string best_pattern;
+			const Directive* best_directive = nullptr;
+			size_t best_pattern_end = 0;
+			
 			for (const auto& [pattern, directive] : defines_) {
 				// Skip if this macro is currently being expanded (prevent recursion)
 				if (expanding_macros.count(pattern) > 0) {
 					continue;
 				}
 				
-				// Search for all occurrences of the pattern and find the first one
-				// that's not inside a string literal and has proper separators
-				size_t search_pos = 0;
+				// Search for the pattern starting from scan_pos
+				size_t search_pos = scan_pos;
 				size_t pos = std::string::npos;
 
 				while ((search_pos = output.find(pattern, search_pos)) != std::string::npos) {
@@ -713,19 +862,40 @@ private:
 					break;
 				}
 
-				if (pos != std::string::npos) {
-					size_t pattern_end = pos + pattern.size();
+				// Keep track of the earliest match
+				if (pos != std::string::npos && (best_pos == std::string::npos || pos < best_pos)) {
+					best_pos = pos;
+					best_pattern = pattern;
+					best_directive = &directive;
+					best_pattern_end = pos + pattern.size();
+				}
+			}
 
-					std::string replace_str;
-					if (auto* defineDirective = directive.get_if<DefineDirective>()) {
-						replace_str = defineDirective->body;
+			if (best_pos != std::string::npos) {
+				size_t pattern_end = best_pattern_end;
 
-						size_t args_start = output.find_first_of('(', pattern_end);
-						if (args_start != std::string::npos && output.find_first_not_of(' ', pattern_end) == args_start) {
-							size_t args_end = findMatchingClosingParen(output, args_start);
-							std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
+				// Debug: Print when we find a macro to expand
+				if (settings_.isVerboseMode()) {
+					std::cerr << "Found macro '" << best_pattern << "' at position " << best_pos << std::endl;
+					size_t context_start = (best_pos >= 20) ? (best_pos - 20) : 0;
+					size_t context_len = std::min<size_t>(80, output.size() - context_start);
+					std::cerr << "  Before: " << output.substr(context_start, context_len) << std::endl;
+				}
 
-							// Calculate variadic arguments
+				std::string replace_str;
+				if (auto* defineDirective = best_directive->get_if<DefineDirective>()) {
+					replace_str = defineDirective->body;
+
+					size_t args_start = output.find_first_of('(', pattern_end);
+					if (args_start != std::string::npos && output.find_first_not_of(' ', pattern_end) == args_start) {
+						size_t args_end = findMatchingClosingParen(output, args_start);
+						std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
+
+						// NOTE: Arguments should NOT be pre-expanded here.
+						// They will be expanded during the final recursive expansion with proper protection.
+						// Pre-expanding them causes issues with recursive macro definitions like SAL macros.
+
+						// Calculate variadic arguments
 							std::string va_args_str;
 							bool has_variadic_args = false;
 							if (args.size() > defineDirective->args.size()) {
@@ -767,11 +937,13 @@ private:
 								replace_str.replace(va_args_pos, 11, va_args_str);
 							}
 
-							if (!defineDirective->args.empty()) {
-								if (args.size() < defineDirective->args.size()) {
-									continue;
-								}
-								for (size_t i = 0; i < defineDirective->args.size(); ++i) {
+						if (!defineDirective->args.empty()) {
+							if (args.size() < defineDirective->args.size()) {
+								// Not enough arguments, skip this macro and move forward
+								scan_pos = best_pos + 1;
+								continue;
+							}
+							for (size_t i = 0; i < defineDirective->args.size(); ++i) {
 									// Handle stringification operator (#) - but NOT token pasting (##)
 									// We need to avoid matching # when it's part of ##
 									size_t stringify_pos = 0;
@@ -793,30 +965,50 @@ private:
 										replace_str.replace(stringify_pos, 1 + defineDirective->args[i].length(), "\"" + args[i] + "\"");
 										stringify_pos += args[i].length() + 2; // Skip past the replaced string
 									}
-									// Replace macro arguments (non-stringified)
-									replaceAll(replace_str, defineDirective->args[i], args[i]);
-								}
+								// Replace macro arguments (non-stringified)
+								replaceAll(replace_str, defineDirective->args[i], args[i]);
 							}
-
-							pattern_end = args_end + 1;
 						}
-					}
-					else if (auto* function_directive = directive.get_if<FunctionDirective>()) {
-						replace_str = function_directive->getBody();
-					}
 
-					// Add this macro to the expanding set to prevent recursion
-					auto new_expanding = expanding_macros;
-					new_expanding.insert(pattern);
-					
-					// Recursively expand macros in the replacement text
-					replace_str = expandMacros(replace_str, new_expanding);
-
-					output = output.replace(output.begin() + pos, output.begin() + pattern_end, replace_str);
-					last_char_index = output.size() - 1;
-					expanded = true;
-					break;
+						pattern_end = args_end + 1;
+					}
 				}
+				else if (auto* function_directive = best_directive->get_if<FunctionDirective>()) {
+					replace_str = function_directive->getBody();
+				}
+
+				// Add this macro to the expanding set to prevent recursion
+				auto new_expanding = expanding_macros;
+				new_expanding.insert(best_pattern);
+				
+				// Recursively expand macros in the replacement text
+				replace_str = expandMacros(replace_str, new_expanding);
+
+				// Debug: Print replacement
+				if (settings_.isVerboseMode()) {
+					std::cerr << "  Replacement: " << replace_str.substr(0, std::min<size_t>(100, replace_str.size())) << std::endl;
+				}
+
+				output = output.replace(output.begin() + best_pos, output.begin() + pattern_end, replace_str);
+				
+				// Move scan position to after the replacement
+				// This prevents rescanning the replacement we just made
+				scan_pos = best_pos + replace_str.size();
+				
+				// Debug: Print new scan position
+				if (settings_.isVerboseMode()) {
+					std::cerr << "  After expansion, scan_pos moved to " << scan_pos;
+					if (replace_str.size() >= best_pattern.size()) {
+						std::cerr << " (jumped forward by " << (replace_str.size() - best_pattern.size()) << ")" << std::endl;
+					} else {
+						std::cerr << " (jumped backward by " << (best_pattern.size() - replace_str.size()) << ")" << std::endl;
+					}
+				}
+				
+				expanded = true;
+			} else {
+				// No more macros found from scan_pos, move forward
+				scan_pos++;
 			}
 		}
 
@@ -846,11 +1038,19 @@ private:
 
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops) {
 		if (ops.empty() || values.size() < 1) {
+			if (settings_.isVerboseMode()) {
+				std::cerr << "apply_operator: ops.empty()=" << ops.empty() 
+				          << " values.size()=" << values.size() << std::endl;
+			}
 			std::cerr << "Internal compiler error, values don't match the ops!" << std::endl;
 			return;
 		}
 
 		Operator op = ops.top();
+		if (settings_.isVerboseMode()) {
+			std::cerr << "Applying operator (values.size=" << values.size() << ")" << std::endl;
+		}
+		
 		if (op == Operator::OpenParen) {
 			ops.pop();
 			return;
@@ -902,6 +1102,16 @@ private:
 	}
 
 	long evaluate_expression(std::istringstream& iss) {
+		if (settings_.isVerboseMode()) {
+			// Save position and read entire expression for debug
+			auto pos = iss.tellg();
+			std::string debug_expr;
+			std::getline(iss, debug_expr);
+			iss.clear();
+			iss.seekg(pos);
+			std::cerr << "Evaluating expression: '" << debug_expr << "'" << std::endl;
+		}
+		
 		std::stack<long> values;
 		std::stack<Operator> ops;
 
@@ -915,6 +1125,9 @@ private:
 				iss >> str_value;
 				long value = stol(str_value);
 				values.push(value);
+				if (settings_.isVerboseMode()) {
+					std::cerr << "  Pushed value: " << value << " (values.size=" << values.size() << ")" << std::endl;
+				}
 			}
 			else if (char_info_table.count(c)) {
 				CharInfo info = char_info_table[c];
@@ -926,6 +1139,10 @@ private:
 				}
 
 				const Operator op = string_to_operator(op_str);
+				
+				if (settings_.isVerboseMode()) {
+					std::cerr << "  Found operator: '" << op_str << "' (values.size=" << values.size() << ", ops.size=" << ops.size() << ")" << std::endl;
+				}
 
 				if (c == '(') {
 					ops.push(op);
@@ -985,12 +1202,17 @@ private:
 					}
 
 					if (has_parenthesis) {
-						iss.ignore(std::numeric_limits<std::streamsize>::max(), ')'); // Ignore characters until the ')'
+						// The symbol may have ')' at the end if it was read by >> operator
+						// Remove ')' from the symbol, but don't call ignore() because >> already consumed it
 						symbol.erase(std::remove(symbol.begin(), symbol.end(), ')'), symbol.end());
 					}
 
 					const bool value = defines_.count(symbol) > 0;
 					values.push(value);
+					if (settings_.isVerboseMode()) {
+						std::cerr << "  Pushed defined() result: " << value << " (symbol='" << symbol << "', values.size=" << values.size() << ")" << std::endl;
+						// Don't print stream state here anymore since it was misleading
+					}
 				}
 				else if (auto it = defines_.find(keyword); it != defines_.end()) {
 					// convert the value to an int
@@ -1029,7 +1251,16 @@ private:
 
 		if (values.size() == 0) {
 			std::cerr << "Internal compiler error, mismatched operator in file " << filestack_.top().file_name << ":" << filestack_.top().line_number;
+			if (settings_.isVerboseMode()) {
+				std::cerr << " - values stack is empty, ops.size()=" << ops.size() << std::endl;
+			} else {
+				std::cerr << std::endl;
+			}
 			return 0;
+		}
+
+		if (settings_.isVerboseMode()) {
+			std::cerr << "Expression result: " << values.top() << " (values.size=" << values.size() << ", ops.size=" << ops.size() << ")" << std::endl;
 		}
 
 		return values.top();
@@ -1048,17 +1279,29 @@ private:
 		}
 		std::string filename(token.substr(1, token.size() - 2));
 		bool found = false;
+		if (settings_.isVerboseMode()) {
+			std::cerr << "Looking for include file: " << filename << std::endl;
+		}
 		for (const auto& include_dir : settings_.getIncludeDirs()) {
 			std::string include_file(include_dir);
 			include_file.append("/");
 			include_file.append(filename);
+			if (settings_.isVerboseMode()) {
+				std::cerr << "  Checking path: " << include_file << " - exists: " << std::filesystem::exists(include_file) << std::endl;
+			}
 			// Check if the file exists before trying to read it
 			// This distinguishes between "file not found" and "file found but had preprocessing error"
 			if (std::filesystem::exists(include_file)) {
 				// File exists, try to read and preprocess it
+				if (settings_.isVerboseMode()) {
+					std::cerr << "Found include file, attempting to read: " << include_file << std::endl;
+				}
 				if (!readFile(include_file)) {
 					// Preprocessing failed (e.g., #error directive)
 					// Return false to propagate the error up
+					if (settings_.isVerboseMode()) {
+						std::cerr << "readFile returned false for: " << include_file << std::endl;
+					}
 					return false;
 				}
 				tree_.addDependency(current_file, include_file);
