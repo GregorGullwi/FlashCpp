@@ -25,9 +25,10 @@ public:
 				continue;
 			}
 
-			if (arg.size() >= 2 && arg[0] == '-') {
+			if (arg.size() >= 2 && (arg[0] == '-' || arg[0] == '/')) {
+				// Handle both - and / prefixes for options (Windows compatibility)
 				if (arg.size() >= 3 && arg[1] == '-') {
-					// Option with long name, e.g. --option=value
+					// Option with long name, e.g. --option=value (only with -)
 					auto equal_pos = arg.find('=');
 					if (equal_pos == std::string_view::npos) {
 						optionValues_[arg.substr(2)] = std::monostate{};
@@ -37,22 +38,35 @@ public:
 					}
 				}
 				else {
-					// Option with short name, e.g. -o value
-					if (arg == "-I" && i + 1 < argc) {
-						std::string_view nextArg = argv[++i];
+					// Option with short name, e.g. -I value or /I value
+					// Also handle concatenated format: /Ipath or -Ipath
+					std::string_view option_part = arg.substr(1);
+					
+					// Check if this is an include directory flag
+					if (option_part.size() >= 1 && option_part[0] == 'I') {
+						if (option_part.size() == 1) {
+							// Format: /I path (space-separated)
+							if (i + 1 < argc) {
+								std::string_view nextArg = argv[++i];
 
-						if (nextArg.front() == '"' || nextArg.front() == '\'') {
-							inQuotedString = true;
-							quoteChar = nextArg.front();
-							quotedString = nextArg.substr(1);
-							if (nextArg.back() == quoteChar) {
-								inQuotedString = false;
-								context.addIncludeDir(quotedString.substr(0, quotedString.size() - 1));
-								quotedString.clear();
+								if (nextArg.front() == '"' || nextArg.front() == '\'') {
+									inQuotedString = true;
+									quoteChar = nextArg.front();
+									quotedString = nextArg.substr(1);
+									if (nextArg.back() == quoteChar) {
+										inQuotedString = false;
+										context.addIncludeDir(quotedString.substr(0, quotedString.size() - 1));
+										quotedString.clear();
+									}
+								}
+								else {
+									context.addIncludeDir(nextArg);
+								}
 							}
-						}
-						else {
-							context.addIncludeDir(nextArg);
+						} else {
+							// Format: /Ipath (concatenated)
+							std::string_view path = option_part.substr(1);
+							context.addIncludeDir(path);
 						}
 					}
 					else if (isKnownFlag(arg.substr(1))) {
