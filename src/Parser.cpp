@@ -317,7 +317,7 @@ ParseResult Parser::parse_top_level_node()
 	}
 #endif
 
-	// Check for #pragma pack directives
+	// Check for #pragma directives
 	if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "#") {
 		consume_token(); // consume '#'
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
@@ -358,6 +358,32 @@ ParseResult Parser::parse_top_level_node()
 
 				// If we get here, it's an unsupported pragma pack format
 				return ParseResult::error("Unsupported #pragma pack format", *current_token_);
+			} else {
+				// Unknown pragma - skip until end of line or until we hit a token that looks like the start of a new construct
+				// Pragmas can span multiple lines with parentheses, so we need to be careful
+				int paren_depth = 0;
+				while (peek_token().has_value()) {
+					if (peek_token()->value() == "(") {
+						paren_depth++;
+						consume_token();
+					} else if (peek_token()->value() == ")") {
+						paren_depth--;
+						consume_token();
+						if (paren_depth == 0) {
+							// End of pragma
+							break;
+						}
+					} else if (paren_depth == 0 && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "#") {
+						// Start of a new preprocessor directive
+						break;
+					} else if (paren_depth == 0 && peek_token()->type() == Token::Type::Keyword) {
+						// Start of a new declaration (namespace, class, extern, etc.)
+						break;
+					} else {
+						consume_token();
+					}
+				}
+				return saved_position.success();
 			}
 		}
 	}
@@ -488,7 +514,9 @@ ParseResult Parser::parse_top_level_node()
 					}
 					return saved_position.success();
 				}
-				return result;
+				// Sub-parser failed - propagate error properly by discarding our saved position
+				// (sub-parser already handled its own position restoration)
+				return saved_position.error("Failed to parse extern block");
 			}
 
 			// Single declaration form: extern "C" int func();
