@@ -244,6 +244,10 @@ private:
 
                 ParseResult error(std::string_view error_message);
 
+                // Propagate result from a sub-parser that has its own ScopedTokenPosition
+                // Sub-parsers handle their own position restoration, so we just discard ours
+                ParseResult propagate(ParseResult&& result);
+
         private:
                 class Parser& parser_;
                 TokenPosition saved_position_;

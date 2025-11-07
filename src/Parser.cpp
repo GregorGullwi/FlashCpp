@@ -205,6 +205,14 @@ ParseResult Parser::ScopedTokenPosition::error(std::string_view error_message) {
         *parser_.peek_token());
 }
 
+ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
+    // Sub-parser already handled position restoration (if needed)
+    // Just discard our saved position and forward the result
+    discarded_ = true;
+    parser_.discard_saved_token(saved_position_);
+    return std::move(result);
+}
+
 std::optional<Token> Parser::consume_token() {
     std::optional<Token> token = peek_token();
     current_token_.emplace(lexer_.next_token());
@@ -273,7 +281,7 @@ void Parser::skip_balanced_braces() {
 	
 	int brace_depth = 0;
 	size_t token_count = 0;
-	const size_t MAX_TOKENS = 10000;  // Safety limit
+	const size_t MAX_TOKENS = 10000;  // Safety limit to prevent infinite loops
 
 	while (peek_token().has_value() && token_count < MAX_TOKENS) {
 		auto token = peek_token();
@@ -398,7 +406,7 @@ ParseResult Parser::parse_top_level_node()
 			}
 			return saved_position.success();
 		}
-		return result;
+		return saved_position.propagate(std::move(result));
 	}
 
 	// Check if it's a namespace declaration
@@ -411,7 +419,7 @@ ParseResult Parser::parse_top_level_node()
 			}
 			return saved_position.success();
 		}
-		return result;
+		return saved_position.propagate(std::move(result));
 	}
 
 	// Check if it's a template declaration (must come before struct/class check)
@@ -423,7 +431,7 @@ ParseResult Parser::parse_top_level_node()
 			}
 			return saved_position.success();
 		}
-		return result;
+		return saved_position.propagate(std::move(result));
 	}
 
 	// Check if it's a class or struct declaration
@@ -443,7 +451,7 @@ ParseResult Parser::parse_top_level_node()
 			pending_struct_variables_.clear();
 			return saved_position.success();
 		}
-		return result;
+		return saved_position.propagate(std::move(result));
 	}
 
 	// Check if it's an enum declaration
@@ -455,7 +463,7 @@ ParseResult Parser::parse_top_level_node()
 			}
 			return saved_position.success();
 		}
-		return result;
+		return saved_position.propagate(std::move(result));
 	}
 
 	// Check if it's a typedef declaration
@@ -467,7 +475,7 @@ ParseResult Parser::parse_top_level_node()
 			}
 			return saved_position.success();
 		}
-		return result;
+		return saved_position.propagate(std::move(result));
 	}
 
 	// Check for extern "C" linkage specification
@@ -514,9 +522,7 @@ ParseResult Parser::parse_top_level_node()
 					}
 					return saved_position.success();
 				}
-				// Sub-parser failed - propagate error properly by discarding our saved position
-				// (sub-parser already handled its own position restoration)
-				return saved_position.error("Failed to parse extern block");
+				return saved_position.propagate(std::move(result));
 			}
 
 			// Single declaration form: extern "C" int func();
@@ -6967,7 +6973,7 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 			auto typedef_result = parse_typedef_declaration();
 			if (typedef_result.is_error()) {
 				current_linkage_ = saved_linkage;
-				return typedef_result;
+				return typedef_result;  // No ScopedTokenPosition here, so direct return is OK
 			}
 			if (auto decl_node = typedef_result.node()) {
 				block_ref.add_statement_node(*decl_node);
@@ -6979,7 +6985,7 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 		ParseResult decl_result = parse_declaration_or_function_definition();
 		if (decl_result.is_error()) {
 			current_linkage_ = saved_linkage;  // Restore linkage before returning error
-			return decl_result;
+			return decl_result;  // No ScopedTokenPosition here, so direct return is OK
 		}
 
 		if (auto decl_node = decl_result.node()) {
