@@ -6962,6 +6962,19 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 
 	// Parse declarations until '}'
 	while (peek_token().has_value() && peek_token()->value() != "}") {
+		// Check for typedef
+		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "typedef") {
+			auto typedef_result = parse_typedef_declaration();
+			if (typedef_result.is_error()) {
+				current_linkage_ = saved_linkage;
+				return typedef_result;
+			}
+			if (auto decl_node = typedef_result.node()) {
+				block_ref.add_statement_node(*decl_node);
+			}
+			continue;
+		}
+		
 		// Parse a declaration or function definition
 		ParseResult decl_result = parse_declaration_or_function_definition();
 		if (decl_result.is_error()) {
