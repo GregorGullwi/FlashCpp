@@ -802,7 +802,7 @@ private:
 			raw_start++;
 		}
 
-		bool expanded = true;
+		//bool expanded = true;
 		size_t loop_guard = 1000;
 		size_t scan_pos = 0;  // Track where we are in the scan
 		
@@ -821,7 +821,7 @@ private:
 				last_debug_pos = scan_pos;
 			}
 			
-			expanded = false;
+			//expanded = false;
 			size_t last_char_index = output.size() - 1;
 			
 			// Try to find any macro starting from scan_pos
@@ -1005,7 +1005,7 @@ private:
 					}
 				}
 				
-				expanded = true;
+				//expanded = true;
 			} else {
 				// No more macros found from scan_pos, move forward
 				scan_pos++;

@@ -364,6 +364,3 @@ struct TypedNumeric {
         unsigned char sizeInBits = 0;
         NumericLiteralValue value = 0ULL;
 };
-
-// only handles unsigned integer types for now
-static std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);

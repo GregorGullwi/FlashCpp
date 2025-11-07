@@ -496,14 +496,14 @@ private:
 			if (func_name == "operator=") {
 				// This is an implicit copy or move assignment operator
 				// Determine which one by checking the parameter type
-				bool is_move_assignment = false;
-				if (node.parameter_nodes().size() == 1) {
-					const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					if (param_type.is_rvalue_reference()) {
-						is_move_assignment = true;
-					}
-				}
+// 				bool is_move_assignment = false;
+// 				if (node.parameter_nodes().size() == 1) {
+// 					const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
+// 					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+// 					if (param_type.is_rvalue_reference()) {
+// 						is_move_assignment = true;
+// 					}
+// 				}
 
 				// Generate memberwise assignment from 'other' to 'this'
 				// (same code for both copy and move assignment - memberwise copy/move)
