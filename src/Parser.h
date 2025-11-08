@@ -363,6 +363,7 @@ private:
         ParseResult parse_struct_declaration();  // Add struct declaration parser
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser
+        ParseResult parse_static_assert();       // NEW: Parse static_assert declarations
         ParseResult parse_friend_declaration();  // NEW: Parse friend declarations
         ParseResult parse_template_declaration();  // NEW: Parse template declarations
         ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member function templates

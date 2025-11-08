@@ -568,6 +568,17 @@ ParseResult Parser::parse_top_level_node()
 		return saved_position.propagate(std::move(result));
 	}
 
+	// Check if it's a static_assert declaration
+	if (peek_token()->type() == Token::Type::Keyword &&
+		peek_token()->value() == "static_assert") {
+		auto result = parse_static_assert();
+		if (!result.is_error()) {
+			// static_assert doesn't produce an AST node (compile-time only)
+			return saved_position.success();
+		}
+		return saved_position.propagate(std::move(result));
+	}
+
 	// Check if it's a namespace declaration
 	if (peek_token()->type() == Token::Type::Keyword &&
 		peek_token()->value() == "namespace") {
@@ -2958,6 +2969,61 @@ ParseResult Parser::parse_enum_declaration()
 	enum_type_info.setEnumInfo(std::move(enum_info));
 
 	return saved_position.success(enum_node);
+}
+
+ParseResult Parser::parse_static_assert()
+{
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'static_assert' keyword
+	auto static_assert_keyword = consume_token();
+	if (!static_assert_keyword.has_value() || static_assert_keyword->value() != "static_assert") {
+		return ParseResult::error("Expected 'static_assert' keyword", static_assert_keyword.value_or(Token()));
+	}
+
+	// Expect opening parenthesis
+	if (!consume_punctuator("(")) {
+		return ParseResult::error("Expected '(' after 'static_assert'", *current_token_);
+	}
+
+	// Skip the condition expression - we don't evaluate it at compile time yet
+	// Just consume tokens until we reach a comma or closing parenthesis
+	int paren_depth = 1;
+	while (peek_token().has_value() && paren_depth > 0) {
+		if (peek_token()->value() == "(") {
+			paren_depth++;
+		} else if (peek_token()->value() == ")") {
+			paren_depth--;
+			if (paren_depth == 0) {
+				break; // Don't consume the final ')'
+			}
+		} else if (peek_token()->value() == "," && paren_depth == 1) {
+			// Found the comma separator between condition and message
+			consume_token(); // consume comma
+			
+			// Skip the optional message string (also not evaluated)
+			// The message could be a string literal or expression
+			while (peek_token().has_value() && peek_token()->value() != ")") {
+				consume_token();
+			}
+			break;
+		}
+		consume_token();
+	}
+
+	// Expect closing parenthesis
+	if (!consume_punctuator(")")) {
+		return ParseResult::error("Expected ')' after static_assert", *current_token_);
+	}
+
+	// Expect semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after static_assert", *current_token_);
+	}
+
+	// static_assert is a compile-time check - we just skip it for now
+	// In a full implementation, we would evaluate the constant expression
+	return saved_position.success();
 }
 
 ParseResult Parser::parse_typedef_declaration()
@@ -7970,6 +8036,13 @@ ParseResult Parser::parse_template_declaration() {
 							return ParseResult::error("Expected ':' after 'protected'", *peek_token());
 						}
 						current_access = AccessSpecifier::Protected;
+						continue;
+					} else if (peek_token()->value() == "static_assert") {
+						// Handle static_assert inside class body
+						auto static_assert_result = parse_static_assert();
+						if (static_assert_result.is_error()) {
+							return static_assert_result;
+						}
 						continue;
 					}
 				}
