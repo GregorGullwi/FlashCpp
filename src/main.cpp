@@ -161,8 +161,8 @@ int main(int argc, char *argv[]) {
         auto parse_result = parser.parse();
 
         if (parse_result.is_error()) {
-            // Print formatted error with file:line:column information
-            std::cerr << parse_result.format_error(lexer.file_paths()) << std::endl;
+            // Print formatted error with file:line:column information and include stack
+            std::cerr << parse_result.format_error(lexer.file_paths(), file_reader.get_line_map()) << std::endl;
             return 1;
         }
     }

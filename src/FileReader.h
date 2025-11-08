@@ -27,6 +27,7 @@ using namespace std::string_view_literals;
 struct SourceLineMapping {
 	size_t source_file_index;  // Index into the file_paths vector
 	size_t source_line;        // Line number in original source file (1-based)
+	size_t parent_line;        // Line in parent file where #include appeared (0 = no parent/main file)
 };
 
 // List of all separator characters for the preprocessor
@@ -119,6 +120,7 @@ struct CurrentFile {
 	std::string_view file_name;
 	long line_number = 0;
 	std::string timestamp;  // File modification timestamp for __TIMESTAMP__
+	long included_at_line = 0;  // Line number in parent file where this was #included (0 for main)
 };
 
 enum class Operator {
@@ -286,7 +288,7 @@ public:
 		return str.find_first_not_of(" \t", pos + 1);
 	}
 
-	bool readFile(std::string_view file) {
+	bool readFile(std::string_view file, long included_at_line = 0) {
 		if (proccessedHeaders_.find(std::string(file)) != proccessedHeaders_.end())
 			return true;
 
@@ -301,17 +303,36 @@ public:
 			std::cout << "readFile " << file << " (depth: " << filestack_.size() << ")" << std::endl;
 		}
 
-		// Save the current file index to restore when we return from this file
+		// Save the current file index and parent line to restore when we return from this file
 		size_t saved_file_index = current_file_index_;
+		size_t saved_parent_line = current_parent_line_;
 		
 		// Register this file in the file_paths_ vector and update current index
 		current_file_index_ = get_or_add_file_path(file);
+		
+		// The parent line is the preprocessed line number corresponding to the #include directive
+		// in the parent file. We need to find that in the line_map.
+		// For the main file, included_at_line is 0, so current_parent_line_ stays 0
+		if (included_at_line > 0 && !line_map_.empty()) {
+			// Find the most recent line_map entry for the parent file at the include line
+			// We search backwards because we just processed that line
+			for (size_t i = line_map_.size(); i > 0; --i) {
+				if (line_map_[i - 1].source_file_index == saved_file_index &&
+				    line_map_[i - 1].source_line == static_cast<size_t>(included_at_line)) {
+					current_parent_line_ = i; // 1-based preprocessed line number
+					break;
+				}
+			}
+		} else {
+			current_parent_line_ = 0;  // Main file has no parent
+		}
 
-		ScopedFileStack filestack(filestack_, file);
+		ScopedFileStack filestack(filestack_, file, included_at_line);
 
 		std::ifstream stream(file.data());
 		if (!stream.is_open()) {
 			current_file_index_ = saved_file_index;  // Restore on error
+			current_parent_line_ = saved_parent_line;
 			return false;
 		}
 
@@ -325,8 +346,9 @@ public:
 
 		bool result = preprocessFileContent(file_content);
 		
-		// Restore the previous file index when returning
+		// Restore the previous file index and parent line when returning
 		current_file_index_ = saved_file_index;
+		current_parent_line_ = saved_parent_line;
 		
 		return result;
 	}
@@ -466,7 +488,11 @@ public:
 			}
 
 			if (line.find("#include", 0) == 0) {
-				if (!processIncludeDirective(line, filestack_.top().file_name)) {
+				// Record the #include line in line_map BEFORE processing it
+				// so that the included file can find its parent
+				append_line_with_tracking("// " + line);  // Comment it out in output
+				
+				if (!processIncludeDirective(line, filestack_.top().file_name, line_number)) {
 					return false;
 				}
 				// Reset prev_line_number so we print the next row
@@ -615,10 +641,19 @@ public:
 		// Record the mapping before appending
 		if (!filestack_.empty()) {
 			const auto& current_file = filestack_.top();
+			
 			line_map_.push_back({
-				current_file_index_,  // Use cached index instead of searching
-				static_cast<size_t>(current_file.line_number)
+				current_file_index_,  // Current file
+				static_cast<size_t>(current_file.line_number),  // Line in current file
+				current_parent_line_  // Preprocessed line where current file was #included
 			});
+			
+			// DEBUG: Print parent_line tracking
+			if (current_parent_line_ > 0) {
+				std::cerr << "DEBUG append_line_with_tracking: line " << current_output_line_ 
+						  << " in file " << current_file_index_ 
+						  << " has parent_line " << current_parent_line_ << "\n";
+			}
 		}
 		
 		result_.append(line).append("\n");
@@ -1343,7 +1378,7 @@ private:
 		return values.top();
 	}
 
-	bool processIncludeDirective(const std::string& line, const std::string_view& current_file) {
+	bool processIncludeDirective(const std::string& line, const std::string_view& current_file, long include_line_number) {
 		std::istringstream iss(line);
 		std::string token;
 		iss >> token;
@@ -1373,7 +1408,7 @@ private:
 				if (settings_.isVerboseMode()) {
 					std::cerr << "Found include file, attempting to read: " << include_file << std::endl;
 				}
-				if (!readFile(include_file)) {
+				if (!readFile(include_file, include_line_number)) {
 					// Preprocessing failed (e.g., #error directive)
 					// Return false to propagate the error up
 					if (settings_.isVerboseMode()) {
@@ -1710,7 +1745,7 @@ private:
 	}
 
 	struct ScopedFileStack {
-		ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file) : filestack_(filestack) {
+		ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file, long included_at_line = 0) : filestack_(filestack) {
 			// Get file modification timestamp
 			std::string timestamp_str;
 			try {
@@ -1726,7 +1761,7 @@ private:
 				// If we can't get the timestamp, use a default
 				timestamp_str = "\"??? ??? ?? ??:??:?? ????\"";
 			}
-			filestack_.push({ file, 0, timestamp_str });
+			filestack_.push({ file, 0, timestamp_str, included_at_line });
 		}
 		~ScopedFileStack() {
 			filestack_.pop();
@@ -1745,6 +1780,7 @@ private:
 	std::vector<SourceLineMapping> line_map_;  // Maps preprocessed lines to source locations
 	size_t current_output_line_ = 1;  // Track current line number in preprocessed output
 	size_t current_file_index_ = 0;  // Track current file index (updated when switching files)
+	size_t current_parent_line_ = 0;  // Track the preprocessed line where current file was #included (0 for main)
 	unsigned long long counter_value_ = 0;
 
 	// State for tracking multiline raw string literals

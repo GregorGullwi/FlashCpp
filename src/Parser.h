@@ -90,24 +90,61 @@ public:
                 return is_error() ? std::get<Error>(value_or_error_).token_ : empty_token;
         }
         
-        // Format error message with file:line:column information
-        std::string format_error(const std::vector<std::string>& file_paths) const {
+        // Format error message with file:line:column information and include stack
+        std::string format_error(const std::vector<std::string>& file_paths, 
+                                const std::vector<SourceLineMapping>& line_map = {}) const {
                 if (!is_error()) return "";
                 
                 const auto& err = std::get<Error>(value_or_error_);
                 const Token& tok = err.token_;
-                std::string location;
+                std::string result;
                 
-                if (tok.file_index() < file_paths.size()) {
-                        location = file_paths[tok.file_index()] + ":" + 
-                                   std::to_string(tok.line()) + ":" + 
-                                   std::to_string(tok.column()) + ": ";
-                } else {
-                        location = "<unknown>:" + std::to_string(tok.line()) + ":" + 
-                                   std::to_string(tok.column()) + ": ";
+                // Build include stack by walking parent chain
+                if (!line_map.empty() && tok.line() > 0 && tok.line() <= line_map.size()) {
+                        std::vector<size_t> include_chain;
+                        size_t current = tok.line();
+                        
+                        // Walk up the parent chain
+                        while (current > 0 && current <= line_map.size()) {
+                                const auto& mapping = line_map[current - 1];
+                                include_chain.push_back(current);
+                                current = mapping.parent_line;
+                        }
+                        
+                        // Reverse to get main file first
+                        std::reverse(include_chain.begin(), include_chain.end());
+                        
+                        // Show the include chain (skip the last one as it's the error location itself)
+                        if (include_chain.size() > 1) {
+                                for (size_t i = 0; i < include_chain.size() - 1; ++i) {
+                                        size_t line_idx = include_chain[i];
+                                        const auto& mapping = line_map[line_idx - 1];
+                                        if (mapping.source_file_index < file_paths.size()) {
+                                                result += "In file included from " + file_paths[mapping.source_file_index];
+                                                result += ":" + std::to_string(mapping.source_line);
+                                                if (i + 1 < include_chain.size() - 1) {
+                                                        result += ",\n";
+                                                } else {
+                                                        result += ":\n";
+                                                }
+                                        }
+                                }
+                        }
                 }
                 
-                return location + "error: " + err.error_message_;
+                // Primary error location
+                if (tok.file_index() < file_paths.size()) {
+                        result += file_paths[tok.file_index()] + ":" + 
+                                std::to_string(tok.line()) + ":" + 
+                                std::to_string(tok.column()) + ": ";
+                } else {
+                        result += "<unknown>:" + std::to_string(tok.line()) + ":" + 
+                                std::to_string(tok.column()) + ": ";
+                }
+                
+                result += "error: " + err.error_message_;
+                
+                return result;
         }
 
         static ParseResult success(ASTNode node = ASTNode{}) {
