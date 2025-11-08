@@ -213,6 +213,25 @@ private:
 
 	// Helper to apply binary operators
 	static EvalResult apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op) {
+		// Handle arithmetic operators first
+		if (op == "+") {
+			return EvalResult::from_int(lhs.as_int() + rhs.as_int());
+		} else if (op == "-") {
+			return EvalResult::from_int(lhs.as_int() - rhs.as_int());
+		} else if (op == "*") {
+			return EvalResult::from_int(lhs.as_int() * rhs.as_int());
+		} else if (op == "/") {
+			if (rhs.as_int() == 0) {
+				return EvalResult::error("Division by zero in constant expression");
+			}
+			return EvalResult::from_int(lhs.as_int() / rhs.as_int());
+		} else if (op == "%") {
+			if (rhs.as_int() == 0) {
+				return EvalResult::error("Modulo by zero in constant expression");
+			}
+			return EvalResult::from_int(lhs.as_int() % rhs.as_int());
+		}
+		
 		// Handle comparison operators that work on integers
 		if (op == "==") {
 			// Compare as integers for all types
