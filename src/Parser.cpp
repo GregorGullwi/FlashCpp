@@ -2856,30 +2856,179 @@ ParseResult Parser::parse_typedef_declaration()
 		return ParseResult::error("Expected 'typedef' keyword", typedef_keyword.value_or(Token()));
 	}
 
-	// Parse the underlying type
-	auto type_result = parse_type_specifier();
-	if (type_result.is_error()) {
-		return type_result;
-	}
+	// Check if this is an inline struct/class definition: typedef struct { ... } alias;
+	// or typedef struct Name { ... } alias;
+	bool is_inline_struct = false;
+	std::string struct_name_for_typedef_storage;  // Storage for generated names
+	std::string_view struct_name_for_typedef;
+	TypeIndex struct_type_index = 0;
 
-	if (!type_result.node().has_value()) {
-		return ParseResult::error("Expected type specifier after 'typedef'", *current_token_);
-	}
+	if (peek_token().has_value() &&
+	    (peek_token()->value() == "struct" || peek_token()->value() == "class")) {
+		// Look ahead to see if this is an inline definition
+		// Pattern 1: typedef struct { ... } alias;
+		// Pattern 2: typedef struct Name { ... } alias;
+		auto next_pos = current_token_;
+		consume_token(); // consume 'struct' or 'class'
 
-	ASTNode type_node = *type_result.node();
-	TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
+		// Check if next token is '{' (anonymous struct) or identifier followed by '{'
+		if (peek_token().has_value() && peek_token()->value() == "{") {
+			// Pattern 1: typedef struct { ... } alias;
+			is_inline_struct = true;
+			// Use a unique temporary name for the struct (will be replaced by typedef alias)
+			// Use the current AST size to make it unique
+			struct_name_for_typedef_storage = "__anonymous_typedef_struct_" + std::to_string(ast_nodes_.size());
+			struct_name_for_typedef = struct_name_for_typedef_storage;
+		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+			auto struct_name_token = peek_token();
+			consume_token(); // consume struct name
 
-	// Handle pointer declarators (e.g., typedef int* IntPtr;)
-	while (peek_token().has_value() && peek_token()->value() == "*") {
-		consume_token(); // consume '*'
-		type_spec.add_pointer_level();
-
-		// Skip const/volatile after * for now (TODO: handle properly)
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-			if (peek_token()->value() == "const" || peek_token()->value() == "volatile") {
-				consume_token();
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Pattern 2: typedef struct Name { ... } alias;
+				is_inline_struct = true;
+				struct_name_for_typedef = struct_name_token->value();
 			} else {
-				break;
+				// Not an inline definition, restore position and parse normally
+				current_token_ = next_pos;
+				is_inline_struct = false;
+			}
+		} else {
+			// Not an inline definition, restore position and parse normally
+			current_token_ = next_pos;
+			is_inline_struct = false;
+		}
+	}
+
+	ASTNode type_node;
+	TypeSpecifierNode type_spec;
+
+	if (is_inline_struct) {
+		// Parse the inline struct definition
+		// We need to manually parse the struct body since we already consumed the keyword and name
+
+		// Register the struct type early
+		TypeInfo& struct_type_info = add_struct_type(std::string(struct_name_for_typedef));
+		struct_type_index = struct_type_info.type_index_;
+
+		// Create struct declaration node
+		auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name_for_typedef, false);
+
+		// Push struct parsing context
+		struct_parsing_context_stack_.push_back({struct_name_for_typedef, &struct_ref});
+
+		// Create StructTypeInfo
+		auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name_for_typedef), AccessSpecifier::Public);
+
+		// Apply pack alignment from #pragma pack
+		size_t pack_alignment = context_.getCurrentPackAlignment();
+		if (pack_alignment > 0) {
+			struct_info->set_pack_alignment(pack_alignment);
+		}
+
+		// Expect opening brace
+		if (!consume_punctuator("{")) {
+			return ParseResult::error("Expected '{' in struct definition", *peek_token());
+		}
+
+		// Parse struct members (simplified version - no inheritance, no member functions for now)
+		std::vector<StructMemberDecl> members;
+		AccessSpecifier current_access = AccessSpecifier::Public;
+
+		while (peek_token().has_value() && peek_token()->value() != "}") {
+			// Parse member declaration
+			auto member_type_result = parse_type_specifier();
+			if (member_type_result.is_error()) {
+				return member_type_result;
+			}
+
+			if (!member_type_result.node().has_value()) {
+				return ParseResult::error("Expected type specifier in struct member", *current_token_);
+			}
+
+			// Parse member name
+			auto member_name_token = consume_token();
+			if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected member name in struct", member_name_token.value_or(Token()));
+			}
+
+			// Create member declaration
+			auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
+			members.push_back({member_decl_node, current_access, std::nullopt});
+			struct_ref.add_member(member_decl_node, current_access, std::nullopt);
+
+			// Expect semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after struct member", *current_token_);
+			}
+		}
+
+		// Expect closing brace
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' after struct members", *peek_token());
+		}
+
+		// Pop struct parsing context
+		struct_parsing_context_stack_.pop_back();
+
+		// Calculate struct layout
+		for (const auto& member_decl : members) {
+			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+			const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+			size_t member_size = get_type_size_bits(member_type_spec.type()) / 8;
+			size_t member_alignment = get_type_alignment(member_type_spec.type(), member_size);
+
+			struct_info->addMember(
+				std::string(decl.identifier_token().value()),
+				member_type_spec.type(),
+				member_type_spec.type_index(),
+				member_size,
+				member_alignment,
+				member_decl.access,
+				member_decl.default_initializer
+			);
+		}
+
+		// Finalize struct layout (add padding)
+		struct_info->finalize();
+
+		// Store struct info
+		struct_type_info.setStructInfo(std::move(struct_info));
+
+		// Create type specifier for the struct
+		type_spec = TypeSpecifierNode(
+			Type::Struct,
+			struct_type_index,
+			static_cast<unsigned char>(struct_type_info.getStructInfo()->total_size * 8),
+			Token(Token::Type::Identifier, struct_name_for_typedef, 0, 0, 0)
+		);
+		type_node = emplace_node<TypeSpecifierNode>(type_spec);
+	} else {
+		// Parse the underlying type normally
+		auto type_result = parse_type_specifier();
+		if (type_result.is_error()) {
+			return type_result;
+		}
+
+		if (!type_result.node().has_value()) {
+			return ParseResult::error("Expected type specifier after 'typedef'", *current_token_);
+		}
+
+		type_node = *type_result.node();
+		type_spec = type_node.as<TypeSpecifierNode>();
+
+		// Handle pointer declarators (e.g., typedef int* IntPtr;)
+		while (peek_token().has_value() && peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+			type_spec.add_pointer_level();
+
+			// Skip const/volatile after * for now (TODO: handle properly)
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				if (peek_token()->value() == "const" || peek_token()->value() == "volatile") {
+					consume_token();
+				} else {
+					break;
+				}
 			}
 		}
 	}
@@ -3474,6 +3623,16 @@ ParseResult Parser::parse_type_specifier()
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
+			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
+			// follow the type_index to get the actual struct TypeInfo
+			if (!struct_info && struct_type_info->type_index_ < gTypeInfo.size()) {
+				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_];
+				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
+					struct_type_info = &actual_struct;
+					struct_info = actual_struct.getStructInfo();
+				}
+			}
+
 			if (struct_info) {
 				type_size = static_cast<unsigned char>(struct_info->total_size * 8);  // Convert bytes to bits
 			} else {
@@ -3536,9 +3695,19 @@ ParseResult Parser::parse_type_specifier()
 		// Check if this is a registered struct type
 		auto type_it = gTypesByName.find(type_name);
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-			// This is a struct type
+			// This is a struct type (or a typedef to a struct type)
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
+			// follow the type_index to get the actual struct TypeInfo
+			if (!struct_info && struct_type_info->type_index_ < gTypeInfo.size()) {
+				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_];
+				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
+					struct_type_info = &actual_struct;
+					struct_info = actual_struct.getStructInfo();
+				}
+			}
 
 			if (struct_info) {
 				type_size = static_cast<unsigned char>(struct_info->total_size * 8);  // Convert bytes to bits
