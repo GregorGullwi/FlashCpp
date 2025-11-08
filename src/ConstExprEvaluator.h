@@ -232,6 +232,25 @@ private:
 			return EvalResult::from_int(lhs.as_int() % rhs.as_int());
 		}
 		
+		// Handle bitwise operators
+		else if (op == "&") {
+			return EvalResult::from_int(lhs.as_int() & rhs.as_int());
+		} else if (op == "|") {
+			return EvalResult::from_int(lhs.as_int() | rhs.as_int());
+		} else if (op == "^") {
+			return EvalResult::from_int(lhs.as_int() ^ rhs.as_int());
+		} else if (op == "<<") {
+			if (rhs.as_int() < 0) {
+				return EvalResult::error("Negative shift count in constant expression");
+			}
+			return EvalResult::from_int(lhs.as_int() << rhs.as_int());
+		} else if (op == ">>") {
+			if (rhs.as_int() < 0) {
+				return EvalResult::error("Negative shift count in constant expression");
+			}
+			return EvalResult::from_int(lhs.as_int() >> rhs.as_int());
+		}
+		
 		// Handle comparison operators that work on integers
 		if (op == "==") {
 			// Compare as integers for all types
@@ -259,6 +278,8 @@ private:
 	static EvalResult apply_unary_op(const EvalResult& operand, std::string_view op) {
 		if (op == "!") {
 			return EvalResult::from_bool(!operand.as_bool());
+		} else if (op == "~") {
+			return EvalResult::from_int(~operand.as_int());
 		}
 
 		// Unsupported operator
