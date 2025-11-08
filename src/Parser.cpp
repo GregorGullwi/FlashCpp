@@ -1407,6 +1407,21 @@ ParseResult Parser::parse_struct_declaration()
 				continue;
 			}
 
+			// Check for 'enum' keyword - nested enum
+			if (keyword == "enum") {
+				auto enum_result = parse_enum_declaration();
+				if (enum_result.is_error()) {
+					return enum_result;
+				}
+
+				// Add enum as a nested type
+				if (auto enum_node = enum_result.node()) {
+					struct_ref.add_nested_class(*enum_node);  // Enums are stored as nested types
+				}
+
+				continue;
+			}
+
 			// Check for 'friend' keyword
 			if (keyword == "friend") {
 				auto friend_result = parse_friend_declaration();
@@ -2750,13 +2765,25 @@ ParseResult Parser::parse_enum_declaration()
 		consume_token(); // consume 'class' or 'struct'
 	}
 
-	// Parse enum name
-	auto name_token = consume_token();
-	if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected enum name", name_token.value_or(Token()));
+	// Parse enum name (optional for anonymous enums)
+	std::string_view enum_name;
+	bool is_anonymous = false;
+	static std::vector<std::string> anonymous_enum_names;  // Keep strings alive
+	
+	// Check if next token is an identifier (name) or : or { (anonymous enum)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+		auto name_token = consume_token();
+		enum_name = name_token->value();
+	} else if (peek_token().has_value() && 
+	           (peek_token()->value() == ":" || peek_token()->value() == "{")) {
+		// Anonymous enum - generate a unique name
+		static int anonymous_enum_counter = 0;
+		anonymous_enum_names.push_back("__anonymous_enum_" + std::to_string(anonymous_enum_counter++));
+		enum_name = anonymous_enum_names.back();
+		is_anonymous = true;
+	} else {
+		return ParseResult::error("Expected enum name, ':', or '{'", *peek_token());
 	}
-
-	std::string_view enum_name = name_token->value();
 
 	// Register the enum type in the global type system EARLY
 	TypeInfo& enum_type_info = add_enum_type(std::string(enum_name));
