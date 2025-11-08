@@ -6,6 +6,7 @@
 #include <deque>
 #include <optional>
 #include <stack>
+#include <unordered_map>
 #include "ChunkedAnyVector.h"
 
 class CompileContext {
@@ -39,6 +40,9 @@ public:
 	}
 
 	void addIncludeDir(std::string_view includeDir) {
+		if (isVerboseMode()) {
+			std::cerr << "Adding include directory: " << includeDir << std::endl;
+		}
 		includeDirs_.emplace_back(includeDir);
 	}
 
@@ -90,6 +94,21 @@ public:
 		currentPackAlignment_ = alignment;
 	}
 
+	// Push with named identifier (for #pragma pack(push, identifier))
+	void pushPackAlignment(std::string_view identifier) {
+		packAlignmentStack_.push(currentPackAlignment_);
+		// Named state stores the current alignment (not changing it)
+		namedPackStates_[std::string(identifier)] = currentPackAlignment_;
+	}
+
+	// Push with named identifier and alignment (for #pragma pack(push, identifier, n))
+	void pushPackAlignment(std::string_view identifier, size_t alignment) {
+		packAlignmentStack_.push(currentPackAlignment_);
+		// Named state stores the NEW alignment we're setting
+		namedPackStates_[std::string(identifier)] = alignment;
+		currentPackAlignment_ = alignment;
+	}
+
 	// Pop pack alignment from stack (for #pragma pack(pop))
 	void popPackAlignment() {
 		if (!packAlignmentStack_.empty()) {
@@ -97,6 +116,27 @@ public:
 			packAlignmentStack_.pop();
 		}
 		// If stack is empty, keep current value (matches MSVC behavior)
+	}
+
+	// Pop to a named pack state (for #pragma pack(pop, identifier))
+	void popPackAlignment(std::string_view identifier) {
+		auto it = namedPackStates_.find(std::string(identifier));
+		if (it != namedPackStates_.end()) {
+			// Restore to the named state
+			currentPackAlignment_ = it->second;
+			// Pop the stack until we get back to that state (or empty)
+			// This matches MSVC behavior of unwinding to the named label
+			while (!packAlignmentStack_.empty() && packAlignmentStack_.top() != it->second) {
+				packAlignmentStack_.pop();
+			}
+			if (!packAlignmentStack_.empty()) {
+				packAlignmentStack_.pop();
+			}
+			namedPackStates_.erase(it);
+		} else {
+			// Named state not found, just do a regular pop
+			popPackAlignment();
+		}
 	}
 
 	// Store a string literal for __PRETTY_FUNCTION__
@@ -134,6 +174,7 @@ private:
 	// #pragma pack state
 	size_t currentPackAlignment_ = 0;  // 0 = no packing (use natural alignment)
 	std::stack<size_t> packAlignmentStack_;  // Stack for push/pop operations
+	std::unordered_map<std::string, size_t> namedPackStates_;  // Named pack states for labels
 
 	// Storage for function name string literals (__FUNCTION__, __func__, __PRETTY_FUNCTION__)
 	// Using std::deque instead of std::vector to avoid invalidating string_views on reallocation

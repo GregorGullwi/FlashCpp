@@ -383,11 +383,13 @@ ParseResult Parser::parse_top_level_node()
 							// #pragma pack(pop, n)
 							
 							if (peek_token().has_value()) {
-								// Check if it's an identifier (could be a label or macro)
+								// Check if it's an identifier (label name)
 								if (peek_token()->type() == Token::Type::Identifier) {
-									consume_token(); // consume the identifier (we ignore it for now)
+									std::string_view identifier = peek_token()->value();
+									consume_token(); // consume the identifier
 									
 									// Check for second comma and alignment value
+									// Pattern: pack(push/pop, identifier, n)
 									if (peek_token().has_value() && peek_token()->value() == ",") {
 										consume_token(); // consume second ','
 										
@@ -396,33 +398,37 @@ ParseResult Parser::parse_top_level_node()
 												std::string_view value_str = peek_token()->value();
 												size_t alignment = 0;
 												auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
-												if (result.ec == std::errc() && pack_action == "push") {
-													context_.pushPackAlignment(alignment);
+												if (result.ec == std::errc()) {
+													if (pack_action == "push") {
+														context_.pushPackAlignment(identifier, alignment);
+													}
+													// pop with identifier and number doesn't make sense in MSVC
 													consume_token(); // consume the number
 												} else {
 													consume_token(); // consume invalid number
 													if (pack_action == "push") {
-														context_.pushPackAlignment();
+														context_.pushPackAlignment(identifier);
 													} else {
-														context_.popPackAlignment();
+														context_.popPackAlignment(identifier);
 													}
 												}
 											} else if (peek_token()->type() == Token::Type::Identifier) {
-												// Another identifier (macro)
+												// Another identifier (macro) - treat as no alignment specified
 												consume_token();
 												if (pack_action == "push") {
-													context_.pushPackAlignment();
+													context_.pushPackAlignment(identifier);
 												} else {
-													context_.popPackAlignment();
+													context_.popPackAlignment(identifier);
 												}
 											}
 										}
 									} else {
 										// Just identifier, no alignment
+										// pack(push, identifier) or pack(pop, identifier)
 										if (pack_action == "push") {
-											context_.pushPackAlignment();
+											context_.pushPackAlignment(identifier);
 										} else {
-											context_.popPackAlignment();
+											context_.popPackAlignment(identifier);
 										}
 									}
 								}
@@ -431,8 +437,11 @@ ParseResult Parser::parse_top_level_node()
 									std::string_view value_str = peek_token()->value();
 									size_t alignment = 0;
 									auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
-									if (result.ec == std::errc() && pack_action == "push") {
-										context_.pushPackAlignment(alignment);
+									if (result.ec == std::errc()) {
+										if (pack_action == "push") {
+											context_.pushPackAlignment(alignment);
+										}
+										// pop with just a number is uncommon but valid
 										consume_token(); // consume the number
 									} else {
 										consume_token(); // consume invalid number
