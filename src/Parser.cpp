@@ -25,7 +25,9 @@ TemplateRegistry gTemplateRegistry;
 // Type keywords set - used for if-statement initializer detection
 static const std::unordered_set<std::string_view> type_keywords = {
 	"int"sv, "float"sv, "double"sv, "char"sv, "bool"sv, "void"sv,
-	"short"sv, "long"sv, "signed"sv, "unsigned"sv, "const"sv, "volatile"sv, "alignas"sv
+	"short"sv, "long"sv, "signed"sv, "unsigned"sv, "const"sv, "volatile"sv, "alignas"sv,
+	// Microsoft-specific type keywords
+	"__int8"sv, "__int16"sv, "__int32"sv, "__int64"sv
 };
 
 // Helper function to find all local variable declarations in an AST node
@@ -3022,9 +3024,14 @@ ParseResult Parser::parse_typedef_declaration()
 			consume_token(); // consume '*'
 			type_spec.add_pointer_level();
 
-			// Skip const/volatile after * for now (TODO: handle properly)
+			// Skip const/volatile and Microsoft-specific modifiers after *
+			// const/volatile: CV-qualifiers on the pointer itself (e.g., int * const p)
+			// Microsoft modifiers: See explanation in parse_type_specifier()
 			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				if (peek_token()->value() == "const" || peek_token()->value() == "volatile") {
+				std::string_view kw = peek_token()->value();
+				if (kw == "const" || kw == "volatile" ||
+				    kw == "__ptr32" || kw == "__ptr64" || kw == "__w64" ||
+				    kw == "__unaligned" || kw == "__uptr" || kw == "__sptr") {
 					consume_token();
 				} else {
 					break;
@@ -3463,6 +3470,17 @@ ParseResult Parser::parse_type_specifier()
 		}
 		else if (token_value == "unsigned") {
 			qualifier = TypeQualifier::Unsigned;
+			consume_token();
+			current_token_opt = peek_token();
+		}
+		// Microsoft-specific type modifiers - consume and ignore
+		// __ptr32/__ptr64: Pointer size modifiers (32-bit vs 64-bit) - not needed for x64-only target
+		// __sptr/__uptr: Signed/unsigned pointer extension - only relevant for 32/64-bit mixing
+		// __w64: Deprecated 64-bit portability warning marker
+		// __unaligned: Alignment hint - doesn't affect type parsing
+		else if (token_value == "__ptr32" || token_value == "__ptr64" ||
+		         token_value == "__w64" || token_value == "__unaligned" ||
+		         token_value == "__uptr" || token_value == "__sptr") {
 			consume_token();
 			current_token_opt = peek_token();
 		}
@@ -3949,6 +3967,11 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"alignas", &Parser::parse_variable_declaration},
 			{"auto", &Parser::parse_variable_declaration},
 			{"decltype", &Parser::parse_variable_declaration},  // C++11 decltype type specifier
+			// Microsoft-specific type keywords
+			{"__int8", &Parser::parse_variable_declaration},
+			{"__int16", &Parser::parse_variable_declaration},
+			{"__int32", &Parser::parse_variable_declaration},
+			{"__int64", &Parser::parse_variable_declaration},
 			{"new", &Parser::parse_expression_statement},
 			{"delete", &Parser::parse_expression_statement},
 			{"static_cast", &Parser::parse_expression_statement},

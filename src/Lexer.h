@@ -415,7 +415,10 @@ private:
 			"virtual",      "void",      "volatile",      "wchar_t",
 			"while",        "xor",       "xor_eq",
 			// Microsoft-specific type keywords
-			"__int8",       "__int16",   "__int32",       "__int64" };
+			"__int8",       "__int16",   "__int32",       "__int64",
+			// Microsoft-specific type modifiers/qualifiers
+			"__ptr32",      "__ptr64",   "__w64",         "__unaligned",
+			"__uptr",       "__sptr" };
 
 		return keywords.count(value) > 0;
 	}
