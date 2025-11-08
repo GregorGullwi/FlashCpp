@@ -833,15 +833,29 @@ ParseResult Parser::parse_type_and_name() {
                                 operator_keyword_token.line(), operator_keyword_token.column(),
                                 operator_keyword_token.file_index());
     } else {
-        // Regular identifier
-        auto id_token = consume_token();
-        if (!id_token) {
-            return ParseResult::error("Expected identifier token", Token());
+        // Regular identifier (or unnamed parameter)
+        // Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
+        if (peek_token().has_value()) {
+            auto next = peek_token()->value();
+            if (next == "," || next == ")" || next == "=" || next == "[") {
+                // This is an unnamed parameter - create a synthetic empty identifier
+                identifier_token = Token(Token::Type::Identifier, "",
+                                        current_token_->line(), current_token_->column(),
+                                        current_token_->file_index());
+            } else {
+                // Regular identifier
+                auto id_token = consume_token();
+                if (!id_token) {
+                    return ParseResult::error("Expected identifier token", Token());
+                }
+                if (id_token->type() != Token::Type::Identifier) {
+                    return ParseResult::error("Expected identifier token", *id_token);
+                }
+                identifier_token = *id_token;
+            }
+        } else {
+            return ParseResult::error("Expected identifier or end of parameter", Token());
         }
-        if (id_token->type() != Token::Type::Identifier) {
-            return ParseResult::error("Expected identifier token", *id_token);
-        }
-        identifier_token = *id_token;
     }
 
     // Check for array declaration: identifier[size]
@@ -1330,9 +1344,6 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Parse members
 	while (peek_token().has_value() && peek_token()->value() != "}") {
-		std::cerr << "DEBUG: Member parsing loop, current token = '" 
-		          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
-		          << "'\n";
 		// Check for access specifier
 		if (peek_token()->type() == Token::Type::Keyword) {
 			std::string_view keyword = peek_token()->value();
@@ -1789,14 +1800,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Parse member declaration (could be data member or member function)
 		// Note: is_virtual was already checked above (line 794)
-		std::cerr << "DEBUG: About to call parse_type_and_name for member, current token = '" 
-		          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
-		          << "'\n";
 		auto member_result = parse_type_and_name();
-		std::cerr << "DEBUG: After parse_type_and_name, is_error=" << member_result.is_error() 
-		          << ", current token = '" 
-		          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
-		          << "'\n";
 		if (member_result.is_error()) {
 			return member_result;
 		}
@@ -7865,11 +7869,9 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Check if there's a function body or just a semicolon
 		if (peek_token().has_value() && peek_token()->value() == ";") {
-			std::cerr << "DEBUG: Found semicolon, just a declaration" << std::endl;
 			// Just a declaration, consume the semicolon
 			consume_token();
 		} else if (peek_token().has_value() && peek_token()->value() == "{") {
-			std::cerr << "DEBUG: Found opening brace, saving body position" << std::endl;
 			// Has a body - save position at the '{' 
 			// This way when we restore, current_token_ will be '{' and we can parse normally
 			TokenPosition body_start = save_token_position();
@@ -7877,17 +7879,13 @@ ParseResult Parser::parse_template_declaration() {
 			// Store the body position in the function declaration so we can re-parse it later
 			func_decl.set_template_body_position(body_start);
 			
-			std::cerr << "DEBUG: Skipping function body" << std::endl;
 			// Skip over the body (skip_balanced_braces will consume the '{' and everything up to the matching '}')
 			skip_balanced_braces();
-			std::cerr << "DEBUG: Finished skipping function body" << std::endl;
 		}
 
-		std::cerr << "DEBUG: Setting decl_result" << std::endl;
 		decl_result = ParseResult::success(*func_result.node());
 	}
 
-	std::cerr << "DEBUG: Removing template parameters from type system" << std::endl;
 	for (const auto* type_info : template_type_infos) {
 		gTypesByName.erase(type_info->name_);
 		// Note: We don't remove from gTypeInfo because it's a deque and removing would invalidate pointers
