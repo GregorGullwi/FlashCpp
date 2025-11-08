@@ -30,6 +30,11 @@ static const std::unordered_set<std::string_view> type_keywords = {
 	"__int8"sv, "__int16"sv, "__int32"sv, "__int64"sv
 };
 
+// Calling convention keywords - Microsoft-specific
+static const std::unordered_set<std::string_view> calling_convention_keywords = {
+	"__cdecl"sv, "__stdcall"sv, "__fastcall"sv, "__vectorcall"sv, "__clrcall"sv, "__thiscall"sv
+};
+
 // Helper function to find all local variable declarations in an AST node
 static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<std::string>& var_names) {
 	if (node.is<VariableDeclarationNode>()) {
@@ -734,6 +739,17 @@ ParseResult Parser::parse_type_and_name() {
     // Get the type specifier node to modify it with pointer levels
     TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
 
+    // Skip calling convention specifiers that can appear after the type
+    // Example: void __cdecl func(); or int __stdcall* func();
+    while (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+        std::string_view token_val = peek_token()->value();
+        if (calling_convention_keywords.count(token_val)) {
+            consume_token();  // Skip calling convention
+        } else {
+            break;
+        }
+    }
+
     // Check if this might be a function pointer declaration
     // Function pointers have the pattern: type (*identifier)(params)
     // We need to check for '(' followed by '*' to detect this
@@ -1367,9 +1383,20 @@ ParseResult Parser::parse_struct_declaration()
 		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 	}
 
-	// Expect opening brace
+	// Check for forward declaration (struct Name;)
+	if (peek_token().has_value()) {
+		std::cerr << "DEBUG parse_struct: After base class parsing, next token = '" << peek_token()->value() << "'\n";
+		if (peek_token()->value() == ";") {
+			// Forward declaration - just register the type and return
+			consume_token(); // consume ';'
+			std::cerr << "DEBUG parse_struct: Forward declaration detected\n";
+			return saved_position.success(struct_node);
+		}
+	}
+
+	// Expect opening brace for full definition
 	if (!consume_punctuator("{")) {
-		return ParseResult::error("Expected '{' after struct/class name or base class list", *peek_token());
+		return ParseResult::error("Expected '{' or ';' after struct/class name or base class list", *peek_token());
 	}
 	std::cerr << "DEBUG: Successfully consumed '{', starting member parsing loop\n";
 
@@ -5150,6 +5177,17 @@ Linkage Parser::parse_attributes()
 {
 	skip_cpp_attributes();  // C++ attributes don't affect linkage
 	Linkage linkage = parse_declspec_attributes();
+	
+	// Skip calling convention specifiers (__cdecl, __stdcall, __fastcall, __vectorcall, __clrcall)
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+		std::string_view token_val = peek_token()->value();
+		if (calling_convention_keywords.count(token_val)) {
+			consume_token();  // Skip calling convention
+		} else {
+			break;
+		}
+	}
+	
 	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
 	if (peek_token().has_value() && peek_token()->value() == "[") {
 		// Recurse to handle more attributes (prefer more specific linkage)
@@ -7618,6 +7656,33 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 				return template_result;  // No ScopedTokenPosition here, so direct return is OK
 			}
 			if (auto decl_node = template_result.node()) {
+				block_ref.add_statement_node(*decl_node);
+			}
+			continue;
+		}
+		
+		// Check for struct/class (including forward declarations)
+		if (peek_token()->type() == Token::Type::Keyword && 
+		    (peek_token()->value() == "struct" || peek_token()->value() == "class")) {
+			auto struct_result = parse_struct_declaration();
+			if (struct_result.is_error()) {
+				current_linkage_ = saved_linkage;
+				return struct_result;
+			}
+			if (auto decl_node = struct_result.node()) {
+				block_ref.add_statement_node(*decl_node);
+			}
+			continue;
+		}
+		
+		// Check for enum
+		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "enum") {
+			auto enum_result = parse_enum_declaration();
+			if (enum_result.is_error()) {
+				current_linkage_ = saved_linkage;
+				return enum_result;
+			}
+			if (auto decl_node = enum_result.node()) {
 				block_ref.add_statement_node(*decl_node);
 			}
 			continue;
