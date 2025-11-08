@@ -4,6 +4,7 @@
 #endif
 #include "OverloadResolution.h"
 #include "TemplateRegistry.h"
+#include "ConstExprEvaluator.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -1462,6 +1463,15 @@ ParseResult Parser::parse_struct_declaration()
 				auto template_result = parse_member_function_template(struct_ref, current_access);
 				if (template_result.is_error()) {
 					return template_result;
+				}
+				continue;
+			}
+
+			// Check for 'static_assert' keyword
+			if (keyword == "static_assert") {
+				auto static_assert_result = parse_static_assert();
+				if (static_assert_result.is_error()) {
+					return static_assert_result;
 				}
 				continue;
 			}
@@ -2986,29 +2996,27 @@ ParseResult Parser::parse_static_assert()
 		return ParseResult::error("Expected '(' after 'static_assert'", *current_token_);
 	}
 
-	// Skip the condition expression - we don't evaluate it at compile time yet
-	// Just consume tokens until we reach a comma or closing parenthesis
-	int paren_depth = 1;
-	while (peek_token().has_value() && paren_depth > 0) {
-		if (peek_token()->value() == "(") {
-			paren_depth++;
-		} else if (peek_token()->value() == ")") {
-			paren_depth--;
-			if (paren_depth == 0) {
-				break; // Don't consume the final ')'
+	// Parse the condition expression
+	ParseResult condition_result = parse_expression();
+	if (condition_result.is_error()) {
+		return condition_result;
+	}
+
+	// Check for optional comma and message
+	std::string message;
+	if (consume_punctuator(",")) {
+		// Parse the message string literal
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::StringLiteral) {
+			auto message_token = consume_token();
+			if (message_token->value().size() >= 2 && 
+			    message_token->value().front() == '"' && 
+			    message_token->value().back() == '"') {
+				// Extract the message content (remove quotes)
+				message = std::string(message_token->value().substr(1, message_token->value().size() - 2));
 			}
-		} else if (peek_token()->value() == "," && paren_depth == 1) {
-			// Found the comma separator between condition and message
-			consume_token(); // consume comma
-			
-			// Skip the optional message string (also not evaluated)
-			// The message could be a string literal or expression
-			while (peek_token().has_value() && peek_token()->value() != ")") {
-				consume_token();
-			}
-			break;
+		} else {
+			return ParseResult::error("Expected string literal for static_assert message", *current_token_);
 		}
-		consume_token();
 	}
 
 	// Expect closing parenthesis
@@ -3021,8 +3029,27 @@ ParseResult Parser::parse_static_assert()
 		return ParseResult::error("Expected ';' after static_assert", *current_token_);
 	}
 
-	// static_assert is a compile-time check - we just skip it for now
-	// In a full implementation, we would evaluate the constant expression
+	// Evaluate the constant expression using ConstExprEvaluator
+	ConstExpr::EvaluationContext ctx;  // Empty context for now (no symbol table access needed)
+	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
+	
+	if (!eval_result.success) {
+		return ParseResult::error(
+			"static_assert condition is not a constant expression: " + eval_result.error_message,
+			*static_assert_keyword
+		);
+	}
+
+	// Check if the assertion failed
+	if (!eval_result.as_bool()) {
+		std::string error_msg = "static_assert failed";
+		if (!message.empty()) {
+			error_msg += ": " + message;
+		}
+		return ParseResult::error(error_msg, *static_assert_keyword);
+	}
+
+	// static_assert passed - just skip it
 	return saved_position.success();
 }
 
