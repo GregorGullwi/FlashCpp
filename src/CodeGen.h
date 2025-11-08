@@ -427,6 +427,9 @@ private:
 		// Add linkage information (C vs C++)
 		funcDeclOperands.emplace_back(static_cast<int>(node.linkage()));
 
+		// Add variadic flag (whether function has ... ellipsis parameter)
+		funcDeclOperands.emplace_back(node.is_variadic());
+
 		// Add parameter types to function declaration
 		//size_t paramCount = 0;
 		for (const auto& param : node.parameter_nodes()) {
@@ -444,7 +447,7 @@ private:
 			}
 			funcDeclOperands.emplace_back(pointer_depth);
 			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
-			
+
 			// Add reference and CV-qualifier information for proper mangling
 			funcDeclOperands.emplace_back(param_type.is_reference());
 			funcDeclOperands.emplace_back(param_type.is_rvalue_reference());
@@ -631,6 +634,9 @@ private:
 
 		// Add linkage information (C++ linkage for constructors)
 		ctorDeclOperands.emplace_back(static_cast<int>(Linkage::CPlusPlus));
+
+		// Add variadic flag (constructors are never variadic)
+		ctorDeclOperands.emplace_back(false);
 
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -944,6 +950,9 @@ private:
 
 		// Add linkage information (C++ linkage for destructors)
 		dtorDeclOperands.emplace_back(static_cast<int>(Linkage::CPlusPlus));
+
+		// Add variadic flag (destructors are never variadic)
+		dtorDeclOperands.emplace_back(false);
 
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -4549,6 +4558,9 @@ private:
 		
 		// Add linkage (C++)
 		funcDeclOperands.emplace_back(static_cast<int>(Linkage::None));
+
+		// Add variadic flag (template functions are typically not variadic, but check anyway)
+		funcDeclOperands.emplace_back(template_func_decl.is_variadic());
 
 		// Add function parameters with concrete types
 		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {

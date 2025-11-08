@@ -444,6 +444,7 @@ private:
 		std::vector<TypeSpecifierNode> parameter_types;
 		bool is_const = false;
 		bool is_static = false;
+		bool is_variadic = false;  // True if function has ... ellipsis parameter
 		EFunctionCallingConv calling_convention = EFunctionCallingConv::cdecl;
 		std::string namespace_name;
 		std::string class_name;
@@ -508,6 +509,11 @@ private:
 		// Add parameter types
 		for (const auto& param_type : sig.parameter_types) {
 			mangled += getTypeCode(param_type);
+		}
+
+		// Add variadic marker if function has ... ellipsis
+		if (sig.is_variadic) {
+			mangled += 'Z';  // 'Z' indicates variadic function in MSVC mangling
 		}
 
 		// End marker
@@ -576,9 +582,10 @@ private:
 public:
 	// Add function signature information for proper mangling
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None) {
+	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.linkage = linkage;
+		sig.is_variadic = is_variadic;
 		// Generate the mangled name and use it as the key
 		std::string mangled_name = generateMangledName(name, sig);
 		function_signatures_[mangled_name] = sig;
@@ -587,10 +594,11 @@ public:
 
 	// Add function signature information for member functions with class name
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None) {
+	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.class_name = class_name;
 		sig.linkage = linkage;
+		sig.is_variadic = is_variadic;
 		// Generate the mangled name and use it as the key
 		std::string mangled_name = generateMangledName(name, sig);
 		function_signatures_[mangled_name] = sig;

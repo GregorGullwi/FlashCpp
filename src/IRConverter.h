@@ -3243,8 +3243,8 @@ private:
 	}
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
-		// Verify we have at least the minimum operands: return type, size, pointer depth, function name, struct name, linkage
-		assert(instruction.getOperandCount() >= 6 && "FunctionDecl must have at least 6 operands");
+		// Verify we have at least the minimum operands: return type, size, pointer depth, function name, struct name, linkage, is_variadic
+		assert(instruction.getOperandCount() >= 7 && "FunctionDecl must have at least 7 operands");
 
 		// Function name can be either std::string or std::string_view (now at index 3)
 		std::string func_name_str;
@@ -3282,9 +3282,12 @@ private:
 		// Extract linkage information (index 5)
 		Linkage linkage = static_cast<Linkage>(instruction.getOperandAs<int>(5));
 
+		// Extract variadic flag (index 6)
+		bool is_variadic = instruction.getOperandAs<bool>(6);
+
 		// Extract parameter types from the instruction
-		// Parameters start at index 6 (after return type, size, pointer depth, function name, struct name, and linkage)
-		size_t paramIndex = 6;
+		// Parameters start at index 7 (after return type, size, pointer depth, function name, struct name, linkage, and is_variadic)
+		size_t paramIndex = 7;
 		while (paramIndex + 7 <= instruction.getOperandCount()) {  // Need type, size, pointer depth, name, is_ref, is_rvalue, cv_qual
 			auto param_base_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
@@ -3296,12 +3299,12 @@ private:
 
 			// Construct parameter TypeSpecifierNode with CV-qualifier
 			TypeSpecifierNode param_type(param_base_type, TypeQualifier::None, static_cast<unsigned char>(param_size), Token{}, cv_qual);
-			
+
 			// Set reference information
 			if (is_reference) {
 				param_type.set_reference(is_rvalue_reference);
 			}
-			
+
 			// Add pointer levels
 			for (int i = 0; i < param_pointer_depth; ++i) {
 				param_type.add_pointer_level();
@@ -3316,10 +3319,10 @@ private:
 		std::string mangled_name;
 		if (!struct_name.empty()) {
 			// Member function - include struct name for mangling
-			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name), linkage);
+			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name), linkage, is_variadic);
 		} else {
 			// Regular function
-			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, linkage);
+			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, linkage, is_variadic);
 		}
 
 		// Finalize previous function before starting new one

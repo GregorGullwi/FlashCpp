@@ -883,12 +883,16 @@ public:
 	Linkage linkage() const { return linkage_; }
 
 	// Template body position support (for delayed parsing of template bodies)
-	void set_template_body_position(TokenPosition pos) { 
+	void set_template_body_position(TokenPosition pos) {
 		has_template_body_ = true;
 		template_body_position_ = pos;
 	}
 	bool has_template_body_position() const { return has_template_body_; }
 	TokenPosition template_body_position() const { return template_body_position_; }
+
+	// Variadic function support (functions with ... ellipsis parameter)
+	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
+	bool is_variadic() const { return is_variadic_; }
 
 private:
 	DeclarationNode& decl_node_;
@@ -897,8 +901,9 @@ private:
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
-	Linkage linkage_;  // Linkage specification (C, C++, or None)
 	bool has_template_body_ = false;
+	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
+	Linkage linkage_;  // Linkage specification (C, C++, or None)
 	TokenPosition template_body_position_;  // Position of template body for delayed parsing
 };
 

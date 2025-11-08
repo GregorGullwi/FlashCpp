@@ -3857,7 +3857,8 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		// Check for variadic parameter (...)
 		if (peek_token().has_value() && peek_token()->value() == "...") {
 			consume_token(); // consume '...'
-			// Variadic parameter - just skip it for now
+			// Mark the function as variadic
+			func_ref.set_is_variadic(true);
 			// The function is marked as variadic, but we don't need to store the ... parameter
 			if (!consume_punctuator(")"sv)) {
 				return ParseResult::error("Expected ')' after variadic parameter '...'", *current_token_);
@@ -7272,6 +7273,13 @@ std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& 
 		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 		result += param_type.getReadableString();
 	}
+
+	// Add variadic ellipsis if this is a variadic function
+	if (func_node.is_variadic()) {
+		if (!params.empty()) result += ", ";
+		result += "...";
+	}
+
 	result += ")";
 
 	return result;
