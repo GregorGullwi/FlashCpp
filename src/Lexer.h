@@ -413,7 +413,9 @@ private:
 			"true",         "try",       "typedef",       "typeid",
 			"typename",     "union",     "unsigned",      "using",
 			"virtual",      "void",      "volatile",      "wchar_t",
-			"while",        "xor",       "xor_eq" };
+			"while",        "xor",       "xor_eq",
+			// Microsoft-specific type keywords
+			"__int8",       "__int16",   "__int32",       "__int64" };
 
 		return keywords.count(value) > 0;
 	}

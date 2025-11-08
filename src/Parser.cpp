@@ -3482,6 +3482,11 @@ ParseResult Parser::parse_type_specifier()
 				{"float", {Type::Float, 32}},
 				{"double", {Type::Double, 64}},
 				{"auto", {Type::Auto, 0}},
+				// Microsoft-specific type keywords
+				{"__int8", {Type::Char, 8}},
+				{"__int16", {Type::Short, 16}},
+				{"__int32", {Type::Int, 32}},
+				{"__int64", {Type::LongLong, 64}},
 	};
 
 	Type type = Type::UserDefined;
