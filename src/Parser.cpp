@@ -2767,8 +2767,7 @@ ParseResult Parser::parse_enum_declaration()
 
 	// Parse enum name (optional for anonymous enums)
 	std::string_view enum_name;
-	bool is_anonymous = false;
-	static std::vector<std::string> anonymous_enum_names;  // Keep strings alive
+	//bool is_anonymous = false;
 	
 	// Check if next token is an identifier (name) or : or { (anonymous enum)
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
@@ -2778,9 +2777,9 @@ ParseResult Parser::parse_enum_declaration()
 	           (peek_token()->value() == ":" || peek_token()->value() == "{")) {
 		// Anonymous enum - generate a unique name
 		static int anonymous_enum_counter = 0;
-		anonymous_enum_names.push_back("__anonymous_enum_" + std::to_string(anonymous_enum_counter++));
-		enum_name = anonymous_enum_names.back();
-		is_anonymous = true;
+		static std::string temp_string;
+		enum_name = temp_string = "__anonymous_enum_" + std::to_string(anonymous_enum_counter++);
+		//is_anonymous = true;
 	} else {
 		return ParseResult::error("Expected enum name, ':', or '{'", *peek_token());
 	}
