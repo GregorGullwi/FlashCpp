@@ -6,6 +6,7 @@
 #include "TemplateRegistry.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
+#include <ranges> // Include ranges for std::ranges::find
 #include "ChunkedString.h"
 
 // Break into the debugger only on Windows
@@ -30,9 +31,19 @@ static const std::unordered_set<std::string_view> type_keywords = {
 	"__int8"sv, "__int16"sv, "__int32"sv, "__int64"sv
 };
 
-// Calling convention keywords - Microsoft-specific
-static const std::unordered_set<std::string_view> calling_convention_keywords = {
-	"__cdecl"sv, "__stdcall"sv, "__fastcall"sv, "__vectorcall"sv, "__clrcall"sv, "__thiscall"sv
+// Calling convention keyword mapping - Microsoft-specific
+struct CallingConventionMapping {
+	std::string_view keyword;
+	CallingConvention convention;
+};
+
+static constexpr CallingConventionMapping calling_convention_map[] = {
+	{"__cdecl"sv, CallingConvention::Cdecl},
+	{"__stdcall"sv, CallingConvention::Stdcall},
+	{"__fastcall"sv, CallingConvention::Fastcall},
+	{"__vectorcall"sv, CallingConvention::Vectorcall},
+	{"__thiscall"sv, CallingConvention::Thiscall},
+	{"__clrcall"sv, CallingConvention::Clrcall}
 };
 
 // Helper function to find all local variable declarations in an AST node
@@ -739,14 +750,20 @@ ParseResult Parser::parse_type_and_name() {
     // Get the type specifier node to modify it with pointer levels
     TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
 
-    // Skip calling convention specifiers that can appear after the type
+    // Extract calling convention specifiers that can appear after the type
     // Example: void __cdecl func(); or int __stdcall* func();
+    // We consume them here and save to last_calling_convention_ for the caller to retrieve
+    last_calling_convention_ = CallingConvention::Default;
     while (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
         std::string_view token_val = peek_token()->value();
-        if (calling_convention_keywords.count(token_val)) {
-            consume_token();  // Skip calling convention
+        
+        // Look up calling convention in the mapping table using ranges
+        auto it = std::ranges::find(calling_convention_map, token_val, &CallingConventionMapping::keyword);
+        if (it != std::end(calling_convention_map)) {
+            last_calling_convention_ = it->convention;
+            consume_token();  // Consume calling convention token
         } else {
-            break;
+            break;  // Not a calling convention keyword, stop scanning
         }
     }
 
@@ -1123,23 +1140,29 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	AttributeInfo attr_info = parse_attributes();
 	
 	// Parse the type specifier and identifier (name)
+	// This will also extract any calling convention that appears after the type
+	// and store it in last_calling_convention_
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error())
 		return type_and_name_result;
+	
+	// Use calling convention from attributes if specified, otherwise use the one from parse_type_and_name()
+	if (attr_info.calling_convention == CallingConvention::Default && 
+	    last_calling_convention_ != CallingConvention::Default) {
+		attr_info.calling_convention = last_calling_convention_;
+	}
 
 	// First, try to parse as a function definition
 	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
-	ParseResult function_definition_result = parse_function_declaration(decl_node);
+	ParseResult function_definition_result = parse_function_declaration(decl_node, attr_info.calling_convention);
 	if (!function_definition_result.is_error()) {
 		// It was successfully parsed as a function definition
-		// Apply attribute linkage and calling convention if present
+		// Apply attribute linkage if present (calling convention already set in parse_function_declaration)
 		if (auto func_node_ptr = function_definition_result.node()) {
 			FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
 			if (attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) {
 				func_node.set_linkage(attr_info.linkage);
 			}
-			// Store calling convention for future use (variadic validation, codegen, etc.)
-			func_node.set_calling_convention(attr_info.calling_convention);
 		}
 		
 		// Continue with function-specific logic
@@ -1216,7 +1239,16 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return saved_position.success();
 		}
 	} else {
-		// Function parsing failed, the position is restored, try parsing as a variable declaration
+		// Function parsing failed, the position is restored
+		// If the error is a semantic error (not a syntax error about expecting '('),
+		// return it directly instead of trying variable declaration parsing
+		std::string error_msg = function_definition_result.error_message();
+		if (error_msg.find("Variadic") != std::string::npos ||
+		    error_msg.find("calling convention") != std::string::npos) {
+			return function_definition_result;
+		}
+		
+		// Otherwise, try parsing as a variable declaration
 		// Attempt to parse a simple declaration (global variable or typedef)
 		// Check for initialization
 		std::optional<ASTNode> initializer;
@@ -3929,7 +3961,7 @@ ParseResult Parser::parse_decltype_specifier()
 	return saved_position.success(emplace_node<TypeSpecifierNode>(*type_spec_opt));
 }
 
-ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node)
+ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
 {
 	// Parse parameters
 	if (!consume_punctuator("(")) {
@@ -3940,6 +3972,9 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 	// Create the function declaration
 	auto [func_node, func_ref] =
 		create_node_ref<FunctionDeclarationNode>(declaration_node);
+	
+	// Set calling convention immediately so it's available during parameter parsing
+	func_ref.set_calling_convention(calling_convention);
 
 	// Set linkage from current context (for extern "C" blocks)
 	if (current_linkage_ != Linkage::None) {
@@ -3952,6 +3987,19 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 			consume_token(); // consume '...'
 			// Mark the function as variadic
 			func_ref.set_is_variadic(true);
+			
+			// Validate calling convention for variadic functions
+			// Only __cdecl and __vectorcall support variadic parameters (caller cleanup)
+			CallingConvention cc = func_ref.calling_convention();
+			if (cc != CallingConvention::Default && 
+			    cc != CallingConvention::Cdecl && 
+			    cc != CallingConvention::Vectorcall) {
+				return ParseResult::error(
+					"Variadic functions must use __cdecl or __vectorcall calling convention "
+					"(other conventions use callee cleanup which is incompatible with variadic arguments)", 
+					*current_token_);
+			}
+			
 			// The function is marked as variadic, but we don't need to store the ... parameter
 			if (!consume_punctuator(")"sv)) {
 				return ParseResult::error("Expected ')' after variadic parameter '...'", *current_token_);
@@ -3971,7 +4019,6 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 
 		// Parse default parameter value (if present)
 		if (consume_punctuator("="sv)) {
-			consume_token(); // consume '='
 
 			// Parse the default value expression
 			auto default_value = parse_expression();
@@ -3983,6 +4030,19 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 			if (peek_token().has_value() && peek_token()->value() == "...") {
 				consume_token(); // consume '...'
 				func_ref.set_is_variadic(true);
+				
+				// Validate calling convention for variadic functions
+				// Only __cdecl and __vectorcall support variadic parameters (caller cleanup)
+				CallingConvention cc = func_ref.calling_convention();
+				if (cc != CallingConvention::Default && 
+				    cc != CallingConvention::Cdecl && 
+				    cc != CallingConvention::Vectorcall) {
+					return ParseResult::error(
+						"Variadic functions must use __cdecl or __vectorcall calling convention "
+						"(other conventions use callee cleanup which is incompatible with variadic arguments)", 
+						*current_token_);
+				}
+				
 				if (!consume_punctuator(")"sv)) {
 					return ParseResult::error("Expected ')' after variadic parameter '...'", *current_token_);
 				}
@@ -5181,24 +5241,14 @@ CallingConvention Parser::parse_calling_convention()
 	
 	while (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 		std::string_view token_val = peek_token()->value();
-		if (calling_convention_keywords.count(token_val)) {
-			// Map keyword to enum (last one wins if multiple specified)
-			if (token_val == "__cdecl") {
-				calling_conv = CallingConvention::Cdecl;
-			} else if (token_val == "__stdcall") {
-				calling_conv = CallingConvention::Stdcall;
-			} else if (token_val == "__fastcall") {
-				calling_conv = CallingConvention::Fastcall;
-			} else if (token_val == "__vectorcall") {
-				calling_conv = CallingConvention::Vectorcall;
-			} else if (token_val == "__thiscall") {
-				calling_conv = CallingConvention::Thiscall;
-			} else if (token_val == "__clrcall") {
-				calling_conv = CallingConvention::Clrcall;
-			}
+		
+		// Look up calling convention in the mapping table using ranges
+		auto it = std::ranges::find(calling_convention_map, token_val, &CallingConventionMapping::keyword);
+		if (it != std::end(calling_convention_map)) {
+			calling_conv = it->convention;  // Last one wins if multiple specified
 			consume_token();
 		} else {
-			break;
+			break;  // Not a calling convention keyword, stop scanning
 		}
 	}
 	

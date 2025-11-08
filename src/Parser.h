@@ -171,6 +171,10 @@ private:
 
         // Track current linkage for extern "C" blocks
         Linkage current_linkage_ = Linkage::None;
+        
+        // Track last calling convention found in parse_type_and_name()
+        // This is used to communicate calling convention from type parsing to function declaration
+        CallingConvention last_calling_convention_ = CallingConvention::Default;
 
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
@@ -277,7 +281,7 @@ private:
         ParseResult parse_type_specifier();
         ParseResult parse_decltype_specifier();  // NEW: Parse decltype(expr) type specifier
         ParseResult parse_declaration_or_function_definition();
-        ParseResult parse_function_declaration(DeclarationNode& declaration_node);
+        ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
         ParseResult parse_struct_declaration();  // Add struct declaration parser
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser

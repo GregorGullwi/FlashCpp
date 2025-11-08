@@ -895,6 +895,10 @@ public:
 	void set_linkage(Linkage linkage) { linkage_ = linkage; }
 	Linkage linkage() const { return linkage_; }
 
+	// Calling convention support (for Windows ABI and variadic validation)
+	void set_calling_convention(CallingConvention cc) { calling_convention_ = cc; }
+	CallingConvention calling_convention() const { return calling_convention_; }
+
 	// Template body position support (for delayed parsing of template bodies)
 	void set_template_body_position(TokenPosition pos) {
 		has_template_body_ = true;
@@ -917,6 +921,7 @@ private:
 	bool has_template_body_ = false;
 	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
+	CallingConvention calling_convention_ = CallingConvention::Default;  // Calling convention (__cdecl, __stdcall, etc.)
 	TokenPosition template_body_position_;  // Position of template body for delayed parsing
 };
 
