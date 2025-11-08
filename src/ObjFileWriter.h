@@ -604,14 +604,22 @@ public:
 		return mangled_name;
 	}
 
-	void add_function_symbol(const std::string& mangled_name, uint32_t section_offset, uint32_t stack_space) {
-		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << std::endl;
+	void add_function_symbol(const std::string& mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None) {
+		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 		auto symbol_func = coffi_.add_symbol(mangled_name);
 		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol_func->set_section_number(section_text->get_index() + 1);
 		symbol_func->set_value(section_offset);
+
+		// Handle dllexport - add export directive
+		if (linkage == Linkage::DllExport) {
+			auto section_drectve = coffi_.get_sections()[sectiontype_to_index[SectionType::DRECTVE]];
+			std::string export_directive = " /EXPORT:" + mangled_name;
+			std::cerr << "Adding export directive: " << export_directive << std::endl;
+			section_drectve->append_data(export_directive.c_str(), export_directive.size());
+		}
 
 		// Extract unmangled name for debug info
 		// Mangled names start with '?' followed by the function name up to '@@'

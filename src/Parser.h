@@ -264,6 +264,7 @@ private:
         std::optional<Token> consume_token();
 
         std::optional<Token> peek_token();
+        std::optional<Token> peek_token(size_t lookahead);  // Peek ahead N tokens (0 = current, 1 = next, etc.)
 
         // Parsing functions for different constructs
         ParseResult parse_top_level_node();
@@ -340,6 +341,11 @@ public:  // Public methods for template instantiation
         // Utility functions
         bool consume_punctuator(const std::string_view& value);
         bool consume_keyword(const std::string_view& value);
+
+        // Attribute handling
+        void skip_cpp_attributes();            // Skip C++ standard [[...]] attributes
+        Linkage parse_declspec_attributes();   // Parse Microsoft __declspec(...) and return linkage
+        Linkage parse_attributes();            // Parse all types of attributes and return linkage
 
         // Helper to build __PRETTY_FUNCTION__ signature from FunctionDeclarationNode
         std::string buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const;

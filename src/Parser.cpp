@@ -228,6 +228,29 @@ std::optional<Token> Parser::peek_token() {
     return current_token_;
 }
 
+std::optional<Token> Parser::peek_token(size_t lookahead) {
+    if (lookahead == 0) {
+        return peek_token();  // Peek at current token
+    }
+    
+    // Save current position
+    TokenPosition saved_pos = save_token_position();
+    
+    // Consume tokens to reach the lookahead position
+    std::optional<Token> result;
+    for (size_t i = 0; i < lookahead; ++i) {
+        consume_token();
+    }
+    
+    // Peek at the token at lookahead position
+    result = peek_token();
+    
+    // Restore original position
+    restore_lexer_position_only(saved_pos);
+    
+    return result;
+}
+
 TokenPosition Parser::save_token_position() {
     TokenPosition cur_pos = lexer_.save_token_position();
     saved_tokens_[cur_pos.cursor_] = { current_token_, ast_nodes_.size() };
@@ -1080,6 +1103,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 {
 	ScopedTokenPosition saved_position(*this);
 	
+	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), etc.)
+	Linkage attr_linkage = parse_attributes();
+	
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error())
@@ -1090,6 +1116,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	ParseResult function_definition_result = parse_function_declaration(decl_node);
 	if (!function_definition_result.is_error()) {
 		// It was successfully parsed as a function definition
+		// Apply attribute linkage if present (dllimport/dllexport takes precedence)
+		if (auto func_node_ptr = function_definition_result.node()) {
+			FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
+			if (attr_linkage == Linkage::DllImport || attr_linkage == Linkage::DllExport) {
+				func_node.set_linkage(attr_linkage);
+			}
+		}
+		
 		// Continue with function-specific logic
 		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
 		if (type_specifier.type() == Type::Auto) {
@@ -5011,6 +5045,96 @@ bool Parser::consume_punctuator(const std::string_view& value)
 	return false;
 }
 
+// Skip C++ standard attributes like [[nodiscard]], [[maybe_unused]], etc.
+void Parser::skip_cpp_attributes()
+{
+	while (peek_token().has_value() && peek_token()->value() == "[") {
+		auto next = peek_token(1);
+		if (next.has_value() && next->value() == "[") {
+			// Found [[
+			consume_token(); // consume first [
+			consume_token(); // consume second [
+			
+			// Skip everything until ]]
+			int bracket_depth = 2;
+			while (peek_token().has_value() && bracket_depth > 0) {
+				if (peek_token()->value() == "[") {
+					bracket_depth++;
+				} else if (peek_token()->value() == "]") {
+					bracket_depth--;
+				}
+				consume_token();
+			}
+		} else {
+			break; // Not [[, stop
+		}
+	}
+}
+
+// Parse Microsoft __declspec(...) attributes and return linkage
+Linkage Parser::parse_declspec_attributes()
+{
+	Linkage linkage = Linkage::None;
+	
+	while (peek_token().has_value() && peek_token()->value() == "__declspec") {
+		consume_token(); // consume "__declspec"
+		
+		if (!consume_punctuator("(")) {
+			return linkage; // Invalid __declspec, return what we have
+		}
+		
+		// Parse the declspec specifier(s)
+		while (peek_token().has_value() && peek_token()->value() != ")") {
+			if (peek_token()->type() == Token::Type::Identifier) {
+				std::string_view spec = peek_token()->value();
+				if (spec == "dllimport") {
+					linkage = Linkage::DllImport;
+				} else if (spec == "dllexport") {
+					linkage = Linkage::DllExport;
+				}
+				// else: ignore other declspec attributes like align, deprecated, etc.
+				consume_token();
+			} else if (peek_token()->value() == "(") {
+				// Skip nested parens like __declspec(align(16))
+				int paren_depth = 1;
+				consume_token();
+				while (peek_token().has_value() && paren_depth > 0) {
+					if (peek_token()->value() == "(") {
+						paren_depth++;
+					} else if (peek_token()->value() == ")") {
+						paren_depth--;
+					}
+					consume_token();
+				}
+			} else {
+				consume_token(); // Skip other tokens
+			}
+		}
+		
+		if (!consume_punctuator(")")) {
+			return linkage; // Missing closing paren
+		}
+	}
+	
+	return linkage;
+}
+
+// Parse all types of attributes (both C++ standard and Microsoft-specific)
+Linkage Parser::parse_attributes()
+{
+	skip_cpp_attributes();  // C++ attributes don't affect linkage
+	Linkage linkage = parse_declspec_attributes();
+	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
+	if (peek_token().has_value() && peek_token()->value() == "[") {
+		// Recurse to handle more attributes (prefer more specific linkage)
+		Linkage more_linkage = parse_attributes();
+		if (more_linkage != Linkage::None) {
+			linkage = more_linkage;
+		}
+	}
+	return linkage;
+}
+
 std::optional<size_t> Parser::parse_alignas_specifier()
 {
 	// Parse: alignas(constant-expression)
@@ -7459,8 +7583,23 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 			continue;
 		}
 		
+		// Check for template
+		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
+			auto template_result = parse_template_declaration();
+			std::cerr << "DEBUG: parse_template_declaration() returned, is_error=" << template_result.is_error() << "\n";
+			if (template_result.is_error()) {
+				current_linkage_ = saved_linkage;
+				return template_result;  // No ScopedTokenPosition here, so direct return is OK
+			}
+			if (auto decl_node = template_result.node()) {
+				block_ref.add_statement_node(*decl_node);
+			}
+			continue;
+		}
+		
 		// Parse a declaration or function definition
 		ParseResult decl_result = parse_declaration_or_function_definition();
+		std::cerr << "DEBUG: parse_declaration_or_function_definition() returned, is_error=" << decl_result.is_error() << "\n";
 		if (decl_result.is_error()) {
 			current_linkage_ = saved_linkage;  // Restore linkage before returning error
 			return decl_result;  // No ScopedTokenPosition here, so direct return is OK

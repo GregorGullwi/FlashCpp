@@ -3383,7 +3383,7 @@ private:
 		}
 
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
-		writer.add_function_symbol(mangled_name, func_offset, total_stack_space);
+		writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage);
 		functionSymbols[func_name] = func_offset;
 
 		// Track function for debug information

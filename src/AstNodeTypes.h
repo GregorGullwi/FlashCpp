@@ -101,6 +101,8 @@ enum class Linkage : uint8_t {
 	None,           // Default C++ linkage (with name mangling)
 	C,              // C linkage (no name mangling)
 	CPlusPlus,      // Explicit C++ linkage
+	DllImport,      // __declspec(dllimport) - symbol imported from DLL
+	DllExport,      // __declspec(dllexport) - symbol exported from DLL
 };
 
 // Access specifier for struct/class members
