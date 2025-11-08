@@ -341,12 +341,33 @@ ParseResult Parser::parse_top_level_node()
 					return saved_position.success();
 				}
 
-				// Check for push/pop: #pragma pack(push) or #pragma pack(pop)
+				// Check for push/pop/show: #pragma pack(push) or #pragma pack(pop) or #pragma pack(show)
 				// Full syntax:
 				//   #pragma pack(push [, identifier] [, n])
 				//   #pragma pack(pop [, {identifier | n}])
+				//   #pragma pack(show)
+				// Note: Identifiers are parsed but NOT currently stored/restored (uses simple stack only)
+				// This means #pragma pack(pop, label) just pops once from stack, ignoring the label name
+				// True named label support would require a map/stack combo in CompileContext
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 					std::string_view pack_action = peek_token()->value();
+					
+					// Handle #pragma pack(show)
+					if (pack_action == "show") {
+						consume_token(); // consume 'show'
+						if (!consume_punctuator(")")) {
+							return ParseResult::error("Expected ')' after pragma pack show", *current_token_);
+						}
+						// Emit a warning showing the current pack alignment
+						size_t current_align = context_.getCurrentPackAlignment();
+						if (current_align == 0) {
+							std::cerr << "warning: current pack alignment is default (natural alignment)\n";
+						} else {
+							std::cerr << "warning: current pack alignment is " << current_align << "\n";
+						}
+						return saved_position.success();
+					}
+					
 					if (pack_action == "push" || pack_action == "pop") {
 						consume_token(); // consume 'push' or 'pop'
 						
@@ -445,19 +466,17 @@ ParseResult Parser::parse_top_level_node()
 				// Try to parse a number: #pragma pack(N)
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Literal) {
 					std::string_view value_str = peek_token()->value();
-					try {
-						size_t alignment = std::stoull(std::string(value_str));
-						if (alignment == 0 || alignment == 1 || alignment == 2 ||
-						    alignment == 4 || alignment == 8 || alignment == 16) {
-							context_.setPackAlignment(alignment);
-							consume_token(); // consume the number
-							if (!consume_punctuator(")")) {
-								return ParseResult::error("Expected ')' after pack alignment value", *current_token_);
-							}
-							return saved_position.success();
+					size_t alignment = 0;
+					auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
+					if (result.ec == std::errc() &&
+					    (alignment == 0 || alignment == 1 || alignment == 2 ||
+					     alignment == 4 || alignment == 8 || alignment == 16)) {
+						context_.setPackAlignment(alignment);
+						consume_token(); // consume the number
+						if (!consume_punctuator(")")) {
+							return ParseResult::error("Expected ')' after pack alignment value", *current_token_);
 						}
-					} catch (...) {
-						// Invalid number
+						return saved_position.success();
 					}
 				}
 
