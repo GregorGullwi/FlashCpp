@@ -3251,8 +3251,12 @@ ParseResult Parser::parse_namespace() {
 	while (peek_token().has_value() && peek_token()->value() != "}") {
 		ParseResult decl_result;
 
+		// Check if it's a using directive, using declaration, or namespace alias
+		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "using") {
+			decl_result = parse_using_directive_or_declaration();
+		}
 		// Check if it's a nested namespace
-		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "namespace") {
+		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "namespace") {
 			decl_result = parse_namespace();
 		}
 		// Check if it's a struct/class declaration
@@ -3389,26 +3393,38 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		return saved_position.success(directive_node);
 	}
 
-	// Otherwise, this is a using declaration: using std::vector;
+	// Otherwise, this is a using declaration: using std::vector; or using ::name;
 	std::vector<StringType<>> namespace_path;
 	Token identifier_token;
 
-	// Parse qualified name (namespace::...::identifier)
-	while (true) {
+	// Check if this starts with :: (global namespace scope)
+	if (peek_token().has_value() && peek_token()->value() == "::") {
+		consume_token(); // consume ::
+		// For global namespace, we use an empty namespace_path
+		// The identifier follows immediately
 		auto token = consume_token();
 		if (!token.has_value() || token->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected identifier in using declaration", token.value_or(Token()));
+			return ParseResult::error("Expected identifier after :: in using declaration", token.value_or(Token()));
 		}
+		identifier_token = *token;
+	} else {
+		// Parse qualified name (namespace::...::identifier)
+		while (true) {
+			auto token = consume_token();
+			if (!token.has_value() || token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier in using declaration", token.value_or(Token()));
+			}
 
-		// Check if followed by ::
-		if (peek_token().has_value() && peek_token()->value() == "::") {
-			// This is a namespace part
-			namespace_path.emplace_back(StringType<>(token->value()));
-			consume_token(); // consume ::
-		} else {
-			// This is the final identifier
-			identifier_token = *token;
-			break;
+			// Check if followed by ::
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				// This is a namespace part
+				namespace_path.emplace_back(StringType<>(token->value()));
+				consume_token(); // consume ::
+			} else {
+				// This is the final identifier
+				identifier_token = *token;
+				break;
+			}
 		}
 	}
 
@@ -5086,6 +5102,120 @@ ParseResult Parser::parse_primary_expression()
 
 		result = emplace_node<ExpressionNode>(
 			OffsetofExprNode(*type_result.node(), member_name, offsetof_token));
+	}
+	// Check for global namespace scope operator :: at the beginning
+	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
+		consume_token(); // consume ::
+
+		// Expect an identifier after ::
+		if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+		}
+
+		Token first_identifier = *current_token_;
+		consume_token(); // consume identifier
+
+		// Helper to get DeclarationNode from either DeclarationNode or FunctionDeclarationNode
+		auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
+			if (node.is<DeclarationNode>()) {
+				return &node.as<DeclarationNode>();
+			} else if (node.is<FunctionDeclarationNode>()) {
+				return &node.as<FunctionDeclarationNode>().decl_node();
+			}
+			return nullptr;
+		};
+
+		// Check if there are more :: following (e.g., ::ns::func)
+		std::vector<StringType<32>> namespaces;
+		Token final_identifier = first_identifier;
+
+		while (current_token_.has_value() && current_token_->value() == "::"sv) {
+			// Current identifier is a namespace part
+			namespaces.emplace_back(StringType<32>(final_identifier.value()));
+			consume_token(); // consume ::
+
+			// Get next identifier
+			if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+			}
+			final_identifier = *current_token_;
+			consume_token(); // consume the identifier
+		}
+
+		// Create a QualifiedIdentifierNode with empty namespace path for global scope
+		// If namespaces is empty, it means ::identifier (global namespace)
+		// If namespaces is not empty, it means ::ns::identifier
+		auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
+
+		// Try to look up the qualified identifier
+		// For global namespace (empty namespaces), we need to look in the global scope
+		std::optional<ASTNode> identifierType;
+		if (namespaces.empty()) {
+			// Global namespace - look up in global symbol table
+			identifierType = gSymbolTable.lookup(qual_id.name());
+		} else {
+			// Qualified with namespace - use lookup_qualified
+			identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());
+		}
+
+		// Check if followed by '(' for function call
+		if (current_token_.has_value() && current_token_->value() == "(") {
+			consume_token(); // consume '('
+
+			// If not found, create a forward declaration
+			if (!identifierType) {
+				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
+				identifierType = forward_decl;
+			}
+
+			// Parse function arguments
+			ChunkedVector<ASTNode> args;
+			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
+				while (true) {
+					auto arg_result = parse_expression();
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					if (auto arg = arg_result.node()) {
+						args.push_back(*arg);
+					}
+
+					if (!peek_token().has_value()) {
+						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+					}
+
+					if (peek_token()->value() == ")") {
+						break;
+					}
+
+					if (!consume_punctuator(",")) {
+						return ParseResult::error("Expected ',' between function arguments", *current_token_);
+					}
+				}
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			}
+
+			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
+			const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+			if (!decl_ptr) {
+				return ParseResult::error("Invalid function declaration", qual_id.identifier_token());
+			}
+
+			// Create function call node with the qualified identifier
+			result = emplace_node<ExpressionNode>(
+				FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), qual_id.identifier_token()));
+		} else {
+			// Just a qualified identifier reference (e.g., ::globalValue)
+			result = emplace_node<ExpressionNode>(qual_id);
+		}
+
+		if (result.has_value())
+			return ParseResult::success(*result);
 	}
 	else if (current_token_->type() == Token::Type::Identifier) {
 		Token idenfifier_token = *current_token_;

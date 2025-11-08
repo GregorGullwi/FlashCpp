@@ -237,7 +237,30 @@ public:
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
 				// Look up the symbol in the target namespace
-				auto result = lookup_qualified(namespace_path, original_name);
+				// If namespace_path is empty, it means global namespace (::name)
+				std::optional<ASTNode> result;
+				if (namespace_path.empty()) {
+					// Global namespace - look up in the global scope (root of namespace_symbols_)
+					// For global namespace, we look in the empty namespace path
+					NamespacePath empty_path;
+					auto ns_it = namespace_symbols_.find(empty_path);
+					if (ns_it != namespace_symbols_.end()) {
+						for (const auto& [key, value_vec] : ns_it->second) {
+#if USE_OLD_STRING_APPROACH
+							if (key == std::string(original_name)) {
+#else
+							if (key.view() == original_name) {
+#endif
+								if (!value_vec.empty()) {
+									result = value_vec[0];
+									break;
+								}
+							}
+						}
+					}
+				} else {
+					result = lookup_qualified(namespace_path, original_name);
+				}
 				if (result.has_value()) {
 					return result;
 				}
@@ -393,9 +416,27 @@ public:
 
 	// Lookup a qualified identifier (e.g., "std::print" or "A::B::func")
 	// Takes a span/vector of namespace components instead of building a concatenated string
+	// If namespaces is empty, looks in the global namespace (for ::identifier syntax)
 	template<typename StringContainer>
 	std::optional<ASTNode> lookup_qualified(const StringContainer& namespaces, std::string_view identifier) const {
+		// If namespaces is empty, look in the global namespace
 		if (namespaces.empty()) {
+			// Look in the global namespace (empty namespace path)
+			NamespacePath empty_path;
+			auto ns_it = namespace_symbols_.find(empty_path);
+			if (ns_it != namespace_symbols_.end()) {
+				for (const auto& [key, value_vec] : ns_it->second) {
+#if USE_OLD_STRING_APPROACH
+					if (key == std::string(identifier)) {
+#else
+					if (key.view() == identifier) {
+#endif
+						if (!value_vec.empty()) {
+							return value_vec[0];
+						}
+					}
+				}
+			}
 			return std::nullopt;
 		}
 
