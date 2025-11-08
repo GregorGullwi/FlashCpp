@@ -41,6 +41,20 @@ struct OpCodeWithSize {
 };
 
 /**
+ * @brief Converts an XMM register enum value to its 0-based encoding for ModR/M bytes.
+ * 
+ * XMM registers in the X64Register enum start at value 16 (after RAX=0...R15=15),
+ * but x86-64 instruction encoding expects XMM registers to be numbered 0-15.
+ * This helper ensures consistent conversion to avoid encoding bugs.
+ * 
+ * @param xmm_reg The XMM register (must be XMM0-XMM15)
+ * @return The 0-based register number (0-15) for use in ModR/M/SIB bytes
+ */
+inline uint8_t xmm_modrm_bits(X64Register xmm_reg) {
+	return static_cast<uint8_t>(xmm_reg) - static_cast<uint8_t>(X64Register::XMM0);
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'mov destination_register, [rbp + offset]'.
  *
  * This function creates the byte sequence for moving a 64-bit value from a
@@ -1486,13 +1500,13 @@ private:
 
 			// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 			std::array<uint8_t, 5> movqInst = { 0x66, 0x48, 0x0F, 0x6E, 0xC0 };
-			movqInst[4] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
+			movqInst[4] = 0xC0 + (xmm_modrm_bits(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
 			textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
 
 			// Release the temporary GPR
 			regAlloc.release(temp_gpr);
 		}
-
+		
 		ctx.rhs_physical_reg = X64Register::Count;
 		if (instruction.isOperandType<std::string_view>(6)) {
 			auto rhs_var_op = instruction.getOperandAs<std::string_view>(6);
@@ -1599,13 +1613,13 @@ private:
 
 			// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 			std::array<uint8_t, 5> movqInst = { 0x66, 0x48, 0x0F, 0x6E, 0xC0 };
-			movqInst[4] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
+			movqInst[4] = 0xC0 + (xmm_modrm_bits(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
 			textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
 
 			// Release the temporary GPR
 			regAlloc.release(temp_gpr);
 		}
-
+		
 		// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
 		if (ctx.result_physical_reg == X64Register::Count) {
 			ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -1957,10 +1971,8 @@ private:
 
 				// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 				std::array<uint8_t, 5> movqInst = { 0x66, 0x48, 0x0F, 0x6E, 0xC0 };
-				movqInst[4] = 0xC0 + (static_cast<uint8_t>(target_reg) << 3) + static_cast<uint8_t>(temp_gpr);
-				textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
-
-				// Release the temporary GPR
+				movqInst[4] = 0xC0 + (xmm_modrm_bits(target_reg) << 3) + static_cast<uint8_t>(temp_gpr);
+				textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());				// Release the temporary GPR
 				regAlloc.release(temp_gpr);
 			} else if (std::holds_alternative<unsigned long long>(argValue)) {
 				// Construct the REX prefix based on target_reg for destination (Reg field).
