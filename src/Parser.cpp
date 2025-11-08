@@ -301,10 +301,6 @@ void Parser::skip_balanced_braces() {
 		token_count++;
 	}
 	
-	if (token_count >= MAX_TOKENS) {
-		std::cerr << "ERROR: skip_balanced_braces exceeded token limit! Infinite loop detected.\n";
-	}
-	
 	std::cerr << "DEBUG skip_balanced_braces: finished, brace_depth=" << brace_depth 
 	          << ", tokens consumed=" << token_count
 	          << ", current token = '" 
@@ -345,7 +341,108 @@ ParseResult Parser::parse_top_level_node()
 					return saved_position.success();
 				}
 
-				// Try to parse a number
+				// Check for push/pop: #pragma pack(push) or #pragma pack(pop)
+				// Full syntax:
+				//   #pragma pack(push [, identifier] [, n])
+				//   #pragma pack(pop [, {identifier | n}])
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+					std::string_view pack_action = peek_token()->value();
+					if (pack_action == "push" || pack_action == "pop") {
+						consume_token(); // consume 'push' or 'pop'
+						
+						// Check for optional parameters
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token(); // consume ','
+							
+							// First parameter could be identifier or number
+							// #pragma pack(push, identifier)
+							// #pragma pack(push, identifier, n)
+							// #pragma pack(push, n)
+							// #pragma pack(pop, identifier)
+							// #pragma pack(pop, n)
+							
+							if (peek_token().has_value()) {
+								// Check if it's an identifier (could be a label or macro)
+								if (peek_token()->type() == Token::Type::Identifier) {
+									consume_token(); // consume the identifier (we ignore it for now)
+									
+									// Check for second comma and alignment value
+									if (peek_token().has_value() && peek_token()->value() == ",") {
+										consume_token(); // consume second ','
+										
+										if (peek_token().has_value()) {
+											if (peek_token()->type() == Token::Type::Literal) {
+												std::string_view value_str = peek_token()->value();
+												size_t alignment = 0;
+												auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
+												if (result.ec == std::errc() && pack_action == "push") {
+													context_.pushPackAlignment(alignment);
+													consume_token(); // consume the number
+												} else {
+													consume_token(); // consume invalid number
+													if (pack_action == "push") {
+														context_.pushPackAlignment();
+													} else {
+														context_.popPackAlignment();
+													}
+												}
+											} else if (peek_token()->type() == Token::Type::Identifier) {
+												// Another identifier (macro)
+												consume_token();
+												if (pack_action == "push") {
+													context_.pushPackAlignment();
+												} else {
+													context_.popPackAlignment();
+												}
+											}
+										}
+									} else {
+										// Just identifier, no alignment
+										if (pack_action == "push") {
+											context_.pushPackAlignment();
+										} else {
+											context_.popPackAlignment();
+										}
+									}
+								}
+								// Check if it's a number directly (no identifier)
+								else if (peek_token()->type() == Token::Type::Literal) {
+									std::string_view value_str = peek_token()->value();
+									size_t alignment = 0;
+									auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
+									if (result.ec == std::errc() && pack_action == "push") {
+										context_.pushPackAlignment(alignment);
+										consume_token(); // consume the number
+									} else {
+										consume_token(); // consume invalid number
+										if (pack_action == "push") {
+											context_.pushPackAlignment();
+										} else {
+											context_.popPackAlignment();
+										}
+									}
+								}
+							}
+						} else {
+							// No parameters - simple push/pop
+							if (pack_action == "push") {
+								context_.pushPackAlignment();
+							} else {
+								context_.popPackAlignment();
+							}
+						}
+						
+						if (!consume_punctuator(")")) {
+							std::cerr << "DEBUG: Expected ), got: '"
+							          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF")
+							          << "'\n";
+							return ParseResult::error("Expected ')' after pragma pack push/pop", *current_token_);
+						}
+						return saved_position.success();
+					}
+				}
+
+				// Try to parse a number: #pragma pack(N)
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Literal) {
 					std::string_view value_str = peek_token()->value();
 					try {
@@ -365,12 +462,18 @@ ParseResult Parser::parse_top_level_node()
 				}
 
 				// If we get here, it's an unsupported pragma pack format
+				std::cerr << "DEBUG: Unsupported pragma pack format, next token: '"
+				          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF")
+				          << "' type=" << (peek_token().has_value() ? static_cast<int>(peek_token()->type()) : -1)
+				          << std::endl;
 				return ParseResult::error("Unsupported #pragma pack format", *current_token_);
 			} else {
 				// Unknown pragma - skip until end of line or until we hit a token that looks like the start of a new construct
 				// Pragmas can span multiple lines with parentheses, so we need to be careful
+				std::cerr << "DEBUG: Skipping unknown pragma: " << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") << std::endl;
 				int paren_depth = 0;
 				while (peek_token().has_value()) {
+					std::cerr << "  pragma skip loop: token='" << peek_token()->value() << "' type=" << static_cast<int>(peek_token()->type()) << " paren_depth=" << paren_depth << std::endl;
 					if (peek_token()->value() == "(") {
 						paren_depth++;
 						consume_token();
@@ -1665,7 +1768,6 @@ ParseResult Parser::parse_struct_declaration()
 		          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
 		          << "'\n";
 		if (member_result.is_error()) {
-			std::cerr << "DEBUG: parse_type_and_name returned error: " << member_result.error_message() << "\n";
 			return member_result;
 		}
 
@@ -7407,8 +7509,6 @@ ParseResult Parser::parse_template_declaration() {
 			// Skip over the body (skip_balanced_braces will consume the '{' and everything up to the matching '}')
 			skip_balanced_braces();
 			std::cerr << "DEBUG: Finished skipping function body" << std::endl;
-		} else {
-			std::cerr << "DEBUG: Unexpected token after function declaration" << std::endl;
 		}
 
 		std::cerr << "DEBUG: Setting decl_result" << std::endl;
