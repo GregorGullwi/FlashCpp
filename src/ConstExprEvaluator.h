@@ -211,44 +211,117 @@ private:
 		return EvalResult::error("sizeof with expression not yet supported");
 	}
 
+	// Helper functions for overflow-safe arithmetic using compiler builtins
+private:
+	// Perform addition with overflow checking, return result or nullopt on overflow
+	static std::optional<long long> safe_add(long long a, long long b) {
+		long long result;
+		bool overflow = __builtin_add_overflow(a, b, &result);
+		return overflow ? std::nullopt : std::optional<long long>(result);
+	}
+
+	// Perform subtraction with overflow checking, return result or nullopt on overflow
+	static std::optional<long long> safe_sub(long long a, long long b) {
+		long long result;
+		bool overflow = __builtin_sub_overflow(a, b, &result);
+		return overflow ? std::nullopt : std::optional<long long>(result);
+	}
+
+	// Perform multiplication with overflow checking, return result or nullopt on overflow
+	static std::optional<long long> safe_mul(long long a, long long b) {
+		long long result;
+		bool overflow = __builtin_mul_overflow(a, b, &result);
+		return overflow ? std::nullopt : std::optional<long long>(result);
+	}
+
+	// Perform left shift with validation and overflow checking, return result or nullopt on error
+	static std::optional<long long> safe_shl(long long a, long long b) {
+		if (b < 0 || b >= 64) {
+			return std::nullopt; // Negative shift or shift >= bit width is undefined
+		}
+		if (a == 0) {
+			return 0; // Shifting zero is fine
+		}
+		
+		// Check if the shift would cause bits to be lost
+		// For left shift, check if any bits would be shifted out
+		long long shifted = a << b;
+		long long back_shifted = shifted >> b;
+		if (back_shifted != a) {
+			return std::nullopt; // Overflow detected
+		}
+		
+		return shifted;
+	}
+
+	// Perform right shift with validation, return result or nullopt on error
+	static std::optional<long long> safe_shr(long long a, long long b) {
+		if (b < 0 || b >= 64) {
+			return std::nullopt; // Negative shift or shift >= bit width is undefined
+		}
+		return a >> b; // Right shift never overflows mathematically
+	}
+
+public:
 	// Helper to apply binary operators
 	static EvalResult apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op) {
-		// Handle arithmetic operators first
+		long long lhs_val = lhs.as_int();
+		long long rhs_val = rhs.as_int();
+		
+		// Handle arithmetic operators with overflow checking
 		if (op == "+") {
-			return EvalResult::from_int(lhs.as_int() + rhs.as_int());
+			if (auto result = safe_add(lhs_val, rhs_val)) {
+				return EvalResult::from_int(*result);
+			} else {
+				return EvalResult::error("Signed integer overflow in constant expression");
+			}
 		} else if (op == "-") {
-			return EvalResult::from_int(lhs.as_int() - rhs.as_int());
+			if (auto result = safe_sub(lhs_val, rhs_val)) {
+				return EvalResult::from_int(*result);
+			} else {
+				return EvalResult::error("Signed integer overflow in constant expression");
+			}
 		} else if (op == "*") {
-			return EvalResult::from_int(lhs.as_int() * rhs.as_int());
+			if (auto result = safe_mul(lhs_val, rhs_val)) {
+				return EvalResult::from_int(*result);
+			} else {
+				return EvalResult::error("Signed integer overflow in constant expression");
+			}
 		} else if (op == "/") {
-			if (rhs.as_int() == 0) {
+			if (rhs_val == 0) {
 				return EvalResult::error("Division by zero in constant expression");
 			}
-			return EvalResult::from_int(lhs.as_int() / rhs.as_int());
+			// Check for overflow in division (only happens with LLONG_MIN / -1)
+			if (lhs_val == LLONG_MIN && rhs_val == -1) {
+				return EvalResult::error("Signed integer overflow in constant expression");
+			}
+			return EvalResult::from_int(lhs_val / rhs_val);
 		} else if (op == "%") {
-			if (rhs.as_int() == 0) {
+			if (rhs_val == 0) {
 				return EvalResult::error("Modulo by zero in constant expression");
 			}
-			return EvalResult::from_int(lhs.as_int() % rhs.as_int());
+			return EvalResult::from_int(lhs_val % rhs_val);
 		}
 		
 		// Handle bitwise operators
 		else if (op == "&") {
-			return EvalResult::from_int(lhs.as_int() & rhs.as_int());
+			return EvalResult::from_int(lhs_val & rhs_val);
 		} else if (op == "|") {
-			return EvalResult::from_int(lhs.as_int() | rhs.as_int());
+			return EvalResult::from_int(lhs_val | rhs_val);
 		} else if (op == "^") {
-			return EvalResult::from_int(lhs.as_int() ^ rhs.as_int());
+			return EvalResult::from_int(lhs_val ^ rhs_val);
 		} else if (op == "<<") {
-			if (rhs.as_int() < 0) {
-				return EvalResult::error("Negative shift count in constant expression");
+			if (auto result = safe_shl(lhs_val, rhs_val)) {
+				return EvalResult::from_int(*result);
+			} else {
+				return EvalResult::error("Left shift overflow or invalid shift count in constant expression");
 			}
-			return EvalResult::from_int(lhs.as_int() << rhs.as_int());
 		} else if (op == ">>") {
-			if (rhs.as_int() < 0) {
-				return EvalResult::error("Negative shift count in constant expression");
+			if (auto result = safe_shr(lhs_val, rhs_val)) {
+				return EvalResult::from_int(*result);
+			} else {
+				return EvalResult::error("Invalid shift count in constant expression");
 			}
-			return EvalResult::from_int(lhs.as_int() >> rhs.as_int());
 		}
 		
 		// Handle comparison operators that work on integers
