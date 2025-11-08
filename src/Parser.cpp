@@ -3886,6 +3886,15 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		}
 
 		if (consume_punctuator(","sv)) {
+			// After a comma, check if the next token is '...' for variadic parameters
+			if (peek_token().has_value() && peek_token()->value() == "...") {
+				consume_token(); // consume '...'
+				func_ref.set_is_variadic(true);
+				if (!consume_punctuator(")"sv)) {
+					return ParseResult::error("Expected ')' after variadic parameter '...'", *current_token_);
+				}
+				break;
+			}
 			continue;
 		}
 		else if (consume_punctuator(")"sv)) {

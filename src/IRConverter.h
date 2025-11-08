@@ -3454,14 +3454,14 @@ private:
 		}
 
 		// First pass: collect all parameter information
-		paramIndex = 6;  // Start after return type, size, pointer depth, function name, struct name, and linkage
+		paramIndex = 7;  // Start after return type, size, pointer depth, function name, struct name, linkage, and is_variadic
 		while (paramIndex + 7 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, name, is_reference, is_rvalue_reference, cv_qualifier
 			auto param_type = instruction.getOperandAs<Type>(paramIndex);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
 			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + 2);
 
 			// Store parameter location based on addressing mode
-			int paramNumber = ((paramIndex - 6) / 7) + param_offset_adjustment;
+			int paramNumber = ((paramIndex - 7) / 7) + param_offset_adjustment;
 			int offset = (paramNumber + 1) * -8;
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 3);

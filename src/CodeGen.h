@@ -2757,7 +2757,7 @@ private:
 
 	// Helper function to generate Microsoft Visual C++ mangled name for function calls
 	// This matches the mangling scheme in ObjFileWriter::generateMangledName
-	std::string generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types) {
+	std::string generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false) {
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
@@ -2778,8 +2778,12 @@ private:
 			mangled += getTypeCodeForMangling(param_type);
 		}
 
-		// End marker
-		mangled += "@Z";
+		// End marker - different for variadic vs non-variadic
+		if (is_variadic) {
+			mangled += "ZZ";  // Variadic functions end with 'ZZ' in MSVC mangling
+		} else {
+			mangled += "@Z";  // Non-variadic functions end with '@Z'
+		}
 
 		return mangled;
 	}
@@ -2899,7 +2903,7 @@ private:
 					// Generate the mangled name directly (unless C linkage)
 					// This ensures we call the correct overload
 					if (func_decl.linkage() != Linkage::C) {
-						function_name = generateMangledNameForCall(function_name, return_type, param_types);
+						function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic());
 					}
 					break;
 				}

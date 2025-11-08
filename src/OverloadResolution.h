@@ -168,15 +168,29 @@ inline OverloadResolutionResult resolve_overload(
 
 		// Check parameter count
 		const auto& parameters = func_decl->parameter_nodes();
-		if (parameters.size() != argument_types.size()) {
-			continue;  // Argument count mismatch
+		bool is_variadic = func_decl->is_variadic();
+
+		// For variadic functions, we need at least as many arguments as named parameters
+		// For non-variadic functions, argument count must match exactly
+		if (is_variadic) {
+			if (argument_types.size() < parameters.size()) {
+				continue;  // Too few arguments for variadic function
+			}
+		} else {
+			if (parameters.size() != argument_types.size()) {
+				continue;  // Argument count mismatch for non-variadic function
+			}
 		}
 		
 		// Check if all arguments can be converted to parameters
+		// For variadic functions, only check the named parameters
+		// The variadic arguments (...) accept any type
 		std::vector<ConversionRank> conversion_ranks;
 		bool all_convertible = true;
 
-		for (size_t i = 0; i < argument_types.size(); ++i) {
+		size_t params_to_check = parameters.size();  // For variadic, only check named params
+
+		for (size_t i = 0; i < params_to_check; ++i) {
 			const auto& param_type = parameters[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 			const auto& arg_type = argument_types[i];
 
@@ -186,6 +200,14 @@ inline OverloadResolutionResult resolve_overload(
 				break;
 			}
 			conversion_ranks.push_back(conversion.rank);
+		}
+
+		// For variadic functions, the extra arguments beyond named parameters
+		// are considered to have "exact match" rank (they're accepted as-is)
+		if (is_variadic) {
+			for (size_t i = params_to_check; i < argument_types.size(); ++i) {
+				conversion_ranks.push_back(ConversionRank::ExactMatch);
+			}
 		}
 
 		if (!all_convertible) {

@@ -209,6 +209,27 @@ TEST_CASE("preprocessor") {
 		run_test_case(input, expected_output);
 	}
 
+	SUBCASE("NestedConditionals") {
+		// Test that nested conditionals inside a skipped block don't trigger errors
+		// This was a bug where #error inside nested blocks would execute even when outer block was skipped
+		const std::string input = R"(
+			#ifdef OUTER_NOT_DEFINED
+			  #ifndef INNER_NOT_DEFINED
+			    #define RESULT 1
+			  #else
+			    #error This should NOT trigger
+			  #endif
+			#else
+			  #define RESULT 2
+			#endif
+			int result = RESULT;
+		  )";
+		const std::string expected_output = R"(
+			int result = 2;
+		  )";
+		run_test_case(input, expected_output);
+	}
+
 #define STR(x) #x
 	[[maybe_unused]] const char* str = STR(hello world);
 
@@ -1064,6 +1085,10 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 
 	// Compare reference and generated object files
 	//CHECK(compare_obj(ref, obj));
+}
+
+TEST_CASE("Variadic functions") {
+	run_test_from_file("test_va_simple.cpp", "Variadic function call", false);
 }
 
 TEST_CASE("Shift operations") {

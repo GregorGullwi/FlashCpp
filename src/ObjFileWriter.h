@@ -511,13 +511,12 @@ private:
 			mangled += getTypeCode(param_type);
 		}
 
-		// Add variadic marker if function has ... ellipsis
+		// Add end marker - different for variadic vs non-variadic
 		if (sig.is_variadic) {
-			mangled += 'Z';  // 'Z' indicates variadic function in MSVC mangling
+			mangled += "ZZ";  // Variadic functions end with 'ZZ' in MSVC mangling
+		} else {
+			mangled += "@Z";  // Non-variadic functions end with '@Z'
 		}
-
-		// End marker
-		mangled += "@Z";
 
 		return mangled;
 	}
