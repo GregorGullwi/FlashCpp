@@ -151,10 +151,9 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    Lexer lexer(preprocessed_source);
+    Lexer lexer(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
 
     std::cerr << "===== FLASHCPP VERSION " << __DATE__ << " " << __TIME__ << " =====\n";
-    std::cerr << "===== STDERR TEST - THIS SHOULD ALWAYS PRINT =====\n";
 
     Parser parser(lexer, context);
     {
@@ -162,7 +161,8 @@ int main(int argc, char *argv[]) {
         auto parse_result = parser.parse();
 
         if (parse_result.is_error()) {
-            std::cerr << "Error: " << parse_result.error_message() << std::endl;
+            // Print formatted error with file:line:column information
+            std::cerr << parse_result.format_error(lexer.file_paths()) << std::endl;
             return 1;
         }
     }

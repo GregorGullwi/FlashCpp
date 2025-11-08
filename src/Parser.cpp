@@ -310,13 +310,8 @@ void Parser::discard_saved_token(const TokenPosition& saved_token_pos) {
 }
 
 void Parser::skip_balanced_braces() {
-	std::cerr << "DEBUG skip_balanced_braces: called, current token = '" 
-	          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
-	          << "'\n";
-	
 	// Expect the current token to be '{'
 	if (!peek_token().has_value() || peek_token()->value() != "{") {
-		std::cerr << "WARNING: skip_balanced_braces called but current token is not '{'\n";
 		return;
 	}
 	
@@ -328,10 +323,8 @@ void Parser::skip_balanced_braces() {
 		auto token = peek_token();
 		if (token->value() == "{") {
 			brace_depth++;
-			std::cerr << "DEBUG: Found '{', depth=" << brace_depth << "\n";
 		} else if (token->value() == "}") {
 			brace_depth--;
-			std::cerr << "DEBUG: Found '}', depth=" << brace_depth << "\n";
 			if (brace_depth == 0) {
 				// Consume the closing '}'  and exit
 				consume_token();
@@ -341,12 +334,6 @@ void Parser::skip_balanced_braces() {
 		consume_token();
 		token_count++;
 	}
-	
-	std::cerr << "DEBUG skip_balanced_braces: finished, brace_depth=" << brace_depth 
-	          << ", tokens consumed=" << token_count
-	          << ", current token = '" 
-	          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
-	          << "'\n";
 }
 
 ParseResult Parser::parse_top_level_node()

@@ -84,6 +84,31 @@ public:
                 static const std::string empty;
                 return is_error() ? std::get<Error>(value_or_error_).error_message_ : empty;
         }
+        
+        const Token& error_token() const {
+                static const Token empty_token;
+                return is_error() ? std::get<Error>(value_or_error_).token_ : empty_token;
+        }
+        
+        // Format error message with file:line:column information
+        std::string format_error(const std::vector<std::string>& file_paths) const {
+                if (!is_error()) return "";
+                
+                const auto& err = std::get<Error>(value_or_error_);
+                const Token& tok = err.token_;
+                std::string location;
+                
+                if (tok.file_index() < file_paths.size()) {
+                        location = file_paths[tok.file_index()] + ":" + 
+                                   std::to_string(tok.line()) + ":" + 
+                                   std::to_string(tok.column()) + ": ";
+                } else {
+                        location = "<unknown>:" + std::to_string(tok.line()) + ":" + 
+                                   std::to_string(tok.column()) + ": ";
+                }
+                
+                return location + "error: " + err.error_message_;
+        }
 
         static ParseResult success(ASTNode node = ASTNode{}) {
                 return ParseResult(node);
@@ -124,7 +149,6 @@ public:
 
                 if (parseResult.is_error()) {
                     last_error_ = parseResult.error_message();
-                    std::cerr << last_error_;
                 }
                 return parseResult;
         }

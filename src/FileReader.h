@@ -21,6 +21,14 @@
 
 using namespace std::string_view_literals;
 
+// Maps a line in the preprocessed output to its original source location
+// Defined here to avoid circular dependency (Lexer.h also uses this)
+// The vector index IS the preprocessed line number (0-based: line_map_[line-1])
+struct SourceLineMapping {
+	size_t source_file_index;  // Index into the file_paths vector
+	size_t source_line;        // Line number in original source file (1-based)
+};
+
 // List of all separator characters for the preprocessor
 // These are characters that can appear before/after identifiers without being part of them
 constexpr char separator_chars[] = {
@@ -259,6 +267,16 @@ public:
 		addBuiltinDefines();
 		result_.reserve(default_result_size);
 	}
+	
+	// Get the line mapping for source location tracking
+	const std::vector<SourceLineMapping>& get_line_map() const {
+		return line_map_;
+	}
+	
+	// Get the file paths vector for looking up source files from line map
+	const std::vector<std::string>& get_file_paths() const {
+		return file_paths_;
+	}
 
 	size_t find_first_non_whitespace_after_hash(const std::string& str) {
 		size_t pos = str.find('#');
@@ -283,10 +301,17 @@ public:
 			std::cout << "readFile " << file << " (depth: " << filestack_.size() << ")" << std::endl;
 		}
 
+		// Save the current file index to restore when we return from this file
+		size_t saved_file_index = current_file_index_;
+		
+		// Register this file in the file_paths_ vector and update current index
+		current_file_index_ = get_or_add_file_path(file);
+
 		ScopedFileStack filestack(filestack_, file);
 
 		std::ifstream stream(file.data());
 		if (!stream.is_open()) {
+			current_file_index_ = saved_file_index;  // Restore on error
 			return false;
 		}
 
@@ -298,7 +323,12 @@ public:
 		std::string file_content(file_size, '\0');
 		stream.read(file_content.data(), file_size);
 
-		return preprocessFileContent(file_content);
+		bool result = preprocessFileContent(file_content);
+		
+		// Restore the previous file index when returning
+		current_file_index_ = saved_file_index;
+		
+		return result;
 	}
 
 	bool preprocessFileContent(const std::string& file_content) {
@@ -552,7 +582,7 @@ public:
 			else if (line.find("#pragma pack", 0) == 0) {
 				processPragmaPack(line);
 				// Pass through the pragma pack directive to the parser
-				result_.append(line).append("\n");
+				append_line_with_tracking(line);
 			}
 			else if (line.find("#line", 0) == 0) {
 				processLineDirective(line);
@@ -565,7 +595,7 @@ public:
 					std::cout << line << "\n";
 				}
 
-				result_.append(line).append("\n");
+				append_line_with_tracking(line);
 			}
 		}
 
@@ -578,6 +608,42 @@ public:
 
 	const std::string& get_result() const {
 		return result_;
+	}
+	
+	// Append a line to the result and record its source location
+	void append_line_with_tracking(const std::string& line) {
+		// Record the mapping before appending
+		if (!filestack_.empty()) {
+			const auto& current_file = filestack_.top();
+			line_map_.push_back({
+				current_file_index_,  // Use cached index instead of searching
+				static_cast<size_t>(current_file.line_number)
+			});
+		}
+		
+		result_.append(line).append("\n");
+		current_output_line_++;
+	}
+	
+	// Get the index of a file path (must already exist)
+	size_t get_file_path_index(std::string_view file_path) const {
+		auto it = std::find(file_paths_.begin(), file_paths_.end(), file_path);
+		if (it != file_paths_.end()) {
+			return std::distance(file_paths_.begin(), it);
+		}
+		// Should never happen if readFile() properly registers files
+		return 0;
+	}
+	
+	// Add a file path if it doesn't already exist, return its index
+	size_t get_or_add_file_path(std::string_view file_path) {
+		auto it = std::find(file_paths_.begin(), file_paths_.end(), file_path);
+		if (it != file_paths_.end()) {
+			return std::distance(file_paths_.begin(), it);
+		}
+		size_t new_index = file_paths_.size();
+		file_paths_.push_back(std::string(file_path));
+		return new_index;
 	}
 
 private:
@@ -1675,6 +1741,10 @@ private:
 	std::unordered_set<std::string> proccessedHeaders_;
 	std::stack<CurrentFile> filestack_;
 	std::string result_;
+	std::vector<std::string> file_paths_;  // Unique list of source file paths
+	std::vector<SourceLineMapping> line_map_;  // Maps preprocessed lines to source locations
+	size_t current_output_line_ = 1;  // Track current line number in preprocessed output
+	size_t current_file_index_ = 0;  // Track current file index (updated when switching files)
 	unsigned long long counter_value_ = 0;
 
 	// State for tracking multiline raw string literals

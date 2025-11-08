@@ -3,12 +3,14 @@
 #include <cctype>
 #include <string_view>
 #include <unordered_set>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 #include <string>
 #include <algorithm>
 
 #include "Token.h"
+#include "FileReader.h"  // For SourceLineMapping definition
 
 struct TokenPosition {
 	size_t cursor_;
@@ -19,10 +21,19 @@ struct TokenPosition {
 
 class Lexer {
 public:
-	explicit Lexer(std::string_view source)
+	explicit Lexer(std::string_view source, 
+	               const std::vector<SourceLineMapping>& line_map = {},
+	               const std::vector<std::string>& file_paths = {})
 		: source_(source), source_size_(source.size()), cursor_(0), line_(1),
-		column_(1), current_file_index_(0) {
-		file_paths_.push_back("<unknown>");
+		column_(1), line_map_(line_map), file_paths_(file_paths) {
+		if (file_paths_.empty()) {
+			file_paths_.push_back("<unknown>");
+		}
+		update_file_index_from_line();
+	}
+	
+	const std::vector<std::string>& file_paths() const {
+		return file_paths_;
 	}
 
 	Token next_token() {
@@ -85,8 +96,6 @@ public:
 			current_file_index_);
 	}
 
-	const std::vector<std::string>& file_paths() const { return file_paths_; }
-
 	TokenPosition save_token_position() {
 		return { cursor_, line_, column_, current_file_index_ };
 	}
@@ -118,8 +127,22 @@ private:
 	size_t cursor_;
 	size_t line_;
 	size_t column_;
-	size_t current_file_index_;
-	std::vector<std::string> file_paths_;
+	size_t current_file_index_ = 0;
+	mutable std::vector<std::string> file_paths_;  // Mutable to allow adding "<unknown>" in constructor
+	const std::vector<SourceLineMapping>& line_map_;
+	
+	// Update current_file_index_ based on current line_
+	void update_file_index_from_line() {
+		if (line_map_.empty() || file_paths_.empty()) {
+			current_file_index_ = 0;
+			return;
+		}
+		
+		// Vector index IS the line number (0-based, so line_ - 1)
+		if (line_ > 0 && line_ <= line_map_.size()) {
+			current_file_index_ = line_map_[line_ - 1].source_file_index;
+		}
+	}
 
 	void consume_single_line_comment() {
 		// Skip the '//'
@@ -143,6 +166,7 @@ private:
 			if (source_[cursor_] == '\n') {
 				++line_;
 				column_ = 1;
+				update_file_index_from_line();
 			}
 			else if (source_[cursor_] == '*' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '/') {
 				cursor_ += 2;  // Skip the '*/'
@@ -161,6 +185,7 @@ private:
 			if (source_[cursor_] == '\n') {
 				++line_;
 				column_ = 1;
+				update_file_index_from_line();
 			}
 			else {
 				++column_;
