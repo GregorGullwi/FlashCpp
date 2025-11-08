@@ -342,10 +342,17 @@ public:  // Public methods for template instantiation
         bool consume_punctuator(const std::string_view& value);
         bool consume_keyword(const std::string_view& value);
 
+        // Attribute parsing result
+        struct AttributeInfo {
+            Linkage linkage = Linkage::None;
+            CallingConvention calling_convention = CallingConvention::Default;
+        };
+
         // Attribute handling
-        void skip_cpp_attributes();            // Skip C++ standard [[...]] attributes
-        Linkage parse_declspec_attributes();   // Parse Microsoft __declspec(...) and return linkage
-        Linkage parse_attributes();            // Parse all types of attributes and return linkage
+        void skip_cpp_attributes();                   // Skip C++ standard [[...]] attributes
+        Linkage parse_declspec_attributes();          // Parse Microsoft __declspec(...) and return linkage
+        AttributeInfo parse_attributes();             // Parse all types of attributes and return linkage + calling convention
+        CallingConvention parse_calling_convention(); // Parse calling convention keywords
 
         // Helper to build __PRETTY_FUNCTION__ signature from FunctionDeclarationNode
         std::string buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const;

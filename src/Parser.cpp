@@ -1119,8 +1119,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 {
 	ScopedTokenPosition saved_position(*this);
 	
-	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), etc.)
-	Linkage attr_linkage = parse_attributes();
+	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), __cdecl, etc.)
+	AttributeInfo attr_info = parse_attributes();
 	
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
@@ -1132,12 +1132,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	ParseResult function_definition_result = parse_function_declaration(decl_node);
 	if (!function_definition_result.is_error()) {
 		// It was successfully parsed as a function definition
-		// Apply attribute linkage if present (dllimport/dllexport takes precedence)
+		// Apply attribute linkage and calling convention if present
 		if (auto func_node_ptr = function_definition_result.node()) {
 			FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
-			if (attr_linkage == Linkage::DllImport || attr_linkage == Linkage::DllExport) {
-				func_node.set_linkage(attr_linkage);
+			if (attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) {
+				func_node.set_linkage(attr_info.linkage);
 			}
+			// Store calling convention for future use (variadic validation, codegen, etc.)
+			func_node.set_calling_convention(attr_info.calling_convention);
 		}
 		
 		// Continue with function-specific logic
@@ -5172,31 +5174,59 @@ Linkage Parser::parse_declspec_attributes()
 	return linkage;
 }
 
-// Parse all types of attributes (both C++ standard and Microsoft-specific)
-Linkage Parser::parse_attributes()
+// Parse calling convention keywords and return the calling convention
+CallingConvention Parser::parse_calling_convention()
 {
-	skip_cpp_attributes();  // C++ attributes don't affect linkage
-	Linkage linkage = parse_declspec_attributes();
+	CallingConvention calling_conv = CallingConvention::Default;
 	
-	// Skip calling convention specifiers (__cdecl, __stdcall, __fastcall, __vectorcall, __clrcall)
 	while (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 		std::string_view token_val = peek_token()->value();
 		if (calling_convention_keywords.count(token_val)) {
-			consume_token();  // Skip calling convention
+			// Map keyword to enum (last one wins if multiple specified)
+			if (token_val == "__cdecl") {
+				calling_conv = CallingConvention::Cdecl;
+			} else if (token_val == "__stdcall") {
+				calling_conv = CallingConvention::Stdcall;
+			} else if (token_val == "__fastcall") {
+				calling_conv = CallingConvention::Fastcall;
+			} else if (token_val == "__vectorcall") {
+				calling_conv = CallingConvention::Vectorcall;
+			} else if (token_val == "__thiscall") {
+				calling_conv = CallingConvention::Thiscall;
+			} else if (token_val == "__clrcall") {
+				calling_conv = CallingConvention::Clrcall;
+			}
+			consume_token();
 		} else {
 			break;
 		}
 	}
 	
+	return calling_conv;
+}
+
+// Parse all types of attributes (both C++ standard and Microsoft-specific)
+Parser::AttributeInfo Parser::parse_attributes()
+{
+	AttributeInfo info;
+	
+	skip_cpp_attributes();  // C++ attributes don't affect linkage
+	info.linkage = parse_declspec_attributes();
+	info.calling_convention = parse_calling_convention();
+	
 	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
 	if (peek_token().has_value() && peek_token()->value() == "[") {
 		// Recurse to handle more attributes (prefer more specific linkage)
-		Linkage more_linkage = parse_attributes();
-		if (more_linkage != Linkage::None) {
-			linkage = more_linkage;
+		AttributeInfo more_info = parse_attributes();
+		if (more_info.linkage != Linkage::None) {
+			info.linkage = more_info.linkage;
+		}
+		if (more_info.calling_convention != CallingConvention::Default) {
+			info.calling_convention = more_info.calling_convention;
 		}
 	}
-	return linkage;
+	
+	return info;
 }
 
 std::optional<size_t> Parser::parse_alignas_specifier()

@@ -105,6 +105,17 @@ enum class Linkage : uint8_t {
 	DllExport,      // __declspec(dllexport) - symbol exported from DLL
 };
 
+// Calling conventions (primarily for x86, but tracked for compatibility and diagnostics)
+enum class CallingConvention : uint8_t {
+	Default,        // Platform default (x64: Microsoft x64, x86: __cdecl)
+	Cdecl,          // __cdecl - caller cleans stack, supports variadic
+	Stdcall,        // __stdcall - callee cleans stack, no variadic
+	Fastcall,       // __fastcall - first args in registers
+	Vectorcall,     // __vectorcall - optimized for SIMD
+	Thiscall,       // __thiscall - C++ member functions (this in register)
+	Clrcall,        // __clrcall - .NET/CLI interop
+};
+
 // Access specifier for struct/class members
 enum class AccessSpecifier {
 	Public,
