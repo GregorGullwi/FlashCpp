@@ -3243,33 +3243,36 @@ private:
 	}
 
 	void handleFunctionDecl(const IrInstruction& instruction) {
-		// Verify we have at least the minimum operands: return type, size, pointer depth, function name, struct name, linkage, is_variadic
-		assert(instruction.getOperandCount() >= 7 && "FunctionDecl must have at least 7 operands");
+		// Verify we have at least the minimum operands using FunctionDeclLayout constants
+		assert(instruction.getOperandCount() >= FunctionDeclLayout::FIRST_PARAM_INDEX &&
+		       "FunctionDecl must have at least the fixed operands");
 
-		// Function name can be either std::string or std::string_view (now at index 3)
+		// Verify the operand count is valid (fixed operands + N complete parameters)
+		assert(FunctionDeclLayout::isValidOperandCount(instruction.getOperandCount()) &&
+		       "FunctionDecl operand count is invalid - parameter operands don't align!");
+
+		// Extract function name using FunctionDeclLayout constant
 		std::string func_name_str;
-		if (instruction.isOperandType<std::string>(3)) {
-			func_name_str = instruction.getOperandAs<std::string>(3);
-		} else if (instruction.isOperandType<std::string_view>(3)) {
-			func_name_str = std::string(instruction.getOperandAs<std::string_view>(3));
+		if (instruction.isOperandType<std::string>(FunctionDeclLayout::FUNCTION_NAME)) {
+			func_name_str = instruction.getOperandAs<std::string>(FunctionDeclLayout::FUNCTION_NAME);
+		} else if (instruction.isOperandType<std::string_view>(FunctionDeclLayout::FUNCTION_NAME)) {
+			func_name_str = std::string(instruction.getOperandAs<std::string_view>(FunctionDeclLayout::FUNCTION_NAME));
 		}
 		std::string_view func_name = func_name_str;
 
-		// Struct name can be either std::string or std::string_view (empty for non-member functions, now at index 4)
+		// Extract struct name using FunctionDeclLayout constant
 		std::string struct_name_str;
-		if (instruction.getOperandCount() > 4) {
-			if (instruction.isOperandType<std::string>(4)) {
-				struct_name_str = instruction.getOperandAs<std::string>(4);
-			} else if (instruction.isOperandType<std::string_view>(4)) {
-				struct_name_str = std::string(instruction.getOperandAs<std::string_view>(4));
-			}
+		if (instruction.isOperandType<std::string>(FunctionDeclLayout::STRUCT_NAME)) {
+			struct_name_str = instruction.getOperandAs<std::string>(FunctionDeclLayout::STRUCT_NAME);
+		} else if (instruction.isOperandType<std::string_view>(FunctionDeclLayout::STRUCT_NAME)) {
+			struct_name_str = std::string(instruction.getOperandAs<std::string_view>(FunctionDeclLayout::STRUCT_NAME));
 		}
 		std::string_view struct_name = struct_name_str;
 
-		// Extract function signature information for proper C++20 name mangling
-		auto return_base_type = instruction.getOperandAs<Type>(0);
-		auto return_size = instruction.getOperandAs<int>(1);
-		auto return_pointer_depth = instruction.getOperandAs<int>(2);
+		// Extract return type information using FunctionDeclLayout constants
+		auto return_base_type = instruction.getOperandAs<Type>(FunctionDeclLayout::RETURN_TYPE);
+		auto return_size = instruction.getOperandAs<int>(FunctionDeclLayout::RETURN_SIZE);
+		auto return_pointer_depth = instruction.getOperandAs<int>(FunctionDeclLayout::RETURN_POINTER_DEPTH);
 
 		// Construct return type TypeSpecifierNode
 		TypeSpecifierNode return_type(return_base_type, TypeQualifier::None, static_cast<unsigned char>(return_size));
@@ -3279,23 +3282,20 @@ private:
 
 		std::vector<TypeSpecifierNode> parameter_types;
 
-		// Extract linkage information (index 5)
-		Linkage linkage = static_cast<Linkage>(instruction.getOperandAs<int>(5));
+		// Extract linkage and variadic flag using FunctionDeclLayout constants
+		Linkage linkage = static_cast<Linkage>(instruction.getOperandAs<int>(FunctionDeclLayout::LINKAGE));
+		bool is_variadic = instruction.getOperandAs<bool>(FunctionDeclLayout::IS_VARIADIC);
 
-		// Extract variadic flag (index 6)
-		bool is_variadic = instruction.getOperandAs<bool>(6);
-
-		// Extract parameter types from the instruction
-		// Parameters start at index 7 (after return type, size, pointer depth, function name, struct name, linkage, and is_variadic)
-		size_t paramIndex = 7;
-		while (paramIndex + 7 <= instruction.getOperandCount()) {  // Need type, size, pointer depth, name, is_ref, is_rvalue, cv_qual
-			auto param_base_type = instruction.getOperandAs<Type>(paramIndex);
-			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
-			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + 2);
-			// paramIndex + 3 is the parameter name (not needed for signature)
-			bool is_reference = instruction.getOperandAs<bool>(paramIndex + 4);
-			bool is_rvalue_reference = instruction.getOperandAs<bool>(paramIndex + 5);
-			CVQualifier cv_qual = static_cast<CVQualifier>(instruction.getOperandAs<int>(paramIndex + 6));
+		// Extract parameter types from the instruction using FunctionDeclLayout constants
+		size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
+		while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
+			auto param_base_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
+			auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
+			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
+			// paramIndex + PARAM_NAME is the parameter name (not needed for signature)
+			bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
+			bool is_rvalue_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE);
+			CVQualifier cv_qual = static_cast<CVQualifier>(instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_CV_QUALIFIER));
 
 			// Construct parameter TypeSpecifierNode with CV-qualifier
 			TypeSpecifierNode param_type(param_base_type, TypeQualifier::None, static_cast<unsigned char>(param_size), Token{}, cv_qual);
@@ -3311,7 +3311,7 @@ private:
 			}
 
 			parameter_types.push_back(param_type);
-			paramIndex += 7;  // Skip type, size, pointer depth, name, is_ref, is_rvalue, cv_qual
+			paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
 		}
 
 		// Add function signature to the object file writer for proper mangling
@@ -3453,18 +3453,19 @@ private:
 			param_offset_adjustment = 1;  // Shift other parameters by 1
 		}
 
-		// First pass: collect all parameter information
-		paramIndex = 7;  // Start after return type, size, pointer depth, function name, struct name, linkage, and is_variadic
-		while (paramIndex + 7 <= instruction.getOperandCount()) {  // Need at least type, size, pointer depth, name, is_reference, is_rvalue_reference, cv_qualifier
-			auto param_type = instruction.getOperandAs<Type>(paramIndex);
-			auto param_size = instruction.getOperandAs<int>(paramIndex + 1);
-			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + 2);
+		// First pass: collect all parameter information using FunctionDeclLayout constants
+		paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
+		while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
+			auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
+			auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
+			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
 
-			// Store parameter location based on addressing mode
-			int paramNumber = ((paramIndex - 7) / 7) + param_offset_adjustment;
+			// Calculate parameter number using FunctionDeclLayout helper
+			size_t param_index_in_list = (paramIndex - FunctionDeclLayout::FIRST_PARAM_INDEX) / FunctionDeclLayout::OPERANDS_PER_PARAM;
+			int paramNumber = static_cast<int>(param_index_in_list) + param_offset_adjustment;
 			int offset = (paramNumber + 1) * -8;
 
-			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + 3);
+			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + FunctionDeclLayout::PARAM_NAME);
 			variable_scopes.back().identifier_offset[param_name] = offset;
 
 			// Add parameter to debug information
@@ -3498,7 +3499,7 @@ private:
 				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth});
 			}
 
-			paramIndex += 7;  // Skip type, size, pointer depth, name, is_reference, is_rvalue_reference, cv_qualifier
+			paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
 		}
 
 		// Second pass: generate parameter storage code in the correct order

@@ -411,24 +411,28 @@ private:
 		const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 
 		// Create function declaration with return type and name
+		// Use FunctionDeclLayout constants to ensure correct operand ordering
 		std::vector<IrOperand> funcDeclOperands;
-		funcDeclOperands.emplace_back(ret_type.type());
-		funcDeclOperands.emplace_back(static_cast<int>(ret_type.size_in_bits()));
-		funcDeclOperands.emplace_back(static_cast<int>(ret_type.pointer_depth()));  // Add pointer depth
-		funcDeclOperands.emplace_back(func_decl.identifier_token().value());
+
+		// Fixed operands (must match FunctionDeclLayout)
+		funcDeclOperands.emplace_back(ret_type.type());                                    // [0] RETURN_TYPE
+		funcDeclOperands.emplace_back(static_cast<int>(ret_type.size_in_bits()));         // [1] RETURN_SIZE
+		funcDeclOperands.emplace_back(static_cast<int>(ret_type.pointer_depth()));        // [2] RETURN_POINTER_DEPTH
+		funcDeclOperands.emplace_back(func_decl.identifier_token().value());              // [3] FUNCTION_NAME
 
 		// Add struct/class name for member functions
 		if (node.is_member_function()) {
-			funcDeclOperands.emplace_back(std::string_view(node.parent_struct_name()));
+			funcDeclOperands.emplace_back(std::string_view(node.parent_struct_name()));   // [4] STRUCT_NAME
 		} else {
-			funcDeclOperands.emplace_back(std::string_view(""));  // Empty string_view for non-member functions
+			funcDeclOperands.emplace_back(std::string_view(""));                          // [4] STRUCT_NAME (empty)
 		}
 
-		// Add linkage information (C vs C++)
-		funcDeclOperands.emplace_back(static_cast<int>(node.linkage()));
+		funcDeclOperands.emplace_back(static_cast<int>(node.linkage()));                  // [5] LINKAGE
+		funcDeclOperands.emplace_back(node.is_variadic());                                // [6] IS_VARIADIC
 
-		// Add variadic flag (whether function has ... ellipsis parameter)
-		funcDeclOperands.emplace_back(node.is_variadic());
+		// Verify we have the correct number of fixed operands
+		assert(funcDeclOperands.size() == FunctionDeclLayout::FIRST_PARAM_INDEX &&
+		       "FunctionDecl fixed operands mismatch - update FunctionDeclLayout constants!");
 
 		// Add parameter types to function declaration
 		//size_t paramCount = 0;
@@ -436,26 +440,27 @@ private:
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-			// Add parameter type, size, and pointer depth to function declaration
-			funcDeclOperands.emplace_back(param_type.type());
-			funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
+			// Add parameter operands (must match FunctionDeclLayout::OPERANDS_PER_PARAM)
+			funcDeclOperands.emplace_back(param_type.type());                             // PARAM_TYPE
+			funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));   // PARAM_SIZE
 
 			// References are treated like pointers in the IR (they're both addresses)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
 			if (param_type.is_reference()) {
 				pointer_depth = 1;  // Treat reference as pointer depth 1
 			}
-			funcDeclOperands.emplace_back(pointer_depth);
-			funcDeclOperands.emplace_back(param_decl.identifier_token().value());
+			funcDeclOperands.emplace_back(pointer_depth);                                 // PARAM_POINTER_DEPTH
+			funcDeclOperands.emplace_back(param_decl.identifier_token().value());         // PARAM_NAME
+			funcDeclOperands.emplace_back(param_type.is_reference());                     // PARAM_IS_REFERENCE
+			funcDeclOperands.emplace_back(param_type.is_rvalue_reference());              // PARAM_IS_RVALUE_REFERENCE
+			funcDeclOperands.emplace_back(static_cast<int>(param_type.cv_qualifier()));   // PARAM_CV_QUALIFIER
 
-			// Add reference and CV-qualifier information for proper mangling
-			funcDeclOperands.emplace_back(param_type.is_reference());
-			funcDeclOperands.emplace_back(param_type.is_rvalue_reference());
-			funcDeclOperands.emplace_back(static_cast<int>(param_type.cv_qualifier()));
-
-			//paramCount++;
 			var_counter.next();
 		}
+
+		// Verify the total operand count is valid
+		assert(FunctionDeclLayout::isValidOperandCount(funcDeclOperands.size()) &&
+		       "FunctionDecl operand count is invalid - parameter operands don't align!");
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), func_decl.identifier_token()));
 

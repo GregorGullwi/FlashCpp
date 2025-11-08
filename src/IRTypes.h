@@ -128,6 +128,72 @@ enum class IrOpcode : int_fast16_t {
 	IndirectCall,        // Call through function pointer: [result_temp, func_ptr, arg1, arg2, ...]
 };
 
+// ============================================================================
+// FunctionDecl IR Instruction Layout Constants
+// ============================================================================
+// These constants define the operand layout for FunctionDecl instructions.
+// This prevents bugs from operand index mismatches when the layout changes.
+//
+// FunctionDecl operand layout:
+//   [0] return_type (Type)
+//   [1] return_size (int)
+//   [2] return_pointer_depth (int)
+//   [3] function_name (string_view)
+//   [4] struct_name (string_view) - empty for non-member functions
+//   [5] linkage (int) - Linkage enum value
+//   [6] is_variadic (bool)
+//   [7+] parameters - each parameter has 7 operands:
+//        [0] param_type (Type)
+//        [1] param_size (int)
+//        [2] param_pointer_depth (int)
+//        [3] param_name (string_view)
+//        [4] is_reference (bool)
+//        [5] is_rvalue_reference (bool)
+//        [6] cv_qualifier (int) - CVQualifier enum value
+//
+namespace FunctionDeclLayout {
+	// Fixed operand indices
+	constexpr size_t RETURN_TYPE = 0;
+	constexpr size_t RETURN_SIZE = 1;
+	constexpr size_t RETURN_POINTER_DEPTH = 2;
+	constexpr size_t FUNCTION_NAME = 3;
+	constexpr size_t STRUCT_NAME = 4;
+	constexpr size_t LINKAGE = 5;
+	constexpr size_t IS_VARIADIC = 6;
+
+	// First parameter starts after the fixed operands
+	constexpr size_t FIRST_PARAM_INDEX = 7;
+
+	// Each parameter has this many operands
+	constexpr size_t OPERANDS_PER_PARAM = 7;
+
+	// Parameter operand offsets (relative to parameter start)
+	constexpr size_t PARAM_TYPE = 0;
+	constexpr size_t PARAM_SIZE = 1;
+	constexpr size_t PARAM_POINTER_DEPTH = 2;
+	constexpr size_t PARAM_NAME = 3;
+	constexpr size_t PARAM_IS_REFERENCE = 4;
+	constexpr size_t PARAM_IS_RVALUE_REFERENCE = 5;
+	constexpr size_t PARAM_CV_QUALIFIER = 6;
+
+	// Helper function to get the index of a specific parameter's operand
+	constexpr size_t getParamOperandIndex(size_t param_number, size_t operand_offset) {
+		return FIRST_PARAM_INDEX + (param_number * OPERANDS_PER_PARAM) + operand_offset;
+	}
+
+	// Helper function to calculate the number of parameters from operand count
+	constexpr size_t getParamCount(size_t total_operand_count) {
+		if (total_operand_count < FIRST_PARAM_INDEX) return 0;
+		return (total_operand_count - FIRST_PARAM_INDEX) / OPERANDS_PER_PARAM;
+	}
+
+	// Helper function to validate that operand count is correct for given parameter count
+	constexpr bool isValidOperandCount(size_t total_operand_count) {
+		if (total_operand_count < FIRST_PARAM_INDEX) return false;
+		return (total_operand_count - FIRST_PARAM_INDEX) % OPERANDS_PER_PARAM == 0;
+	}
+}
+
 enum class X64Register : uint8_t {
 	RAX,
 	RCX,
