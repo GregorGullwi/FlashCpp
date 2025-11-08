@@ -1314,6 +1314,25 @@ ParseResult Parser::parse_struct_declaration()
 
 	std::string_view struct_name = name_token->value();
 
+	// Check for template specialization arguments after struct name
+	// e.g., struct MyStruct<int>, struct MyStruct<T&>
+	if (peek_token().has_value() && peek_token()->value() == "<") {
+		// This is a template specialization - skip the template arguments
+		// Full implementation would parse and store these properly
+		int angle_bracket_depth = 0;
+		consume_token(); // consume '<'
+		angle_bracket_depth = 1;
+		
+		while (peek_token().has_value() && angle_bracket_depth > 0) {
+			if (peek_token()->value() == "<") {
+				angle_bracket_depth++;
+			} else if (peek_token()->value() == ">") {
+				angle_bracket_depth--;
+			}
+			consume_token();
+		}
+	}
+
 	// Register the struct type in the global type system EARLY
 	// This allows member functions (like constructors) to reference the struct type
 	// We'll fill in the struct info later after parsing all members
