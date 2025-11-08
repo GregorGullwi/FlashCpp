@@ -25,7 +25,7 @@ public:
 	               const std::vector<SourceLineMapping>& line_map = {},
 	               const std::vector<std::string>& file_paths = {})
 		: source_(source), source_size_(source.size()), cursor_(0), line_(1),
-		column_(1), line_map_(line_map), file_paths_(file_paths) {
+		column_(1), file_paths_(file_paths), line_map_(line_map) {
 		if (file_paths_.empty()) {
 			file_paths_.push_back("<unknown>");
 		}
@@ -34,6 +34,35 @@ public:
 	
 	const std::vector<std::string>& file_paths() const {
 		return file_paths_;
+	}
+	
+	// Get the text of a specific line from the preprocessed source
+	std::string get_line_text(size_t line_num) const {
+		if (line_num == 0) return "";
+		
+		size_t current_line = 1;
+		size_t line_start = 0;
+		
+		// Find the start of the requested line
+		for (size_t i = 0; i < source_size_; ++i) {
+			if (current_line == line_num) {
+				line_start = i;
+				break;
+			}
+			if (source_[i] == '\n') {
+				current_line++;
+			}
+		}
+		
+		if (current_line != line_num) return "";
+		
+		// Find the end of the line
+		size_t line_end = line_start;
+		while (line_end < source_size_ && source_[line_end] != '\n') {
+			line_end++;
+		}
+		
+		return std::string(source_.substr(line_start, line_end - line_start));
 	}
 
 	Token next_token() {

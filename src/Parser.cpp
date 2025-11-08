@@ -3904,8 +3904,13 @@ ParseResult Parser::parse_type_specifier()
 			resolved_type, user_type_index, type_size, type_name_token, cv_qualifier));
 	}
 
-	return ParseResult::error("Unexpected token in type specifier",
-		current_token_opt.value_or(Token()));
+	std::string error_msg = "Unexpected token in type specifier";
+	if (current_token_opt.has_value()) {
+		error_msg += ": '";
+		error_msg += current_token_opt->value();
+		error_msg += "'";
+	}
+	return ParseResult::error(error_msg, current_token_opt.value_or(Token()));
 }
 
 ParseResult Parser::parse_decltype_specifier()

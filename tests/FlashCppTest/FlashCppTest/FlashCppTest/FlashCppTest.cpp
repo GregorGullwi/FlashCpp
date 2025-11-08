@@ -38,16 +38,20 @@ std::string read_test_file(const std::string& filename) {
 // Helper function to run a test with a given source file
 void run_test_from_file(const std::string& filename, const std::string& test_name, bool generate_obj, std::optional<int> break_at_line = {}) {
 	std::cout << "run_test_from_file: " << test_name.c_str() << std::endl;
-    std::string code = read_test_file(filename);
 
-    Lexer lexer(code);
-	compile_context = CompileContext();
+	CompileContext test_context;
+	test_context.setInputFile(filename);
+
+	FileTree file_tree;
+    FileReader file_reader(test_context, file_tree);
+	const std::string& code = file_reader.get_result();
+
 	gTypeInfo.clear();
 	gNativeTypes.clear();  // Clear native types map before reinitializing
 	gTypesByName.clear();  // Clear types by name map as well
 	gTemplateRegistry.clear();
-	compile_context.setInputFile(filename);
-    Parser parser(lexer, compile_context);
+    Lexer lexer(code, file_reader.get_line_map(), file_reader.get_file_paths());
+    Parser parser(lexer, test_context);
 #if WITH_DEBUG_INFO
 	parser.break_at_line_ = break_at_line;
 #endif

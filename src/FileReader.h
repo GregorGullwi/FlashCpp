@@ -647,13 +647,6 @@ public:
 				static_cast<size_t>(current_file.line_number),  // Line in current file
 				current_parent_line_  // Preprocessed line where current file was #included
 			});
-			
-			// DEBUG: Print parent_line tracking
-			if (current_parent_line_ > 0) {
-				std::cerr << "DEBUG append_line_with_tracking: line " << current_output_line_ 
-						  << " in file " << current_file_index_ 
-						  << " has parent_line " << current_parent_line_ << "\n";
-			}
 		}
 		
 		result_.append(line).append("\n");

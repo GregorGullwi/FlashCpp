@@ -92,7 +92,8 @@ public:
         
         // Format error message with file:line:column information and include stack
         std::string format_error(const std::vector<std::string>& file_paths, 
-                                const std::vector<SourceLineMapping>& line_map = {}) const {
+                                const std::vector<SourceLineMapping>& line_map = {},
+                                const Lexer* lexer = nullptr) const {
                 if (!is_error()) return "";
                 
                 const auto& err = std::get<Error>(value_or_error_);
@@ -143,6 +144,22 @@ public:
                 }
                 
                 result += "error: " + err.error_message_;
+                
+                // Add the source line if lexer is provided
+                if (lexer && tok.line() > 0) {
+                        std::string line_text = lexer->get_line_text(tok.line());
+                        if (!line_text.empty()) {
+                                result += "\n  " + line_text;
+                                // Add a caret pointing to the error column
+                                if (tok.column() > 0) {
+                                        result += "\n  ";
+                                        for (size_t i = 1; i < tok.column(); ++i) {
+                                                result += " ";
+                                        }
+                                        result += "^";
+                                }
+                        }
+                }
                 
                 return result;
         }
