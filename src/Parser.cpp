@@ -3536,7 +3536,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	Token using_token = using_token_opt.value();
 	consume_token(); // consume 'using'
 
-	// Check if this is a namespace alias: using identifier = namespace::path;
+	// Check if this is a type alias or namespace alias: using identifier = ...;
 	// We need to look ahead to see if there's an '=' after the first identifier
 	TokenPosition lookahead_pos = save_token_position();
 	auto first_token = peek_token();
@@ -3544,7 +3544,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		consume_token(); // consume identifier
 		auto next_token = peek_token();
 		if (next_token.has_value() && next_token->value() == "=") {
-			// This is a namespace alias: using alias = target::namespace;
+			// This is either a type alias or namespace alias: using alias = type/namespace;
 			restore_token_position(lookahead_pos);
 
 			// Parse alias name
@@ -3554,16 +3554,41 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			}
 
 			// Consume '='
-			if (!consume_punctuator("=")) {
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator || peek_token()->value() != "=") {
 				return ParseResult::error("Expected '=' after alias name", *current_token_);
 			}
+			consume_token(); // consume '='
 
-			// Parse target namespace path
+			// Try to parse as a type specifier (for type aliases like: using value_type = T;)
+			ParseResult type_result = parse_type_specifier();
+			if (!type_result.is_error()) {
+				// This is a type alias
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after type alias", *current_token_);
+				}
+
+				// Register the type alias in gTypesByName
+				if (type_result.node().has_value()) {
+					const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+					
+					// Create a TypeInfo for the alias that points to the underlying type
+					std::string alias_name(alias_token->value());
+					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
+					alias_type_info.type_index_ = type_spec.type_index();
+					alias_type_info.type_size_ = type_spec.size_in_bits();
+					gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+				}
+
+				// Return success (no AST node needed for type aliases)
+				return saved_position.success();
+			}
+
+			// Not a type alias, try parsing as namespace path for namespace alias
 			std::vector<StringType<>> target_namespace;
 			while (true) {
 				auto ns_token = consume_token();
 				if (!ns_token.has_value() || ns_token->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected namespace name", ns_token.value_or(Token()));
+					return ParseResult::error("Expected type or namespace name", ns_token.value_or(Token()));
 				}
 				target_namespace.emplace_back(StringType<>(ns_token->value()));
 
@@ -8167,6 +8192,14 @@ ParseResult Parser::parse_template_declaration() {
 						if (static_assert_result.is_error()) {
 							return static_assert_result;
 						}
+						continue;
+					} else if (peek_token()->value() == "using") {
+						// Handle type alias inside class body: using value_type = T;
+						auto using_result = parse_using_directive_or_declaration();
+						if (using_result.is_error()) {
+							return using_result;
+						}
+						// Type aliases are registered during parsing, no need to add to struct members
 						continue;
 					}
 				}
