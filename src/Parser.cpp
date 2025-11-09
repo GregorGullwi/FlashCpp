@@ -7809,80 +7809,25 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 		return ParseResult::error("Expected '{' after extern linkage specification", *current_token_);
 	}
 
-	// Create a block to hold all declarations
-	auto [block_node, block_ref] = create_node_ref(BlockNode());
-
 	// Save the current linkage and set the new one
 	Linkage saved_linkage = current_linkage_;
 	current_linkage_ = linkage;
 
-	// Parse declarations until '}'
-	while (peek_token().has_value() && peek_token()->value() != "}") {
-		// Check for typedef
-		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "typedef") {
-			auto typedef_result = parse_typedef_declaration();
-			if (typedef_result.is_error()) {
-				current_linkage_ = saved_linkage;
-				return typedef_result;  // No ScopedTokenPosition here, so direct return is OK
-			}
-			if (auto decl_node = typedef_result.node()) {
-				block_ref.add_statement_node(*decl_node);
-			}
-			continue;
-		}
-		
-		// Check for template
-		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
-			auto template_result = parse_template_declaration();
-			std::cerr << "DEBUG: parse_template_declaration() returned, is_error=" << template_result.is_error() << "\n";
-			if (template_result.is_error()) {
-				current_linkage_ = saved_linkage;
-				return template_result;  // No ScopedTokenPosition here, so direct return is OK
-			}
-			if (auto decl_node = template_result.node()) {
-				block_ref.add_statement_node(*decl_node);
-			}
-			continue;
-		}
-		
-		// Check for struct/class (including forward declarations)
-		if (peek_token()->type() == Token::Type::Keyword && 
-		    (peek_token()->value() == "struct" || peek_token()->value() == "class")) {
-			auto struct_result = parse_struct_declaration();
-			if (struct_result.is_error()) {
-				current_linkage_ = saved_linkage;
-				return struct_result;
-			}
-			if (auto decl_node = struct_result.node()) {
-				block_ref.add_statement_node(*decl_node);
-			}
-			continue;
-		}
-		
-		// Check for enum
-		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "enum") {
-			auto enum_result = parse_enum_declaration();
-			if (enum_result.is_error()) {
-				current_linkage_ = saved_linkage;
-				return enum_result;
-			}
-			if (auto decl_node = enum_result.node()) {
-				block_ref.add_statement_node(*decl_node);
-			}
-			continue;
-		}
-		
-		// Parse a declaration or function definition
-		ParseResult decl_result = parse_declaration_or_function_definition();
-		std::cerr << "DEBUG: parse_declaration_or_function_definition() returned, is_error=" << decl_result.is_error() << "\n";
-		if (decl_result.is_error()) {
-			current_linkage_ = saved_linkage;  // Restore linkage before returning error
-			return decl_result;  // No ScopedTokenPosition here, so direct return is OK
-		}
+	// Save the current AST size to know which nodes were added by this block
+	size_t ast_size_before = ast_nodes_.size();
 
-		if (auto decl_node = decl_result.node()) {
-			block_ref.add_statement_node(*decl_node);
+	// Parse declarations until '}' by calling parse_top_level_node() repeatedly
+	// This ensures extern "C" blocks support exactly the same constructs as file scope
+	while (peek_token().has_value() && peek_token()->value() != "}") {
+		
+		ParseResult result = parse_top_level_node();
+		
+		if (result.is_error()) {
+			current_linkage_ = saved_linkage;  // Restore linkage before returning error
+			return result;
 		}
+		
+		// parse_top_level_node() already adds nodes to ast_nodes_, so we don't need to do it here
 	}
 
 	// Restore the previous linkage
@@ -7891,6 +7836,17 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 	if (!consume_punctuator("}")) {
 		return ParseResult::error("Expected '}' after extern block", *current_token_);
 	}
+
+	// Create a block node containing all declarations parsed in this extern block
+	auto [block_node, block_ref] = create_node_ref(BlockNode());
+	
+	// Move all nodes added during this block into the BlockNode
+	for (size_t i = ast_size_before; i < ast_nodes_.size(); ++i) {
+		block_ref.add_statement_node(ast_nodes_[i]);
+	}
+	
+	// Remove those nodes from ast_nodes_ since they're now in the BlockNode
+	ast_nodes_.resize(ast_size_before);
 
 	return ParseResult::success(block_node);
 }
