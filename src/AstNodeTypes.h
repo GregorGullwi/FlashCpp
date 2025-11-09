@@ -1201,6 +1201,16 @@ private:
 	std::optional<ASTNode> function_decl_;  // For friend functions
 };
 
+// Type alias declaration (using alias = type;)
+struct TypeAliasDecl {
+	std::string_view alias_name;  // The alias name
+	ASTNode type_node;            // TypeSpecifierNode representing the aliased type
+	AccessSpecifier access;       // Access specifier (public/private/protected)
+
+	TypeAliasDecl(std::string_view name, ASTNode type, AccessSpecifier acc)
+		: alias_name(name), type_node(type), access(acc) {}
+};
+
 class StructDeclarationNode {
 public:
 	explicit StructDeclarationNode(std::string_view name, bool is_class = false)
@@ -1270,6 +1280,15 @@ public:
 		return nested_classes_;
 	}
 
+	// Type alias support
+	void add_type_alias(std::string_view alias_name, ASTNode type_node, AccessSpecifier access) {
+		type_aliases_.emplace_back(alias_name, type_node, access);
+	}
+
+	const std::vector<TypeAliasDecl>& type_aliases() const {
+		return type_aliases_;
+	}
+
 	void set_enclosing_class(StructDeclarationNode* enclosing) {
 		enclosing_class_ = enclosing;
 	}
@@ -1297,6 +1316,7 @@ private:
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
 	std::vector<ASTNode> friend_declarations_;  // Friend declarations
 	std::vector<ASTNode> nested_classes_;  // Nested classes
+	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
 };
