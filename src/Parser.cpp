@@ -331,7 +331,7 @@ void Parser::skip_balanced_braces() {
 		} else if (token->value() == "}") {
 			brace_depth--;
 			if (brace_depth == 0) {
-				// Consume the closing '}'  and exit
+				// Consume the closing '}' and exit
 				consume_token();
 				break;
 			}
@@ -9296,15 +9296,13 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		// Just a declaration, consume the semicolon
 		consume_token();
 	} else if (peek_token().has_value() && peek_token()->value() == "{") {
-		// Has a body - save position BEFORE consuming the '{'
-		// This way when we restore, current_token_ will be '{' and we can parse normally
+		// Has a body - save position AT the '{'
 		TokenPosition body_start = save_token_position();
 		
 		// Store the body position in the function declaration so we can re-parse it later
 		func_decl.set_template_body_position(body_start);
 		
-		// Now consume the '{' and skip over the body
-		consume_token();
+		// Skip over the body (including the opening and closing braces)
 		skip_balanced_braces();
 	}
 
