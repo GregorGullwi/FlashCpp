@@ -8651,6 +8651,8 @@ ParseResult Parser::parse_template_declaration() {
 		// Register the specialization
 		std::cerr << "DEBUG: Registering specialization for " << template_name << " with " << template_args.size() << " args\n";
 		for (size_t i = 0; i < template_args.size(); ++i) {
+			std::cerr << "  Arg " << i << ": base_type=" << static_cast<int>(template_args[i].base_type)
+			          << " is_ref=" << template_args[i].is_reference << "\n";
 		}
 		gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
 
@@ -8689,10 +8691,34 @@ ParseResult Parser::parse_template_declaration() {
 			
 			std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
 			
-			// TODO: For now, treat partial specialization same as full specialization
-			// In the future, we need to store the pattern and match against it during instantiation
-			// For now, just instantiate with the pattern as-is
-			std::string_view instantiated_name = get_instantiated_class_name(template_name, pattern_args);
+			// Generate a unique name for the pattern template
+			// We use the template parameter names + modifiers to create unique pattern names
+			// E.g., Container<T*> -> Container_pattern_TP
+			//       Container<T**> -> Container_pattern_TPP
+			//       Container<T&> -> Container_pattern_TR
+			std::string pattern_name = std::string(template_name) + "_pattern";
+			for (const auto& arg : pattern_args) {
+				// Add modifiers to make pattern unique
+				pattern_name += "_";
+				// Add pointer markers
+				for (size_t i = 0; i < arg.pointer_depth; ++i) {
+					pattern_name += "P";
+				}
+				// Add reference markers
+				if (arg.is_rvalue_reference) {
+					pattern_name += "RR";
+				} else if (arg.is_reference) {
+					pattern_name += "R";
+				}
+				// Add const/volatile markers
+				if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
+					pattern_name += "C";
+				}
+				if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
+					pattern_name += "V";
+				}
+			}
+			std::string_view instantiated_name = StringBuilder().append(pattern_name).commit();
 			
 			std::cerr << "DEBUG: Partial specialization pattern generates name: " << instantiated_name << "\n";
 			
@@ -8806,9 +8832,18 @@ ParseResult Parser::parse_template_declaration() {
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
 			
-			// Register the specialization
-			gTemplateRegistry.registerSpecialization(template_name, pattern_args, struct_node);
+			// Register the specialization PATTERN (not exact match)
+			// This allows pattern matching during instantiation
+			std::cerr << "DEBUG: Registering partial specialization PATTERN for " << template_name << "\n";
+			for (size_t i = 0; i < pattern_args.size(); ++i) {
+				std::cerr << "  Pattern arg " << i << ": base_type=" << static_cast<int>(pattern_args[i].base_type)
+				          << " is_ref=" << pattern_args[i].is_reference
+				          << " is_rvalue_ref=" << pattern_args[i].is_rvalue_reference
+				          << " ptr_depth=" << pattern_args[i].pointer_depth << "\n";
+			}
+			gTemplateRegistry.registerSpecializationPattern(template_name, template_params, pattern_args, struct_node);
 			
+			std::cerr << "DEBUG: Returning partial specialization struct node\n";
 			return saved_position.success(struct_node);
 		}
 
@@ -9355,16 +9390,30 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Get the type specifier node and make a copy we can modify
 		TypeSpecifierNode type_node = type_result.node()->as<TypeSpecifierNode>();
 		
+		// Check for pointer modifiers (*) - for patterns like T*, T**, etc.
+		while (peek_token().has_value() && peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+			type_node.add_pointer_level(CVQualifier::None);
+			std::cerr << "DEBUG: parse_explicit_template_arguments found pointer level\n";
+		}
+		
 		// Check for reference modifier (&) or rvalue reference (&&)
-		if (peek_token().has_value() && peek_token()->value() == "&") {
+		if (peek_token().has_value() && peek_token()->value() == "&&") {
+			// Rvalue reference - single && token
+			consume_token(); // consume '&&'
+			type_node.set_reference(true);  // is_rvalue = true
+			std::cerr << "DEBUG: parse_explicit_template_arguments found rvalue reference (&&)\n";
+		} else if (peek_token().has_value() && peek_token()->value() == "&") {
 			consume_token(); // consume '&'
 			
-			// Check for && (rvalue reference)
+			// Check for second & (though lexer usually combines them)
 			if (peek_token().has_value() && peek_token()->value() == "&") {
 				consume_token(); // consume second '&'
 				type_node.set_reference(true);  // is_rvalue = true
+				std::cerr << "DEBUG: parse_explicit_template_arguments found rvalue reference (& &)\n";
 			} else {
 				type_node.set_reference(false); // is_rvalue = false (lvalue reference)
+				std::cerr << "DEBUG: parse_explicit_template_arguments found lvalue reference (&)\n";
 			}
 		}
 
@@ -9902,24 +9951,84 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 // Try to instantiate a class template with explicit template arguments
 // Returns the instantiated StructDeclarationNode if successful
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
-	// First, check if there's a specialization for these exact template arguments
+	std::cerr << "DEBUG: try_instantiate_class_template called with template_name='" << template_name << "' and " << template_args.size() << " args\n";
+	
+	// Generate the instantiated class name first
+	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+	std::cerr << "DEBUG: Target instantiated name: '" << instantiated_name << "'\n";
+
+	// Check if we already have this instantiation
+	auto existing_type = gTypesByName.find(instantiated_name);
+	if (existing_type != gTypesByName.end()) {
+		std::cerr << "DEBUG: Type already exists, returning nullopt\n";
+		return std::nullopt;
+	}
+	
+	// First, check if there's an exact specialization match
 	std::cerr << "DEBUG: Looking up specialization for " << template_name << " with " << template_args.size() << " args\n";
 	for (size_t i = 0; i < template_args.size(); ++i) {
 		std::cerr << "  Arg " << i << ": base_type=" << static_cast<int>(template_args[i].base_type) 
-		          << " is_ref=" << template_args[i].is_reference << "\n";
+		          << " is_ref=" << template_args[i].is_reference
+		          << " is_rvalue_ref=" << template_args[i].is_rvalue_reference
+		          << " ptr_depth=" << template_args[i].pointer_depth << "\n";
 	}
-	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args);
-	if (specialization_opt.has_value()) {
-		std::cerr << "DEBUG: Found specialization!\n";
-		// Found a specialization - it's already fully instantiated and registered
-		// Return nullopt to indicate the type is already available
-		// The caller will look it up in gTypesByName
-		return std::nullopt;
+	
+	// Try to match a specialization pattern
+	auto pattern_match_opt = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
+	if (pattern_match_opt.has_value()) {
+		std::cerr << "DEBUG: Found matching specialization pattern!\n";
+		// Found a matching pattern - we need to instantiate it with concrete types
+		const ASTNode& pattern_node = *pattern_match_opt;
+		
+		if (!pattern_node.is<StructDeclarationNode>()) {
+			std::cerr << "DEBUG: Pattern node is not a StructDeclarationNode\n";
+			return std::nullopt;
+		}
+		
+		const StructDeclarationNode& pattern_struct = pattern_node.as<StructDeclarationNode>();
+		
+		// Create a new struct with the instantiated name
+		// Copy members from the pattern, substituting template parameters
+		// For now, if members use template parameters, we substitute them
+		
+		// Create struct type info first
+		TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+		auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), pattern_struct.default_access());
+		
+		// Copy members from pattern
+		for (const auto& member_decl : pattern_struct.members()) {
+			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+			
+			// For pattern specializations, members should already have concrete types
+			// since the pattern was parsed with concrete types (e.g., T& was parsed as a reference)
+			// We just copy them as-is
+			
+			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+			
+			struct_info->addMember(
+				std::string(decl.identifier_token().value()),
+				type_spec.type(),
+				type_spec.type_index(),
+				member_size,
+				member_alignment,
+				member_decl.access,
+				member_decl.default_initializer
+			);
+		}
+		
+		struct_info->finalize();
+		struct_type_info.setStructInfo(std::move(struct_info));
+		
+		std::cerr << "DEBUG: Pattern instantiation complete for " << instantiated_name << "\n";
+		return std::nullopt;  // Type is now available in gTypesByName
 	}
-	std::cerr << "DEBUG: No specialization found, using primary template\n";
+	std::cerr << "DEBUG: No pattern match found, using primary template\n";
 
 	// No specialization found - use the primary template
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+	std::cerr << "DEBUG: lookupTemplate('" << template_name << "') returned " << (template_opt.has_value() ? "found" : "not found") << "\n";
 	if (!template_opt.has_value()) {
 		return std::nullopt;  // No template with this name
 	}
@@ -9967,12 +10076,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Use the filled template args for the rest of the function
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
 
-	// Generate the instantiated class name
-	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args_to_use);
+	// Generate the instantiated class name (again, with filled args)
+	instantiated_name = get_instantiated_class_name(template_name, template_args_to_use);
+	std::cerr << "DEBUG: Checking if '" << instantiated_name << "' already exists (after default filling)\n";
 
-	// Check if we already have this instantiation
-	auto existing_type = gTypesByName.find(instantiated_name);
+	// Check if we already have this instantiation (after filling defaults)
+	existing_type = gTypesByName.find(instantiated_name);
 	if (existing_type != gTypesByName.end()) {
+		std::cerr << "DEBUG: Type already exists, returning nullopt\n";
 		// Already instantiated, return the existing struct node
 		// We need to find the struct node in the AST
 		// For now, just return nullopt and let the type lookup handle it

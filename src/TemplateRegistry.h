@@ -8,6 +8,7 @@
 #include <vector>
 #include <unordered_map>
 #include <optional>
+#include <algorithm>
 
 // Full type representation for template arguments
 // Captures base type, references, pointers, cv-qualifiers, etc.
@@ -16,46 +17,76 @@ struct TemplateTypeArg {
 	TypeIndex type_index;  // For user-defined types
 	bool is_reference;
 	bool is_rvalue_reference;
+	size_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
+	CVQualifier cv_qualifier;  // const/volatile qualifiers
 	
-	TemplateTypeArg() : base_type(Type::Invalid), type_index(0), is_reference(false), is_rvalue_reference(false) {}
+	TemplateTypeArg() 
+		: base_type(Type::Invalid)
+		, type_index(0)
+		, is_reference(false)
+		, is_rvalue_reference(false)
+		, pointer_depth(0)
+		, cv_qualifier(CVQualifier::None) {}
 	
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
 		, type_index(type_spec.type_index())
 		, is_reference(type_spec.is_reference())
-		, is_rvalue_reference(type_spec.is_rvalue_reference()) {}
+		, is_rvalue_reference(type_spec.is_rvalue_reference())
+		, pointer_depth(type_spec.pointer_depth())
+		, cv_qualifier(type_spec.cv_qualifier()) {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		return base_type == other.base_type &&
 		       type_index == other.type_index &&
 		       is_reference == other.is_reference &&
-		       is_rvalue_reference == other.is_rvalue_reference;
+		       is_rvalue_reference == other.is_rvalue_reference &&
+		       pointer_depth == other.pointer_depth &&
+		       cv_qualifier == other.cv_qualifier;
 	}
 	
 	// Get string representation for mangling
 	std::string toString() const {
 		std::string result;
-		switch (base_type) {
-			case Type::Int: result = "int"; break;
-			case Type::Float: result = "float"; break;
-			case Type::Double: result = "double"; break;
-			case Type::Bool: result = "bool"; break;
-			case Type::Char: result = "char"; break;
-			case Type::Long: result = "long"; break;
-			case Type::LongLong: result = "longlong"; break;
-			case Type::Short: result = "short"; break;
-			case Type::UnsignedInt: result = "uint"; break;
-			case Type::UnsignedLong: result = "ulong"; break;
-			case Type::UnsignedLongLong: result = "ulonglong"; break;
-			case Type::UnsignedShort: result = "ushort"; break;
-			case Type::UnsignedChar: result = "uchar"; break;
-			default: result = "unknown"; break;
+		
+		// Add const/volatile prefix if present
+		if ((static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
+			result += "C";  // const
 		}
+		if ((static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
+			result += "V";  // volatile
+		}
+		
+		// Add base type name
+		switch (base_type) {
+			case Type::Int: result += "int"; break;
+			case Type::Float: result += "float"; break;
+			case Type::Double: result += "double"; break;
+			case Type::Bool: result += "bool"; break;
+			case Type::Char: result += "char"; break;
+			case Type::Long: result += "long"; break;
+			case Type::LongLong: result += "longlong"; break;
+			case Type::Short: result += "short"; break;
+			case Type::UnsignedInt: result += "uint"; break;
+			case Type::UnsignedLong: result += "ulong"; break;
+			case Type::UnsignedLongLong: result += "ulonglong"; break;
+			case Type::UnsignedShort: result += "ushort"; break;
+			case Type::UnsignedChar: result += "uchar"; break;
+			default: result += "unknown"; break;
+		}
+		
+		// Add pointer markers
+		for (size_t i = 0; i < pointer_depth; ++i) {
+			result += "P";  // P for pointer
+		}
+		
+		// Add reference markers
 		if (is_rvalue_reference) {
 			result += "RR";  // rvalue reference
 		} else if (is_reference) {
 			result += "R";   // lvalue reference
 		}
+		
 		return result;
 	}
 };
@@ -67,6 +98,8 @@ struct TemplateTypeArgHash {
 		hash ^= std::hash<size_t>{}(arg.type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<bool>{}(arg.is_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<bool>{}(arg.is_rvalue_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<size_t>{}(arg.pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.cv_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		return hash;
 	}
 };
@@ -144,6 +177,122 @@ struct OutOfLineMemberFunction {
 	ASTNode function_node;                  // FunctionDeclarationNode
 	TokenPosition body_start;               // Position of function body for re-parsing
 	std::vector<std::string_view> template_param_names;  // Names of template parameters
+};
+
+// Template specialization pattern - represents a pattern like T&, T*, const T, etc.
+struct TemplatePattern {
+	std::vector<ASTNode> template_params;  // Template parameters (e.g., typename T)
+	std::vector<TemplateTypeArg> pattern_args;  // Pattern like T&, T*, etc.
+	ASTNode specialized_node;  // The AST node for the specialized template
+	
+	// Check if this pattern matches the given concrete arguments
+	// For example, pattern T& matches int&, float&, etc.
+	// Returns true if match succeeds, and fills param_substitutions with T->int mapping
+	bool matches(const std::vector<TemplateTypeArg>& concrete_args, 
+	             std::unordered_map<std::string, TemplateTypeArg>& param_substitutions) const
+	{
+		// Pattern and concrete args must have the same number of arguments
+		if (pattern_args.size() != concrete_args.size()) {
+			return false;
+		}
+	
+		param_substitutions.clear();
+	
+		// Check each pattern argument against the corresponding concrete argument
+		for (size_t i = 0; i < pattern_args.size(); ++i) {
+			const TemplateTypeArg& pattern_arg = pattern_args[i];
+			const TemplateTypeArg& concrete_arg = concrete_args[i];
+		
+			// Find the template parameter name for this pattern position
+			// The pattern_arg contains the type from the pattern (e.g., T for pattern T&)
+			// We need to check if the base types match and the modifiers match
+		
+			// Pattern matching rules:
+			// 1. If pattern is "T&" and concrete is "int&", then T=int (reference match)
+			// 2. If pattern is "T&&" and concrete is "int&&", then T=int (rvalue reference match)
+			// 3. If pattern is "T*" and concrete is "int*", then T=int (pointer match)
+			// 4. If pattern is "T**" and concrete is "int**", then T=int (double pointer match)
+			// 5. If pattern is "const T" and concrete is "const int", then T=int (const match)
+			// 6. If pattern is "T" and concrete is "int", then T=int (exact match)
+			// 7. Reference/pointer/const modifiers must match
+		
+			// Check if modifiers match
+			if (pattern_arg.is_reference != concrete_arg.is_reference) {
+				return false;
+			}
+			if (pattern_arg.is_rvalue_reference != concrete_arg.is_rvalue_reference) {
+				return false;
+			}
+			if (pattern_arg.pointer_depth != concrete_arg.pointer_depth) {
+				return false;
+			}
+			if (pattern_arg.cv_qualifier != concrete_arg.cv_qualifier) {
+				return false;
+			}
+		
+			// For pattern matching, we need to extract the template parameter name
+			// The pattern_arg.base_type is UserDefined and represents the template parameter
+			// We need to get the parameter name from template_params
+		
+			if (i >= template_params.size()) {
+				return false;  // Mismatch in parameter count
+			}
+		
+			const ASTNode& param_node = template_params[i];
+			if (!param_node.is<TemplateParameterNode>()) {
+				return false;
+			}
+		
+			const TemplateParameterNode& template_param = param_node.as<TemplateParameterNode>();
+			std::string param_name(template_param.name());
+		
+			// Check if we've already seen this parameter
+			auto it = param_substitutions.find(param_name);
+			if (it != param_substitutions.end()) {
+				// Parameter already bound - check consistency
+				if (!(it->second == concrete_arg)) {
+					return false;  // Inconsistent substitution
+				}
+			} else {
+				// Bind this parameter to the concrete type
+				param_substitutions[param_name] = concrete_arg;
+			}
+		}
+	
+		return true;  // All patterns matched
+	}
+	
+	// Calculate specificity score (higher = more specialized)
+	// T = 0, T& = 1, T* = 1, const T = 1, const T& = 2, etc.
+	int specificity() const
+	{
+		int score = 0;
+	
+		for (const auto& arg : pattern_args) {
+			// Base score: any pattern parameter = 0
+		
+			// Pointer modifier adds specificity (T* is more specific than T)
+			score += arg.pointer_depth;  // T* = +1, T** = +2, etc.
+		
+			// Reference modifier adds specificity
+			if (arg.is_reference) {
+				score += 1;  // T& is more specific than T
+			}
+			if (arg.is_rvalue_reference) {
+				score += 1;  // T&& is more specific than T
+			}
+		
+			// CV-qualifiers add specificity
+			if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
+				score += 1;  // const T is more specific than T
+			}
+			if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
+				score += 1;  // volatile T is more specific than T
+			}
+		}
+	
+		return score;
+	}
 };
 
 // Key for template specializations
@@ -279,19 +428,66 @@ public:
 		return {};
 	}
 
-	// Register a template specialization
+	// Register a template specialization pattern
+	void registerSpecializationPattern(std::string_view template_name, 
+	                                   const std::vector<ASTNode>& template_params,
+	                                   const std::vector<TemplateTypeArg>& pattern_args, 
+	                                   ASTNode specialized_node) {
+		std::string key(template_name);
+		TemplatePattern pattern;
+		pattern.template_params = template_params;
+		pattern.pattern_args = pattern_args;
+		pattern.specialized_node = specialized_node;
+		specialization_patterns_[key].push_back(std::move(pattern));
+	}
+
+	// Register a template specialization (exact match)
 	void registerSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
 		SpecializationKey key{std::string(template_name), template_args};
 		specializations_[key] = specialized_node;
 	}
 
-	// Look up a template specialization
+	// Look up a template specialization (exact match first, then pattern match)
 	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
+		// First, try exact match
 		SpecializationKey key{std::string(template_name), template_args};
 		auto it = specializations_.find(key);
 		if (it != specializations_.end()) {
 			return it->second;
 		}
+		
+		// No exact match - try pattern matching
+		return matchSpecializationPattern(template_name, template_args);
+	}
+	
+	// Find a matching specialization pattern
+	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name, 
+	                                                  const std::vector<TemplateTypeArg>& concrete_args) const {
+		auto patterns_it = specialization_patterns_.find(std::string(template_name));
+		if (patterns_it == specialization_patterns_.end()) {
+			return std::nullopt;  // No patterns for this template
+		}
+		
+		const std::vector<TemplatePattern>& patterns = patterns_it->second;
+		const TemplatePattern* best_match = nullptr;
+		int best_specificity = -1;
+		
+		// Find the most specific matching pattern
+		for (const auto& pattern : patterns) {
+			std::unordered_map<std::string, TemplateTypeArg> substitutions;
+			if (pattern.matches(concrete_args, substitutions)) {
+				int spec = pattern.specificity();
+				if (spec > best_specificity) {
+					best_match = &pattern;
+					best_specificity = spec;
+				}
+			}
+		}
+		
+		if (best_match) {
+			return best_match->specialized_node;
+		}
+		
 		return std::nullopt;
 	}
 
@@ -301,6 +497,7 @@ public:
 		instantiations_.clear();
 		out_of_line_members_.clear();
 		specializations_.clear();
+		specialization_patterns_.clear();
 	}
 
 private:
@@ -313,8 +510,11 @@ private:
 	// Map from class name to out-of-line member function definitions
 	std::unordered_map<std::string, std::vector<OutOfLineMemberFunction>> out_of_line_members_;
 
-	// Map from (template_name, template_args) to specialized class node
+	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
+	
+	// Map from template_name to specialization patterns (for pattern matching)
+	std::unordered_map<std::string, std::vector<TemplatePattern>> specialization_patterns_;
 };
 
 // Global template registry
