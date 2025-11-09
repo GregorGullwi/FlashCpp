@@ -18,6 +18,7 @@
 #include "Token.h"
 #include "SymbolTable.h"
 #include "CompileContext.h"
+#include "TemplateRegistry.h"
 
 #ifndef WITH_DEBUG_INFO
 #define WITH_DEBUG_INFO 0
@@ -371,12 +372,12 @@ private:
         ParseResult parse_template_parameter();  // NEW: Parse a single template parameter
         ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
         ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
-        std::optional<std::vector<Type>> parse_explicit_template_arguments();  // NEW: Parse explicit template arguments like <int, float>
+        std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments();  // NEW: Parse explicit template arguments like <int, float>
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
-        std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<Type>& explicit_types);  // NEW: Instantiate with explicit args
-        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<Type>& template_args);  // NEW: Instantiate class template
+        std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types);  // NEW: Instantiate with explicit args
+        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate class template
         std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
-        std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<Type>& template_args);  // NEW: Get mangled name for instantiated class
+        std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
         std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<std::string_view>& template_param_names);  // NEW: Parse out-of-line template member function
         
 public:  // Public methods for template instantiation

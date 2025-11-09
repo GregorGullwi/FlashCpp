@@ -212,6 +212,7 @@ Parser::ScopedTokenPosition::~ScopedTokenPosition() {
 }
 
 ParseResult Parser::ScopedTokenPosition::success(ASTNode node) {
+    std::cerr << "DEBUG ScopedTokenPosition::success() called, discarding saved position\n";
     discarded_ = true;
     parser_.discard_saved_token(saved_position_);
     return ParseResult::success(node);
@@ -554,6 +555,10 @@ ParseResult Parser::parse_top_level_node()
 						consume_token();
 					}
 				}
+				std::cerr << "DEBUG: Finished skipping pragma, next token: " 
+				          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF") 
+				          << " type=" << (peek_token().has_value() ? static_cast<int>(peek_token()->type()) : -1)
+				          << std::endl;
 				return saved_position.success();
 			}
 		}
@@ -598,10 +603,18 @@ ParseResult Parser::parse_top_level_node()
 
 	// Check if it's a template declaration (must come before struct/class check)
 	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
+		std::cerr << "DEBUG: Top-level found 'template', calling parse_template_declaration\n";
 		auto result = parse_template_declaration();
+		std::cerr << "DEBUG: parse_template_declaration returned, is_error=" << result.is_error() << "\n";
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
 				ast_nodes_.push_back(*node);
+			}
+			std::cerr << "DEBUG: Template parsed successfully, next token: ";
+			if (peek_token().has_value()) {
+				std::cerr << "'" << peek_token()->value() << "' at line " << peek_token()->line() << "\n";
+			} else {
+				std::cerr << "<EOF>\n";
 			}
 			return saved_position.success();
 		}
@@ -1141,6 +1154,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), __cdecl, etc.)
 	AttributeInfo attr_info = parse_attributes();
 	
+	std::cerr << "DEBUG: After parse_attributes, current token: ";
+	if (peek_token().has_value()) {
+		std::cerr << "'" << peek_token()->value() << "'\n";
+	} else {
+		std::cerr << "<EOF>\n";
+	}
+	
 	// Parse the type specifier and identifier (name)
 	// This will also extract any calling convention that appears after the type
 	// and store it in last_calling_convention_
@@ -1221,6 +1241,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			// Parse function body
 			auto block_result = parse_block();
+			std::cerr << "DEBUG: parse_block returned, is_error=" << block_result.is_error() << "\n";
 			if (block_result.is_error()) {
 				current_function_ = nullptr;
 				gSymbolTable.exit_scope();
@@ -1429,7 +1450,7 @@ ParseResult Parser::parse_struct_declaration()
 				return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
 			}
 			
-			std::vector<Type> template_args = *template_args_opt;
+			std::vector<TemplateTypeArg> template_args = *template_args_opt;
 			
 			// Check if the base class is a template
 			auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
@@ -1565,11 +1586,47 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Check for 'using' keyword - type alias
 			if (keyword == "using") {
-				auto using_result = parse_using_directive_or_declaration();
-				if (using_result.is_error()) {
-					return using_result;
+				consume_token(); // consume 'using'
+				
+				auto alias_token = peek_token();
+				if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected alias name after 'using'", peek_token().value_or(Token()));
 				}
-				// Type aliases are registered during parsing, no need to add to struct members
+				
+				std::string_view alias_name = alias_token->value();
+				consume_token(); // consume alias name
+				
+				// Check for '='
+				if (!peek_token().has_value() || peek_token()->value() != "=") {
+					return ParseResult::error("Expected '=' after alias name", *current_token_);
+				}
+				consume_token(); // consume '='
+				
+				// Parse the type
+				auto type_result = parse_type_specifier();
+				if (type_result.is_error()) {
+					return type_result;
+				}
+				
+				if (!type_result.node().has_value()) {
+					return ParseResult::error("Expected type after '=' in type alias", *current_token_);
+				}
+				
+				// Consume semicolon
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after type alias", *current_token_);
+				}
+				
+				// Store the alias in the struct
+				struct_ref.add_type_alias(alias_name, *type_result.node(), current_access);
+				
+				// Also register it globally (for non-template or immediate use)
+				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+				auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+				alias_type_info.type_index_ = type_spec.type_index();
+				alias_type_info.type_size_ = type_spec.size_in_bits();
+				gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+				
 				continue;
 			}
 
@@ -3797,6 +3854,7 @@ ParseResult Parser::parse_type_specifier()
 	if (!current_token_opt.has_value() ||
 		(current_token_opt->type() != Token::Type::Keyword &&
 			current_token_opt->type() != Token::Type::Identifier)) {
+		std::cerr << "DEBUG: parse_type_specifier returning early - invalid token\n";
 		return ParseResult::error("Expected type specifier",
 			current_token_opt.value_or(Token()));
 	}
@@ -4053,7 +4111,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// Check for template arguments: Container<int>
-		std::optional<std::vector<Type>> template_args;
+		std::optional<std::vector<TemplateTypeArg>> template_args;
 		auto next_token = peek_token();
 		if (next_token.has_value() && next_token->value() == "<") {
 			template_args = parse_explicit_template_arguments();
@@ -4063,7 +4121,7 @@ ParseResult Parser::parse_type_specifier()
 				
 				// Fill in default template arguments to get the actual instantiated name
 				// (try_instantiate_class_template fills them internally, we need to do the same here)
-				std::vector<Type> filled_template_args = *template_args;
+				std::vector<TemplateTypeArg> filled_template_args = *template_args;
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
@@ -4076,7 +4134,7 @@ ParseResult Parser::parse_type_specifier()
 							const ASTNode& default_node = param.default_value();
 							if (default_node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
-								filled_template_args.push_back(default_type.type());
+								filled_template_args.push_back(TemplateTypeArg(default_type));
 							}
 						}
 					}
@@ -4116,21 +4174,24 @@ ParseResult Parser::parse_type_specifier()
 					std::cerr << "DEBUG: Looking up qualified type '" << qualified_type_name << "': " 
 					          << (qual_type_it != gTypesByName.end() ? "FOUND" : "NOT FOUND") << "\n";
 					if (qual_type_it != gTypesByName.end()) {
-						std::cerr << "DEBUG: Type found, isStruct=" << qual_type_it->second->isStruct() 
-						          << " type=" << static_cast<int>(qual_type_it->second->type_) << "\n";
-						if (qual_type_it->second->isStruct()) {
-							const TypeInfo* struct_type_info = qual_type_it->second;
-							const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+						const TypeInfo* type_info = qual_type_it->second;
+						
+						// Handle both struct types and type aliases
+						if (type_info->isStruct()) {
+							const StructTypeInfo* struct_info = type_info->getStructInfo();
 
 							if (struct_info) {
 								type_size = static_cast<unsigned char>(struct_info->total_size * 8);
 							} else {
 								type_size = 0;
 							}
-							std::cerr << "DEBUG: Returning TypeSpecifierNode for " << qualified_type_name 
-							          << " with size=" << (int)type_size << " type_index=" << struct_type_info->type_index_ << "\n";
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+								Type::Struct, type_info->type_index_, type_size, type_name_token, cv_qualifier));
+						} else {
+							// This is a type alias - return the aliased type
+							type_size = static_cast<unsigned char>(type_info->type_size_);
+							return ParseResult::success(emplace_node<TypeSpecifierNode>(
+								type_info->type_, type_info->type_index_, type_size, type_name_token, cv_qualifier));
 						}
 					}
 					return ParseResult::error("Unknown nested type: " + qualified_type_name, type_name_token);
@@ -4173,18 +4234,18 @@ ParseResult Parser::parse_type_specifier()
 			
 			if (all_have_defaults) {
 				// Instantiate with empty args - defaults will be filled in
-				std::vector<Type> empty_args;
+				std::vector<TemplateTypeArg> empty_args;
 				auto instantiated_class = try_instantiate_class_template(type_name, empty_args);
 				
 				// Fill in default template arguments to get the actual instantiated name
-				std::vector<Type> filled_template_args;
+				std::vector<TemplateTypeArg> filled_template_args;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 					if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
 						const ASTNode& default_node = param.default_value();
 						if (default_node.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
-							filled_template_args.push_back(default_type.type());
+							filled_template_args.push_back(TemplateTypeArg(default_type));
 						}
 					}
 				}
@@ -6194,7 +6255,7 @@ ParseResult Parser::parse_primary_expression()
 			// Identifier already consumed at line 1621
 
 			// Check for explicit template arguments: identifier<type1, type2>(args)
-			std::optional<std::vector<Type>> explicit_template_args;
+			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
 			if (peek_token().has_value() && peek_token()->value() == "<") {
 				explicit_template_args = parse_explicit_template_arguments();
 				// If parsing failed, it might be a less-than operator, so continue normally
@@ -8289,7 +8350,35 @@ ParseResult Parser::parse_template_declaration() {
 	ParseResult decl_result;
 	if (is_class_template) {
 		std::cerr << "DEBUG: Parsing class template" << std::endl;
-		// Handle template specialization
+		
+		// Check if this is a partial specialization by peeking ahead
+		// Pattern: template<typename T> struct Name<T&> { ... }
+		// After struct/class keyword and name, if we see '<', it's a specialization
+		bool is_partial_specialization = false;
+		if (!is_specialization && !template_params.empty()) {
+			// Save position to peek ahead
+			auto peek_pos = save_token_position();
+			
+			// Try to consume struct/class keyword
+			if (consume_keyword("struct") || consume_keyword("class")) {
+				// Try to get class name
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+					std::string_view class_name = peek_token()->value();
+					consume_token();
+					
+					// Check if template arguments follow
+					if (peek_token().has_value() && peek_token()->value() == "<") {
+						// This is a partial specialization!
+						is_partial_specialization = true;
+					}
+				}
+			}
+			
+			// Restore position
+			restore_token_position(peek_pos);
+		}
+		
+		// Handle full template specialization (template<>)
 		if (is_specialization) {
 			// Parse: class ClassName<TemplateArgs> { ... }
 			// We need to parse the class keyword, name, template arguments, and body separately
@@ -8314,7 +8403,7 @@ ParseResult Parser::parse_template_declaration() {
 				return ParseResult::error("Expected template arguments in specialization", *current_token_);
 			}
 
-			std::vector<Type> template_args = *template_args_opt;
+			std::vector<TemplateTypeArg> template_args = *template_args_opt;
 
 			// Now parse the class body as a regular struct
 			// But we need to give it a unique name that includes the template arguments
@@ -8388,7 +8477,8 @@ ParseResult Parser::parse_template_declaration() {
 						if (using_result.is_error()) {
 							return using_result;
 						}
-						// Type aliases are registered during parsing, no need to add to struct members
+						// Type aliases are registered during parsing
+						// For template specializations, they're already in gTypesByName
 						continue;
 					} else if (peek_token()->value() == "static") {
 						// Handle static members: static const int size = 10;
@@ -8561,7 +8651,6 @@ ParseResult Parser::parse_template_declaration() {
 		// Register the specialization
 		std::cerr << "DEBUG: Registering specialization for " << template_name << " with " << template_args.size() << " args\n";
 		for (size_t i = 0; i < template_args.size(); ++i) {
-			std::cerr << "  Arg " << i << ": type=" << static_cast<int>(template_args[i]) << "\n";
 		}
 		gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
 
@@ -8571,6 +8660,156 @@ ParseResult Parser::parse_template_declaration() {
 		// but then the wrapping TemplateClassDeclarationNode gets added by the caller
 		std::cerr << "DEBUG: Returning specialization struct node directly\n";
 		return saved_position.success(struct_node);
+		}
+		
+		// Handle partial specialization (template<typename T> struct X<T&>)
+		if (is_partial_specialization) {
+			std::cerr << "DEBUG: Parsing partial specialization\n";
+			
+			// Parse the struct/class keyword
+			bool is_class = consume_keyword("class");
+			if (!is_class) {
+				consume_keyword("struct");
+			}
+			
+			// Parse class name
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected class name", *current_token_);
+			}
+			
+			Token class_name_token = *peek_token();
+			std::string_view template_name = class_name_token.value();
+			consume_token();
+			
+			// Parse the specialization pattern: <T&>, <T*, U>, etc.
+			auto pattern_args_opt = parse_explicit_template_arguments();
+			if (!pattern_args_opt.has_value()) {
+				return ParseResult::error("Expected template argument pattern in partial specialization", *current_token_);
+			}
+			
+			std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
+			
+			// TODO: For now, treat partial specialization same as full specialization
+			// In the future, we need to store the pattern and match against it during instantiation
+			// For now, just instantiate with the pattern as-is
+			std::string_view instantiated_name = get_instantiated_class_name(template_name, pattern_args);
+			
+			std::cerr << "DEBUG: Partial specialization pattern generates name: " << instantiated_name << "\n";
+			
+			// Create a struct node for this specialization
+			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
+				instantiated_name,
+				is_class
+			);
+			
+			// Expect opening brace
+			if (!consume_punctuator("{")) {
+				return ParseResult::error("Expected '{' after partial specialization header", *peek_token());
+			}
+			
+			// Create struct type info
+			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+			
+			AccessSpecifier current_access = struct_ref.default_access();
+			
+			// Set up member function context
+			member_function_context_stack_.push_back({
+				instantiated_name,
+				struct_type_info.type_index_,
+				&struct_ref
+			});
+			
+			// Parse class body (same as full specialization)
+			while (peek_token().has_value() && peek_token()->value() != "}") {
+				// Check for access specifiers
+				if (peek_token()->type() == Token::Type::Keyword) {
+					if (peek_token()->value() == "public") {
+						consume_token();
+						if (!consume_punctuator(":")) {
+							return ParseResult::error("Expected ':' after 'public'", *peek_token());
+						}
+						current_access = AccessSpecifier::Public;
+						continue;
+					} else if (peek_token()->value() == "private") {
+						consume_token();
+						if (!consume_punctuator(":")) {
+							return ParseResult::error("Expected ':' after 'private'", *peek_token());
+						}
+						current_access = AccessSpecifier::Private;
+						continue;
+					} else if (peek_token()->value() == "protected") {
+						consume_token();
+						if (!consume_punctuator(":")) {
+							return ParseResult::error("Expected ':' after 'protected'", *peek_token());
+						}
+						current_access = AccessSpecifier::Protected;
+						continue;
+					}
+				}
+				
+				// Parse member declaration
+				auto member_result = parse_declaration_or_function_definition();
+				if (member_result.is_error()) {
+					return member_result;
+				}
+				
+				if (member_result.node().has_value()) {
+					ASTNode member_node = *member_result.node();
+					if (member_node.is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_node = member_node.as<VariableDeclarationNode>();
+						struct_ref.add_member(var_node.declaration_node(), current_access);
+					}
+				}
+				
+				// Consume optional semicolon
+				consume_punctuator(";");
+			}
+			
+			// Expect closing brace
+			if (!consume_punctuator("}")) {
+				return ParseResult::error("Expected '}' after class body", *peek_token());
+			}
+			
+			// Pop member function context
+			member_function_context_stack_.pop_back();
+			
+			// Expect semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after class declaration", *peek_token());
+			}
+			
+			// Create StructTypeInfo with member information
+			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			
+			// Add members to struct info
+			for (const auto& member_decl : struct_ref.members()) {
+				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				
+				size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+				size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+				
+				struct_info->addMember(
+					std::string(decl.identifier_token().value()),
+					type_spec.type(),
+					type_spec.type_index(),
+					member_size,
+					member_alignment,
+					member_decl.access,
+					member_decl.default_initializer
+				);
+			}
+			
+			// Finalize the struct layout
+			struct_info->finalize();
+			
+			// Store struct info
+			struct_type_info.setStructInfo(std::move(struct_info));
+			
+			// Register the specialization
+			gTemplateRegistry.registerSpecialization(template_name, pattern_args, struct_node);
+			
+			return saved_position.success(struct_node);
 		}
 
 		// Set flag to indicate we're parsing a template class
@@ -9084,7 +9323,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 // Parse explicit template arguments: <int, float, ...>
 // Returns a vector of types if successful, nullopt otherwise
-std::optional<std::vector<Type>> Parser::parse_explicit_template_arguments() {
+std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments() {
 	// Save position in case this isn't template arguments
 	auto saved_pos = save_token_position();
 
@@ -9094,7 +9333,7 @@ std::optional<std::vector<Type>> Parser::parse_explicit_template_arguments() {
 	}
 	consume_token(); // consume '<'
 
-	std::vector<Type> template_args;
+	std::vector<TemplateTypeArg> template_args;
 
 	// Check for empty template argument list (e.g., Container<>)
 	if (peek_token().has_value() && peek_token()->value() == ">") {
@@ -9110,15 +9349,33 @@ std::optional<std::vector<Type>> Parser::parse_explicit_template_arguments() {
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
 			// Not a valid type - this might not be template arguments
+			std::cerr << "DEBUG: parse_explicit_template_arguments failed to parse type\n";
 			restore_token_position(saved_pos);
 			return std::nullopt;
 		}
 
-		const TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
-		template_args.push_back(type_node.type());
+		// Get the type specifier node and make a copy we can modify
+		TypeSpecifierNode type_node = type_result.node()->as<TypeSpecifierNode>();
+		
+		// Check for reference modifier (&) or rvalue reference (&&)
+		if (peek_token().has_value() && peek_token()->value() == "&") {
+			consume_token(); // consume '&'
+			
+			// Check for && (rvalue reference)
+			if (peek_token().has_value() && peek_token()->value() == "&") {
+				consume_token(); // consume second '&'
+				type_node.set_reference(true);  // is_rvalue = true
+			} else {
+				type_node.set_reference(false); // is_rvalue = false (lvalue reference)
+			}
+		}
+
+		// Create TemplateTypeArg from the fully parsed type
+		template_args.push_back(TemplateTypeArg(type_node));
 
 		// Check for ',' or '>'
 		if (!peek_token().has_value()) {
+			std::cerr << "DEBUG: parse_explicit_template_arguments unexpected end of tokens\n";
 			restore_token_position(saved_pos);
 			return std::nullopt;
 		}
@@ -9134,6 +9391,7 @@ std::optional<std::vector<Type>> Parser::parse_explicit_template_arguments() {
 		}
 
 		// Unexpected token
+		std::cerr << "DEBUG: parse_explicit_template_arguments unexpected token: '" << peek_token()->value() << "'\n";
 		restore_token_position(saved_pos);
 		return std::nullopt;
 	}
@@ -9144,7 +9402,7 @@ std::optional<std::vector<Type>> Parser::parse_explicit_template_arguments() {
 }
 
 // Try to instantiate a template with explicit template arguments
-std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<Type>& explicit_types) {
+std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types) {
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 	if (!template_opt.has_value()) {
@@ -9175,7 +9433,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			// TODO: Implement proper template template argument parsing
 			template_args.push_back(TemplateArgument::makeTemplate(""));  // Placeholder
 		} else {
-			template_args.push_back(TemplateArgument::makeType(explicit_types[i]));
+			// Convert TemplateTypeArg to Type for now (losing reference information in this path)
+			// TODO: Extend TemplateArgument to support full type information
+			template_args.push_back(TemplateArgument::makeType(explicit_types[i].base_type));
 		}
 	}
 
@@ -9628,14 +9888,14 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 // Get the mangled name for an instantiated class template
 // Example: Container<int> -> Container_int
-std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<Type>& template_args) {
+std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	StringBuilder& result = StringBuilder().append(template_name);
 	result.append("_");
 
 	for (size_t i = 0; i < template_args.size(); ++i) {
 		if (i > 0) result.append("_");
 
-		result.append(TemplateRegistry::typeToString(template_args[i]));
+		result.append(template_args[i].toString());
 	}
 
 	return result.commit();
@@ -9643,11 +9903,12 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 
 // Try to instantiate a class template with explicit template arguments
 // Returns the instantiated StructDeclarationNode if successful
-std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<Type>& template_args) {
+std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	// First, check if there's a specialization for these exact template arguments
 	std::cerr << "DEBUG: Looking up specialization for " << template_name << " with " << template_args.size() << " args\n";
 	for (size_t i = 0; i < template_args.size(); ++i) {
-		std::cerr << "  Arg " << i << ": type=" << static_cast<int>(template_args[i]) << "\n";
+		std::cerr << "  Arg " << i << ": base_type=" << static_cast<int>(template_args[i].base_type) 
+		          << " is_ref=" << template_args[i].is_reference << "\n";
 	}
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args);
 	if (specialization_opt.has_value()) {
@@ -9681,7 +9942,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	
 	// Create a mutable copy of template_args to fill in defaults
-	std::vector<Type> filled_template_args(template_args.begin(), template_args.end());
+	std::vector<TemplateTypeArg> filled_template_args(template_args.begin(), template_args.end());
 	
 	// Fill in default arguments for missing parameters
 	for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
@@ -9696,7 +9957,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const ASTNode& default_node = param.default_value();
 			if (default_node.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
-				filled_template_args.push_back(default_type.type());
+				filled_template_args.push_back(TemplateTypeArg(default_type));
 			}
 		} else if (param.kind() == TemplateParameterKind::NonType) {
 			// For non-type parameters with defaults, we'd need to evaluate the expression
@@ -9706,7 +9967,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	
 	// Use the filled template args for the rest of the function
-	const std::vector<Type>& template_args_to_use = filled_template_args;
+	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
 
 	// Generate the instantiated class name
 	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args_to_use);
@@ -9749,8 +10010,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 					if (tparam.name() == type_name) {
 						// This is a template parameter - substitute with concrete type
-						member_type = template_args_to_use[i];
-						member_type_index = 0;  // Primitive types don't have type_index
+						member_type = template_args_to_use[i].base_type;
+						member_type_index = template_args_to_use[i].type_index;
 						break;
 					}
 				}
@@ -9835,9 +10096,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (tparam.name() == type_name) {
 								// This is a template parameter - substitute with concrete type
 								substituted_type_spec = TypeSpecifierNode(
-									template_args_to_use[i],
+									template_args_to_use[i].base_type,
 									TypeQualifier::None,
-									get_type_size_bits(template_args_to_use[i]),
+									get_type_size_bits(template_args_to_use[i].base_type),
 									Token()
 								);
 								// Copy pointer levels to the new type specifier
@@ -9879,6 +10140,46 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 		}
+	}
+
+	// Copy type aliases from the template with template parameter substitution
+	for (const auto& type_alias : class_decl.type_aliases()) {
+		std::string qualified_alias_name = std::string(instantiated_name) + "::" + std::string(type_alias.alias_name);
+		
+		// Get the aliased type and substitute template parameters
+		const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+		
+		// Create a substituted type specifier
+		Type substituted_type = alias_type_spec.type();
+		TypeIndex substituted_type_index = alias_type_spec.type_index();
+		unsigned char substituted_size = alias_type_spec.size_in_bits();
+		
+		// Substitute template parameters in the alias type
+		if (substituted_type == Type::UserDefined) {
+			TypeIndex type_idx = alias_type_spec.type_index();
+			if (type_idx < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_idx];
+				std::string_view type_name = type_info.name_;
+				
+				// Try to find which template parameter this is
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.name() == type_name) {
+						// This is a template parameter - substitute with concrete type
+						substituted_type = template_args_to_use[i].base_type;
+						substituted_type_index = template_args_to_use[i].type_index;
+						substituted_size = get_type_size_bits(substituted_type);
+						break;
+					}
+				}
+			}
+		}
+		
+		// Register the type alias in gTypesByName
+		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, gTypeInfo.size());
+		alias_type_info.type_index_ = substituted_type_index;
+		alias_type_info.type_size_ = substituted_size;
+		gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
 	}
 
 	// Finalize the struct layout

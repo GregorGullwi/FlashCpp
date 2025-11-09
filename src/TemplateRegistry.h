@@ -9,6 +9,68 @@
 #include <unordered_map>
 #include <optional>
 
+// Full type representation for template arguments
+// Captures base type, references, pointers, cv-qualifiers, etc.
+struct TemplateTypeArg {
+	Type base_type;
+	TypeIndex type_index;  // For user-defined types
+	bool is_reference;
+	bool is_rvalue_reference;
+	
+	TemplateTypeArg() : base_type(Type::Invalid), type_index(0), is_reference(false), is_rvalue_reference(false) {}
+	
+	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
+		: base_type(type_spec.type())
+		, type_index(type_spec.type_index())
+		, is_reference(type_spec.is_reference())
+		, is_rvalue_reference(type_spec.is_rvalue_reference()) {}
+	
+	bool operator==(const TemplateTypeArg& other) const {
+		return base_type == other.base_type &&
+		       type_index == other.type_index &&
+		       is_reference == other.is_reference &&
+		       is_rvalue_reference == other.is_rvalue_reference;
+	}
+	
+	// Get string representation for mangling
+	std::string toString() const {
+		std::string result;
+		switch (base_type) {
+			case Type::Int: result = "int"; break;
+			case Type::Float: result = "float"; break;
+			case Type::Double: result = "double"; break;
+			case Type::Bool: result = "bool"; break;
+			case Type::Char: result = "char"; break;
+			case Type::Long: result = "long"; break;
+			case Type::LongLong: result = "longlong"; break;
+			case Type::Short: result = "short"; break;
+			case Type::UnsignedInt: result = "uint"; break;
+			case Type::UnsignedLong: result = "ulong"; break;
+			case Type::UnsignedLongLong: result = "ulonglong"; break;
+			case Type::UnsignedShort: result = "ushort"; break;
+			case Type::UnsignedChar: result = "uchar"; break;
+			default: result = "unknown"; break;
+		}
+		if (is_rvalue_reference) {
+			result += "RR";  // rvalue reference
+		} else if (is_reference) {
+			result += "R";   // lvalue reference
+		}
+		return result;
+	}
+};
+
+// Hash function for TemplateTypeArg
+struct TemplateTypeArgHash {
+	size_t operator()(const TemplateTypeArg& arg) const {
+		size_t hash = std::hash<int>{}(static_cast<int>(arg.base_type));
+		hash ^= std::hash<size_t>{}(arg.type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<bool>{}(arg.is_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<bool>{}(arg.is_rvalue_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		return hash;
+	}
+};
+
 // Template instantiation key - uniquely identifies a template instantiation
 struct TemplateInstantiationKey {
 	std::string template_name;
@@ -87,7 +149,7 @@ struct OutOfLineMemberFunction {
 // Key for template specializations
 struct SpecializationKey {
 	std::string template_name;
-	std::vector<Type> template_args;
+	std::vector<TemplateTypeArg> template_args;
 
 	bool operator==(const SpecializationKey& other) const {
 		return template_name == other.template_name && template_args == other.template_args;
@@ -98,8 +160,9 @@ struct SpecializationKey {
 struct SpecializationKeyHash {
 	size_t operator()(const SpecializationKey& key) const {
 		size_t hash = std::hash<std::string>{}(key.template_name);
+		TemplateTypeArgHash arg_hasher;
 		for (const auto& arg : key.template_args) {
-			hash ^= std::hash<int>{}(static_cast<int>(arg)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= arg_hasher(arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		return hash;
 	}
@@ -217,13 +280,13 @@ public:
 	}
 
 	// Register a template specialization
-	void registerSpecialization(std::string_view template_name, const std::vector<Type>& template_args, ASTNode specialized_node) {
+	void registerSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
 		SpecializationKey key{std::string(template_name), template_args};
 		specializations_[key] = specialized_node;
 	}
 
 	// Look up a template specialization
-	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<Type>& template_args) const {
+	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
 		SpecializationKey key{std::string(template_name), template_args};
 		auto it = specializations_.find(key);
 		if (it != specializations_.end()) {
