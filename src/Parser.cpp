@@ -278,21 +278,24 @@ void Parser::restore_token_position(const TokenPosition& saved_token_pos, const 
     lexer_.restore_token_position(saved_token_pos);
     SavedToken saved_token = saved_tokens_.at(saved_token_pos.cursor_);
     current_token_ = saved_token.current_token_;
-    size_t old_size = ast_nodes_.size();
-    std::cerr << "DEBUG restore_token_position: Restoring from ast size " << old_size << " to " << saved_token.ast_nodes_size_ << "\n";
-    std::cerr << "  Called from " << location.file_name() << ":" << location.line() 
-              << " in function " << location.function_name() << "\n";
-    if (saved_token.ast_nodes_size_ < old_size && old_size - saved_token.ast_nodes_size_ > 0) {
-        std::cerr << "  WARNING: About to erase " << (old_size - saved_token.ast_nodes_size_) << " nodes!\n";
-        // Print what's being erased
-        for (size_t i = saved_token.ast_nodes_size_; i < old_size; ++i) {
-            std::cerr << "    Erasing node " << i << ": " << ast_nodes_[i].type_name();
-            if (ast_nodes_[i].is<StructDeclarationNode>()) {
-                std::cerr << " (struct: " << ast_nodes_[i].as<StructDeclarationNode>().name() << ")";
-            }
-            std::cerr << "\n";
-        }
-    }
+	
+	if (context_.isVerboseMode()) {
+		size_t old_size = ast_nodes_.size();
+		std::cerr << "DEBUG restore_token_position: Restoring from ast size " << old_size << " to " << saved_token.ast_nodes_size_ << "\n";
+		std::cerr << "  Called from " << location.file_name() << ":" << location.line() 
+				  << " in function " << location.function_name() << "\n";
+		if (saved_token.ast_nodes_size_ < old_size && old_size - saved_token.ast_nodes_size_ > 0) {
+			std::cerr << "  WARNING: About to erase " << (old_size - saved_token.ast_nodes_size_) << " nodes!\n";
+			// Print what's being erased
+			for (size_t i = saved_token.ast_nodes_size_; i < old_size; ++i) {
+				std::cerr << "    Erasing node " << i << ": " << ast_nodes_[i].type_name();
+				if (ast_nodes_[i].is<StructDeclarationNode>()) {
+					std::cerr << " (struct: " << ast_nodes_[i].as<StructDeclarationNode>().name() << ")";
+				}
+				std::cerr << "\n";
+			}
+		}
+	}
     ast_nodes_.erase(ast_nodes_.begin() + saved_token.ast_nodes_size_,
         ast_nodes_.end());
     //saved_tokens_.erase(saved_token_pos.cursor_);
@@ -4051,21 +4054,44 @@ ParseResult Parser::parse_type_specifier()
 
 		// Check for template arguments: Container<int>
 		std::optional<std::vector<Type>> template_args;
-		if (peek_token().has_value() && peek_token()->value() == "<") {
+		auto next_token = peek_token();
+		if (next_token.has_value() && next_token->value() == "<") {
 			template_args = parse_explicit_template_arguments();
 			// If parsing succeeded, try to instantiate the class template
 			if (template_args.has_value()) {
 				auto instantiated_class = try_instantiate_class_template(type_name, *template_args);
 				
+				// Fill in default template arguments to get the actual instantiated name
+				// (try_instantiate_class_template fills them internally, we need to do the same here)
+				std::vector<Type> filled_template_args = *template_args;
+				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+					const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
+					const auto& template_params = template_class.template_parameters();
+					
+					// Fill in defaults for missing parameters
+					for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
+						const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+						if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
+							const ASTNode& default_node = param.default_value();
+							if (default_node.is<TypeSpecifierNode>()) {
+								const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+								filled_template_args.push_back(default_type.type());
+							}
+						}
+					}
+				}
+				
 				// Whether instantiation succeeded or returned nullopt (for specializations),
-				// the type should now be registered. Look it up.
-				std::string_view instantiated_name = get_instantiated_class_name(type_name, *template_args);
+				// the type should now be registered. Look it up using filled args.
+				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
 				
 				// Check for qualified name after template arguments: Template<T>::nested
 				if (peek_token().has_value() && peek_token()->value() == "::") {
 					// Parse the qualified identifier path (e.g., Template<int>::Inner)
 					auto qualified_result = parse_qualified_identifier_after_template(type_name_token);
 					if (qualified_result.is_error()) {
+						std::cerr << "DEBUG: parse_qualified_identifier_after_template failed\n";
 						return qualified_result;
 					}
 					
@@ -8183,6 +8209,19 @@ ParseResult Parser::parse_template_declaration() {
 		}
 	}
 
+	// RAII cleanup for template parameters registered in gTypesByName
+	// This ensures cleanup happens on ALL return paths (success or error)
+	struct TemplateParamCleanup {
+		std::vector<TypeInfo*>& type_infos;
+		~TemplateParamCleanup() {
+			std::cerr << "DEBUG: TemplateParamCleanup destructor called, cleaning up " << type_infos.size() << " entries\n";
+			for (const auto* type_info : type_infos) {
+				gTypesByName.erase(type_info->name_);
+				// Note: We don't remove from gTypeInfo because it's a deque and removing would invalidate pointers
+			}
+		}
+	} cleanup_guard{template_type_infos};
+
 	// Check if it's a class/struct template
 	bool is_class_template = peek_token().has_value() &&
 	                         peek_token()->type() == Token::Type::Keyword &&
@@ -8569,12 +8608,6 @@ ParseResult Parser::parse_template_declaration() {
 		decl_result = ParseResult::success(*func_result.node());
 	}
 
-	for (const auto* type_info : template_type_infos) {
-		gTypesByName.erase(type_info->name_);
-		// Note: We don't remove from gTypeInfo because it's a deque and removing would invalidate pointers
-		// The entries will just be unused after this point
-	}
-
 	if (decl_result.is_error()) {
 		return decl_result;
 	}
@@ -8751,7 +8784,21 @@ ParseResult Parser::parse_template_parameter() {
 			// Create type parameter node
 			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
 
-			// TODO: Handle default arguments (e.g., typename T = int)
+			// Handle default arguments (e.g., typename T = int)
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			    peek_token()->value() == "=") {
+				consume_token(); // consume '='
+				
+				// Parse the default type
+				auto default_type_result = parse_type_specifier();
+				if (default_type_result.is_error()) {
+					return ParseResult::error("Expected type after '=' in template parameter default", *current_token_);
+				}
+				
+				if (default_type_result.node().has_value()) {
+					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
+				}
+			}
 
 			return saved_position.success(param_node);
 		}
@@ -8780,7 +8827,21 @@ ParseResult Parser::parse_template_parameter() {
 	// Create non-type parameter node
 	auto param_node = emplace_node<TemplateParameterNode>(param_name, *type_result.node(), param_name_token);
 
-	// TODO: Handle default arguments (e.g., int N = 10)
+	// Handle default arguments (e.g., int N = 10)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+	    peek_token()->value() == "=") {
+		consume_token(); // consume '='
+		
+		// Parse the default value expression
+		auto default_value_result = parse_expression();
+		if (default_value_result.is_error()) {
+			return ParseResult::error("Expected expression after '=' in template parameter default", *current_token_);
+		}
+		
+		if (default_value_result.node().has_value()) {
+			param_node.as<TemplateParameterNode>().set_default_value(*default_value_result.node());
+		}
+	}
 
 	return saved_position.success(param_node);
 }
@@ -8980,6 +9041,14 @@ std::optional<std::vector<Type>> Parser::parse_explicit_template_arguments() {
 	consume_token(); // consume '<'
 
 	std::vector<Type> template_args;
+
+	// Check for empty template argument list (e.g., Container<>)
+	if (peek_token().has_value() && peek_token()->value() == ">") {
+		consume_token(); // consume '>'
+		// Success - discard saved position
+		discard_saved_token(saved_pos);
+		return template_args;  // Return empty vector
+	}
 
 	// Parse template arguments
 	while (true) {
@@ -9552,12 +9621,41 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	const StructDeclarationNode& class_decl = template_class.class_decl_node();
 
 	// Verify we have the right number of template arguments
-	if (template_args.size() != template_params.size()) {
-		return std::nullopt;  // Wrong number of template arguments
+	// Allow fewer arguments if the remaining parameters have defaults
+	if (template_args.size() > template_params.size()) {
+		return std::nullopt;  // Too many template arguments
 	}
+	
+	// Create a mutable copy of template_args to fill in defaults
+	std::vector<Type> filled_template_args(template_args.begin(), template_args.end());
+	
+	// Fill in default arguments for missing parameters
+	for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
+		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+		if (!param.has_default()) {
+			return std::nullopt;  // Missing required template argument
+		}
+		
+		// Use the default value
+		if (param.kind() == TemplateParameterKind::Type) {
+			// For type parameters with defaults, extract the type
+			const ASTNode& default_node = param.default_value();
+			if (default_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+				filled_template_args.push_back(default_type.type());
+			}
+		} else if (param.kind() == TemplateParameterKind::NonType) {
+			// For non-type parameters with defaults, we'd need to evaluate the expression
+			// For now, we'll skip this - it requires constant expression evaluation
+			return std::nullopt;
+		}
+	}
+	
+	// Use the filled template args for the rest of the function
+	const std::vector<Type>& template_args_to_use = filled_template_args;
 
 	// Generate the instantiated class name
-	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args_to_use);
 
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
@@ -9597,7 +9695,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 					if (tparam.name() == type_name) {
 						// This is a template parameter - substitute with concrete type
-						member_type = template_args[i];
+						member_type = template_args_to_use[i];
 						member_type_index = 0;  // Primitive types don't have type_index
 						break;
 					}
@@ -9683,9 +9781,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (tparam.name() == type_name) {
 								// This is a template parameter - substitute with concrete type
 								substituted_type_spec = TypeSpecifierNode(
-									template_args[i],
+									template_args_to_use[i],
 									TypeQualifier::None,
-									get_type_size_bits(template_args[i]),
+									get_type_size_bits(template_args_to_use[i]),
 									Token()
 								);
 								// Copy pointer levels to the new type specifier
