@@ -1409,30 +1409,53 @@ ParseResult Parser::parse_struct_declaration()
 				consume_token();
 			}
 
-			// Parse base class name
-			auto base_name_token = consume_token();
-			if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
+		// Parse base class name
+		auto base_name_token = consume_token();
+		if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
+		}
+
+		std::string_view base_class_name = base_name_token->value();
+		
+		// Check if this is a template base class (e.g., Base<T>)
+		std::string instantiated_base_name;
+		if (peek_token().has_value() && peek_token()->value() == "<") {
+			// Parse template arguments
+			auto template_args_opt = parse_explicit_template_arguments();
+			if (!template_args_opt.has_value()) {
+				return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
 			}
-
-			std::string_view base_class_name = base_name_token->value();
-
-			// Look up base class type
-			auto base_type_it = gTypesByName.find(base_class_name);
-			if (base_type_it == gTypesByName.end()) {
-				return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+			
+			std::vector<Type> template_args = *template_args_opt;
+			
+			// Check if the base class is a template
+			auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
+			if (template_entry) {
+				// Try to instantiate the base template
+				// Note: try_instantiate_class_template returns nullopt on success 
+				// (type is registered in gTypesByName)
+				try_instantiate_class_template(base_class_name, template_args);
+				
+				// Use the instantiated name as the base class
+				instantiated_base_name = get_instantiated_class_name(base_class_name, template_args);
+				base_class_name = instantiated_base_name;
 			}
+		}
 
-			const TypeInfo* base_type_info = base_type_it->second;
-			if (base_type_info->type_ != Type::Struct) {
-				return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
-			}
+		// Look up base class type
+		auto base_type_it = gTypesByName.find(base_class_name);
+		if (base_type_it == gTypesByName.end()) {
+			return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+		}
 
-			// Add base class to struct node and type info
-			struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
-			struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+		const TypeInfo* base_type_info = base_type_it->second;
+		if (base_type_info->type_ != Type::Struct) {
+			return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
+		}
 
-		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+		// Add base class to struct node and type info
+		struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+		struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 	}
 
 	// Check for forward declaration (struct Name;)
@@ -1535,6 +1558,55 @@ ParseResult Parser::parse_struct_declaration()
 				}
 
 				continue;  // Skip to next member
+			}
+
+			// Check for 'using' keyword - type alias
+			if (keyword == "using") {
+				auto using_result = parse_using_directive_or_declaration();
+				if (using_result.is_error()) {
+					return using_result;
+				}
+				// Type aliases are registered during parsing, no need to add to struct members
+				continue;
+			}
+
+			// Check for 'static' keyword - static member
+			if (keyword == "static") {
+				// For now, just parse and skip static members
+				// Full implementation would handle static data member initialization
+				consume_token(); // consume 'static'
+				
+				// Check if it's const
+				bool is_const = false;
+				if (peek_token().has_value() && peek_token()->value() == "const") {
+					is_const = true;
+					consume_token(); // consume 'const'
+				}
+				
+				// Parse type and name
+				auto type_and_name_result = parse_type_and_name();
+				if (type_and_name_result.is_error()) {
+					return type_and_name_result;
+				}
+				
+				// Check for initialization
+				if (peek_token().has_value() && peek_token()->value() == "=") {
+					consume_token(); // consume '='
+					// Parse the initializer expression
+					auto init_result = parse_expression();
+					if (init_result.is_error()) {
+						return init_result;
+					}
+				}
+				
+				// Expect semicolon
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after static member declaration", *current_token_);
+				}
+				
+				// TODO: Register static member in struct info
+				// For now, we just skip it
+				continue;
 			}
 
 			// Check for nested class/struct declaration
@@ -8201,6 +8273,44 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						// Type aliases are registered during parsing, no need to add to struct members
 						continue;
+					} else if (peek_token()->value() == "static") {
+						// Handle static members: static const int size = 10;
+						consume_token(); // consume "static"
+						
+						// Handle optional const
+						bool is_const = false;
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword 
+							&& peek_token()->value() == "const") {
+							is_const = true;
+							consume_token();
+						}
+						
+						// Parse type and name
+						auto type_and_name = parse_type_specifier();
+						if (type_and_name.is_error()) {
+							return type_and_name;
+						}
+						
+						// Optional initializer
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator 
+							&& peek_token()->value() == "=") {
+							consume_token(); // consume "="
+							
+							// Parse initializer expression
+							auto init_result = parse_expression();
+							if (init_result.is_error()) {
+								return init_result;
+							}
+						}
+						
+						// Consume semicolon
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after static member declaration", *peek_token());
+						}
+						
+						// TODO: Register static member in struct info
+						// For now, just continue without adding to struct members
+						continue;
 					}
 				}
 
@@ -9548,7 +9658,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				
 				// Add member to the nested struct info
-				size_t member_size = substituted_type_spec.size_in_bits() / 8;
+				// For pointers, use pointer size (64 bits on x64), otherwise use type size
+				size_t member_size;
+				if (substituted_type_spec.is_pointer()) {
+					member_size = 8;  // 64-bit pointer
+				} else {
+					member_size = substituted_type_spec.size_in_bits() / 8;
+				}
 				size_t member_alignment = get_type_alignment(substituted_type_spec.type(), member_size);
 				
 				nested_struct_info->addMember(
