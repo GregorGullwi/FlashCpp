@@ -5,3 +5,6 @@ Debug/
 */*.obj
 core.*
 *.user
+
+# Prevent reserved-name file on Windows
+nul
