@@ -420,6 +420,7 @@ public:  // Public methods for template instantiation
         ParseResult parse_primary_expression();
         ParseResult parse_unary_expression();
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
+        ParseResult parse_qualified_identifier_after_template(const Token& template_base_token);  // Parse Template<T>::member
 
         // Utility functions
         bool consume_punctuator(const std::string_view& value);

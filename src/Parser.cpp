@@ -3938,6 +3938,48 @@ ParseResult Parser::parse_type_specifier()
 				// Whether instantiation succeeded or returned nullopt (for specializations),
 				// the type should now be registered. Look it up.
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, *template_args);
+				
+				// Check for qualified name after template arguments: Template<T>::nested
+				if (peek_token().has_value() && peek_token()->value() == "::") {
+					// Parse the qualified identifier path (e.g., Template<int>::Inner)
+					auto qualified_result = parse_qualified_identifier_after_template(type_name_token);
+					if (qualified_result.is_error()) {
+						return qualified_result;
+					}
+					
+					// Build fully qualified type name using instantiated template name
+					const auto& qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+					std::string qualified_type_name(instantiated_name);
+					for (const auto& ns_part : qualified_node.namespaces()) {
+						// Skip the first part (template name itself) as it's already in instantiated_name
+#if USE_OLD_STRING_APPROACH
+						std::string_view ns_view = ns_part;
+#else
+						std::string_view ns_view = ns_part.view();
+#endif
+						if (ns_view != type_name) {
+							qualified_type_name += "::" + std::string(ns_view);
+						}
+					}
+					qualified_type_name += "::" + std::string(qualified_node.identifier_token().value());
+					
+					// Look up the fully qualified type (e.g., "Traits_int::nested")
+					auto qual_type_it = gTypesByName.find(qualified_type_name);
+					if (qual_type_it != gTypesByName.end() && qual_type_it->second->isStruct()) {
+						const TypeInfo* struct_type_info = qual_type_it->second;
+						const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+						if (struct_info) {
+							type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+						} else {
+							type_size = 0;
+						}
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+					}
+					return ParseResult::error("Unknown nested type: " + qualified_type_name, type_name_token);
+				}
+				
 				auto inst_type_it = gTypesByName.find(instantiated_name);
 				if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
 					const TypeInfo* struct_type_info = inst_type_it->second;
@@ -5903,7 +5945,28 @@ ParseResult Parser::parse_primary_expression()
 				result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 			}
 			else {
-				// Not a function call, but identifier not found - this is an error
+				// Not a function call - could be a template with `<` or just missing identifier
+				// Check if this might be a template: identifier<...>
+				if (peek_token().has_value() && peek_token()->value() == "<") {
+					// Try to parse as template instantiation with member access
+					auto explicit_template_args = parse_explicit_template_arguments();
+					
+					if (explicit_template_args.has_value()) {
+						// Successfully parsed template arguments
+						// Now check for :: to handle Template<T>::member syntax
+						if (peek_token().has_value() && peek_token()->value() == "::") {
+							// Parse qualified identifier after template
+							auto qualified_result = parse_qualified_identifier_after_template(idenfifier_token);
+							if (!qualified_result.is_error() && qualified_result.node().has_value()) {
+								auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+								result = emplace_node<ExpressionNode>(qualified_node);
+								return ParseResult::success(*result);
+							}
+						}
+					}
+				}
+				
+				// Not a function call or template member access, identifier not found - this is an error
 				std::cerr << "DEBUG: Missing identifier: " << idenfifier_token.value() << "\n";
 				return ParseResult::error("Missing identifier", idenfifier_token);
 			}
@@ -5919,6 +5982,17 @@ ParseResult Parser::parse_primary_expression()
 			if (peek_token().has_value() && peek_token()->value() == "<") {
 				explicit_template_args = parse_explicit_template_arguments();
 				// If parsing failed, it might be a less-than operator, so continue normally
+				
+				// After template arguments, check for :: to handle Template<T>::member syntax
+				if (explicit_template_args.has_value() && peek_token().has_value() && peek_token()->value() == "::") {
+					// Parse qualified identifier after template
+					auto qualified_result = parse_qualified_identifier_after_template(idenfifier_token);
+					if (!qualified_result.is_error() && qualified_result.node().has_value()) {
+						auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+						result = emplace_node<ExpressionNode>(qualified_node);
+						return ParseResult::success(*result);
+					}
+				}
 			}
 
 			// Check if this looks like a function call
@@ -7616,6 +7690,32 @@ ParseResult Parser::parse_qualified_identifier() {
 		}
 	}
 
+	// Create a QualifiedIdentifierNode
+	auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+	return ParseResult::success(qualified_node);
+}
+
+// Helper: Parse qualified identifier path after template arguments (Template<T>::member)
+// Assumes we're positioned right after template arguments and next token is ::
+// Returns a QualifiedIdentifierNode wrapped in ExpressionNode if successful
+ParseResult Parser::parse_qualified_identifier_after_template(const Token& template_base_token) {
+	std::vector<StringType<32>> namespaces;
+	Token final_identifier = template_base_token;  // Start with the template name
+	
+	// Collect the qualified path after ::
+	while (peek_token().has_value() && peek_token()->value() == "::") {
+		// Current identifier becomes a namespace part
+		namespaces.emplace_back(StringType<32>(final_identifier.value()));
+		consume_token(); // consume ::
+		
+		// Get next identifier
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
+		}
+		final_identifier = *peek_token();
+		consume_token(); // consume the identifier
+	}
+	
 	// Create a QualifiedIdentifierNode
 	auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 	return ParseResult::success(qualified_node);
