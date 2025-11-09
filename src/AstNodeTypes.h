@@ -216,10 +216,28 @@ struct RTTITypeInfo {
 	}
 };
 
+// Static member information
+struct StructStaticMember {
+	std::string name;
+	Type type;
+	TypeIndex type_index;   // Index into gTypeInfo for complex types
+	size_t size;            // Size in bytes
+	size_t alignment;       // Alignment requirement
+	AccessSpecifier access; // Access level (public/protected/private)
+	std::optional<ASTNode> initializer;  // Optional initializer expression
+	bool is_const;          // True if declared with const qualifier
+
+	StructStaticMember(std::string n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
+	                   std::optional<ASTNode> init = std::nullopt, bool is_const = false)
+		: name(std::move(n)), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
+		  initializer(std::move(init)), is_const(is_const) {}
+};
+
 // Struct type information
 struct StructTypeInfo {
 	std::string name;
 	std::vector<StructMember> members;
+	std::vector<StructStaticMember> static_members;  // Static members
 	std::vector<StructMemberFunction> member_functions;
 	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
 	size_t total_size = 0;      // Total size of struct in bytes
@@ -339,6 +357,22 @@ struct StructTypeInfo {
 	// Add a base class
 	void addBaseClass(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
 		base_classes.emplace_back(base_name, base_type_index, access, is_virtual, 0);
+	}
+
+	// Find static member by name
+	const StructStaticMember* findStaticMember(const std::string& name) const {
+		for (const auto& static_member : static_members) {
+			if (static_member.name == name) {
+				return &static_member;
+			}
+		}
+		return nullptr;
+	}
+
+	// Add static member
+	void addStaticMember(const std::string& name, Type type, TypeIndex type_index, size_t size, size_t alignment,
+	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, bool is_const = false) {
+		static_members.emplace_back(name, type, type_index, size, alignment, access, std::move(initializer), is_const);
 	}
 
 	// Find member recursively through base classes

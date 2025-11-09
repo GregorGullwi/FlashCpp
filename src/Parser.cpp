@@ -1590,6 +1590,7 @@ ParseResult Parser::parse_struct_declaration()
 				}
 				
 				// Check for initialization
+				std::optional<ASTNode> init_expr_opt;
 				if (peek_token().has_value() && peek_token()->value() == "=") {
 					consume_token(); // consume '='
 					// Parse the initializer expression
@@ -1597,15 +1598,38 @@ ParseResult Parser::parse_struct_declaration()
 					if (init_result.is_error()) {
 						return init_result;
 					}
+					init_expr_opt = init_result.node();
 				}
-				
+
 				// Expect semicolon
 				if (!consume_punctuator(";")) {
 					return ParseResult::error("Expected ';' after static member declaration", *current_token_);
 				}
-				
-				// TODO: Register static member in struct info
-				// For now, we just skip it
+
+				// Get the declaration and type specifier
+				if (!type_and_name_result.node().has_value()) {
+					return ParseResult::error("Expected static member declaration", *current_token_);
+				}
+				const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
+				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+				// Register static member in struct info
+				// Calculate size and alignment for the static member
+				size_t static_member_size = get_type_size_bits(type_spec.type()) / 8;
+				size_t static_member_alignment = get_type_alignment(type_spec.type(), static_member_size);
+
+				// Add to struct's static members
+				struct_info->addStaticMember(
+					std::string(decl.identifier_token().value()),
+					type_spec.type(),
+					type_spec.type_index(),
+					static_member_size,
+					static_member_alignment,
+					current_access,
+					init_expr_opt,  // initializer
+					is_const
+				);
+
 				continue;
 			}
 
@@ -8286,30 +8310,47 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						// Parse type and name
-						auto type_and_name = parse_type_specifier();
+						auto type_and_name = parse_type_and_name();
 						if (type_and_name.is_error()) {
 							return type_and_name;
 						}
-						
+
 						// Optional initializer
-						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator 
+						std::optional<ASTNode> init_expr_opt;
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator
 							&& peek_token()->value() == "=") {
 							consume_token(); // consume "="
-							
+
 							// Parse initializer expression
 							auto init_result = parse_expression();
 							if (init_result.is_error()) {
 								return init_result;
 							}
+							init_expr_opt = init_result.node();
 						}
-						
+
 						// Consume semicolon
 						if (!consume_punctuator(";")) {
 							return ParseResult::error("Expected ';' after static member declaration", *peek_token());
 						}
-						
-						// TODO: Register static member in struct info
-						// For now, just continue without adding to struct members
+
+						// Get the declaration and type specifier
+						if (!type_and_name.node().has_value()) {
+							return ParseResult::error("Expected static member declaration", *peek_token());
+						}
+						const DeclarationNode& decl = type_and_name.node()->as<DeclarationNode>();
+						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+						// Register static member in struct info
+						// Calculate size and alignment for the static member
+						size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+
+						// Add to struct's static members (will be added to struct_info later)
+						// For template specializations, static member info is added when creating StructTypeInfo
+						// TODO: Store static member info for later registration in StructTypeInfo
+						// For now, just skip to avoid compilation errors
+					
 						continue;
 					}
 				}
@@ -9571,7 +9612,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			get_type_size_bits(member_type),
 			Token()
 		);
-		
+
 		// Copy pointer levels from the original type specifier
 		auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
 		for (const auto& ptr_level : type_spec.pointer_levels()) {
