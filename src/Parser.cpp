@@ -4153,6 +4153,60 @@ ParseResult Parser::parse_type_specifier()
 			}
 		}
 
+		// Check if this is a template with all default parameters (e.g., Container instead of Container<>)
+		auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+		if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+			const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
+			const auto& template_params = template_class.template_parameters();
+			
+			// Check if all parameters have defaults
+			bool all_have_defaults = true;
+			for (const auto& param_node : template_params) {
+				if (param_node.is<TemplateParameterNode>()) {
+					const auto& param = param_node.as<TemplateParameterNode>();
+					if (!param.has_default()) {
+						all_have_defaults = false;
+						break;
+					}
+				}
+			}
+			
+			if (all_have_defaults) {
+				// Instantiate with empty args - defaults will be filled in
+				std::vector<Type> empty_args;
+				auto instantiated_class = try_instantiate_class_template(type_name, empty_args);
+				
+				// Fill in default template arguments to get the actual instantiated name
+				std::vector<Type> filled_template_args;
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+					if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
+						const ASTNode& default_node = param.default_value();
+						if (default_node.is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+							filled_template_args.push_back(default_type.type());
+						}
+					}
+				}
+				
+				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
+				
+				auto inst_type_it = gTypesByName.find(instantiated_name);
+				if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
+					const TypeInfo* struct_type_info = inst_type_it->second;
+					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+
+					if (struct_info) {
+						type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+					} else {
+						type_size = 0;
+					}
+					return ParseResult::success(emplace_node<TypeSpecifierNode>(
+						Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+				}
+			}
+		}
+
 		// Check if this is a registered struct type
 		auto type_it = gTypesByName.find(type_name);
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
