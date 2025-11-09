@@ -3935,6 +3935,7 @@ ParseResult Parser::parse_type_specifier()
 			// If parsing succeeded, try to instantiate the class template
 			if (template_args.has_value()) {
 				auto instantiated_class = try_instantiate_class_template(type_name, *template_args);
+				
 				// Whether instantiation succeeded or returned nullopt (for specializations),
 				// the type should now be registered. Look it up.
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, *template_args);
@@ -3965,17 +3966,25 @@ ParseResult Parser::parse_type_specifier()
 					
 					// Look up the fully qualified type (e.g., "Traits_int::nested")
 					auto qual_type_it = gTypesByName.find(qualified_type_name);
-					if (qual_type_it != gTypesByName.end() && qual_type_it->second->isStruct()) {
-						const TypeInfo* struct_type_info = qual_type_it->second;
-						const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+					std::cerr << "DEBUG: Looking up qualified type '" << qualified_type_name << "': " 
+					          << (qual_type_it != gTypesByName.end() ? "FOUND" : "NOT FOUND") << "\n";
+					if (qual_type_it != gTypesByName.end()) {
+						std::cerr << "DEBUG: Type found, isStruct=" << qual_type_it->second->isStruct() 
+						          << " type=" << static_cast<int>(qual_type_it->second->type_) << "\n";
+						if (qual_type_it->second->isStruct()) {
+							const TypeInfo* struct_type_info = qual_type_it->second;
+							const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
-						if (struct_info) {
-							type_size = static_cast<unsigned char>(struct_info->total_size * 8);
-						} else {
-							type_size = 0;
+							if (struct_info) {
+								type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+							} else {
+								type_size = 0;
+							}
+							std::cerr << "DEBUG: Returning TypeSpecifierNode for " << qualified_type_name 
+							          << " with size=" << (int)type_size << " type_index=" << struct_type_info->type_index_ << "\n";
+							return ParseResult::success(emplace_node<TypeSpecifierNode>(
+								Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 						}
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 					}
 					return ParseResult::error("Unknown nested type: " + qualified_type_name, type_name_token);
 				}
@@ -4341,6 +4350,12 @@ ParseResult Parser::parse_statement_or_declaration()
 				// This is a struct/enum/typedef type declaration
 				return parse_variable_declaration();
 			}
+		}
+		
+		// Check if this is a template identifier (e.g., Container<int>::Iterator)
+		// Templates need to be parsed as variable declarations
+		if (gTemplateRegistry.lookupTemplate(type_name).has_value()) {
+			return parse_variable_declaration();
 		}
 
 		// If it starts with an identifier, it could be an assignment, expression,
@@ -6289,6 +6304,13 @@ ParseResult Parser::parse_primary_expression()
 		bool value = (current_token_->value() == "true");
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
 			static_cast<unsigned long long>(value), Type::Bool, TypeQualifier::None, 1));
+		consume_token();
+	}
+	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "nullptr"sv) {
+		// Handle nullptr literal - represented as null pointer constant (0)
+		// The actual type will be determined by context (can convert to any pointer type)
+		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
+			0ULL, Type::Int, TypeQualifier::None, 64));
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "this"sv) {
@@ -9362,17 +9384,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	}
 
-	// Create a new struct type for the instantiation
+	// Create a new struct type for the instantiation (but don't create AST node for template instantiations)
 	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
-
-	// Create a new StructDeclarationNode for the instantiation
-	auto [new_struct_node, new_struct_ref] = emplace_node_ref<StructDeclarationNode>(
-		instantiated_name,
-		class_decl.is_class()
-	);
-
+	
 	// Create StructTypeInfo
-	auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), new_struct_ref.default_access());
+	auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), AccessSpecifier::Public);
 
 	// Copy members from the template, substituting template parameters with concrete types
 	for (const auto& member_decl : class_decl.members()) {
@@ -9406,18 +9422,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		// Create the substituted type specifier
-		ASTNode substituted_type = emplace_node<TypeSpecifierNode>(
+		auto substituted_type = emplace_node<TypeSpecifierNode>(
 			member_type,
 			TypeQualifier::None,
 			get_type_size_bits(member_type),
 			Token()
 		);
-
-		// Create the new member declaration
-		auto new_member_decl = emplace_node<DeclarationNode>(substituted_type, decl.identifier_token());
+		
+		// Copy pointer levels from the original type specifier
+		auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
+		for (const auto& ptr_level : type_spec.pointer_levels()) {
+			substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+		}
 
 		// Add to the instantiated struct
-		new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
+		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
 
 		// Add to struct layout
 		size_t member_size = get_type_size_bits(member_type) / 8;
@@ -9434,340 +9453,90 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		);
 	}
 
-	// Copy member functions from the template, substituting template parameters with concrete types
-	for (const auto& member_func_decl : class_decl.member_functions()) {
-		// Skip constructors and destructors for now
-		if (member_func_decl.is_constructor || member_func_decl.is_destructor) {
-			continue;
-		}
+	// Skip member function instantiation - we only need type information for nested classes
+	// Member functions will be instantiated on-demand when called
 
-		// Only handle regular member functions
-		if (!member_func_decl.function_declaration.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-
-		const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
-		const DeclarationNode& decl = func_decl.decl_node();
-		const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
-
-		// Substitute template parameters in return type
-		Type return_type = return_type_spec.type();
-		TypeIndex return_type_index = return_type_spec.type_index();
-
-		if (return_type == Type::UserDefined) {
-			// Look up the type name using type_index
-			if (return_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[return_type_index];
-				std::string_view type_name = type_info.name_;
-
-				// Try to find which template parameter this is
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-					if (tparam.name() == type_name) {
-						// This is a template parameter - substitute with concrete type
-						return_type = template_args[i];
-						return_type_index = 0;
-						break;
-					}
+	// Copy nested classes from the template with template parameter substitution
+	std::cerr << "DEBUG: Copying " << class_decl.nested_classes().size() << " nested classes\n";
+	for (const auto& nested_class : class_decl.nested_classes()) {
+		std::cerr << "DEBUG: Processing nested class\n";
+		if (nested_class.is<StructDeclarationNode>()) {
+			const StructDeclarationNode& nested_struct = nested_class.as<StructDeclarationNode>();
+			std::string qualified_name = std::string(instantiated_name) + "::" + std::string(nested_struct.name());
+			std::cerr << "DEBUG: Registering nested class " << qualified_name << "\n";
+			
+			// Create a new StructTypeInfo for the nested class
+			auto nested_struct_info = std::make_unique<StructTypeInfo>(qualified_name, nested_struct.default_access());
+			
+			// Copy and substitute members from the nested class
+			for (const auto& member_decl : nested_struct.members()) {
+				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				
+				// Create a substituted type specifier
+				TypeSpecifierNode substituted_type_spec(
+					type_spec.type(),
+					type_spec.qualifier(),
+					type_spec.size_in_bits(),
+					Token()  // Empty token
+				);
+				
+				// Copy pointer levels from the original type specifier
+				for (const auto& ptr_level : type_spec.pointer_levels()) {
+					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 				}
-			}
-		}
-
-		// Create the substituted return type specifier
-		ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
-			return_type,
-			TypeQualifier::None,
-			get_type_size_bits(return_type),
-			Token()
-		);
-
-		// Create the new function declaration
-		auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, decl.identifier_token());
-		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, instantiated_name);
-
-		// Copy and substitute parameters
-		for (const auto& param : func_decl.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = param.as<DeclarationNode>();
-				const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
-
-				// Substitute template parameters in parameter type
-				Type param_type = param_type_spec.type();
-				TypeIndex param_type_index = param_type_spec.type_index();
-
-				if (param_type == Type::UserDefined) {
-					// Look up the type name using type_index
-					if (param_type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[param_type_index];
+				
+				// Substitute template parameters in the base type
+				if (substituted_type_spec.type() == Type::UserDefined) {
+					TypeIndex type_idx = substituted_type_spec.type_index();
+					if (type_idx < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_idx];
 						std::string_view type_name = type_info.name_;
-
+						
 						// Try to find which template parameter this is
 						for (size_t i = 0; i < template_params.size(); ++i) {
 							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 							if (tparam.name() == type_name) {
 								// This is a template parameter - substitute with concrete type
-								param_type = template_args[i];
-								param_type_index = 0;
+								substituted_type_spec = TypeSpecifierNode(
+									template_args[i],
+									TypeQualifier::None,
+									get_type_size_bits(template_args[i]),
+									Token()
+								);
+								// Copy pointer levels to the new type specifier
+								for (const auto& ptr_level : type_spec.pointer_levels()) {
+									substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+								}
 								break;
 							}
 						}
 					}
 				}
-
-				// Create the substituted parameter type specifier
-				ASTNode substituted_param_type = emplace_node<TypeSpecifierNode>(
-					param_type,
-					TypeQualifier::None,
-					get_type_size_bits(param_type),
-					Token()
+				
+				// Add member to the nested struct info
+				size_t member_size = substituted_type_spec.size_in_bits() / 8;
+				size_t member_alignment = get_type_alignment(substituted_type_spec.type(), member_size);
+				
+				nested_struct_info->addMember(
+					std::string(decl.identifier_token().value()),
+					substituted_type_spec.type(),
+					substituted_type_spec.type_index(),
+					member_size,
+					member_alignment,
+					member_decl.access,
+					member_decl.default_initializer
 				);
-
-				// Create the new parameter declaration
-				auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
-				new_func_ref.add_parameter_node(new_param_decl);
 			}
+			
+			// Finalize the nested struct layout
+			nested_struct_info->finalize();
+			
+			// Register the nested class in the type system
+			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size());
+			nested_type_info.setStructInfo(std::move(nested_struct_info));
+			gTypesByName.emplace(qualified_name, &nested_type_info);
 		}
-
-		// Handle the function body
-		// Check if this template function has a stored body position for re-parsing
-		auto body_it = template_member_function_bodies_.find(const_cast<FunctionDeclarationNode*>(&func_decl));
-		if (body_it != template_member_function_bodies_.end()) {
-			// Re-parse the function body with template parameters substituted
-			const TemplateMemberFunctionBody& template_body = body_it->second;
-
-			// Temporarily add the concrete types to the type system with template parameter names
-			std::vector<TypeInfo*> temp_type_infos;
-			for (size_t i = 0; i < template_body.template_param_names.size() && i < template_args.size(); ++i) {
-				std::string_view param_name = template_body.template_param_names[i];
-				Type concrete_type = template_args[i];
-
-				// Create a temporary TypeInfo that maps the template parameter name to the concrete type
-				auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name_, &type_info);
-				temp_type_infos.push_back(&type_info);
-		}
-
-		// Save current position
-		TokenPosition current_pos = save_token_position();
-
-		// Restore to the function body start (lexer only, don't erase AST nodes)
-		restore_lexer_position_only(template_body.body_start);
-
-		// Set up parsing context for the member function
-		gSymbolTable.enter_scope(ScopeType::Function);
-		current_function_ = &new_func_ref;
-		member_function_context_stack_.push_back({
-			instantiated_name,
-			struct_type_info.type_index_,
-			&new_struct_ref
-		});			// Add parameters to symbol table
-			for (const auto& param : new_func_ref.parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					const auto& param_decl = param.as<DeclarationNode>();
-					gSymbolTable.insert(param_decl.identifier_token().value(), param);
-				}
-			}
-
-			// Parse the function body
-			auto block_result = parse_block();
-			if (!block_result.is_error() && block_result.node().has_value()) {
-				new_func_ref.set_definition(block_result.node()->as<BlockNode>());
-			}
-
-			// Clean up context
-			current_function_ = nullptr;
-			member_function_context_stack_.pop_back();
-			gSymbolTable.exit_scope();
-
-			// Restore original lexer position (but keep the AST nodes we just created)
-			restore_lexer_position_only(current_pos);
-
-			// Remove temporary type infos
-			for (const auto* type_info : temp_type_infos) {
-				gTypesByName.erase(type_info->name_);
-			}
-		} else {
-			// Fallback: copy the function body pointer directly (old behavior)
-			auto orig_body = func_decl.get_definition();
-			if (orig_body.has_value()) {
-				new_func_ref.set_definition(**orig_body);
-			}
-		}
-
-		// Add to the instantiated struct
-		new_struct_ref.add_member_function(new_func_node, member_func_decl.access,
-		                                   member_func_decl.is_virtual, member_func_decl.is_pure_virtual,
-		                                   member_func_decl.is_override, member_func_decl.is_final);
-
-		// Add to struct type info
-		struct_info->addMemberFunction(
-			std::string(decl.identifier_token().value()),
-			new_func_node,
-			member_func_decl.access,
-			member_func_decl.is_virtual,
-			member_func_decl.is_pure_virtual,
-			member_func_decl.is_override,
-			member_func_decl.is_final
-		);
-
-		// Add to top-level AST so it gets visited by the code generator
-		std::cerr << "DEBUG [8090 try_instantiate_class_template]: Adding member function: " 
-		          << decl.identifier_token().value() << "\n";
-		ast_nodes_.push_back(new_func_node);
-	}
-
-	// Process out-of-line member function definitions
-	auto out_of_line_members = gTemplateRegistry.getOutOfLineMembers(template_name);
-	for (const auto& out_of_line_member : out_of_line_members) {
-		// Re-parse the out-of-line member function body with concrete types
-		// Similar to how we handle inline member functions above
-
-		const FunctionDeclarationNode& func_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>();
-		const DeclarationNode& decl = func_decl.decl_node();
-
-		// Generate instantiated function name
-		std::string instantiated_func_name = std::string(decl.identifier_token().value()) + "_" + std::string(instantiated_name);
-
-		// Substitute template parameters in return type
-		const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
-		Type return_type = return_type_spec.type();
-		TypeIndex return_type_index = return_type_spec.type_index();
-
-		// Check if return type is a template parameter
-		if (return_type == Type::UserDefined) {
-			if (return_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[return_type_index];
-				std::string_view type_name = type_info.name_;
-
-				// Try to find which template parameter this is
-				for (size_t i = 0; i < out_of_line_member.template_param_names.size() && i < template_args.size(); ++i) {
-					if (out_of_line_member.template_param_names[i] == type_name) {
-						return_type = template_args[i];
-						return_type_index = 0;
-						break;
-					}
-				}
-			}
-		}
-
-		// Create the substituted return type specifier
-		ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
-			return_type,
-			TypeQualifier::None,
-			get_type_size_bits(return_type),
-			Token()
-		);
-
-		// Create the new function declaration as a member function
-		auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, decl.identifier_token());
-		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, instantiated_name);  // instantiated_name is the struct name
-
-		// Copy and substitute parameters
-		for (const auto& param : func_decl.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = param.as<DeclarationNode>();
-				const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
-
-				// Substitute template parameters in parameter type
-				Type param_type = param_type_spec.type();
-				TypeIndex param_type_index = param_type_spec.type_index();
-
-				if (param_type == Type::UserDefined) {
-					if (param_type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[param_type_index];
-						std::string_view type_name = type_info.name_;
-
-						// Try to find which template parameter this is
-						for (size_t i = 0; i < out_of_line_member.template_param_names.size() && i < template_args.size(); ++i) {
-							if (out_of_line_member.template_param_names[i] == type_name) {
-								param_type = template_args[i];
-								param_type_index = 0;
-								break;
-							}
-						}
-					}
-				}
-
-				// Create substituted parameter
-				ASTNode substituted_param_type = emplace_node<TypeSpecifierNode>(
-					param_type,
-					param_type_spec.qualifier(),
-					get_type_size_bits(param_type),
-					Token()  // Empty token
-				);
-
-				ASTNode substituted_param = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
-				new_func_ref.add_parameter_node(substituted_param);
-			}
-		}
-
-		// Re-parse the function body with concrete types
-		TokenPosition current_pos = save_token_position();
-
-		// Restore to the body start position
-		restore_token_position(out_of_line_member.body_start);
-
-		// Temporarily add the concrete types to the type system with template parameter names
-		std::vector<TypeInfo*> temp_type_infos;
-		for (size_t i = 0; i < out_of_line_member.template_param_names.size() && i < template_args.size(); ++i) {
-			std::string_view param_name = out_of_line_member.template_param_names[i];
-			Type concrete_type = template_args[i];
-
-			// Create a temporary TypeInfo that maps the template parameter name to the concrete type
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-			gTypesByName.emplace(type_info.name_, &type_info);
-			temp_type_infos.push_back(&type_info);
-		}
-
-		// Set up function context for parsing the body
-		current_function_ = &new_func_ref;
-		member_function_context_stack_.push_back({
-			instantiated_name,
-			struct_type_info.type_index_,
-			&new_struct_ref
-		});
-		gSymbolTable.enter_scope(ScopeType::Function);
-
-		// Add parameters to symbol table
-		for (const auto& param : new_func_ref.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& param_decl = param.as<DeclarationNode>();
-				gSymbolTable.insert(param_decl.identifier_token().value(), param);
-			}
-		}
-
-		// Re-parse the function body
-		auto block_result = parse_block();
-		if (!block_result.is_error() && block_result.node().has_value()) {
-			new_func_ref.set_definition(block_result.node()->as<BlockNode>());
-		}
-
-		// Clean up context
-		current_function_ = nullptr;
-		member_function_context_stack_.pop_back();
-		gSymbolTable.exit_scope();
-
-		// Restore original lexer position (but keep the AST nodes we just created)
-		restore_lexer_position_only(current_pos);
-
-		// Remove temporary type infos
-		for (const auto* type_info : temp_type_infos) {
-			gTypesByName.erase(type_info->name_);
-		}
-
-		// Add the instantiated function to the struct
-		new_struct_ref.add_member_function(
-			new_func_node,
-			AccessSpecifier::Public,  // TODO: Get actual access specifier
-			false,  // is_virtual
-			false,  // is_pure_virtual
-			false,  // is_override
-			false   // is_final
-		);
-
-		// Add to top-level AST so it gets visited by the code generator
-		std::cerr << "DEBUG [8246 try_instantiate_class_template out-of-line]: Adding member function\n";
-		ast_nodes_.push_back(new_func_node);
 	}
 
 	// Finalize the struct layout
@@ -9776,10 +9545,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
 
-	// Add to top-level AST so it gets visited by the code generator
-	ast_nodes_.push_back(new_struct_node);
-
-	return new_struct_node;
+	// Template instantiations don't create AST nodes - they only register types
+	// Return nullopt to signal the type is now available in the type system
+	return std::nullopt;
 }
 
 // Try to instantiate a member function template during a member function call
@@ -9896,6 +9664,12 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		get_type_size_bits(return_type),
 		Token()
 	);
+	
+	// Copy pointer levels from the original return type specifier
+	auto& substituted_return_type_spec = substituted_return_type.as<TypeSpecifierNode>();
+	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+	}
 
 	// Create the new function declaration
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
@@ -9926,12 +9700,18 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			}
 
 			// Create the substituted parameter type specifier
-			ASTNode substituted_param_type = emplace_node<TypeSpecifierNode>(
+			auto substituted_param_type = emplace_node<TypeSpecifierNode>(
 				param_type,
 				TypeQualifier::None,
 				get_type_size_bits(param_type),
 				Token()
 			);
+			
+			// Copy pointer levels from the original parameter type specifier
+			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
+			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+			}
 
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
