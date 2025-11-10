@@ -4616,7 +4616,24 @@ ParseResult Parser::parse_statement_or_declaration()
 		
 		// Check if this is a template identifier (e.g., Container<int>::Iterator)
 		// Templates need to be parsed as variable declarations
+		// UNLESS the next token is '(' (which indicates a function template call)
 		if (gTemplateRegistry.lookupTemplate(type_name).has_value()) {
+			// We need to consume the identifier to peek at what comes after
+			consume_token(); // consume the identifier
+			// Peek ahead to see if this is a function call (template_name(...))
+			// or a variable declaration (template_name<...> var)
+			if (peek_token().has_value()) {
+				if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+					// Restore position before the identifier so parse_expression can handle it
+					restore_token_position(saved_pos);
+					// This is a function call, parse as expression
+					return parse_expression();
+				}
+			}
+			std::cerr << "DEBUG: Parsing as variable declaration\n";
+			// Restore position before the identifier so parse_variable_declaration can handle it
+			restore_token_position(saved_pos);
+			// Otherwise, it's a variable declaration with a template type
 			return parse_variable_declaration();
 		}
 
@@ -8654,8 +8671,35 @@ ParseResult Parser::parse_template_declaration() {
 			std::cerr << "  Arg " << i << ": base_type=" << static_cast<int>(template_args[i].base_type)
 			          << " is_ref=" << template_args[i].is_reference << "\n";
 		}
-		gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
-
+		// NOTE:
+		// At this point we have parsed a specialization of the primary template.
+		// Two forms are supported:
+		//  - Full/Exact specialization: template<> struct Container<bool> { ... };
+		//  - Partial specialization   : template<typename T> struct Container<T*> { ... };
+		//
+		// Full specializations:
+		//   - template_params is empty (template<>)
+		//   - template_args holds fully concrete TemplateTypeArg values (e.g., bool)
+		//   - We must register an exact specialization that will be preferred for a
+		//     matching instantiation (e.g., Container<bool>).
+		//
+		// Partial specializations:
+		//   - template_params is non-empty (e.g., <typename T>)
+		//   - template_args/pattern_args use TemplateTypeArg to encode the pattern
+		//     (T*, T&, const T, etc.) and are handled via pattern matching.
+		//
+		// Implementation:
+		//   - If template_params is empty, treat as full specialization and register
+		//     via registerSpecialization().
+		//   - Otherwise, treat as partial specialization pattern and register via
+		//     registerSpecializationPattern().
+		if (template_params.empty()) {
+			// Full specialization: exact match on concrete arguments
+			gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
+		} else {
+			// Partial specialization: register as a pattern for matching
+			gTemplateRegistry.registerSpecializationPattern(template_name, template_params, template_args, struct_node);
+		}
 		// Don't create a TemplateClassDeclarationNode for specializations
 		// Just return the struct_node directly so it gets added to AST by the caller
 		// This avoids the issue where the struct gets added to ast_nodes_ here
@@ -9952,6 +9996,17 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 // Returns the instantiated StructDeclarationNode if successful
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	std::cerr << "DEBUG: try_instantiate_class_template called with template_name='" << template_name << "' and " << template_args.size() << " args\n";
+
+	// 1) Full/Exact specialization lookup
+	// If there is an exact specialization registered for (template_name, template_args),
+	// it always wins over partial specializations and the primary template.
+	if (!template_args.empty()) {
+		auto exact_spec = gTemplateRegistry.lookupSpecialization(template_name, template_args);
+		if (exact_spec.has_value()) {
+			std::cerr << "DEBUG: Found exact specialization for '" << template_name << "'\n";
+			return exact_spec;
+		}
+	}
 	
 	// Generate the instantiated class name first
 	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
