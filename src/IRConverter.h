@@ -758,8 +758,9 @@ std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
 
 int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 	// For RBP-relative addressing, temporary variables use negative offsets
-	// TempVar 0 is at [rbp-8], TempVar 1 is at [rbp-16], etc.
-	return static_cast<int32_t>((tempVar.index) * -8);
+	// TempVar stores 1-based numbers: TempVar(1) is at [rbp-8], TempVar(2) at [rbp-16], etc.
+	// In member functions, TempVar starts at 2 (number 1 is reserved for 'this')
+	return static_cast<int32_t>(tempVar.var_number * -8);
 }
 
 struct RegisterAllocator
@@ -1927,6 +1928,7 @@ private:
 		int scope_stack_space = 0;
 		std::unordered_map<std::string_view, int> identifier_offset;
 	};
+	
 	StackSpaceSize calculateFunctionStackSpace(const std::string& func_name, StackVariableScope& var_scope) {
 		StackSpaceSize func_stack_space{};
 
@@ -2327,7 +2329,7 @@ private:
 					// the value is currently in RAX (from the most recent operation).
 
 					// Allocate stack slot for this TempVar
-					int stack_offset = allocateStackSlotForTempVar(src_reg_temp.index);
+					int stack_offset = allocateStackSlotForTempVar(src_reg_temp.var_number);
 
 					if (is_float_arg) {
 						// For floating-point, assume value is in XMM0 and store it
@@ -2353,7 +2355,7 @@ private:
 
 						// Now load from stack to target register
 						prefix = (argType == Type::Float) ? 0xF3 : 0xF2;
-						int load_offset = allocateStackSlotForTempVar(src_reg_temp.index);
+						int load_offset = allocateStackSlotForTempVar(src_reg_temp.var_number);
 						textSectionData.push_back(prefix);
 						textSectionData.push_back(0x0F);
 						textSectionData.push_back(0x10);
@@ -5710,8 +5712,15 @@ private:
 			member_stack_offset = object_base_offset + member_offset;
 		}
 
-		// Get the result variable's stack offset
-		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		// Get the result variable's stack offset from the identifier_offset map
+		int32_t result_offset;
+		auto it = current_scope.identifier_offset.find(result_var.name());
+		if (it != current_scope.identifier_offset.end()) {
+			result_offset = it->second;
+		} else {
+			// Fallback (shouldn't happen if temp var was properly registered)
+			result_offset = getStackOffsetFromTempVar(result_var);
+		}
 
 		// Calculate member size in bytes
 		int member_size_bytes = member_size_bits / 8;
@@ -6650,3 +6659,5 @@ private:
 	};
 	std::vector<PendingGlobalRelocation> pending_global_relocations_;
 };
+
+

@@ -281,16 +281,17 @@ constexpr auto temp_name_array = make_view_array();
 
 struct TempVar
 {
-	TempVar() = default;
-	explicit TempVar(size_t idx) : index(idx) {}
+	TempVar() : var_number(1) {}  // Start at 1, not 0
+	explicit TempVar(size_t num) : var_number(num) {}
 
 	TempVar next() {
-		return TempVar(++index);
+		return TempVar(++var_number);
 	}
 	std::string_view name() const {
-		return temp_name_array[index];
+		// temp_name_array is 0-indexed, so subtract 1
+		return temp_name_array[var_number - 1];
 	}
-	size_t index = 0;
+	size_t var_number = 1;  // 1-based: first temp var is number 1
 };
 
 using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type, TempVar>;
@@ -567,7 +568,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -578,7 +579,7 @@ public:
 					if (isOperandType<unsigned long long>(3))
 						oss << getOperandAs<unsigned long long>(3);
 					else if (isOperandType<TempVar>(3))
-						oss << '%' << getOperandAs<TempVar>(3).index;
+						oss << '%' << getOperandAs<TempVar>(3).var_number;
 					else if (isOperandType<std::string_view>(3))
 						oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -587,7 +588,7 @@ public:
 					if (isOperandType<unsigned long long>(6))
 						oss << getOperandAs<unsigned long long>(6);
 					else if (isOperandType<TempVar>(6))
-						oss << '%' << getOperandAs<TempVar>(6).index;
+						oss << '%' << getOperandAs<TempVar>(6).var_number;
 					else if (isOperandType<std::string_view>(6))
 						oss << '%' << getOperandAs<std::string_view>(6);
 				}
@@ -602,7 +603,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -613,7 +614,7 @@ public:
 					if (isOperandType<unsigned long long>(3))
 						oss << getOperandAs<unsigned long long>(3);
 					else if (isOperandType<TempVar>(3))
-						oss << '%' << getOperandAs<TempVar>(3).index;
+						oss << '%' << getOperandAs<TempVar>(3).var_number;
 					else if (isOperandType<std::string_view>(3))
 						oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -622,7 +623,7 @@ public:
 					if (isOperandType<unsigned long long>(6))
 						oss << getOperandAs<unsigned long long>(6);
 					else if (isOperandType<TempVar>(6))
-						oss << '%' << getOperandAs<TempVar>(6).index;
+						oss << '%' << getOperandAs<TempVar>(6).var_number;
 					else if (isOperandType<std::string_view>(6))
 						oss << '%' << getOperandAs<std::string_view>(6);
 				}
@@ -637,7 +638,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -648,7 +649,7 @@ public:
 					if (isOperandType<unsigned long long>(3))
 						oss << getOperandAs<unsigned long long>(3);
 					else if (isOperandType<TempVar>(3))
-						oss << '%' << getOperandAs<TempVar>(3).index;
+						oss << '%' << getOperandAs<TempVar>(3).var_number;
 					else if (isOperandType<std::string_view>(3))
 						oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -657,7 +658,7 @@ public:
 					if (isOperandType<unsigned long long>(6))
 						oss << getOperandAs<unsigned long long>(6);
 					else if (isOperandType<TempVar>(6))
-						oss << '%' << getOperandAs<TempVar>(6).index;
+						oss << '%' << getOperandAs<TempVar>(6).var_number;
 					else if (isOperandType<std::string_view>(6))
 						oss << '%' << getOperandAs<std::string_view>(6);
 				}
@@ -672,7 +673,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -683,7 +684,7 @@ public:
 					if (isOperandType<unsigned long long>(3))
 						oss << getOperandAs<unsigned long long>(3);
 					else if (isOperandType<TempVar>(3))
-						oss << '%' << getOperandAs<TempVar>(3).index;
+						oss << '%' << getOperandAs<TempVar>(3).var_number;
 					else if (isOperandType<std::string_view>(3))
 						oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -692,7 +693,7 @@ public:
 					if (isOperandType<unsigned long long>(6))
 						oss << getOperandAs<unsigned long long>(6);
 					else if (isOperandType<TempVar>(6))
-						oss << '%' << getOperandAs<TempVar>(6).index;
+						oss << '%' << getOperandAs<TempVar>(6).var_number;
 					else if (isOperandType<std::string_view>(6))
 						oss << '%' << getOperandAs<std::string_view>(6);
 				}
@@ -707,7 +708,7 @@ public:
 				if (getOperandCount() > 0) {
 					oss << '%';
 					if (isOperandType<TempVar>(0))
-						oss << getOperandAs<TempVar>(0).index;
+						oss << getOperandAs<TempVar>(0).var_number;
 					else if (isOperandType<std::string_view>(0))
 						oss << getOperandAs<std::string_view>(0);
 
@@ -716,7 +717,7 @@ public:
 					if (isOperandType<unsigned long long>(3))
 						oss << getOperandAs<unsigned long long>(3);
 					else if (isOperandType<TempVar>(3))
-						oss << '%' << getOperandAs<TempVar>(3).index;
+						oss << '%' << getOperandAs<TempVar>(3).var_number;
 					else if (isOperandType<std::string_view>(3))
 						oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -725,7 +726,7 @@ public:
 					if (isOperandType<unsigned long long>(6))
 						oss << getOperandAs<unsigned long long>(6);
 					else if (isOperandType<TempVar>(6))
-						oss << '%' << getOperandAs<TempVar>(6).index;
+						oss << '%' << getOperandAs<TempVar>(6).var_number;
 					else if (isOperandType<std::string_view>(6))
 						oss << '%' << getOperandAs<std::string_view>(6);
 				}
@@ -739,7 +740,7 @@ public:
 				if (getOperandCount() > 0) {
 					oss << '%';
 					if (isOperandType<TempVar>(0))
-						oss << getOperandAs<TempVar>(0).index;
+						oss << getOperandAs<TempVar>(0).var_number;
 					else if (isOperandType<std::string_view>(0))
 						oss << getOperandAs<std::string_view>(0);
 
@@ -748,7 +749,7 @@ public:
 					if (isOperandType<unsigned long long>(3))
 						oss << getOperandAs<unsigned long long>(3);
 					else if (isOperandType<TempVar>(3))
-						oss << '%' << getOperandAs<TempVar>(3).index;
+						oss << '%' << getOperandAs<TempVar>(3).var_number;
 					else if (isOperandType<std::string_view>(3))
 						oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -757,7 +758,7 @@ public:
 					if (isOperandType<unsigned long long>(6))
 						oss << getOperandAs<unsigned long long>(6);
 					else if (isOperandType<TempVar>(6))
-						oss << '%' << getOperandAs<TempVar>(6).index;
+						oss << '%' << getOperandAs<TempVar>(6).var_number;
 					else if (isOperandType<std::string_view>(6))
 						oss << '%' << getOperandAs<std::string_view>(6);
 				}
@@ -771,7 +772,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -780,7 +781,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -789,7 +790,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -803,7 +804,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -812,7 +813,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -821,7 +822,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -835,7 +836,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -844,7 +845,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -853,7 +854,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -867,7 +868,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -876,7 +877,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -885,7 +886,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -899,7 +900,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -908,7 +909,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -917,7 +918,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -931,7 +932,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -940,7 +941,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -949,7 +950,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -963,7 +964,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -972,7 +973,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -981,7 +982,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -995,7 +996,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1004,7 +1005,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1013,7 +1014,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1027,7 +1028,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1036,7 +1037,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1045,7 +1046,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1059,7 +1060,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1068,7 +1069,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1077,7 +1078,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1091,7 +1092,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1100,7 +1101,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1116,7 +1117,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1125,7 +1126,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1134,7 +1135,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1148,7 +1149,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1157,7 +1158,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1166,7 +1167,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1180,7 +1181,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1189,7 +1190,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1198,7 +1199,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1212,7 +1213,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1221,7 +1222,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1230,7 +1231,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1244,7 +1245,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1253,7 +1254,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1262,7 +1263,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1276,7 +1277,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1285,7 +1286,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1294,7 +1295,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1308,7 +1309,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1317,7 +1318,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1326,7 +1327,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1340,7 +1341,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1349,7 +1350,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1358,7 +1359,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1372,7 +1373,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1381,7 +1382,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1390,7 +1391,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1404,7 +1405,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1413,7 +1414,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1422,7 +1423,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1436,7 +1437,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1445,7 +1446,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1454,7 +1455,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1468,7 +1469,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1477,7 +1478,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1486,7 +1487,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1500,7 +1501,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1509,7 +1510,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1518,7 +1519,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1532,7 +1533,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1541,7 +1542,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1550,7 +1551,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1564,7 +1565,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1573,7 +1574,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1582,7 +1583,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1596,7 +1597,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1605,7 +1606,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1614,7 +1615,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1628,7 +1629,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1637,7 +1638,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1646,7 +1647,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1660,7 +1661,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1669,7 +1670,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1678,7 +1679,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -1692,7 +1693,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1701,7 +1702,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1717,7 +1718,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1726,7 +1727,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1742,7 +1743,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1751,7 +1752,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1767,7 +1768,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1776,7 +1777,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -1795,7 +1796,7 @@ public:
 				if (isOperandType<unsigned long long>(2))
 					oss << getOperandAs<unsigned long long>(2);
 				else if (isOperandType<TempVar>(2))
-					oss << '%' << getOperandAs<TempVar>(2).index;
+					oss << '%' << getOperandAs<TempVar>(2).var_number;
 				else if (isOperandType<std::string_view>(2))
 					oss << '%' << getOperandAs<std::string_view>(2);
 			}
@@ -1832,7 +1833,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -1860,7 +1861,7 @@ public:
 							if (isOperandType<unsigned long long>(i + 2))
 								oss << getOperandAs<unsigned long long>(i + 2);
 							else if (isOperandType<TempVar>(i + 2))
-								oss << '%' << getOperandAs<TempVar>(i + 2).index;
+								oss << '%' << getOperandAs<TempVar>(i + 2).var_number;
 							else if (isOperandType<std::string_view>(i + 2))
 								oss << '%' << getOperandAs<std::string_view>(i + 2);
 						}
@@ -1935,7 +1936,7 @@ public:
 				oss << "br i1 ";
 				// Operand 2 is the condition value
 				if (isOperandType<TempVar>(2))
-					oss << '%' << getOperandAs<TempVar>(2).index;
+					oss << '%' << getOperandAs<TempVar>(2).var_number;
 				else if (isOperandType<std::string_view>(2))
 					oss << '%' << getOperandAs<std::string_view>(2);
 				else if (isOperandType<unsigned long long>(2))
@@ -2043,7 +2044,7 @@ public:
 			if (getOperandCount() >= 7) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2053,7 +2054,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2063,7 +2064,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2082,7 +2083,7 @@ public:
 				if (isOperandType<unsigned long long>(2))
 					oss << getOperandAs<unsigned long long>(2);
 				else if (isOperandType<TempVar>(2))
-					oss << '%' << getOperandAs<TempVar>(2).index;
+					oss << '%' << getOperandAs<TempVar>(2).var_number;
 				else if (isOperandType<std::string_view>(2))
 					oss << '%' << getOperandAs<std::string_view>(2);
 
@@ -2092,7 +2093,7 @@ public:
 				if (isOperandType<unsigned long long>(5))
 					oss << getOperandAs<unsigned long long>(5);
 				else if (isOperandType<TempVar>(5))
-					oss << '%' << getOperandAs<TempVar>(5).index;
+					oss << '%' << getOperandAs<TempVar>(5).var_number;
 				else if (isOperandType<std::string_view>(5))
 					oss << '%' << getOperandAs<std::string_view>(5);
 
@@ -2102,7 +2103,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2117,7 +2118,7 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2126,7 +2127,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 			}
@@ -2141,7 +2142,7 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2150,7 +2151,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 			}
@@ -2165,7 +2166,7 @@ public:
 			if (getOperandCount() >= 6) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2174,7 +2175,7 @@ public:
 
 				// Object
 				if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2195,7 +2196,7 @@ public:
 
 				// Object
 				if (isOperandType<TempVar>(2))
-					oss << '%' << getOperandAs<TempVar>(2).index;
+					oss << '%' << getOperandAs<TempVar>(2).var_number;
 				else if (isOperandType<std::string_view>(2))
 					oss << '%' << getOperandAs<std::string_view>(2);
 
@@ -2206,7 +2207,7 @@ public:
 
 				// Value
 				if (isOperandType<TempVar>(5))
-					oss << '%' << getOperandAs<TempVar>(5).index;
+					oss << '%' << getOperandAs<TempVar>(5).var_number;
 				else if (isOperandType<std::string_view>(5))
 					oss << '%' << getOperandAs<std::string_view>(5);
 				else if (isOperandType<int>(5))
@@ -2234,7 +2235,7 @@ public:
 				oss << " %";
 
 				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).index;
+					oss << getOperandAs<TempVar>(1).var_number;
 				else if (isOperandType<std::string_view>(1))
 					oss << getOperandAs<std::string_view>(1);
 				else if (isOperandType<std::string>(1))
@@ -2246,7 +2247,7 @@ public:
 						oss << " " << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
 
 						if (isOperandType<TempVar>(i + 2))
-							oss << '%' << getOperandAs<TempVar>(i + 2).index;
+							oss << '%' << getOperandAs<TempVar>(i + 2).var_number;
 						else if (isOperandType<std::string_view>(i + 2))
 							oss << '%' << getOperandAs<std::string_view>(i + 2);
 						else if (isOperandType<unsigned long long>(i + 2))
@@ -2274,7 +2275,7 @@ public:
 				oss << " %";
 
 				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).index;
+					oss << getOperandAs<TempVar>(1).var_number;
 				else if (isOperandType<std::string_view>(1))
 					oss << getOperandAs<std::string_view>(1);
 				else if (isOperandType<std::string>(1))
@@ -2290,7 +2291,7 @@ public:
 			if (getOperandCount() >= 5) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2299,7 +2300,7 @@ public:
 				// Object (this pointer)
 				oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " %";
 				if (isOperandType<TempVar>(3))
-					oss << getOperandAs<TempVar>(3).index;
+					oss << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << getOperandAs<std::string_view>(3);
 
@@ -2316,7 +2317,7 @@ public:
 						if (isOperandType<unsigned long long>(i + 2))
 							oss << getOperandAs<unsigned long long>(i + 2);
 						else if (isOperandType<TempVar>(i + 2))
-							oss << '%' << getOperandAs<TempVar>(i + 2).index;
+							oss << '%' << getOperandAs<TempVar>(i + 2).var_number;
 						else if (isOperandType<std::string_view>(i + 2))
 							oss << '%' << getOperandAs<std::string_view>(i + 2);
 					}
@@ -2334,7 +2335,7 @@ public:
 			if (getOperandCount() >= 2) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2352,7 +2353,7 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 
 				oss << " = heap_alloc [" << static_cast<int>(getOperandAs<Type>(1)) << "]["
 				    << getOperandAs<int>(2) << "][" << getOperandAs<int>(3) << "]";
@@ -2368,13 +2369,13 @@ public:
 			if (getOperandCount() >= 5) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 
 				oss << " = heap_alloc_array [" << static_cast<int>(getOperandAs<Type>(1)) << "]["
 				    << getOperandAs<int>(2) << "][" << getOperandAs<int>(3) << "] %";
 
 				if (isOperandType<TempVar>(4))
-					oss << getOperandAs<TempVar>(4).index;
+					oss << getOperandAs<TempVar>(4).var_number;
 			}
 		}
 		break;
@@ -2387,7 +2388,7 @@ public:
 			if (getOperandCount() >= 1) {
 				oss << "heap_free %";
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 			}
 		}
 		break;
@@ -2400,7 +2401,7 @@ public:
 			if (getOperandCount() >= 1) {
 				oss << "heap_free_array %";
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 			}
 		}
 		break;
@@ -2413,10 +2414,10 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				oss << " = placement_new %";
 				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).index;
+					oss << getOperandAs<TempVar>(1).var_number;
 				oss << " [" << getOperandAsTypeString(2) << "][" << getOperandAs<int>(3) << "]";
 			}
 		}
@@ -2430,7 +2431,7 @@ public:
 			if (getOperandCount() >= 3) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				oss << " = typeid ";
 				if (isOperandType<std::string>(1))
 					oss << getOperandAs<std::string>(1);
@@ -2449,10 +2450,10 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				oss << " = dynamic_cast %";
 				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).index;
+					oss << getOperandAs<TempVar>(1).var_number;
 				oss << " [" << getOperandAs<std::string>(2) << "]";
 				oss << " [is_ref=" << (getOperandAs<bool>(3) ? "true" : "false") << "]";
 			}
@@ -2466,7 +2467,7 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2475,7 +2476,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 			}
@@ -2489,7 +2490,7 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2498,7 +2499,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 			}
@@ -2512,7 +2513,7 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2521,7 +2522,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 			}
@@ -2535,7 +2536,7 @@ public:
 			if (getOperandCount() >= 4) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2544,7 +2545,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 			}
@@ -2558,7 +2559,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2567,7 +2568,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2576,7 +2577,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2590,7 +2591,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2599,7 +2600,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2608,7 +2609,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2622,7 +2623,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2631,7 +2632,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2640,7 +2641,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2654,7 +2655,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2663,7 +2664,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2672,7 +2673,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2686,7 +2687,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2695,7 +2696,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2704,7 +2705,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2718,7 +2719,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2727,7 +2728,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2736,7 +2737,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2750,7 +2751,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2759,7 +2760,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2768,7 +2769,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2782,7 +2783,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2791,7 +2792,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2800,7 +2801,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2814,7 +2815,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2823,7 +2824,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2832,7 +2833,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2846,7 +2847,7 @@ public:
 			if (getOperandCount() > 0) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).index;
+					oss << getOperandAs<TempVar>(0).var_number;
 				else if (isOperandType<std::string_view>(0))
 					oss << getOperandAs<std::string_view>(0);
 
@@ -2855,7 +2856,7 @@ public:
 				if (isOperandType<unsigned long long>(3))
 					oss << getOperandAs<unsigned long long>(3);
 				else if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2864,7 +2865,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2881,7 +2882,7 @@ public:
 
 				// Print LHS (operand 3)
 				if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).index;
+					oss << '%' << getOperandAs<TempVar>(3).var_number;
 				else if (isOperandType<std::string_view>(3))
 					oss << '%' << getOperandAs<std::string_view>(3);
 
@@ -2891,7 +2892,7 @@ public:
 				if (isOperandType<unsigned long long>(6))
 					oss << getOperandAs<unsigned long long>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2926,7 +2927,7 @@ public:
 				else if (isOperandType<double>(6))
 					oss << getOperandAs<double>(6);
 				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).index;
+					oss << '%' << getOperandAs<TempVar>(6).var_number;
 				else if (isOperandType<std::string_view>(6))
 					oss << '%' << getOperandAs<std::string_view>(6);
 			}
@@ -2966,7 +2967,7 @@ public:
 			} else {
 				global_name = std::string(std::get<std::string_view>(operands_[1]));
 			}
-			oss << '%' << getOperandAs<TempVar>(0).index << " = global_load @" << global_name;
+			oss << '%' << getOperandAs<TempVar>(0).var_number << " = global_load @" << global_name;
 		}
 		break;
 
@@ -2975,7 +2976,7 @@ public:
 			// global_store @global_name, %value
 			// Format: [global_name, value]
 			assert(getOperandCount() == 2 && "GlobalStore must have exactly 2 operands");
-			oss << "global_store @" << getOperandAs<std::string_view>(0) << ", %" << getOperandAs<TempVar>(1).index;
+			oss << "global_store @" << getOperandAs<std::string_view>(0) << ", %" << getOperandAs<TempVar>(1).var_number;
 		}
 		break;
 
@@ -2984,7 +2985,7 @@ public:
 			// %result = function_address @function_name
 			// Format: [result_temp, function_name]
 			assert(getOperandCount() == 2 && "FunctionAddress must have exactly 2 operands");
-			oss << '%' << getOperandAs<TempVar>(0).index << " = function_address @" << getOperandAs<std::string_view>(1);
+			oss << '%' << getOperandAs<TempVar>(0).var_number << " = function_address @" << getOperandAs<std::string_view>(1);
 		}
 		break;
 
@@ -2993,11 +2994,11 @@ public:
 			// %result = indirect_call %func_ptr, arg1_type, arg1_size, arg1_value, ...
 			// Format: [result_temp, func_ptr_var, arg1_type, arg1_size, arg1_value, ...]
 			assert(getOperandCount() >= 2 && "IndirectCall must have at least 2 operands");
-			oss << '%' << getOperandAs<TempVar>(0).index << " = indirect_call ";
+			oss << '%' << getOperandAs<TempVar>(0).var_number << " = indirect_call ";
 
 			// Function pointer can be either a TempVar or a variable name (string_view)
 			if (isOperandType<TempVar>(1)) {
-				oss << '%' << getOperandAs<TempVar>(1).index;
+				oss << '%' << getOperandAs<TempVar>(1).var_number;
 			} else if (isOperandType<std::string_view>(1)) {
 				oss << '%' << getOperandAs<std::string_view>(1);
 			}
@@ -3006,7 +3007,7 @@ public:
 			for (size_t i = 2; i + 2 < getOperandCount(); i += 3) {
 				oss << ", " << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
 				if (isOperandType<TempVar>(i + 2)) {
-					oss << '%' << getOperandAs<TempVar>(i + 2).index;
+					oss << '%' << getOperandAs<TempVar>(i + 2).var_number;
 				} else if (isOperandType<std::string_view>(i + 2)) {
 					oss << '%' << getOperandAs<std::string_view>(i + 2);
 				} else if (isOperandType<unsigned long long>(i + 2)) {
@@ -3097,3 +3098,5 @@ private:
 	std::vector<IrInstruction> instructions;
 	size_t reserved_capacity_ = 0;
 };
+
+

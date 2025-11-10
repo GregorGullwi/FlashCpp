@@ -378,7 +378,8 @@ private:
 		}
 
 		// Reset the temporary variable counter for each new function
-		var_counter = TempVar();
+		// For member functions, reserve TempVar(1) for the implicit 'this' parameter
+		var_counter = node.is_member_function() ? TempVar(2) : TempVar();
 
 		// Set current function name for static local variable mangling
 		const DeclarationNode& func_decl = node.decl_node();
@@ -643,7 +644,8 @@ private:
 			return;
 
 		// Reset the temporary variable counter for each new constructor
-		var_counter = TempVar();
+		// Constructors are always member functions, so reserve TempVar(1) for 'this'
+		var_counter = TempVar(2);
 
 		// Set current function name for static local variable mangling
 		current_function_name_ = std::string(node.name());
@@ -959,7 +961,8 @@ private:
 			return;
 
 		// Reset the temporary variable counter for each new destructor
-		var_counter = TempVar();
+		// Destructors are always member functions, so reserve TempVar(1) for 'this'
+		var_counter = TempVar(2);
 
 		// Set current function name for static local variable mangling
 		current_function_name_ = std::string(node.name());
