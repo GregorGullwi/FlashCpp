@@ -8560,51 +8560,66 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 
-				// Parse member declaration
-				auto member_result = parse_declaration_or_function_definition();
+					// Parse member declaration (use same logic as regular struct parsing)
+				auto member_result = parse_type_and_name();
 				if (member_result.is_error()) {
 					return member_result;
 				}
 
-				// Add member to struct
-				if (member_result.node().has_value()) {
-					ASTNode member_node = *member_result.node();
+				if (!member_result.node().has_value()) {
+					return ParseResult::error("Expected member declaration", *peek_token());
+				}
 
-					// Check if it's a function or variable
-					if (member_node.is<FunctionDeclarationNode>()) {
-						// This is a member function - we need to create a new FunctionDeclarationNode
-						// with the struct name to make it a proper member function
-						FunctionDeclarationNode& func_decl = member_node.as<FunctionDeclarationNode>();
-						DeclarationNode& decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
-
-						// Create a new FunctionDeclarationNode with member function info
-						auto [member_func_node, member_func_ref] =
-							emplace_node_ref<FunctionDeclarationNode>(decl_node, instantiated_name);
-
-						// Copy parameters from the parsed function
-						for (const auto& param : func_decl.parameter_nodes()) {
-							member_func_ref.add_parameter_node(param);
-						}
-
-						// Copy function body if it exists
-						auto definition_opt = func_decl.get_definition();
-						if (definition_opt.has_value()) {
-							member_func_ref.set_definition(**definition_opt);
-						}
-
-						// Add to struct
-						struct_ref.add_member_function(
-							member_func_node,
-							current_access,
-							false,  // is_virtual
-							false,  // is_pure_virtual
-							false,  // is_override
-							false   // is_final
-						);
-					} else if (member_node.is<VariableDeclarationNode>()) {
-						const VariableDeclarationNode& var_node = member_node.as<VariableDeclarationNode>();
-						struct_ref.add_member(var_node.declaration_node(), current_access);
+				// Check if this is a member function (has '(') or data member
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					// This is a member function
+					if (!member_result.node()->is<DeclarationNode>()) {
+						return ParseResult::error("Expected declaration node for member function", *peek_token());
 					}
+
+					DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+
+					// Parse function declaration with parameters
+					auto func_result = parse_function_declaration(decl_node);
+					if (func_result.is_error()) {
+						return func_result;
+					}
+
+					if (!func_result.node().has_value()) {
+						return ParseResult::error("Failed to create function declaration node", *peek_token());
+					}
+
+					FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+					DeclarationNode& func_decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
+
+					// Create a new FunctionDeclarationNode with member function info
+					auto [member_func_node, member_func_ref] =
+						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, instantiated_name);
+
+					// Copy parameters from the parsed function
+					for (const auto& param : func_decl.parameter_nodes()) {
+						member_func_ref.add_parameter_node(param);
+					}
+
+					// Copy function body if it exists
+					auto definition_opt = func_decl.get_definition();
+					if (definition_opt.has_value()) {
+						member_func_ref.set_definition(**definition_opt);
+					}
+
+					// Add to struct
+					struct_ref.add_member_function(
+						member_func_node,
+						current_access,
+						false,  // is_virtual
+						false,  // is_pure_virtual
+						false,  // is_override
+						false   // is_final
+					);
+				} else {
+					// This is a data member
+					member_result.node()->as<DeclarationNode>();
+					struct_ref.add_member(*member_result.node(), current_access);
 				}
 
 				// Consume optional semicolon
