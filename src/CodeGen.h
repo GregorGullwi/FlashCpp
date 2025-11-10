@@ -373,8 +373,9 @@ private:
 
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		auto definition_block = node.get_definition();
-		if (!definition_block.has_value())
+		if (!definition_block.has_value()) {
 			return;
+		}
 
 		// Reset the temporary variable counter for each new function
 		var_counter = TempVar();
@@ -421,11 +422,18 @@ private:
 		funcDeclOperands.emplace_back(func_decl.identifier_token().value());              // [3] FUNCTION_NAME
 
 		// Add struct/class name for member functions
-		if (node.is_member_function()) {
-			funcDeclOperands.emplace_back(std::string_view(node.parent_struct_name()));   // [4] STRUCT_NAME
+		// Use current_struct_name_ if set (for instantiated template specializations),
+		// otherwise use the function node's parent_struct_name
+		std::string_view struct_name_for_function;
+		if (!current_struct_name_.empty()) {
+			struct_name_for_function = current_struct_name_;
+		} else if (node.is_member_function()) {
+			struct_name_for_function = node.parent_struct_name();
 		} else {
-			funcDeclOperands.emplace_back(std::string_view(""));                          // [4] STRUCT_NAME (empty)
+			struct_name_for_function = "";
 		}
+		
+		funcDeclOperands.emplace_back(struct_name_for_function);   // [4] STRUCT_NAME
 
 		funcDeclOperands.emplace_back(static_cast<int>(node.linkage()));                  // [5] LINKAGE
 		funcDeclOperands.emplace_back(node.is_variadic());                                // [6] IS_VARIADIC
@@ -596,16 +604,28 @@ private:
 
 		std::cerr << "DEBUG visitStructDeclarationNode: " << node.name() << " with " << node.member_functions().size() << " member functions\n";
 
+		// Skip pattern structs - they're templates and shouldn't generate code
+		// Pattern structs have "_pattern_" in their name
+		std::string_view struct_name = node.name();
+		if (struct_name.find("_pattern_") != std::string_view::npos) {
+			return;
+		}
+
 		// Only visit member functions if we're at the top level (not inside a function)
 		// Local struct declarations inside functions should not generate member function IR
 		// because the member functions are already generated when the struct type is registered
 		if (current_function_name_.empty()) {
 			// We're at the top level, visit member functions
+			// Set struct context so member functions know which struct they belong to
+			// NOTE: We don't clear this until the next struct - the string must persist
+			// because IrOperands store string_view references to it
+			current_struct_name_ = std::string(struct_name);
 			for (const auto& member_func : node.member_functions()) {
 				std::cerr << "  Visiting member function\n";
 				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 				visit(member_func.function_declaration);
 			}
+			// Don't clear current_struct_name_ - it will be overwritten by the next struct
 		}
 		// If we're inside a function, just skip - the struct type is already registered
 	}
@@ -4487,6 +4507,7 @@ private:
 
 	// Current function name (for mangling static local variables)
 	std::string current_function_name_;
+	std::string current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 
 	// Static local variable information
 	struct StaticLocalInfo {

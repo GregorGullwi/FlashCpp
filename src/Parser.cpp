@@ -4119,6 +4119,11 @@ ParseResult Parser::parse_type_specifier()
 			if (template_args.has_value()) {
 				auto instantiated_class = try_instantiate_class_template(type_name, *template_args);
 				
+				// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
+				if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
+					ast_nodes_.push_back(*instantiated_class);
+				}
+				
 				// Fill in default template arguments to get the actual instantiated name
 				// (try_instantiate_class_template fills them internally, we need to do the same here)
 				std::vector<TemplateTypeArg> filled_template_args = *template_args;
@@ -8828,6 +8833,9 @@ ParseResult Parser::parse_template_declaration() {
 					if (member_node.is<VariableDeclarationNode>()) {
 						const VariableDeclarationNode& var_node = member_node.as<VariableDeclarationNode>();
 						struct_ref.add_member(var_node.declaration_node(), current_access);
+					} else if (member_node.is<FunctionDeclarationNode>()) {
+						// Handle member function
+						struct_ref.add_member_function(member_node, current_access);
 					}
 				}
 				
@@ -8867,6 +8875,22 @@ ParseResult Parser::parse_template_declaration() {
 					member_alignment,
 					member_decl.access,
 					member_decl.default_initializer
+				);
+			}
+			
+			// Add member functions to struct info
+			for (const auto& member_func_decl : struct_ref.member_functions()) {
+				const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+				const DeclarationNode& decl = func_decl.decl_node();
+				
+				struct_info->addMemberFunction(
+					std::string(decl.identifier_token().value()),
+					member_func_decl.function_declaration,
+					member_func_decl.access,
+					member_func_decl.is_virtual,
+					member_func_decl.is_pure_virtual,
+					member_func_decl.is_override,
+					member_func_decl.is_final
 				);
 			}
 			
@@ -10001,9 +10025,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
 	if (!template_args.empty()) {
-		auto exact_spec = gTemplateRegistry.lookupSpecialization(template_name, template_args);
+		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
 		if (exact_spec.has_value()) {
-			std::cerr << "DEBUG: Found exact specialization for '" << template_name << "'\n";
+			std::cerr << "DEBUG: Found exact (non-pattern) specialization for '" << template_name << "'\n";
 			return exact_spec;
 		}
 	}
@@ -10073,11 +10097,50 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			);
 		}
 		
+		// Copy member functions from pattern
+		for (const StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
+			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			const DeclarationNode& decl = func_decl.decl_node();
+			struct_info->addMemberFunction(
+				std::string(decl.identifier_token().value()),
+				mem_func.function_declaration,
+				mem_func.access,
+				mem_func.is_virtual,
+				mem_func.is_pure_virtual,
+				mem_func.is_override,
+				mem_func.is_final
+			);
+		}
+		
 		struct_info->finalize();
 		struct_type_info.setStructInfo(std::move(struct_info));
 		
+		// Create an AST node for the instantiated struct so member functions can be code-generated
+		auto instantiated_struct = emplace_node<StructDeclarationNode>(
+			instantiated_name,
+			false  // is_class
+		);
+		StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
+		
+		// Copy data members
+		for (const auto& member_decl : pattern_struct.members()) {
+			instantiated_struct_ref.add_member(
+				member_decl.declaration,
+				member_decl.access,
+				member_decl.default_initializer
+			);
+		}
+		
+		// Copy member functions
+		for (const StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
+			instantiated_struct_ref.add_member_function(
+				mem_func.function_declaration,
+				mem_func.access
+			);
+		}
+		
 		std::cerr << "DEBUG: Pattern instantiation complete for " << instantiated_name << "\n";
-		return std::nullopt;  // Type is now available in gTypesByName
+		return instantiated_struct;  // Return the struct node for code generation
 	}
 	std::cerr << "DEBUG: No pattern match found, using primary template\n";
 
@@ -10352,9 +10415,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
 
-	// Template instantiations don't create AST nodes - they only register types
-	// Return nullopt to signal the type is now available in the type system
-	return std::nullopt;
+	// Create an AST node for the instantiated struct so member functions can be code-generated
+	auto instantiated_struct = emplace_node<StructDeclarationNode>(
+		instantiated_name,
+		false  // is_class
+	);
+	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
+	
+	// Copy member functions from the template
+	for (const StructMemberFunctionDecl& mem_func : class_decl.member_functions()) {
+		const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
+		const DeclarationNode& decl = func_decl.decl_node();
+		instantiated_struct_ref.add_member_function(
+			mem_func.function_declaration,
+			mem_func.access
+		);
+	}
+
+	// Return the instantiated struct node for code generation
+	return instantiated_struct;
 }
 
 // Try to instantiate a member function template during a member function call

@@ -447,13 +447,22 @@ public:
 		specializations_[key] = specialized_node;
 	}
 
-	// Look up a template specialization (exact match first, then pattern match)
-	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
-		// First, try exact match
+	// Look up an exact template specialization (no pattern matching)
+	std::optional<ASTNode> lookupExactSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
 		SpecializationKey key{std::string(template_name), template_args};
 		auto it = specializations_.find(key);
 		if (it != specializations_.end()) {
 			return it->second;
+		}
+		return std::nullopt;
+	}
+
+	// Look up a template specialization (exact match first, then pattern match)
+	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
+		// First, try exact match
+		auto exact = lookupExactSpecialization(template_name, template_args);
+		if (exact.has_value()) {
+			return exact;
 		}
 		
 		// No exact match - try pattern matching

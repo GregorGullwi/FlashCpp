@@ -365,20 +365,27 @@ public:
 				if (mangled[0] != '?') continue;
 				
 				// Pattern 1: ?FunctionName@ClassName@@...
-				if (mangled.size() > 1 + func_name.size() + 1 + class_name.size() &&
+				// Check: mangled starts with "?<func_name>@<class_name>@@"
+				size_t expected_class_start = 2 + func_name.size();
+				size_t expected_separator = expected_class_start + class_name.size();
+				if (mangled.size() > expected_separator + 1 &&
 				    mangled.substr(1, func_name.size()) == func_name &&
 				    mangled[1 + func_name.size()] == '@' &&
-				    mangled.substr(2 + func_name.size(), class_name.size()) == class_name) {
+				    mangled.substr(expected_class_start, class_name.size()) == class_name &&
+				    mangled.substr(expected_separator, 2) == "@@") {  // Ensure class name ends with @@
 					std::cerr << "DEBUG: getMangledName found match (pattern 1) for " << name << " -> " << mangled << "\n";
 					return mangled;
 				}
 				
 				// Pattern 2: ?ClassName::FunctionName@ClassName@@... (for constructors/destructors)
 				std::string full_func_name = std::string(class_name) + "::" + std::string(func_name);
-				if (mangled.size() > 1 + full_func_name.size() + 1 + class_name.size() &&
+				expected_class_start = 2 + full_func_name.size();
+				expected_separator = expected_class_start + class_name.size();
+				if (mangled.size() > expected_separator + 1 &&
 				    mangled.substr(1, full_func_name.size()) == full_func_name &&
 				    mangled[1 + full_func_name.size()] == '@' &&
-				    mangled.substr(2 + full_func_name.size(), class_name.size()) == class_name) {
+				    mangled.substr(expected_class_start, class_name.size()) == class_name &&
+				    mangled.substr(expected_separator, 2) == "@@") {  // Ensure class name ends with @@
 					std::cerr << "DEBUG: getMangledName found match (pattern 2) for " << name << " -> " << mangled << "\n";
 					return mangled;
 				}
