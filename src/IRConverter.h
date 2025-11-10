@@ -4769,19 +4769,79 @@ private:
 
 	void handleZeroExtend(const IrInstruction& instruction) {
 		// Zero extension: movzx dest, src
-		// For now, implement a simple version that handles common cases
-
-		// Get operands: result_var, from_type, from_size, value, to_size
-		Type fromType = instruction.getOperandAs<Type>(1);
+		// Operands: result_var(0), from_type(1), from_size(2), value(3), to_size(4)
 		int fromSize = instruction.getOperandAs<int>(2);
 		int toSize = instruction.getOperandAs<int>(4);
 
-		// For simplicity, assume we're extending to a register
-		// In a full implementation, we'd need to handle different size combinations
-		// This is a placeholder that would need proper x86-64 movzx instructions
+		// Get source value into a register
+		X64Register source_reg = X64Register::Count;
+		if (instruction.isOperandType<TempVar>(3)) {
+			auto temp = instruction.getOperandAs<TempVar>(3);
+			auto stack_addr = getStackOffsetFromTempVar(temp);
+			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
+				source_reg = reg_opt.value();
+			} else {
+				source_reg = allocateRegisterWithSpilling();
+				auto mov_opcodes = generateMovFromFrame(source_reg, stack_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
+					mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(source_reg);
+			}
+		} else if (instruction.isOperandType<std::string_view>(3)) {
+			auto var_name = instruction.getOperandAs<std::string_view>(3);
+			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
+			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second); reg_opt.has_value()) {
+					source_reg = reg_opt.value();
+				} else {
+					source_reg = allocateRegisterWithSpilling();
+					auto mov_opcodes = generateMovFromFrame(source_reg, var_id->second);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
+						mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(source_reg);
+				}
+			}
+		}
 
-		// TODO: Implement proper zero extension instructions based on sizes
-		// movzx r64, r32 (32->64), movzx r32, r16 (16->32), movzx r32, r8 (8->32), etc.
+		// Allocate result register
+		X64Register result_reg = allocateRegisterWithSpilling();
+
+		// Generate movzx instruction
+		if (fromSize == 8 && toSize == 32) {
+			// movzx r32, r8: 0F B6 /r
+			auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
+			std::array<uint8_t, 4> movzx = { encoding.rex_prefix, 0x0F, 0xB6, encoding.modrm_byte };
+			textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
+		} else if (fromSize == 16 && toSize == 32) {
+			// movzx r32, r16: 0F B7 /r
+			auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
+			std::array<uint8_t, 4> movzx = { encoding.rex_prefix, 0x0F, 0xB7, encoding.modrm_byte };
+			textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
+		} else if (fromSize == 32 && toSize == 64) {
+			// mov r32, r32 (implicitly zero-extends to 64 bits on x86-64)
+			std::array<uint8_t, 2> mov = { 0x89, 0xC0 };
+			mov[1] = 0xC0 + (static_cast<uint8_t>(source_reg) << 3) + static_cast<uint8_t>(result_reg);
+			textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
+		} else {
+			// Fallback: just copy
+			auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
+			std::array<uint8_t, 3> mov = { encoding.rex_prefix, 0x89, encoding.modrm_byte };
+			textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
+		}
+
+		// Store result
+		auto result_operand = instruction.getOperand(0);
+		if (instruction.isOperandType<TempVar>(0)) {
+			auto temp = instruction.getOperandAs<TempVar>(0);
+			auto stack_addr = getStackOffsetFromTempVar(temp);
+			regAlloc.set_stack_variable_offset(result_reg, stack_addr);
+		} else if (instruction.isOperandType<std::string_view>(0)) {
+			auto var_name = instruction.getOperandAs<std::string_view>(0);
+			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
+			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				regAlloc.set_stack_variable_offset(result_reg, var_id->second);
+			}
+		}
 	}
 
 	void handleTruncate(const IrInstruction& instruction) {
