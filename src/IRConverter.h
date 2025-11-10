@@ -128,6 +128,209 @@ OpCodeWithSize generateMovFromFrame(X64Register destinationRegister, int32_t off
 }
 
 /**
+ * @brief Generates x86-64 binary opcodes for 'mov r32, [rbp + offset]'.
+ *
+ * This function creates the byte sequence for loading a 32-bit value from
+ * a frame-relative address (RBP + offset) into a 32-bit register.
+ * Note: This zero-extends the value to 64 bits in the destination register.
+ *
+ * @param destinationRegister The destination register (RAX, RCX, RDX, etc.).
+ * @param offset The signed offset from RBP.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// For 32-bit operations, we may need REX prefix only if using R8-R15
+	bool needs_rex = static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8);
+	
+	if (needs_rex) {
+		uint8_t rex_prefix = 0x40; // Base REX prefix (no W bit for 32-bit)
+		rex_prefix |= (1 << 2); // Set R bit for R8-R15
+		*current_byte_ptr++ = rex_prefix;
+		result.size_in_bytes++;
+	}
+
+	// Opcode for MOV r32, r/m32
+	*current_byte_ptr++ = 0x8B;
+	result.size_in_bytes++;
+
+	// ModR/M byte
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x01; // RBP always needs displacement
+	}
+	else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // 8-bit displacement
+	}
+	else {
+		mod_field = 0x02; // 32-bit displacement
+	}
+
+	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// Displacement
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	}
+	else {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
+/**
+ * @brief Generates x86-64 binary opcodes for 'mov r64, [base_reg + offset]'.
+ *
+ * Load a 64-bit value from memory via a base register plus offset.
+ *
+ * @param dest_reg The destination register.
+ * @param base_reg The base register for addressing (e.g., RCX for pointer).
+ * @param offset The signed offset from the base register.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovFromMemory(X64Register dest_reg, X64Register base_reg, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX prefix for 64-bit operation
+	uint8_t rex_prefix = 0x48; // REX.W
+
+	// Set REX.R if dest_reg is R8-R15
+	if (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+		rex_prefix |= (1 << 2); // REX.R
+	}
+
+	// Set REX.B if base_reg is R8-R15
+	if (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+		rex_prefix |= (1 << 0); // REX.B
+	}
+
+	*current_byte_ptr++ = rex_prefix;
+	result.size_in_bytes++;
+
+	// Opcode: MOV r64, r/m64
+	*current_byte_ptr++ = 0x8B;
+	result.size_in_bytes++;
+
+	// ModR/M byte
+	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
+	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+
+	uint8_t mod_field;
+	if (offset == 0 && base_bits != 0x05) { // RBP/R13 always need displacement
+		mod_field = 0x00; // No displacement
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // 8-bit displacement
+	} else {
+		mod_field = 0x02; // 32-bit displacement
+	}
+
+	uint8_t modrm = (mod_field << 6) | (dest_bits << 3) | base_bits;
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
+
+	// Add displacement if needed
+	if (offset != 0 || base_bits == 0x05) { // RBP/R13 always need displacement
+		if (offset >= -128 && offset <= 127) {
+			*current_byte_ptr++ = static_cast<uint8_t>(offset);
+			result.size_in_bytes++;
+		} else {
+			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+			result.size_in_bytes += 4;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * @brief Generates x86-64 binary opcodes for 'mov r32, [base_reg + offset]'.
+ *
+ * Load a 32-bit value from memory via a base register plus offset.
+ * Zero-extends to 64 bits in the destination register.
+ *
+ * @param dest_reg The destination register.
+ * @param base_reg The base register for addressing.
+ * @param offset The signed offset from the base register.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register base_reg, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX prefix only if using R8-R15
+	bool needs_rex = (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) ||
+	                 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
+
+	if (needs_rex) {
+		uint8_t rex_prefix = 0x40; // Base REX (no W bit for 32-bit)
+		if (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex_prefix |= (1 << 2); // REX.R
+		}
+		if (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex_prefix |= (1 << 0); // REX.B
+		}
+		*current_byte_ptr++ = rex_prefix;
+		result.size_in_bytes++;
+	}
+
+	// Opcode: MOV r32, r/m32
+	*current_byte_ptr++ = 0x8B;
+	result.size_in_bytes++;
+
+	// ModR/M byte
+	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
+	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+
+	uint8_t mod_field;
+	if (offset == 0 && base_bits != 0x05) {
+		mod_field = 0x00;
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01;
+	} else {
+		mod_field = 0x02;
+	}
+
+	uint8_t modrm = (mod_field << 6) | (dest_bits << 3) | base_bits;
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
+
+	// Displacement
+	if (offset != 0 || base_bits == 0x05) {
+		if (offset >= -128 && offset <= 127) {
+			*current_byte_ptr++ = static_cast<uint8_t>(offset);
+			result.size_in_bytes++;
+		} else {
+			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+			result.size_in_bytes += 4;
+		}
+	}
+
+	return result;
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'movss/movsd xmm, [rbp + offset]'.
  *
  * This function creates the byte sequence for loading a float/double value from
@@ -1385,7 +1588,7 @@ private:
 			.type = instruction.getOperandAs<Type>(1),
 			.size_in_bits = instruction.getOperandAs<int>(2),
 			.result_operand = instruction.getOperand(0),
-			.result_physical_reg = X64Register::RAX,
+			.result_physical_reg = X64Register::Count,
 			.rhs_physical_reg = X64Register::RCX
 		};
 
@@ -1660,12 +1863,14 @@ private:
 					auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.size_in_bits / 8);
 					textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
 				}
+				// Result is already in the correct register, no move needed
 			}
 			else {
+				// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
+				// Tell the register allocator that this register now holds this temp variable
 				assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
-
-				auto mov_opcodes = generateMovToFrame(actual_source_reg, res_stack_var_addr);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr);
+				// Don't store to memory - keep the value in the register for subsequent operations
 			}
 
 		}
@@ -3555,7 +3760,7 @@ private:
 	void handleReturn(const IrInstruction& instruction) {
 		// Add line mapping for the return statement itself (only for functions without function calls)
 		// For functions with function calls (like main), the closing brace is already mapped in handleFunctionCall
-		if (instruction.getLineNumber() > 0 && current_function_name_ != "main") {
+		if (instruction.getLineNumber() > 0 && current_function_name_ != "main") {	// TODO: Is main special case still needed here?
 			addLineMapping(instruction.getLineNumber());
 		}
 
@@ -3603,70 +3808,70 @@ private:
 				textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 			}
 			else if (instruction.isOperandType<TempVar>(2)) {
-			// Handle temporary variable (stored on stack)
-			auto size_it_bits = instruction.getOperandAs<int>(1);
-			auto return_var = instruction.getOperandAs<TempVar>(2);
+				// Handle temporary variable (stored on stack)
+				auto size_it_bits = instruction.getOperandAs<int>(1);
+				auto return_var = instruction.getOperandAs<TempVar>(2);
 
-			// Load the temporary variable from stack to RAX
-			auto temp_var_name = return_var.name();
-			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(temp_var_name);
-			if (it != current_scope.identifier_offset.end()) {
-				int var_offset = it->second;
-				if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
-					if (reg_var.value() != X64Register::RAX) {
-						auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), 4);	// TODO: reg size
-						textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+				// Load the temporary variable from stack to RAX
+				auto temp_var_name = return_var.name();
+				const StackVariableScope& current_scope = variable_scopes.back();
+				auto it = current_scope.identifier_offset.find(temp_var_name);
+				if (it != current_scope.identifier_offset.end()) {
+					int var_offset = it->second;
+					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+						if (reg_var.value() != X64Register::RAX) {
+							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), 4);	// TODO: reg size
+							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+						}
 					}
-				}
-				else {
-					// Load from stack using RBP-relative addressing
-					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-					regAlloc.flushSingleDirtyRegister(X64Register::RAX);
-				}
-			} else {
-				// Temporary variable not found in stack. This can happen in a few scenarios:
-				// 1. Function call result is immediately returned (value still in RAX)
-				// 2. TempVar was never actually stored (shouldn't happen with our current logic)
-				// 3. There's a bug in our TempVar indexing
-
-				// For now, we'll assume the value is still in RAX from the most recent operation
-				// This is a reasonable assumption for simple cases like "return function_call()"
-				// where the function call result goes directly to the return without intermediate operations
-
-				// In a more sophisticated compiler, we'd track register liveness and know
-				// whether the value is still in RAX or needs to be loaded from somewhere else
-			}
-		}
-		else if (instruction.isOperandType<std::string_view>(2)) {
-			// Handle local variable access
-			auto var_name = instruction.getOperandAs<std::string_view>(2);
-			auto size_in_bits = instruction.getOperandAs<int>(1);
-
-			// Find the variable's stack offset
-			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(var_name);
-			if (it != current_scope.identifier_offset.end()) {
-				int var_offset = it->second;
-				if (auto stackRegister = regAlloc.tryGetStackVariableRegister(var_offset); stackRegister.has_value()) {
-					if (stackRegister.value() != X64Register::RAX) {	// Value is already in register, move if it's not in RAX already
-						regAlloc.get_reg_reg_move_op_code(X64Register::RAX, stackRegister.value(), 4);	// TODO: What size should we use here?
+					else {
+						// Load from stack using RBP-relative addressing
+						auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 					}
-				}
-				else {
-					assert(variable_scopes.back().scope_stack_space <= var_offset);
-					// Load from stack using RBP-relative addressing
-					auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-					regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+				} else {
+					// Temporary variable not found in stack. This can happen in a few scenarios:
+					// 1. Function call result is immediately returned (value still in RAX)
+					// 2. TempVar was never actually stored (shouldn't happen with our current logic)
+					// 3. There's a bug in our TempVar indexing
+
+					// For now, we'll assume the value is still in RAX from the most recent operation
+					// This is a reasonable assumption for simple cases like "return function_call()"
+					// where the function call result goes directly to the return without intermediate operations
+
+					// In a more sophisticated compiler, we'd track register liveness and know
+					// whether the value is still in RAX or needs to be loaded from somewhere else
 				}
 			}
-		}
-	}
+			else if (instruction.isOperandType<std::string_view>(2)) {
+				// Handle local variable access
+				auto var_name = instruction.getOperandAs<std::string_view>(2);
+				auto size_in_bits = instruction.getOperandAs<int>(1);
 
-	// MSVC-style epilogue
-	int32_t total_stack_space = variable_scopes.back().scope_stack_space;
+				// Find the variable's stack offset
+				const StackVariableScope& current_scope = variable_scopes.back();
+				auto it = current_scope.identifier_offset.find(var_name);
+				if (it != current_scope.identifier_offset.end()) {
+					int var_offset = it->second;
+					if (auto stackRegister = regAlloc.tryGetStackVariableRegister(var_offset); stackRegister.has_value()) {
+						if (stackRegister.value() != X64Register::RAX) {	// Value is already in register, move if it's not in RAX already
+							regAlloc.get_reg_reg_move_op_code(X64Register::RAX, stackRegister.value(), 4);	// TODO: What size should we use here?
+						}
+					}
+					else {
+						assert(variable_scopes.back().scope_stack_space <= var_offset);
+						// Load from stack using RBP-relative addressing
+						auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+					}
+				}
+			}
+		}
+
+		// MSVC-style epilogue
+		//int32_t total_stack_space = variable_scopes.back().scope_stack_space;
 
 		// Always generate epilogue since we always generate prologue
 		// mov rsp, rbp (restore stack pointer)
@@ -3679,6 +3884,13 @@ private:
 
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
+
+		// Mirror function-entry scope accounting at this exit point:
+		// drop the innermost function scope so subsequent instructions (if any)
+		// can't mistakenly reuse its variable mappings.
+		if (!variable_scopes.empty()) {
+			variable_scopes.pop_back();
+		}
 	}
 
 	void handleStackAlloc(const IrInstruction& instruction) {
@@ -3735,6 +3947,11 @@ private:
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+
+		// Release the RHS register (we're done with it)
+		regAlloc.release(ctx.rhs_physical_reg);
+		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
+		// that will be used by subsequent operations
 	}
 
 	void handleSubtract(const IrInstruction& instruction) {
@@ -3748,6 +3965,10 @@ private:
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+
+		// Release the RHS register (we're done with it)
+		regAlloc.release(ctx.rhs_physical_reg);
+		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
 	}
 
 	void handleMultiply(const IrInstruction& instruction) {
@@ -3761,6 +3982,10 @@ private:
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
+
+		// Release the RHS register (we're done with it)
+		regAlloc.release(ctx.rhs_physical_reg);
+		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
 	}
 
 	void handleDivide(const IrInstruction& instruction) {
@@ -5388,11 +5613,11 @@ private:
 		const StackVariableScope& current_scope = variable_scopes.back();
 
 		// Check if operand 3 is a string_view (variable name) or TempVar (nested access)
-		std::string object_name_str;
+		std::string_view object_name;
 		if (instruction.isOperandType<std::string_view>(3)) {
 			// Simple case: object is a variable name
-			object_name_str = std::string(instruction.getOperandAs<std::string_view>(3));
-			auto it = current_scope.identifier_offset.find(object_name_str);
+			object_name = instruction.getOperandAs<std::string_view>(3);
+			auto it = current_scope.identifier_offset.find(object_name);
 			if (it == current_scope.identifier_offset.end()) {
 				assert(false && "Struct object not found in scope");
 				return;
@@ -5400,7 +5625,7 @@ private:
 			object_base_offset = it->second;
 
 			// Check if this is the 'this' pointer
-			if (object_name_str == "this") {
+			if (object_name == "this") {
 				is_pointer_access = true;
 			}
 		} else if (instruction.isOperandType<TempVar>(3)) {
@@ -5431,8 +5656,8 @@ private:
 		// Calculate member size in bytes
 		int member_size_bytes = member_size_bits / 8;
 
-		// Load the member value into a register based on size
-		X64Register temp_reg = X64Register::RAX;
+		// Allocate a register for loading the member value
+		X64Register temp_reg = allocateRegisterWithSpilling();
 
 		if (is_pointer_access) {
 			// For 'this' pointer: load pointer into RCX, then load from [RCX + member_offset]
@@ -5442,144 +5667,41 @@ private:
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-			// Now load from [RCX + member_offset] into RAX
+			// Now load from [RCX + member_offset] into temp_reg using size-appropriate function
+			OpCodeWithSize load_opcodes;
 			if (member_size_bytes == 8) {
-				// 64-bit member: MOV RAX, [RCX + member_offset]
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x8B); // MOV r64, r/m64
-				if (member_offset == 0) {
-					textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
-				} else if (member_offset >= -128 && member_offset <= 127) {
-					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], RAX
-					textSectionData.push_back(static_cast<uint8_t>(member_offset));
-				} else {
-					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], RAX
-					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
+				load_opcodes = generateMovFromMemory(temp_reg, X64Register::RCX, member_offset);
 			} else if (member_size_bytes == 4) {
-				// 32-bit member: MOV EAX, [RCX + member_offset]
-				textSectionData.push_back(0x8B); // MOV r32, r/m32
-				if (member_offset == 0) {
-					textSectionData.push_back(0x01); // ModR/M: [RCX], EAX
-				} else if (member_offset >= -128 && member_offset <= 127) {
-					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], EAX
-					textSectionData.push_back(static_cast<uint8_t>(member_offset));
-				} else {
-					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], EAX
-					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
-			} else if (member_size_bytes == 2) {
-				// 16-bit member: MOVZX RAX, WORD PTR [RCX + member_offset]
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x0F); // Two-byte opcode prefix
-				textSectionData.push_back(0xB7); // MOVZX r64, r/m16
-				if (member_offset == 0) {
-					textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
-				} else if (member_offset >= -128 && member_offset <= 127) {
-					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], RAX
-					textSectionData.push_back(static_cast<uint8_t>(member_offset));
-				} else {
-					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], RAX
-					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
-			} else if (member_size_bytes == 1) {
-				// 8-bit member: MOVZX RAX, BYTE PTR [RCX + member_offset]
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x0F); // Two-byte opcode prefix
-				textSectionData.push_back(0xB6); // MOVZX r64, r/m8
-				if (member_offset == 0) {
-					textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
-				} else if (member_offset >= -128 && member_offset <= 127) {
-					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], RAX
-					textSectionData.push_back(static_cast<uint8_t>(member_offset));
-				} else {
-					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], RAX
-					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
+				load_opcodes = generateMovFromMemory32(temp_reg, X64Register::RCX, member_offset);
 			} else {
-				assert(false && "Unsupported member size");
-				return;
+				// For smaller sizes, use 64-bit load for now
+				// TODO: Add generateMovzxFromMemory16/8 for proper zero/sign extension
+				load_opcodes = generateMovFromMemory(temp_reg, X64Register::RCX, member_offset);
 			}
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		} else {
-			// For regular struct variables on the stack
+			// For regular struct variables on the stack, use size-appropriate load
+			OpCodeWithSize load_opcodes;
 			if (member_size_bytes == 8) {
-				// 64-bit member: MOV RAX, [RBP + member_stack_offset]
-				auto load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
 			} else if (member_size_bytes == 4) {
-				// 32-bit member: MOV EAX, [RBP + member_stack_offset]
-				textSectionData.push_back(0x8B); // MOV r32, r/m32
-				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
-					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
-				} else {
-					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
-					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
-			} else if (member_size_bytes == 2) {
-				// 16-bit member: MOVZX RAX, WORD PTR [RBP + member_stack_offset]
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x0F); // Two-byte opcode prefix
-				textSectionData.push_back(0xB7); // MOVZX r64, r/m16
-				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
-				} else {
-					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
-			} else if (member_size_bytes == 1) {
-				// 8-bit member: MOVZX RAX, BYTE PTR [RBP + member_stack_offset]
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x0F); // Two-byte opcode prefix
-				textSectionData.push_back(0xB6); // MOVZX r64, r/m8
-				if (member_stack_offset >= -128 && member_stack_offset <= 127) {
-					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-					textSectionData.push_back(static_cast<uint8_t>(member_stack_offset));
-				} else {
-					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-					uint32_t offset_u32 = static_cast<uint32_t>(member_stack_offset);
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
+				load_opcodes = generateMovFromFrame32(temp_reg, member_stack_offset);
 			} else {
-				assert(false && "Unsupported member size");
-				return;
+				// For smaller sizes, use 64-bit load (will be zero-extended)
+				// TODO: Add generateMovzxFromFrame16/8 for proper zero/sign extension
+				load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
 			}
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		}
 
-		// Store the result to the result variable's stack location
-		auto store_opcodes = generateMovToFrame(temp_reg, result_offset);
-		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		// Store the result - but keep it in the register for subsequent operations
+		// Associate the allocated register with the result temp variable's stack offset
+		regAlloc.set_stack_variable_offset(temp_reg, result_offset);
+		// Don't store to memory yet - keep the value in the register for efficiency
 	}
+
 
 	void handleMemberStore(const IrInstruction& instruction) {
 		// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
