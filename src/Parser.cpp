@@ -8618,12 +8618,38 @@ ParseResult Parser::parse_template_declaration() {
 					);
 				} else {
 					// This is a data member
-					member_result.node()->as<DeclarationNode>();
-					struct_ref.add_member(*member_result.node(), current_access);
+					std::optional<ASTNode> default_initializer;
+
+					// Get the type from the member declaration
+					if (!member_result.node()->is<DeclarationNode>()) {
+						return ParseResult::error("Expected declaration node for member", *peek_token());
+					}
+					const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+					const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+
+					// Check for member initialization with '=' (C++11 feature)
+					if (peek_token().has_value() && peek_token()->value() == "=") {
+						consume_token(); // consume '='
+
+						// Parse the initializer expression
+						auto init_result = parse_expression();
+						if (init_result.is_error()) {
+							return init_result;
+						}
+						if (init_result.node().has_value()) {
+							default_initializer = *init_result.node();
+						}
+					}
+
+					struct_ref.add_member(*member_result.node(), current_access, default_initializer);
+
+					// Consume semicolon
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after member declaration", *peek_token());
+					}
 				}
 
-				// Consume optional semicolon
-				consume_punctuator(";");
+				// Consumed semicolon above in each branch
 			}
 
 			// Expect closing brace
