@@ -10083,7 +10083,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// since the pattern was parsed with concrete types (e.g., T& was parsed as a reference)
 			// We just copy them as-is
 			
-			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+			// Calculate member size accounting for pointer depth
+			size_t member_size;
+			if (type_spec.pointer_depth() > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				// Pointers and references are always 8 bytes (64-bit)
+				member_size = 8;
+			} else {
+				member_size = get_type_size_bits(type_spec.type()) / 8;
+			}
 			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 			
 			struct_info->addMember(

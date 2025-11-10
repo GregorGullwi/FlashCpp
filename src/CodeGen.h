@@ -2041,6 +2041,33 @@ private:
 			}
 		}
 
+		// Check if we're in a member function and this identifier is a member variable
+		if (!current_struct_name_.empty()) {
+			// Look up the struct type
+			auto type_it = gTypesByName.find(std::string(current_struct_name_));
+			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+				if (struct_info) {
+					// Check if this identifier is a member of the struct
+					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
+					if (member) {
+						// This is a member variable access - generate MemberAccess IR with implicit 'this'
+						// Format: [result_var, member_type, member_size, object_name, member_name, offset]
+						TempVar result_temp = var_counter.next();
+						std::vector<IrOperand> operands;
+						operands.emplace_back(result_temp);
+						operands.emplace_back(member->type);
+						operands.emplace_back(static_cast<int>(member->size * 8));  // size in bits
+						operands.emplace_back(std::string_view("this"));  // implicit this pointer
+						operands.emplace_back(std::string_view(member->name));  // member name
+						operands.emplace_back(static_cast<int>(member->offset));
+						ir_.addInstruction(IrOpcode::MemberAccess, std::move(operands), Token());
+						return { member->type, static_cast<int>(member->size * 8), result_temp };
+					}
+				}
+			}
+		}
+
 		// Check if this is a static local variable FIRST (before symbol table lookup)
 		auto static_local_it = static_local_names_.find(std::string(identifierNode.name()));
 		if (static_local_it != static_local_names_.end()) {
@@ -2598,6 +2625,52 @@ private:
 									}
 								}
 							}
+						}
+					}
+				}
+			}
+		}
+
+		// Special handling for assignment to member variables in member functions
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && !current_struct_name_.empty()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
+				std::string_view lhs_name = lhs_ident.name();
+
+				// Check if this is a member variable of the current struct
+				auto type_it = gTypesByName.find(std::string(current_struct_name_));
+				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+					if (struct_info) {
+						const StructMember* member = struct_info->findMemberRecursive(std::string(lhs_name));
+						if (member) {
+							// This is an assignment to a member variable: member = value
+							// Generate MemberStore instead of regular Assignment
+
+							// Generate IR for the RHS value
+							auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+							// Build MemberStore IR operands: [member_type, member_size, object_name, member_name, offset, value]
+							std::vector<IrOperand> irOperands;
+							irOperands.emplace_back(member->type);
+							irOperands.emplace_back(static_cast<int>(member->size * 8));
+							irOperands.emplace_back(std::string_view("this"));  // implicit this pointer
+							irOperands.emplace_back(lhs_name);
+							irOperands.emplace_back(static_cast<int>(member->offset));
+
+							// Add only the value from RHS (rhsIrOperands = [type, size, value])
+							if (rhsIrOperands.size() >= 3) {
+								irOperands.emplace_back(rhsIrOperands[2]);
+							} else {
+								// Error: invalid RHS operands
+								return { Type::Int, 32, TempVar{0} };
+							}
+
+							ir_.addInstruction(IrOpcode::MemberStore, std::move(irOperands), binaryOperatorNode.get_token());
+
+							// Return the RHS value as the result
+							return rhsIrOperands;
 						}
 					}
 				}
