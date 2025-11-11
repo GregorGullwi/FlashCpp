@@ -694,7 +694,7 @@ private:
 		bool inside_string = false;
 		bool inside_raw_string = false;
 		bool escaped = false;
-		std::string raw_delimiter;
+		std::string_view raw_delimiter;
 
 		for (size_t i = 0; i < pos && i < str.size(); ++i) {
 			if (inside_raw_string) {
@@ -740,14 +740,14 @@ private:
 				// Check for raw string literal: R"delim(
 				if (str[i] == 'R' && i + 2 < str.size() && str[i + 1] == '"') {
 					inside_raw_string = true;
-					raw_delimiter.clear();
+					raw_delimiter = std::string_view{};
 					i += 2; // Skip R"
 
 					// Extract delimiter (characters between " and ()
 					while (i < str.size() && str[i] != '(') {
-						raw_delimiter += str[i];
 						++i;
 					}
+					raw_delimiter = std::string_view(str.data() + 2, i - 2);
 					// i now points to '(', continue from next character
 					continue;
 				}
