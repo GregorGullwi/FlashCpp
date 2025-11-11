@@ -3215,6 +3215,62 @@ private:
 						break;
 					}
 				}
+				
+				// If not found as member function, check if it's a function pointer data member
+				if (!called_member_func) {
+					for (const auto& member : struct_info->members) {
+						if (member.name == func_name && member.type == Type::FunctionPointer) {
+							// This is a call through a function pointer member!
+							// Generate an indirect call instead of a member function call
+							// TODO: Get actual return type from function signature stored in member's TypeSpecifierNode
+							// For now, we assume int return type which works for most common cases
+							
+							TempVar ret_var = var_counter.next();
+							std::vector<IrOperand> irOperands;
+							irOperands.emplace_back(ret_var);
+							
+							// Get the function pointer member
+							// We need to generate member access to get the pointer value
+							TempVar func_ptr_temp = var_counter.next();
+							
+							// Generate member access IR to load the function pointer
+							// Format: [result_var, member_type, member_size, object_name/temp, member_name, offset]
+							std::vector<IrOperand> member_access_operands;
+							member_access_operands.emplace_back(func_ptr_temp);
+							member_access_operands.emplace_back(member.type);
+							member_access_operands.emplace_back(static_cast<int>(member.size * 8));  // Convert bytes to bits
+							
+							// Add object operand
+							if (object_name.empty()) {
+								// Use temp var
+								// TODO: Need to handle object expression properly
+								assert(false && "Function pointer member call on expression not yet supported");
+							} else {
+								member_access_operands.emplace_back(object_name);
+							}
+							
+							member_access_operands.emplace_back(func_name);  // Member name
+							member_access_operands.emplace_back(static_cast<int>(member.offset));  // Member offset
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_access_operands), Token()));
+							
+							// Now add the indirect call with the function pointer temp var
+							irOperands.emplace_back(func_ptr_temp);
+							
+							// Add arguments
+							memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+								auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+								irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+							});
+							
+							ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+							
+							// Return with function pointer's return type
+							// TODO: Need to get the actual return type from the function signature stored in the member's TypeSpecifierNode
+							// For now, assume int return type (common case)
+							return { Type::Int, 32, ret_var };
+						}
+					}
+				}
 			}
 		}
 
