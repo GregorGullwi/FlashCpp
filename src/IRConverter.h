@@ -2744,18 +2744,35 @@ private:
 			object_offset = it->second;
 		}
 
+		// Check if the object is 'this' (a pointer that needs to be reloaded)
+		bool object_is_this_pointer = false;
+		if (std::holds_alternative<std::string>(object_var)) {
+			object_is_this_pointer = (std::get<std::string>(object_var) == "this");
+		} else if (std::holds_alternative<std::string_view>(object_var)) {
+			object_is_this_pointer = (std::get<std::string_view>(object_var) == "this");
+		}
+
 		// Load the address of the object into RCX (first parameter - 'this' pointer)
-		// LEA RCX, [RBP + object_offset]
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8D); // LEA opcode
-		if (object_offset >= -128 && object_offset <= 127) {
-			textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
-			textSectionData.push_back(static_cast<uint8_t>(object_offset));
+		if (object_is_this_pointer) {
+			// For 'this' pointer: reload the pointer value (not its address)
+			// MOV RCX, [RBP + object_offset]
+			auto load_opcodes = generateMovFromFrame(X64Register::RCX, object_offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		} else {
-			textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
-			for (int j = 0; j < 4; ++j) {
-				textSectionData.push_back(static_cast<uint8_t>(object_offset & 0xFF));
-				object_offset >>= 8;
+			// For regular objects: get the address
+			// LEA RCX, [RBP + object_offset]
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8D); // LEA opcode
+			if (object_offset >= -128 && object_offset <= 127) {
+				textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
+				textSectionData.push_back(static_cast<uint8_t>(object_offset));
+			} else {
+				textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
+				for (int j = 0; j < 4; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(object_offset & 0xFF));
+					object_offset >>= 8;
+				}
 			}
 		}
 
