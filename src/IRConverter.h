@@ -192,6 +192,118 @@ OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, int32_t o
 }
 
 /**
+ * @brief Generates x86-64 binary opcodes for 'movzx r32, word ptr [rbp + offset]'.
+ *
+ * Load a 16-bit value from RBP-relative address and zero-extend to 32/64 bits.
+ *
+ * @param destinationRegister The destination register.
+ * @param offset The signed byte offset from RBP.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovzxFromFrame16(X64Register destinationRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX prefix only if using R8-R15
+	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+		uint8_t rex_prefix = 0x40 | (1 << 2); // REX + REX.R
+		*current_byte_ptr++ = rex_prefix;
+		result.size_in_bytes++;
+	}
+
+	// Opcode: 0F B7 for MOVZX r32, r/m16
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0xB7;
+	result.size_in_bytes += 2;
+
+	// ModR/M and displacement
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x01; // RBP needs displacement even for 0
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // 8-bit displacement
+	} else {
+		mod_field = 0x02; // 32-bit displacement
+	}
+
+	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// Displacement
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	} else {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
+/**
+ * @brief Generates x86-64 binary opcodes for 'movzx r32, byte ptr [rbp + offset]'.
+ *
+ * Load an 8-bit value from RBP-relative address and zero-extend to 32/64 bits.
+ *
+ * @param destinationRegister The destination register.
+ * @param offset The signed byte offset from RBP.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX prefix only if using R8-R15
+	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+		uint8_t rex_prefix = 0x40 | (1 << 2); // REX + REX.R
+		*current_byte_ptr++ = rex_prefix;
+		result.size_in_bytes++;
+	}
+
+	// Opcode: 0F B6 for MOVZX r32, r/m8
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0xB6;
+	result.size_in_bytes += 2;
+
+	// ModR/M and displacement
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x01; // RBP needs displacement even for 0
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // 8-bit displacement
+	} else {
+		mod_field = 0x02; // 32-bit displacement
+	}
+
+	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// Displacement
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	} else {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'mov r64, [base_reg + offset]'.
  *
  * Load a 64-bit value from memory via a base register plus offset.
@@ -314,6 +426,146 @@ OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register base_re
 	result.size_in_bytes++;
 
 	// Displacement
+	if (offset != 0 || base_bits == 0x05) {
+		if (offset >= -128 && offset <= 127) {
+			*current_byte_ptr++ = static_cast<uint8_t>(offset);
+			result.size_in_bytes++;
+		} else {
+			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+			result.size_in_bytes += 4;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * @brief Generates x86-64 binary opcodes for 'movzx r32, word ptr [base_reg + offset]'.
+ *
+ * Load a 16-bit value from memory and zero-extend to 32 bits (then to 64 bits).
+ *
+ * @param dest_reg The destination register.
+ * @param base_reg The base register for addressing.
+ * @param offset The signed offset from the base register.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovFromMemory16(X64Register dest_reg, X64Register base_reg, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX prefix only if using R8-R15
+	bool needs_rex = (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) ||
+	                 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
+
+	if (needs_rex) {
+		uint8_t rex_prefix = 0x40; // Base REX
+		if (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex_prefix |= (1 << 2); // REX.R
+		}
+		if (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex_prefix |= (1 << 0); // REX.B
+		}
+		*current_byte_ptr++ = rex_prefix;
+		result.size_in_bytes++;
+	}
+
+	// Opcode: 0F B7 for MOVZX r32, r/m16
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0xB7;
+	result.size_in_bytes += 2;
+
+	// ModR/M byte
+	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
+	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+
+	uint8_t mod_field;
+	if (offset == 0 && base_bits != 0x05) {
+		mod_field = 0x00;
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01;
+	} else {
+		mod_field = 0x02;
+	}
+
+	uint8_t modrm = (mod_field << 6) | (dest_bits << 3) | base_bits;
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
+
+	// Add displacement if needed
+	if (offset != 0 || base_bits == 0x05) {
+		if (offset >= -128 && offset <= 127) {
+			*current_byte_ptr++ = static_cast<uint8_t>(offset);
+			result.size_in_bytes++;
+		} else {
+			*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+			*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+			result.size_in_bytes += 4;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * @brief Generates x86-64 binary opcodes for 'movzx r32, byte ptr [base_reg + offset]'.
+ *
+ * Load an 8-bit value from memory and zero-extend to 32 bits (then to 64 bits).
+ *
+ * @param dest_reg The destination register.
+ * @param base_reg The base register for addressing.
+ * @param offset The signed offset from the base register.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register base_reg, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX prefix only if using R8-R15
+	bool needs_rex = (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) ||
+	                 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
+
+	if (needs_rex) {
+		uint8_t rex_prefix = 0x40; // Base REX
+		if (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex_prefix |= (1 << 2); // REX.R
+		}
+		if (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex_prefix |= (1 << 0); // REX.B
+		}
+		*current_byte_ptr++ = rex_prefix;
+		result.size_in_bytes++;
+	}
+
+	// Opcode: 0F B6 for MOVZX r32, r/m8
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0xB6;
+	result.size_in_bytes += 2;
+
+	// ModR/M byte
+	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
+	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+
+	uint8_t mod_field;
+	if (offset == 0 && base_bits != 0x05) {
+		mod_field = 0x00;
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01;
+	} else {
+		mod_field = 0x02;
+	}
+
+	uint8_t modrm = (mod_field << 6) | (dest_bits << 3) | base_bits;
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
+
+	// Add displacement if needed
 	if (offset != 0 || base_bits == 0x05) {
 		if (offset >= -128 && offset <= 127) {
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
@@ -802,6 +1054,16 @@ struct RegisterAllocator
 
 	void flushSingleDirtyRegister(X64Register reg) {
 		registers[static_cast<int>(reg)].isDirty = false;
+	}
+
+	// Find which register (if any) currently holds a value for the given stack offset
+	std::optional<X64Register> findRegisterForStackOffset(int32_t stackOffset) const {
+		for (const auto& reg : registers) {
+			if (reg.isAllocated && reg.stackVariableOffset == stackOffset) {
+				return reg.reg;
+			}
+		}
+		return std::nullopt;
 	}
 
 	AllocatedRegister& allocate() {
@@ -2503,6 +2765,21 @@ private:
 			
 			// Build TypeSpecifierNode for this parameter
 			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(paramSize), Token{});
+			
+			// For copy/move constructors: if parameter is the same struct type, it should be a const reference
+			// Copy constructor: Type(const Type& other) -> paramType == Type::Struct and same as struct_name
+			// We detect this by checking if paramType is Struct and num_params == 1
+			if (num_params == 1 && paramType == Type::Struct) {
+				// This is likely a copy constructor - recreate as const reference
+				// Look up struct type index to create proper TypeSpecifierNode
+				auto type_it = gTypesByName.find(struct_name);
+				if (type_it != gTypesByName.end()) {
+					TypeIndex struct_type_index = type_it->second->type_index_;
+					param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(paramSize), Token{}, CVQualifier::Const);
+					param_type.set_reference(false);  // lvalue reference (const Type&)
+				}
+			}
+			
 			parameter_types.push_back(param_type);
 		}
 
@@ -2514,6 +2791,9 @@ private:
 			auto paramValue = instruction.getOperand(paramIndex + 2);
 
 			X64Register target_reg = INT_PARAM_REGS[i + 1]; // Skip RCX (index 0)
+
+			// Check if this is a reference parameter (copy/move constructor)
+			bool is_reference_param = (num_params == 1 && paramType == Type::Struct);
 
 			if (std::holds_alternative<unsigned long long>(paramValue)) {
 				// Immediate value
@@ -2536,18 +2816,56 @@ private:
 				// Load from temp variable
 				const TempVar temp_var = std::get<TempVar>(paramValue);
 				int param_offset = getStackOffsetFromTempVar(temp_var);
-				auto load_opcodes = generateMovFromFrame(target_reg, param_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				if (is_reference_param) {
+					// For reference parameters, load address (LEA)
+					// LEA target_reg, [RBP + param_offset]
+					textSectionData.push_back(0x48); // REX.W prefix
+					textSectionData.push_back(0x8D); // LEA opcode
+					uint8_t target_reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
+					if (param_offset >= -128 && param_offset <= 127) {
+						textSectionData.push_back(0x45 + (target_reg_bits << 3)); // ModR/M: [RBP + disp8], target_reg
+						textSectionData.push_back(static_cast<uint8_t>(param_offset));
+					} else {
+						textSectionData.push_back(0x85 + (target_reg_bits << 3)); // ModR/M: [RBP + disp32], target_reg
+						for (int j = 0; j < 4; ++j) {
+							textSectionData.push_back(static_cast<uint8_t>(param_offset & 0xFF));
+							param_offset >>= 8;
+						}
+					}
+				} else {
+					// For value parameters, load value (MOV)
+					auto load_opcodes = generateMovFromFrame(target_reg, param_offset);
+					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				}
 			} else if (std::holds_alternative<std::string_view>(paramValue)) {
 				// Load from variable
 				std::string_view var_name = std::get<std::string_view>(paramValue);
 				auto it = variable_scopes.back().identifier_offset.find(var_name);
 				if (it != variable_scopes.back().identifier_offset.end()) {
 					int param_offset = it->second;
-					auto load_opcodes = generateMovFromFrame(target_reg, param_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					if (is_reference_param) {
+						// For reference parameters, load address (LEA)
+						// LEA target_reg, [RBP + param_offset]
+						textSectionData.push_back(0x48); // REX.W prefix
+						textSectionData.push_back(0x8D); // LEA opcode
+						uint8_t target_reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
+						if (param_offset >= -128 && param_offset <= 127) {
+							textSectionData.push_back(0x45 + (target_reg_bits << 3)); // ModR/M: [RBP + disp8], target_reg
+							textSectionData.push_back(static_cast<uint8_t>(param_offset));
+						} else {
+							textSectionData.push_back(0x85 + (target_reg_bits << 3)); // ModR/M: [RBP + disp32], target_reg
+							for (int j = 0; j < 4; ++j) {
+								textSectionData.push_back(static_cast<uint8_t>(param_offset & 0xFF));
+								param_offset >>= 8;
+							}
+						}
+					} else {
+						// For value parameters, load value (MOV)
+						auto load_opcodes = generateMovFromFrame(target_reg, param_offset);
+						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+						                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					}
 				}
 			}
 		}
@@ -3691,6 +4009,8 @@ private:
 
 		// First pass: collect all parameter information using FunctionDeclLayout constants
 		paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
+		// Clear reference parameter tracking from previous function
+		reference_stack_offsets_.clear();
 		while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
 			auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
@@ -3703,6 +4023,12 @@ private:
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + FunctionDeclLayout::PARAM_NAME);
 			variable_scopes.back().identifier_offset[param_name] = offset;
+
+			// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
+			bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
+			if (is_reference) {
+				reference_stack_offsets_.insert(offset);
+			}
 
 			// Add parameter to debug information
 			uint32_t param_type_index = 0x74; // T_INT4 for int parameters
@@ -5688,7 +6014,7 @@ private:
 
 		// Get the object's base stack offset or pointer
 		int32_t object_base_offset = 0;
-		bool is_pointer_access = false;  // true if object is 'this' (a pointer)
+		bool is_pointer_access = false;  // true if object is 'this' or a reference parameter (both are pointers)
 		const StackVariableScope& current_scope = variable_scopes.back();
 
 		// Check if operand 3 is a string_view (variable name) or TempVar (nested access)
@@ -5703,8 +6029,8 @@ private:
 			}
 			object_base_offset = it->second;
 
-			// Check if this is the 'this' pointer
-			if (object_name == "this") {
+			// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
+			if (object_name == "this" || reference_stack_offsets_.count(object_base_offset) > 0) {
 				is_pointer_access = true;
 			}
 		} else if (instruction.isOperandType<TempVar>(3)) {
@@ -5759,10 +6085,13 @@ private:
 				load_opcodes = generateMovFromMemory(temp_reg, X64Register::RCX, member_offset);
 			} else if (member_size_bytes == 4) {
 				load_opcodes = generateMovFromMemory32(temp_reg, X64Register::RCX, member_offset);
+			} else if (member_size_bytes == 2) {
+				load_opcodes = generateMovFromMemory16(temp_reg, X64Register::RCX, member_offset);
+			} else if (member_size_bytes == 1) {
+				load_opcodes = generateMovFromMemory8(temp_reg, X64Register::RCX, member_offset);
 			} else {
-				// For smaller sizes, use 64-bit load for now
-				// TODO: Add generateMovzxFromMemory16/8 for proper zero/sign extension
-				load_opcodes = generateMovFromMemory(temp_reg, X64Register::RCX, member_offset);
+				assert(false && "Unsupported member size");
+				return;
 			}
 			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
@@ -5773,10 +6102,13 @@ private:
 				load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
 			} else if (member_size_bytes == 4) {
 				load_opcodes = generateMovFromFrame32(temp_reg, member_stack_offset);
+			} else if (member_size_bytes == 2) {
+				load_opcodes = generateMovzxFromFrame16(temp_reg, member_stack_offset);
+			} else if (member_size_bytes == 1) {
+				load_opcodes = generateMovzxFromFrame8(temp_reg, member_stack_offset);
 			} else {
-				// For smaller sizes, use 64-bit load (will be zero-extended)
-				// TODO: Add generateMovzxFromFrame16/8 for proper zero/sign extension
-				load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
+				assert(false && "Unsupported member size");
+				return;
 			}
 			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
@@ -5869,8 +6201,8 @@ private:
 			}
 			object_base_offset = it->second;
 
-			// Check if this is the 'this' pointer
-			if (object_name_str == "this") {
+			// Check if this is the 'this' pointer or a reference parameter
+			if (object_name_str == "this" || reference_stack_offsets_.count(object_base_offset) > 0) {
 				is_pointer_access = true;
 			}
 		} else if (instruction.isOperandType<TempVar>(2)) {
@@ -5937,9 +6269,18 @@ private:
 		} else {
 			// Load from value variable's stack location (TempVar)
 			int32_t value_offset = getStackOffsetFromTempVar(value_var);
-			auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
-			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			
+			// Check if this value is already in a register (from previous MemberAccess)
+			auto existing_reg = regAlloc.findRegisterForStackOffset(value_offset);
+			if (existing_reg.has_value()) {
+				// Value is already in a register, use it directly
+				value_reg = existing_reg.value();
+			} else {
+				// Need to load from stack
+				auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
+				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			}
 		}
 
 		// Store the value to the member's location
@@ -5952,17 +6293,23 @@ private:
 			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
 			// Now store value_reg to [RCX + member_offset]
+			// Get the register encoding (lower 3 bits for ModR/M, and check if R8-R15 for REX)
+			uint8_t value_reg_bits = static_cast<uint8_t>(value_reg) & 0x07;
+			bool value_needs_rex_r = static_cast<uint8_t>(value_reg) >= static_cast<uint8_t>(X64Register::R8);
+
 			if (member_size_bytes == 8) {
-				// 64-bit member: MOV [RCX + member_offset], RAX
-				textSectionData.push_back(0x48); // REX.W
+				// 64-bit member: MOV [RCX + member_offset], value_reg
+				uint8_t rex = 0x48; // REX.W
+				if (value_needs_rex_r) rex |= 0x04; // REX.R for R8-R15
+				textSectionData.push_back(rex);
 				textSectionData.push_back(0x89); // MOV r/m64, r64
 				if (member_offset == 0) {
-					textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+					textSectionData.push_back(0x01 + (value_reg_bits << 3)); // ModR/M: [RCX], value_reg
 				} else if (member_offset >= -128 && member_offset <= 127) {
-					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], RAX
+					textSectionData.push_back(0x41 + (value_reg_bits << 3)); // ModR/M: [RCX + disp8], value_reg
 					textSectionData.push_back(static_cast<uint8_t>(member_offset));
 				} else {
-					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], RAX
+					textSectionData.push_back(0x81 + (value_reg_bits << 3)); // ModR/M: [RCX + disp32], value_reg
 					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
 					textSectionData.push_back(offset_u32 & 0xFF);
 					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
@@ -5970,15 +6317,18 @@ private:
 					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 				}
 			} else if (member_size_bytes == 4) {
-				// 32-bit member: MOV [RCX + member_offset], EAX
+				// 32-bit member: MOV [RCX + member_offset], value_reg (32-bit)
+				if (value_needs_rex_r) {
+					textSectionData.push_back(0x44); // REX.R for R8-R15
+				}
 				textSectionData.push_back(0x89); // MOV r/m32, r32
 				if (member_offset == 0) {
-					textSectionData.push_back(0x01); // ModR/M: [RCX], EAX
+					textSectionData.push_back(0x01 + (value_reg_bits << 3)); // ModR/M: [RCX], value_reg
 				} else if (member_offset >= -128 && member_offset <= 127) {
-					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], EAX
+					textSectionData.push_back(0x41 + (value_reg_bits << 3)); // ModR/M: [RCX + disp8], value_reg
 					textSectionData.push_back(static_cast<uint8_t>(member_offset));
 				} else {
-					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], EAX
+					textSectionData.push_back(0x81 + (value_reg_bits << 3)); // ModR/M: [RCX + disp32], value_reg
 					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
 					textSectionData.push_back(offset_u32 & 0xFF);
 					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
@@ -5986,16 +6336,19 @@ private:
 					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 				}
 			} else if (member_size_bytes == 2) {
-				// 16-bit member: MOV [RCX + member_offset], AX
+				// 16-bit member: MOV [RCX + member_offset], value_reg (16-bit)
 				textSectionData.push_back(0x66); // Operand-size override prefix
+				if (value_needs_rex_r) {
+					textSectionData.push_back(0x44); // REX.R for R8-R15
+				}
 				textSectionData.push_back(0x89); // MOV r/m16, r16
 				if (member_offset == 0) {
-					textSectionData.push_back(0x01); // ModR/M: [RCX], AX
+					textSectionData.push_back(0x01 + (value_reg_bits << 3)); // ModR/M: [RCX], value_reg
 				} else if (member_offset >= -128 && member_offset <= 127) {
-					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], AX
+					textSectionData.push_back(0x41 + (value_reg_bits << 3)); // ModR/M: [RCX + disp8], value_reg
 					textSectionData.push_back(static_cast<uint8_t>(member_offset));
 				} else {
-					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], AX
+					textSectionData.push_back(0x81 + (value_reg_bits << 3)); // ModR/M: [RCX + disp32], value_reg
 					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
 					textSectionData.push_back(offset_u32 & 0xFF);
 					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
@@ -6003,15 +6356,18 @@ private:
 					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 				}
 			} else if (member_size_bytes == 1) {
-				// 8-bit member: MOV [RCX + member_offset], AL
+				// 8-bit member: MOV [RCX + member_offset], value_reg (8-bit)
+				if (value_needs_rex_r) {
+					textSectionData.push_back(0x44); // REX.R for R8-R15
+				}
 				textSectionData.push_back(0x88); // MOV r/m8, r8
 				if (member_offset == 0) {
-					textSectionData.push_back(0x01); // ModR/M: [RCX], AL
+					textSectionData.push_back(0x01 + (value_reg_bits << 3)); // ModR/M: [RCX], value_reg
 				} else if (member_offset >= -128 && member_offset <= 127) {
-					textSectionData.push_back(0x41); // ModR/M: [RCX + disp8], AL
+					textSectionData.push_back(0x41 + (value_reg_bits << 3)); // ModR/M: [RCX + disp8], value_reg
 					textSectionData.push_back(static_cast<uint8_t>(member_offset));
 				} else {
-					textSectionData.push_back(0x81); // ModR/M: [RCX + disp32], AL
+					textSectionData.push_back(0x81 + (value_reg_bits << 3)); // ModR/M: [RCX + disp32], value_reg
 					uint32_t offset_u32 = static_cast<uint32_t>(member_offset);
 					textSectionData.push_back(offset_u32 & 0xFF);
 					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
@@ -6674,6 +7030,9 @@ private:
 		uint32_t type;
 	};
 	std::vector<PendingGlobalRelocation> pending_global_relocations_;
+
+	// Track which stack offsets hold reference parameters (need pointer dereferencing)
+	std::unordered_set<int32_t> reference_stack_offsets_;
 };
 
 

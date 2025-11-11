@@ -1851,8 +1851,17 @@ private:
 				// TODO: Store function pointer or closure data in the variable
 			} else {
 				// Regular expression initializer
-				auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-				operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+				// For struct types with copy constructors, don't add initializer to VariableDecl
+				// It will be handled by ConstructorCall below
+				bool is_copy_init_for_struct = (type_node.type() == Type::Struct && 
+				                                 node.initializer() && 
+				                                 init_node.is<ExpressionNode>() && 
+				                                 !init_node.is<InitializerListNode>());
+				
+				if (!is_copy_init_for_struct) {
+					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+				}
 			}
 		}
 
@@ -1875,12 +1884,32 @@ private:
 					}
 
 					if (type_info.struct_info_->hasConstructor()) {
+						// Check if we have an initializer
+						bool has_copy_init = false;
+						if (node.initializer()) {
+							const ASTNode& init_node = *node.initializer();
+							if (init_node.is<ExpressionNode>() && !init_node.is<InitializerListNode>()) {
+								// For copy initialization like "AllSizes b = a;", the initializer
+								// operands were already appended to the VariableDecl instruction.
+								// We need to generate a copy constructor call instead of default constructor.
+								// The initializer operands are in format: [type, size, value]
+								has_copy_init = true;
+							}
+						}
+
 						// Generate constructor call
 						std::vector<IrOperand> ctor_operands;
 						ctor_operands.emplace_back(type_info.name_);  // Struct name (std::string)
 						ctor_operands.emplace_back(decl.identifier_token().value());    // Object variable name (string_view)
 
-						// TODO: Add support for constructor parameters from initializer
+						if (has_copy_init && node.initializer()) {
+							// Add initializer as copy constructor parameter
+							const ASTNode& init_node = *node.initializer();
+							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							// init_operands = [type, size, value]
+							// Add all three to match copy constructor parameter format
+							ctor_operands.insert(ctor_operands.end(), init_operands.begin(), init_operands.end());
+						}
 
 						ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), decl.identifier_token());
 					}
