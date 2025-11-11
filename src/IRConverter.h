@@ -5097,19 +5097,83 @@ private:
 
 	void handleSignExtend(const IrInstruction& instruction) {
 		// Sign extension: movsx dest, src
-		// For now, implement a simple version that handles common cases
-
-		// Get operands: result_var, from_type, from_size, value, to_size
-		Type fromType = instruction.getOperandAs<Type>(1);
+		// Operands: result_var(0), from_type(1), from_size(2), value(3), to_size(4)
 		int fromSize = instruction.getOperandAs<int>(2);
 		int toSize = instruction.getOperandAs<int>(4);
 
-		// For simplicity, assume we're extending to a register
-		// In a full implementation, we'd need to handle different size combinations
-		// This is a placeholder that would need proper x86-64 movsx instructions
+		// Get source value into a register
+		X64Register source_reg = X64Register::Count;
+		if (instruction.isOperandType<TempVar>(3)) {
+			auto temp = instruction.getOperandAs<TempVar>(3);
+			auto stack_addr = getStackOffsetFromTempVar(temp);
+			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
+				source_reg = reg_opt.value();
+			} else {
+				source_reg = allocateRegisterWithSpilling();
+				auto mov_opcodes = generateMovFromFrame(source_reg, stack_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
+					mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(source_reg);
+			}
+		} else if (instruction.isOperandType<std::string_view>(3)) {
+			auto var_name = instruction.getOperandAs<std::string_view>(3);
+			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
+			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second); reg_opt.has_value()) {
+					source_reg = reg_opt.value();
+				} else {
+					source_reg = allocateRegisterWithSpilling();
+					auto mov_opcodes = generateMovFromFrame(source_reg, var_id->second);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
+						mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(source_reg);
+				}
+			}
+		}
 
-		// TODO: Implement proper sign extension instructions based on sizes
-		// movsx r64, r32 (32->64), movsx r32, r16 (16->32), movsx r32, r8 (8->32), etc.
+		// Allocate result register
+		X64Register result_reg = allocateRegisterWithSpilling();
+
+		// Generate movsx instruction based on size combination
+		if (fromSize == 8 && (toSize == 32 || toSize == 64)) {
+			// movsx r32/r64, r8: REX 0F BE /r (sign-extend byte to dword/qword)
+			uint8_t rex = (toSize == 64) ? 0x48 : 0x40;
+			if (static_cast<uint8_t>(result_reg) >= 8) rex |= 0x04; // REX.R
+			if (static_cast<uint8_t>(source_reg) >= 8) rex |= 0x01; // REX.B
+			
+			uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(result_reg) & 0x07) << 3) | (static_cast<uint8_t>(source_reg) & 0x07);
+			std::array<uint8_t, 4> movsx = { rex, 0x0F, 0xBE, modrm };
+			textSectionData.insert(textSectionData.end(), movsx.begin(), movsx.end());
+		} else if (fromSize == 16 && (toSize == 32 || toSize == 64)) {
+			// movsx r32/r64, r16: REX 0F BF /r (sign-extend word to dword/qword)
+			uint8_t rex = (toSize == 64) ? 0x48 : 0x40;
+			if (static_cast<uint8_t>(result_reg) >= 8) rex |= 0x04; // REX.R
+			if (static_cast<uint8_t>(source_reg) >= 8) rex |= 0x01; // REX.B
+			
+			uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(result_reg) & 0x07) << 3) | (static_cast<uint8_t>(source_reg) & 0x07);
+			std::array<uint8_t, 4> movsx = { rex, 0x0F, 0xBF, modrm };
+			textSectionData.insert(textSectionData.end(), movsx.begin(), movsx.end());
+		} else if (fromSize == 32 && toSize == 64) {
+			// movsxd r64, r32: REX.W 63 /r (sign-extend dword to qword)
+			uint8_t rex = 0x48; // REX.W
+			if (static_cast<uint8_t>(result_reg) >= 8) rex |= 0x04; // REX.R
+			if (static_cast<uint8_t>(source_reg) >= 8) rex |= 0x01; // REX.B
+			
+			uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(result_reg) & 0x07) << 3) | (static_cast<uint8_t>(source_reg) & 0x07);
+			std::array<uint8_t, 3> movsx = { rex, 0x63, modrm };
+			textSectionData.insert(textSectionData.end(), movsx.begin(), movsx.end());
+		} else {
+			// Fallback or no extension needed: just copy
+			auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
+			std::array<uint8_t, 3> mov = { encoding.rex_prefix, 0x89, encoding.modrm_byte };
+			textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
+		}
+
+		// Store result - associate register with result temp variable's stack offset
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		regAlloc.set_stack_variable_offset(result_reg, result_offset);
+		// Don't store to memory yet - keep the value in the register for efficiency
 	}
 
 	void handleZeroExtend(const IrInstruction& instruction) {
@@ -5190,20 +5254,93 @@ private:
 	}
 
 	void handleTruncate(const IrInstruction& instruction) {
-		// Truncation: just use the lower bits
-		// For now, implement a simple version that handles common cases
-
-		// Get operands: result_var, from_type, from_size, value, to_size
-		Type fromType = instruction.getOperandAs<Type>(1);
+		// Truncation: just use the lower bits by moving to a smaller register
+		// Operands: result_var(0), from_type(1), from_size(2), value(3), to_size(4)
 		int fromSize = instruction.getOperandAs<int>(2);
 		int toSize = instruction.getOperandAs<int>(4);
 
-		// For simplicity, assume we're truncating in a register
-		// In a full implementation, we'd need to handle different size combinations
-		// This is a placeholder that would need proper x86-64 instructions
+		// Get source value into a register
+		X64Register source_reg = X64Register::Count;
+		if (instruction.isOperandType<TempVar>(3)) {
+			auto temp = instruction.getOperandAs<TempVar>(3);
+			auto stack_addr = getStackOffsetFromTempVar(temp);
+			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
+				source_reg = reg_opt.value();
+			} else {
+				source_reg = allocateRegisterWithSpilling();
+				auto mov_opcodes = generateMovFromFrame(source_reg, stack_addr);
+				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
+					mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(source_reg);
+			}
+		} else if (instruction.isOperandType<std::string_view>(3)) {
+			auto var_name = instruction.getOperandAs<std::string_view>(3);
+			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
+			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second); reg_opt.has_value()) {
+					source_reg = reg_opt.value();
+				} else {
+					source_reg = allocateRegisterWithSpilling();
+					auto mov_opcodes = generateMovFromFrame(source_reg, var_id->second);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
+						mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					regAlloc.flushSingleDirtyRegister(source_reg);
+				}
+			}
+		}
 
-		// TODO: Implement proper truncation (often just using smaller register names)
-		// e.g., using eax instead of rax for 32-bit, ax for 16-bit, al for 8-bit
+		// Allocate result register
+		X64Register result_reg = allocateRegisterWithSpilling();
+
+		// Generate appropriate MOV instruction based on target size
+		// On x86-64, moving to a smaller register automatically truncates
+		if (toSize == 8) {
+			// mov r8, r8 (byte to byte) - just copy the low byte
+			// Use movzx to ensure we only get the low byte
+			uint8_t rex = 0x40;
+			if (static_cast<uint8_t>(result_reg) >= 8) rex |= 0x04; // REX.R
+			if (static_cast<uint8_t>(source_reg) >= 8) rex |= 0x01; // REX.B
+			
+			uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(result_reg) & 0x07) << 3) | (static_cast<uint8_t>(source_reg) & 0x07);
+			std::array<uint8_t, 4> movzx = { rex, 0x0F, 0xB6, modrm };
+			textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
+		} else if (toSize == 16) {
+			// mov r16, r16 (word to word)
+			// Use movzx to ensure we only get the low word
+			uint8_t rex = 0x40;
+			if (static_cast<uint8_t>(result_reg) >= 8) rex |= 0x04; // REX.R
+			if (static_cast<uint8_t>(source_reg) >= 8) rex |= 0x01; // REX.B
+			
+			uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(result_reg) & 0x07) << 3) | (static_cast<uint8_t>(source_reg) & 0x07);
+			std::array<uint8_t, 4> movzx = { rex, 0x0F, 0xB7, modrm };
+			textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
+		} else if (toSize == 32) {
+			// mov r32, r32 (dword to dword) - implicitly zero-extends on x86-64
+			uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(result_reg) & 0x07) << 3) | (static_cast<uint8_t>(source_reg) & 0x07);
+			
+			// Check if we need REX prefix
+			if (static_cast<uint8_t>(result_reg) >= 8 || static_cast<uint8_t>(source_reg) >= 8) {
+				uint8_t rex = 0x40;
+				if (static_cast<uint8_t>(result_reg) >= 8) rex |= 0x04; // REX.R
+				if (static_cast<uint8_t>(source_reg) >= 8) rex |= 0x01; // REX.B
+				std::array<uint8_t, 3> mov = { rex, 0x89, modrm };
+				textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
+			} else {
+				std::array<uint8_t, 2> mov = { 0x89, modrm };
+				textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
+			}
+		} else {
+			// 64-bit or fallback: just copy the whole register
+			auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
+			std::array<uint8_t, 3> mov = { encoding.rex_prefix, 0x89, encoding.modrm_byte };
+			textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
+		}
+
+		// Store result - associate register with result temp variable's stack offset
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		int32_t result_offset = getStackOffsetFromTempVar(result_var);
+		regAlloc.set_stack_variable_offset(result_reg, result_offset);
+		// Don't store to memory yet - keep the value in the register for efficiency
 	}
 
 	void handleAddAssign(const IrInstruction& instruction) {
