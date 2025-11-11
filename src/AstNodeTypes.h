@@ -876,6 +876,23 @@ private:
 	bool is_prefix_;
 };
 
+class TernaryOperatorNode {
+public:
+	explicit TernaryOperatorNode(ASTNode condition, ASTNode true_expr, ASTNode false_expr, Token question_token)
+		: condition_(condition), true_expr_(true_expr), false_expr_(false_expr), question_token_(question_token) {}
+
+	const ASTNode& condition() const { return condition_; }
+	const ASTNode& true_expr() const { return true_expr_; }
+	const ASTNode& false_expr() const { return false_expr_; }
+	const Token& get_token() const { return question_token_; }
+
+private:
+	ASTNode condition_;
+	ASTNode true_expr_;
+	ASTNode false_expr_;
+	Token question_token_;
+};
+
 class BlockNode {
 public:
 	explicit BlockNode() {}
@@ -1708,7 +1725,7 @@ private:
 };
 
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
-	BinaryOperatorNode, UnaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
+	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, TypeidNode, LambdaExpressionNode>;
 

@@ -1918,6 +1918,10 @@ private:
 			const auto& expr = std::get<UnaryOperatorNode>(exprNode);
 			return generateUnaryOperatorIr(expr);
 		}
+		else if (std::holds_alternative<TernaryOperatorNode>(exprNode)) {
+			const auto& expr = std::get<TernaryOperatorNode>(exprNode);
+			return generateTernaryOperatorIr(expr);
+		}
 		else if (std::holds_alternative<FunctionCallNode>(exprNode)) {
 			const auto& expr = std::get<FunctionCallNode>(exprNode);
 			return generateFunctionCallIr(expr);
@@ -2436,6 +2440,81 @@ private:
 
 		// Return the result
 		return { operandType, std::get<int>(operandIrOperands[1]), result_var };
+	}
+
+	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
+		// Ternary operator: condition ? true_expr : false_expr
+		// Generate IR:
+		// 1. Evaluate condition
+		// 2. Conditional branch to true or false label
+		// 3. Label for true branch, evaluate true_expr, assign to result, jump to end
+		// 4. Label for false branch, evaluate false_expr, assign to result
+		// 5. Label for end (both branches merge here)
+
+		// Generate unique labels for this ternary
+		static size_t ternary_counter = 0;
+		std::string true_label = "ternary_true_" + std::to_string(ternary_counter);
+		std::string false_label = "ternary_false_" + std::to_string(ternary_counter);
+		std::string end_label = "ternary_end_" + std::to_string(ternary_counter);
+		ternary_counter++;
+
+		// Evaluate the condition
+		auto condition_operands = visitExpressionNode(ternaryNode.condition().as<ExpressionNode>());
+		
+		// Generate conditional branch: if condition true goto true_label, else goto false_label
+		std::vector<IrOperand> branch_operands;
+		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
+		branch_operands.emplace_back(true_label);
+		branch_operands.emplace_back(false_label);
+		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), ternaryNode.get_token());
+
+		// True branch label
+		ir_.addInstruction(IrOpcode::Label, { true_label }, ternaryNode.get_token());
+
+		// Evaluate true expression
+		auto true_operands = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
+		
+		// Create result variable to hold the final value
+		TempVar result_var = var_counter.next();
+		Type result_type = std::get<Type>(true_operands[0]);
+		int result_size = std::get<int>(true_operands[1]);
+		
+		// Assign true_expr result to result variable
+		// Assignment format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
+		std::vector<IrOperand> assign_true_operands;
+		assign_true_operands.emplace_back(result_var);  // result_var (unused for simple assignment)
+		assign_true_operands.emplace_back(result_type); // lhs_type
+		assign_true_operands.emplace_back(result_size); // lhs_size
+		assign_true_operands.emplace_back(result_var);  // lhs_value (destination)
+		// Copy RHS operands directly (type, size, value - value can be TempVar, literal, etc.)
+		assign_true_operands.insert(assign_true_operands.end(), true_operands.begin(), true_operands.end());
+		ir_.addInstruction(IrOpcode::Assignment, std::move(assign_true_operands), ternaryNode.get_token());
+
+		// Unconditional branch to end
+		ir_.addInstruction(IrOpcode::Branch, { end_label }, ternaryNode.get_token());
+
+		// False branch label
+		ir_.addInstruction(IrOpcode::Label, { false_label }, ternaryNode.get_token());
+
+		// Evaluate false expression
+		auto false_operands = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
+
+		// Assign false_expr result to result variable
+		// Assignment format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
+		std::vector<IrOperand> assign_false_operands;
+		assign_false_operands.emplace_back(result_var);  // result_var (unused for simple assignment)
+		assign_false_operands.emplace_back(result_type); // lhs_type
+		assign_false_operands.emplace_back(result_size); // lhs_size
+		assign_false_operands.emplace_back(result_var);  // lhs_value (destination)
+		// Copy RHS operands directly (type, size, value - value can be TempVar, literal, etc.)
+		assign_false_operands.insert(assign_false_operands.end(), false_operands.begin(), false_operands.end());
+		ir_.addInstruction(IrOpcode::Assignment, std::move(assign_false_operands), ternaryNode.get_token());
+
+		// End label (merge point)
+		ir_.addInstruction(IrOpcode::Label, { end_label }, ternaryNode.get_token());
+
+		// Return the result variable
+		return { result_type, result_size, result_var };
 	}
 
 	std::vector<IrOperand> generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {

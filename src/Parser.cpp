@@ -5418,6 +5418,11 @@ ParseResult Parser::parse_expression(int precedence)
 			break;
 		}
 
+		// Skip ternary operator '?' - it's handled separately below
+		if (is_operator && peek_token()->value() == "?") {
+			break;
+		}
+
 		// Get the precedence of the current operator
 		int current_operator_precedence =
 			get_operator_precedence(peek_token()->value());
@@ -5444,6 +5449,44 @@ ParseResult Parser::parse_expression(int precedence)
 				auto binary_op = emplace_node<ExpressionNode>(
 					BinaryOperatorNode(operator_token, *leftNode, *rightNode));
 				result = ParseResult::success(binary_op);
+			}
+		}
+	}
+
+	// Check for ternary operator (condition ? true_expr : false_expr)
+	// Ternary has precedence 5 (between assignment=3 and logical-or=7)
+	// Only parse ternary if we're at a precedence level that allows it
+	if (precedence <= 5 && peek_token().has_value() && 
+	    peek_token()->type() == Token::Type::Operator && peek_token()->value() == "?") {
+		consume_token();  // Consume '?'
+		Token question_token = *current_token_;  // Save the '?' token
+
+		// Parse the true expression (allow lower precedence on the right)
+		ParseResult true_result = parse_expression(0);
+		if (true_result.is_error()) {
+			return true_result;
+		}
+
+		// Expect ':'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator || peek_token()->value() != ":") {
+			return ParseResult::error("Expected ':' in ternary operator", *current_token_);
+		}
+		consume_token();  // Consume ':'
+
+		// Parse the false expression (use precedence 5 for right-associativity)
+		ParseResult false_result = parse_expression(5);
+		if (false_result.is_error()) {
+			return false_result;
+		}
+
+		if (auto condition_node = result.node()) {
+			if (auto true_node = true_result.node()) {
+				if (auto false_node = false_result.node()) {
+					// Create the ternary operator node
+					auto ternary_op = emplace_node<ExpressionNode>(
+						TernaryOperatorNode(*condition_node, *true_node, *false_node, question_token));
+					result = ParseResult::success(ternary_op);
+				}
 			}
 		}
 	}
@@ -5568,6 +5611,8 @@ int Parser::get_operator_precedence(const std::string_view& op)
 			{"&&", 8},
 			// Logical OR (precedence 7)
 			{"||", 7},
+			// Ternary conditional (precedence 5, handled specially in parse_expression)
+			{"?", 5},
 			// Assignment operators (precedence 3, right-associative, lowest precedence)
 			{"=", 3}, {"+=", 3}, {"-=", 3}, {"*=", 3}, {"/=", 3},
 			{"%=", 3}, {"&=", 3}, {"|=", 3}, {"^=", 3},
@@ -5581,7 +5626,9 @@ int Parser::get_operator_precedence(const std::string_view& op)
 		return it->second;
 	}
 	else {
-		throw std::runtime_error("Invalid operator");
+		// Log warning for unknown operators to help debugging
+		std::cerr << "WARNING: Unknown operator '" << op << "' in get_operator_precedence, returning 0\n";
+		return 0;
 	}
 }
 
