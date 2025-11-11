@@ -1253,7 +1253,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
-					node->as<FunctionDeclarationNode>().set_definition(block->as<BlockNode>());
+					node->as<FunctionDeclarationNode>().set_definition(*block);
 					return saved_position.success(*node);
 				}
 			}
@@ -1883,7 +1883,7 @@ ParseResult Parser::parse_struct_declaration()
 
 							// Create an empty block for the constructor body
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
-							ctor_ref.set_definition(block_ref);
+							ctor_ref.set_definition(block_node);
 
 							gSymbolTable.exit_scope();
 						} else if (peek_token()->value() == "delete") {
@@ -2032,7 +2032,7 @@ ParseResult Parser::parse_struct_declaration()
 
 						// Create an empty block for the destructor body
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
-						dtor_ref.set_definition(block_ref);
+						dtor_ref.set_definition(block_node);
 					} else if (peek_token()->value() == "delete") {
 						consume_token(); // consume 'delete'
 						is_deleted = true;
@@ -2184,7 +2184,7 @@ ParseResult Parser::parse_struct_declaration()
 
 							// Create an empty block for the function body
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
-							member_func_ref.set_definition(block_ref);
+							member_func_ref.set_definition(block_node);
 						} else if (peek_token()->value() == "delete") {
 							consume_token(); // consume 'delete'
 							is_deleted = true;
@@ -2552,7 +2552,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Create an empty block for the constructor body
 		auto [block_node, block_ref] = create_node_ref(BlockNode());
-		default_ctor_ref.set_definition(block_ref);
+		default_ctor_ref.set_definition(block_node);
 
 		// Mark this as an implicit default constructor
 		default_ctor_ref.set_is_implicit(true);
@@ -2603,7 +2603,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Create an empty block for the constructor body
 		auto [copy_block_node, copy_block_ref] = create_node_ref(BlockNode());
-		copy_ctor_ref.set_definition(copy_block_ref);
+		copy_ctor_ref.set_definition(copy_block_node);
 
 		// Mark this as an implicit copy constructor
 		copy_ctor_ref.set_is_implicit(true);
@@ -2669,7 +2669,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Create an empty block for the operator= body
 		auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
-		func_ref.set_definition(op_block_ref);
+		func_ref.set_definition(op_block_node);
 
 		// Mark this as an implicit operator=
 		func_ref.set_is_implicit(true);
@@ -2721,7 +2721,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Create an empty block for the constructor body
 		auto [move_block_node, move_block_ref] = create_node_ref(BlockNode());
-		move_ctor_ref.set_definition(move_block_ref);
+		move_ctor_ref.set_definition(move_block_node);
 
 		// Mark this as an implicit move constructor
 		move_ctor_ref.set_is_implicit(true);
@@ -2784,7 +2784,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Create an empty block for the operator= body
 		auto [move_op_block_node, move_op_block_ref] = create_node_ref(BlockNode());
-		move_func_ref.set_definition(move_op_block_ref);
+		move_func_ref.set_definition(move_op_block_node);
 
 		// Mark this as an implicit operator=
 		move_func_ref.set_is_implicit(true);
@@ -2890,7 +2890,7 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Attach body to constructor node
 			if (auto block = block_result.node()) {
-				delayed.ctor_node->set_definition(block->as<BlockNode>());
+				delayed.ctor_node->set_definition(*block);
 			}
 
 			// Clean up context
@@ -2922,7 +2922,7 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Attach body to destructor node
 			if (auto block = block_result.node()) {
-				delayed.dtor_node->set_definition(block->as<BlockNode>());
+				delayed.dtor_node->set_definition(*block);
 			}
 
 			// Clean up context
@@ -2964,7 +2964,7 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Attach body to function node
 			if (auto block = block_result.node()) {
-				delayed.func_node->set_definition(block->as<BlockNode>());
+				delayed.func_node->set_definition(*block);
 			}
 
 			// Clean up context
@@ -7755,7 +7755,7 @@ ParseResult Parser::transformLambdaToStruct(const LambdaExpressionNode& lambda) 
 
     // Set the body - need to create a mutable copy
     auto body_copy = emplace_node<BlockNode>(lambda.body().as<BlockNode>());
-    func_ref.set_definition(body_copy.as<BlockNode>());
+    func_ref.set_definition(body_copy);
 
     // Add operator() to the struct
     struct_ref.add_operator_overload(
@@ -8651,7 +8651,7 @@ ParseResult Parser::parse_template_declaration() {
 					// Copy function body if it exists
 					auto definition_opt = func_decl.get_definition();
 					if (definition_opt.has_value()) {
-						member_func_ref.set_definition(**definition_opt);
+						member_func_ref.set_definition(definition_opt.value());
 					}
 
 					// Add to struct
@@ -9703,7 +9703,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Copy the function body if it exists
 	auto orig_body = func_decl.get_definition();
 	if (orig_body.has_value()) {
-		new_func_ref.set_definition(**orig_body);
+		new_func_ref.set_definition(orig_body.value());
 	}
 
 	// Register the instantiation
@@ -10047,7 +10047,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		auto block_result = parse_block();
 		std::cerr << "DEBUG: parse_block() returned, error=" << block_result.is_error() << ", has_value=" << block_result.node().has_value() << std::endl;
 		if (!block_result.is_error() && block_result.node().has_value()) {
-			new_func_ref.set_definition(block_result.node()->as<BlockNode>());
+			new_func_ref.set_definition(*block_result.node());
 			std::cerr << "DEBUG: Set function definition" << std::endl;
 		}
 
@@ -10068,7 +10068,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// Fallback: copy the function body pointer directly (old behavior)
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
-			new_func_ref.set_definition(**orig_body);
+			new_func_ref.set_definition(orig_body.value());
 			std::cerr << "DEBUG: Copied original function body (fallback)" << std::endl;
 		} else {
 			std::cerr << "DEBUG: No function body to copy" << std::endl;
@@ -10796,11 +10796,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		std::cerr << "DEBUG: parse_block() error=" << block_result.is_error() 
 		          << " has_value=" << block_result.node().has_value() << "\n";
 		if (!block_result.is_error() && block_result.node().has_value()) {
-			new_func_ref.set_definition(block_result.node()->as<BlockNode>());
+			new_func_ref.set_definition(*block_result.node());
 			std::cerr << "DEBUG: set_definition called for " << mangled_name << "\n";
 		}
 
-	// Clean up context
+		// Clean up context
 	std::cerr << "DEBUG [8522]: Cleaning up context\n";
 	current_function_ = nullptr;
 	std::cerr << "DEBUG [8524]: Popping member_function_context_stack_\n";

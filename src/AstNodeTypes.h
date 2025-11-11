@@ -923,14 +923,14 @@ public:
 	void add_parameter_node(ASTNode parameter_node) {
 		parameter_nodes_.push_back(parameter_node);
 	}
-	auto get_definition() const {
+	const std::optional<ASTNode>& get_definition() const {
 		return definition_block_;
 	}
-	bool set_definition(BlockNode& block_node) {
+	bool set_definition(ASTNode block_node) {
 		if (definition_block_.has_value())
 			return false;
 
-		definition_block_.emplace(&block_node);
+		definition_block_.emplace(block_node);
 		return true;
 	}
 
@@ -965,7 +965,7 @@ public:
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
-	std::optional<BlockNode*> definition_block_;
+	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
@@ -1116,12 +1116,14 @@ public:
 		is_implicit_ = implicit;
 	}
 
-	auto get_definition() const { return definition_block_; }
+	const std::optional<ASTNode>& get_definition() const {
+		return definition_block_;
+	}
 
-	bool set_definition(BlockNode& block_node) {
+	bool set_definition(ASTNode block_node) {
 		if (definition_block_.has_value())
 			return false;
-		definition_block_.emplace(&block_node);
+		definition_block_.emplace(block_node);
 		return true;
 	}
 
@@ -1131,7 +1133,7 @@ private:
 	std::vector<ASTNode> parameter_nodes_;
 	std::vector<MemberInitializer> member_initializers_;
 	std::vector<BaseInitializer> base_initializers_;  // Base class initializers
-	std::optional<BlockNode*> definition_block_;
+	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
 };
 
@@ -1146,19 +1148,21 @@ public:
 	std::string_view name() const { return name_; }
 	Token name_token() const { return Token(Token::Type::Identifier, name_, 0, 0, 0); }  // Create token on demand
 
-	auto get_definition() const { return definition_block_; }
+	const std::optional<ASTNode>& get_definition() const {
+		return definition_block_;
+	}
 
-	bool set_definition(BlockNode& block_node) {
+	bool set_definition(ASTNode block_node) {
 		if (definition_block_.has_value())
 			return false;
-		definition_block_.emplace(&block_node);
+		definition_block_.emplace(block_node);
 		return true;
 	}
 
 private:
 	std::string_view struct_name_;  // Points directly into source text from lexer token
 	std::string_view name_;         // Points directly into source text from lexer token
-	std::optional<BlockNode*> definition_block_;
+	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 };
 
 // Struct member with access specifier

@@ -2494,6 +2494,19 @@ private:
 		const size_t param_stride = 3; // type, size, value
 		const size_t num_params = (instruction.getOperandCount() - first_param_index) / param_stride;
 
+		// Extract parameter types for overload resolution
+		std::vector<TypeSpecifierNode> parameter_types;
+		for (size_t i = 0; i < num_params; ++i) {
+			size_t paramIndex = first_param_index + i * param_stride;
+			Type paramType = instruction.getOperandAs<Type>(paramIndex);
+			int paramSize = instruction.getOperandAs<int>(paramIndex + 1);
+			
+			// Build TypeSpecifierNode for this parameter
+			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(paramSize), Token{});
+			parameter_types.push_back(param_type);
+		}
+
+		// Load parameters into registers
 		for (size_t i = 0; i < num_params && i < 3; ++i) { // Max 3 additional params (RCX is 'this')
 			size_t paramIndex = first_param_index + i * param_stride;
 			Type paramType = instruction.getOperandAs<Type>(paramIndex);
@@ -2544,11 +2557,15 @@ private:
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
-		// Get the mangled name for the constructor (handles name mangling)
-		std::cerr << "DEBUG handleConstructorCall: function_name = " << function_name << "\n";
-		std::string mangled_name = writer.getMangledName(function_name);
-		std::cerr << "DEBUG handleConstructorCall: after getMangledName = " << mangled_name << "\n";
-		std::cerr << "DEBUG handleConstructorCall: about to add_relocation with: " << mangled_name << "\n";
+		// Build FunctionSignature for proper overload resolution
+		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
+		sig.class_name = struct_name;
+
+		// Generate the correct mangled name for this specific constructor overload
+		std::string mangled_name = writer.generateMangledName(function_name, sig);
+		std::cerr << "DEBUG handleConstructorCall: function_name = " << function_name << ", num_params = " << num_params << "\n";
+		std::cerr << "DEBUG handleConstructorCall: mangled_name = " << mangled_name << "\n";
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
 		regAlloc.reset();
@@ -6402,23 +6419,22 @@ private:
 		// Get result offset
 		int result_offset = getStackOffsetFromTempVar(result_var);
 
-		// Load the address of the function into RAX
-		// LEA RAX, [RIP + function_name]  (RIP-relative addressing for position-independent code)
-		// Or: MOV RAX, OFFSET function_name
-
-		// We'll use MOV RAX, OFFSET function_name with a relocation
+		// Load the address of the function into RAX using RIP-relative addressing
+		// LEA RAX, [RIP + function_name]  (position-independent code, uses REL32 relocation)
 		textSectionData.push_back(0x48); // REX.W
-		textSectionData.push_back(0xB8); // MOV RAX, imm64
+		textSectionData.push_back(0x8D); // LEA
+		textSectionData.push_back(0x05); // ModR/M: RAX, [RIP + disp32]
 
-		// Add placeholder for the address (will be filled by relocation)
+		// Add placeholder for the displacement (will be filled by relocation)
 		uint32_t reloc_position = static_cast<uint32_t>(textSectionData.size());
-		for (int i = 0; i < 8; ++i) {
-			textSectionData.push_back(0x00);
-		}
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
 
-		// Add relocation for the function address
+		// Add REL32 relocation for the function address (RIP-relative)
 		std::string mangled_name = writer.getMangledName(std::string(func_name));
-		writer.add_relocation(reloc_position, mangled_name);
+		writer.add_relocation(reloc_position, mangled_name, IMAGE_REL_AMD64_REL32);
 
 		// Store RAX to result variable
 		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);

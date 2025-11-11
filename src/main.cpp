@@ -206,8 +206,8 @@ int main(int argc, char *argv[]) {
                 std::cerr << "DEBUG: Visiting FunctionDeclarationNode: " << func.decl_node().identifier_token().value() 
                           << " has_definition=" << has_def << "\n";
                 if (has_def) {
-                    const BlockNode* def_block = *func.get_definition();
-                    std::cerr << "  -> Block has " << def_block->get_statements().size() << " statements\n";
+                    const BlockNode& def_block = func.get_definition().value().as<BlockNode>();
+                    std::cerr << "  -> Block has " << def_block.get_statements().size() << " statements\n";
                 }
             }
             converter.visit(node_handle);

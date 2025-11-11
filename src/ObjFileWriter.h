@@ -26,6 +26,9 @@
 #ifndef IMAGE_REL_AMD64_SECTION
 #define IMAGE_REL_AMD64_SECTION         0x000A  // Section index
 #endif
+#ifndef IMAGE_REL_AMD64_ADDR64
+#define IMAGE_REL_AMD64_ADDR64          0x0001  // 64-bit absolute address
+#endif
 
 enum class SectionType : unsigned char
 {
@@ -45,6 +48,29 @@ enum class SectionType : unsigned char
 
 class ObjectFileWriter {
 public:
+	enum EFunctionCallingConv : unsigned char
+	{
+		cdecl,
+		stdcall,
+		fastcall,
+	};
+	// Function signature information for mangling
+	struct FunctionSignature {
+		TypeSpecifierNode return_type;
+		std::vector<TypeSpecifierNode> parameter_types;
+		bool is_const = false;
+		bool is_static = false;
+		bool is_variadic = false;  // True if function has ... ellipsis parameter
+		EFunctionCallingConv calling_convention = EFunctionCallingConv::cdecl;
+		std::string namespace_name;
+		std::string class_name;
+		Linkage linkage = Linkage::None;  // C vs C++ linkage
+
+		FunctionSignature() = default;
+		FunctionSignature(const TypeSpecifierNode& ret_type, std::vector<TypeSpecifierNode> params)
+			: return_type(ret_type), parameter_types(std::move(params)) {}
+	};
+
 	ObjectFileWriter() {
 		std::cerr << "Creating simplified ObjectFileWriter for debugging..." << std::endl;
 
@@ -439,94 +465,8 @@ public:
 	}
 
 private:
-	enum EFunctionCallingConv : unsigned char
-	{
-		cdecl,
-		stdcall,
-		fastcall,
-	};
-	// Function signature information for mangling
-	struct FunctionSignature {
-		TypeSpecifierNode return_type;
-		std::vector<TypeSpecifierNode> parameter_types;
-		bool is_const = false;
-		bool is_static = false;
-		bool is_variadic = false;  // True if function has ... ellipsis parameter
-		EFunctionCallingConv calling_convention = EFunctionCallingConv::cdecl;
-		std::string namespace_name;
-		std::string class_name;
-		Linkage linkage = Linkage::None;  // C vs C++ linkage
-
-		FunctionSignature() = default;
-		FunctionSignature(const TypeSpecifierNode& ret_type, std::vector<TypeSpecifierNode> params)
-			: return_type(ret_type), parameter_types(std::move(params)) {}
-	};
-
 	// Map from mangled name to function signature
-	mutable std::unordered_map<std::string, FunctionSignature> function_signatures_;
-
-	// Generate Microsoft Visual C++ mangled name
-	std::string generateMangledName(std::string_view name, const FunctionSignature& sig) const {
-		// Special case: main function is never mangled
-		if (name == "main") {
-			return "main";
-		}
-
-		// C linkage functions are not mangled
-		if (sig.linkage == Linkage::C) {
-			return std::string(name);
-		}
-
-		// Calculate approximate size and reserve to avoid reallocations
-		size_t estimated_size = 1 + name.size() + 2 + 2 + 2;  // '?' + name + "@@" + calling_conv + return_type
-		if (!sig.class_name.empty()) {
-			estimated_size += 1 + sig.class_name.size();  // '@' + class_name
-		}
-		estimated_size += sig.parameter_types.size() * 3;  // Rough estimate for param types
-		estimated_size += 2;  // "@Z"
-
-		std::string mangled;
-		mangled.reserve(estimated_size);
-
-		mangled += '?';
-		mangled += name;
-
-		// Add class name if this is a member function
-		if (!sig.class_name.empty()) {
-			mangled += '@';
-			mangled += sig.class_name;
-		}
-
-		mangled += "@@";
-
-		// Add calling convention and linkage
-		if (sig.calling_convention == EFunctionCallingConv::cdecl) {
-			mangled += "YA";  // __cdecl
-		} else if (sig.calling_convention == EFunctionCallingConv::stdcall) {
-			mangled += "YG";  // __stdcall
-		} else if (sig.calling_convention == EFunctionCallingConv::fastcall) {
-			mangled += "YI";  // __fastcall
-		} else {
-			mangled += "YA";  // Default to __cdecl
-		}
-
-		// Add return type
-		mangled += getTypeCode(sig.return_type);
-
-		// Add parameter types
-		for (const auto& param_type : sig.parameter_types) {
-			mangled += getTypeCode(param_type);
-		}
-
-		// Add end marker - different for variadic vs non-variadic
-		if (sig.is_variadic) {
-			mangled += "ZZ";  // Variadic functions end with 'ZZ' in MSVC mangling
-		} else {
-			mangled += "@Z";  // Non-variadic functions end with '@Z'
-		}
-
-		return mangled;
-	}
+	mutable std::unordered_map<std::string, ObjectFileWriter::FunctionSignature> function_signatures_;
 
 	// Get Microsoft Visual C++ type code for mangling (with pointer support)
 	std::string getTypeCode(const TypeSpecifierNode& type_node) const {
@@ -586,6 +526,70 @@ private:
 	}
 
 public:
+	// Generate Microsoft Visual C++ mangled name
+	std::string generateMangledName(std::string_view name, const FunctionSignature& sig) const {
+		// Special case: main function is never mangled
+		if (name == "main") {
+			return "main";
+		}
+
+		// C linkage functions are not mangled
+		if (sig.linkage == Linkage::C) {
+			return std::string(name);
+		}
+
+		// Calculate approximate size and reserve to avoid reallocations
+		size_t estimated_size = 1 + name.size() + 2 + 2 + 2;  // '?' + name + "@@" + calling_conv + return_type
+		if (!sig.class_name.empty()) {
+			estimated_size += 1 + sig.class_name.size();  // '@' + class_name
+		}
+		estimated_size += sig.parameter_types.size() * 3;  // Rough estimate for param types
+		estimated_size += 2;  // "@Z"
+
+		std::string mangled;
+		mangled.reserve(estimated_size);
+
+		mangled += '?';
+		mangled += name;
+
+		// Add class name if this is a member function
+		if (!sig.class_name.empty()) {
+			mangled += '@';
+			mangled += sig.class_name;
+		}
+
+		mangled += "@@";
+
+		// Calling convention - Y for cdecl (non-member), Q for cdecl (member)
+		if (!sig.class_name.empty()) {
+			mangled += "Q";  // Member function
+			if (sig.is_const) {
+				mangled += "E";  // const member function
+			} else {
+				mangled += "A";  // non-const member function
+			}
+		} else {
+			mangled += "YA";  // Non-member function with __cdecl
+		}
+
+		// Return type
+		mangled += getTypeCode(sig.return_type);
+
+		// Parameter types
+		for (const auto& param : sig.parameter_types) {
+			mangled += getTypeCode(param);
+		}
+
+		if (sig.is_variadic) {
+			mangled += "Z";  // ... ellipsis parameter
+		} else {
+			mangled += "@Z";  // End of parameter list (no ellipsis)
+		}
+
+		std::cerr << "DEBUG generateMangledName: " << name << " -> " << mangled << "\n";
+		return mangled;
+	}
+
 	// Add function signature information for proper mangling
 	// Returns the mangled name for the function
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false) {
@@ -663,8 +667,12 @@ public:
 	}
 
 	void add_relocation(uint64_t offset, std::string_view symbol_name) {
+		add_relocation(offset, symbol_name, IMAGE_REL_AMD64_REL32);
+	}
+
+	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type) {
 		// Get the function symbol using mangled name
-		std::cerr << "DEBUG add_relocation: input symbol_name = " << symbol_name << "\n";
+		std::cerr << "DEBUG add_relocation: input symbol_name = " << symbol_name << ", type = " << relocation_type << "\n";
 		std::string mangled_name = getMangledName(std::string(symbol_name));
 		std::cerr << "DEBUG add_relocation: after getMangledName = " << mangled_name << "\n";
 		auto* symbol = coffi_.get_symbol(std::string(mangled_name));
@@ -689,7 +697,7 @@ public:
 		COFFI::rel_entry_generic relocation;
 		relocation.virtual_address = offset;
 		relocation.symbol_table_index = symbol_index;
-		relocation.type = IMAGE_REL_AMD64_REL32;
+		relocation.type = relocation_type;
 		section_text->add_relocation_entry(&relocation);
 	}
 

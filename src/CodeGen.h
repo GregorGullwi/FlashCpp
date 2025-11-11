@@ -372,8 +372,8 @@ private:
 	}
 
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
-		auto definition_block = node.get_definition();
-		if (!definition_block.has_value()) {
+		if (!node.get_definition().has_value()) {
+			std::cerr << "DEBUG: Function has no definition, skipping\n";
 			return;
 		}
 
@@ -583,9 +583,10 @@ private:
 			}
 		} else {
 			// User-defined function body
-			std::cerr << "DEBUG: About to visit " << (*definition_block)->get_statements().size() 
+			const BlockNode& block = node.get_definition().value().as<BlockNode>();
+			std::cerr << "DEBUG: About to visit " << block.get_statements().size() 
 			          << " statements in function " << func_decl.identifier_token().value() << "\n";
-			(*definition_block)->get_statements().visit([&](ASTNode statement) {
+			block.get_statements().visit([&](ASTNode statement) {
 				std::cerr << "DEBUG: Visiting statement in " << func_decl.identifier_token().value() << "\n";
 				visit(statement);
 			});
@@ -597,6 +598,7 @@ private:
 		}
 
 		symbol_table.exit_scope();
+		current_function_name_.clear();
 	}
 
 	void visitStructDeclarationNode(const StructDeclarationNode& node) {
@@ -639,8 +641,7 @@ private:
 	}
 
 	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
-		auto definition_block = node.get_definition();
-		if (!definition_block.has_value())
+		if (!node.get_definition().has_value())
 			return;
 
 		// Reset the temporary variable counter for each new constructor
@@ -944,7 +945,8 @@ private:
 		}
 
 		// Visit the constructor body
-		definition_block.value()->get_statements().visit([&](const ASTNode& statement) {
+		const BlockNode& block = node.get_definition().value().as<BlockNode>();
+		block.get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
 
@@ -953,11 +955,11 @@ private:
 		ir_.addInstruction(IrOpcode::Return, {Type::Void, 0, 0ULL}, node.name_token());
 
 		symbol_table.exit_scope();
+		current_function_name_.clear();
 	}
 
 	void visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
-		auto definition_block = node.get_definition();
-		if (!definition_block.has_value())
+		if (!node.get_definition().has_value())
 			return;
 
 		// Reset the temporary variable counter for each new destructor
@@ -1014,7 +1016,8 @@ private:
 		// 3. Base class destructors (in REVERSE declaration order)
 
 		// Step 1: Visit the destructor body
-		definition_block.value()->get_statements().visit([&](const ASTNode& statement) {
+		const BlockNode& block = node.get_definition().value().as<BlockNode>();
+		block.get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
 
@@ -1052,6 +1055,7 @@ private:
 		ir_.addInstruction(IrOpcode::Return, {Type::Void, 0, 0ULL}, node.name_token());
 
 		symbol_table.exit_scope();
+		current_function_name_.clear();
 	}
 
 	void visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
