@@ -714,6 +714,31 @@ private:
 			symbol_table.insert(param_decl.identifier_token().value(), param);
 		}
 
+		// C++11 Delegating constructor: if present, ONLY call the target constructor
+		// No base class or member initialization should happen
+		if (node.delegating_initializer().has_value()) {
+			const auto& delegating_init = node.delegating_initializer().value();
+			
+			// Build constructor call: StructName::StructName(this, args...)
+			std::vector<IrOperand> ctor_operands;
+			ctor_operands.emplace_back(std::string(node.struct_name()));  // Struct name
+			ctor_operands.emplace_back(std::string_view("this"));  // 'this' pointer
+
+			// Add constructor arguments from delegating initializer
+			for (const auto& arg : delegating_init.arguments) {
+				auto arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
+				// Add the argument value (type, size, value)
+				ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+			}
+
+			ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), node.name_token());
+			
+			// Delegating constructors don't execute the body or initialize members
+			// Just return
+			ir_.addInstruction(IrOpcode::Return, { Type::Void, 0, 0ULL }, node.name_token());
+			return;
+		}
+
 		// C++ construction order:
 		// 1. Base class constructors (in declaration order)
 		// 2. Member variables (in declaration order)

@@ -1085,6 +1085,14 @@ struct BaseInitializer {
 		: base_class_name(std::move(name)), arguments(std::move(args)) {}
 };
 
+// Delegating constructor initializer (C++11 feature)
+struct DelegatingInitializer {
+	std::vector<ASTNode> arguments;
+
+	explicit DelegatingInitializer(std::vector<ASTNode> args)
+		: arguments(std::move(args)) {}
+};
+
 // Constructor declaration node
 class ConstructorDeclarationNode {
 public:
@@ -1098,6 +1106,7 @@ public:
 	const std::vector<ASTNode>& parameter_nodes() const { return parameter_nodes_; }
 	const std::vector<MemberInitializer>& member_initializers() const { return member_initializers_; }
 	const std::vector<BaseInitializer>& base_initializers() const { return base_initializers_; }
+	const std::optional<DelegatingInitializer>& delegating_initializer() const { return delegating_initializer_; }
 	bool is_implicit() const { return is_implicit_; }
 
 	void add_parameter_node(ASTNode parameter_node) {
@@ -1110,6 +1119,10 @@ public:
 
 	void add_base_initializer(std::string base_name, std::vector<ASTNode> args) {
 		base_initializers_.emplace_back(std::move(base_name), std::move(args));
+	}
+
+	void set_delegating_initializer(std::vector<ASTNode> args) {
+		delegating_initializer_.emplace(std::move(args));
 	}
 
 	void set_is_implicit(bool implicit) {
@@ -1133,6 +1146,7 @@ private:
 	std::vector<ASTNode> parameter_nodes_;
 	std::vector<MemberInitializer> member_initializers_;
 	std::vector<BaseInitializer> base_initializers_;  // Base class initializers
+	std::optional<DelegatingInitializer> delegating_initializer_;  // Delegating constructor call
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
 };
