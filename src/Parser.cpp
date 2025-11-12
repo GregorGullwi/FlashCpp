@@ -1834,21 +1834,32 @@ ParseResult Parser::parse_struct_declaration()
 							                         "' after initializer arguments", *peek_token());
 						}
 
-						// Determine if this is a base class or member initializer
+						// Determine if this is a delegating, base class, or member initializer
+						bool is_delegating = (init_name == struct_ref.name());
 						bool is_base_init = false;
-						for (const auto& base : struct_ref.base_classes()) {
-							if (base.name == init_name) {
-								is_base_init = true;
-								ctor_ref.add_base_initializer(std::string(init_name), std::move(init_args));
-								break;
+						
+						if (is_delegating) {
+							// Delegating constructor: Point() : Point(0, 0) {}
+							// In C++11, if a constructor delegates, it CANNOT have other initializers
+							if (!ctor_ref.member_initializers().empty() || !ctor_ref.base_initializers().empty()) {
+								return ParseResult::error("Delegating constructor cannot have other member or base initializers", *init_name_token);
 							}
-						}
+							ctor_ref.set_delegating_initializer(std::move(init_args));
+						} else {
+							for (const auto& base : struct_ref.base_classes()) {
+								if (base.name == init_name) {
+									is_base_init = true;
+									ctor_ref.add_base_initializer(std::string(init_name), std::move(init_args));
+									break;
+								}
+							}
 
-						if (!is_base_init) {
-							// It's a member initializer
-							// For simplicity, we'll use the first argument as the initializer expression
-							if (!init_args.empty()) {
-								ctor_ref.add_member_initializer(init_name, init_args[0]);
+							if (!is_base_init) {
+								// It's a member initializer
+								// For simplicity, we'll use the first argument as the initializer expression
+								if (!init_args.empty()) {
+									ctor_ref.add_member_initializer(init_name, init_args[0]);
+								}
 							}
 						}
 

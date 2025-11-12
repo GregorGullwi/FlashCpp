@@ -826,7 +826,31 @@ private:
 					}
 
 					if (is_copy_constructor || is_move_constructor) {
-						// Implicit copy/move constructor: memberwise copy/move from 'other' to 'this'
+						// Implicit copy/move constructor: call base class copy/move constructors first, then memberwise copy/move from 'other' to 'this'
+
+						// Step 1: Call base class copy/move constructors (in declaration order)
+						for (const auto& base : struct_info->base_classes) {
+							// Get base class type info
+							if (base.type_index >= gTypeInfo.size()) {
+								continue;  // Invalid base type index
+							}
+							const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+
+							// Build constructor call: Base::Base(this, other)
+							// For copy constructors, pass 'other' as the copy source
+							// For move constructors, pass 'other' as the move source
+							std::vector<IrOperand> ctor_operands;
+							ctor_operands.emplace_back(base_type_info.name_);  // Base class name
+							ctor_operands.emplace_back(std::string_view("this"));  // 'this' pointer (base subobject is at offset 0 for now)
+							// Add 'other' parameter for copy/move constructor
+							ctor_operands.emplace_back(Type::Struct);  // Parameter type (struct reference)
+							ctor_operands.emplace_back(static_cast<int>(struct_info->total_size * 8));  // Parameter size in bits
+							ctor_operands.emplace_back(std::string_view("other"));  // Parameter value ('other' object)
+
+							ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), node.name_token());
+						}
+
+						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
 							// First, load the member from 'other'
 							// Format: [result_var, member_type, member_size, object_name, member_name, offset]
