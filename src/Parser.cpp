@@ -8609,11 +8609,18 @@ ParseResult Parser::parse_template_declaration() {
 						size_t member_size = get_type_size_bits(type_spec.type()) / 8;
 						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
-						// Add to struct's static members (will be added to struct_info later)
-						// For template specializations, static member info is added when creating StructTypeInfo
-						// TODO: Store static member info for later registration in StructTypeInfo
-						// For now, just skip to avoid compilation errors
-					
+						// Register the static member
+						struct_type_info.getStructInfo()->addStaticMember(
+							std::string(decl.identifier_token().value()),
+							type_spec.type(),
+							type_spec.type_index(),
+							member_size,
+							member_alignment,
+							AccessSpecifier::Public,
+							init_expr_opt,
+							is_const
+						);
+
 						continue;
 					}
 				}

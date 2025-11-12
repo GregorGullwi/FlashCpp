@@ -628,6 +628,33 @@ private:
 				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 				visit(member_func.function_declaration);
 			}
+
+			// Generate global storage for static members
+			auto type_it = gTypesByName.find(std::string(node.name()));
+			if (type_it != gTypesByName.end()) {
+				const TypeInfo* type_info = type_it->second;
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
+				if (struct_info) {
+					for (const auto& static_member : struct_info->static_members) {
+						std::vector<IrOperand> global_operands;
+						global_operands.emplace_back(static_member.type);
+						global_operands.emplace_back(static_cast<int>(static_member.size * 8));
+						std::string mangled_name = std::string(node.name()) + "::" + static_member.name;
+						global_operands.emplace_back(mangled_name);
+
+						// Check if static member has an initializer
+						bool has_initializer = static_member.initializer.has_value();
+						global_operands.emplace_back(has_initializer);
+						if (has_initializer) {
+							// Evaluate the initializer expression
+							auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
+							// Add the initializer value (should be [type, size, value])
+							global_operands.insert(global_operands.end(), init_operands.begin(), init_operands.end());
+						}
+						ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(global_operands), Token());
+					}
+				}
+			}
 			// Don't clear current_struct_name_ - it will be overwritten by the next struct
 		}
 		// If we're inside a function, just skip - the struct type is already registered
@@ -2277,6 +2304,28 @@ private:
 					// Return the enum value as a constant
 					return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
 					         static_cast<unsigned long long>(enum_value) };
+				}
+			}
+
+			// Check if this is a static member access (e.g., StructName::static_member)
+			auto struct_type_it = gTypesByName.find(namespaces[0]);
+			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
+				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+				if (struct_info) {
+					// Look for static member
+					const StructStaticMember* static_member = struct_info->findStaticMember(std::string(qualifiedIdNode.name()));
+					if (static_member) {
+						// This is a static member access - generate GlobalLoad
+						TempVar result_temp = var_counter.next();
+						std::vector<IrOperand> operands;
+						operands.emplace_back(result_temp);
+						// Use qualified name as the global symbol name: StructName::static_member
+						operands.emplace_back(std::string_view(std::string(struct_name_view) + "::" + std::string(qualifiedIdNode.name())));
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(operands), Token()));
+
+						// Return the temp variable that will hold the loaded value
+						return { static_member->type, static_cast<int>(static_member->size), result_temp };
+					}
 				}
 			}
 		}
