@@ -10224,6 +10224,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				mem_func.is_final
 			);
 		}
+
+		// Copy static members from the pattern
+		// Get the pattern's StructTypeInfo
+		auto pattern_type_it = gTypesByName.find(std::string(pattern_struct.name()));
+		if (pattern_type_it != gTypesByName.end()) {
+			const TypeInfo* pattern_type_info = pattern_type_it->second;
+			const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
+			if (pattern_struct_info) {
+				std::cerr << "DEBUG: Copying " << pattern_struct_info->static_members.size() << " static members from pattern\n";
+				for (const auto& static_member : pattern_struct_info->static_members) {
+					std::cerr << "DEBUG: Copying static member: " << static_member.name << "\n";
+					struct_info->addStaticMember(
+						static_member.name,
+						static_member.type,
+						static_member.type_index,
+						static_member.size,
+						static_member.alignment,
+						static_member.access,
+						static_member.initializer,
+						static_member.is_const
+					);
+				}
+			}
+		}
 		
 		struct_info->finalize();
 		struct_type_info.setStructInfo(std::move(struct_info));
@@ -10545,7 +10569,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		);
 	}
 
+	// Copy static members from the primary template
+	// Get the primary template's StructTypeInfo
+	auto primary_type_it = gTypesByName.find(std::string(template_name));
+	if (primary_type_it != gTypesByName.end()) {
+		const TypeInfo* primary_type_info = primary_type_it->second;
+		const StructTypeInfo* primary_struct_info = primary_type_info->getStructInfo();
+		if (primary_struct_info) {
+			std::cerr << "DEBUG: Copying " << primary_struct_info->static_members.size() << " static members from primary template\n";
+			for (const auto& static_member : primary_struct_info->static_members) {
+				std::cerr << "DEBUG: Copying static member: " << static_member.name << "\n";
+				struct_info->addStaticMember(
+					static_member.name,
+					static_member.type,
+					static_member.type_index,
+					static_member.size,
+					static_member.alignment,
+					static_member.access,
+					static_member.initializer,
+					static_member.is_const
+				);
+			}
+		}
+	}
+
 	// Return the instantiated struct node for code generation
+	std::cerr << "DEBUG: Primary template instantiation complete for " << instantiated_name << "\n";
 	return instantiated_struct;
 }
 

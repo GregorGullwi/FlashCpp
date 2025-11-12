@@ -648,8 +648,13 @@ private:
 						if (has_initializer) {
 							// Evaluate the initializer expression
 							auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
-							// Add the initializer value (should be [type, size, value])
-							global_operands.insert(global_operands.end(), init_operands.begin(), init_operands.end());
+							// Add only the initializer value (init_operands[2] is the value)
+							if (init_operands.size() >= 3) {
+								global_operands.emplace_back(init_operands[2]);
+							} else {
+								// Fallback to zero if initializer evaluation failed
+								global_operands.emplace_back(0ULL);
+							}
 						}
 						ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(global_operands), Token());
 					}
@@ -2320,7 +2325,7 @@ private:
 						std::vector<IrOperand> operands;
 						operands.emplace_back(result_temp);
 						// Use qualified name as the global symbol name: StructName::static_member
-						operands.emplace_back(std::string_view(std::string(struct_name_view) + "::" + std::string(qualifiedIdNode.name())));
+						operands.emplace_back(std::string_view(std::string(namespaces[0]) + "::" + std::string(qualifiedIdNode.name())));
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(operands), Token()));
 
 						// Return the temp variable that will hold the loaded value
