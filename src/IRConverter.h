@@ -6095,6 +6095,10 @@ private:
 		// Calculate member size in bytes
 		int member_size_bytes = member_size_bits / 8;
 
+		// Flush all dirty registers to ensure values are saved before allocating
+		// This fixes the codegen bug where intermediate arithmetic results get overwritten
+		flushAllDirtyRegisters();
+
 		// Allocate a register for loading the member value
 		X64Register temp_reg = allocateRegisterWithSpilling();
 
