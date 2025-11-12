@@ -2388,6 +2388,13 @@ private:
 
 		flushAllDirtyRegisters();
 
+		struct StackArg {
+			Type type;
+			int size;
+			IrOperand value;
+		};
+		std::vector<StackArg> stack_args;
+
 		// Get result variable and function name
 		auto result_var = instruction.getOperand(0);
 		//auto funcName = instruction.getOperandAs<std::string_view>(1);
@@ -2409,7 +2416,7 @@ private:
 		for (size_t i = 0; i < num_args; ++i) {
 			size_t argIndex = first_arg_index + i * arg_stride;
 			Type argType = instruction.getOperandAs<Type>(argIndex);
-			// int argSize = instruction.getOperandAs<int>(argIndex + 1); // unused for now
+			int argSize = instruction.getOperandAs<int>(argIndex + 1);
 			auto argValue = instruction.getOperand(argIndex + 2); // could be immediate or variable
 
 			// Determine if this is a floating-point argument
@@ -2419,10 +2426,10 @@ private:
 			// x64 Windows calling convention: first 4 args in registers, rest on stack
 			bool use_register = (i < 4);
 
-			// TODO: Implement stack-based argument passing for arguments 5+
-			// For now, skip arguments beyond the 4th one to prevent crashes
 			if (!use_register) {
-				continue; // Skip this argument for now
+				// Collect stack arguments for later processing
+				stack_args.push_back({argType, argSize, argValue});
+				continue;
 			}
 
 			// Determine the target register for the argument (if using registers)
@@ -2659,6 +2666,69 @@ private:
 			}
 		}
 
+		// Push stack arguments in reverse order (right to left)
+		for (auto it = stack_args.rbegin(); it != stack_args.rend(); ++it) {
+			const auto& arg = *it;
+			// Load value into a register
+			X64Register temp_reg = allocateRegisterWithSpilling();
+
+			// Handle different value types
+			if (std::holds_alternative<unsigned long long>(arg.value)) {
+				// Immediate value
+				uint8_t rex_prefix = 0x48;
+				if (static_cast<uint8_t>(temp_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					rex_prefix |= (1 << 2);
+				}
+				textSectionData.push_back(rex_prefix);
+				if (static_cast<uint8_t>(temp_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					textSectionData.back() |= (1 << 0);
+				}
+				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(temp_reg) & 0x07));
+				unsigned long long value = std::get<unsigned long long>(arg.value);
+				for (size_t j = 0; j < 8; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
+					value >>= 8;
+				}
+			} else if (std::holds_alternative<std::string_view>(arg.value)) {
+				// Local variable
+				std::string_view var_name = std::get<std::string_view>(arg.value);
+				int var_offset = variable_scopes.back().identifier_offset[var_name];
+				auto load_opcodes = generateMovFromFrame(temp_reg, var_offset);
+				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(temp_reg);
+			} else if (std::holds_alternative<TempVar>(arg.value)) {
+				// Temp var
+				auto temp_var = std::get<TempVar>(arg.value);
+				int var_offset = getStackOffsetFromTempVar(temp_var);
+				auto load_opcodes = generateMovFromFrame(temp_reg, var_offset);
+				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				regAlloc.flushSingleDirtyRegister(temp_reg);
+			} else if (std::holds_alternative<double>(arg.value)) {
+				// Floating-point literal
+				double float_value = std::get<double>(arg.value);
+				uint64_t bits;
+				std::memcpy(&bits, &float_value, sizeof(bits));
+				// Load bits into temp_reg
+				uint8_t rex_prefix = 0x48;
+				if (static_cast<uint8_t>(temp_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					rex_prefix |= (1 << 2);
+				}
+				textSectionData.push_back(rex_prefix);
+				if (static_cast<uint8_t>(temp_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+					textSectionData.back() |= (1 << 0);
+				}
+				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(temp_reg) & 0x07));
+				for (size_t j = 0; j < 8; ++j) {
+					textSectionData.push_back(static_cast<uint8_t>(bits & 0xFF));
+					bits >>= 8;
+				}
+			}
+
+			// Push the register
+			textSectionData.push_back(0x50 + static_cast<uint8_t>(temp_reg)); // PUSH reg
+			regAlloc.release(temp_reg);
+		}
+
 		// call [function name] instruction is 5 bytes
 		// Function name can be either std::string (mangled) or std::string_view (unmangled)
 		std::string function_name;
@@ -2695,6 +2765,25 @@ private:
 		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
 		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+
+		// Clean up stack arguments
+		if (!stack_args.empty()) {
+			int cleanup_size = static_cast<int>(stack_args.size()) * 8;
+			if (cleanup_size <= 127) {
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x83); // ADD RSP, imm8
+				textSectionData.push_back(0xC4);
+				textSectionData.push_back(static_cast<uint8_t>(cleanup_size));
+			} else {
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x81);
+				textSectionData.push_back(0xC4);
+				for (int i = 0; i < 4; ++i) {
+					textSectionData.push_back(static_cast<uint8_t>(cleanup_size & 0xFF));
+					cleanup_size >>= 8;
+				}
+			}
+		}
 
 		// NOTE: We used to call regAlloc.reset() here, but that was causing issues
 		// with register allocation across multiple function calls. The register allocator
@@ -4044,7 +4133,7 @@ private:
 			// Calculate parameter number using FunctionDeclLayout helper
 			size_t param_index_in_list = (paramIndex - FunctionDeclLayout::FIRST_PARAM_INDEX) / FunctionDeclLayout::OPERANDS_PER_PARAM;
 			int paramNumber = static_cast<int>(param_index_in_list) + param_offset_adjustment;
-			int offset = (paramNumber + 1) * -8;
+			int offset = paramNumber < 4 ? (paramNumber + 1) * -8 : 16 + (paramNumber - 4) * 8;
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + FunctionDeclLayout::PARAM_NAME);
 			variable_scopes.back().identifier_offset[param_name] = offset;
