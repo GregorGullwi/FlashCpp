@@ -52,6 +52,20 @@ public:
 		}
 		auto& chunk = data.back();
 		std::size_t offset = (chunk.size() + alignment - 1) & ~(alignment - 1);
+
+		// Ensure we don't exceed the reserved capacity
+		if (offset + size > chunk.capacity()) {
+			// Start a new chunk if this one can't fit the object
+			data.emplace_back().reserve(ChunkSize);
+			auto& new_chunk = data.back();
+			offset = (new_chunk.size() + alignment - 1) & ~(alignment - 1);
+			new_chunk.resize(offset + size);
+			std::decay_t<T>* p = new (&new_chunk[offset]) std::decay_t<T>(std::forward<Args>(args)...);
+			index_to_pointer.emplace_back(p);
+			index_to_type.emplace_back(typeid(T));
+			return *p;
+		}
+
 		chunk.resize(offset + size);
 		std::decay_t<T>* p = new (&chunk[offset]) std::decay_t<T>(std::forward<Args>(args)...);
 		index_to_pointer.emplace_back(p);

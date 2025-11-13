@@ -48,6 +48,11 @@ public:
 	bool has_value() const {
 		return node_.has_value();
 	}
+	
+	// Direct access to underlying std::any (for debugging/workarounds)
+	const std::any& get_any() const {
+		return node_;
+	}
 
 private:
 	std::any node_;
@@ -759,7 +764,7 @@ public:
 	const Token& identifier_token() const { return identifier_; }
 	uint32_t line_number() const { return identifier_.line(); }
 	bool is_array() const { return array_size_.has_value(); }
-	std::optional<ASTNode> array_size() const { return array_size_; }
+	const std::optional<ASTNode>& array_size() const { return array_size_; }
 
 	// Alignment support
 	size_t custom_alignment() const { return custom_alignment_; }
@@ -1186,7 +1191,7 @@ struct StructMemberDecl {
 	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
 
 	StructMemberDecl(ASTNode decl, AccessSpecifier acc, std::optional<ASTNode> init = std::nullopt)
-		: declaration(decl), access(acc), default_initializer(std::move(init)) {}
+		: declaration(decl), access(acc), default_initializer(init) {}
 };
 
 // Struct member function with access specifier
@@ -1260,7 +1265,7 @@ public:
 		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
 	}
 
-	void add_member(ASTNode member, AccessSpecifier access, std::optional<ASTNode> default_initializer = std::nullopt) {
+	void add_member(const ASTNode& member, AccessSpecifier access, std::optional<ASTNode> default_initializer = std::nullopt) {
 		members_.emplace_back(member, access, std::move(default_initializer));
 	}
 
@@ -1360,10 +1365,15 @@ private:
 class TemplateClassDeclarationNode {
 public:
 	TemplateClassDeclarationNode() = delete;
-	TemplateClassDeclarationNode(std::vector<ASTNode> template_params, ASTNode class_decl)
-		: template_parameters_(std::move(template_params)), class_declaration_(class_decl) {}
+	TemplateClassDeclarationNode(std::vector<ASTNode> template_params, 
+								std::vector<std::string_view> param_names,
+								ASTNode class_decl)
+		: template_parameters_(std::move(template_params))
+		, template_param_names_(std::move(param_names))
+		, class_declaration_(class_decl) {}
 
 	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	const std::vector<std::string_view>& template_param_names() const { return template_param_names_; }
 	ASTNode class_declaration() const { return class_declaration_; }
 
 	// Get the underlying StructDeclarationNode
@@ -1376,6 +1386,7 @@ public:
 
 private:
 	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
+	std::vector<std::string_view> template_param_names_;  // Parameter names for lookup
 	ASTNode class_declaration_;  // StructDeclarationNode
 };
 
@@ -1742,10 +1753,24 @@ private:
 	static inline size_t next_lambda_id_ = 0;  // Counter for generating unique IDs
 };
 
+// Template parameter reference node - represents a reference to a template parameter in expressions
+class TemplateParameterReferenceNode {
+public:
+	explicit TemplateParameterReferenceNode(std::string_view param_name, Token token)
+		: param_name_(param_name), token_(token) {}
+
+	std::string_view param_name() const { return param_name_; }
+	const Token& token() const { return token_; }
+
+private:
+	std::string_view param_name_;  // Name of the template parameter being referenced
+	Token token_;                  // Token for error reporting
+};
+
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, TypeidNode, LambdaExpressionNode>;
+	DynamicCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode>;
 
 /*class FunctionDefinitionNode {
 public:

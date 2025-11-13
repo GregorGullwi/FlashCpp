@@ -21,6 +21,9 @@
 
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
+
+// Global callback for template parameter checking
+std::function<bool(std::string_view)> gIsTemplateParameterCallback;
 ChunkedStringAllocator gChunkedStringAllocator;
 TemplateRegistry gTemplateRegistry;
 
@@ -282,20 +285,8 @@ void Parser::restore_token_position(const TokenPosition& saved_token_pos, const 
 	
 	if (context_.isVerboseMode()) {
 		size_t old_size = ast_nodes_.size();
-		std::cerr << "DEBUG restore_token_position: Restoring from ast size " << old_size << " to " << saved_token.ast_nodes_size_ << "\n";
-		std::cerr << "  Called from " << location.file_name() << ":" << location.line() 
-				  << " in function " << location.function_name() << "\n";
-		if (saved_token.ast_nodes_size_ < old_size && old_size - saved_token.ast_nodes_size_ > 0) {
-			std::cerr << "  WARNING: About to erase " << (old_size - saved_token.ast_nodes_size_) << " nodes!\n";
-			// Print what's being erased
-			for (size_t i = saved_token.ast_nodes_size_; i < old_size; ++i) {
-				std::cerr << "    Erasing node " << i << ": " << ast_nodes_[i].type_name();
-				if (ast_nodes_[i].is<StructDeclarationNode>()) {
-					std::cerr << " (struct: " << ast_nodes_[i].as<StructDeclarationNode>().name() << ")";
-				}
-				std::cerr << "\n";
-			}
-		}
+		ast_nodes_.erase(ast_nodes_.begin() + saved_token.ast_nodes_size_,
+			ast_nodes_.end());
 	}
     ast_nodes_.erase(ast_nodes_.begin() + saved_token.ast_nodes_size_,
         ast_nodes_.end());
@@ -496,9 +487,6 @@ ParseResult Parser::parse_top_level_node()
 						}
 						
 						if (!consume_punctuator(")")) {
-							std::cerr << "DEBUG: Expected ), got: '"
-							          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF")
-							          << "'\n";
 							return ParseResult::error("Expected ')' after pragma pack push/pop", *current_token_);
 						}
 						return saved_position.success();
@@ -523,10 +511,6 @@ ParseResult Parser::parse_top_level_node()
 				}
 
 				// If we get here, it's an unsupported pragma pack format
-				std::cerr << "DEBUG: Unsupported pragma pack format, next token: '"
-				          << (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF")
-				          << "' type=" << (peek_token().has_value() ? static_cast<int>(peek_token()->type()) : -1)
-				          << std::endl;
 				return ParseResult::error("Unsupported #pragma pack format", *current_token_);
 			} else {
 				// Unknown pragma - skip until end of line or until we hit a token that looks like the start of a new construct
@@ -1241,7 +1225,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			// Parse function body
 			auto block_result = parse_block();
-			std::cerr << "DEBUG: parse_block returned, is_error=" << block_result.is_error() << "\n";
 			if (block_result.is_error()) {
 				current_function_ = nullptr;
 				gSymbolTable.exit_scope();
@@ -1484,11 +1467,9 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Check for forward declaration (struct Name;)
 	if (peek_token().has_value()) {
-		std::cerr << "DEBUG parse_struct: After base class parsing, next token = '" << peek_token()->value() << "'\n";
 		if (peek_token()->value() == ";") {
 			// Forward declaration - just register the type and return
 			consume_token(); // consume ';'
-			std::cerr << "DEBUG parse_struct: Forward declaration detected\n";
 			return saved_position.success(struct_node);
 		}
 	}
@@ -1497,7 +1478,6 @@ ParseResult Parser::parse_struct_declaration()
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' or ';' after struct/class name or base class list", *peek_token());
 	}
-	std::cerr << "DEBUG: Successfully consumed '{', starting member parsing loop\n";
 
 	// Default access specifier (public for struct, private for class)
 	AccessSpecifier current_access = struct_ref.default_access();
@@ -5938,10 +5918,10 @@ ParseResult Parser::parse_primary_expression()
 		std::optional<ASTNode> identifierType;
 		if (namespaces.empty()) {
 			// Global namespace - look up in global symbol table
-			identifierType = gSymbolTable.lookup(qual_id.name());
+			identifierType = lookup_symbol(qual_id.name());
 		} else {
 			// Qualified with namespace - use lookup_qualified
-			identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());
+			identifierType = lookup_symbol_qualified(qual_id.namespaces(), qual_id.name());
 		}
 
 		// Check if followed by '(' for function call
@@ -6143,7 +6123,7 @@ ParseResult Parser::parse_primary_expression()
 		}
 
 		// Get the identifier's type information from the symbol table
-		auto identifierType = gSymbolTable.lookup(idenfifier_token.value());
+		auto identifierType = lookup_symbol(idenfifier_token.value());
 
 		if (!identifierType) {
 			// If we're inside a member function, check if this is a member variable
@@ -6323,12 +6303,30 @@ ParseResult Parser::parse_primary_expression()
 					}
 				}
 				
-				// Not a function call or template member access, identifier not found - this is an error
+				// Check if we're parsing a template and this identifier is a template parameter
+				if (parsing_template_class_ || !current_template_param_names_.empty()) {
+					// Check if this identifier matches any template parameter name
+					for (const auto& param_name : current_template_param_names_) {
+						if (param_name == idenfifier_token.value()) {
+							// This is a template parameter reference
+							result = emplace_node<ExpressionNode>(TemplateParameterReferenceNode(param_name, idenfifier_token));
+							return ParseResult::success(*result);
+						}
+					}
+				}
+
+				// Not a function call, template member access, or template parameter reference - this is an error
 				std::cerr << "DEBUG: Missing identifier: " << idenfifier_token.value() << "\n";
 				return ParseResult::error("Missing identifier", idenfifier_token);
 			}
 		}
-		else if (!identifierType->is<DeclarationNode>() && !identifierType->is<FunctionDeclarationNode>() && !identifierType->is<VariableDeclarationNode>() && !identifierType->is<TemplateFunctionDeclarationNode>()) {
+		
+		if (identifierType && (!identifierType->is<DeclarationNode>() && 
+		         !identifierType->is<FunctionDeclarationNode>() && 
+		         !identifierType->is<VariableDeclarationNode>() &&
+		         !identifierType->is<TemplateFunctionDeclarationNode>() &&
+		         !identifierType->is<TemplateParameterReferenceNode>())) {
+			std::cerr << "DEBUG: Identifier type check failed, type_name=" << identifierType->type_name() << "\n";
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
 		}
 		else {
@@ -6954,7 +6952,7 @@ ParseResult Parser::parse_primary_expression()
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								// Look up identifier type from symbol table
 								const auto& ident = std::get<IdentifierNode>(expr);
-								auto symbol = gSymbolTable.lookup(ident.name());
+								auto symbol = lookup_symbol(ident.name());
 								if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 									const auto& decl = symbol->as<DeclarationNode>();
 									arg_type = decl.type_node().as<TypeSpecifierNode>().type();
@@ -6990,7 +6988,7 @@ ParseResult Parser::parse_primary_expression()
 				const ExpressionNode& expr = result->as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(expr)) {
 					const auto& ident = std::get<IdentifierNode>(expr);
-					auto symbol = gSymbolTable.lookup(ident.name());
+					auto symbol = lookup_symbol(ident.name());
 					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl = symbol->as<DeclarationNode>();
 						const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
@@ -7552,7 +7550,7 @@ ParseResult Parser::parse_lambda_expression() {
             // Look up the variable in the symbol table
             // At this point, we're after the lambda body scope was exited,
             // so any variable found in the symbol table is from an outer scope
-            std::optional<ASTNode> var_symbol = gSymbolTable.lookup(var_name);
+            std::optional<ASTNode> var_symbol = lookup_symbol(var_name);
             if (var_symbol.has_value()) {
                 // Check if this is a variable (not a function or type)
                 // Variables are stored as DeclarationNode in the symbol table
@@ -7613,7 +7611,7 @@ ParseResult Parser::parse_lambda_expression() {
 
             // Look up the captured variable in the current scope
             std::string_view var_name = capture.identifier_name();
-            std::optional<ASTNode> var_symbol = gSymbolTable.lookup(var_name);
+            std::optional<ASTNode> var_symbol = lookup_symbol(var_name);
 
             if (!var_symbol.has_value()) {
                 continue;
@@ -8134,8 +8132,31 @@ std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& 
 	return result;
 }
 
+// Check if an identifier name is a template parameter in current scope
+bool Parser::is_template_parameter(std::string_view name) const {
+    bool result = std::find(template_param_names_.begin(), template_param_names_.end(), name) != template_param_names_.end();
+    if (parsing_template_body_) {
+        std::cerr << "DEBUG: is_template_parameter('" << name << "') = " << result
+                  << ", parsing_template_body_ = " << parsing_template_body_
+                  << ", template_param_names size = " << template_param_names_.size() << "\n";
+    }
+    return result;
+}
+
+// Lookup symbol with template parameter checking
+std::optional<ASTNode> Parser::lookup_symbol_with_template_check(std::string_view identifier) {
+    // First check if it's a template parameter using the new method
+    if (parsing_template_body_ && !current_template_param_names_.empty()) {
+        std::cerr << "DEBUG: Creating TemplateParameterReferenceNode for '" << identifier << "' using new method\n";
+        return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+    }
+
+    // Otherwise, do normal symbol lookup
+    return gSymbolTable.lookup(identifier);
+}
+
 // Helper to extract type from an expression for overload resolution
-std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) {
+std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) const {
 	// Handle lambda expressions directly (not wrapped in ExpressionNode)
 	if (expr_node.is<LambdaExpressionNode>()) {
 		const auto& lambda = expr_node.as<LambdaExpressionNode>();
@@ -8165,7 +8186,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 	else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
-		auto symbol = gSymbolTable.lookup(ident.name());
+		auto symbol = this->lookup_symbol(ident.name());
 		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 			const auto& decl = symbol->as<DeclarationNode>();
 			TypeSpecifierNode type = decl.type_node().as<TypeSpecifierNode>();
@@ -8393,13 +8414,17 @@ ParseResult Parser::parse_template_declaration() {
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			// Add ALL template parameters to the name list (Type, NonType, and Template)
+			// This allows them to be recognized when referenced in the template body
+			template_param_names.push_back(tparam.name());  // string_view from Token
+			
+			// Only Type parameters need TypeInfo registration
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name_, &type_info);
 				template_type_infos.push_back(&type_info);
-				template_param_names.push_back(tparam.name());  // string_view from Token
 			}
 		}
 	}
@@ -9023,14 +9048,48 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Set flag to indicate we're parsing a template class
 		// This will prevent delayed function bodies from being parsed immediately
+		std::cerr << "DEBUG: About to set parsing_template_class_ = true\n";
+		std::cerr << "DEBUG: Setting template parameter context for class template\n";
+		std::cerr << "DEBUG: template_params.size() = " << template_params.size() << "\n";
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			std::cerr << "DEBUG: template_params[" << i << "] type_name: " << template_params[i].type_name() << "\n";
+			std::cerr << "DEBUG: template_params[" << i << "] is<TemplateParameterNode>: " << template_params[i].is<TemplateParameterNode>() << "\n";
+			if (template_params[i].is<TemplateParameterNode>()) {
+				const auto& tparam = template_params[i].as<TemplateParameterNode>();
+				std::cerr << "DEBUG:   name='" << tparam.name() << "' kind=" << static_cast<int>(tparam.kind()) << "\n";
+			}
+		}
 		parsing_template_class_ = true;
-		current_template_param_names_ = template_param_names;
+		parsing_template_body_ = true;
+		template_param_names_.clear();
+		for (const auto& param : template_params) {
+			if (param.is<TemplateParameterNode>()) {
+				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+				template_param_names_.push_back(tparam.name());
+			}
+		}
+		std::cerr << "DEBUG: Template parameter context set, parsing_template_body_ = " << parsing_template_body_ << "\n";
+		
+		// Set template parameter context for current_template_param_names_
+		std::vector<std::string_view> template_param_names_for_body;
+		for (const auto& param : template_params) {
+			if (param.is<TemplateParameterNode>()) {
+				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+				template_param_names_for_body.push_back(tparam.name());
+			}
+		}
+		current_template_param_names_ = std::move(template_param_names_for_body);
 
 		// Parse class template
 		decl_result = parse_struct_declaration();
 
+		// Clear template parameter context
+		current_template_param_names_.clear();
+
 		// Reset flag
 		parsing_template_class_ = false;
+		parsing_template_body_ = false;
+		template_param_names_.clear();
 		current_template_param_names_.clear();
 	} else {
 		std::cerr << "DEBUG: Parsing function template (not a class template)" << std::endl;
@@ -9138,9 +9197,17 @@ ParseResult Parser::parse_template_declaration() {
 
 		return saved_position.success(template_func_node);
 	} else if (decl_node.is<StructDeclarationNode>()) {
-		// Create a TemplateClassDeclarationNode
+		// Create a TemplateClassDeclarationNode with parameter names for lookup
+		std::vector<std::string_view> param_names;
+		for (const auto& param : template_params) {
+			if (param.is<TemplateParameterNode>()) {
+				param_names.push_back(param.as<TemplateParameterNode>().name());
+			}
+		}
+		
 		auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
 			std::move(template_params),
+			std::move(param_names),
 			decl_node
 		);
 
@@ -9552,17 +9619,72 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 	// Parse template arguments
 	while (true) {
-		// Parse a type
+		// Save position in case type parsing fails
+		TokenPosition saved_pos = save_token_position();
+
+		// First, try to parse an expression (for non-type template parameters)
+		auto expr_result = parse_primary_expression();
+		if (!expr_result.is_error() && expr_result.node().has_value()) {
+			// Successfully parsed an expression - check if it's a numeric literal
+			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
+			if (std::holds_alternative<NumericLiteralNode>(expr)) {
+				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+				const auto& val = lit.value();
+				if (std::holds_alternative<unsigned long long>(val)) {
+					template_args.emplace_back(static_cast<int64_t>(std::get<unsigned long long>(val)));
+					std::cerr << "DEBUG: parse_explicit_template_arguments parsed numeric literal: " 
+					          << std::get<unsigned long long>(val) << "\n";
+					discard_saved_token(saved_pos);
+					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
+				} else if (std::holds_alternative<double>(val)) {
+					template_args.emplace_back(static_cast<int64_t>(std::get<double>(val)));
+					std::cerr << "DEBUG: parse_explicit_template_arguments parsed double literal: " 
+					          << std::get<double>(val) << "\n";
+					discard_saved_token(saved_pos);
+					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
+				} else {
+					std::cerr << "DEBUG: Unsupported numeric literal type\n";
+					restore_token_position(saved_pos);
+					return std::nullopt;
+				}
+				
+				// Check for ',' or '>' after the numeric literal
+				if (!peek_token().has_value()) {
+					std::cerr << "DEBUG: parse_explicit_template_arguments unexpected end of tokens after numeric literal\n";
+					return std::nullopt;
+				}
+
+				if (peek_token()->value() == ">") {
+					consume_token(); // consume '>'
+					break;
+				}
+
+				if (peek_token()->value() == ",") {
+					consume_token(); // consume ','
+					continue;
+				}
+
+				// Unexpected token after numeric literal
+				std::cerr << "DEBUG: parse_explicit_template_arguments unexpected token after numeric literal: '" 
+				          << peek_token()->value() << "'\n";
+				return std::nullopt;
+			}
+
+			// Expression is not a numeric literal - fall through to type parsing
+		}
+
+		// Expression parsing failed or wasn't a numeric literal - try parsing a type
+		restore_token_position(saved_pos);
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
-			// Not a valid type - this might not be template arguments
-			std::cerr << "DEBUG: parse_explicit_template_arguments failed to parse type\n";
+			// Neither type nor expression parsing worked
+			std::cerr << "DEBUG: parse_explicit_template_arguments failed to parse type or expression\n";
 			restore_token_position(saved_pos);
 			return std::nullopt;
 		}
 
-		// Get the type specifier node and make a copy we can modify
-		TypeSpecifierNode type_node = type_result.node()->as<TypeSpecifierNode>();
+		// Successfully parsed a type
+		TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
 		
 		// Check for pointer modifiers (*) - for patterns like T*, T**, etc.
 		while (peek_token().has_value() && peek_token()->value() == "*") {
@@ -10322,9 +10444,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				filled_template_args.push_back(TemplateTypeArg(default_type));
 			}
 		} else if (param.kind() == TemplateParameterKind::NonType) {
-			// For non-type parameters with defaults, we'd need to evaluate the expression
-			// For now, we'll skip this - it requires constant expression evaluation
-			return std::nullopt;
+			// For non-type parameters with defaults, evaluate the expression
+			const ASTNode& default_node = param.default_value();
+			if (default_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr = default_node.as<ExpressionNode>();
+				if (std::holds_alternative<NumericLiteralNode>(expr)) {
+					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+					const auto& val = lit.value();
+					if (std::holds_alternative<unsigned long long>(val)) {
+						int64_t int_val = static_cast<int64_t>(std::get<unsigned long long>(val));
+						filled_template_args.push_back(TemplateTypeArg(int_val));
+					} else if (std::holds_alternative<double>(val)) {
+						int64_t int_val = static_cast<int64_t>(std::get<double>(val));
+						filled_template_args.push_back(TemplateTypeArg(int_val));
+					}
+				}
+			}
 		}
 	}
 	
@@ -10382,6 +10517,68 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
+		// Handle array size substitution for non-type template parameters
+		std::optional<ASTNode> substituted_array_size;
+		if (decl.is_array()) {
+			if (decl.array_size().has_value()) {
+				const ASTNode& array_size_node = *decl.array_size();
+				
+				// The array size might be stored directly or wrapped in different node types
+				// Try to extract the identifier or value from various possible representations
+				std::optional<std::string_view> identifier_name;
+				std::optional<int64_t> literal_value;
+				
+				// Check if it's an ExpressionNode
+				if (array_size_node.is<ExpressionNode>()) {
+					const ExpressionNode& expr = array_size_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const IdentifierNode& ident = std::get<IdentifierNode>(expr);
+						identifier_name = ident.name();
+					} else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+						identifier_name = tparam_ref.param_name();
+					} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
+						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+						const auto& val = lit.value();
+						if (std::holds_alternative<unsigned long long>(val)) {
+							literal_value = static_cast<int64_t>(std::get<unsigned long long>(val));
+						}
+					}
+				}
+				// Check if it's a direct IdentifierNode (shouldn't happen, but be safe)
+				else if (array_size_node.is<IdentifierNode>()) {
+					const IdentifierNode& ident = array_size_node.as<IdentifierNode>();
+					identifier_name = ident.name();
+				}
+				
+				// If we found an identifier, try to substitute it with a non-type template parameter value
+				if (identifier_name.has_value()) {
+					// Try to find which non-type template parameter this is
+					for (size_t i = 0; i < template_params.size(); ++i) {
+						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+						if (tparam.kind() == TemplateParameterKind::NonType && tparam.name() == *identifier_name) {
+							// Found the non-type parameter - substitute with the actual value
+							if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
+								// Create a numeric literal node with the substituted value
+								int64_t val = template_args_to_use[i].value;
+								Token num_token(Token::Type::Literal, std::to_string(val), 0, 0, 0);
+								auto num_literal = emplace_node<ExpressionNode>(
+									NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 32)
+								);
+								substituted_array_size = num_literal;
+								break;
+							}
+						}
+					}
+				}
+			}
+			
+			// If we didn't substitute, keep the original array size
+			if (!substituted_array_size.has_value()) {
+				substituted_array_size = decl.array_size();
+			}
+		}
+
 		// Create the substituted type specifier
 		auto substituted_type = emplace_node<TypeSpecifierNode>(
 			member_type,
@@ -10399,8 +10596,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
 
-		// Add to struct layout
-		size_t member_size = get_type_size_bits(member_type) / 8;
+		// Calculate member size - for arrays, multiply element size by array size
+		size_t member_size;
+		if (substituted_array_size.has_value()) {
+			// Extract the array size value
+			size_t array_size = 1;
+			const ASTNode& size_node = *substituted_array_size;
+			if (size_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr = size_node.as<ExpressionNode>();
+				if (std::holds_alternative<NumericLiteralNode>(expr)) {
+					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+					const auto& val = lit.value();
+					if (std::holds_alternative<unsigned long long>(val)) {
+						array_size = static_cast<size_t>(std::get<unsigned long long>(val));
+					}
+				}
+			}
+			member_size = (get_type_size_bits(member_type) / 8) * array_size;
+		} else {
+			member_size = get_type_size_bits(member_type) / 8;
+		}
 		size_t member_alignment = get_type_alignment(member_type, member_size);
 
 		struct_info->addMember(
@@ -11082,7 +11297,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			
 			// Also push member function context for good measure
 			// Try to find the StructDeclarationNode in the symbol table
-			auto struct_symbol_opt = gSymbolTable.lookup(struct_name);
+			auto struct_symbol_opt = lookup_symbol(struct_name);
 			StructDeclarationNode* struct_node_ptr = nullptr;
 			if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
 				struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());

@@ -110,6 +110,18 @@ public:
         return *this;
     }
 
+    StringBuilder& operator+=(std::string_view sv) {
+        return append(sv);
+    }
+
+    StringBuilder& operator+=(char c) {
+        return append(c);
+    }
+
+    StringBuilder& operator+=(int value) {
+        return append(value);
+    }
+
     std::string_view commit() {
         size_t len = write_ptr_ - buf_start_;
         append('\0');

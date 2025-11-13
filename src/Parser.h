@@ -298,6 +298,10 @@ private:
         bool parsing_template_class_ = false;
         std::vector<std::string_view> current_template_param_names_;  // Names of current template parameters - from Token storage
 
+        // Track if we're parsing a template body (for template parameter reference recognition)
+        bool parsing_template_body_ = false;
+        std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
+
         // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
         std::vector<ASTNode> pending_struct_variables_;
 
@@ -445,7 +449,33 @@ public:  // Public methods for template instantiation
         std::optional<size_t> parse_alignas_specifier();  // Parse alignas(n) and return alignment value
 
         // Helper to extract type from an expression for overload resolution
-        static std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
+        std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node) const;
+
+        // Check if an identifier name is a template parameter in current scope
+        bool is_template_parameter(std::string_view name) const;
+       
+        // Lookup symbol with template parameter checking
+        std::optional<ASTNode> lookup_symbol_with_template_check(std::string_view identifier);
+
+        // Unified symbol lookup that automatically provides template parameters when parsing templates
+        std::optional<ASTNode> lookup_symbol(std::string_view identifier) const {
+            if (parsing_template_body_ && !current_template_param_names_.empty()) {
+                return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+            } else {
+                return gSymbolTable.lookup(identifier);
+            }
+        }
+
+        // Overload for qualified lookups
+        std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
+            if (parsing_template_body_ && !current_template_param_names_.empty()) {
+                // For qualified lookups, we still need template params for the base lookup
+                // But qualified lookups are less common in template bodies
+                return gSymbolTable.lookup_qualified(namespaces, identifier);
+            } else {
+                return gSymbolTable.lookup_qualified(namespaces, identifier);
+            }
+        }
 
         TokenPosition save_token_position();
         void restore_token_position(const TokenPosition& token_position, const std::source_location location = std::source_location::current());

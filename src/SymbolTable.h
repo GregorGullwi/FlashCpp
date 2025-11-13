@@ -5,7 +5,9 @@
 #include <stack>
 #include <optional>
 #include <vector>
+#include <functional>
 #include "AstNodeTypes.h"
+#include "Token.h"
 #include "StackString.h"
 
 enum class ScopeType {
@@ -213,6 +215,21 @@ public:
 		return lookup(identifier, get_current_scope_handle());
 	}
 
+	// Lookup with template parameter checking callback
+	std::optional<ASTNode> lookup_with_template_check(std::string_view identifier, std::function<bool(std::string_view)> is_template_param) const {
+		// First check if it's a template parameter
+		if (is_template_param(identifier)) {
+			// Return a special marker - the caller should create a TemplateParameterReferenceNode
+			return std::nullopt;  // We'll handle this in the caller
+		}
+
+		// Otherwise, do normal lookup
+		return lookup(identifier);
+	}
+
+	// Check if an identifier is a template parameter (called from Parser)
+	bool is_template_parameter(std::string_view name) const;
+
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		// Build the current namespace path once (for efficiency)
 		NamespacePath current_ns_path;
@@ -295,6 +312,26 @@ public:
 		}
 
 		return std::nullopt;
+	}
+
+	// Overload that accepts template parameters (eliminates global callback)
+	std::optional<ASTNode> lookup(std::string_view identifier, 
+								 ScopeHandle scope_limit_handle,
+								 const std::vector<std::string_view>* template_params) const {
+		// Check if this is a template parameter
+		if (template_params) {
+			auto it = std::find(template_params->begin(), template_params->end(), identifier);
+			if (it != template_params->end()) {
+				// This is a template parameter - create a TemplateParameterReferenceNode
+				std::cerr << "DEBUG: SymbolTable lookup found template parameter '" << identifier 
+				          << "' in provided template params, creating TemplateParameterReferenceNode\n";
+				Token token(Token::Type::Identifier, std::string(identifier), 0, 0, 0);
+				return ASTNode::emplace_node<TemplateParameterReferenceNode>(identifier, token);
+			}
+		}
+
+		// Otherwise, use the regular lookup
+		return lookup(identifier, scope_limit_handle);
 	}
 
 	// New method to get all overloads of a function

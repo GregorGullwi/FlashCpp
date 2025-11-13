@@ -12,6 +12,7 @@
 
 // Full type representation for template arguments
 // Captures base type, references, pointers, cv-qualifiers, etc.
+// Can also represent non-type template parameters (values)
 struct TemplateTypeArg {
 	Type base_type;
 	TypeIndex type_index;  // For user-defined types
@@ -19,22 +20,41 @@ struct TemplateTypeArg {
 	bool is_rvalue_reference;
 	size_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
+
+	// For non-type template parameters
+	bool is_value;  // true if this represents a value instead of a type
+	int64_t value;  // the value for non-type parameters
 	
-	TemplateTypeArg() 
+	TemplateTypeArg()
 		: base_type(Type::Invalid)
 		, type_index(0)
 		, is_reference(false)
 		, is_rvalue_reference(false)
 		, pointer_depth(0)
-		, cv_qualifier(CVQualifier::None) {}
-	
+		, cv_qualifier(CVQualifier::None)
+		, is_value(false)
+		, value(0) {}
+
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
 		, type_index(type_spec.type_index())
 		, is_reference(type_spec.is_reference())
 		, is_rvalue_reference(type_spec.is_rvalue_reference())
 		, pointer_depth(type_spec.pointer_depth())
-		, cv_qualifier(type_spec.cv_qualifier()) {}
+		, cv_qualifier(type_spec.cv_qualifier())
+		, is_value(false)
+		, value(0) {}
+
+	// Constructor for non-type template parameters
+	explicit TemplateTypeArg(int64_t val)
+		: base_type(Type::Int)  // Default to int for values
+		, type_index(0)
+		, is_reference(false)
+		, is_rvalue_reference(false)
+		, pointer_depth(0)
+		, cv_qualifier(CVQualifier::None)
+		, is_value(true)
+		, value(val) {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		return base_type == other.base_type &&
@@ -42,13 +62,20 @@ struct TemplateTypeArg {
 		       is_reference == other.is_reference &&
 		       is_rvalue_reference == other.is_rvalue_reference &&
 		       pointer_depth == other.pointer_depth &&
-		       cv_qualifier == other.cv_qualifier;
+		       cv_qualifier == other.cv_qualifier &&
+		       is_value == other.is_value &&
+		       (!is_value || value == other.value);  // Only compare value if it's a value
 	}
 	
 	// Get string representation for mangling
 	std::string toString() const {
+		if (is_value) {
+			// For values, just return the value as string
+			return std::to_string(value);
+		}
+
 		std::string result;
-		
+
 		// Add const/volatile prefix if present
 		if ((static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
 			result += "C";  // const
@@ -56,7 +83,7 @@ struct TemplateTypeArg {
 		if ((static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
 			result += "V";  // volatile
 		}
-		
+
 		// Add base type name
 		switch (base_type) {
 			case Type::Int: result += "int"; break;
@@ -74,19 +101,19 @@ struct TemplateTypeArg {
 			case Type::UnsignedChar: result += "uchar"; break;
 			default: result += "unknown"; break;
 		}
-		
+
 		// Add pointer markers
 		for (size_t i = 0; i < pointer_depth; ++i) {
 			result += "P";  // P for pointer
 		}
-		
+
 		// Add reference markers
 		if (is_rvalue_reference) {
 			result += "RR";  // rvalue reference
 		} else if (is_reference) {
 			result += "R";   // lvalue reference
 		}
-		
+
 		return result;
 	}
 };
@@ -100,6 +127,10 @@ struct TemplateTypeArgHash {
 		hash ^= std::hash<bool>{}(arg.is_rvalue_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<size_t>{}(arg.pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.cv_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<bool>{}(arg.is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		if (arg.is_value) {
+			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
 		return hash;
 	}
 };
@@ -325,6 +356,21 @@ public:
 		std::string key(name);
 		templates_[key] = template_node;
 	}
+
+	// Register template parameter names for a template
+	void registerTemplateParameters(std::string_view name, const std::vector<std::string_view>& param_names) {
+		std::string key(name);
+		template_parameters_[key] = std::vector<std::string_view>(param_names.begin(), param_names.end());
+	}
+
+	// Get template parameter names for a template
+	std::vector<std::string_view> getTemplateParameters(std::string_view name) const {
+		auto it = template_parameters_.find(std::string(name));
+		if (it != template_parameters_.end()) {
+			return it->second;
+		}
+		return {};
+	}
 	
 	// Look up a template by name
 	std::optional<ASTNode> lookupTemplate(std::string_view name) const {
@@ -503,6 +549,7 @@ public:
 	// Clear all templates and instantiations
 	void clear() {
 		templates_.clear();
+		template_parameters_.clear();
 		instantiations_.clear();
 		out_of_line_members_.clear();
 		specializations_.clear();
@@ -512,6 +559,9 @@ public:
 private:
 	// Map from template name to template declaration node
 	std::unordered_map<std::string, ASTNode> templates_;
+
+	// Map from template name to template parameter names
+	std::unordered_map<std::string, std::vector<std::string_view>> template_parameters_;
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
