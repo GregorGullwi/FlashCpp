@@ -7069,7 +7069,8 @@ ParseResult Parser::parse_primary_expression()
 	if (result.has_value())
 		return ParseResult::success(*result);
 
-	return ParseResult::success();
+	// No result was produced - this should not happen in a well-formed expression
+	return ParseResult();  // Return monostate instead of empty success
 }
 
 ParseResult Parser::parse_for_loop() {
