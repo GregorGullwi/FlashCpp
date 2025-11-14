@@ -392,6 +392,13 @@ public:  // Public methods for template instantiation
 		const std::vector<Type>& concrete_types,
 		std::string_view struct_name = "",  // Optional: for member functions
 		TypeIndex struct_type_index = 0     // Optional: for member functions
+	);
+
+	// Substitute template parameters in an AST node with concrete types/values
+	ASTNode substituteTemplateParameters(
+		const ASTNode& node,
+		const std::vector<ASTNode>& template_params,
+		const std::vector<TemplateArgument>& template_args
 	);private:  // Resume private methods
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();

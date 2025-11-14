@@ -21,9 +21,6 @@
 
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
-
-// Global callback for template parameter checking
-std::function<bool(std::string_view)> gIsTemplateParameterCallback;
 ChunkedStringAllocator gChunkedStringAllocator;
 TemplateRegistry gTemplateRegistry;
 
@@ -6377,8 +6374,11 @@ ParseResult Parser::parse_primary_expression()
 					}
 				}
 			}
+			// Check if this is a template parameter (for constructor calls like T(...))
+			bool is_template_parameter = identifierType->is<TemplateParameterReferenceNode>();
+			
 			bool is_function_call = peek_token().has_value() && peek_token()->value() == "(" &&
-			                        (is_function_decl || is_function_pointer || has_operator_call || explicit_template_args.has_value());
+			                        (is_function_decl || is_function_pointer || has_operator_call || explicit_template_args.has_value() || is_template_parameter);
 
 			if (is_function_call && consume_punctuator("("sv)) {
 				if (!peek_token().has_value())
@@ -6437,6 +6437,15 @@ ParseResult Parser::parse_primary_expression()
 					Token operator_token(Token::Type::Identifier, "operator()", idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 					result = emplace_node<ExpressionNode>(MemberFunctionCallNode(object_expr, *operator_call_func, std::move(args), operator_token));
 				}
+				// For template parameter constructor calls, create ConstructorCallNode
+				else if (is_template_parameter) {
+					// This is a constructor call: T(args)
+					const auto& template_param = identifierType->as<TemplateParameterReferenceNode>();
+					// Create a TypeSpecifierNode for the template parameter
+					Token param_token(Token::Type::Identifier, template_param.param_name(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
+					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+				}
 				// For function pointers, skip overload resolution and create FunctionCallNode directly
 				else if (is_function_pointer) {
 					const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
@@ -6446,78 +6455,57 @@ ParseResult Parser::parse_primary_expression()
 					result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 				}
 				else {
-					// Perform overload resolution for regular functions
-					// First, get all overloads of this function
-					auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
-
-					std::cerr << "DEBUG [function call]: lookup_all for '" << idenfifier_token.value() << "' returned " << all_overloads.size() << " overloads" << std::endl;
-					for (size_t i = 0; i < all_overloads.size(); ++i) {
-						std::cerr << "  overload " << i << ": ";
-						if (all_overloads[i].is<DeclarationNode>()) {
-							const auto& decl = all_overloads[i].as<DeclarationNode>();
-							std::cerr << "DeclarationNode - " << decl.identifier_token().value();
-						} else if (all_overloads[i].is<FunctionDeclarationNode>()) {
-							const auto& func = all_overloads[i].as<FunctionDeclarationNode>();
-							std::cerr << "FunctionDeclarationNode - " << func.decl_node().identifier_token().value();
+					// Check if this is a constructor call on a template parameter
+					if (result.has_value() && result->is<ExpressionNode>()) {
+						const ExpressionNode& expr = result->as<ExpressionNode>();
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							// This is a constructor call: T(args)
+							const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
+							// Create a TypeSpecifierNode for the template parameter
+							Token param_token(Token::Type::Identifier, template_param.param_name(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
+							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
 						} else {
-							std::cerr << "Other node type";
-						}
-						std::cerr << std::endl;
-					}
+							// Perform overload resolution for regular functions
+							// First, get all overloads of this function
+							auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
 
-					// Extract argument types
-					std::vector<TypeSpecifierNode> arg_types;
-					for (size_t i = 0; i < args.size(); ++i) {
-						auto arg_type = get_expression_type(args[i]);
-						if (!arg_type.has_value()) {
-							// If we can't determine the type, fall back to old behavior
-							const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
-							if (!decl_ptr) {
-								return ParseResult::error("Invalid function declaration", idenfifier_token);
-							}
-							result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
-							break;
-						}
-						arg_types.push_back(*arg_type);
-					}
-
-					// If we successfully extracted all argument types, perform overload resolution
-					if (!result.has_value() && arg_types.size() == args.size()) {
-						// If explicit template arguments were provided, use them directly
-						if (explicit_template_args.has_value()) {
-							auto instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *explicit_template_args);
-							if (instantiated_func.has_value()) {
-								// Successfully instantiated template
-								const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
-								if (!decl_ptr) {
-									return ParseResult::error("Invalid template instantiation", idenfifier_token);
+							std::cerr << "DEBUG [function call]: lookup_all for '" << idenfifier_token.value() << "' returned " << all_overloads.size() << " overloads" << std::endl;
+							for (size_t i = 0; i < all_overloads.size(); ++i) {
+								std::cerr << "  overload " << i << ": ";
+								if (all_overloads[i].is<DeclarationNode>()) {
+									const auto& decl = all_overloads[i].as<DeclarationNode>();
+									std::cerr << "DeclarationNode - " << decl.identifier_token().value();
+								} else if (all_overloads[i].is<FunctionDeclarationNode>()) {
+									const auto& func = all_overloads[i].as<FunctionDeclarationNode>();
+									std::cerr << "FunctionDeclarationNode - " << func.decl_node().identifier_token().value();
+								} else {
+									std::cerr << "Other node type";
 								}
-								result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
-							} else {
-								return ParseResult::error("No matching template for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+								std::cerr << std::endl;
 							}
-						} else {
-							// No explicit template arguments - try overload resolution first
-							if (all_overloads.empty()) {
-								// No overloads found - try template instantiation
-								auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
-								if (instantiated_func.has_value()) {
-									// Successfully instantiated template
-									const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
+
+							// Extract argument types
+							std::vector<TypeSpecifierNode> arg_types;
+							for (size_t i = 0; i < args.size(); ++i) {
+								auto arg_type = get_expression_type(args[i]);
+								if (!arg_type.has_value()) {
+									// If we can't determine the type, fall back to old behavior
+									const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 									if (!decl_ptr) {
-										return ParseResult::error("Invalid template instantiation", idenfifier_token);
+										return ParseResult::error("Invalid function declaration", idenfifier_token);
 									}
 									result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
-								} else {
-									return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+									break;
 								}
-							} else {
-								// Have overloads - do overload resolution
-								auto resolution_result = resolve_overload(all_overloads, arg_types);
+								arg_types.push_back(*arg_type);
+							}
 
-								if (!resolution_result.has_match) {
-									// No matching regular function found - try template instantiation with deduction
-									auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+							// If we successfully extracted all argument types, perform overload resolution
+							if (!result.has_value() && arg_types.size() == args.size()) {
+								// If explicit template arguments were provided, use them directly
+								if (explicit_template_args.has_value()) {
+									auto instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *explicit_template_args);
 									if (instantiated_func.has_value()) {
 										// Successfully instantiated template
 										const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
@@ -6526,18 +6514,52 @@ ParseResult Parser::parse_primary_expression()
 										}
 										result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 									} else {
-										return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+										return ParseResult::error("No matching template for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 									}
-								} else if (resolution_result.is_ambiguous) {
-									return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 								} else {
-									// Get the selected overload
-									const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
-									if (!decl_ptr) {
-										return ParseResult::error("Invalid function declaration", idenfifier_token);
-									}
+									// No explicit template arguments - try overload resolution first
+									if (all_overloads.empty()) {
+										// No overloads found - try template instantiation
+										auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+										if (instantiated_func.has_value()) {
+											// Successfully instantiated template
+											const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
+											if (!decl_ptr) {
+												return ParseResult::error("Invalid template instantiation", idenfifier_token);
+											}
+											result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+										} else {
+											return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+										}
+									} else {
+										// Have overloads - do overload resolution
+										auto resolution_result = resolve_overload(all_overloads, arg_types);
 
-									result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+										if (!resolution_result.has_match) {
+											// No matching regular function found - try template instantiation with deduction
+											auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+											if (instantiated_func.has_value()) {
+												// Successfully instantiated template
+												const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
+												if (!decl_ptr) {
+													return ParseResult::error("Invalid template instantiation", idenfifier_token);
+												}
+												result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+											} else {
+												return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+											}
+										} else if (resolution_result.is_ambiguous) {
+											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+										} else {
+											// Get the selected overload
+											const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
+											if (!decl_ptr) {
+												return ParseResult::error("Invalid function declaration", idenfifier_token);
+											}
+
+											result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+										}
+									}
 								}
 							}
 						}
@@ -10775,13 +10797,202 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
 	
 	// Copy member functions from the template
+	std::cerr << "DEBUG: Copying " << class_decl.member_functions().size() << " member functions from primary template\n";
 	for (const StructMemberFunctionDecl& mem_func : class_decl.member_functions()) {
-		const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
-		const DeclarationNode& decl = func_decl.decl_node();
-		instantiated_struct_ref.add_member_function(
-			mem_func.function_declaration,
-			mem_func.access
-		);
+		std::cerr << "DEBUG: Processing member function, is_constructor=" << mem_func.is_constructor 
+		          << " is_destructor=" << mem_func.is_destructor << "\n";
+
+		if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			const DeclarationNode& decl = func_decl.decl_node();
+			std::cerr << "DEBUG: Copying member function: " << decl.identifier_token().value()
+			          << " has_definition=" << func_decl.get_definition().has_value() << "\n";
+
+			// If the function has a definition, we need to substitute template parameters
+			if (func_decl.get_definition().has_value()) {
+				std::cerr << "DEBUG: Substituting template parameters in member function body\n";
+
+				// Create a new function declaration with substituted body
+				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
+					decl.type_node(), decl.identifier_token()
+				);
+				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+					new_func_decl_ref, instantiated_name
+				);
+
+				// Copy parameters
+				for (const auto& param : func_decl.parameter_nodes()) {
+					new_func_ref.add_parameter_node(param);
+				}
+
+				// Substitute template parameters in the function body
+				// Convert TemplateTypeArg vector to TemplateArgument vector
+				std::vector<TemplateArgument> converted_template_args;
+				for (const auto& ttype_arg : template_args_to_use) {
+					if (ttype_arg.is_value) {
+						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value));
+					} else {
+						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+					}
+				}
+
+				try {
+					std::cerr << "DEBUG: About to call substituteTemplateParameters\n";
+					ASTNode substituted_body = substituteTemplateParameters(
+						*func_decl.get_definition(),
+						template_params,
+						converted_template_args
+					);
+					std::cerr << "DEBUG: substituteTemplateParameters completed successfully\n";
+					new_func_ref.set_definition(substituted_body);
+				} catch (const std::exception& e) {
+					std::cerr << "ERROR: Exception during template parameter substitution for function " 
+					          << decl.identifier_token().value() << ": " << e.what() << "\n";
+					throw;
+				} catch (...) {
+					std::cerr << "ERROR: Unknown exception during template parameter substitution for function " 
+					          << decl.identifier_token().value() << "\n";
+					throw;
+				}
+
+				// Add the substituted function to the instantiated struct
+				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+			} else {
+				// No definition to substitute, copy directly
+				instantiated_struct_ref.add_member_function(
+					mem_func.function_declaration,
+					mem_func.access
+				);
+			}
+		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+			std::cerr << "DEBUG: Copying constructor: " << ctor_decl.name()
+			          << " has_definition=" << ctor_decl.get_definition().has_value() << "\n";
+
+			if (ctor_decl.get_definition().has_value()) {
+				std::cerr << "DEBUG: Substituting template parameters in constructor body\n";
+
+				// Convert TemplateTypeArg vector to TemplateArgument vector
+				std::vector<TemplateArgument> converted_template_args;
+				for (const auto& ttype_arg : template_args_to_use) {
+					if (ttype_arg.is_value) {
+						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value));
+					} else {
+						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+					}
+				}
+
+				try {
+					std::cerr << "DEBUG: About to call substituteTemplateParameters for constructor\n";
+					ASTNode substituted_body = substituteTemplateParameters(
+						*ctor_decl.get_definition(),
+						template_params,
+						converted_template_args
+					);
+					std::cerr << "DEBUG: substituteTemplateParameters completed for constructor\n";
+					
+					// Create a new constructor declaration with substituted body
+					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+						ctor_decl.struct_name(), ctor_decl.name()
+					);
+					
+					// Copy parameters
+					for (const auto& param : ctor_decl.parameter_nodes()) {
+						new_ctor_ref.add_parameter_node(param);
+					}
+					
+					// Copy other properties
+					for (const auto& init : ctor_decl.member_initializers()) {
+						new_ctor_ref.add_member_initializer(init.member_name, init.initializer_expr);
+					}
+					for (const auto& init : ctor_decl.base_initializers()) {
+						new_ctor_ref.add_base_initializer(init.base_class_name, init.arguments);
+					}
+					if (ctor_decl.delegating_initializer().has_value()) {
+						new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
+					}
+					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
+					new_ctor_ref.set_definition(substituted_body);
+					
+					// Add the substituted constructor to the instantiated struct
+					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
+				} catch (const std::exception& e) {
+					std::cerr << "ERROR: Exception during template parameter substitution for constructor " 
+					          << ctor_decl.name() << ": " << e.what() << "\n";
+					throw;
+				} catch (...) {
+					std::cerr << "ERROR: Unknown exception during template parameter substitution for constructor " 
+					          << ctor_decl.name() << "\n";
+					throw;
+				}
+			} else {
+				// No definition to substitute, copy directly
+				instantiated_struct_ref.add_constructor(
+					mem_func.function_declaration,
+					mem_func.access
+				);
+			}
+		} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
+			const DestructorDeclarationNode& dtor_decl = mem_func.function_declaration.as<DestructorDeclarationNode>();
+			std::cerr << "DEBUG: Copying destructor: " << dtor_decl.name()
+			          << " has_definition=" << dtor_decl.get_definition().has_value() << "\n";
+
+			if (dtor_decl.get_definition().has_value()) {
+				std::cerr << "DEBUG: Substituting template parameters in destructor body\n";
+
+				// Convert TemplateTypeArg vector to TemplateArgument vector
+				std::vector<TemplateArgument> converted_template_args;
+				for (const auto& ttype_arg : template_args_to_use) {
+					if (ttype_arg.is_value) {
+						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value));
+					} else {
+						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+					}
+				}
+
+				try {
+					std::cerr << "DEBUG: About to call substituteTemplateParameters for destructor\n";
+					ASTNode substituted_body = substituteTemplateParameters(
+						*dtor_decl.get_definition(),
+						template_params,
+						converted_template_args
+					);
+					std::cerr << "DEBUG: substituteTemplateParameters completed for destructor\n";
+					
+					// Create a new destructor declaration with substituted body
+					auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
+						dtor_decl.struct_name(), dtor_decl.name()
+					);
+					
+					new_dtor_ref.set_definition(substituted_body);
+					
+					// Add the substituted destructor to the instantiated struct
+					instantiated_struct_ref.add_destructor(new_dtor_node, mem_func.access);
+				} catch (const std::exception& e) {
+					std::cerr << "ERROR: Exception during template parameter substitution for destructor " 
+					          << dtor_decl.name() << ": " << e.what() << "\n";
+					throw;
+				} catch (...) {
+					std::cerr << "ERROR: Unknown exception during template parameter substitution for destructor " 
+					          << dtor_decl.name() << "\n";
+					throw;
+				}
+			} else {
+				// No definition to substitute, copy directly
+				instantiated_struct_ref.add_destructor(
+					mem_func.function_declaration,
+					mem_func.access
+				);
+			}
+		} else {
+			std::cerr << "ERROR: Unknown member function type in template instantiation: " 
+			          << mem_func.function_declaration.type_name() << "\n";
+			// Copy directly as fallback
+			instantiated_struct_ref.add_member_function(
+				mem_func.function_declaration,
+				mem_func.access
+			);
+		}
 	}
 
 	// Copy static members from the primary template
@@ -11341,5 +11552,223 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	}
 
 	return block_result.node();
+}
+
+// Substitute template parameters in an AST node with concrete types/values
+// This recursively traverses the AST and replaces TemplateParameterReferenceNode instances
+ASTNode Parser::substituteTemplateParameters(
+	const ASTNode& node,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateArgument>& template_args
+) {
+	// Helper function to get type name as string
+	auto get_type_name = [](Type type) -> std::string {
+		switch (type) {
+			case Type::Void: return "void";
+			case Type::Bool: return "bool";
+			case Type::Char: return "char";
+			case Type::UnsignedChar: return "unsigned char";
+			case Type::Short: return "short";
+			case Type::UnsignedShort: return "unsigned short";
+			case Type::Int: return "int";
+			case Type::UnsignedInt: return "unsigned int";
+			case Type::Long: return "long";
+			case Type::UnsignedLong: return "unsigned long";
+			case Type::LongLong: return "long long";
+			case Type::UnsignedLongLong: return "unsigned long long";
+			case Type::Float: return "float";
+			case Type::Double: return "double";
+			case Type::LongDouble: return "long double";
+			case Type::UserDefined: return "user_defined";  // This should be handled specially
+			default: return "unknown";
+		}
+	};
+
+	// Handle different node types
+	if (node.is<ExpressionNode>()) {
+		const ExpressionNode& expr_node = node.as<ExpressionNode>();
+		const auto& expr = expr_node;
+
+		// Check if this is a TemplateParameterReferenceNode
+		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+			std::string_view param_name = tparam_ref.param_name();
+
+			// Find which template parameter this is
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == param_name) {
+					const TemplateArgument& arg = template_args[i];
+
+					if (arg.kind == TemplateArgument::Kind::Type) {
+						// Create an identifier node for the concrete type
+						Token type_token(Token::Type::Identifier, std::string(get_type_name(arg.type_value)),
+						                tparam_ref.token().line(), tparam_ref.token().column(),
+						                tparam_ref.token().file_index());
+						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
+					} else if (arg.kind == TemplateArgument::Kind::Value) {
+						// Create a numeric literal node for the value
+						Token value_token(Token::Type::Literal, std::to_string(arg.int_value),
+						                 tparam_ref.token().line(), tparam_ref.token().column(),
+						                 tparam_ref.token().file_index());
+						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), Type::Int, TypeQualifier::None, 32));
+					}
+					// For template template parameters, not yet supported
+					break;
+				}
+			}
+
+			// If we couldn't substitute, return the original node
+			return node;
+		}
+
+		// For other expression types, recursively substitute in subexpressions
+		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+			const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr);
+			ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
+			ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
+			return emplace_node<ExpressionNode>(BinaryOperatorNode(bin_op.get_token(), substituted_left, substituted_right));
+		} else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+			const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(expr);
+			ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
+			return emplace_node<ExpressionNode>(UnaryOperatorNode(unary_op.get_token(), substituted_operand, unary_op.is_prefix()));
+		} else if (std::holds_alternative<FunctionCallNode>(expr)) {
+			const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr);
+			ChunkedVector<ASTNode> substituted_args;
+			for (size_t i = 0; i < func_call.arguments().size(); ++i) {
+				substituted_args.push_back(substituteTemplateParameters(func_call.arguments()[i], template_params, template_args));
+			}
+			return emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
+		} else if (std::holds_alternative<MemberAccessNode>(expr)) {
+			const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
+			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
+			return emplace_node<ExpressionNode>(MemberAccessNode(substituted_object, member_access.member_token()));
+		} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
+			const ConstructorCallNode& constructor_call = std::get<ConstructorCallNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);
+			ChunkedVector<ASTNode> substituted_args;
+			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
+				substituted_args.push_back(substituteTemplateParameters(constructor_call.arguments()[i], template_params, template_args));
+			}
+			return emplace_node<ExpressionNode>(ConstructorCallNode(substituted_type, std::move(substituted_args), constructor_call.called_from()));
+		} else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+			const ArraySubscriptNode& array_sub = std::get<ArraySubscriptNode>(expr);
+			ASTNode substituted_array = substituteTemplateParameters(array_sub.array_expr(), template_params, template_args);
+			ASTNode substituted_index = substituteTemplateParameters(array_sub.index_expr(), template_params, template_args);
+			return emplace_node<ExpressionNode>(ArraySubscriptNode(substituted_array, substituted_index, array_sub.bracket_token()));
+		}
+
+		// For other expression types that don't contain subexpressions, return as-is
+		return node;
+
+	} else if (node.is<FunctionCallNode>()) {
+		// Handle function calls that might contain template parameter references
+		const FunctionCallNode& func_call = node.as<FunctionCallNode>();
+
+		// Substitute arguments
+		ChunkedVector<ASTNode> substituted_args;
+		for (size_t i = 0; i < func_call.arguments().size(); ++i) {
+			substituted_args.push_back(substituteTemplateParameters(func_call.arguments()[i], template_params, template_args));
+		}
+
+		// For now, don't substitute the function declaration itself
+		// Create new function call with substituted arguments
+		return emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from());
+
+	} else if (node.is<BinaryOperatorNode>()) {
+		// Handle binary operators
+		const BinaryOperatorNode& bin_op = node.as<BinaryOperatorNode>();
+
+		ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
+		ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
+
+		return emplace_node<BinaryOperatorNode>(bin_op.get_token(), substituted_left, substituted_right);
+
+	} else if (node.is<DeclarationNode>()) {
+		// Handle declarations that might have template parameter types
+		const DeclarationNode& decl = node.as<DeclarationNode>();
+
+		// Substitute the type specifier
+		ASTNode substituted_type = substituteTemplateParameters(decl.type_node(), template_params, template_args);
+
+		// Create new declaration with substituted type
+		return emplace_node<DeclarationNode>(substituted_type, decl.identifier_token());
+
+	} else if (node.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
+
+		// Check if this is a user-defined type that matches a template parameter
+		if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+			std::string_view type_name = type_info.name_;
+
+			// Check if this type name matches a template parameter
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == type_name && template_args[i].kind == TemplateArgument::Kind::Type) {
+					// Substitute with concrete type
+					return emplace_node<TypeSpecifierNode>(
+						template_args[i].type_value,
+						TypeQualifier::None,
+						get_type_size_bits(template_args[i].type_value),
+						Token()
+					);
+				}
+			}
+		}
+
+		return node;
+
+	} else if (node.is<BlockNode>()) {
+		// Handle block nodes by substituting in all statements
+		const BlockNode& block = node.as<BlockNode>();
+		
+		auto new_block = emplace_node<BlockNode>();
+		BlockNode& new_block_ref = new_block.as<BlockNode>();
+		
+		for (size_t i = 0; i < block.get_statements().size(); ++i) {
+			new_block_ref.add_statement_node(substituteTemplateParameters(block.get_statements()[i], template_params, template_args));
+		}
+		
+		return new_block;
+
+	} else if (node.is<ForStatementNode>()) {
+		// Handle for statements
+		const ForStatementNode& for_stmt = node.as<ForStatementNode>();
+		
+		auto init_stmt = for_stmt.get_init_statement().has_value() ? 
+			std::optional<ASTNode>(substituteTemplateParameters(*for_stmt.get_init_statement(), template_params, template_args)) : 
+			std::nullopt;
+		auto condition = for_stmt.get_condition().has_value() ? 
+			std::optional<ASTNode>(substituteTemplateParameters(*for_stmt.get_condition(), template_params, template_args)) : 
+			std::nullopt;
+		auto update_expr = for_stmt.get_update_expression().has_value() ? 
+			std::optional<ASTNode>(substituteTemplateParameters(*for_stmt.get_update_expression(), template_params, template_args)) : 
+			std::nullopt;
+		auto body_stmt = substituteTemplateParameters(for_stmt.get_body_statement(), template_params, template_args);
+		
+		return emplace_node<ForStatementNode>(init_stmt, condition, update_expr, body_stmt);
+
+	} else if (node.is<UnaryOperatorNode>()) {
+		// Handle unary operators
+		const UnaryOperatorNode& unary_op = node.as<UnaryOperatorNode>();
+		
+		ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
+		
+		return emplace_node<UnaryOperatorNode>(unary_op.get_token(), substituted_operand, unary_op.is_prefix());
+
+	} else if (node.is<VariableDeclarationNode>()) {
+		// Handle variable declarations
+		const VariableDeclarationNode& var_decl = node.as<VariableDeclarationNode>();
+		
+		auto initializer = var_decl.initializer().has_value() ?
+			std::optional<ASTNode>(substituteTemplateParameters(*var_decl.initializer(), template_params, template_args)) :
+			std::nullopt;
+		
+		return emplace_node<VariableDeclarationNode>(var_decl.declaration_node(), initializer, var_decl.storage_class());
+	}
+
+	// For other node types, return as-is (simplified implementation)
+	return node;
 }
 

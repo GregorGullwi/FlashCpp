@@ -2084,6 +2084,14 @@ private:
 			const auto& expr = std::get<LambdaExpressionNode>(exprNode);
 			return generateLambdaExpressionIr(expr);
 		}
+		else if (std::holds_alternative<ConstructorCallNode>(exprNode)) {
+			const auto& expr = std::get<ConstructorCallNode>(exprNode);
+			return generateConstructorCallIr(expr);
+		}
+		else if (std::holds_alternative<TemplateParameterReferenceNode>(exprNode)) {
+			const auto& expr = std::get<TemplateParameterReferenceNode>(exprNode);
+			return generateTemplateParameterReferenceIr(expr);
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -2681,6 +2689,102 @@ private:
 				// Generate IR for the RHS value
 				auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
+				// Get array information FIRST to check if it's a member array
+				const ExpressionNode& array_expr = array_subscript.array_expr().as<ExpressionNode>();
+				
+				// Check if this is a member array access: obj.array[index] = value
+				if (std::holds_alternative<MemberAccessNode>(array_expr)) {
+					const MemberAccessNode& member_access = std::get<MemberAccessNode>(array_expr);
+					const ASTNode& object_node = member_access.object();
+					std::string_view member_name = member_access.member_name();
+
+					// Handle this->member[index] or obj.member[index]
+					if (object_node.is<ExpressionNode>()) {
+						const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+							const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
+							std::string_view object_name = object_ident.name();
+
+							// Look up the object in the symbol table
+							const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+							if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+								const auto& decl_node = symbol->as<DeclarationNode>();
+								const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+
+								if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) {
+									// Get the struct type info
+									TypeIndex struct_type_index = type_node.type_index();
+									if (struct_type_index < gTypeInfo.size()) {
+										const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+										const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+										
+										if (struct_info) {
+											const StructMember* member = struct_info->findMember(std::string(member_name));
+											if (member) {
+												// Get index information
+												auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
+
+												// Determine element type and size
+												// For arrays, member->type is the array element type
+												// member->size is the total array size in bytes
+												// Calculate element size from member type
+												Type element_type = member->type;
+												int element_size_bytes = 0;
+												
+												// Get element size based on type
+												if (element_type == Type::Int || element_type == Type::UnsignedInt) {
+													element_size_bytes = 4;
+												} else if (element_type == Type::Long || element_type == Type::UnsignedLong) {
+													element_size_bytes = 8;
+												} else if (element_type == Type::Short || element_type == Type::UnsignedShort) {
+													element_size_bytes = 2;
+												} else if (element_type == Type::Char || element_type == Type::UnsignedChar) {
+													element_size_bytes = 1;
+												} else if (element_type == Type::Bool) {
+													element_size_bytes = 1;
+												} else if (element_type == Type::Float) {
+													element_size_bytes = 4;
+												} else if (element_type == Type::Double) {
+													element_size_bytes = 8;
+												} else if (element_type == Type::Struct || element_type == Type::UserDefined) {
+													// For struct types, get size from type info
+													if (member->type_index < gTypeInfo.size()) {
+														const TypeInfo& elem_type_info = gTypeInfo[member->type_index];
+														if (elem_type_info.getStructInfo()) {
+															element_size_bytes = static_cast<int>(elem_type_info.getStructInfo()->total_size);
+														}
+													}
+												}
+												
+												int element_size = element_size_bytes * 8;  // Convert to bits
+
+												// Build ArrayStore IR operands for member array
+												// Format: [element_type, element_size, object_name.member_name, index_type, index_size, index_value, value]
+												std::vector<IrOperand> arrayStoreOperands;
+												arrayStoreOperands.emplace_back(element_type);                           // element type
+												arrayStoreOperands.emplace_back(element_size);                          // element size
+												arrayStoreOperands.emplace_back(std::string(object_name) + "." + std::string(member_name)); // qualified name
+												arrayStoreOperands.emplace_back(std::get<Type>(indexIrOperands[0]));   // index type
+												arrayStoreOperands.emplace_back(std::get<int>(indexIrOperands[1]));    // index size
+												arrayStoreOperands.emplace_back(indexIrOperands[2]);                    // index value
+												arrayStoreOperands.emplace_back(rhsIrOperands[2]);                      // value to store
+
+												ir_.addInstruction(IrOpcode::ArrayStore, std::move(arrayStoreOperands), binaryOperatorNode.get_token());
+
+												// Return the RHS value as the result
+												return rhsIrOperands;
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					// If we couldn't handle the member array access, fall through to error
+					return { Type::Int, 32, TempVar{0} };
+				}
+				
+				// NOT a member array - handle as regular array subscript
 				// Generate IR for the array subscript to get the address
 				auto arrayAccessIrOperands = generateArraySubscriptIr(array_subscript);
 
@@ -2689,8 +2793,6 @@ private:
 				// We need to generate an ArrayStore instruction
 				// Format: [element_type, element_size, array_name, index_type, index_size, index_value, value]
 
-				// Get array information
-				const ExpressionNode& array_expr = array_subscript.array_expr().as<ExpressionNode>();
 				if (!std::holds_alternative<IdentifierNode>(array_expr)) {
 					// Error: array must be an identifier for now
 					return { Type::Int, 32, TempVar{0} };
@@ -5081,6 +5183,58 @@ private:
 
 		// Exit function scope
 		symbol_table.exit_scope();
+	}
+
+	std::vector<IrOperand> generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
+		// This should not happen during normal code generation - template parameters should be substituted
+		// during template instantiation. If we get here, it means template instantiation failed.
+		std::string param_name = std::string(templateParamRefNode.param_name());
+		std::cerr << "Error: Template parameter '" << param_name << "' was not substituted during template instantiation\n";
+		std::cerr << "This indicates a bug in template instantiation - template parameters should be replaced with concrete types/values\n";
+		assert(false && "Template parameter reference found during code generation - should have been substituted");
+		return {};
+	}
+
+	std::vector<IrOperand> generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
+		std::vector<IrOperand> irOperands;
+
+		// Get the type being constructed
+		const ASTNode& type_node = constructorCallNode.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			assert(false && "Constructor call type node must be a TypeSpecifierNode");
+			return {};
+		}
+
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+
+		// For constructor calls, we need to generate a function call to the constructor
+		// In C++, constructors are named after the class
+		std::string constructor_name;
+		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+			// Use the type name as the constructor name
+			constructor_name = gTypeInfo[type_spec.type_index()].name_;
+		} else {
+			// For basic types, constructors might not exist, but we can handle them as value construction
+			// For now, treat as a regular function call
+			constructor_name = gTypeInfo[type_spec.type_index()].name_;
+		}
+
+		// Create a temporary variable for the result (the constructed object)
+		TempVar ret_var = var_counter.next();
+		irOperands.emplace_back(ret_var);
+		irOperands.emplace_back(constructor_name);
+
+		// Generate IR for constructor arguments
+		constructorCallNode.arguments().visit([&](ASTNode argument) {
+			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+			irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+		});
+
+		// Add the constructor call instruction
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), constructorCallNode.called_from()));
+
+		// Return the result variable with the constructed type
+		return { type_spec.type(), static_cast<int>(type_spec.size_in_bits()), ret_var };
 	}
 
 };

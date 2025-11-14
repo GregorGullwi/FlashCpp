@@ -5779,8 +5779,13 @@ private:
 		std::string array_name;
 		if (instruction.isOperandType<std::string_view>(3)) {
 			array_name = std::string(instruction.getOperandAs<std::string_view>(3));
+		} else if (instruction.isOperandType<std::string>(3)) {
+			array_name = instruction.getOperandAs<std::string>(3);
 		} else {
-			assert(false && "Array must be an identifier for now");
+			// Debug: print what type we actually got
+			std::cerr << "ERROR in handleArrayAccess: operand 3 is neither string_view nor std::string\n";
+			std::cerr << "Operand count: " << instruction.getOperandCount() << "\n";
+			assert(false && "Array must be an identifier or qualified name");
 		}
 
 		// Get the index value (could be a constant or a temp var)
@@ -5789,14 +5794,31 @@ private:
 		// Calculate element size in bytes
 		int element_size_bytes = element_size_bits / 8;
 
+		// Check if this is a member array access (object.member format)
+		bool is_member_array = array_name.find('.') != std::string::npos;
+		std::string_view array_name_view(array_name);
+		std::string_view object_name;
+		std::string_view member_name;
+		int64_t member_offset = 0;
+
+		if (is_member_array) {
+			// Parse object.member
+			size_t dot_pos = array_name_view.find('.');
+			object_name = array_name_view.substr(0, dot_pos);
+			member_name = array_name_view.substr(dot_pos + 1);
+			// member_offset will be 0 for now - needs proper struct lookup
+		}
+
+		std::string_view lookup_name = is_member_array ? object_name : array_name_view;
+		int64_t array_base_offset = variable_scopes.back().identifier_offset[lookup_name];
+
 		// Load index into a register (RAX)
 		if (instruction.isOperandType<unsigned long long>(6)) {
 			// Constant index
 			uint64_t index_value = instruction.getOperandAs<unsigned long long>(6);
 
-			// Calculate offset directly: base_offset + (index * element_size)
-			int64_t array_base_offset = variable_scopes.back().identifier_offset[array_name];
-			int64_t element_offset = array_base_offset - (index_value * element_size_bytes);
+			// Calculate offset directly: base_offset + member_offset + (index * element_size)
+			int64_t element_offset = array_base_offset + member_offset - (index_value * element_size_bytes);
 
 			// Load from [RBP + offset] into RAX
 			// MOV RAX, [RBP + offset]
@@ -5818,7 +5840,6 @@ private:
 			// Variable index - need to compute address at runtime
 			TempVar index_var = instruction.getOperandAs<TempVar>(6);
 			int64_t index_var_offset = getStackOffsetFromTempVar(index_var);
-			int64_t array_base_offset = variable_scopes.back().identifier_offset[array_name];
 
 			// Load index into RCX: MOV RCX, [RBP + index_offset]
 			textSectionData.push_back(0x48); // REX.W
@@ -5858,15 +5879,16 @@ private:
 				textSectionData.push_back((size_u32 >> 24) & 0xFF);
 			}
 
-			// Load array base address into RAX: LEA RAX, [RBP + array_base_offset]
+			// Load array base address into RAX: LEA RAX, [RBP + array_base_offset + member_offset]
+			int64_t combined_offset = array_base_offset + member_offset;
 			textSectionData.push_back(0x48); // REX.W
 			textSectionData.push_back(0x8D); // LEA r64, m
-			if (array_base_offset >= -128 && array_base_offset <= 127) {
+			if (combined_offset >= -128 && combined_offset <= 127) {
 				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-				textSectionData.push_back(static_cast<uint8_t>(array_base_offset));
+				textSectionData.push_back(static_cast<uint8_t>(combined_offset));
 			} else {
 				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-				uint32_t offset_u32 = static_cast<uint32_t>(array_base_offset);
+				uint32_t offset_u32 = static_cast<uint32_t>(combined_offset);
 				textSectionData.push_back(offset_u32 & 0xFF);
 				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
 				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
@@ -5914,12 +5936,38 @@ private:
 		std::string array_name;
 		if (instruction.isOperandType<std::string_view>(2)) {
 			array_name = std::string(instruction.getOperandAs<std::string_view>(2));
+		} else if (instruction.isOperandType<std::string>(2)) {
+			array_name = instruction.getOperandAs<std::string>(2);
 		} else {
 			assert(false && "Array must be an identifier for now");
 		}
 
 		// Calculate element size in bytes
 		int element_size_bytes = element_size_bits / 8;
+
+		// Check if this is a member array access (object.member format)
+		bool is_member_array = array_name.find('.') != std::string::npos;
+		std::string_view array_name_view(array_name);
+		std::string_view object_name;
+		std::string_view member_name;
+		int64_t member_offset = 0;
+
+		if (is_member_array) {
+			// Parse object.member
+			size_t dot_pos = array_name_view.find('.');
+			object_name = array_name_view.substr(0, dot_pos);
+			member_name = array_name_view.substr(dot_pos + 1);
+
+			// Look up the member offset
+			// Get object's type info to find member offset
+			auto it = variable_scopes.back().identifier_offset.find(object_name);
+			if (it != variable_scopes.back().identifier_offset.end()) {
+				// Find member offset in struct layout
+				// For now, we'll need to get this from the struct type info
+				// This is a simplified approach - we'll add proper lookup later
+				member_offset = 0; // Will be computed below when we have struct info access
+			}
+		}
 
 		// Get the value to store
 		X64Register value_reg = X64Register::RAX;
@@ -5945,15 +5993,16 @@ private:
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		}
 
+		// Calculate offset directly: base_offset + member_offset + (index * element_size)
+		// Arrays grow upward in memory (toward higher addresses), so we add the index
+		std::string_view lookup_name = is_member_array ? object_name : array_name_view;
+		int64_t array_base_offset = variable_scopes.back().identifier_offset[lookup_name];
+
 		// Now compute the target address and store
 		if (instruction.isOperandType<unsigned long long>(5)) {
 			// Constant index
 			uint64_t index_value = instruction.getOperandAs<unsigned long long>(5);
-
-			// Calculate offset directly: base_offset + (index * element_size)
-			// Arrays grow upward in memory (toward higher addresses), so we add the index
-			int64_t array_base_offset = variable_scopes.back().identifier_offset[array_name];
-			int64_t element_offset = array_base_offset + (index_value * element_size_bytes);
+			int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 
 			// Store RAX to [RBP + offset]
 			if (element_size_bytes == 1) {
@@ -5987,7 +6036,6 @@ private:
 			// Variable index - need to compute address at runtime
 			TempVar index_var = instruction.getOperandAs<TempVar>(5);
 			int64_t index_var_offset = getStackOffsetFromTempVar(index_var);
-			int64_t array_base_offset = variable_scopes.back().identifier_offset[array_name];
 
 			// Load index into RCX: MOV RCX, [RBP + index_offset]
 			textSectionData.push_back(0x48); // REX.W
@@ -6026,15 +6074,16 @@ private:
 				textSectionData.push_back((size_u32 >> 24) & 0xFF);
 			}
 
-			// Load array base address into RDX: LEA RDX, [RBP + array_base_offset]
+			// Load array base address into RDX: LEA RDX, [RBP + array_base_offset + member_offset]
+			int64_t combined_offset = array_base_offset + member_offset;
 			textSectionData.push_back(0x48); // REX.W
 			textSectionData.push_back(0x8D); // LEA r64, m
-			if (array_base_offset >= -128 && array_base_offset <= 127) {
+			if (combined_offset >= -128 && combined_offset <= 127) {
 				textSectionData.push_back(0x55); // ModR/M: [RBP + disp8], RDX
-				textSectionData.push_back(static_cast<uint8_t>(array_base_offset));
+				textSectionData.push_back(static_cast<uint8_t>(combined_offset));
 			} else {
 				textSectionData.push_back(0x95); // ModR/M: [RBP + disp32], RDX
-				uint32_t offset_u32 = static_cast<uint32_t>(array_base_offset);
+				uint32_t offset_u32 = static_cast<uint32_t>(combined_offset);
 				textSectionData.push_back(offset_u32 & 0xFF);
 				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
 				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
@@ -6546,16 +6595,17 @@ private:
 					textSectionData.push_back(offset_u32 & 0xFF);
 					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
 					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
-			} else {
-				assert(false && "Unsupported member size");
-				return;
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 			}
+		} else {
+			// Array members should use ArrayStore, not MemberStore
+			// If this fires, CodeGen.h is generating incorrect IR - fix it there
+			std::cerr << "ERROR: MemberStore with size " << member_size_bytes << " bytes (array member?)\n";
+			assert(false && "Array elements should use ArrayStore, not MemberStore");
+			return;
 		}
 	}
-
-	void handlePreIncrement(const IrInstruction& instruction) {
+	}	void handlePreIncrement(const IrInstruction& instruction) {
 		// Pre-increment: ++x
 		// Operands: [result_var, type, size, operand]
 		assert(instruction.getOperandCount() == 4 && "PreIncrement must have 4 operands");

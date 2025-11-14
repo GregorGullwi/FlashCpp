@@ -872,6 +872,7 @@ public:
 		: identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix) {}
 
 	std::string_view op() const { return identifier_.value(); }
+	const Token& get_token() const { return identifier_; }
 	auto get_operand() const { return operand_node_; }
 	bool is_prefix() const { return is_prefix_; }
 
@@ -995,6 +996,25 @@ public:
 
 private:
 	DeclarationNode& func_decl_;
+	ChunkedVector<ASTNode> arguments_;
+	Token called_from_;
+};
+
+// Constructor call node - represents constructor calls like T(args)
+class ConstructorCallNode {
+public:
+	explicit ConstructorCallNode(ASTNode type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+		: type_node_(type_node), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+
+	const ASTNode& type_node() const { return type_node_; }
+	const auto& arguments() const { return arguments_; }
+
+	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
+
+	Token called_from() const { return called_from_; }
+
+private:
+	ASTNode type_node_;  // TypeSpecifierNode representing the type being constructed
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 };
@@ -1519,6 +1539,7 @@ public:
 
 	ASTNode object() const { return object_; }
 	std::string_view member_name() const { return member_name_.value(); }
+	const Token& member_token() const { return member_name_; }
 
 private:
 	ASTNode object_;
@@ -1768,7 +1789,7 @@ private:
 };
 
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
-	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, MemberAccessNode, MemberFunctionCallNode,
+	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode>;
 
