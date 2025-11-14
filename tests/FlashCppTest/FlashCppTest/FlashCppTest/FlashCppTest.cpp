@@ -570,13 +570,13 @@ TEST_SUITE("Code gen") {
 
 bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const std::string& file1_path = "", const std::string& file2_path = "") {
 	// Compare section characteristics and flags
-	const auto& sections1 = reader1.get_sections();
-	const auto& sections2 = reader2.get_sections();
+	const COFFI::sections& sections1 = reader1.get_sections();
+	const COFFI::sections& sections2 = reader2.get_sections();
 
 	// Create a map of sections by name for the second reader
 	std::map<std::string, const COFFI::section*> sections2_by_name;
 	for (const auto& sec : sections2) {
-		sections2_by_name[sec->get_name()] = sec;
+		sections2_by_name[sec.get_name()] = &sec;
 	}
 
 	// Compare symbol table
@@ -617,11 +617,11 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 	}
 
 	// Compare relocation entries for .text section
-	auto find_section = [](const COFFI::coffi& reader, const std::string& name) -> COFFI::section* {
+	auto find_section = [](const COFFI::coffi& reader, const std::string& name) -> const COFFI::section* {
 		const auto& sections = reader.get_sections();
 		for (const auto& sec : sections) {
-			if (sec->get_name() == name) {
-				return sec;
+			if (sec.get_name() == name) {
+				return &sec;
 			}
 		}
 		return nullptr;
