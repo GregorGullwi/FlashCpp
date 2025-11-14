@@ -1272,6 +1272,162 @@ struct RegisterAllocator
 	}
 };
 
+/**
+ * @brief Emits x64 opcodes to load a value from [RAX] with size-appropriate instruction.
+ *
+ * Generates the correct load instruction based on element size:
+ * - 1 byte: MOVZX EAX, BYTE PTR [RAX]  (0x0F 0xB6 0x00) - zero-extend byte to 32-bit
+ * - 2 bytes: MOVZX EAX, WORD PTR [RAX] (0x0F 0xB7 0x00) - zero-extend word to 32-bit
+ * - 4 bytes: MOV EAX, DWORD PTR [RAX]  (0x8B 0x00) - 32-bit load (no REX.W prefix)
+ * - 8 bytes: MOV RAX, QWORD PTR [RAX]  (0x48 0x8B 0x00) - 64-bit load (with REX.W prefix)
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param element_size_bytes The size of the element (1, 2, 4, or 8 bytes)
+ */
+inline void emitLoadFromAddressInRAX(std::vector<char>& textSectionData, int element_size_bytes) {
+	if (element_size_bytes == 1) {
+		// MOVZX EAX, BYTE PTR [RAX] - zero-extend byte to 32-bit
+		textSectionData.push_back(0x0F); // Two-byte opcode prefix
+		textSectionData.push_back(0xB6); // MOVZX r32, r/m8
+		textSectionData.push_back(0x00); // ModR/M: [RAX], EAX
+	} else if (element_size_bytes == 2) {
+		// MOVZX EAX, WORD PTR [RAX] - zero-extend word to 32-bit
+		textSectionData.push_back(0x0F); // Two-byte opcode prefix
+		textSectionData.push_back(0xB7); // MOVZX r32, r/m16
+		textSectionData.push_back(0x00); // ModR/M: [RAX], EAX
+	} else if (element_size_bytes == 4) {
+		// MOV EAX, DWORD PTR [RAX] - 32-bit load (no REX.W, zero-extends to 64-bit)
+		textSectionData.push_back(0x8B); // MOV r32, r/m32
+		textSectionData.push_back(0x00); // ModR/M: [RAX], EAX
+	} else {
+		// MOV RAX, QWORD PTR [RAX] - 64-bit load (8 bytes)
+		textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		textSectionData.push_back(0x00); // ModR/M: [RAX], RAX
+	}
+}
+
+/**
+ * @brief Emits x64 opcodes to multiply RCX by element_size_bytes.
+ *
+ * Optimizes for power-of-2 sizes using SHL (bit shift left):
+ * - 1 byte: No operation needed (index already in bytes)
+ * - 2 bytes: SHL RCX, 1  (multiply by 2)
+ * - 4 bytes: SHL RCX, 2  (multiply by 4)
+ * - 8 bytes: SHL RCX, 3  (multiply by 8)
+ * - Other: IMUL RCX, RCX, imm32 (general multiplication)
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param element_size_bytes The size to multiply by (1, 2, 4, 8, or other)
+ */
+inline void emitMultiplyRCXByElementSize(std::vector<char>& textSectionData, int element_size_bytes) {
+	if (element_size_bytes == 1) {
+		// No multiplication needed - index is already in bytes
+		return;
+	} else if (element_size_bytes == 2 || element_size_bytes == 4 || element_size_bytes == 8) {
+		// Use bit shift for powers of 2: SHL RCX, shift_amount
+		int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2 : 3;
+		textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
+		textSectionData.push_back(0xC1); // SHL r/m64, imm8
+		textSectionData.push_back(0xE1); // ModR/M: RCX (11 100 001)
+		textSectionData.push_back(static_cast<uint8_t>(shift_amount)); // Shift amount
+	} else {
+		// General case: IMUL RCX, RCX, element_size_bytes
+		textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
+		textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
+		textSectionData.push_back(0xC9); // ModR/M: RCX, RCX (11 001 001)
+		// Little-endian 32-bit immediate
+		uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
+		textSectionData.push_back(size_u32 & 0xFF);
+		textSectionData.push_back((size_u32 >> 8) & 0xFF);
+		textSectionData.push_back((size_u32 >> 16) & 0xFF);
+		textSectionData.push_back((size_u32 >> 24) & 0xFF);
+	}
+}
+
+/**
+ * @brief Emits x64 opcodes for ADD RAX, RCX.
+ *
+ * Generates: 48 01 C8
+ * - 0x48: REX.W prefix (64-bit operation)
+ * - 0x01: ADD r/m64, r64
+ * - 0xC8: ModR/M byte (11 001 000) = RAX (destination), RCX (source)
+ *
+ * @param textSectionData The vector to append opcodes to
+ */
+inline void emitAddRAXRCX(std::vector<char>& textSectionData) {
+	textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
+	textSectionData.push_back(0x01); // ADD r/m64, r64
+	textSectionData.push_back(0xC8); // ModR/M: RAX (dest), RCX (source)
+}
+
+/**
+ * @brief Emits x64 opcodes to load a variable from stack into RCX.
+ *
+ * Generates MOV RCX, [RBP + offset] with optimal displacement encoding:
+ * - 8-bit displacement if -128 <= offset <= 127
+ * - 32-bit displacement otherwise
+ *
+ * Opcodes:
+ * - 0x48: REX.W prefix (64-bit operation)
+ * - 0x8B: MOV r64, r/m64
+ * - ModR/M: 0x4D (disp8) or 0x8D (disp32) for [RBP + disp], RCX
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param offset The stack offset from RBP (negative for locals)
+ */
+inline void emitLoadIndexIntoRCX(std::vector<char>& textSectionData, int64_t offset) {
+	textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
+	textSectionData.push_back(0x8B); // MOV r64, r/m64
+	
+	if (offset >= -128 && offset <= 127) {
+		// 8-bit displacement
+		textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX (01 001 101)
+		textSectionData.push_back(static_cast<uint8_t>(offset));
+	} else {
+		// 32-bit displacement
+		textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX (10 001 101)
+		uint32_t offset_u32 = static_cast<uint32_t>(offset);
+		textSectionData.push_back(offset_u32 & 0xFF);
+		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+	}
+}
+
+/**
+ * @brief Emits x64 opcodes for LEA RAX, [RBP + offset].
+ *
+ * Load effective address - computes RBP + offset without dereferencing.
+ * Uses optimal displacement encoding (8-bit or 32-bit).
+ *
+ * Opcodes:
+ * - 0x48: REX.W prefix (64-bit operation)
+ * - 0x8D: LEA r64, m
+ * - ModR/M: 0x45 (disp8) or 0x85 (disp32) for [RBP + disp], RAX
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param offset The offset from RBP
+ */
+inline void emitLEAArrayBase(std::vector<char>& textSectionData, int64_t offset) {
+	textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
+	textSectionData.push_back(0x8D); // LEA r64, m
+	
+	if (offset >= -128 && offset <= 127) {
+		// 8-bit displacement
+		textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX (01 000 101)
+		textSectionData.push_back(static_cast<uint8_t>(offset));
+	} else {
+		// 32-bit displacement
+		textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX (10 000 101)
+		uint32_t offset_u32 = static_cast<uint32_t>(offset);
+		textSectionData.push_back(offset_u32 & 0xFF);
+		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+	}
+}
+
 struct RegCode {
 	uint8_t code;
 	bool use_rex;
@@ -3492,7 +3648,7 @@ private:
 		if (is_type) {
 			// typeid(Type) - compile-time constant
 			// For now, return a dummy pointer (in a full implementation, we'd have a .rdata section with type_info)
-			std::string type_name = instruction.getOperandAs<std::string>(1);
+			const std::string& type_name = instruction.getOperandAs<std::string>(1);
 
 			// Load address of type_info into RAX (using a placeholder address for now)
 			// In a real implementation, we'd have a symbol for each type's RTTI data
@@ -3568,7 +3724,7 @@ private:
 
 		TempVar result_var = instruction.getOperandAs<TempVar>(0);
 		TempVar source_var = instruction.getOperandAs<TempVar>(1);
-		std::string target_type = instruction.getOperandAs<std::string>(2);
+		const std::string& target_type = instruction.getOperandAs<std::string>(2);
 		bool is_reference = instruction.getOperandAs<bool>(3);
 
 		// Load source pointer into RAX
@@ -5775,17 +5931,29 @@ private:
 		//auto index_type = instruction.getOperandAs<Type>(4);
 		//auto index_size_bits = instruction.getOperandAs<int>(5);
 
-		// Get the array base address (from stack)
-		std::string array_name;
+		// Get the array base address (from stack or register)
+		int64_t array_base_offset = 0;
+		bool is_array_pointer = false;  // true if array is a pointer/temp var
+		TempVar array_temp_var;
+
 		if (instruction.isOperandType<std::string_view>(3)) {
-			array_name = std::string(instruction.getOperandAs<std::string_view>(3));
+			// Simple case: array is a variable name
+			std::string_view array_name = instruction.getOperandAs<std::string_view>(3);
+			array_base_offset = variable_scopes.back().identifier_offset[array_name];
 		} else if (instruction.isOperandType<std::string>(3)) {
-			array_name = instruction.getOperandAs<std::string>(3);
+			// Simple case: array is a variable name (std::string)
+			const std::string& array_name = instruction.getOperandAs<std::string>(3);
+			array_base_offset = variable_scopes.back().identifier_offset[array_name];
+		} else if (instruction.isOperandType<TempVar>(3)) {
+			// Complex case: array is the result of a previous expression (pointer)
+			array_temp_var = instruction.getOperandAs<TempVar>(3);
+			array_base_offset = getStackOffsetFromTempVar(array_temp_var);
+			is_array_pointer = true;
 		} else {
 			// Debug: print what type we actually got
-			std::cerr << "ERROR in handleArrayAccess: operand 3 is neither string_view nor std::string\n";
+			std::cerr << "ERROR in handleArrayAccess: operand 3 is neither string_view nor std::string nor TempVar\n";
 			std::cerr << "Operand count: " << instruction.getOperandCount() << "\n";
-			assert(false && "Array must be an identifier or qualified name");
+			assert(false && "Array must be an identifier, qualified name, or temp var");
 		}
 
 		// Get the index value (could be a constant or a temp var)
@@ -5795,115 +5963,296 @@ private:
 		int element_size_bytes = element_size_bits / 8;
 
 		// Check if this is a member array access (object.member format)
-		bool is_member_array = array_name.find('.') != std::string::npos;
-		std::string_view array_name_view(array_name);
+		// Only applies to string-based arrays, not temp vars
+		bool is_member_array = false;
+		std::string_view array_name_view;
 		std::string_view object_name;
 		std::string_view member_name;
 		int64_t member_offset = 0;
 
-		if (is_member_array) {
-			// Parse object.member
-			size_t dot_pos = array_name_view.find('.');
-			object_name = array_name_view.substr(0, dot_pos);
-			member_name = array_name_view.substr(dot_pos + 1);
-			// member_offset will be 0 for now - needs proper struct lookup
+		if (!is_array_pointer) {
+			// Only check for member arrays if we have a string-based array
+			if (instruction.isOperandType<std::string_view>(3)) {
+				array_name_view = instruction.getOperandAs<std::string_view>(3);
+			} else if (instruction.isOperandType<std::string>(3)) {
+				array_name_view = instruction.getOperandAs<std::string>(3);
+			}
+			
+			is_member_array = array_name_view.find('.') != std::string::npos;
+			if (is_member_array) {
+				// Parse object.member
+				size_t dot_pos = array_name_view.find('.');
+				object_name = array_name_view.substr(0, dot_pos);
+				member_name = array_name_view.substr(dot_pos + 1);
+				// member_offset will be 0 for now - needs proper struct lookup
+			}
 		}
 
 		std::string_view lookup_name = is_member_array ? object_name : array_name_view;
-		int64_t array_base_offset = variable_scopes.back().identifier_offset[lookup_name];
 
 		// Load index into a register (RAX)
 		if (instruction.isOperandType<unsigned long long>(6)) {
 			// Constant index
 			uint64_t index_value = instruction.getOperandAs<unsigned long long>(6);
+			std::cerr << "DEBUG: Constant index=" << index_value << "\n";
 
-			// Calculate offset directly: base_offset + member_offset + (index * element_size)
-			int64_t element_offset = array_base_offset + member_offset - (index_value * element_size_bytes);
+			if (is_array_pointer) {
+				// Array is a pointer/temp var - load pointer and compute address
+				// Load array pointer into RAX: MOV RAX, [RBP + array_base_offset]
+				auto load_ptr_opcodes = generateMovFromFrame(X64Register::RAX, array_base_offset);
+				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+				                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-			// Load from [RBP + offset] into RAX
-			// MOV RAX, [RBP + offset]
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x8B); // MOV r64, r/m64
-
-			if (element_offset >= -128 && element_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-				textSectionData.push_back(static_cast<uint8_t>(element_offset));
-			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-				uint32_t offset_u32 = static_cast<uint32_t>(element_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				// Add offset to pointer: ADD RAX, (index * element_size)
+				int64_t offset_bytes = index_value * element_size_bytes;
+				if (offset_bytes != 0) {
+					// ADD RAX, imm32
+					textSectionData.push_back(0x48); // REX.W
+					textSectionData.push_back(0x05); // ADD RAX, imm32
+					uint32_t offset_u32 = static_cast<uint32_t>(offset_bytes);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
 				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
 				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+
+			// Load value from [RAX] with size-appropriate instruction
+			emitLoadFromAddressInRAX(textSectionData, element_size_bytes);
+		} else {
+			// Array is a regular variable - use direct stack offset
+			int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);				// Load from [RBP + offset] into RAX
+				// MOV RAX, [RBP + offset]
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8B); // MOV r64, r/m64
+
+				if (element_offset >= -128 && element_offset <= 127) {
+					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+					textSectionData.push_back(static_cast<uint8_t>(element_offset));
+				} else {
+					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+					uint32_t offset_u32 = static_cast<uint32_t>(element_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
 			}
 		} else if (instruction.isOperandType<TempVar>(6)) {
 			// Variable index - need to compute address at runtime
 			TempVar index_var = instruction.getOperandAs<TempVar>(6);
 			int64_t index_var_offset = getStackOffsetFromTempVar(index_var);
+			std::cerr << "DEBUG: Variable index=" << index_var.name() << " offset=" << index_var_offset << " array_base=" << array_base_offset << "\n";
 
-			// Load index into RCX: MOV RCX, [RBP + index_offset]
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x8B); // MOV r64, r/m64
-			if (index_var_offset >= -128 && index_var_offset <= 127) {
-				textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
-				textSectionData.push_back(static_cast<uint8_t>(index_var_offset));
+			if (is_array_pointer) {
+				// Array is a pointer/temp var
+				// Load array pointer into RAX: MOV RAX, [RBP + array_base_offset]
+				auto load_ptr_opcodes = generateMovFromFrame(X64Register::RAX, array_base_offset);
+				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+				                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+
+				// Load index variable from stack into RCX
+				emitLoadIndexIntoRCX(textSectionData, index_var_offset);
+
+				// Multiply index by element size (optimized for power-of-2 sizes)
+				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+
+				// Add scaled index to array pointer: ADD RAX, RCX
+				emitAddRAXRCX(textSectionData);
+
+				// Load value from [RAX] with size-appropriate instruction
+				emitLoadFromAddressInRAX(textSectionData, element_size_bytes);
 			} else {
-				textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
-				uint32_t offset_u32 = static_cast<uint32_t>(index_var_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-			}
+				// Array is a regular variable - use direct stack offset calculation
+				// Load index variable from stack into RCX
+				emitLoadIndexIntoRCX(textSectionData, index_var_offset);
 
-			// Multiply index by element size: IMUL RCX, element_size
-			if (element_size_bytes == 1) {
-				// No multiplication needed
-			} else if (element_size_bytes == 2 || element_size_bytes == 4 || element_size_bytes == 8) {
-				// Use shift for powers of 2
-				int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2 : 3;
-				// SHL RCX, shift_amount
+				// Multiply index by element size (optimized for power-of-2 sizes)
+				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+
+				// Load array base address: LEA RAX, [RBP + combined_offset]
+				int64_t combined_offset = array_base_offset + member_offset;
+				emitLEAArrayBase(textSectionData, combined_offset);
+
+				// Add scaled index to base address: ADD RAX, RCX
+				emitAddRAXRCX(textSectionData);
+
+				// Load value from [RAX] with size-appropriate instruction
+				emitLoadFromAddressInRAX(textSectionData, element_size_bytes);
+			}
+		} else if (instruction.isOperandType<std::string_view>(6) || instruction.isOperandType<std::string>(6)) {
+			// Variable index stored as identifier name - need to compute address at runtime
+			std::string index_var_name_str;
+			if (instruction.isOperandType<std::string_view>(6)) {
+				index_var_name_str = std::string(instruction.getOperandAs<std::string_view>(6));
+			} else {
+				index_var_name_str = instruction.getOperandAs<std::string>(6);
+			}
+			
+			auto index_it = variable_scopes.back().identifier_offset.find(index_var_name_str);
+			assert(index_it != variable_scopes.back().identifier_offset.end() && "Index variable not found");
+			int64_t index_var_offset = index_it->second;
+			std::cerr << "DEBUG: Variable index (identifier)=" << index_var_name_str << " offset=" << index_var_offset << " array_base=" << array_base_offset << "\n";
+
+			if (is_array_pointer) {
+				// Array is a pointer/temp var
+				// Load array pointer into RAX: MOV RAX, [RBP + array_base_offset]
+				auto load_ptr_opcodes = generateMovFromFrame(X64Register::RAX, array_base_offset);
+				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+				                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+
+				// Load index into RCX: MOV RCX, [RBP + index_offset]
 				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0xC1); // SHL r/m64, imm8
-				textSectionData.push_back(0xE1); // ModR/M: RCX
-				textSectionData.push_back(shift_amount);
-			} else {
-				// General multiplication: IMUL RCX, RCX, element_size
+				textSectionData.push_back(0x8B); // MOV r64, r/m64
+				if (index_var_offset >= -128 && index_var_offset <= 127) {
+					textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
+					textSectionData.push_back(static_cast<uint8_t>(index_var_offset));
+				} else {
+					textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
+					uint32_t offset_u32 = static_cast<uint32_t>(index_var_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+
+				// Multiply index by element size: IMUL RCX, element_size
+				if (element_size_bytes == 1) {
+					// No multiplication needed
+				} else if (element_size_bytes == 2 || element_size_bytes == 4 || element_size_bytes == 8) {
+					// Use shift for powers of 2
+					int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2 : 3;
+					// SHL RCX, shift_amount
+					textSectionData.push_back(0x48); // REX.W
+					textSectionData.push_back(0xC1); // SHL r/m64, imm8
+					textSectionData.push_back(0xE1); // ModR/M: RCX
+					textSectionData.push_back(shift_amount);
+				} else {
+					// General multiplication: IMUL RCX, RCX, element_size
+					textSectionData.push_back(0x48); // REX.W
+					textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
+					textSectionData.push_back(0xC9); // ModR/M: RCX, RCX
+					uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
+					textSectionData.push_back(size_u32 & 0xFF);
+					textSectionData.push_back((size_u32 >> 8) & 0xFF);
+					textSectionData.push_back((size_u32 >> 16) & 0xFF);
+					textSectionData.push_back((size_u32 >> 24) & 0xFF);
+				}
+
+				// Add index offset to array pointer: ADD RAX, RCX
 				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
-				textSectionData.push_back(0xC9); // ModR/M: RCX, RCX
-				uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
-				textSectionData.push_back(size_u32 & 0xFF);
-				textSectionData.push_back((size_u32 >> 8) & 0xFF);
-				textSectionData.push_back((size_u32 >> 16) & 0xFF);
-				textSectionData.push_back((size_u32 >> 24) & 0xFF);
-			}
+				textSectionData.push_back(0x01); // ADD r/m64, r64
+				textSectionData.push_back(0xC8); // ModR/M: RAX, RCX
 
-			// Load array base address into RAX: LEA RAX, [RBP + array_base_offset + member_offset]
-			int64_t combined_offset = array_base_offset + member_offset;
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x8D); // LEA r64, m
-			if (combined_offset >= -128 && combined_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-				textSectionData.push_back(static_cast<uint8_t>(combined_offset));
+				// Load value from computed address based on element size
+				if (element_size_bytes == 1) {
+					// MOVZX EAX, BYTE PTR [RAX]
+					textSectionData.push_back(0x0F); // Two-byte opcode prefix
+					textSectionData.push_back(0xB6); // MOVZX r32, r/m8
+					textSectionData.push_back(0x00); // ModR/M: [RAX], EAX
+				} else if (element_size_bytes == 2) {
+					// MOVZX EAX, WORD PTR [RAX]
+					textSectionData.push_back(0x0F); // Two-byte opcode prefix
+					textSectionData.push_back(0xB7); // MOVZX r32, r/m16
+					textSectionData.push_back(0x00); // ModR/M: [RAX], EAX
+				} else if (element_size_bytes == 4) {
+					// MOV EAX, DWORD PTR [RAX]
+					textSectionData.push_back(0x8B); // MOV r32, r/m32
+					textSectionData.push_back(0x00); // ModR/M: [RAX], EAX
+				} else {
+					// MOV RAX, QWORD PTR [RAX] (8 bytes)
+					textSectionData.push_back(0x48); // REX.W
+					textSectionData.push_back(0x8B); // MOV r64, r/m64
+					textSectionData.push_back(0x00); // ModR/M: [RAX], RAX
+				}
 			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-				uint32_t offset_u32 = static_cast<uint32_t>(combined_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				// Array is a regular variable - use direct stack offset calculation
+				// Load index into RCX: MOV RCX, [RBP + index_offset]
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8B); // MOV r64, r/m64
+				if (index_var_offset >= -128 && index_var_offset <= 127) {
+					textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
+					textSectionData.push_back(static_cast<uint8_t>(index_var_offset));
+				} else {
+					textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
+					uint32_t offset_u32 = static_cast<uint32_t>(index_var_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+
+				// Multiply index by element size: IMUL RCX, element_size
+				if (element_size_bytes == 1) {
+					// No multiplication needed
+				} else if (element_size_bytes == 2 || element_size_bytes == 4 || element_size_bytes == 8) {
+					// Use shift for powers of 2
+					int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2 : 3;
+					// SHL RCX, shift_amount
+					textSectionData.push_back(0x48); // REX.W
+					textSectionData.push_back(0xC1); // SHL r/m64, imm8
+					textSectionData.push_back(0xE1); // ModR/M: RCX
+					textSectionData.push_back(shift_amount);
+				} else {
+					// General multiplication: IMUL RCX, RCX, element_size
+					textSectionData.push_back(0x48); // REX.W
+					textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
+					textSectionData.push_back(0xC9); // ModR/M: RCX, RCX
+					uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
+					textSectionData.push_back(size_u32 & 0xFF);
+					textSectionData.push_back((size_u32 >> 8) & 0xFF);
+					textSectionData.push_back((size_u32 >> 16) & 0xFF);
+					textSectionData.push_back((size_u32 >> 24) & 0xFF);
+				}
+
+				// Load array base address into RAX: LEA RAX, [RBP + array_base_offset + member_offset]
+				int64_t combined_offset = array_base_offset + member_offset;
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x8D); // LEA r64, m
+				if (combined_offset >= -128 && combined_offset <= 127) {
+					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+					textSectionData.push_back(static_cast<uint8_t>(combined_offset));
+				} else {
+					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+					uint32_t offset_u32 = static_cast<uint32_t>(combined_offset);
+					textSectionData.push_back(offset_u32 & 0xFF);
+					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+
+				// Add index offset to base: ADD RAX, RCX
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x01); // ADD r/m64, r64
+				textSectionData.push_back(0xC8); // ModR/M: RAX, RCX
+
+				// Load value from computed address based on element size
+				if (element_size_bytes == 1) {
+					// MOVZX EAX, BYTE PTR [RAX]
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0xB6);
+					textSectionData.push_back(0x00);
+				} else if (element_size_bytes == 2) {
+					// MOVZX EAX, WORD PTR [RAX]
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0xB7);
+					textSectionData.push_back(0x00);
+				} else if (element_size_bytes == 4) {
+					// MOV EAX, DWORD PTR [RAX]
+					textSectionData.push_back(0x8B);
+					textSectionData.push_back(0x00);
+				} else {
+					// MOV RAX, QWORD PTR [RAX]
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x8B);
+					textSectionData.push_back(0x00);
+				}
 			}
-
-			// Subtract index offset from base: SUB RAX, RCX
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x29); // SUB r/m64, r64
-			textSectionData.push_back(0xC8); // ModR/M: RAX, RCX
-
-			// Load value from computed address: MOV RAX, [RAX]
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x8B); // MOV r64, r/m64
-			textSectionData.push_back(0x00); // ModR/M: [RAX], RAX
+		} else {
+			std::cerr << "ERROR: Index operand (6) is not unsigned long long or TempVar!\n";
+			std::cerr << "  Index is string_view: " << instruction.isOperandType<std::string_view>(6) << "\n";
+			std::cerr << "  Index is string: " << instruction.isOperandType<std::string>(6) << "\n";
+			std::cerr << "  Index is int: " << instruction.isOperandType<int>(6) << "\n";
+			assert(false && "Index must be constant or temp var");
 		}
 
 		// Store result to stack: MOV [RBP + result_offset], RAX
@@ -6037,45 +6386,15 @@ private:
 			TempVar index_var = instruction.getOperandAs<TempVar>(5);
 			int64_t index_var_offset = getStackOffsetFromTempVar(index_var);
 
-			// Load index into RCX: MOV RCX, [RBP + index_offset]
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x8B); // MOV r64, r/m64
-			if (index_var_offset >= -128 && index_var_offset <= 127) {
-				textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX
-				textSectionData.push_back(static_cast<uint8_t>(index_var_offset));
-			} else {
-				textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX
-				uint32_t offset_u32 = static_cast<uint32_t>(index_var_offset);
-				textSectionData.push_back(offset_u32 & 0xFF);
-				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-			}
+			// Load index into RCX
+			emitLoadIndexIntoRCX(textSectionData, index_var_offset);
 
 			// Multiply index by element size
-			if (element_size_bytes == 1) {
-				// No multiplication needed
-			} else if (element_size_bytes == 2 || element_size_bytes == 4 || element_size_bytes == 8) {
-				// Use shift for powers of 2
-				int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2 : 3;
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0xC1); // SHL r/m64, imm8
-				textSectionData.push_back(0xE1); // ModR/M: RCX
-				textSectionData.push_back(shift_amount);
-			} else {
-				// General multiplication
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
-				textSectionData.push_back(0xC9); // ModR/M: RCX, RCX
-				uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
-				textSectionData.push_back(size_u32 & 0xFF);
-				textSectionData.push_back((size_u32 >> 8) & 0xFF);
-				textSectionData.push_back((size_u32 >> 16) & 0xFF);
-				textSectionData.push_back((size_u32 >> 24) & 0xFF);
-			}
+			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-			// Load array base address into RDX: LEA RDX, [RBP + array_base_offset + member_offset]
+			// Load array base address into RDX and add index offset
 			int64_t combined_offset = array_base_offset + member_offset;
+			// Note: Using RDX instead of RAX for array store operations
 			textSectionData.push_back(0x48); // REX.W
 			textSectionData.push_back(0x8D); // LEA r64, m
 			if (combined_offset >= -128 && combined_offset <= 127) {
@@ -6089,9 +6408,7 @@ private:
 				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
 				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 			}
-
-			// Add index offset to base: ADD RDX, RCX
-			// Arrays grow upward in memory (toward higher addresses), so we add the index
+			// ADD RDX, RCX (arrays grow upward in memory)
 			textSectionData.push_back(0x48); // REX.W
 			textSectionData.push_back(0x01); // ADD r/m64, r64
 			textSectionData.push_back(0xCA); // ModR/M: RDX, RCX
