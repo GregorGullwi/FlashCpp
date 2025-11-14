@@ -149,7 +149,7 @@ static std::unordered_map<Operator, int> precedence_table = {
 	{Operator::Not, 3},
 };
 
-static Operator string_to_operator(const std::string& op) {
+static Operator string_to_operator(std::string_view op) {
 	if (op == "&&") return Operator::And;
 	if (op == "||") return Operator::Or;
 	if (op == ">") return Operator::Greater;
@@ -161,7 +161,8 @@ static Operator string_to_operator(const std::string& op) {
 	if (op == "!") return Operator::Not;
 	if (op == "(") return Operator::OpenParen;
 	if (op == ")") return Operator::CloseParen;
-	throw std::invalid_argument("Invalid operator: " + op);
+	std::cerr << "Invalid operator " << op;
+	throw std::invalid_argument(std::string("Invalid operator: ") + std::string(op));
 }
 
 struct CharInfo {
@@ -200,51 +201,65 @@ static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) 
 	}
 }
 
-static std::vector<std::string> splitArgs(std::string&& argsStr) {
-	std::vector<std::string> args;
-	const std::size_t second_arg_start = argsStr.find(',');
-	if (second_arg_start == std::string::npos) {
-		args.emplace_back(std::move(argsStr));
-		return args;
-	}
+static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
+    std::vector<std::string_view> args;
 
-	args.emplace_back(argsStr.substr(0, second_arg_start));
-	std::string arg;
-	size_t i = argsStr.find_first_not_of(' ', second_arg_start + 1);
-	const size_t argsSize = argsStr.size();
-	while (i < argsSize) {
-		char c = argsStr[i];
-		if (c == ',' && arg.size() > 0) {
-			args.emplace_back(std::move(arg));
-			arg = std::string();	// it's undefined behavior to start using a moved from string
-			i = argsStr.find_first_not_of(' ', i + 1);
-		}
-		else if (c == '(') {
-			size_t closingPos = findMatchingClosingParen(argsStr, i);
-			if (closingPos == std::string::npos) {
-				throw std::runtime_error("Unmatched opening parenthesis in macro argument list");
-			}
-			arg += argsStr.substr(i + 1, closingPos - i - 1);
-			i = closingPos + 1;
-		}
-		else if (arg.size() == 0 && (c == ' ' || c == '\t')) {
-			i++;
-		}
-		else if (c == ')') {
-			break;
-		}
-		else {
-			arg += c;
-			i++;
-		}
-	}
-	if (arg.size() > 0) {
-		args.emplace_back(std::move(arg));
-	}
-	return args;
+    size_t n = argsStr.size();
+    size_t i = 0;
+
+    // Skip leading whitespace
+    while (i < n && (argsStr[i] == ' ' || argsStr[i] == '\t')) i++;
+
+    size_t arg_start = i;
+    int paren_depth = 0;
+
+    for (; i < n; ++i) {
+        char c = argsStr[i];
+
+        if (c == '(') {
+            paren_depth++;
+            continue;
+        }
+        if (c == ')') {
+            if (paren_depth == 0) {
+                // Final argument ends here
+                break;
+            }
+            paren_depth--;
+            continue;
+        }
+        if (c == ',' && paren_depth == 0) {
+            // Argument ended
+            size_t end = i;
+
+            // Trim trailing whitespace
+            while (end > arg_start && (argsStr[end - 1] == ' ' || argsStr[end - 1] == '\t'))
+                end--;
+
+            args.emplace_back(argsStr.substr(arg_start, end - arg_start));
+
+            // Move to next argument
+            i = argsStr.find_first_not_of(" \t", i + 1);
+            if (i == std::string_view::npos)
+                return args;
+
+            arg_start = i;
+        }
+    }
+
+    // Final argument (if any)
+    if (arg_start < n) {
+        size_t end = i;
+        while (end > arg_start && (argsStr[end - 1] == ' ' || argsStr[end - 1] == '\t'))
+            end--;
+        args.emplace_back(argsStr.substr(arg_start, end - arg_start));
+    }
+
+    return args;
 }
 
-static void replaceAll(std::string& str, const std::string& from, const std::string& to) {
+
+static void replaceAll(std::string& str, const std::string_view from, const std::string_view to) {
 	size_t pos = 0;
 	while ((pos = str.find(from, pos)) != std::string::npos) {
 		str.replace(pos, from.length(), to);
@@ -983,7 +998,7 @@ private:
 					size_t args_start = output.find_first_of('(', pattern_end);
 					if (args_start != std::string::npos && output.find_first_not_of(' ', pattern_end) == args_start) {
 						size_t args_end = findMatchingClosingParen(output, args_start);
-						std::vector<std::string> args = splitArgs(output.substr(args_start + 1, args_end - args_start - 1));
+						std::vector<std::string_view> args = splitArgs(std::string_view(output).substr(args_start + 1, args_end - args_start - 1));
 
 						// NOTE: Arguments should NOT be pre-expanded here.
 						// They will be expanded during the final recursive expansion with proper protection.
@@ -1056,7 +1071,7 @@ private:
 											continue;
 										}
 										// This is a real stringification operator
-										replace_str.replace(stringify_pos, 1 + defineDirective->args[i].length(), "\"" + args[i] + "\"");
+										replace_str.replace(stringify_pos, 1 + defineDirective->args[i].length(), std::format("\"{0}\"", args[i]));
 										stringify_pos += args[i].length() + 2; // Skip past the replaced string
 									}
 								// Replace macro arguments (non-stringified)
