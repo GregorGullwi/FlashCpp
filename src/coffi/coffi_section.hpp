@@ -153,7 +153,7 @@ template <class T> class section_impl_tmpl : public section
     }
 
     //------------------------------------------------------------------------------
-    const char* get_data() const { return data_; }
+    const char* get_data() const { return data_.get(); }
 
     //------------------------------------------------------------------------------
     void set_data(const char* data, uint32_t size)
@@ -163,10 +163,10 @@ template <class T> class section_impl_tmpl : public section
             data_reserved_ = 0;
         }
         else {
-            data_ = new char[size];
+            data_ = std::make_unique<char[]>(size);
             if (data_) {
                 data_reserved_ = size;
-                std::copy(data, data + size, data_);
+                std::copy(data, data + size, data_.get());
             }
             else {
                 data_reserved_ = 0;
@@ -186,23 +186,21 @@ template <class T> class section_impl_tmpl : public section
     {
         if (!data_) {
             set_data(data, size);
-            return;
         }
         if (get_data_size() + size <= data_reserved_) {
-            std::copy(data, data + size, data_ + get_data_size());
+            std::copy(data, data + size, data_.get() + get_data_size());
         }
         else {
             uint32_t new_data_size = 2 * (data_reserved_ + size);
-            char*    new_data      = new char[new_data_size];
+            std::unique_ptr<char[]> new_data = std::make_unique<char[]>(new_data_size);
             if (!new_data) {
                 size = 0;
             }
             else {
                 data_reserved_ = new_data_size;
-                std::copy(data_, data_ + get_data_size(), new_data);
-                std::copy(data, data + size, new_data + get_data_size());
-                delete[] data_;
-                data_ = new_data;
+                std::copy(data_.get(), data_.get() + get_data_size(), new_data.get());
+                std::copy(data, data + size, new_data.get() + get_data_size());
+                data_ = std::move(new_data);
             }
         }
         set_data_size(get_data_size() + size);
@@ -247,12 +245,12 @@ template <class T> class section_impl_tmpl : public section
         if (!dont) {
             data_reserved_ = get_data_size();
             if ((get_data_offset() != 0) && (data_reserved_ != 0)) {
-                data_ = new char[data_reserved_];
+                data_ = std::make_unique<char[]>(data_reserved_);
                 if (!data_) {
                     return false;
                 }
                 stream.seekg(get_data_offset());
-                stream.read(data_, data_reserved_);
+                stream.read(data_.get(), data_reserved_);
             }
         }
 
@@ -291,7 +289,7 @@ template <class T> class section_impl_tmpl : public section
         if (!data_ || get_data_offset() == 0) {
             return;
         }
-        stream.write(data_, get_data_size());
+        stream.write(data_.get(), get_data_size());
     }
 
     //------------------------------------------------------------------------------
@@ -329,8 +327,7 @@ template <class T> class section_impl_tmpl : public section
     void clean()
     {
         if (data_) {
-            delete[] data_;
-            data_          = 0;
+            data_.reset();
             data_reserved_ = 0;
         }
     }
@@ -355,9 +352,9 @@ template <class T> class section_impl_tmpl : public section
 
     //------------------------------------------------------------------------------
     T                        header;
-    uint32_t                 index;
+    uint32_t                 index{};
     std::string              name;
-    char*                    data_;
+    std::unique_ptr<char[]>  data_;
     uint32_t                 data_reserved_;
     string_to_name_provider* stn_;
     symbol_provider*         sym_;
@@ -460,75 +457,57 @@ class section_impl_ti : public section_impl_tmpl<section_header_ti>
 };
 
 /*! @brief List of sections
-     *
-     * It is implemented as a vector of @ref section pointers.
-     * This allows to manage easily all the different section implementations (for every COFF format),
-     * with pointers to their base interface class (@ref section).
-     */
-//------------------------------------------------------------------------------
-class sections : public std::vector<section*>
+ *
+ *  It is implemented as a vector of @ref section pointers.
+ *  This allows to manage easily all the different section implementations (for every COFF format),
+ *  with pointers to their base interface class (@ref section).
+ */
+class sections : public unique_ptr_collection<section>
 {
   public:
-    //------------------------------------------------------------------------------
-    sections() {}
+    sections() = default;
 
-    //------------------------------------------------------------------------------
     //! Discards the copy constructor
     sections(const sections&) = delete;
 
-    //------------------------------------------------------------------------------
-    virtual ~sections() { clean(); }
+    sections(sections&&) = default;
 
-    //------------------------------------------------------------------------------
-    void clean()
-    {
-        for (auto sec : *this) {
-            delete sec;
-        }
-        clear();
-    }
-
-    //------------------------------------------------------------------------------
     /*! @brief Subscript operator, finds a section by its index
-         *
-         * @param[in] i Index of the section
-         * @return A reference to the element at specified location **i**
-         */
+     *
+     * @param[in] i Index of the section
+     * @return A reference to the element at specified location **i**
+     */
     section* operator[](size_t i)
     {
-        return std::vector<section*>::operator[](i);
+        return items_[i].get();
     }
 
-    //------------------------------------------------------------------------------
-    /*! @copydoc operator[](size_t)
-         */
+    //! @copydoc operator[](size_t)
     const section* operator[](size_t i) const
     {
-        return std::vector<section*>::operator[](i);
+        return items_[i].get();
     }
 
-    //------------------------------------------------------------------------------
     /*! @brief Subscript operator, finds a section by its symbolic name
-         *
-         * @param[in] name Symbolic name of the section
-         * @return A reference to the element with the section symbolic name **name**
-         */
+     *
+     *  @param[in] name Symbolic name of the section
+     *  @return A reference to the element with the section symbolic name **name**
+     */
     section* operator[](const std::string& name)
     {
         return (section*)((const sections*)this)->operator[](name);
     }
 
-    //------------------------------------------------------------------------------
-    /*! @copydoc operator[](const std::string&)
-         */
+    //! @copydoc operator[](const std::string&)
     const section* operator[](const std::string& name) const
     {
-        for (section* sec : *this) {
-            if (sec->get_name() == name) {
-                return sec;
+        for (auto& section : items_) {
+            if (section->get_name() == name) {
+                return section.get();
             }
         }
-        return 0;
+
+        return nullptr;
     }
 };
 

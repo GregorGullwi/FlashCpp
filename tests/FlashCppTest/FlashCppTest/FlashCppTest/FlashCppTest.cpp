@@ -1917,7 +1917,7 @@ TEST_CASE("Lambda: Simple captures") {
 }
 
 TEST_CASE("Lambda: Comprehensive captures") {
-	run_test_from_file("test_lambda_captures_comprehensive.cpp", "Comprehensive lambda capture tests", true);
+	run_test_from_file("test_lambda_captures_comprehensive.cpp", "Comprehensive lambda capture tests", false);
 }
 
 TEST_CASE("FunctionPointer:BasicDeclaration") {

@@ -37,10 +37,10 @@ namespace COFFI {
     !defined(COFFI_NO_INTTYPES) && !defined(DOXYGEN)
 #include <stdint.h>
 #else
-typedef unsigned char    uint8_t;
-typedef signed char      int8_t;
-typedef uint16_t         uint16_t;
-typedef signed short     int16_t;
+typedef unsigned char uint8_t;
+typedef signed char   int8_t;
+typedef uint16_t      uint16_t;
+typedef signed short  int16_t;
 #ifdef _MSC_VER
 typedef unsigned __int32 uint32_t;
 typedef signed __int32   int32_t;
@@ -318,39 +318,6 @@ typedef signed long long   int64_t;
 #define IMAGE_REL_ARM_BRANCH11            0x0004 //!< Reference to a subroutine call, consisting of two 16-bit instructions with 11-bit offsets.
 #define IMAGE_REL_ARM_SECTION             0x000E //!< The 16-bit section index of the section containing the target. This is used to support debugging information.
 #define IMAGE_REL_ARM_SECREL              0x000F //!< The 32-bit offset of the target from the beginning of its section. This is used to support debugging information as well as static thread local storage.
-
-//! @}
-//! 
-//! @name COFF Relocations Type Indicators - x64 Processors
-//! @{
-#define IMAGE_REL_AMD64_ABSOLUTE        0x0000  // Reference is absolute, no relocation is necessary
-#define IMAGE_REL_AMD64_ADDR64          0x0001  // 64-bit address (VA).
-#define IMAGE_REL_AMD64_ADDR32          0x0002  // 32-bit address (VA).
-#define IMAGE_REL_AMD64_ADDR32NB        0x0003  // 32-bit address w/o image base (RVA).
-#define IMAGE_REL_AMD64_REL32           0x0004  // 32-bit relative address from byte following reloc
-#define IMAGE_REL_AMD64_REL32_1         0x0005  // 32-bit relative address from byte distance 1 from reloc
-#define IMAGE_REL_AMD64_REL32_2         0x0006  // 32-bit relative address from byte distance 2 from reloc
-#define IMAGE_REL_AMD64_REL32_3         0x0007  // 32-bit relative address from byte distance 3 from reloc
-#define IMAGE_REL_AMD64_REL32_4         0x0008  // 32-bit relative address from byte distance 4 from reloc
-#define IMAGE_REL_AMD64_REL32_5         0x0009  // 32-bit relative address from byte distance 5 from reloc
-#define IMAGE_REL_AMD64_SECTION         0x000A  // Section index
-#define IMAGE_REL_AMD64_SECREL          0x000B  // 32 bit offset from base of section containing target
-#define IMAGE_REL_AMD64_SECREL7         0x000C  // 7 bit unsigned offset from base of section containing target
-#define IMAGE_REL_AMD64_TOKEN           0x000D  // 32 bit metadata token
-#define IMAGE_REL_AMD64_SREL32          0x000E  // 32 bit signed span-dependent value emitted into object
-#define IMAGE_REL_AMD64_PAIR            0x000F
-#define IMAGE_REL_AMD64_SSPAN32         0x0010  // 32 bit signed span-dependent value applied at link time
-#define IMAGE_REL_AMD64_EHANDLER        0x0011
-#define IMAGE_REL_AMD64_IMPORT_BR       0x0012  // Indirect branch to an import
-#define IMAGE_REL_AMD64_IMPORT_CALL     0x0013  // Indirect call to an import
-#define IMAGE_REL_AMD64_CFG_BR          0x0014  // Indirect branch to a CFG check
-#define IMAGE_REL_AMD64_CFG_BR_REX      0x0015  // Indirect branch to a CFG check, with REX.W prefix
-#define IMAGE_REL_AMD64_CFG_CALL        0x0016  // Indirect call to a CFG check
-#define IMAGE_REL_AMD64_INDIR_BR        0x0017  // Indirect branch to a target in RAX (no CFG)
-#define IMAGE_REL_AMD64_INDIR_BR_REX    0x0018  // Indirect branch to a target in RAX, with REX.W prefix (no CFG)
-#define IMAGE_REL_AMD64_INDIR_CALL      0x0019  // Indirect call to a target in RAX (no CFG)
-#define IMAGE_REL_AMD64_INDIR_BR_SWITCHTABLE_FIRST  0x0020 // Indirect branch for a switch table using Reg 0 (RAX)
-#define IMAGE_REL_AMD64_INDIR_BR_SWITCHTABLE_LAST   0x002F // Indirect branch for a switch table using Reg 15 (R15)
 
 //! @}
 
@@ -760,10 +727,10 @@ struct coff_file_header
     uint16_t sections_count;  //!< The size of the section table
     uint32_t time_data_stamp; //!< A C run-time time_t value
     uint32_t
-             symbol_table_offset; //!< The file offset of the COFF symbol table, or zero if no COFF symbol table is present
-    uint32_t symbols_count;       //!< The number of entries in the symbol table
+        symbol_table_offset; //!< The file offset of the COFF symbol table, or zero if no COFF symbol table is present
+    uint32_t symbols_count;  //!< The number of entries in the symbol table
     uint16_t
-             optional_header_size; //!< Which is required for executable files but not for object files.
+        optional_header_size; //!< Which is required for executable files but not for object files.
     uint16_t flags; //!< The flags that indicate the attributes of the file
 };
 
@@ -774,10 +741,10 @@ struct coff_file_header_ti
     uint16_t sections_count;  //!< The size of the section table
     uint32_t time_data_stamp; //!< A C run-time time_t value
     uint32_t
-             symbol_table_offset; //!< The file offset of the COFF symbol table, or zero if no COFF symbol table is present
-    uint32_t symbols_count;       //!< The number of entries in the symbol table
+        symbol_table_offset; //!< The file offset of the COFF symbol table, or zero if no COFF symbol table is present
+    uint32_t symbols_count;  //!< The number of entries in the symbol table
     uint16_t
-             optional_header_size; //!< Which is required for executable files but not for object files.
+        optional_header_size; //!< Which is required for executable files but not for object files.
     uint16_t flags; //!< The flags that indicate the attributes of the file
     uint16_t
         target_id; //!< Magic number indicates the file can be executed in a specific TI system
@@ -798,7 +765,7 @@ struct coff_optional_header_pe
     uint32_t
         uninitialized_data_size; //!< The sum of all uninitialized data sections
     uint32_t
-             entry_point_address; //!< The address of the entry point relative to the image base
+        entry_point_address; //!< The address of the entry point relative to the image base
     uint32_t code_base; //!< base of the beginning-of-code section
     uint32_t data_base; //!< base of the beginning-of-data section
 };
@@ -815,7 +782,7 @@ struct coff_optional_header_pe_plus
     uint32_t
         uninitialized_data_size; //!< The sum of all uninitialized data sections
     uint32_t
-             entry_point_address; //!< The address of the entry point relative to the image base
+        entry_point_address; //!< The address of the entry point relative to the image base
     uint32_t code_base; //!< base of the beginning-of-code section
 };
 
@@ -830,7 +797,7 @@ struct common_optional_header_ti
     uint32_t
         uninitialized_data_size; //!< The sum of all uninitialized data sections
     uint32_t
-             entry_point_address; //!< The address of the entry point relative to the image base
+        entry_point_address; //!< The address of the entry point relative to the image base
     uint32_t code_base; //!< The address that is relative to the image
     uint32_t data_base; //!<
 };
