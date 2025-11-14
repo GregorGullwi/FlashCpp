@@ -1249,8 +1249,8 @@ private:
 					std::cerr << "  Pushed value: " << value << " (values.size=" << values.size() << ")" << std::endl;
 				}
 			}
-			else if (char_info_table.count(c)) {
-				CharInfo info = char_info_table[c];
+			else if (auto it = char_info_table.find(c); it != char_info_table.end()) {
+				CharInfo info = it->second;
 				op_str = iss.get(); // Consume the operator
 
 				// Handle multi-character operators
@@ -1436,7 +1436,7 @@ private:
 		return true;
 	}
 
-	void processPragmaPack(const std::string& line) {
+	void processPragmaPack(std::string_view line) {
 		// Parse #pragma pack directives
 		// Supported formats:
 		//   #pragma pack()           - reset to default (no packing)
@@ -1459,15 +1459,15 @@ private:
 		}
 
 		// Extract content between parentheses
-		std::string content = line.substr(open_paren + 1, close_paren - open_paren - 1);
+		std::string_view content = line.substr(open_paren + 1, close_paren - open_paren - 1);
 
 		// Trim whitespace
-		auto trim_start = content.find_first_not_of(" \t");
-		auto trim_end = content.find_last_not_of(" \t");
-		if (trim_start != std::string::npos && trim_end != std::string::npos) {
+		auto trim_start = content.find_first_not_of(" \t"sv);
+		auto trim_end = content.find_last_not_of(" \t"sv);
+		if (trim_start != std::string_view::npos && trim_end != std::string_view::npos) {
 			content = content.substr(trim_start, trim_end - trim_start + 1);
 		} else {
-			content.clear();
+			content = {};
 		}
 
 		// Handle empty parentheses: #pragma pack()
@@ -1477,39 +1477,40 @@ private:
 		}
 
 		// Check for push/pop
-		if (content == "push") {
+		if (content == "push"sv) {
 			settings_.pushPackAlignment();
 			return;
 		}
 
-		if (content == "pop") {
+		if (content == "pop"sv) {
 			settings_.popPackAlignment();
 			return;
 		}
 
 		// Check for "push, n" format
 		size_t comma_pos = content.find(',');
-		if (comma_pos != std::string::npos) {
-			std::string first_part = content.substr(0, comma_pos);
-			std::string second_part = content.substr(comma_pos + 1);
+		if (comma_pos != std::string_view::npos) {
+			std::string_view first_part = content.substr(0, comma_pos);
+			std::string_view second_part = content.substr(comma_pos + 1);
 
 			// Trim both parts
 			auto trim_first_start = first_part.find_first_not_of(" \t");
 			auto trim_first_end = first_part.find_last_not_of(" \t");
-			if (trim_first_start != std::string::npos && trim_first_end != std::string::npos) {
+			if (trim_first_start != std::string_view::npos && trim_first_end != std::string_view::npos) {
 				first_part = first_part.substr(trim_first_start, trim_first_end - trim_first_start + 1);
 			}
 
 			auto trim_second_start = second_part.find_first_not_of(" \t");
 			auto trim_second_end = second_part.find_last_not_of(" \t");
-			if (trim_second_start != std::string::npos && trim_second_end != std::string::npos) {
+			if (trim_second_start != std::string_view::npos && trim_second_end != std::string_view::npos) {
 				second_part = second_part.substr(trim_second_start, trim_second_end - trim_second_start + 1);
 			}
 
 			if (first_part == "push") {
 				// Parse the alignment value
 				try {
-					size_t alignment = std::stoull(second_part);
+					size_t alignment = 0;
+					std::from_chars(second_part.data(), second_part.data() + second_part.size(), alignment);
 					// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
 					if (alignment == 0 || alignment == 1 || alignment == 2 ||
 					    alignment == 4 || alignment == 8 || alignment == 16) {
@@ -1525,7 +1526,8 @@ private:
 
 		// Otherwise, try to parse as a single number: #pragma pack(n)
 		try {
-			size_t alignment = std::stoull(content);
+			size_t alignment = 0;
+			std::from_chars(content.data(), content.data() + content.size(), alignment);
 			// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
 			if (alignment == 0 || alignment == 1 || alignment == 2 ||
 			    alignment == 4 || alignment == 8 || alignment == 16) {
