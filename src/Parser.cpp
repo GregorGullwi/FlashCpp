@@ -746,6 +746,16 @@ ParseResult Parser::parse_type_and_name() {
     // Get the type specifier node to modify it with pointer levels
     TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
 
+    // Check for pack expansion: Type... (ellipsis right after the type)
+    bool is_pack_expansion = false;
+    if (peek_token().has_value() && 
+        (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
+        peek_token()->value() == "...") {
+        is_pack_expansion = true;
+        consume_token(); // consume '...'
+        std::cerr << "DEBUG: Detected pack expansion after type in declaration\n";
+    }
+
     // Extract calling convention specifiers that can appear after the type
     // Example: void __cdecl func(); or int __stdcall* func();
     // We consume them here and save to last_calling_convention_ for the caller to retrieve
@@ -943,6 +953,11 @@ ParseResult Parser::parse_type_and_name() {
         // Apply custom alignment if specified
         if (custom_alignment.has_value()) {
             decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+        }
+
+        // Set pack expansion flag if detected
+        if (is_pack_expansion) {
+            decl_node.as<DeclarationNode>().set_pack_expansion(true);
         }
 
         return ParseResult::success(decl_node);
@@ -10399,6 +10414,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		const StructDeclarationNode& pattern_struct = pattern_node.as<StructDeclarationNode>();
 		
+		// Get template parameters from the primary template
+		auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+		if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+			std::cerr << "ERROR: Could not find primary template for pattern specialization\n";
+			return std::nullopt;
+		}
+		const TemplateClassDeclarationNode& primary_template = template_opt->as<TemplateClassDeclarationNode>();
+		const std::vector<ASTNode>& template_params = primary_template.template_parameters();
+		
 		// Create a new struct with the instantiated name
 		// Copy members from the pattern, substituting template parameters
 		// For now, if members use template parameters, we substitute them
@@ -10411,6 +10435,73 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		for (const auto& member_decl : pattern_struct.members()) {
 			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+			
+			// Check if this is a pack expansion (Args... members)
+			if (decl.is_pack_expansion()) {
+				// Find which template parameter is the pack
+				// Look up the type name using type_index
+				std::string_view type_name;
+				if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					type_name = type_info.name_;
+				} else {
+					std::cerr << "ERROR: Pack expansion with non-UserDefined type\n";
+					continue;
+				}
+				bool found_pack = false;
+				
+				for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
+					const TemplateParameterNode& tparam = template_params[param_idx].as<TemplateParameterNode>();
+					if (tparam.name() == type_name && tparam.is_variadic()) {
+						// This is the pack! Expand it
+						size_t non_variadic_count = 0;
+						for (const auto& param : template_params) {
+							if (!param.as<TemplateParameterNode>().is_variadic()) {
+								non_variadic_count++;
+							}
+					}
+					
+					size_t pack_size = template_args.size() - non_variadic_count;
+					
+					// Create one member for each pack element
+					for (size_t i = 0; i < pack_size; ++i) {
+						const TemplateTypeArg& arg = template_args[non_variadic_count + i];							// Generate member name: values0, values1, values2, etc.
+							std::string_view member_name = StringBuilder()
+								.append(decl.identifier_token().value())
+								.append(std::to_string(i))
+								.commit();
+							
+							// Calculate member size
+							size_t member_size;
+							if (arg.pointer_depth > 0 || arg.is_reference || arg.is_rvalue_reference) {
+								member_size = 8;  // Pointers/references are 8 bytes
+							} else {
+								member_size = get_type_size_bits(arg.base_type) / 8;
+							}
+							size_t member_alignment = get_type_alignment(arg.base_type, member_size);
+							struct_info->addMember(
+								std::string(member_name),
+								arg.base_type,
+								arg.type_index,
+								member_size,
+								member_alignment,
+								member_decl.access,
+								std::nullopt  // No default initializer for pack expansion members
+							);
+						}
+						
+						found_pack = true;
+						break;
+					}
+				}
+				
+				if (!found_pack) {
+					std::cerr << "ERROR: Pack expansion for non-pack type '" << type_name << "'\n";
+				}
+				
+				// Skip the regular member processing below
+				continue;
+			}
 			
 			// For pattern specializations, members should already have concrete types
 			// since the pattern was parsed with concrete types (e.g., T& was parsed as a reference)
@@ -10624,6 +10715,75 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& member_decl : class_decl.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+		// Check if this is a pack expansion (Args... members)
+		if (decl.is_pack_expansion()) {
+			// Find which template parameter is the pack
+			// Look up the type name using type_index
+			std::string_view type_name;
+			if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+				type_name = type_info.name_;
+			} else {
+				std::cerr << "ERROR: Pack expansion with non-UserDefined type\n";
+				continue;
+			}
+			bool found_pack = false;
+			
+			for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
+				const TemplateParameterNode& tparam = template_params[param_idx].as<TemplateParameterNode>();
+				if (tparam.name() == type_name && tparam.is_variadic()) {
+					// This is the pack! Expand it
+					size_t non_variadic_count = 0;
+					for (const auto& param : template_params) {
+						if (!param.as<TemplateParameterNode>().is_variadic()) {
+							non_variadic_count++;
+						}
+					}
+					
+					size_t pack_size = template_args_to_use.size() - non_variadic_count;
+					
+					// Create one member for each pack element
+					for (size_t i = 0; i < pack_size; ++i) {
+						const TemplateTypeArg& arg = template_args_to_use[non_variadic_count + i];
+						
+						// Generate member name: values0, values1, values2, etc.
+						std::string_view member_name = StringBuilder()
+							.append(decl.identifier_token().value())
+							.append(std::to_string(i))
+							.commit();
+						
+						// Calculate member size
+						size_t member_size;
+						if (arg.pointer_depth > 0 || arg.is_reference || arg.is_rvalue_reference) {
+							member_size = 8;  // Pointers/references are 8 bytes
+						} else {
+							member_size = get_type_size_bits(arg.base_type) / 8;
+						}
+						size_t member_alignment = get_type_alignment(arg.base_type, member_size);
+						struct_info->addMember(
+							std::string(member_name),
+							arg.base_type,
+							arg.type_index,
+							member_size,
+							member_alignment,
+							member_decl.access,
+							std::nullopt  // No default initializer for pack expansion members
+						);
+					}
+					
+					found_pack = true;
+					break;
+				}
+			}
+			
+			if (!found_pack) {
+				std::cerr << "ERROR: Pack expansion for non-pack type '" << type_name << "'\n";
+			}
+			
+			// Skip the regular member processing below
+			continue;
+		}
 
 		// Check if the member type is a template parameter
 		// For now, assume the first template parameter (T) maps to the first template argument

@@ -756,9 +756,9 @@ class DeclarationNode {
 public:
 	DeclarationNode() = default;
 	DeclarationNode(ASTNode type_node, Token identifier)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(std::nullopt), custom_alignment_(0) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(std::nullopt), custom_alignment_(0), is_pack_expansion_(false) {}
 	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size), custom_alignment_(0) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size), custom_alignment_(0), is_pack_expansion_(false) {}
 
 	ASTNode type_node() const { return type_node_; }
 	const Token& identifier_token() const { return identifier_; }
@@ -770,11 +770,16 @@ public:
 	size_t custom_alignment() const { return custom_alignment_; }
 	void set_custom_alignment(size_t alignment) { custom_alignment_ = alignment; }
 
+	// Pack expansion support (Args... members)
+	bool is_pack_expansion() const { return is_pack_expansion_; }
+	void set_pack_expansion(bool value) { is_pack_expansion_ = value; }
+
 private:
 	ASTNode type_node_;
 	Token identifier_;
 	std::optional<ASTNode> array_size_;  // For array declarations like int arr[10]
 	size_t custom_alignment_;            // Custom alignment from alignas(n), 0 = use natural alignment
+	bool is_pack_expansion_;             // True if declaration is Args... members
 };
 
 class IdentifierNode {
