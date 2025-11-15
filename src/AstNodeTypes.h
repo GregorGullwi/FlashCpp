@@ -1881,7 +1881,7 @@ public:
 		std::optional<ASTNode> expression = std::nullopt, Token return_token = Token())
 		: expression_(expression), return_token_(return_token) {}
 
-	std::optional<ASTNode> expression() const { return expression_; }
+	const std::optional<ASTNode>& expression() const { return expression_; }
 	const Token& return_token() const { return return_token_; }
 
 private:

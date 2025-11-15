@@ -36,7 +36,10 @@ class AstToIr {
 public:
 	AstToIr() = delete;  // Require valid references
 	AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
-		: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {}
+		: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
+		// Generate static member declarations for template classes before processing AST
+		generateStaticMemberDeclarations();
+	}
 
 	void visit(const ASTNode& node) {
 		// Skip empty nodes (e.g., from forward declarations)
@@ -172,6 +175,45 @@ public:
 	// Reserve space for IR instructions (optimization)
 	void reserveInstructions(size_t capacity) {
 		ir_.reserve(capacity);
+	}
+
+	// Generate GlobalVariableDecl for all static members in all registered types
+	// This is called at the beginning of IR generation to ensure all template
+	// instantiation static members are emitted
+	void generateStaticMemberDeclarations() {
+		for (const auto& [type_name, type_info] : gTypesByName) {
+			if (!type_info->isStruct()) {
+				continue;
+			}
+			const StructTypeInfo* struct_info = type_info->getStructInfo();
+			if (!struct_info || struct_info->static_members.empty()) {
+				continue;
+			}
+			
+			for (const auto& static_member : struct_info->static_members) {
+				std::vector<IrOperand> global_operands;
+				global_operands.emplace_back(static_member.type);
+				global_operands.emplace_back(static_cast<int>(static_member.size * 8));
+				std::string mangled_name = type_name + "::" + static_member.name;
+				global_operands.emplace_back(mangled_name);
+
+				// Check if static member has an initializer
+				bool has_initializer = static_member.initializer.has_value();
+				global_operands.emplace_back(has_initializer);
+				if (has_initializer) {
+					// Evaluate the initializer expression
+					auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
+					// Add only the initializer value (init_operands[2] is the value)
+					if (init_operands.size() >= 3) {
+						global_operands.emplace_back(init_operands[2]);
+					} else {
+						// Fallback to zero if initializer evaluation failed
+						global_operands.emplace_back(0ULL);
+					}
+				}
+				ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(global_operands), Token());
+			}
+		}
 	}
 
 private:
@@ -384,6 +426,11 @@ private:
 		// Set current function name for static local variable mangling
 		const DeclarationNode& func_decl = node.decl_node();
 		current_function_name_ = std::string(func_decl.identifier_token().value());
+		
+		// Set current function return type and size for type checking in return statements
+		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
+		current_function_return_type_ = ret_type_spec.type();
+		current_function_return_size_ = static_cast<int>(ret_type_spec.size_in_bits());
 
 		// DEBUG: Check what we're receiving
 		const TypeSpecifierNode& debug_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
@@ -1171,9 +1218,29 @@ private:
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
-			auto operands = visitExpressionNode(node.expression()->as<ExpressionNode>());
+			const auto& expr_opt = node.expression();
+			assert(expr_opt->is<ExpressionNode>());
+			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>());
+			
+			// Convert to the function's return type if necessary
+			if (!operands.empty() && operands.size() >= 2) {
+				Type expr_type = std::get<Type>(operands[0]);
+				int expr_size = std::get<int>(operands[1]);
+				
+				// Get the current function's return type
+				Type return_type = current_function_return_type_;
+				int return_size = current_function_return_size_;
+				
+				// Convert if types don't match
+				if (expr_type != return_type || expr_size != return_size) {
+					// Update operands with the converted value
+					operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+				}
+			}
+			
 			// Add the return value's type and size information
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(operands), node.return_token()));
+
 		}
 		else {
 			// For void returns, we don't need any operands
@@ -2436,12 +2503,14 @@ private:
 	}
 
 	std::vector<IrOperand> generateTypeConversion(const std::vector<IrOperand>& operands, Type fromType, Type toType, const Token& source_token) {
-		if (fromType == toType) {
+		// Get the actual size from the operands (they already contain the correct size)
+		// operands format: [type, size, value]
+		int fromSize = (operands.size() >= 2) ? std::get<int>(operands[1]) : get_type_size_bits(fromType);
+		int toSize = get_type_size_bits(toType);
+		
+		if (fromType == toType && fromSize == toSize) {
 			return operands; // No conversion needed
 		}
-
-		int fromSize = get_type_size_bits(fromType);
-		int toSize = get_type_size_bits(toType);
 
 		// Check if the value is a compile-time constant (literal)
 		// operands format: [type, size, value]
@@ -4967,6 +5036,8 @@ private:
 	// Current function name (for mangling static local variables)
 	std::string current_function_name_;
 	std::string current_struct_name_;  // For tracking which struct we're currently visiting member functions for
+	Type current_function_return_type_;  // Current function's return type
+	int current_function_return_size_;   // Current function's return size in bits
 
 	// Static local variable information
 	struct StaticLocalInfo {

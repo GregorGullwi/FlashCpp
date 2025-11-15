@@ -10574,7 +10574,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Fill in default arguments for missing parameters
 	for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
 		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+		// Skip variadic parameters - they're allowed to be empty
+		if (param.is_variadic()) {
+			continue;
+		}
+		
 		if (!param.has_default()) {
+			std::cerr << "DEBUG: Param " << i << " has no default, returning nullopt\n";
 			return std::nullopt;  // Missing required template argument
 		}
 		
