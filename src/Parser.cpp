@@ -6066,16 +6066,59 @@ ParseResult Parser::parse_primary_expression()
 				consume_token(); // consume the identifier to check for the next ::
 			}
 
-			// current_token_ is now the token after the final identifier
+		// current_token_ is now the token after the final identifier
 
-			// Create a QualifiedIdentifierNode
-			auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
-			const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
+		// Create a QualifiedIdentifierNode
+		auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
 
-			// Try to look up the qualified identifier
-			auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());
+		// Check for std::forward intrinsic
+		// std::forward<T>(arg) is a compiler intrinsic for perfect forwarding
+		if (qual_id.namespaces().size() == 1 && 
+		    qual_id.namespaces()[0] == "std" && 
+		    qual_id.name() == "forward") {
+			
+			// Handle std::forward<T>(arg)
+			// For now, we'll treat it as an identity function that preserves references
+			// Skip template arguments if present
+			if (current_token_.has_value() && current_token_->value() == "<") {
+				// Skip template arguments: <T>
+				int angle_bracket_depth = 1;
+				consume_token(); // consume <
+				
+				while (angle_bracket_depth > 0 && current_token_.has_value()) {
+					if (current_token_->value() == "<") angle_bracket_depth++;
+					else if (current_token_->value() == ">") angle_bracket_depth--;
+					consume_token();
+				}
+			}
+			
+			// Now expect (arg)
+			if (!current_token_.has_value() || current_token_->value() != "(") {
+				return ParseResult::error("Expected '(' after std::forward", final_identifier);
+			}
+			consume_token(); // consume '('
+			
+			// Parse the single argument
+			auto arg_result = parse_expression();
+			if (arg_result.is_error()) {
+				return arg_result;
+			}
+			
+			if (!current_token_.has_value() || current_token_->value() != ")") {
+				return ParseResult::error("Expected ')' after std::forward argument", *current_token_);
+			}
+			consume_token(); // consume ')'
+			
+			// std::forward<T>(arg) is essentially an identity function
+			// Just return the argument expression itself
+			// The type system already preserves the reference type
+			result = arg_result.node();
+			return ParseResult::success(*result);
+		}
 
-			// Check if followed by '(' for function call
+		// Try to look up the qualified identifier
+		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());			// Check if followed by '(' for function call
 			if (current_token_.has_value() && current_token_->value() == "(") {
 				consume_token(); // consume '('
 
@@ -6136,6 +6179,7 @@ ParseResult Parser::parse_primary_expression()
 
 		// Get the identifier's type information from the symbol table
 		auto identifierType = lookup_symbol(idenfifier_token.value());
+
 		// Check if this is a template function call
 		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
 		    consume_punctuator("("sv)) {
@@ -10419,6 +10463,10 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			
 			// Check if this is a parameter pack
 			if (param_decl.is_parameter_pack()) {
+				// Check if the original parameter type is an rvalue reference (for perfect forwarding)
+				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
+				
 				// Expand the parameter pack into multiple parameters
 				// Use all remaining argument types for this pack
 				while (arg_type_index < arg_types.size()) {
@@ -10432,6 +10480,24 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 						Token()
 					);
 					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
+					
+					// If the original parameter was a forwarding reference (T&&), preserve that
+					// For perfect forwarding: T&& + lvalue → T&, T&& + rvalue → T&&
+					// For now, we'll just apply && to all expanded parameters if the template used &&
+					if (is_forwarding_reference) {
+						// Copy reference type from the deduced argument type
+						if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
+							param_type.as<TypeSpecifierNode>().set_reference(arg_type.is_rvalue_reference());
+						} else {
+							// Argument is not a reference, so applying && makes it an rvalue reference
+							param_type.as<TypeSpecifierNode>().set_reference(true);  // true = rvalue reference
+						}
+					}
+					
+					// Copy pointer levels and CV qualifiers
+					for (const auto& ptr_level : arg_type.pointer_levels()) {
+						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					}
 					
 					// Create parameter name: base_name + index (e.g., args_0, args_1, ...)
 					StringBuilder param_name_builder;
@@ -10754,11 +10820,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 	std::cerr << "DEBUG: lookupTemplate('" << template_name << "') returned " << (template_opt.has_value() ? "found" : "not found") << "\n";
 	if (!template_opt.has_value()) {
+		std::cerr << "DEBUG: No primary template found, returning nullopt\n";
 		return std::nullopt;  // No template with this name
 	}
 
 	const ASTNode& template_node = *template_opt;
 	if (!template_node.is<TemplateClassDeclarationNode>()) {
+		std::cerr << "DEBUG: Template node is not a TemplateClassDeclarationNode, returning nullopt\n";
 		return std::nullopt;  // Not a class template
 	}
 
