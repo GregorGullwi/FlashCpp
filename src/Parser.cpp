@@ -6716,37 +6716,65 @@ ParseResult Parser::parse_primary_expression()
 	}
 	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "sizeof"sv) {
 		// Handle sizeof operator: sizeof(type) or sizeof(expression)
+		// Also handle sizeof... operator: sizeof...(pack_name)
 		Token sizeof_token = *current_token_;
 		consume_token(); // consume 'sizeof'
+
+		// Check for ellipsis to determine if this is sizeof... (parameter pack)
+		bool is_sizeof_pack = false;
+		if (peek_token().has_value() && 
+		    (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
+		    peek_token()->value() == "...") {
+			consume_token(); // consume '...'
+			is_sizeof_pack = true;
+		}
 
 		if (!consume_punctuator("("sv)) {
 			return ParseResult::error("Expected '(' after 'sizeof'", *current_token_);
 		}
 
-		// Try to parse as a type first
-		TokenPosition saved_pos = save_token_position();
-		ParseResult type_result = parse_type_specifier();
-
-		if (!type_result.is_error() && type_result.node().has_value()) {
-			// Successfully parsed as type
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after sizeof type", *current_token_);
+		if (is_sizeof_pack) {
+			// Parse sizeof...(pack_name)
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected parameter pack name after 'sizeof...('", *current_token_);
 			}
-			discard_saved_token(saved_pos);
-			result = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
+			
+			Token pack_name_token = *peek_token();
+			std::string_view pack_name = pack_name_token.value();
+			consume_token(); // consume pack name
+			
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after sizeof... pack name", *current_token_);
+			}
+			
+			result = emplace_node<ExpressionNode>(SizeofPackNode(pack_name, sizeof_token));
 		}
 		else {
-			// Not a type, try parsing as expression
-			restore_token_position(saved_pos);
-			ParseResult expr_result = parse_expression();
-			if (expr_result.is_error()) {
-				return ParseResult::error("Expected type or expression after 'sizeof('", *current_token_);
+			// Try to parse as a type first
+			TokenPosition saved_pos = save_token_position();
+			ParseResult type_result = parse_type_specifier();
+
+			if (!type_result.is_error() && type_result.node().has_value()) {
+				// Successfully parsed as type
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after sizeof type", *current_token_);
+				}
+				discard_saved_token(saved_pos);
+				result = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
 			}
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after sizeof expression", *current_token_);
+			else {
+				// Not a type, try parsing as expression
+				restore_token_position(saved_pos);
+				ParseResult expr_result = parse_expression();
+				if (expr_result.is_error()) {
+					return ParseResult::error("Expected type or expression after 'sizeof('", *current_token_);
+				}
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after sizeof expression", *current_token_);
+				}
+				result = emplace_node<ExpressionNode>(
+					SizeofExprNode::from_expression(*expr_result.node(), sizeof_token));
 			}
-			result = emplace_node<ExpressionNode>(
-				SizeofExprNode::from_expression(*expr_result.node(), sizeof_token));
 		}
 	}
 	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "typeid"sv) {
@@ -11092,6 +11120,43 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::cerr << "DEBUG: Copying " << primary_struct_info->static_members.size() << " static members from primary template\n";
 			for (const auto& static_member : primary_struct_info->static_members) {
 				std::cerr << "DEBUG: Copying static member: " << static_member.name << "\n";
+				
+				// Check if initializer contains sizeof...(pack_name) and substitute with pack size
+				std::optional<ASTNode> substituted_initializer = static_member.initializer;
+				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
+					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
+					if (std::holds_alternative<SizeofPackNode>(expr)) {
+						const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+						std::string_view pack_name = sizeof_pack.pack_name();
+						
+						// Find which template parameter is the pack
+						size_t pack_size = 0;
+						for (size_t i = 0; i < template_params.size(); ++i) {
+							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+							if (tparam.name() == pack_name && tparam.is_variadic()) {
+								// Calculate pack size: total args - non-variadic params
+								size_t non_variadic_count = 0;
+								for (const auto& param : template_params) {
+									if (!param.as<TemplateParameterNode>().is_variadic()) {
+										non_variadic_count++;
+									}
+								}
+								pack_size = template_args_to_use.size() - non_variadic_count;
+								
+								// Create a constant expression with the pack size
+								// Use StringBuilder to create a persistent string_view
+								std::string_view pack_size_str = StringBuilder().append(std::to_string(pack_size)).commit();
+								Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
+								auto num_literal = emplace_node<ExpressionNode>(
+									NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+								);
+								substituted_initializer = num_literal;
+								break;
+							}
+						}
+					}
+				}
+				
 				// Use struct_info_ptr instead of struct_info (which was moved)
 				struct_info_ptr->addStaticMember(
 					static_member.name,
@@ -11100,7 +11165,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.size,
 					static_member.alignment,
 					static_member.access,
-					static_member.initializer,  // Copy initializer (ASTNode is just a pointer wrapper, safe to copy)
+					substituted_initializer,  // Use substituted initializer if sizeof... was replaced
 					static_member.is_const
 				);
 			}

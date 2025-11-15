@@ -2056,6 +2056,14 @@ private:
 			const auto& expr = std::get<SizeofExprNode>(exprNode);
 			return generateSizeofIr(expr);
 		}
+		else if (std::holds_alternative<SizeofPackNode>(exprNode)) {
+			const auto& expr = std::get<SizeofPackNode>(exprNode);
+			// sizeof... should have been replaced with a constant during template instantiation
+			// If we reach here, it means sizeof... wasn't properly substituted
+			// This is an error - sizeof... can only appear in template contexts
+			std::cerr << "ERROR: sizeof... operator found during code generation - should have been substituted during template instantiation\n";
+			return {};
+		}
 		else if (std::holds_alternative<OffsetofExprNode>(exprNode)) {
 			const auto& expr = std::get<OffsetofExprNode>(exprNode);
 			return generateOffsetofIr(expr);

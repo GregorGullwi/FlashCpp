@@ -1611,6 +1611,20 @@ private:
 	bool is_type_;
 };
 
+// sizeof... operator node - returns the number of elements in a parameter pack
+class SizeofPackNode {
+public:
+	explicit SizeofPackNode(std::string_view pack_name, Token sizeof_token)
+		: pack_name_(pack_name), sizeof_token_(sizeof_token) {}
+
+	std::string_view pack_name() const { return pack_name_; }
+	const Token& sizeof_token() const { return sizeof_token_; }
+
+private:
+	std::string_view pack_name_;  // Name of the parameter pack
+	Token sizeof_token_;
+};
+
 // offsetof operator node - offsetof(struct_type, member)
 class OffsetofExprNode {
 public:
@@ -1795,7 +1809,7 @@ private:
 
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
-	ArraySubscriptNode, SizeofExprNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
+	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode>;
 
 /*class FunctionDefinitionNode {
