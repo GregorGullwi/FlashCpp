@@ -9390,6 +9390,15 @@ ParseResult Parser::parse_template_parameter() {
 			Token keyword_token = *peek_token();
 			consume_token(); // consume 'typename' or 'class'
 
+			// Check for ellipsis (parameter pack): typename... Args
+			bool is_variadic = false;
+			if (peek_token().has_value() && 
+			    (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
+			    peek_token()->value() == "...") {
+				consume_token(); // consume '...'
+				is_variadic = true;
+			}
+
 			// Expect identifier (parameter name)
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected identifier after 'typename' or 'class'", *current_token_);
@@ -9401,9 +9410,15 @@ ParseResult Parser::parse_template_parameter() {
 
 			// Create type parameter node
 			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
+			
+			// Set variadic flag if this is a parameter pack
+			if (is_variadic) {
+				param_node.as<TemplateParameterNode>().set_variadic(true);
+			}
 
 			// Handle default arguments (e.g., typename T = int)
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			// Note: Parameter packs cannot have default arguments
+			if (!is_variadic && peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
 			    peek_token()->value() == "=") {
 				consume_token(); // consume '='
 				
@@ -9433,7 +9448,14 @@ ParseResult Parser::parse_template_parameter() {
 		return ParseResult::error("Expected type specifier for non-type template parameter", *current_token_);
 	}
 
-	// Expect identifier (parameter name)
+	// Check for ellipsis (parameter pack): int... Ns
+	bool is_variadic = false;
+	if (peek_token().has_value() && 
+	    (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
+	    peek_token()->value() == "...") {
+		consume_token(); // consume '...'
+		is_variadic = true;
+	}	// Expect identifier (parameter name)
 	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
 		return ParseResult::error("Expected identifier for non-type template parameter", *current_token_);
 	}
@@ -9444,9 +9466,15 @@ ParseResult Parser::parse_template_parameter() {
 
 	// Create non-type parameter node
 	auto param_node = emplace_node<TemplateParameterNode>(param_name, *type_result.node(), param_name_token);
+	
+	// Set variadic flag if this is a parameter pack
+	if (is_variadic) {
+		param_node.as<TemplateParameterNode>().set_variadic(true);
+	}
 
 	// Handle default arguments (e.g., int N = 10)
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+	// Note: Parameter packs cannot have default arguments
+	if (!is_variadic && peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
 	    peek_token()->value() == "=") {
 		consume_token(); // consume '='
 		
@@ -10468,10 +10496,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	const std::vector<ASTNode>& template_params = template_class.template_parameters();
 	const StructDeclarationNode& class_decl = template_class.class_decl_node();
 
+	// Count non-variadic parameters
+	size_t non_variadic_param_count = 0;
+	bool has_parameter_pack = false;
+	size_t parameter_pack_index = 0;
+	
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+		if (param.is_variadic()) {
+			has_parameter_pack = true;
+			parameter_pack_index = i;
+		} else {
+			non_variadic_param_count++;
+		}
+	}
+	
+	std::cerr << "DEBUG: Template has " << non_variadic_param_count << " non-variadic params, has_pack=" << has_parameter_pack << "\n";
+
 	// Verify we have the right number of template arguments
-	// Allow fewer arguments if the remaining parameters have defaults
-	if (template_args.size() > template_params.size()) {
-		return std::nullopt;  // Too many template arguments
+	// For variadic templates: args.size() >= non_variadic_param_count
+	// For non-variadic templates: args.size() <= template_params.size()
+	if (has_parameter_pack) {
+		// With parameter pack, we need at least the non-variadic parameters
+		if (template_args.size() < non_variadic_param_count) {
+			std::cerr << "DEBUG: Too few arguments for variadic template (got " << template_args.size() 
+			          << ", need at least " << non_variadic_param_count << ")\n";
+			return std::nullopt;
+		}
+		// The rest of the arguments go into the parameter pack
+	} else {
+		// Non-variadic template: allow fewer arguments if remaining parameters have defaults
+		if (template_args.size() > template_params.size()) {
+			return std::nullopt;  // Too many template arguments
+		}
 	}
 	
 	// Create a mutable copy of template_args to fill in defaults

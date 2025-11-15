@@ -24,6 +24,9 @@ struct TemplateTypeArg {
 	// For non-type template parameters
 	bool is_value;  // true if this represents a value instead of a type
 	int64_t value;  // the value for non-type parameters
+
+	// For variadic templates (parameter packs)
+	bool is_pack;  // true if this represents a parameter pack (typename... Args)
 	
 	TemplateTypeArg()
 		: base_type(Type::Invalid)
@@ -33,7 +36,8 @@ struct TemplateTypeArg {
 		, pointer_depth(0)
 		, cv_qualifier(CVQualifier::None)
 		, is_value(false)
-		, value(0) {}
+		, value(0)
+		, is_pack(false) {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
@@ -43,7 +47,8 @@ struct TemplateTypeArg {
 		, pointer_depth(type_spec.pointer_depth())
 		, cv_qualifier(type_spec.cv_qualifier())
 		, is_value(false)
-		, value(0) {}
+		, value(0)
+		, is_pack(false) {}
 
 	// Constructor for non-type template parameters
 	explicit TemplateTypeArg(int64_t val)
@@ -54,7 +59,8 @@ struct TemplateTypeArg {
 		, pointer_depth(0)
 		, cv_qualifier(CVQualifier::None)
 		, is_value(true)
-		, value(val) {}
+		, value(val)
+		, is_pack(false) {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		return base_type == other.base_type &&
@@ -64,7 +70,13 @@ struct TemplateTypeArg {
 		       pointer_depth == other.pointer_depth &&
 		       cv_qualifier == other.cv_qualifier &&
 		       is_value == other.is_value &&
-		       (!is_value || value == other.value);  // Only compare value if it's a value
+		       (!is_value || value == other.value) &&  // Only compare value if it's a value
+		       is_pack == other.is_pack;
+	}
+
+	// Helper method to check if this is a parameter pack
+	bool isParameterPack() const {
+		return is_pack;
 	}
 	
 	// Get string representation for mangling
@@ -131,6 +143,7 @@ struct TemplateTypeArgHash {
 		if (arg.is_value) {
 			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
+		hash ^= std::hash<bool>{}(arg.is_pack) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		return hash;
 	}
 };

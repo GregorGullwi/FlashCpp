@@ -1057,6 +1057,10 @@ public:
 	ASTNode default_value() const { return default_value_.value(); }
 	void set_default_value(ASTNode value) { default_value_ = value; }
 
+	// For variadic templates (parameter packs)
+	bool is_variadic() const { return is_variadic_; }
+	void set_variadic(bool variadic) { is_variadic_ = variadic; }
+
 private:
 	TemplateParameterKind kind_;
 	std::string_view name_;  // Points directly into source text from lexer token
@@ -1064,6 +1068,7 @@ private:
 	std::vector<ASTNode> nested_params_;  // For template template parameters (nested template parameters)
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
 	Token token_;  // For error reporting
+	bool is_variadic_ = false;  // True for parameter packs (typename... Args)
 };
 
 // Template function declaration node - represents a function template
