@@ -39,11 +39,11 @@ public:
 		return includeDirs_;
 	}
 
-	void addIncludeDir(std::string_view includeDir) {
+	void addIncludeDir(std::string includeDir) {
 		if (isVerboseMode()) {
 			std::cerr << "Adding include directory: " << includeDir << std::endl;
 		}
-		includeDirs_.emplace_back(includeDir);
+		includeDirs_.emplace_back(std::move(includeDir));
 	}
 
 	const std::vector<std::string>& getDependencies() const {
