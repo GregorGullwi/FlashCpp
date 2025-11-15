@@ -835,6 +835,16 @@ ParseResult Parser::parse_type_and_name() {
         }
     }
 
+    // Check for parameter pack: Type... identifier
+    // This is used in variadic function templates like: template<typename... Args> void func(Args... args)
+    bool is_parameter_pack = false;
+    if (peek_token().has_value() && 
+        (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
+        peek_token()->value() == "...") {
+        consume_token(); // consume '...'
+        is_parameter_pack = true;
+    }
+
     // Check for alignas specifier before the identifier (if not already specified)
     if (!custom_alignment.has_value()) {
         custom_alignment = parse_alignas_specifier();
@@ -943,6 +953,11 @@ ParseResult Parser::parse_type_and_name() {
         // Apply custom alignment if specified
         if (custom_alignment.has_value()) {
             decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+        }
+
+        // Apply parameter pack flag if this is a parameter pack
+        if (is_parameter_pack) {
+            decl_node.as<DeclarationNode>().set_parameter_pack(true);
         }
 
         return ParseResult::success(decl_node);
@@ -6121,10 +6136,93 @@ ParseResult Parser::parse_primary_expression()
 
 		// Get the identifier's type information from the symbol table
 		auto identifierType = lookup_symbol(idenfifier_token.value());
+		// Check if this is a template function call
+		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
+		    consume_punctuator("("sv)) {
+			
+			// Parse arguments to deduce template parameters
+			if (!peek_token().has_value())
+				return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
+
+			ChunkedVector<ASTNode> args;
+			std::vector<TypeSpecifierNode> arg_types;
+			
+			while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+				ParseResult argResult = parse_expression();
+				if (argResult.is_error()) {
+					return argResult;
+				}
+
+				if (auto node = argResult.node()) {
+					args.push_back(*node);
+					
+					// Try to deduce the type of this argument
+					if (node->is<ExpressionNode>()) {
+						const auto& expr = node->as<ExpressionNode>();
+						Type arg_type = Type::Int;  // Default assumption
+						
+						std::visit([&](const auto& inner) {
+							using T = std::decay_t<decltype(inner)>;
+							if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+								arg_type = inner.type();
+							} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+								arg_type = Type::Char;  // const char*
+							} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+								// Look up the identifier's type
+								auto id_type = lookup_symbol(inner.name());
+								if (id_type.has_value()) {
+									if (id_type->is<DeclarationNode>()) {
+										const auto& decl = id_type->as<DeclarationNode>();
+										if (decl.type_node().is<TypeSpecifierNode>()) {
+											arg_type = decl.type_node().as<TypeSpecifierNode>().type();
+										}
+									}
+								}
+							}
+						}, expr);
+						
+						arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
+					}
+				}
+
+				if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+					consume_token(); // Consume comma
+				}
+				else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+					return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
+				}
+
+				if (!peek_token().has_value())
+					return ParseResult::error(ParserError::NotImplemented, Token());
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			}
+
+			// Try to instantiate the template function
+			auto template_func_inst = try_instantiate_template(idenfifier_token.value(), arg_types);
+			
+			if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
+				const auto& func = template_func_inst->as<FunctionDeclarationNode>();
+				result = emplace_node<ExpressionNode>(
+					FunctionCallNode(const_cast<DeclarationNode&>(func.decl_node()), std::move(args), idenfifier_token));
+				return ParseResult::success(*result);
+			} else {
+				std::cerr << "DEBUG: Template instantiation failed\n";
+				return ParseResult::error("Failed to instantiate template function", idenfifier_token);
+			}
+		}
 
 		if (!identifierType) {
+			// Check if this is a template function before treating it as missing
+			if (current_token_.has_value() && current_token_->value() == "(" &&
+			    gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
+				// Don't set identifierType - fall through to the function call handling below
+				// which will trigger template instantiation
+			}
 			// If we're inside a member function, check if this is a member variable
-			if (!member_function_context_stack_.empty()) {
+			else if (!member_function_context_stack_.empty()) {
 				const auto& context = member_function_context_stack_.back();
 				const StructDeclarationNode* struct_node = context.struct_node;
 
@@ -6232,6 +6330,85 @@ ParseResult Parser::parse_primary_expression()
 			// Check if this is a function call (forward reference)
 			// Identifier already consumed at line 1621
 			if (consume_punctuator("("sv)) {
+				// First, check if this is a template function that needs instantiation
+				std::optional<ASTNode> template_func_inst;
+				if (gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
+					// Parse arguments to deduce template parameters
+					if (!peek_token().has_value())
+						return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
+
+					ChunkedVector<ASTNode> args;
+					std::vector<TypeSpecifierNode> arg_types;
+					
+					while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+						ParseResult argResult = parse_expression();
+						if (argResult.is_error()) {
+							return argResult;
+						}
+
+						if (auto node = argResult.node()) {
+							args.push_back(*node);
+							
+							// Try to deduce the type of this argument
+							// For now, we'll use a simple heuristic
+							if (node->is<ExpressionNode>()) {
+								const auto& expr = node->as<ExpressionNode>();
+								Type arg_type = Type::Int;  // Default assumption
+								
+								std::visit([&](const auto& inner) {
+									using T = std::decay_t<decltype(inner)>;
+									if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+										arg_type = inner.type();
+									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+										arg_type = Type::Char;  // const char*
+									} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+										// Look up the identifier's type
+										auto id_type = lookup_symbol(inner.name());
+										if (id_type.has_value()) {
+											if (id_type->is<DeclarationNode>()) {
+												const auto& decl = id_type->as<DeclarationNode>();
+												if (decl.type_node().is<TypeSpecifierNode>()) {
+													arg_type = decl.type_node().as<TypeSpecifierNode>().type();
+												}
+											}
+										}
+									}
+								}, expr);
+								
+								arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
+							}
+						}
+
+						if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+							consume_token(); // Consume comma
+						}
+						else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+							return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
+						}
+
+						if (!peek_token().has_value())
+							return ParseResult::error(ParserError::NotImplemented, Token());
+					}
+
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+					}
+
+					// Try to instantiate the template function
+					template_func_inst = try_instantiate_template(idenfifier_token.value(), arg_types);
+					
+					if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
+						const auto& func = template_func_inst->as<FunctionDeclarationNode>();
+						result = emplace_node<ExpressionNode>(
+							FunctionCallNode(const_cast<DeclarationNode&>(func.decl_node()), std::move(args), idenfifier_token));
+						return ParseResult::success(*result);
+					} else {
+						std::cerr << "DEBUG: Template instantiation failed or didn't return FunctionDeclarationNode\n";
+						// Fall through to forward declaration
+					}
+				}
+				
+				// Not a template function, or instantiation failed
 				// Create a forward declaration for the function
 				// We'll assume it returns int for now (this is a simplification)
 				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
@@ -10004,8 +10181,17 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// We deduce template parameters in order from function arguments
 	// TODO: Add support for non-type parameters and more complex deduction
 
-	if (arg_types.empty()) {
-		std::cerr << "DEBUG [depth=" << recursion_depth << "]: No arguments to deduce from" << std::endl;
+	// Check if we have only variadic parameters - they can be empty
+	bool all_variadic = true;
+	for (const auto& template_param_node : template_params) {
+		const TemplateParameterNode& param = template_param_node.as<TemplateParameterNode>();
+		if (!param.is_variadic()) {
+			all_variadic = false;
+			break;
+		}
+	}
+
+	if (arg_types.empty() && !all_variadic) {
 		recursion_depth--;
 		return std::nullopt;  // No arguments to deduce from
 	}
@@ -10105,21 +10291,29 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				return std::nullopt;
 			}
 		} else if (param.kind() == TemplateParameterKind::Type) {
-			// Type parameter - use deduced type args if available, otherwise deduce from argument
-			if (!deduced_type_args.empty()) {
-				Type deduced_type = deduced_type_args[0];
-				template_args.push_back(TemplateArgument::makeType(deduced_type));
-				deduced_type_args.erase(deduced_type_args.begin());
-				std::cerr << "DEBUG [depth=" << recursion_depth << "]: Deduced type parameter from instantiated name: " << static_cast<int>(deduced_type) << std::endl;
-			} else if (arg_index < arg_types.size()) {
-				template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
-				std::cerr << "DEBUG [depth=" << recursion_depth << "]: Deduced type parameter from argument type: " << static_cast<int>(arg_types[arg_index].type()) << std::endl;
-				arg_index++;
+			// Type parameter - check if it's variadic (parameter pack)
+			if (param.is_variadic()) {
+				// Deduce all remaining argument types for this parameter pack
+				while (arg_index < arg_types.size()) {
+					template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+					arg_index++;
+				}
+				
+				// Note: If no arguments remain, the pack is empty (which is valid)
 			} else {
-				// Not enough arguments to deduce all template parameters
-				// Fall back to first argument for remaining parameters
-				template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
-				std::cerr << "DEBUG [depth=" << recursion_depth << "]: Fell back to first argument type for remaining parameters" << std::endl;
+				// Non-variadic type parameter
+				if (!deduced_type_args.empty()) {
+					Type deduced_type = deduced_type_args[0];
+					template_args.push_back(TemplateArgument::makeType(deduced_type));
+					deduced_type_args.erase(deduced_type_args.begin());
+				} else if (arg_index < arg_types.size()) {
+					template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+					arg_index++;
+				} else {
+					// Not enough arguments to deduce all template parameters
+					// Fall back to first argument for remaining parameters
+					template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+				}
 			}
 		} else {
 			// Non-type parameter - not yet supported in deduction
@@ -10217,26 +10411,65 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
 	// Add parameters with substituted types
+	size_t arg_type_index = 0;  // Track which argument type we're using
 	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 		const auto& param = func_decl.parameter_nodes()[i];
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			
-			// For this test case, use the argument type directly
-			// In a full implementation, we'd substitute template parameters in the parameter type
-			size_t arg_type_index = (i < arg_types.size()) ? i : (arg_types.size() - 1);
-			const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
-			
-			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				arg_type.type(),
-				arg_type.qualifier(),
-				arg_type.size_in_bits(),
-				Token()
-			);
-			param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
-			
-			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-			new_func_ref.add_parameter_node(new_param_decl);
+			// Check if this is a parameter pack
+			if (param_decl.is_parameter_pack()) {
+				// Expand the parameter pack into multiple parameters
+				// Use all remaining argument types for this pack
+				while (arg_type_index < arg_types.size()) {
+					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
+					
+					// Create a new parameter with the concrete type
+					ASTNode param_type = emplace_node<TypeSpecifierNode>(
+						arg_type.type(),
+						arg_type.qualifier(),
+						arg_type.size_in_bits(),
+						Token()
+					);
+					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
+					
+					// Create parameter name: base_name + index (e.g., args_0, args_1, ...)
+					StringBuilder param_name_builder;
+					param_name_builder.append(param_decl.identifier_token().value());
+					param_name_builder.append('_');
+					param_name_builder.append(static_cast<int>(arg_type_index));
+					std::string_view param_name = param_name_builder.commit();
+					
+					Token param_token(Token::Type::Identifier, 
+					                 param_name,
+					                 param_decl.identifier_token().line(),
+					                 param_decl.identifier_token().column(),
+					                 param_decl.identifier_token().file_index());
+					
+					auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_token);
+					new_func_ref.add_parameter_node(new_param_decl);
+					
+					arg_type_index++;
+				}
+			} else {
+				// Regular parameter - substitute template parameters in the parameter type
+				if (arg_type_index < arg_types.size()) {
+					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
+					
+					ASTNode param_type = emplace_node<TypeSpecifierNode>(
+						arg_type.type(),
+						arg_type.qualifier(),
+						arg_type.size_in_bits(),
+						Token()
+					);
+					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
+					
+					auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+					new_func_ref.add_parameter_node(new_param_decl);
+					
+					arg_type_index++;
+				}
+			}
 		}
 	}
 
