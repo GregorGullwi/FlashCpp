@@ -78,6 +78,9 @@ class StringBuilder {
 public:
     explicit StringBuilder(ChunkedStringAllocator& allocator = gChunkedStringAllocator)
         : alloc_(allocator), chunk_(allocator.current_chunk()), buf_start_(chunk_->current_ptr()), write_ptr_(buf_start_) {}
+    ~StringBuilder() {
+        assert(buf_start_ == chunk_->current_ptr() && "did you forget to call commit() on the StringBuilder?");
+    }
 
     StringBuilder& append(std::string_view sv) {
         ensure_capacity(sv.size());
@@ -126,7 +129,9 @@ public:
         size_t len = write_ptr_ - buf_start_;
         append('\0');
         chunk_->allocate(len + 1);
-        return std::string_view(buf_start_, len);
+        std::string_view return_str(buf_start_, len);
+        buf_start_ = write_ptr_ = chunk_->current_ptr();
+        return return_str;
     }
 
 private:
