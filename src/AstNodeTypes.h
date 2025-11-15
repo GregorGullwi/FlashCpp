@@ -233,9 +233,9 @@ struct StructStaticMember {
 	bool is_const;          // True if declared with const qualifier
 
 	StructStaticMember(std::string n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
-	                   std::optional<ASTNode> init = std::nullopt, bool is_const = false)
+	                   std::optional<ASTNode> init = std::nullopt, bool is_const_val = false)
 		: name(std::move(n)), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
-		  initializer(std::move(init)), is_const(is_const) {}
+		  initializer(init), is_const(is_const_val) {}
 };
 
 // Struct type information
@@ -377,7 +377,7 @@ struct StructTypeInfo {
 	// Add static member
 	void addStaticMember(const std::string& name, Type type, TypeIndex type_index, size_t size, size_t alignment,
 	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, bool is_const = false) {
-		static_members.emplace_back(name, type, type_index, size, alignment, access, std::move(initializer), is_const);
+		static_members.push_back(StructStaticMember(name, type, type_index, size, alignment, access, initializer, is_const));
 	}
 
 	// Find member recursively through base classes

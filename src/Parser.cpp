@@ -6289,13 +6289,39 @@ ParseResult Parser::parse_primary_expression()
 						// Successfully parsed template arguments
 						// Now check for :: to handle Template<T>::member syntax
 						if (peek_token().has_value() && peek_token()->value() == "::") {
-							// Parse qualified identifier after template
-							auto qualified_result = parse_qualified_identifier_after_template(idenfifier_token);
-							if (!qualified_result.is_error() && qualified_result.node().has_value()) {
-								auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
-								result = emplace_node<ExpressionNode>(qualified_node);
-								return ParseResult::success(*result);
+							// Instantiate the template to get the actual instantiated name
+							std::string_view template_name = idenfifier_token.value();
+							std::string_view instantiated_name = get_instantiated_class_name(template_name, *explicit_template_args);
+							try_instantiate_class_template(template_name, *explicit_template_args);
+							
+							// Parse qualified identifier after template, using the instantiated name
+							// We need to collect the :: path ourselves since we have the instantiated name
+							std::vector<StringType<32>> namespaces;
+							Token final_identifier = idenfifier_token;
+							
+							// Collect the qualified path after ::
+							while (peek_token().has_value() && peek_token()->value() == "::") {
+								// Current identifier becomes a namespace part (but use instantiated name for first part)
+								if (namespaces.empty()) {
+									namespaces.emplace_back(StringType<32>(instantiated_name));
+								} else {
+									namespaces.emplace_back(StringType<32>(final_identifier.value()));
+								}
+								consume_token(); // consume ::
+								
+								// Get next identifier
+								if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+									return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
+								}
+								final_identifier = *peek_token();
+								consume_token(); // consume the identifier
 							}
+							
+							// Create a QualifiedIdentifierNode with the instantiated type name
+							auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
+							result = emplace_node<ExpressionNode>(qualified_node);
+							return ParseResult::success(*result);
 						}
 					}
 				}
@@ -10790,6 +10816,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
 
+	// Get a pointer to the moved struct_info for later use
+	StructTypeInfo* struct_info_ptr = struct_type_info.getStructInfo();
+
 	// Create an AST node for the instantiated struct so member functions can be code-generated
 	auto instantiated_struct = emplace_node<StructDeclarationNode>(
 		instantiated_name,
@@ -11006,14 +11035,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::cerr << "DEBUG: Copying " << primary_struct_info->static_members.size() << " static members from primary template\n";
 			for (const auto& static_member : primary_struct_info->static_members) {
 				std::cerr << "DEBUG: Copying static member: " << static_member.name << "\n";
-				struct_info->addStaticMember(
+				// Use struct_info_ptr instead of struct_info (which was moved)
+				struct_info_ptr->addStaticMember(
 					static_member.name,
 					static_member.type,
 					static_member.type_index,
 					static_member.size,
 					static_member.alignment,
 					static_member.access,
-					static_member.initializer,
+					static_member.initializer,  // Copy initializer (ASTNode is just a pointer wrapper, safe to copy)
 					static_member.is_const
 				);
 			}

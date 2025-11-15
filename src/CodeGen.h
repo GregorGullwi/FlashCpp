@@ -2333,11 +2333,13 @@ private:
 						std::vector<IrOperand> operands;
 						operands.emplace_back(result_temp);
 						// Use qualified name as the global symbol name: StructName::static_member
-						operands.emplace_back(std::string_view(std::string(namespaces[0]) + "::" + std::string(qualifiedIdNode.name())));
+						// Use the actual type name (which may be an instantiated template name like Container_int)
+						std::string qualified_name = struct_type_it->second->name_ + "::" + std::string(qualifiedIdNode.name());
+						operands.emplace_back(qualified_name);
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(operands), Token()));
 
 						// Return the temp variable that will hold the loaded value
-						return { static_member->type, static_cast<int>(static_member->size), result_temp };
+						return { static_member->type, static_cast<int>(static_member->size * 8), result_temp };
 					}
 				}
 			}

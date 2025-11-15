@@ -29,6 +29,12 @@
 #ifndef IMAGE_REL_AMD64_ADDR64
 #define IMAGE_REL_AMD64_ADDR64          0x0001  // 64-bit absolute address
 #endif
+#ifndef IMAGE_REL_AMD64_REL32
+#define IMAGE_REL_AMD64_REL32           0x0004	// 32-bit relative address from byte following reloc
+#endif
+#ifndef IMAGE_REL_AMD64_ADDR32NB
+#define IMAGE_REL_AMD64_ADDR32NB        0x0003 // 32-bit address w/o image base (RVA).
+#endif
 
 enum class SectionType : unsigned char
 {
@@ -326,11 +332,11 @@ public:
 		try {
 			// Skip debug info for now
 			std::cerr << "Starting coffi_.save..." << std::endl;
-			std::cerr << "Number of sections: " << coffi_.get_sections().size() << std::endl;
+			std::cerr << "Number of sections: " << coffi_.get_sections().get_count() << std::endl;
 			std::cerr << "Number of symbols: " << coffi_.get_symbols()->size() << std::endl;
 
 			// Print section info
-			for (size_t i = 0; i < coffi_.get_sections().size(); ++i) {
+			for (size_t i = 0; i < coffi_.get_sections().get_count(); ++i) {
 				auto section = coffi_.get_sections()[i];
 				// Note: COFFI has a bug where section names are not stored correctly, so we use our mapping
 				std::string section_name = "unknown";
@@ -340,9 +346,22 @@ public:
 						break;
 					}
 				}
+				auto data_size = section->get_data_size();
 				std::cerr << "Section " << i << ": '" << section_name << "'"
-				         << " size=" << section->get_data_size()
-				         << " flags=0x" << std::hex << section->get_flags() << std::dec << std::endl;
+				         << " size=" << data_size
+				         << " flags=0x" << std::hex << section->get_flags() << std::dec
+				         << " reloc_count=" << section->get_reloc_count()
+				         << " reloc_offset=" << section->get_reloc_offset();
+				
+				// For .data section (index 2), check data
+				if (section_name == ".data") {
+					std::cerr << " <<< DATA SECTION";
+				}
+				// For .pdata section, check relocations  
+				if (section_name == ".pdata") {
+					std::cerr << " <<< PDATA SECTION";
+				}
+				std::cerr << std::endl;
 			}
 
 			// Print symbol info
@@ -355,6 +374,16 @@ public:
 			}
 
 			bool success = coffi_.save(filename);
+			std::cerr << "COFFI save returned: " << (success ? "true" : "FALSE") << std::endl;
+			
+			// Verify the file was written correctly by checking size
+			std::ifstream check_file(filename, std::ios::binary | std::ios::ate);
+			if (check_file.is_open()) {
+				auto file_size = check_file.tellg();
+				std::cerr << "Written file size: " << file_size << " bytes\n";
+				check_file.close();
+			}
+			
 			if (success) {
 				std::cerr << "Object file written successfully!" << std::endl;
 			} else {
@@ -653,9 +682,11 @@ public:
 	}
 
 	void add_data(const std::vector<char>& data, SectionType section_type) {
-		std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type);
-		auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
-		std::cerr << " (current size: " << section->get_data_size() << ")" << std::endl;
+		int section_index = sectiontype_to_index[section_type];
+		std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type) << " (index=" << section_index << ")";
+		auto section = coffi_.get_sections()[section_index];
+		uint32_t size_before = section->get_data_size();
+		std::cerr << " (current size: " << size_before << ")" << std::endl;
 		if (section_type == SectionType::TEXT) {
 			std::cerr << "Machine code bytes (" << data.size() << " total): ";
 			for (size_t i = 0; i < data.size(); ++i) {
@@ -664,6 +695,13 @@ public:
 			std::cerr << std::dec << std::endl;
 		}
 		section->append_data(data.data(), data.size());
+		uint32_t size_after = section->get_data_size();
+		uint32_t size_increase = size_after - size_before;
+		std::cerr << "DEBUG: Section " << section_index << " size after append: " << size_after 
+		          << " (increased by " << size_increase << ", expected " << data.size() << ")" << std::endl;
+		if (size_increase != data.size()) {
+			std::cerr << "WARNING: Size increase mismatch! Expected " << data.size() << " but got " << size_increase << std::endl;
+		}
 	}
 
 	void add_relocation(uint64_t offset, std::string_view symbol_name) {
@@ -970,6 +1008,10 @@ public:
 		SectionType section_type = is_initialized ? SectionType::DATA : SectionType::BSS;
 		auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
 		uint32_t offset = static_cast<uint32_t>(section->get_data_size());
+
+		std::cerr << "DEBUG: add_global_variable - var_name=" << var_name << " is_initialized=" << is_initialized << " init_value=" << init_value << "\n";
+		std::cerr << "DEBUG: add_global_variable - section_type=" << (section_type == SectionType::DATA ? "DATA" : "BSS") << "\n";
+		std::cerr << "DEBUG: add_global_variable - section index=" << sectiontype_to_index[section_type] << " offset=" << offset << "\n";
 
 		if (is_initialized) {
 			// Add initialized data to .data section
