@@ -126,7 +126,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>external;src;tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -135,7 +135,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>external;src;tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -144,7 +144,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Benchmark|x64'">
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>external;src;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <AdditionalOptions>-fms-compatibility -fms-extensions -fdelayed-template-parsing %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -155,7 +155,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'">
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Projects\FlashCpp\tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>external;src;tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>

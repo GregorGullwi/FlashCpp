@@ -105,7 +105,7 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Program Files\LLVM\llvm\include;C:\Program Files\LLVM\clang\include;C:\Program Files\LLVM\build\include;C:\Projects\FlashCpp\tests\external\doctest;C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Program Files\LLVM\include;C:\Program Files\LLVM\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Program Files\LLVM\llvm\include;C:\Program Files\LLVM\clang\include;C:\Program Files\LLVM\build\include;..\external\doctest;..\..\external;..\..\src;C:\Program Files\LLVM\include;C:\Program Files\LLVM\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExceptionHandling>Sync</ExceptionHandling>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -124,7 +124,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Program Files\LLVM\llvm\include;C:\Program Files\LLVM\clang\include;C:\Program Files\LLVM\build\include;C:\Projects\FlashCpp\tests\external\doctest;C:\Projects\FlashCpp\external;C:\Projects\FlashCpp\src;C:\Program Files\LLVM\include;C:\Program Files\LLVM\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Program Files\LLVM\llvm\include;C:\Program Files\LLVM\clang\include;C:\Program Files\LLVM\build\include;..\external\doctest;..\..\external;..\..\src;C:\Program Files\LLVM\include;C:\Program Files\LLVM\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
