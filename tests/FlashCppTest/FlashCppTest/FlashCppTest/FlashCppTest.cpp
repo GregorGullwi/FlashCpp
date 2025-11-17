@@ -2082,4 +2082,109 @@ TEST_SUITE("Templates") {
 	TEST_CASE("Templates:TemplateTemplateParams") {
 		run_test_from_file("template_template_params.cpp", "Templates:TemplateTemplateParams", false);
 	}
+
+	// Additional template tests from TEMPLATE_FEATURES_SUMMARY.md
+	TEST_CASE("Templates:ImplicitCtor") {
+		run_test_from_file("test_template_implicit_ctor.cpp", "Templates:ImplicitCtor", false);
+	}
+
+	TEST_CASE("Templates:VariadicBasic") {
+		run_test_from_file("test_variadic_basic.cpp", "Templates:VariadicBasic", false);
+	}
+
+	TEST_CASE("Templates:SizeofPackSimple") {
+		run_test_from_file("test_sizeof_pack_simple.cpp", "Templates:SizeofPackSimple", false);
+	}
+
+	TEST_CASE("Templates:VariadicFunctionTemplate") {
+		run_test_from_file("test_variadic_function_template.cpp", "Templates:VariadicFunctionTemplate", false);
+	}
+
+	TEST_CASE("Templates:PerfectForwarding") {
+		run_test_from_file("test_perfect_forwarding.cpp", "Templates:PerfectForwarding", false);
+	}
+
+	TEST_CASE("Templates:MultipleParamsExpression") {
+		run_test_from_file("test_multiple_params_expression.cpp", "Templates:MultipleParamsExpression", false);
+	}
+
+	TEST_CASE("Templates:MemberAccessBug") {
+		run_test_from_file("test_member_access_bug.cpp", "Templates:MemberAccessBug", false);
+	}
+
+	TEST_CASE("Templates:NontypeArray") {
+		run_test_from_file("test_nontype_array.cpp", "Templates:NontypeArray", false);
+	}
+
+	TEST_CASE("Templates:MultiTypeNontype") {
+		run_test_from_file("test_multi_type_nontype.cpp", "Templates:MultiTypeNontype", false);
+	}
+
+	TEST_CASE("Templates:FullSpecialization") {
+		run_test_from_file("test_full_specialization.cpp", "Templates:FullSpecialization", false);
+	}
+
+	TEST_CASE("Templates:MemberFuncTemplate") {
+		run_test_from_file("test_member_func_template.cpp", "Templates:MemberFuncTemplate", false);
+	}
+
+	TEST_CASE("Templates:TemplateSpecialization") {
+		run_test_from_file("test_template_specialization.cpp", "Templates:TemplateSpecialization", false);
+	}
+
+	TEST_CASE("Templates:TypeAlias") {
+		run_test_from_file("test_template_type_alias.cpp", "Templates:TypeAlias", false);
+	}
+
+	TEST_CASE("Templates:AliasInternal") {
+		run_test_from_file("test_template_alias_internal.cpp", "Templates:AliasInternal", false);
+	}
+
+	TEST_CASE("Templates:AliasSimple") {
+		run_test_from_file("test_template_alias_simple.cpp", "Templates:AliasSimple", false);
+	}
+
+	TEST_CASE("Templates:NoBrackets") {
+		run_test_from_file("test_template_no_brackets.cpp", "Templates:NoBrackets", false);
+	}
+
+	TEST_CASE("Templates:MultiDefaults") {
+		run_test_from_file("test_template_multi_defaults.cpp", "Templates:MultiDefaults", false);
+	}
+
+	TEST_CASE("Templates:DefaultOrder") {
+		run_test_from_file("test_template_default_order.cpp", "Templates:DefaultOrder", false);
+	}
+
+	TEST_CASE("Templates:Features") {
+		run_test_from_file("test_template_features.cpp", "Templates:Features", false);
+	}
+
+	TEST_CASE("Templates:NestedSimple") {
+		run_test_from_file("test_nested_simple.cpp", "Templates:NestedSimple", false);
+	}
+
+	TEST_CASE("Templates:ExternCppTemplate") {
+		run_test_from_file("test_extern_cpp_template.cpp", "Templates:ExternCppTemplate", false);
+	}
+
+	TEST_CASE("Templates:ExternSimpleTemplate") {
+		run_test_from_file("test_extern_simple_template.cpp", "Templates:ExternSimpleTemplate", false);
+	}
+
+	TEST_CASE("Templates:SimpleTemplateMember") {
+		run_test_from_file("test_simple_template_member.cpp", "Templates:SimpleTemplateMember", false);
+	}
+
+	TEST_CASE("Templates:ScopeResolution") {
+		run_test_from_file("test_template_scope_resolution.cpp", "Templates:ScopeResolution", false);
+	}
+
+	TEST_CASE("Templates:ReturnType") {
+		run_test_from_file("test_template_return_type.cpp", "Templates:ReturnType", false);
+	}
+
+	TEST_CASE("Templates:QualifiedId") {
+		run_test_from_file("test_template_qualified_id.cpp", "Templates:QualifiedId", false);
+	}
 }
