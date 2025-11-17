@@ -433,6 +433,12 @@ private:
 		current_function_return_type_ = ret_type_spec.type();
 		current_function_return_size_ = static_cast<int>(ret_type_spec.size_in_bits());
 
+		// Clear current_struct_name_ if this is not a member function
+		// This prevents struct context from leaking into free functions
+		if (!node.is_member_function()) {
+			current_struct_name_.clear();
+		}
+
 		// DEBUG: Check what we're receiving
 		const TypeSpecifierNode& debug_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 		std::cerr << "\n===== CODEGEN visitFunctionDeclarationNode: " << func_decl.identifier_token().value() << " =====\n";
