@@ -5421,6 +5421,11 @@ ParseResult Parser::parse_expression(int precedence)
 			break;
 		}
 
+		// Skip pack expansion operator '...' - it should be handled by the caller (e.g., function call argument parsing)
+		if (peek_token()->value() == "...") {
+			break;
+		}
+
 		// Skip ternary operator '?' - it's handled separately below
 		if (is_operator && peek_token()->value() == "?") {
 			break;
@@ -6137,8 +6142,66 @@ ParseResult Parser::parse_primary_expression()
 						if (arg_result.is_error()) {
 							return arg_result;
 						}
-						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
+						
+						// Check for pack expansion: expr...
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							consume_token(); // consume '...'
+							
+							// Pack expansion: need to expand the expression for each pack element
+							// Strategy: Try to find expanded pack elements in the symbol table
+							
+							if (auto arg_node = arg_result.node()) {
+								// Simple case: if the expression is just a single identifier that looks
+								// like a pack parameter, try to expand it
+								if (arg_node->is<IdentifierNode>()) {
+									std::string_view pack_name = arg_node->as<IdentifierNode>().name();
+									
+									// Try to find pack_name_0, pack_name_1, etc. in the symbol table
+									size_t pack_size = 0;
+									std::string base_name(pack_name);
+									
+									for (size_t i = 0; i < 100; ++i) {  // reasonable limit
+										// Use StringBuilder to create a persistent string
+										std::string_view element_name = StringBuilder()
+											.append(base_name)
+											.append("_")
+											.append(static_cast<int>(i))
+											.commit();
+										
+										if (gSymbolTable.lookup(element_name).has_value()) {
+											++pack_size;
+										} else {
+											break;
+										}
+									}
+									
+									if (pack_size > 0) {
+										// Add each pack element as a separate argument
+										for (size_t i = 0; i < pack_size; ++i) {
+											// Use StringBuilder to create a persistent string for the token
+											std::string_view element_name = StringBuilder()
+												.append(base_name)
+												.append("_")
+												.append(static_cast<int>(i))
+												.commit();
+											
+											Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+											auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+											args.push_back(elem_node);
+										}
+									} else {
+										args.push_back(*arg_node);
+									}
+								} else {
+									// Complex expression: need full rewriting (not implemented yet)
+									args.push_back(*arg_node);
+								}
+							}
+						} else {
+							// Regular argument
+							if (auto arg = arg_result.node()) {
+								args.push_back(*arg);
+							}
 						}
 
 						if (!peek_token().has_value()) {
@@ -6154,7 +6217,7 @@ ParseResult Parser::parse_primary_expression()
 						}
 					}
 				}
-
+				
 				if (!consume_punctuator(")")) {
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
@@ -6179,6 +6242,14 @@ ParseResult Parser::parse_primary_expression()
 
 		// Get the identifier's type information from the symbol table
 		auto identifierType = lookup_symbol(idenfifier_token.value());
+		
+		// Special case: if the identifier is not found but is followed by '...', 
+		// it might be a pack parameter that was expanded (e.g., "args" -> "args_0", "args_1", etc.)
+		// Allow it to proceed so pack expansion can handle it
+		bool is_pack_expansion = false;
+		if (!identifierType.has_value() && peek_token().has_value() && peek_token()->value() == "...") {
+			is_pack_expansion = true;
+		}
 
 		// Check if this is a template function call
 		if (identifierType && identifierType->is<TemplateFunctionDeclarationNode>() &&
@@ -6204,31 +6275,41 @@ ParseResult Parser::parse_primary_expression()
 					if (node->is<ExpressionNode>()) {
 						const auto& expr = node->as<ExpressionNode>();
 						Type arg_type = Type::Int;  // Default assumption
-						
+						bool is_lvalue = false;  // Track if this is an lvalue for perfect forwarding
+					
 						std::visit([&](const auto& inner) {
 							using T = std::decay_t<decltype(inner)>;
 							if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 								arg_type = inner.type();
+								// Literals are rvalues
 							} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 								arg_type = Type::Char;  // const char*
+								// String literals are lvalues (but typically decay to pointers)
 							} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 								// Look up the identifier's type
 								auto id_type = lookup_symbol(inner.name());
 								if (id_type.has_value()) {
-									if (id_type->is<DeclarationNode>()) {
-										const auto& decl = id_type->as<DeclarationNode>();
-										if (decl.type_node().is<TypeSpecifierNode>()) {
-											arg_type = decl.type_node().as<TypeSpecifierNode>().type();
+									if (id_type->template is<DeclarationNode>()) {
+										const auto& decl = id_type->template as<DeclarationNode>();
+										if (decl.type_node().template is<TypeSpecifierNode>()) {
+											arg_type = decl.type_node().template as<TypeSpecifierNode>().type();
+											// Named variables are lvalues
+											is_lvalue = true;
 										}
 									}
 								}
 							}
 						}, expr);
-						
-						arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
+					
+						TypeSpecifierNode arg_type_node(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
+						if (is_lvalue) {
+							// Mark as lvalue reference for perfect forwarding template deduction
+							arg_type_node.set_lvalue_reference(true);
+						}
+						arg_types.push_back(arg_type_node);
 					}
 				}
-
+				
 				if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
 					consume_token(); // Consume comma
 				}
@@ -6371,10 +6452,51 @@ ParseResult Parser::parse_primary_expression()
 				}
 			}
 
-			// Check if this is a function call (forward reference)
+			// Check if this is a function call or constructor call (forward reference)
 			// Identifier already consumed at line 1621
 			if (consume_punctuator("("sv)) {
-				// First, check if this is a template function that needs instantiation
+				// First, check if this is a type name (constructor call)
+				auto type_it = gTypesByName.find(std::string(idenfifier_token.value()));
+				if (type_it != gTypesByName.end()) {
+					// This is a constructor call: TypeName(args)
+					// Parse constructor arguments
+					ChunkedVector<ASTNode> args;
+					while (current_token_.has_value() && 
+					       (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")")) {
+						ParseResult argResult = parse_expression();
+						if (argResult.is_error()) {
+							return argResult;
+						}
+						if (auto node = argResult.node()) {
+							args.push_back(*node);
+						}
+						
+						if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+							consume_token(); // Consume comma
+						}
+						else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+							return ParseResult::error("Expected ',' or ')' after constructor argument", *current_token_);
+						}
+					}
+					
+					if (!consume_punctuator(")")) {
+						std::cerr << "DEBUG: Failed to consume ')' after constructor arguments, current token: " 
+						          << current_token_->value() << "\n";
+						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+					}
+					
+					// Create TypeSpecifierNode for the constructor call
+					TypeIndex type_index = type_it->second->type_index_;
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(
+						Type::UserDefined, TypeQualifier::None, type_index, idenfifier_token);
+					
+					result = emplace_node<ExpressionNode>(
+						ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+					
+					return ParseResult::success(*result);
+				}
+				
+				// Not a constructor - check if this is a template function that needs instantiation
 				std::optional<ASTNode> template_func_inst;
 				if (gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
 					// Parse arguments to deduce template parameters
@@ -6409,10 +6531,10 @@ ParseResult Parser::parse_primary_expression()
 										// Look up the identifier's type
 										auto id_type = lookup_symbol(inner.name());
 										if (id_type.has_value()) {
-											if (id_type->is<DeclarationNode>()) {
-												const auto& decl = id_type->as<DeclarationNode>();
-												if (decl.type_node().is<TypeSpecifierNode>()) {
-													arg_type = decl.type_node().as<TypeSpecifierNode>().type();
+											if (id_type->template is<DeclarationNode>()) {
+												const auto& decl = id_type->template as<DeclarationNode>();
+												if (decl.type_node().template is<TypeSpecifierNode>()) {
+													arg_type = decl.type_node().template as<TypeSpecifierNode>().type();
 												}
 											}
 										}
@@ -6472,8 +6594,68 @@ ParseResult Parser::parse_primary_expression()
 						return argResult;
 					}
 
-					if (auto node = argResult.node()) {
-						args.push_back(*node);
+					// Check for pack expansion: expr...
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume '...'
+						
+						// Pack expansion: need to expand the expression for each pack element
+						if (auto arg_node = argResult.node()) {
+							// Simple case: if the expression is just a single identifier that looks
+							// like a pack parameter, try to expand it
+							if (arg_node->is<IdentifierNode>()) {
+								std::string_view pack_name = arg_node->as<IdentifierNode>().name();
+								
+								// Try to find pack_name_0, pack_name_1, etc. in the symbol table
+								size_t pack_size = 0;
+								std::string base_name(pack_name);
+								
+								for (size_t i = 0; i < 100; ++i) {  // reasonable limit
+									// Use StringBuilder to create a persistent string
+									std::string_view element_name = StringBuilder()
+										.append(base_name)
+										.append("_")
+										.append(static_cast<int>(i))
+										.commit();
+									
+									if (gSymbolTable.lookup(element_name).has_value()) {
+										++pack_size;
+									} else {
+										break;
+									}
+								}
+								
+								if (pack_size > 0) {
+									// Add each pack element as a separate argument
+									for (size_t i = 0; i < pack_size; ++i) {
+										// Use StringBuilder to create a persistent string for the token
+										std::string_view element_name = StringBuilder()
+											.append(base_name)
+											.append("_")
+											.append(static_cast<int>(i))
+											.commit();
+										
+										Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+										auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+										args.push_back(elem_node);
+									}
+								} else {
+									if (auto node = argResult.node()) {
+										args.push_back(*node);
+									}
+								}
+							} else {
+								// Complex expression: need full rewriting (not implemented yet)
+								std::cerr << "DEBUG: Complex pack expansion not yet implemented\n";
+								if (auto node = argResult.node()) {
+									args.push_back(*node);
+								}
+							}
+						}
+					} else {
+						// Regular argument
+						if (auto node = argResult.node()) {
+							args.push_back(*node);
+						}
 					}
 
 					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
@@ -6559,7 +6741,15 @@ ParseResult Parser::parse_primary_expression()
 					}
 				}
 
-				// Not a function call, template member access, or template parameter reference - this is an error
+				// Not a function call, template member access, or template parameter reference
+				// But allow pack expansion (identifier...)
+				if (is_pack_expansion) {
+					// Create a simple identifier node - the pack expansion will be handled by the caller
+					result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+					return ParseResult::success(*result);
+				}
+				
+				// Not a function call, template member access, template parameter reference, or pack expansion - this is an error
 				std::cerr << "DEBUG: Missing identifier: " << idenfifier_token.value() << "\n";
 				return ParseResult::error("Missing identifier", idenfifier_token);
 			}
@@ -6592,6 +6782,11 @@ ParseResult Parser::parse_primary_expression()
 						return ParseResult::success(*result);
 					}
 				}
+			}
+
+			// Initially set result to a simple identifier - will be upgraded to FunctionCallNode if it's a function call
+			if (!result.has_value()) {
+				result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 			}
 
 			// Check if this looks like a function call
@@ -6638,8 +6833,74 @@ ParseResult Parser::parse_primary_expression()
 						return argResult;
 					}
 
-					if (auto node = argResult.node()) {
-						args.push_back(*node);
+					// Check for pack expansion: expr...
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume '...'
+						
+						// Pack expansion: need to expand the expression for each pack element
+						if (auto arg_node = argResult.node()) {
+							// Check if this is an ExpressionNode containing an IdentifierNode
+							if (arg_node->is<ExpressionNode>()) {
+								const auto& expr = arg_node->as<ExpressionNode>();
+								if (std::holds_alternative<IdentifierNode>(expr)) {
+									const auto& ident_node = std::get<IdentifierNode>(expr);
+									std::string_view pack_name = ident_node.name();
+									// Try to find pack_name_0, pack_name_1, etc. in the symbol table
+									size_t pack_size = 0;
+									std::string base_name(pack_name);
+									
+									for (size_t i = 0; i < 100; ++i) {  // reasonable limit
+										// Use StringBuilder to create a persistent string
+										std::string_view element_name = StringBuilder()
+											.append(base_name)
+											.append("_")
+											.append(static_cast<int>(i))
+											.commit();
+										
+										if (gSymbolTable.lookup(element_name).has_value()) {
+											++pack_size;
+										} else {
+											break;
+										}
+									}
+									
+									if (pack_size > 0) {
+										// Add each pack element as a separate argument
+										for (size_t i = 0; i < pack_size; ++i) {
+											// Use StringBuilder to create a persistent string for the token
+											std::string_view element_name = StringBuilder()
+												.append(base_name)
+												.append("_")
+												.append(static_cast<int>(i))
+												.commit();
+											
+											Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+											auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+											args.push_back(elem_node);
+										}
+									} else {
+										if (auto node = argResult.node()) {
+											args.push_back(*node);
+										}
+									}
+								} else {
+									// Complex expression: need full rewriting (not implemented yet)
+									if (auto node = argResult.node()) {
+										args.push_back(*node);
+									}
+								}
+							} else {
+								// Not an ExpressionNode
+								if (auto node = argResult.node()) {
+									args.push_back(*node);
+								}
+							}
+						}
+					} else {
+						// Regular argument
+						if (auto node = argResult.node()) {
+							args.push_back(*node);
+						}
 					}
 
 					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ","sv) {
@@ -6745,11 +7006,27 @@ ParseResult Parser::parse_primary_expression()
 									result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
 									break;
 								}
-								arg_types.push_back(*arg_type);
+							
+								TypeSpecifierNode arg_type_node = *arg_type;
+							
+								// For perfect forwarding: check if argument is an lvalue (named variable)
+								// If so, mark it as an lvalue reference for template deduction
+								if (args[i].is<ExpressionNode>()) {
+									const ExpressionNode& expr = args[i].as<ExpressionNode>();
+									if (std::holds_alternative<IdentifierNode>(expr)) {
+										// This is a named variable (lvalue) - mark as lvalue reference
+										// For forwarding reference deduction: Args&& deduces to T& for lvalues
+										arg_type_node.set_lvalue_reference(true);
+									}
+									// TODO: Handle other lvalue cases (array subscript, member access, dereference, etc.)
+									// Literals and temporaries remain as-is (treated as rvalues)
+								}
+							
+								arg_types.push_back(arg_type_node);
 							}
-
+							
 							// If we successfully extracted all argument types, perform overload resolution
-							if (!result.has_value() && arg_types.size() == args.size()) {
+							if (arg_types.size() == args.size()) {
 								// If explicit template arguments were provided, use them directly
 								if (explicit_template_args.has_value()) {
 									auto instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *explicit_template_args);
@@ -10339,7 +10616,8 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			if (param.is_variadic()) {
 				// Deduce all remaining argument types for this parameter pack
 				while (arg_index < arg_types.size()) {
-					template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+					// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
+					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
 					arg_index++;
 				}
 				
@@ -10463,6 +10741,9 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			
 			// Check if this is a parameter pack
 			if (param_decl.is_parameter_pack()) {
+				// Track how many elements this pack expands to
+				size_t pack_start_index = arg_type_index;
+				
 				// Check if the original parameter type is an rvalue reference (for perfect forwarding)
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
@@ -10480,20 +10761,31 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 						Token()
 					);
 					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
-					
-					// If the original parameter was a forwarding reference (T&&), preserve that
-					// For perfect forwarding: T&& + lvalue → T&, T&& + rvalue → T&&
-					// For now, we'll just apply && to all expanded parameters if the template used &&
+				
+					// If the original parameter was a forwarding reference (T&&), apply reference collapsing
+					// Reference collapsing rules:
+					//   T& && → T&    (lvalue reference wins)
+					//   T&& && → T&&  (both rvalue → rvalue)
+					//   T && → T&&    (non-reference + && → rvalue reference)
 					if (is_forwarding_reference) {
-						// Copy reference type from the deduced argument type
-						if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
-							param_type.as<TypeSpecifierNode>().set_reference(arg_type.is_rvalue_reference());
+						if (arg_type.is_lvalue_reference()) {
+							// Deduced type is lvalue reference (e.g., int&)
+							// Applying && gives int& && which collapses to int&
+							param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+							std::cerr << "DEBUG [depth=" << recursion_depth << "]: Forwarding ref + lvalue → lvalue reference" << std::endl;
+						} else if (arg_type.is_rvalue_reference()) {
+							// Deduced type is rvalue reference (e.g., int&&)
+							// Applying && gives int&& && which collapses to int&&
+							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+							std::cerr << "DEBUG [depth=" << recursion_depth << "]: Forwarding ref + rvalue → rvalue reference" << std::endl;
 						} else {
-							// Argument is not a reference, so applying && makes it an rvalue reference
-							param_type.as<TypeSpecifierNode>().set_reference(true);  // true = rvalue reference
+							// Deduced type is non-reference (e.g., int from literal)
+							// Applying && gives int&&
+							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+							std::cerr << "DEBUG [depth=" << recursion_depth << "]: Forwarding ref + non-ref → rvalue reference" << std::endl;
 						}
 					}
-					
+				
 					// Copy pointer levels and CV qualifiers
 					for (const auto& ptr_level : arg_type.pointer_levels()) {
 						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
@@ -10507,16 +10799,21 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 					std::string_view param_name = param_name_builder.commit();
 					
 					Token param_token(Token::Type::Identifier, 
-					                 param_name,
-					                 param_decl.identifier_token().line(),
-					                 param_decl.identifier_token().column(),
-					                 param_decl.identifier_token().file_index());
-					
+									 param_name,
+									 param_decl.identifier_token().line(),
+									 param_decl.identifier_token().column(),
+									 param_decl.identifier_token().file_index());
+				
 					auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_token);
 					new_func_ref.add_parameter_node(new_param_decl);
 					
 					arg_type_index++;
 				}
+				
+				// Record the pack expansion size for use during body re-parsing
+				//size_t pack_size = arg_type_index - pack_start_index;
+				// We'll set this before re-parsing the body below
+				
 			} else {
 				// Regular parameter - substitute template parameters in the parameter type
 				if (arg_type_index < arg_types.size()) {
@@ -10622,8 +10919,23 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
-	// Add to symbol table
+	// Add to symbol table at GLOBAL scope (not current scope)
+	// Template instantiations should be globally visible, not scoped to where they're called
+	
+	// Save current scope depth
+	size_t scopes_to_exit = 0;
+	while (gSymbolTable.get_current_scope_type() != ScopeType::Global) {
+		gSymbolTable.exit_scope();
+		scopes_to_exit++;
+	}
+	
+	// Insert at global scope
 	gSymbolTable.insert(mangled_token.value(), new_func_node);
+	
+	// Restore scopes
+	for (size_t i = 0; i < scopes_to_exit; ++i) {
+		gSymbolTable.enter_scope(ScopeType::Function);  // Assume function scopes for now
+	}
 
 	// Add to top-level AST so it gets visited by the code generator
 	ast_nodes_.push_back(new_func_node);
@@ -11021,6 +11333,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 				}
+			} else {
+				std::cerr << "DEBUG: Array does NOT have array_size!\n";
 			}
 			
 			// If we didn't substitute, keep the original array size
@@ -11458,6 +11772,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 								}
 								pack_size = template_args_to_use.size() - non_variadic_count;
+								std::cerr << "DEBUG: sizeof...(" << pack_name << ") = " << pack_size << "\n";
 								
 								// Create a constant expression with the pack size
 								// Use StringBuilder to create a persistent string_view

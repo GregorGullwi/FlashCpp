@@ -2750,9 +2750,39 @@ private:
 							}
 						}
 						else {
-							// Use the existing generateMovFromFrame function for consistency
-							auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
-							textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+							// Check if this is an 8-bit value that needs MOVZX
+							if (argSize == 8) {
+								// MOVZX target_reg, byte ptr [rbp+var_offset]
+								// Encoding: 0F B6 /r with REX.R if target_reg >= R8
+								uint8_t rex_prefix = 0;
+								if (static_cast<uint8_t>(target_reg) >= 8) {
+									rex_prefix = 0x44; // REX.R for R8-R15 destination
+								}
+								if (rex_prefix != 0) {
+									textSectionData.push_back(rex_prefix);
+								}
+								textSectionData.push_back(0x0F);
+								textSectionData.push_back(0xB6);
+								
+								// ModR/M byte: Mod=01/10 (disp8/disp32), Reg=target, R/M=101 (RBP)
+								uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
+								if (var_offset >= -128 && var_offset <= 127) {
+									uint8_t modrm = 0x45 | (reg_bits << 3); // Mod=01, R/M=101 (RBP)
+									textSectionData.push_back(modrm);
+									textSectionData.push_back(static_cast<uint8_t>(var_offset));
+								} else {
+									uint8_t modrm = 0x85 | (reg_bits << 3); // Mod=10, R/M=101 (RBP)
+									textSectionData.push_back(modrm);
+									for (int j = 0; j < 4; ++j) {
+										textSectionData.push_back(static_cast<uint8_t>(var_offset & 0xFF));
+										var_offset >>= 8;
+									}
+								}
+							} else {
+								// Use the existing generateMovFromFrame function for consistency
+								auto mov_opcodes = generateMovFromFrame(target_reg, var_offset);
+								textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+							}
 							regAlloc.flushSingleDirtyRegister(target_reg);
 						}
 					}
@@ -2947,6 +2977,16 @@ private:
 		// Just flush dirty registers before the call (which we already do above) and
 		// let the register allocator manage state naturally.
 		// regAlloc.reset();  // REMOVED - was causing bugs with multiple function calls
+		
+		// However, we DO need to invalidate volatile (caller-saved) registers after a call
+		// because they may have been clobbered by the callee.
+		// x86-64 Windows calling convention: RCX, RDX, R8, R9, R10, R11, XMM0-XMM5 are volatile
+		regAlloc.release(X64Register::RCX);
+		regAlloc.release(X64Register::RDX);
+		regAlloc.release(X64Register::R8);
+		regAlloc.release(X64Register::R9);
+		regAlloc.release(X64Register::R10);
+		regAlloc.release(X64Register::R11);
 	}
 
 	void handleConstructorCall(const IrInstruction& instruction) {
@@ -3966,6 +4006,13 @@ private:
 				} else if (instruction.isOperandType<std::string_view>(6)) {
 					auto rvalue_var_name = instruction.getOperandAs<std::string_view>(6);
 					auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
+					if (src_it == current_scope.identifier_offset.end()) {
+						std::cerr << "ERROR: Variable '" << rvalue_var_name << "' not found in symbol table\n";
+						std::cerr << "Available variables in current scope:\n";
+						for (const auto& [name, offset] : current_scope.identifier_offset) {
+							std::cerr << "  - " << name << " at offset " << offset << "\n";
+						}
+					}
 					assert(src_it != current_scope.identifier_offset.end());
 					src_offset = src_it->second;
 				}
@@ -4109,6 +4156,9 @@ private:
 		// Extract linkage and variadic flag using FunctionDeclLayout constants
 		Linkage linkage = static_cast<Linkage>(instruction.getOperandAs<int>(FunctionDeclLayout::LINKAGE));
 		bool is_variadic = instruction.getOperandAs<bool>(FunctionDeclLayout::IS_VARIADIC);
+		
+		// Extract pre-computed mangled name (includes full CV-qualifier info)
+		std::string_view mangled_name = instruction.getOperandAs<std::string_view>(FunctionDeclLayout::MANGLED_NAME);
 
 		// Extract parameter types from the instruction using FunctionDeclLayout constants
 		size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
@@ -4127,28 +4177,32 @@ private:
 			// Set reference information
 			if (is_reference) {
 				param_type.set_reference(is_rvalue_reference);
+				// For references, ptr_depth includes +1 for the reference itself (ABI)
+				// Subtract 1 to get the actual pointer levels (e.g., int*& has ptr_depth=2, but only 1 PE)
+				for (int i = 1; i < param_pointer_depth; ++i) {
+					param_type.add_pointer_level();
+				}
+			} else {
+				// Non-reference: add all pointer levels
+				for (int i = 0; i < param_pointer_depth; ++i) {
+					param_type.add_pointer_level();
+				}
 			}
-
-			// Add pointer levels
-			for (int i = 0; i < param_pointer_depth; ++i) {
-				param_type.add_pointer_level();
-			}
-
+		
 			parameter_types.push_back(param_type);
 			paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
 		}
 
-		// Add function signature to the object file writer for proper mangling
-		// and get the mangled name for this function
-		std::string mangled_name;
+		// Add function signature to the object file writer (still needed for debug info)
+		// but use the pre-computed mangled name instead of regenerating it
 		if (!struct_name.empty()) {
-			// Member function - include struct name for mangling
-			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name), linkage, is_variadic);
+			// Member function - include struct name
+			writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name), linkage, is_variadic, mangled_name);
 		} else {
 			// Regular function
-			mangled_name = writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, linkage, is_variadic);
+			writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, linkage, is_variadic, mangled_name);
 		}
-
+		
 		// Finalize previous function before starting new one
 		if (!current_function_name_.empty()) {
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
@@ -7141,19 +7195,73 @@ private:
 		// Operands: [result_var, type, size, operand]
 		assert(instruction.getOperandCount() == 4 && "Dereference must have 4 operands");
 
+		Type value_type = instruction.getOperandAs<Type>(1);
+		int value_size = instruction.getOperandAs<int>(2);
+
 		// Load the pointer operand into a register
 		X64Register ptr_reg = loadOperandIntoRegister(instruction, 3);
 
-		// Now dereference: load value from [ptr_reg] into ptr_reg
-		// MOV ptr_reg, [ptr_reg]
-		auto encoding = encodeRegToRegInstruction(ptr_reg, ptr_reg);
-		std::array<uint8_t, 3> derefInst = { encoding.rex_prefix, 0x8B, encoding.modrm_byte };
-		textSectionData.insert(textSectionData.end(), derefInst.begin(), derefInst.end());
+		// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
+		X64Register value_reg = ptr_reg;
+
+		// Determine the correct MOV instruction based on size and build REX prefix
+		uint8_t rex_prefix = 0x40; // Base REX prefix
+		uint8_t opcode = 0x8B;     // MOV r64, r/m64
+		
+		// Check if we need REX.W (64-bit operand size)
+		if (value_size == 64) {
+			rex_prefix |= 0x08; // Set W bit for 64-bit operand
+		} else if (value_size == 32) {
+			// 32-bit uses base REX (no W bit)
+		}
+		
+		// Check if destination register (same as source) is R8-R15
+		if (static_cast<uint8_t>(ptr_reg) >= 8) {
+			rex_prefix |= 0x05; // Set both R and B bits (destination and base)
+		}
+		
+		// For 8-bit, we'll use MOVZX which has different encoding
+		bool use_movzx = (value_size == 8);
+		
+		// Handle special case: RSP/R12 requires SIB byte
+		uint8_t ptr_encoding = static_cast<uint8_t>(ptr_reg) & 0x07;
+		bool needs_sib = (ptr_encoding == 0x04);
+
+		if (use_movzx) {
+			// MOVZX EAX, byte ptr [ptr_reg] - always loads into RAX
+			value_reg = X64Register::RAX;
+			
+			// ModR/M byte: mod=00 (indirect), reg=RAX (0), r/m=ptr_reg
+			uint8_t modrm_byte = (0x00 << 6) | (0x00 << 3) | ptr_encoding;
+			
+			if (static_cast<uint8_t>(ptr_reg) >= 8) {
+				textSectionData.push_back(0x41); // REX with B bit for extended base register
+			}
+			textSectionData.push_back(0x0F);
+			textSectionData.push_back(0xB6);
+			textSectionData.push_back(modrm_byte);
+			if (needs_sib) {
+				textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
+			}
+		} else {
+			// Regular MOV ptr_reg, [ptr_reg]
+			// ModR/M byte: mod=00 (indirect, no disp), reg=ptr_reg, r/m=ptr_reg
+			uint8_t modrm_byte = (0x00 << 6) | (ptr_encoding << 3) | ptr_encoding;
+			
+			if (rex_prefix != 0x40 || static_cast<uint8_t>(ptr_reg) >= 8) {
+				textSectionData.push_back(rex_prefix);
+			}
+			textSectionData.push_back(opcode);
+			textSectionData.push_back(modrm_byte);
+			if (needs_sib) {
+				textSectionData.push_back(0x24); // SIB: no scale, no index, base=RSP/R12
+			}
+		}
 
 		// Store the dereferenced value to result_var
 		auto result_var = instruction.getOperandAs<TempVar>(0);
 		int32_t result_offset = getStackOffsetFromTempVar(result_var);
-		auto result_store = generateMovToFrame(ptr_reg, result_offset);
+		auto result_store = generateMovToFrame(value_reg, result_offset);
 		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
 		                       result_store.op_codes.begin() + result_store.size_in_bytes);
 	}
@@ -7429,7 +7537,7 @@ private:
 
 	// Debug information tracking
 	std::string current_function_name_;
-	std::string current_function_mangled_name_;
+	std::string_view current_function_mangled_name_;
 	uint32_t current_function_offset_ = 0;
 
 	// Pending function info for exception handling

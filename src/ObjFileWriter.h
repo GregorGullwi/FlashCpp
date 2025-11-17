@@ -501,33 +501,52 @@ private:
 	std::string getTypeCode(const TypeSpecifierNode& type_node) const {
 		std::string code;
 
-		// Handle CV-qualifiers for references
-		// In MSVC mangling, CV-qualifiers come before the reference/pointer markers
-		auto cv_val = static_cast<uint8_t>(type_node.cv_qualifier());
-		bool has_const = (cv_val & static_cast<uint8_t>(CVQualifier::Const)) != 0;
-		bool has_volatile = (cv_val & static_cast<uint8_t>(CVQualifier::Volatile)) != 0;
-		
-		// Handle references - they need special encoding
-		if (type_node.is_reference()) {
-			if (type_node.is_rvalue_reference()) {
-				// Rvalue reference: $$Q + CV qualifiers + base type
-				code += "$$Q";
-				if (has_const && has_volatile) code += "EA";
-				else if (has_const) code += "EB";
-				else if (has_volatile) code += "EC";
-				else code += "EA";  // Non-const, non-volatile rvalue ref
-			} else {
-				// Lvalue reference: A/B + CV qualifiers
-				if (has_const && has_volatile) code += "AED";
-				else if (has_const) code += "AEB";  // const lvalue reference
-				else if (has_volatile) code += "AEC";
-				else code += "AEA";  // Non-const lvalue reference
-			}
+		// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
+		// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the reference itself
+		if (type_node.is_lvalue_reference()) {
+			code += "AE";
+			code += "A";  // References are never const/volatile in C++, always use A
+		} else if (type_node.is_rvalue_reference()) {
+			code += "$$QE";
+			code += "A";  // References are never const/volatile in C++, always use A
 		}
 
-		// Add pointer prefix for each level of indirection
-		for (size_t i = 0; i < type_node.pointer_depth(); ++i) {
-			code += "PE";  // Pointer prefix in MSVC mangling
+		// Add pointer prefix for each level of indirection with CV-qualifiers
+		// MSVC format: [P|Q|R|S][E][A|B|C|D] where:
+		//   P = pointer, Q = const pointer, R = volatile pointer, S = const volatile pointer
+		//   E = 64-bit (always E for x64)
+		//   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
+		const auto& ptr_levels = type_node.pointer_levels();
+		for (size_t i = 0; i < ptr_levels.size(); ++i) {
+			const auto& ptr_level = ptr_levels[i];
+			
+			// Pointer CV-qualifiers (on the pointer itself)
+			if (ptr_level.cv_qualifier == CVQualifier::None) {
+				code += "PE";
+			} else if (ptr_level.cv_qualifier == CVQualifier::Const) {
+				code += "QE";
+			} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
+				code += "RE";
+			} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
+				code += "SE";
+			}
+			
+			// Pointee CV-qualifiers (on what the pointer points to)
+			// For the last pointer level, use the base type's CV-qualifier
+			// For intermediate levels, get CV from the next pointer level
+			CVQualifier pointee_cv = (i == ptr_levels.size() - 1) 
+				? type_node.cv_qualifier() 
+				: ptr_levels[i + 1].cv_qualifier;
+				
+			if (pointee_cv == CVQualifier::None) {
+				code += "A";
+			} else if (pointee_cv == CVQualifier::Const) {
+				code += "B";
+			} else if (pointee_cv == CVQualifier::Volatile) {
+				code += "C";
+			} else if (pointee_cv == CVQualifier::ConstVolatile) {
+				code += "D";
+			}
 		}
 
 		// Add base type code
@@ -630,6 +649,14 @@ public:
 		function_signatures_[mangled_name] = sig;
 		return mangled_name;
 	}
+	
+	// Overload that accepts pre-computed mangled name (for function definitions from IR)
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name) {
+		FunctionSignature sig(return_type, parameter_types);
+		sig.linkage = linkage;
+		sig.is_variadic = is_variadic;
+		function_signatures_[std::string(mangled_name)] = sig;
+	}
 
 	// Add function signature information for member functions with class name
 	// Returns the mangled name for the function
@@ -643,11 +670,20 @@ public:
 		function_signatures_[mangled_name] = sig;
 		return mangled_name;
 	}
+	
+	// Overload that accepts pre-computed mangled name (for member function definitions from IR)
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name) {
+		FunctionSignature sig(return_type, parameter_types);
+		sig.class_name = class_name;
+		sig.linkage = linkage;
+		sig.is_variadic = is_variadic;
+		function_signatures_[std::string(mangled_name)] = sig;
+	}
 
-	void add_function_symbol(const std::string& mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None) {
+	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None) {
 		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
-		auto symbol_func = coffi_.add_symbol(mangled_name);
+		auto symbol_func = coffi_.add_symbol(std::string(mangled_name));
 		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol_func->set_section_number(section_text->get_index() + 1);
@@ -656,24 +692,24 @@ public:
 		// Handle dllexport - add export directive
 		if (linkage == Linkage::DllExport) {
 			auto section_drectve = coffi_.get_sections()[sectiontype_to_index[SectionType::DRECTVE]];
-			std::string export_directive = " /EXPORT:" + mangled_name;
+			std::string export_directive = std::string(" /EXPORT:") + std::string(mangled_name);
 			std::cerr << "Adding export directive: " << export_directive << std::endl;
 			section_drectve->append_data(export_directive.c_str(), export_directive.size());
 		}
 
 		// Extract unmangled name for debug info
 		// Mangled names start with '?' followed by the function name up to '@@'
-		std::string unmangled_name = mangled_name;
+		std::string unmangled_name(mangled_name);
 		if (!mangled_name.empty() && mangled_name[0] == '?') {
 			size_t end_pos = mangled_name.find("@@");
-			if (end_pos != std::string::npos) {
-				unmangled_name = mangled_name.substr(1, end_pos - 1);
+			if (end_pos != std::string_view::npos) {
+				unmangled_name = std::string(mangled_name.substr(1, end_pos - 1));
 			}
 		}
 
 		// Add function to debug info with length 0 - length will be calculated later
 		std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " (mangled: " << mangled_name << ") at offset " << section_offset << "\n";
-		debug_builder_.addFunction(unmangled_name, mangled_name, section_offset, 0, stack_space);
+		debug_builder_.addFunction(unmangled_name, std::string(mangled_name), section_offset, 0, stack_space);
 		std::cerr << "DEBUG: Function added to debug builder \n";
 
 		// Exception info is now handled directly in IRConverter finalization logic
@@ -764,13 +800,13 @@ public:
 		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 	}
 
-	void add_pdata_relocations(uint32_t pdata_offset, const std::string& mangled_name, uint32_t xdata_offset) {
+	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset) {
 		std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
 		// Get the function symbol using mangled name
-		auto* function_symbol = coffi_.get_symbol(mangled_name);
+		auto* function_symbol = coffi_.get_symbol(std::string(mangled_name));
 		if (!function_symbol) {
-			throw std::runtime_error("Function symbol not found: " + mangled_name);
+			throw std::runtime_error(std::string("Function symbol not found: ") + std::string(mangled_name));
 		}
 
 		// Get the .xdata section symbol
@@ -867,7 +903,7 @@ public:
 		debug_builder_.finalizeCurrentFunction();
 	}
 
-	void add_function_exception_info(const std::string& mangled_name, uint32_t function_start, uint32_t function_size) {
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size) {
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
 			if (existing == mangled_name) {
@@ -877,7 +913,7 @@ public:
 		}
 
 		std::cerr << "Adding exception info for function: " << mangled_name << " at offset " << function_start << " size " << function_size << std::endl;
-		added_exception_functions_.push_back(mangled_name);
+		added_exception_functions_.push_back(std::string(mangled_name));
 
 		// Get current XDATA section size to calculate the offset for this function's unwind info
 		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];

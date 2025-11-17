@@ -142,7 +142,8 @@ enum class IrOpcode : int_fast16_t {
 //   [4] struct_name (string_view) - empty for non-member functions
 //   [5] linkage (int) - Linkage enum value
 //   [6] is_variadic (bool)
-//   [7+] parameters - each parameter has 7 operands:
+//   [7] mangled_name (string_view) - pre-computed mangled name with full CV-qualifier info
+//   [8+] parameters - each parameter has 7 operands:
 //        [0] param_type (Type)
 //        [1] param_size (int)
 //        [2] param_pointer_depth (int)
@@ -160,9 +161,10 @@ namespace FunctionDeclLayout {
 	constexpr size_t STRUCT_NAME = 4;
 	constexpr size_t LINKAGE = 5;
 	constexpr size_t IS_VARIADIC = 6;
+	constexpr size_t MANGLED_NAME = 7;
 
 	// First parameter starts after the fixed operands
-	constexpr size_t FIRST_PARAM_INDEX = 7;
+	constexpr size_t FIRST_PARAM_INDEX = 8;
 
 	// Each parameter has this many operands
 	constexpr size_t OPERANDS_PER_PARAM = 7;

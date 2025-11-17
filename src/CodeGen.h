@@ -447,9 +447,14 @@ private:
 				const DeclarationNode& param_decl = param.as<DeclarationNode>();
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				std::cerr << "  param[" << i << "]: name='" << param_decl.identifier_token().value() 
-				          << "' type=" << (int)param_type.type() 
-				          << " size=" << (int)param_type.size_in_bits()
-				          << " ptr_depth=" << param_type.pointer_depth() << "\n";
+						  << "' type=" << (int)param_type.type() 
+						  << " size=" << (int)param_type.size_in_bits()
+						  << " ptr_depth=" << param_type.pointer_depth()
+						  << " base_cv=" << (int)param_type.cv_qualifier();
+				for (size_t j = 0; j < param_type.pointer_levels().size(); ++j) {
+					std::cerr << " ptr[" << j << "]_cv=" << (int)param_type.pointer_levels()[j].cv_qualifier;
+				}
+				std::cerr << "\n";
 			}
 		}
 		std::cerr << "=====\n";
@@ -486,6 +491,23 @@ private:
 		funcDeclOperands.emplace_back(static_cast<int>(node.linkage()));                  // [5] LINKAGE
 		funcDeclOperands.emplace_back(node.is_variadic());                                // [6] IS_VARIADIC
 
+		// Generate mangled name now while we have full type information with CV-qualifiers
+		// Extract parameter types for mangling
+		std::vector<TypeSpecifierNode> param_types_for_mangling;
+		for (const auto& param : node.parameter_nodes()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+		}
+		
+		std::string_view mangled_name = generateMangledNameForCall(
+			std::string(func_decl.identifier_token().value()),
+			ret_type,
+			param_types_for_mangling,
+			node.is_variadic()
+		);
+		
+		funcDeclOperands.emplace_back(mangled_name);                                       // [7] MANGLED_NAME
+
 		// Verify we have the correct number of fixed operands
 		assert(funcDeclOperands.size() == FunctionDeclLayout::FIRST_PARAM_INDEX &&
 		       "FunctionDecl fixed operands mismatch - update FunctionDeclLayout constants!");
@@ -503,7 +525,7 @@ private:
 			// References are treated like pointers in the IR (they're both addresses)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
 			if (param_type.is_reference()) {
-				pointer_depth = 1;  // Treat reference as pointer depth 1
+				pointer_depth += 1;  // Add 1 for reference (ABI treats it as an additional pointer level)
 			}
 			funcDeclOperands.emplace_back(pointer_depth);                                 // PARAM_POINTER_DEPTH
 			funcDeclOperands.emplace_back(param_decl.identifier_token().value());         // PARAM_NAME
@@ -3254,73 +3276,102 @@ private:
 
 	// Helper function to generate Microsoft Visual C++ mangled name for function calls
 	// This matches the mangling scheme in ObjFileWriter::generateMangledName
-	std::string generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false) {
+	std::string_view generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false) {
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
 		}
 
-		std::string mangled = "?";
-		mangled += name;
-		mangled += "@@";
-
-		// Add calling convention and linkage (__cdecl)
-		mangled += "YA";
+		StringBuilder builder;
+		builder.append('?');
+		builder.append(name);
+		builder.append("@@YA");  // @@ + calling convention (__cdecl)
 
 		// Add return type code
-		mangled += getTypeCodeForMangling(return_type);
+		appendTypeCodeForMangling(builder, return_type);
 
 		// Add parameter type codes
 		for (const auto& param_type : param_types) {
-			mangled += getTypeCodeForMangling(param_type);
+			appendTypeCodeForMangling(builder, param_type);
 		}
 
 		// End marker - different for variadic vs non-variadic
 		if (is_variadic) {
-			mangled += "ZZ";  // Variadic functions end with 'ZZ' in MSVC mangling
+			builder.append("ZZ");  // Variadic functions end with 'ZZ' in MSVC mangling
 		} else {
-			mangled += "@Z";  // Non-variadic functions end with '@Z'
+			builder.append("@Z");  // Non-variadic functions end with '@Z'
 		}
 
-		return mangled;
+		return builder.commit();
 	}
 
-	// Helper to get type code for mangling (matches ObjFileWriter::getTypeCode)
-	std::string getTypeCodeForMangling(const TypeSpecifierNode& type_node) {
-		std::string code;
-
-		// Handle references - they're treated as pointers in MSVC mangling
-		// References add one level of pointer indirection
-		if (type_node.is_reference()) {
-			code += "PE";  // Pointer prefix for reference
+	// Helper to append type code for mangling to StringBuilder
+	void appendTypeCodeForMangling(StringBuilder& builder, const TypeSpecifierNode& type_node) {
+		// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
+		// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the reference itself
+		if (type_node.is_lvalue_reference()) {
+			builder.append("AEA");  // References are never const/volatile in C++, always use A
+		} else if (type_node.is_rvalue_reference()) {
+			builder.append("$$QEA");  // References are never const/volatile in C++, always use A
 		}
 
-		// Add pointer prefix for each level of indirection
-		for (int i = 0; i < type_node.pointer_depth(); ++i) {
-			code += "PE";  // Pointer prefix in MSVC mangling
+		// Add pointer prefix for each level of indirection with CV-qualifiers
+		// MSVC format: [P|Q|R|S][E][A|B|C|D] where:
+		//   P = pointer, Q = const pointer, R = volatile pointer, S = const volatile pointer
+		//   E = 64-bit (always E for x64)
+		//   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
+		const auto& ptr_levels = type_node.pointer_levels();
+		for (int i = 0; i < static_cast<int>(ptr_levels.size()); ++i) {
+			const auto& ptr_level = ptr_levels[i];
+			
+			// Pointer CV-qualifiers (on the pointer itself)
+			if (ptr_level.cv_qualifier == CVQualifier::None) {
+				builder.append("PE");
+			} else if (ptr_level.cv_qualifier == CVQualifier::Const) {
+				builder.append("QE");
+			} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
+				builder.append("RE");
+			} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
+				builder.append("SE");
+			}
+			
+			// Pointee CV-qualifiers (on what the pointer points to)
+			// For the last pointer level, use the base type's CV-qualifier
+			// For intermediate levels, get CV from the next pointer level
+			CVQualifier pointee_cv = (i == static_cast<int>(ptr_levels.size()) - 1) 
+				? type_node.cv_qualifier() 
+				: ptr_levels[i + 1].cv_qualifier;
+				
+			if (pointee_cv == CVQualifier::None) {
+				builder.append('A');
+			} else if (pointee_cv == CVQualifier::Const) {
+				builder.append('B');
+			} else if (pointee_cv == CVQualifier::Volatile) {
+				builder.append('C');
+			} else if (pointee_cv == CVQualifier::ConstVolatile) {
+				builder.append('D');
+			}
 		}
 
 		// Add base type code
 		switch (type_node.type()) {
-			case Type::Void: code += "X"; break;
-			case Type::Bool: code += "_N"; break;  // bool
-			case Type::Char: code += "D"; break;   // char
-			case Type::UnsignedChar: code += "E"; break;  // unsigned char
-			case Type::Short: code += "F"; break;  // short
-			case Type::UnsignedShort: code += "G"; break;  // unsigned short
-			case Type::Int: code += "H"; break;    // int
-			case Type::UnsignedInt: code += "I"; break;  // unsigned int
-			case Type::Long: code += "J"; break;   // long
-			case Type::UnsignedLong: code += "K"; break;  // unsigned long
-			case Type::LongLong: code += "_J"; break;  // long long
-			case Type::UnsignedLongLong: code += "_K"; break;  // unsigned long long
-			case Type::Float: code += "M"; break;  // float
-			case Type::Double: code += "N"; break;  // double
-			case Type::LongDouble: code += "O"; break;  // long double
-			default: code += "H"; break;  // Default to int
+			case Type::Void: builder.append('X'); break;
+			case Type::Bool: builder.append("_N"); break;  // bool
+			case Type::Char: builder.append('D'); break;   // char
+			case Type::UnsignedChar: builder.append('E'); break;  // unsigned char
+			case Type::Short: builder.append('F'); break;  // short
+			case Type::UnsignedShort: builder.append('G'); break;  // unsigned short
+			case Type::Int: builder.append('H'); break;    // int
+			case Type::UnsignedInt: builder.append('I'); break;  // unsigned int
+			case Type::Long: builder.append('J'); break;   // long
+			case Type::UnsignedLong: builder.append('K'); break;  // unsigned long
+			case Type::LongLong: builder.append("_J"); break;  // long long
+			case Type::UnsignedLongLong: builder.append("_K"); break;  // unsigned long long
+			case Type::Float: builder.append('M'); break;  // float
+			case Type::Double: builder.append('N'); break;  // double
+			case Type::LongDouble: builder.append('O'); break;  // long double
+			default: builder.append('H'); break;  // Default to int
 		}
-
-		return code;
 	}
 
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
@@ -3373,9 +3424,15 @@ private:
 			? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
 			: symbol_table.lookup_all(decl_node.identifier_token().value());
 
+		// Also try looking up in gSymbolTable directly for comparison
+		extern SymbolTable gSymbolTable;
+		auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
+
 		// Find the matching overload by comparing the DeclarationNode address
 		// This works because the FunctionCallNode holds a reference to the specific
 		// DeclarationNode that was selected by overload resolution
+		std::vector<TypeSpecifierNode> param_types;  // Declare param_types here
+		bool found_overload = false;
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
@@ -3385,7 +3442,6 @@ private:
 					const auto& func_decl = *overload_func_decl;
 
 					// Extract parameter types for mangling (including pointer information)
-					std::vector<TypeSpecifierNode> param_types;
 					for (const auto& param_node : func_decl.parameter_nodes()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
@@ -3402,20 +3458,51 @@ private:
 					if (func_decl.linkage() != Linkage::C) {
 						function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic());
 					}
+					found_overload = true;
 					break;
 				}
 			}
 		}
-
+	
+		// Fallback: if pointer comparison failed (e.g., for template instantiations),
+		// try to find the function by checking if there's only one overload with this name
+		if (!found_overload && all_overloads.size() == 1 && all_overloads[0].is<FunctionDeclarationNode>()) {
+			const auto& func_decl = all_overloads[0].as<FunctionDeclarationNode>();
+		
+			// Extract parameter types
+			for (const auto& param_node : func_decl.parameter_nodes()) {
+				if (param_node.is<DeclarationNode>()) {
+					const auto& param_decl = param_node.as<DeclarationNode>();
+					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					param_types.push_back(param_type);
+				}
+			}
+		
+			// Get return type
+			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		
+			// Generate mangled name
+			if (func_decl.linkage() != Linkage::C) {
+				function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic());
+			}
+			found_overload = true;
+		}
+	
 		// Always add the return variable and function name (mangled for overload resolution)
 		TempVar ret_var = var_counter.next();
 		irOperands.emplace_back(ret_var);
 		irOperands.emplace_back(function_name);
 
-		// Generate IR for function arguments
+		// Process arguments - match them with parameter types
+		size_t arg_index = 0;
 		functionCallNode.arguments().visit([&](ASTNode argument) {
 			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-			// For variables, we need to add the type and size
+			
+			// Get the parameter type for this argument (if it exists)
+			const TypeSpecifierNode* param_type = (arg_index < param_types.size()) ? &param_types[arg_index] : nullptr;
+			arg_index++;
+			
+			// For variables, we need to check if the parameter expects a reference
 			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
@@ -3442,6 +3529,44 @@ private:
 					irOperands.emplace_back(type_node.type());  // Element type (e.g., Char for char[])
 					irOperands.emplace_back(64);  // Pointer size is 64 bits on x64
 					irOperands.emplace_back(addr_var);
+				} else if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+					// Parameter expects a reference - pass the address of the argument
+					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+						// Argument is already a reference - just pass it through
+						irOperands.emplace_back(type_node.type());
+						irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+						irOperands.emplace_back(identifier.name());
+					} else {
+						// Argument is a value - take its address
+						TempVar addr_var = var_counter.next();
+
+						std::vector<IrOperand> addrOfOperands;
+						addrOfOperands.emplace_back(addr_var);
+						addrOfOperands.emplace_back(type_node.type());
+						addrOfOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+						addrOfOperands.emplace_back(identifier.name());
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addrOfOperands), Token()));
+
+						// Pass the address
+						irOperands.emplace_back(type_node.type());
+						irOperands.emplace_back(64);  // Pointer size
+						irOperands.emplace_back(addr_var);
+					}
+				} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+					// Argument is a reference but parameter expects a value - dereference
+					TempVar deref_var = var_counter.next();
+
+					std::vector<IrOperand> derefOperands;
+					derefOperands.emplace_back(deref_var);
+					derefOperands.emplace_back(type_node.type());
+					derefOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+					derefOperands.emplace_back(identifier.name());
+					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(derefOperands), Token()));
+
+					// Pass the dereferenced value
+					irOperands.emplace_back(type_node.type());
+					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+					irOperands.emplace_back(deref_var);
 				} else {
 					// Regular variable - pass by value
 					irOperands.emplace_back(type_node.type());

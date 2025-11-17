@@ -722,9 +722,19 @@ public:
 	// Reference support
 	bool is_reference() const { return is_reference_; }
 	bool is_rvalue_reference() const { return is_rvalue_reference_; }
+	bool is_lvalue_reference() const { return is_reference_ && !is_rvalue_reference_; }
 	void set_reference(bool is_rvalue = false) {
 		is_reference_ = true;
 		is_rvalue_reference_ = is_rvalue;
+	}
+	void set_lvalue_reference(bool is_lvalue = true) {
+		if (is_lvalue) {
+			is_reference_ = true;
+			is_rvalue_reference_ = false;
+		} else {
+			is_reference_ = false;
+			is_rvalue_reference_ = false;
+		}
 	}
 
 	// Function pointer support

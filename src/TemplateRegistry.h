@@ -189,14 +189,23 @@ struct TemplateArgument {
 	};
 	
 	Kind kind;
-	Type type_value;  // For type arguments
+	Type type_value;  // For type arguments (legacy - enum only)
 	int64_t int_value;  // For non-type integer arguments
 	std::string template_name;  // For template template arguments (name of the template)
+	std::optional<TypeSpecifierNode> type_specifier;  // Full type info including references, pointers, CV qualifiers
 	
 	static TemplateArgument makeType(Type t) {
 		TemplateArgument arg;
 		arg.kind = Kind::Type;
 		arg.type_value = t;
+		return arg;
+	}
+	
+	static TemplateArgument makeTypeSpecifier(const TypeSpecifierNode& type_spec) {
+		TemplateArgument arg;
+		arg.kind = Kind::Type;
+		arg.type_value = type_spec.type();  // Keep legacy field populated
+		arg.type_specifier = type_spec;
 		return arg;
 	}
 	
