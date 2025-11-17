@@ -751,6 +751,71 @@ OpCodeWithSize generateMovToFrame(X64Register sourceRegister, int32_t offset) {
 	return result;
 }
 
+/**
+ * @brief Generates x86-64 binary opcodes for 'mov [rbp + offset], r32'.
+ *
+ * This function creates the byte sequence for storing a 32-bit value from
+ * a 32-bit register to a frame-relative address (RBP + offset).
+ * Used for storing 32-bit parameters like int, char, and bool.
+ *
+ * @param sourceRegister The source register (EAX, ECX, EDX, etc.).
+ * @param offset The signed offset from RBP.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// For 32-bit operations, we may need REX prefix only if using R8-R15
+	bool needs_rex = static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8);
+	
+	if (needs_rex) {
+		uint8_t rex_prefix = 0x40; // Base REX prefix (no W bit for 32-bit)
+		rex_prefix |= (1 << 2); // Set R bit for R8-R15
+		*current_byte_ptr++ = rex_prefix;
+		result.size_in_bytes++;
+	}
+
+	// --- Opcode for MOV r/m32, r32 ---
+	*current_byte_ptr++ = 0x89;
+	result.size_in_bytes++;
+
+	// --- ModR/M byte (Mod | Reg | R/M) ---
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
+
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x01; // Mod = 01b (8-bit displacement) - RBP always needs displacement even for 0
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // Mod = 01b (8-bit displacement)
+	} else {
+		mod_field = 0x02; // Mod = 10b (32-bit displacement)
+	}
+
+	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
+	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// --- Displacement ---
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		// 8-bit signed displacement (even for offset 0 with RBP)
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	} else {
+		// 32-bit signed displacement (little-endian format)
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
 // CLANG COMPATIBILITY: Generate MOV [rsp+offset], reg instruction for RSP-relative addressing
 OpCodeWithSize generateMovToRsp(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
@@ -2694,13 +2759,19 @@ private:
 					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
 					    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
 						if (reg_var.value() != target_reg) {
-							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 8);	// Use 64-bit move
+							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), argSize / 8);
 							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 						}
 					}
 					else {
 						// Load from stack using RBP-relative addressing
-						auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
+						// Use size-appropriate load based on argument size
+						OpCodeWithSize load_opcodes;
+						if (argSize <= 32) {
+							load_opcodes = generateMovFromFrame32(target_reg, var_offset);
+						} else {
+							load_opcodes = generateMovFromFrame(target_reg, var_offset);
+						}
 						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -4419,9 +4490,22 @@ private:
 					}
 				}
 			} else {
-				// For integer parameters, use regular MOV
-				auto mov_opcodes = generateMovToFrame(param.src_reg, param.offset);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				// For integer parameters, use size-appropriate MOV
+				// Use 32-bit store for 32-bit types (int, char, bool), 64-bit for pointers/64-bit types
+				bool use_32bit_store = (param.param_size <= 32) && (param.pointer_depth == 0);
+				
+				if (use_32bit_store) {
+					auto mov_opcodes = generateMovToFrame32(param.src_reg, param.offset);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				} else {
+					auto mov_opcodes = generateMovToFrame(param.src_reg, param.offset);
+					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				}
+				
+				// Release the parameter register from the register allocator
+				// Parameters are now on the stack, so the register allocator should not
+				// think they're still in registers
+				regAlloc.release(param.src_reg);
 			}
 		}
 	}
@@ -4489,13 +4573,19 @@ private:
 					int var_offset = it->second;
 					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
 						if (reg_var.value() != X64Register::RAX) {
-							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), 4);	// TODO: reg size
+							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), size_it_bits / 8);
 							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 						}
 					}
 					else {
 						// Load from stack using RBP-relative addressing
-						auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+						// Use 32-bit load for 32-bit types, 64-bit for larger types
+						OpCodeWithSize load_opcodes;
+						if (size_it_bits <= 32) {
+							load_opcodes = generateMovFromFrame32(X64Register::RAX, var_offset);
+						} else {
+							load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+						}
 						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 					}
@@ -4525,13 +4615,20 @@ private:
 					int var_offset = it->second;
 					if (auto stackRegister = regAlloc.tryGetStackVariableRegister(var_offset); stackRegister.has_value()) {
 						if (stackRegister.value() != X64Register::RAX) {	// Value is already in register, move if it's not in RAX already
-							regAlloc.get_reg_reg_move_op_code(X64Register::RAX, stackRegister.value(), 4);	// TODO: What size should we use here?
+							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, stackRegister.value(), size_in_bits / 8);
+							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 						}
 					}
 					else {
 						assert(variable_scopes.back().scope_stack_space <= var_offset);
 						// Load from stack using RBP-relative addressing
-						auto load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+						// Use 32-bit load for 32-bit types, 64-bit for larger types
+						OpCodeWithSize load_opcodes;
+						if (size_in_bits <= 32) {
+							load_opcodes = generateMovFromFrame32(X64Register::RAX, var_offset);
+						} else {
+							load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
+						}
 						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 					}

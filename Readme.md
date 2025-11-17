@@ -76,7 +76,7 @@
 - **Namespaces**: Full namespace support with qualified lookup, `using` directives, `using` declarations, namespace aliases, anonymous namespaces ✅
 - **Auto type deduction**: `auto` keyword for variable declarations with full type inference ✅
 - **Type casts**: C-style casts `(Type)expr` and C++ casts `static_cast<Type>(expr)` 🆕
-- **Preprocessor**: Macro expansion, conditional compilation, file inclusion, `#pragma pack`
+- **Preprocessor**: Macro expansion, conditional compilation, file inclusion, `#pragma pack`, function-like macros, variadic macros, token pasting, string concatenation, conditional expressions in macros
 
 ---
 
@@ -129,7 +129,7 @@
 - **Compile speed**: Optimized for fast compilation
 - **Code quality**: Generates efficient x86-64 assembly
 - **Type safety**: Comprehensive type checking and promotion
-- **Test coverage**: 127 test cases across all language features ✅
+- **Test coverage**: 153 test cases across all language features ✅
 
 ---
 
@@ -166,49 +166,54 @@ bool test_comparisons(double a, double b) {
 
 ---
 
-## 🔮 **Roadmap** (Foundation-First Approach)
+## 🔮 **Roadmap**
 
-### **Phase 1: Core Language Completeness** ✅ **COMPLETE**
-- ✅ **Switch statements**: `switch`/`case`/`default` control flow (COMPLETED)
-- ✅ **Goto and labels**: Label declarations and goto statements (COMPLETED)
-- ✅ **Namespaces**: Full namespace support with qualified lookup, `using` directives, declarations, aliases (COMPLETED) ✅
-- ✅ **Lambda expressions**: Basic lambda support with value and reference captures (COMPLETED)
-- ✅ **Auto type deduction**: `auto` keyword for variable declarations with full type inference (COMPLETED) ✅
-- ✅ **Typedef support**: Type aliases with `typedef` keyword (COMPLETED)
+### **✅ Completed Core Features**
+- ✅ **Switch statements**: `switch`/`case`/`default` control flow
+- ✅ **Goto and labels**: Label declarations and goto statements
+- ✅ **Namespaces**: Full namespace support with qualified lookup, `using` directives, declarations, aliases, anonymous namespaces ✅
+- ✅ **Lambda expressions**: Basic lambda support with value and reference captures
+- ✅ **Auto type deduction**: `auto` keyword for variable declarations with full type inference ✅
+- ✅ **Typedef support**: Type aliases with `typedef` keyword
+- ✅ **Friend declarations**: Friend classes and friend functions ✅
+- ✅ **Nested classes**: Inner class declarations with proper scoping ✅
+- ✅ **Decltype**: Type queries for expressions with `decltype(expr)` syntax ✅
+- ✅ **Trailing return types**: `auto func() -> ReturnType` syntax ✅
+- ✅ **Designated initializers**: `Type{.member = value}` aggregate initialization syntax ✅
 
-### **Phase 2: OOP Completeness** (2 weeks)
-- **Friend declarations**: Friend classes and friend functions
-- **Nested classes**: Inner class declarations with proper scoping
+### **✅ Templates** - 85% Complete (17/19 Features)
+- ✅ **Basic templates**: Template instantiation, defaults, nested types, nullptr, type aliases
+- ✅ **Partial specialization**: Full pattern matching (T&, T&&, T*, const T) with specificity scoring
+- ✅ **Member function templates**: Template member functions with argument deduction
+- ✅ **Template template parameters**: Templates accepting other templates as arguments
+- ✅ **Full specialization**: Exact type match with `template<>` syntax
+- ✅ **Non-type parameters**: Array size substitution and multiple non-type parameters
+- ✅ **Static members**: Per-instantiation storage for static members in templates
+- ✅ **Variadic templates**: Parameter packs, function templates, perfect forwarding, sizeof... operator
+- ⏳ **Non-type parameters in expressions**: Beyond array sizes
+- ⏳ **Fold expressions**: Optional advanced feature
 
-### **Phase 3: Type System & Semantic Analysis** (4 weeks)
-- **Decltype**: Type queries for expressions
+### **⏳ Remaining Features**
+
+**OOP Completeness:**
+- **Remaining**: Enhanced RTTI features, advanced inheritance patterns
+
+**Type System:**
+- **Remaining**: Advanced template metaprogramming features
 - **Control flow analysis**: Unreachable code detection, return path validation
-- **Trailing return types**: `auto func() -> ReturnType` syntax
 
-### **Phase 4: Error Handling & Quality** (3 weeks)
-- **Enhanced error reporting**: Better error messages with source context and suggestions
-- **Preprocessor completion**: `#error` directive, built-in defines, `#pragma once`
-- **Multiple error reporting**: Collect and report multiple errors
-
-### **Phase 5: Advanced Features** (4 weeks)
+**C++20 Features:**
+- **Concepts**: Template constraints and requirements
+- **Ranges**: Range adaptors and views (std::ranges)
 - **Range-based for loops**: `for (auto x : container)` syntax
 - **Constexpr functions**: Compile-time function evaluation
 - **Static assertions**: `static_assert` for compile-time checks
-
-### **Phase 6: Templates** (16 weeks) - After Foundation Complete
-- **Function templates**: Template functions with type deduction
-- **Class templates**: Template classes with instantiation
-- **Template specialization**: Full and partial specialization
-- **Variadic templates**: Parameter packs and fold expressions
-
-### **Phase 7: Advanced C++20 Features** (After Templates)
-- **Concepts**: Template constraints and requirements
-- **Ranges**: Range adaptors and views (std::ranges)
-- **Modules**: Module system (import/export)
-- **Coroutines**: Coroutine support (co_await, co_yield, co_return)
-- **Designated initializers**: `Type{.member = value}` syntax
 - **Spaceship operator**: `<=>` three-way comparison
-- **Requires clauses**: Constraint expressions for templates
+
+**Quality & Error Handling:**
+- **Enhanced error reporting**: Better error messages with source context and suggestions
+- **Preprocessor completion**: `#error` directive, built-in defines, `#pragma once`
+- **Multiple error reporting**: Collect and report multiple errors
 
 ---
 
@@ -217,13 +222,16 @@ bool test_comparisons(double a, double b) {
 ### **Critical/Commonly Used** (High Priority)
 These features are essential for modern C++ and widely used in production code:
 
-1. **Templates** ⭐⭐⭐⭐⭐
-   - Function templates with type deduction
-   - Class templates with specialization
-   - Variadic templates and parameter packs
-   - Template metaprogramming
-   - **Impact**: Enables generic programming, STL compatibility
-   - **Estimated effort**: 16 weeks
+1. **Templates** ⭐⭐⭐⭐⭐ ✅ **85% COMPLETE**
+   - ✅ Function templates with type deduction
+   - ✅ Class templates with specialization
+   - ✅ Variadic templates and parameter packs
+   - ✅ Perfect forwarding with rvalue references
+   - ✅ Template template parameters
+   - ⏳ Non-type parameters in expressions (remaining)
+   - ⏳ Fold expressions (optional)
+   - **Status**: 17/19 features complete, ~85% STL compatibility
+   - **Remaining effort**: 25-40 hours
 
 2. **Range-based for loops** ⭐⭐⭐⭐
    - `for (auto x : container)` syntax
@@ -244,78 +252,36 @@ These features are essential for modern C++ and widely used in production code:
    - **Impact**: Template error messages, type safety
    - **Estimated effort**: 4 weeks (after templates)
 
-5. **Designated initializers** ⭐⭐⭐
-   - `Type{.member = value}` syntax
-   - Aggregate initialization
-   - **Impact**: Cleaner struct/class initialization
-   - **Estimated effort**: 1 week
+8. **Concepts** ⭐⭐⭐⭐
+   - Template constraints and requirements
+   - Requires clauses
+   - Concept definitions
+   - **Impact**: Template error messages, type safety
+   - **Estimated effort**: 4 weeks (after templates)
 
-### **Important** (Medium Priority)
-These features are useful but less critical:
-
-6. **Ranges library** ⭐⭐⭐
+9. **Ranges library** ⭐⭐⭐
    - `std::ranges` adaptors and views
    - Lazy evaluation
    - **Impact**: Functional programming style, performance
    - **Estimated effort**: 4 weeks (after templates)
 
-7. **Spaceship operator** ⭐⭐⭐
-   - Three-way comparison `<=>`
-   - Automatic comparison generation
-   - **Impact**: Simplified comparison operators
-   - **Estimated effort**: 1 week
-
-8. **Decltype** ⭐⭐⭐
-   - Type queries for expressions
-   - `decltype(expr)` syntax
-   - **Impact**: Type introspection, template metaprogramming
-   - **Estimated effort**: 1 week
-
-9. **Friend declarations** ⭐⭐
-   - Friend classes and functions
-   - Access control exceptions
-   - **Impact**: Advanced OOP patterns
-   - **Estimated effort**: 1 week
-
-10. **Nested classes** ⭐⭐
-    - Inner class declarations
-    - Proper scoping
-    - **Impact**: Encapsulation, organization
+10. **Spaceship operator** ⭐⭐⭐
+    - Three-way comparison `<=>`
+    - Automatic comparison generation
+    - **Impact**: Simplified comparison operators
     - **Estimated effort**: 1 week
 
-### **Advanced** (Lower Priority)
-These are powerful but less commonly used:
 
-11. **Modules** ⭐⭐
-    - Module system (import/export)
-    - Compilation units
-    - **Impact**: Better code organization, faster compilation
-    - **Estimated effort**: 6 weeks (after templates)
-
-12. **Coroutines** ⭐⭐
-    - `co_await`, `co_yield`, `co_return`
-    - Async/await patterns
-    - **Impact**: Asynchronous programming
-    - **Estimated effort**: 8 weeks (after templates)
-
-13. **Reflection** ⭐
-    - Runtime type information queries
-    - Metadata access
-    - **Impact**: Serialization, debugging
-    - **Estimated effort**: 6 weeks (C++26 feature)
 
 ### **Summary of Missing Features by Category**
 
-| Category | Missing | Priority | Effort |
+| Category | Missing | Priority | Status |
 |----------|---------|----------|--------|
-| **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | 20 weeks |
-| **Modern Loops** | Range-based for | ⭐⭐⭐⭐ | 2 weeks |
-| **Compile-time** | Constexpr, static_assert | ⭐⭐⭐⭐ | 3 weeks |
-| **Initialization** | Designated initializers | ⭐⭐⭐ | 1 week |
-| **Comparison** | Spaceship operator | ⭐⭐⭐ | 1 week |
-| **Type System** | Decltype, Concepts | ⭐⭐⭐ | 2 weeks |
-| **OOP** | Friends, Nested classes | ⭐⭐ | 2 weeks |
-| **Advanced** | Modules, Coroutines, Reflection | ⭐⭐ | 20 weeks |
+| **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | ✅ 85% |
+| **Modern Loops** | Range-based for | ⭐⭐⭐⭐ | ⏳ Pending |
+| **Compile-time** | Constexpr, static_assert | ⭐⭐⭐⭐ | ⏳ Pending |
+| **Comparison** | Spaceship operator | ⭐⭐⭐ | ⏳ Pending |
+| **Advanced Features** | Ranges library | ⭐⭐⭐ | ⏳ Pending |
 
 ---
 
@@ -484,55 +450,6 @@ These are powerful but less commonly used:
 
 ---
 
-## 🎯 **Implementation Plan** (Foundation-First Approach)
-
-### **Phase 1: Core Language Completeness** ✅ **COMPLETE**
-1. [x] **Switch statements** (COMPLETED) - Essential control flow with enum support
-2. [x] **Goto and labels** (COMPLETED) - Complete control flow support
-3. [x] **Namespaces** (COMPLETED) - Full namespace support with qualified lookup, using directives, declarations, and aliases ✅
-4. [x] **Lambda expressions** (COMPLETED) - Basic lambdas with captures
-5. [x] **Auto type deduction** (COMPLETED) - `auto` keyword with full type inference ✅
-6. [x] **Typedef support** (COMPLETED) - Type aliases with typedef
-
-### **Phase 2: OOP Completeness** (Next 2 weeks)
-7. [ ] **Friend declarations** (1 week) - Friend classes and functions
-8. [ ] **Nested classes** (1 week) - Inner class declarations
-
-### **Phase 3: Type System & Semantic Analysis** (Weeks 3-6)
-9. [ ] **Decltype** (1 week) - Type queries for expressions
-10. [ ] **Trailing return types** (1 week) - `auto func() -> Type` syntax
-11. [ ] **Control flow analysis** (2 weeks) - Unreachable code detection
-
-### **Phase 4: Error Handling & Quality** (Weeks 7-9)
-12. [ ] **Enhanced error reporting** (2 weeks) - Better error messages
-13. [ ] **Preprocessor completion** (1 week) - `#error`, built-in defines
-
-### **Phase 5: Advanced Features** (Weeks 10-13)
-14. [ ] **Range-based for loops** (2 weeks) - Modern for loop syntax
-15. [ ] **Constexpr functions** (2 weeks) - Compile-time evaluation
-16. [ ] **Static assertions** (1 week) - Compile-time checks
-
-### **Phase 6: Initialization & Comparison** (Weeks 14-15)
-17. [ ] **Designated initializers** (1 week) - `Type{.member = value}` syntax
-18. [ ] **Spaceship operator** (1 week) - Three-way comparison `<=>`
-
-### **Phase 7: Templates** (Weeks 16-31) - After Foundation Complete
-19. [ ] **Function templates** (6 weeks) - Template functions with deduction
-20. [ ] **Class templates** (6 weeks) - Template classes with instantiation
-21. [ ] **Advanced templates** (4 weeks) - Specialization, variadic templates
-
-### **Phase 8: Advanced C++20** (Weeks 32+) - After Templates
-22. [ ] **Concepts** (4 weeks) - Template constraints and requirements
-23. [ ] **Ranges library** (4 weeks) - Range adaptors and views
-24. [ ] **Modules** (6 weeks) - Module system (import/export)
-25. [ ] **Coroutines** (8 weeks) - Async/await support
-
-**Current Status**: Foundation phase complete! ✅
-**Next Focus**: OOP completeness (friends, nested classes)
-**Total Timeline**: ~12 months to complete all phases including templates and advanced features
-
----
-
 ## 🤝 **Contributing**
 
 Flash C++ Compiler has been developed in cooperation with AI assistance to accelerate development. Contributions are welcome!
@@ -579,7 +496,7 @@ This project is open source. See the repository for license details.
 - ✅ **Modern instruction generation**: SSE/AVX2 optimizations for floating-point
 - ✅ **IEEE 754 compliance**: Proper floating-point semantics
 - ✅ **Type-aware compilation**: Automatic optimization based on operand types
-- ✅ **Comprehensive testing**: 127 test cases ensuring correctness ✅
+- ✅ **Comprehensive testing**: 153 test cases ensuring correctness ✅
 - ✅ **Production-ready**: Suitable for object-oriented and numerical computing applications
 
 **The compiler has evolved from basic arithmetic to a comprehensive system capable of handling complex C++ programs with:**
@@ -595,7 +512,8 @@ This project is open source. See the repository for license details.
 
 **It's now ready for real-world C++ development!** 🚀
 
-**Foundation phase complete!** The compiler now has all essential language features. Next major milestones:
-1. **OOP Completeness** (friends, nested classes)
-2. **Template support** for generic programming
-3. **Advanced C++20 features** (concepts, ranges, modules, coroutines)
+**Foundation complete!** The compiler now has all essential language features. Next milestones:
+1. **Templates: 85% complete** - 17/19 features done, variadic templates with perfect forwarding working
+2. **Template completion** - Non-type parameters in expressions and fold expressions
+3. **OOP Completeness** - Friends and nested classes
+4. **C++20 features** - Concepts, ranges, range-based for loops
