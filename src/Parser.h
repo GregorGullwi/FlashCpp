@@ -460,6 +460,14 @@ public:  // Public methods for template instantiation
 
         // Check if an identifier name is a template parameter in current scope
         bool is_template_parameter(std::string_view name) const;
+
+        // Substitute template parameter in a type specification
+        // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
+        std::pair<Type, TypeIndex> substitute_template_parameter(
+            const TypeSpecifierNode& original_type,
+            const std::vector<ASTNode>& template_params,
+            const std::vector<TemplateTypeArg>& template_args
+        );
        
         // Lookup symbol with template parameter checking
         std::optional<ASTNode> lookup_symbol_with_template_check(std::string_view identifier);

@@ -8722,6 +8722,58 @@ bool Parser::is_template_parameter(std::string_view name) const {
     return result;
 }
 
+// Substitute template parameter in a type specification
+// Handles complex transformations like const T& -> const int&, T* -> int*, etc.
+std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
+	const TypeSpecifierNode& original_type,
+	const std::vector<ASTNode>& template_params,
+	const std::vector<TemplateTypeArg>& template_args
+) {
+	Type result_type = original_type.type();
+	TypeIndex result_type_index = original_type.type_index();
+
+	// Only substitute UserDefined types (which might be template parameters)
+	if (result_type == Type::UserDefined) {
+		// Look up the type name using type_index
+		if (result_type_index < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[result_type_index];
+			std::string_view type_name = type_info.name_;
+
+			// Try to find which template parameter this is
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				if (template_params[i].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.name() == type_name) {
+						// Found a match! Substitute with the concrete type
+						const TemplateTypeArg& arg = template_args[i];
+						
+						// The template argument already contains the full type info including:
+						// - base_type, type_index
+						// - pointer_depth, is_reference, is_rvalue_reference
+						// - cv_qualifier (const/volatile)
+						
+						// We need to apply the qualifiers from BOTH:
+						// 1. The original type (e.g., const T& has const and reference)
+						// 2. The template argument (e.g., T=int* has pointer_depth=1)
+						
+						result_type = arg.base_type;
+						result_type_index = arg.type_index;
+						
+						// Note: The qualifiers (pointer_depth, references, const/volatile) are NOT
+						// combined here because they are already fully specified in the TypeSpecifierNode
+						// that will be created using this base type. The caller is responsible for
+						// constructing a new TypeSpecifierNode with the appropriate qualifiers.
+						
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	return {result_type, result_type_index};
+}
+
 // Lookup symbol with template parameter checking
 std::optional<ASTNode> Parser::lookup_symbol_with_template_check(std::string_view identifier) {
     // First check if it's a template parameter using the new method
@@ -10694,6 +10746,18 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Get the original function's declaration
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 
+	// Convert template_args to TemplateTypeArg format for substitution
+	std::vector<TemplateTypeArg> template_args_as_type_args;
+	for (const auto& arg : template_args) {
+		if (arg.kind == TemplateArgument::Kind::Type) {
+			TemplateTypeArg type_arg;
+			type_arg.base_type = arg.type_value;
+			type_arg.type_index = 0;  // Simple types don't have an index
+			template_args_as_type_args.push_back(type_arg);
+		}
+		// Note: Template and value arguments aren't used in type substitution
+	}
+
 	// Create a token for the mangled name
 	Token mangled_token(Token::Type::Identifier, mangled_name,
 	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
@@ -10701,30 +10765,11 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	// Create return type - substitute template parameters if needed
 	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
-	Type return_type_enum = orig_return_type.type();
-	TypeIndex return_type_index = orig_return_type.type_index();
-
-	// If return type is a template parameter, substitute it
-	if (return_type_enum == Type::UserDefined && return_type_index < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = type_info.name_;
-		
-		// Check if it's a template parameter
-		std::vector<std::string_view> param_names;
-		for (const auto& tparam_node : template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
-			}
-		}
-		
-		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
-			if (param_names[i] == type_name && template_args[i].kind == TemplateArgument::Kind::Type) {
-				return_type_enum = template_args[i].type_value;
-				return_type_index = 0;
-				break;
-			}
-		}
-	}
+	
+	// Use the new substitution helper to handle complex types (const T&, T*, etc.)
+	auto [return_type_enum, return_type_index] = substitute_template_parameter(
+		orig_return_type, template_params, template_args_as_type_args
+	);
 
 	ASTNode return_type = emplace_node<TypeSpecifierNode>(
 		return_type_enum,
@@ -11257,31 +11302,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
-		// Check if the member type is a template parameter
-		// For now, assume the first template parameter (T) maps to the first template argument
-		// TODO: Implement proper template parameter substitution
-		Type member_type = type_spec.type();
-		TypeIndex member_type_index = type_spec.type_index();
-
-		// If the type is UserDefined, check if it's a template parameter
-		if (member_type == Type::UserDefined) {
-			// Look up the type name using type_index
-			if (member_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[member_type_index];
-				std::string_view type_name = type_info.name_;
-
-				// Try to find which template parameter this is
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-					if (tparam.name() == type_name) {
-						// This is a template parameter - substitute with concrete type
-						member_type = template_args_to_use[i].base_type;
-						member_type_index = template_args_to_use[i].type_index;
-						break;
-					}
-				}
-			}
-		}
+		// Substitute template parameter if the member type is a template parameter
+		auto [member_type, member_type_index] = substitute_template_parameter(
+			type_spec, template_params, template_args_to_use
+		);
 
 		// Handle array size substitution for non-type template parameters
 		std::optional<ASTNode> substituted_array_size;
@@ -11348,11 +11372,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		// Create the substituted type specifier
+		// IMPORTANT: Preserve the base CV qualifier from the original type!
+		// For example: const T* should become const int* when T=int
 		auto substituted_type = emplace_node<TypeSpecifierNode>(
 			member_type,
-			TypeQualifier::None,
+			member_type_index,
 			get_type_size_bits(member_type),
-			Token()
+			Token(),
+			type_spec.cv_qualifier()  // Preserve const/volatile qualifier
 		);
 
 		// Copy pointer levels from the original type specifier
@@ -11382,7 +11409,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			member_size = (get_type_size_bits(member_type) / 8) * array_size;
 		} else {
-			member_size = get_type_size_bits(member_type) / 8;
+			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
+			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				member_size = 8;  // Pointers and references are 64-bit on x64
+			} else {
+				member_size = get_type_size_bits(member_type) / 8;
+			}
 		}
 		size_t member_alignment = get_type_alignment(member_type, member_size);
 
