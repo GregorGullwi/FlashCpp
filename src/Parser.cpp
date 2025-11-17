@@ -4028,9 +4028,10 @@ ParseResult Parser::parse_type_specifier()
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			type, qualifier, type_size, current_token_opt.value(), cv_qualifier));
 	}
-	else if (qualifier != TypeQualifier::None || cv_qualifier != CVQualifier::None || long_count > 0) {
-		// Handle cases like "unsigned", "signed", "const", "long" without explicit type (defaults to int)
-		// Examples: "unsigned" -> unsigned int, "const" -> const int, "long" -> long int
+	else if (qualifier != TypeQualifier::None || long_count > 0) {
+		// Handle cases like "unsigned", "signed", "long" without explicit type (defaults to int)
+		// But NOT "const" alone - that could be "const Widget" which needs to continue
+		// Examples: "unsigned" -> unsigned int, "signed" -> signed int, "long" -> long int
 
 		if (long_count == 1) {
 			// "long" or "const long" -> long int
@@ -4041,7 +4042,7 @@ ParseResult Parser::parse_type_specifier()
 			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedLongLong : Type::LongLong;
 			type_size = 64;
 		} else {
-			// "unsigned", "signed", or "const" without type -> int
+			// "unsigned", "signed" without type -> int
 			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedInt : Type::Int;
 			type_size = 32;
 		}
@@ -4049,6 +4050,9 @@ ParseResult Parser::parse_type_specifier()
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			type, qualifier, type_size, Token(), cv_qualifier));
 	}
+	// If we only have CV-qualifiers (const/volatile) without unsigned/signed/long,
+	// continue parsing - could be "const Widget&", "const int*", etc.
+	// The following checks handle struct/class keywords and identifiers
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Keyword &&
 	         (current_token_opt->value() == "struct" || current_token_opt->value() == "class")) {
 		// Handle "struct TypeName" or "class TypeName"

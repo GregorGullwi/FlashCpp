@@ -3181,7 +3181,7 @@ private:
 		}
 
 		// Generate the call instruction
-		std::string function_name = std::string(struct_name) + "::" + std::string(struct_name);
+		std::string function_name = struct_name;  // Constructor name is same as struct name (no :: prefix)
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
@@ -7141,24 +7141,33 @@ private:
 		// Operands: [result_var, type, size, operand]
 		assert(instruction.getOperandCount() == 4 && "AddressOf must have 4 operands");
 
-		// Get operand (variable to take address of) - can be string_view or string
-		std::string operand_str;
-		if (instruction.isOperandType<std::string_view>(3)) {
-			operand_str = std::string(instruction.getOperandAs<std::string_view>(3));
-		} else if (instruction.isOperandType<std::string>(3)) {
-			operand_str = instruction.getOperandAs<std::string>(3);
+		int32_t var_offset;
+		
+		// Get operand (variable to take address of) - can be string_view, string, or TempVar
+		if (instruction.isOperandType<TempVar>(3)) {
+			// Taking address of a temporary variable (e.g., for rvalue references)
+			TempVar temp = instruction.getOperandAs<TempVar>(3);
+			var_offset = getStackOffsetFromTempVar(temp);
 		} else {
-			assert(false && "AddressOf operand must be string_view or string");
-			return;
-		}
+			// Taking address of a named variable
+			std::string operand_str;
+			if (instruction.isOperandType<std::string_view>(3)) {
+				operand_str = std::string(instruction.getOperandAs<std::string_view>(3));
+			} else if (instruction.isOperandType<std::string>(3)) {
+				operand_str = instruction.getOperandAs<std::string>(3);
+			} else {
+				assert(false && "AddressOf operand must be string_view, string, or TempVar");
+				return;
+			}
 
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(operand_str);
-		if (it == current_scope.identifier_offset.end()) {
-			assert(false && "Variable not found in scope");
-			return;
+			const StackVariableScope& current_scope = variable_scopes.back();
+			auto it = current_scope.identifier_offset.find(operand_str);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Variable not found in scope");
+				return;
+			}
+			var_offset = it->second;
 		}
-		int32_t var_offset = it->second;
 
 		// Calculate the address: RBP + offset
 		// LEA RAX, [RBP + offset]

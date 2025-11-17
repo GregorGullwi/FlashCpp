@@ -502,13 +502,31 @@ private:
 		std::string code;
 
 		// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
-		// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the reference itself
+		// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the REFERENCED type
 		if (type_node.is_lvalue_reference()) {
 			code += "AE";
-			code += "A";  // References are never const/volatile in C++, always use A
+			// Add CV-qualifier of the referenced type
+			if (type_node.cv_qualifier() == CVQualifier::None) {
+				code += 'A';
+			} else if (type_node.cv_qualifier() == CVQualifier::Const) {
+				code += 'B';
+			} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
+				code += 'C';
+			} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
+				code += 'D';
+			}
 		} else if (type_node.is_rvalue_reference()) {
 			code += "$$QE";
-			code += "A";  // References are never const/volatile in C++, always use A
+			// Add CV-qualifier of the referenced type (though rvalue refs are usually non-const)
+			if (type_node.cv_qualifier() == CVQualifier::None) {
+				code += 'A';
+			} else if (type_node.cv_qualifier() == CVQualifier::Const) {
+				code += 'B';
+			} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
+				code += 'C';
+			} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
+				code += 'D';
+			}
 		}
 
 		// Add pointer prefix for each level of indirection with CV-qualifiers
@@ -566,10 +584,23 @@ private:
 			case Type::Float: code += "M"; break;
 			case Type::Double: code += "N"; break;
 			case Type::LongDouble: code += "O"; break;
-			case Type::Struct: code += "V"; break;  // Struct/class type
+			case Type::Struct:
+			case Type::UserDefined: {
+				// Struct/class types use format: V<name>@@ or U<name>@@ (V for class, U for struct, but we use V)
+				// Get the type name from the global type registry
+				if (type_node.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+					code += 'V';
+					code += type_info.name_;
+					code += "@@";
+				} else {
+					code += 'H';  // Fallback to int if type not found
+				}
+				break;
+			}
 			default: code += "H"; break;  // Default to int for unknown types
 		}
-
+		
 		return code;
 	}
 

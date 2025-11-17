@@ -503,7 +503,8 @@ private:
 			std::string(func_decl.identifier_token().value()),
 			ret_type,
 			param_types_for_mangling,
-			node.is_variadic()
+			node.is_variadic(),
+			node.is_member_function() ? std::string(struct_name_for_function) : ""
 		);
 		
 		funcDeclOperands.emplace_back(mangled_name);                                       // [7] MANGLED_NAME
@@ -758,7 +759,7 @@ private:
 		ctorDeclOperands.emplace_back(Type::Void);  // Constructors don't have a return type
 		ctorDeclOperands.emplace_back(0);  // Size is 0 for void
 		ctorDeclOperands.emplace_back(0);  // Pointer depth is 0 for void
-		ctorDeclOperands.emplace_back(std::string(node.struct_name()) + "::" + std::string(node.struct_name()));
+		ctorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Constructor name (same as struct)
 		ctorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
 
 		// Add linkage information (C++ linkage for constructors)
@@ -766,6 +767,26 @@ private:
 
 		// Add variadic flag (constructors are never variadic)
 		ctorDeclOperands.emplace_back(false);
+
+		// Generate mangled name for constructor
+		std::vector<TypeSpecifierNode> param_types_for_mangling;
+		for (const auto& param : node.parameter_nodes()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+		}
+		
+		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
+		std::string ctor_name = std::string(node.struct_name());
+		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
+		std::string_view mangled_name = generateMangledNameForCall(
+			ctor_name,
+			void_type,
+			param_types_for_mangling,
+			false,  // not variadic
+			std::string(node.struct_name())  // struct name for member function mangling
+		);
+		
+		ctorDeclOperands.emplace_back(mangled_name);  // [7] MANGLED_NAME
 
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -1125,7 +1146,7 @@ private:
 		dtorDeclOperands.emplace_back(Type::Void);  // Destructors don't have a return type
 		dtorDeclOperands.emplace_back(0);  // Size is 0 for void
 		dtorDeclOperands.emplace_back(0);  // Pointer depth is 0 for void
-		dtorDeclOperands.emplace_back(std::string(node.struct_name()) + "::~" + std::string(node.struct_name()));
+		dtorDeclOperands.emplace_back(std::string("~") + std::string(node.struct_name()));  // Destructor name
 		dtorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
 
 		// Add linkage information (C++ linkage for destructors)
@@ -1133,6 +1154,21 @@ private:
 
 		// Add variadic flag (destructors are never variadic)
 		dtorDeclOperands.emplace_back(false);
+
+		// Generate mangled name for destructor (MSVC format: ?~ClassName@ClassName@@...)
+		// Destructors have no parameters (except implicit 'this')
+		std::vector<TypeSpecifierNode> empty_params;
+		std::string dtor_name = std::string("~") + std::string(node.struct_name());
+		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
+		std::string_view mangled_name = generateMangledNameForCall(
+			dtor_name,
+			void_type,
+			empty_params,
+			false,  // not variadic
+			std::string(node.struct_name())  // struct name for member function mangling
+		);
+		
+		dtorDeclOperands.emplace_back(mangled_name);  // [7] MANGLED_NAME
 
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -3276,7 +3312,7 @@ private:
 
 	// Helper function to generate Microsoft Visual C++ mangled name for function calls
 	// This matches the mangling scheme in ObjFileWriter::generateMangledName
-	std::string_view generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false) {
+	std::string_view generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "") {
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
@@ -3284,8 +3320,25 @@ private:
 
 		StringBuilder builder;
 		builder.append('?');
-		builder.append(name);
-		builder.append("@@YA");  // @@ + calling convention (__cdecl)
+		
+		// Handle member functions vs free functions
+		if (!struct_name.empty()) {
+			// Member function: ?name@ClassName@@QA...
+			//  Extract just the function name (after ::)
+			std::string func_only_name = name;
+			size_t pos = name.rfind("::");
+			if (pos != std::string::npos) {
+				func_only_name = name.substr(pos + 2);
+			}
+			builder.append(func_only_name);
+			builder.append('@');
+			builder.append(struct_name);
+			builder.append("@@QA");  // @@ + calling convention for member functions (Q = __thiscall-like)
+		} else {
+			// Free function: ?name@@YA...
+			builder.append(name);
+			builder.append("@@YA");  // @@ + calling convention (__cdecl)
+		}
 
 		// Add return type code
 		appendTypeCodeForMangling(builder, return_type);
@@ -3456,7 +3509,8 @@ private:
 					// Generate the mangled name directly (unless C linkage)
 					// This ensures we call the correct overload
 					if (func_decl.linkage() != Linkage::C) {
-						function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic());
+						std::string_view struct_name_for_call = func_decl.is_member_function() ? func_decl.parent_struct_name() : "";
+						function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic(), struct_name_for_call);
 					}
 					found_overload = true;
 					break;
@@ -3575,7 +3629,58 @@ private:
 				}
 			}
 			else {
-				irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+				// Not an identifier - could be a literal, expression result, etc.
+				// Check if parameter expects a reference and argument is a literal
+				if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+					// Parameter expects a reference, but argument is not an identifier
+					// We need to materialize the value into a temporary and pass its address
+					
+					// Check if this is a literal value (has unsigned long long or double in operand[2])
+					bool is_literal = (argumentIrOperands.size() >= 3 && 
+					                  (std::holds_alternative<unsigned long long>(argumentIrOperands[2]) ||
+					                   std::holds_alternative<double>(argumentIrOperands[2])));
+					
+					if (is_literal) {
+						// Materialize the literal into a temporary variable
+						Type literal_type = std::get<Type>(argumentIrOperands[0]);
+						int literal_size = std::get<int>(argumentIrOperands[1]);
+						
+						// Create a temporary variable to hold the literal value
+						TempVar temp_var = var_counter.next();
+						
+						// Generate an assignment IR to store the literal
+						// Format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
+						std::vector<IrOperand> assignOperands;
+						assignOperands.emplace_back(temp_var);            // result_var (unused for assign)
+						assignOperands.push_back(argumentIrOperands[0]);  // lhs_type
+						assignOperands.push_back(argumentIrOperands[1]);  // lhs_size
+						assignOperands.emplace_back(temp_var);            // lhs_value (temp var)
+						assignOperands.push_back(argumentIrOperands[0]);  // rhs_type
+						assignOperands.push_back(argumentIrOperands[1]);  // rhs_size
+						assignOperands.push_back(argumentIrOperands[2]);  // rhs_value (literal)
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assignOperands), Token()));
+						
+						// Now take the address of the temporary
+						TempVar addr_var = var_counter.next();
+						std::vector<IrOperand> addrOfOperands;
+						addrOfOperands.emplace_back(addr_var);
+						addrOfOperands.emplace_back(literal_type);
+						addrOfOperands.emplace_back(literal_size);
+						addrOfOperands.emplace_back(temp_var);
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addrOfOperands), Token()));
+						
+						// Pass the address
+						irOperands.emplace_back(literal_type);
+						irOperands.emplace_back(64);  // Pointer size
+						irOperands.emplace_back(addr_var);
+					} else {
+						// Not a literal - just pass through
+						irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+					}
+				} else {
+					// Parameter doesn't expect a reference - pass through as-is
+					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+				}
 			}
 		});
 
