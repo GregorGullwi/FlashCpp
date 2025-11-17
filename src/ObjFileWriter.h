@@ -9,6 +9,7 @@
 #include "coffi/coffi.hpp"
 #include "CodeViewDebug.h"
 #include "AstNodeTypes.h"
+#include "NameMangling.h"
 #include <string>
 #include <string_view>
 #include <array>
@@ -500,107 +501,7 @@ private:
 	// Get Microsoft Visual C++ type code for mangling (with pointer support)
 	std::string getTypeCode(const TypeSpecifierNode& type_node) const {
 		std::string code;
-
-		// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
-		// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the REFERENCED type
-		if (type_node.is_lvalue_reference()) {
-			code += "AE";
-			// Add CV-qualifier of the referenced type
-			if (type_node.cv_qualifier() == CVQualifier::None) {
-				code += 'A';
-			} else if (type_node.cv_qualifier() == CVQualifier::Const) {
-				code += 'B';
-			} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
-				code += 'C';
-			} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
-				code += 'D';
-			}
-		} else if (type_node.is_rvalue_reference()) {
-			code += "$$QE";
-			// Add CV-qualifier of the referenced type (though rvalue refs are usually non-const)
-			if (type_node.cv_qualifier() == CVQualifier::None) {
-				code += 'A';
-			} else if (type_node.cv_qualifier() == CVQualifier::Const) {
-				code += 'B';
-			} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
-				code += 'C';
-			} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
-				code += 'D';
-			}
-		}
-
-		// Add pointer prefix for each level of indirection with CV-qualifiers
-		// MSVC format: [P|Q|R|S][E][A|B|C|D] where:
-		//   P = pointer, Q = const pointer, R = volatile pointer, S = const volatile pointer
-		//   E = 64-bit (always E for x64)
-		//   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
-		const auto& ptr_levels = type_node.pointer_levels();
-		for (size_t i = 0; i < ptr_levels.size(); ++i) {
-			const auto& ptr_level = ptr_levels[i];
-			
-			// Pointer CV-qualifiers (on the pointer itself)
-			if (ptr_level.cv_qualifier == CVQualifier::None) {
-				code += "PE";
-			} else if (ptr_level.cv_qualifier == CVQualifier::Const) {
-				code += "QE";
-			} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
-				code += "RE";
-			} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
-				code += "SE";
-			}
-			
-			// Pointee CV-qualifiers (on what the pointer points to)
-			// For the last pointer level, use the base type's CV-qualifier
-			// For intermediate levels, get CV from the next pointer level
-			CVQualifier pointee_cv = (i == ptr_levels.size() - 1) 
-				? type_node.cv_qualifier() 
-				: ptr_levels[i + 1].cv_qualifier;
-				
-			if (pointee_cv == CVQualifier::None) {
-				code += "A";
-			} else if (pointee_cv == CVQualifier::Const) {
-				code += "B";
-			} else if (pointee_cv == CVQualifier::Volatile) {
-				code += "C";
-			} else if (pointee_cv == CVQualifier::ConstVolatile) {
-				code += "D";
-			}
-		}
-
-		// Add base type code
-		switch (type_node.type()) {
-			case Type::Void: code += "X"; break;
-			case Type::Bool: code += "_N"; break;
-			case Type::Char: code += "D"; break;
-			case Type::UnsignedChar: code += "E"; break;
-			case Type::Short: code += "F"; break;
-			case Type::UnsignedShort: code += "G"; break;
-			case Type::Int: code += "H"; break;
-			case Type::UnsignedInt: code += "I"; break;
-			case Type::Long: code += "J"; break;
-			case Type::UnsignedLong: code += "K"; break;
-			case Type::LongLong: code += "_J"; break;
-			case Type::UnsignedLongLong: code += "_K"; break;
-			case Type::Float: code += "M"; break;
-			case Type::Double: code += "N"; break;
-			case Type::LongDouble: code += "O"; break;
-			case Type::Struct:
-			case Type::UserDefined: {
-				// Struct/class types use format: V<name>@@ or U<name>@@ (V for class, U for struct, but we use V)
-				// Get the type name from the global type registry
-				if (type_node.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-					code += 'V';
-					code += type_info.name_;
-					code += "@@";
-				} else {
-					code += 'H';  // Fallback to int if type not found
-				}
-				break;
-			}
-			default: code += "H"; break;  // Default to int for unknown types
-		}
-		
+		NameMangling::appendTypeCode(code, type_node);
 		return code;
 	}
 

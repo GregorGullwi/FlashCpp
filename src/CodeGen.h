@@ -6,6 +6,7 @@
 #include "CompileContext.h"
 #include "TemplateRegistry.h"
 #include "ChunkedString.h"
+#include "NameMangling.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -3360,74 +3361,8 @@ private:
 
 	// Helper to append type code for mangling to StringBuilder
 	void appendTypeCodeForMangling(StringBuilder& builder, const TypeSpecifierNode& type_node) {
-		// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
-		// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the reference itself
-		if (type_node.is_lvalue_reference()) {
-			builder.append("AEA");  // References are never const/volatile in C++, always use A
-		} else if (type_node.is_rvalue_reference()) {
-			builder.append("$$QEA");  // References are never const/volatile in C++, always use A
-		}
-
-		// Add pointer prefix for each level of indirection with CV-qualifiers
-		// MSVC format: [P|Q|R|S][E][A|B|C|D] where:
-		//   P = pointer, Q = const pointer, R = volatile pointer, S = const volatile pointer
-		//   E = 64-bit (always E for x64)
-		//   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
-		const auto& ptr_levels = type_node.pointer_levels();
-		for (int i = 0; i < static_cast<int>(ptr_levels.size()); ++i) {
-			const auto& ptr_level = ptr_levels[i];
-			
-			// Pointer CV-qualifiers (on the pointer itself)
-			if (ptr_level.cv_qualifier == CVQualifier::None) {
-				builder.append("PE");
-			} else if (ptr_level.cv_qualifier == CVQualifier::Const) {
-				builder.append("QE");
-			} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
-				builder.append("RE");
-			} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
-				builder.append("SE");
-			}
-			
-			// Pointee CV-qualifiers (on what the pointer points to)
-			// For the last pointer level, use the base type's CV-qualifier
-			// For intermediate levels, get CV from the next pointer level
-			CVQualifier pointee_cv = (i == static_cast<int>(ptr_levels.size()) - 1) 
-				? type_node.cv_qualifier() 
-				: ptr_levels[i + 1].cv_qualifier;
-				
-			if (pointee_cv == CVQualifier::None) {
-				builder.append('A');
-			} else if (pointee_cv == CVQualifier::Const) {
-				builder.append('B');
-			} else if (pointee_cv == CVQualifier::Volatile) {
-				builder.append('C');
-			} else if (pointee_cv == CVQualifier::ConstVolatile) {
-				builder.append('D');
-			}
-		}
-
-		// Add base type code
-		switch (type_node.type()) {
-			case Type::Void: builder.append('X'); break;
-			case Type::Bool: builder.append("_N"); break;  // bool
-			case Type::Char: builder.append('D'); break;   // char
-			case Type::UnsignedChar: builder.append('E'); break;  // unsigned char
-			case Type::Short: builder.append('F'); break;  // short
-			case Type::UnsignedShort: builder.append('G'); break;  // unsigned short
-			case Type::Int: builder.append('H'); break;    // int
-			case Type::UnsignedInt: builder.append('I'); break;  // unsigned int
-			case Type::Long: builder.append('J'); break;   // long
-			case Type::UnsignedLong: builder.append('K'); break;  // unsigned long
-			case Type::LongLong: builder.append("_J"); break;  // long long
-			case Type::UnsignedLongLong: builder.append("_K"); break;  // unsigned long long
-			case Type::Float: builder.append('M'); break;  // float
-			case Type::Double: builder.append('N'); break;  // double
-			case Type::LongDouble: builder.append('O'); break;  // long double
-			default: builder.append('H'); break;  // Default to int
-		}
-	}
-
-	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
+		NameMangling::appendTypeCode(builder, type_node);
+	}	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 
 		const auto& decl_node = functionCallNode.function_declaration();
