@@ -2183,6 +2183,102 @@ TEST_SUITE("Templates") {
 	TEST_CASE("Templates:ReturnType") {
 		run_test_from_file("test_template_return_type.cpp", "Templates:ReturnType", false);
 	}
+TEST_CASE("Spec:FuncPtr") {
+	run_test_from_file("test_spec_func_ptr.cpp", "Function pointer specialization", false);
+}
+
+TEST_CASE("FuncPtr:StructOnly") {
+	run_test_from_file("test_func_ptr_struct_only.cpp", "Function pointer in struct only", false);
+}
+
+TEST_CASE("Spec:DefaultInit") {
+	run_test_from_file("test_spec_default_init.cpp", "Specialization default initialization", false);
+}
+
+TEST_CASE("FuncPtr:Nullptr") {
+	run_test_from_file("test_func_ptr_nullptr.cpp", "Function pointer nullptr", false);
+}
+
+TEST_CASE("Spec:CallOnly") {
+	run_test_from_file("test_spec_call_only.cpp", "Specialization call only", false);
+}
+
+TEST_CASE("Spec:FuncPtrSet") {
+	run_test_from_file("test_spec_func_ptr_set.cpp", "Function pointer set specialization", false);
+}
+
+TEST_CASE("Spec:FuncPtrMinimal") {
+	run_test_from_file("test_spec_func_ptr_minimal.cpp", "Minimal function pointer specialization", false);
+}
+
+TEST_CASE("FuncPtr:PrimaryTemplate") {
+	run_test_from_file("test_func_ptr_primary_template.cpp", "Function pointer primary template", false);
+}
+
+TEST_CASE("FuncPtr:Local") {
+	run_test_from_file("test_func_ptr_local.cpp", "Local function pointer", false);
+}
+
+TEST_CASE("FuncPtr:Simple") {
+	run_test_from_file("test_func_ptr_simple.cpp", "Simple function pointer", false);
+}
+
+TEST_CASE("Spec:MultiMembers") {
+	run_test_from_file("test_spec_multi_members.cpp", "Specialization with multiple members", false);
+}
+
+TEST_CASE("SimpleCall") {
+	run_test_from_file("test_simple_call.cpp", "Simple call test", false);
+}
+
+TEST_CASE("TernaryFunc") {
+	run_test_from_file("test_ternary_func.cpp", "Ternary function", false);
+}
+
+TEST_CASE("Spec:NullptrInit") {
+	run_test_from_file("test_spec_nullptr_init.cpp", "Specialization nullptr initialization", false);
+}
+
+TEST_CASE("Spec:CtorInit") {
+	run_test_from_file("test_spec_ctor_init.cpp", "Specialization constructor initialization", false);
+}
+
+TEST_CASE("Spec:NullptrCheck") {
+	run_test_from_file("test_spec_nullptr_check.cpp", "Specialization nullptr check", false);
+}
+
+TEST_CASE("Spec:MemberValue") {
+	run_test_from_file("test_spec_member_value.cpp", "Specialization member value", false);
+}
+
+TEST_CASE("Spec:InitSimple") {
+	run_test_from_file("test_spec_init_simple.cpp", "Specialization init simple", false);
+}
+
+TEST_CASE("Spec:MemberAccessFix") {
+	run_test_from_file("test_spec_member_access_fix.cpp", "Specialization member access fix", false);
+}
+
+TEST_CASE("Spec:MemberOnly") {
+	run_test_from_file("test_spec_member_only.cpp", "Specialization member only", false);
+}
+
+TEST_CASE("Spec:NullptrRegularPtr") {
+	run_test_from_file("test_spec_nullptr_regular_ptr.cpp", "Specialization nullptr regular ptr", false);
+}
+
+TEST_CASE("Spec:NullptrReset") {
+	run_test_from_file("test_spec_nullptr_reset.cpp", "Specialization nullptr reset", false);
+}
+
+TEST_CASE("Spec:PtrNullptrBool") {
+	run_test_from_file("test_spec_ptr_nullptr_bool.cpp", "Specialization ptr nullptr bool", false);
+}
+}
+
+TEST_CASE("Spec:FuncPtrNullptrBool") {
+	run_test_from_file("test_spec_func_ptr_nullptr_bool.cpp", "Function pointer nullptr bool specialization", false);
+}
 
 	TEST_CASE("Templates:QualifiedId") {
 		run_test_from_file("test_template_qualified_id.cpp", "Templates:QualifiedId", false);
