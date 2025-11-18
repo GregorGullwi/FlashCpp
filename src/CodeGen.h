@@ -141,6 +141,11 @@ public:
 			// TODO: Implement class template instantiation in Phase 6
 			return;
 		}
+		else if (node.is<TemplateAliasNode>()) {
+			// Template alias declarations don't generate code - they're compile-time type substitutions
+			// The type is resolved during parsing when the alias is used
+			return;
+		}
 		else if (node.is<ExpressionNode>()) {
 			// Expression statement (e.g., function call, lambda expression, etc.)
 			// Evaluate the expression but discard the result

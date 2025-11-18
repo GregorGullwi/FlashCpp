@@ -1109,6 +1109,39 @@ private:
 	ASTNode function_declaration_;  // FunctionDeclarationNode
 };
 
+// Template alias declaration: template<typename T> using Ptr = T*;
+class TemplateAliasNode {
+public:
+	TemplateAliasNode() = delete;
+	TemplateAliasNode(std::vector<ASTNode> template_params,
+	                  std::vector<std::string_view> param_names,
+	                  std::string_view alias_name,
+	                  ASTNode target_type)
+		: template_parameters_(std::move(template_params))
+		, template_param_names_(std::move(param_names))
+		, alias_name_(alias_name)
+		, target_type_(target_type) {}
+
+	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	const std::vector<std::string_view>& template_param_names() const { return template_param_names_; }
+	std::string_view alias_name() const { return alias_name_; }
+	ASTNode target_type() const { return target_type_; }
+
+	// Get the underlying TypeSpecifierNode
+	TypeSpecifierNode& target_type_node() {
+		return target_type_.as<TypeSpecifierNode>();
+	}
+	const TypeSpecifierNode& target_type_node() const {
+		return target_type_.as<TypeSpecifierNode>();
+	}
+
+private:
+	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
+	std::vector<std::string_view> template_param_names_;  // Parameter names for lookup
+	std::string_view alias_name_;  // The name of the alias (e.g., "Ptr")
+	ASTNode target_type_;  // TypeSpecifierNode - the target type (e.g., T*)
+};
+
 // Forward declaration for TemplateClassDeclarationNode (defined after StructDeclarationNode)
 class TemplateClassDeclarationNode;
 

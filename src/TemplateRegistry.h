@@ -385,6 +385,21 @@ public:
 		template_parameters_[key] = std::vector<std::string_view>(param_names.begin(), param_names.end());
 	}
 
+	// Register an alias template: template<typename T> using Ptr = T*;
+	void register_alias_template(std::string_view name, ASTNode alias_node) {
+		std::string key(name);
+		alias_templates_[key] = alias_node;
+	}
+
+	// Look up an alias template by name
+	std::optional<ASTNode> lookup_alias_template(std::string_view name) const {
+		auto it = alias_templates_.find(std::string(name));
+		if (it != alias_templates_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+
 	// Get template parameter names for a template
 	std::vector<std::string_view> getTemplateParameters(std::string_view name) const {
 		auto it = template_parameters_.find(std::string(name));
@@ -576,6 +591,7 @@ public:
 		out_of_line_members_.clear();
 		specializations_.clear();
 		specialization_patterns_.clear();
+		alias_templates_.clear();
 	}
 
 private:
@@ -584,6 +600,9 @@ private:
 
 	// Map from template name to template parameter names
 	std::unordered_map<std::string, std::vector<std::string_view>> template_parameters_;
+
+	// Map from alias template name to TemplateAliasNode
+	std::unordered_map<std::string, ASTNode> alias_templates_;
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
