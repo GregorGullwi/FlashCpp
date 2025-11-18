@@ -281,6 +281,7 @@ private:
                 bool is_destructor;                       // Special handling for destructors
                 ConstructorDeclarationNode* ctor_node;   // For constructors (nullptr for regular functions)
                 DestructorDeclarationNode* dtor_node;    // For destructors (nullptr for regular functions)
+                std::vector<std::string_view> template_param_names; // For template member functions
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 

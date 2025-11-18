@@ -2365,6 +2365,9 @@ private:
 		}
 
 		if (!symbol.has_value()) {
+			std::cerr << "ERROR: Symbol '" << identifierNode.name() << "' not found in symbol table during code generation\n";
+			std::cerr << "  Current function: " << current_function_name_ << "\n";
+			std::cerr << "  Current struct: " << current_struct_name_ << "\n";
 			assert(false && "Expected symbol to exist");
 			return {};
 		}

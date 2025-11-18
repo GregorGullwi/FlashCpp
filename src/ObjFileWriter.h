@@ -456,8 +456,9 @@ public:
 
 			// If not found in function_signatures_, generate a basic mangled name
 			// This handles forward references to functions that haven't been processed yet
-			// Format: ?FunctionName@ClassName@@YAH@Z (assuming int return, no params for now)
-			// For constructors (FunctionName == ClassName), use YAX (void return)
+			// Format: ?FunctionName@ClassName@@QAH@Z (member function, int return, no params)
+			// For constructors (FunctionName == ClassName), use QAX (void return)
+			// Q indicates __thiscall (member function with implicit this pointer)
 			// This is a simplified mangling - the actual signature will be added later
 			// Reserve space to avoid reallocations
 			std::string mangled;
@@ -468,9 +469,9 @@ public:
 			mangled += class_name;
 			// Check if this is a constructor (function name == class name)
 			if (func_name == class_name) {
-				mangled += "@@YAX@Z";  // void return, no params
+				mangled += "@@QAX@Z";  // __thiscall void return, no params
 			} else {
-				mangled += "@@YAH@Z";  // int return, no params (default for regular functions)
+				mangled += "@@QAH@Z";  // __thiscall int return, no params (default for member functions)
 			}
 			return mangled;
 		}
@@ -540,7 +541,7 @@ public:
 
 		mangled += "@@";
 
-		// Calling convention - Y for cdecl (non-member), Q for cdecl (member)
+		// Calling convention - Y for __cdecl (non-member), Q for __thiscall (member)
 		if (!sig.class_name.empty()) {
 			mangled += "Q";  // Member function
 			if (sig.is_const) {
@@ -678,13 +679,10 @@ public:
 
 	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type) {
 		// Get the function symbol using mangled name
-		std::cerr << "DEBUG add_relocation: input symbol_name = " << symbol_name << ", type = " << relocation_type << "\n";
 		std::string mangled_name = getMangledName(std::string(symbol_name));
-		std::cerr << "DEBUG add_relocation: after getMangledName = " << mangled_name << "\n";
 		auto* symbol = coffi_.get_symbol(std::string(mangled_name));
 		if (!symbol) {
 			// Symbol not found - add it as an external symbol (for C library functions like puts, printf, etc.)
-			std::cerr << "Adding external symbol: " << mangled_name << " (original: " << symbol_name << ")" << std::endl;
 
 			// Add external symbol with:
 			// - section number 0 (undefined/external)

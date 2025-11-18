@@ -12588,6 +12588,37 @@ ASTNode Parser::substituteTemplateParameters(
 			std::nullopt;
 		
 		return emplace_node<VariableDeclarationNode>(var_decl.declaration_node(), initializer, var_decl.storage_class());
+
+	} else if (node.is<ReturnStatementNode>()) {
+		// Handle return statements
+		const ReturnStatementNode& ret_stmt = node.as<ReturnStatementNode>();
+		
+		auto expr = ret_stmt.expression().has_value() ?
+			std::optional<ASTNode>(substituteTemplateParameters(*ret_stmt.expression(), template_params, template_args)) :
+			std::nullopt;
+		
+		return emplace_node<ReturnStatementNode>(expr, ret_stmt.return_token());
+
+	} else if (node.is<IfStatementNode>()) {
+		// Handle if statements
+		const IfStatementNode& if_stmt = node.as<IfStatementNode>();
+		
+		ASTNode substituted_condition = substituteTemplateParameters(if_stmt.get_condition(), template_params, template_args);
+		ASTNode substituted_then = substituteTemplateParameters(if_stmt.get_then_statement(), template_params, template_args);
+		auto substituted_else = if_stmt.get_else_statement().has_value() ?
+			std::optional<ASTNode>(substituteTemplateParameters(*if_stmt.get_else_statement(), template_params, template_args)) :
+			std::nullopt;
+		
+		return emplace_node<IfStatementNode>(substituted_condition, substituted_then, substituted_else);
+
+	} else if (node.is<WhileStatementNode>()) {
+		// Handle while statements
+		const WhileStatementNode& while_stmt = node.as<WhileStatementNode>();
+		
+		ASTNode substituted_condition = substituteTemplateParameters(while_stmt.get_condition(), template_params, template_args);
+		ASTNode substituted_body = substituteTemplateParameters(while_stmt.get_body_statement(), template_params, template_args);
+		
+		return emplace_node<WhileStatementNode>(substituted_condition, substituted_body);
 	}
 
 	// For other node types, return as-is (simplified implementation)
