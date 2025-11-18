@@ -2183,6 +2183,8 @@ TEST_SUITE("Templates") {
 	TEST_CASE("Templates:ReturnType") {
 		run_test_from_file("test_template_return_type.cpp", "Templates:ReturnType", false);
 	}
+}
+
 TEST_CASE("Spec:FuncPtr") {
 	run_test_from_file("test_spec_func_ptr.cpp", "Function pointer specialization", false);
 }
@@ -2274,13 +2276,11 @@ TEST_CASE("Spec:NullptrReset") {
 TEST_CASE("Spec:PtrNullptrBool") {
 	run_test_from_file("test_spec_ptr_nullptr_bool.cpp", "Specialization ptr nullptr bool", false);
 }
-}
 
 TEST_CASE("Spec:FuncPtrNullptrBool") {
 	run_test_from_file("test_spec_func_ptr_nullptr_bool.cpp", "Function pointer nullptr bool specialization", false);
 }
 
-	TEST_CASE("Templates:QualifiedId") {
-		run_test_from_file("test_template_qualified_id.cpp", "Templates:QualifiedId", false);
-	}
+TEST_CASE("Templates:QualifiedId") {
+	run_test_from_file("test_template_qualified_id.cpp", "Templates:QualifiedId", false);
 }
