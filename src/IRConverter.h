@@ -1914,6 +1914,12 @@ public:
 		}
 
 		auto ir_processing_end = std::chrono::high_resolution_clock::now();
+	
+		// Clean up the last function's variable scope after all instructions are processed
+		if (!variable_scopes.empty()) {
+			variable_scopes.pop_back();
+		}
+	
 		if (show_timing) {
 			auto ir_duration = std::chrono::duration_cast<std::chrono::microseconds>(ir_processing_end - ir_processing_start);
 			printf("    IR instruction processing: %8.3f ms\n", ir_duration.count() / 1000.0);
@@ -4210,6 +4216,7 @@ private:
 			struct_name_str = std::string(instruction.getOperandAs<std::string_view>(FunctionDeclLayout::STRUCT_NAME));
 		}
 		std::string_view struct_name = struct_name_str;
+		std::cerr << "DEBUG [handleFunctionDecl]: func_name='" << func_name << "' struct_name='" << struct_name << "' empty=" << struct_name.empty() << std::endl;
 
 		// Extract return type information using FunctionDeclLayout constants
 		auto return_base_type = instruction.getOperandAs<Type>(FunctionDeclLayout::RETURN_TYPE);
@@ -4248,6 +4255,10 @@ private:
 			// Set reference information
 			if (is_reference) {
 				param_type.set_reference(is_rvalue_reference);
+				std::cerr << "DEBUG: Parameter " << paramIndex/FunctionDeclLayout::OPERANDS_PER_PARAM 
+						  << " is_ref=" << is_reference << " is_rvalue=" << is_rvalue_reference 
+						  << " ptr_depth=" << param_pointer_depth << "\n";
+			
 				// For references, ptr_depth includes +1 for the reference itself (ABI)
 				// Subtract 1 to get the actual pointer levels (e.g., int*& has ptr_depth=2, but only 1 PE)
 				for (int i = 1; i < param_pointer_depth; ++i) {
@@ -4284,6 +4295,12 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			writer.add_function_exception_info(current_function_mangled_name_, current_function_offset_, function_length);
+		
+			// Clean up the previous function's variable scope
+			// This happens when we start a NEW function, ensuring the previous function's scope is removed
+			if (!variable_scopes.empty()) {
+				variable_scopes.pop_back();
+			}
 		}
 
 		// align the function to 16 bytes
@@ -4371,6 +4388,10 @@ private:
 		}
 
 		// For RBP-relative addressing, we start with negative offset after total allocated space
+		if (variable_scopes.empty()) {
+			std::cerr << "FATAL: variable_scopes is EMPTY!\n"; std::cerr.flush();
+			std::abort();
+		}
 		variable_scopes.back().scope_stack_space = -total_stack_space;
 
 		// Handle parameters
@@ -4511,6 +4532,11 @@ private:
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
+		if (variable_scopes.empty()) {
+			std::cerr << "FATAL [handleReturn]: variable_scopes is EMPTY!\n"; std::cerr.flush();
+			std::abort();
+		}
+		
 		// Add line mapping for the return statement itself (only for functions without function calls)
 		// For functions with function calls (like main), the closing brace is already mapped in handleFunctionCall
 		if (instruction.getLineNumber() > 0 && current_function_name_ != "main") {	// TODO: Is main special case still needed here?
@@ -4651,12 +4677,9 @@ private:
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);
 
-		// Mirror function-entry scope accounting at this exit point:
-		// drop the innermost function scope so subsequent instructions (if any)
-		// can't mistakenly reuse its variable mappings.
-		if (!variable_scopes.empty()) {
-			variable_scopes.pop_back();
-		}
+		// NOTE: We do NOT pop variable_scopes here because there may be multiple
+		// return statements in a function (e.g., early returns in if statements).
+		// The scope will be popped when we finish processing the entire function.
 	}
 
 	void handleStackAlloc(const IrInstruction& instruction) {

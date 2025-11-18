@@ -10279,7 +10279,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	// Parse template arguments
 	while (true) {
 		// Save position in case type parsing fails
-		TokenPosition saved_pos = save_token_position();
+		TokenPosition arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
 		auto expr_result = parse_primary_expression();
@@ -10293,13 +10293,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					template_args.emplace_back(static_cast<int64_t>(std::get<unsigned long long>(val)));
 					std::cerr << "DEBUG: parse_explicit_template_arguments parsed numeric literal: " 
 					          << std::get<unsigned long long>(val) << "\n";
-					discard_saved_token(saved_pos);
+					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
 				} else if (std::holds_alternative<double>(val)) {
 					template_args.emplace_back(static_cast<int64_t>(std::get<double>(val)));
 					std::cerr << "DEBUG: parse_explicit_template_arguments parsed double literal: " 
 					          << std::get<double>(val) << "\n";
-					discard_saved_token(saved_pos);
+					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
 				} else {
 					std::cerr << "DEBUG: Unsupported numeric literal type\n";
@@ -10310,6 +10310,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// Check for ',' or '>' after the numeric literal
 				if (!peek_token().has_value()) {
 					std::cerr << "DEBUG: parse_explicit_template_arguments unexpected end of tokens after numeric literal\n";
+					restore_token_position(saved_pos);
 					return std::nullopt;
 				}
 
@@ -10326,6 +10327,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// Unexpected token after numeric literal
 				std::cerr << "DEBUG: parse_explicit_template_arguments unexpected token after numeric literal: '" 
 				          << peek_token()->value() << "'\n";
+				restore_token_position(saved_pos);
 				return std::nullopt;
 			}
 
@@ -10333,7 +10335,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		}
 
 		// Expression parsing failed or wasn't a numeric literal - try parsing a type
-		restore_token_position(saved_pos);
+		restore_token_position(arg_saved_pos);
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
 			// Neither type nor expression parsing worked
