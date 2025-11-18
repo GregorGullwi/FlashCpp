@@ -10,6 +10,17 @@
 #include <optional>
 #include <algorithm>
 
+// Transparent string hash for heterogeneous lookup (C++20)
+// Allows unordered_map<string, T, TransparentStringHash, equal_to<>> to lookup with string_view
+struct TransparentStringHash {
+	using is_transparent = void;
+	using hash_type = std::hash<std::string_view>;
+	
+	size_t operator()(const char* str) const { return hash_type{}(str); }
+	size_t operator()(std::string_view str) const { return hash_type{}(str); }
+	size_t operator()(const std::string& str) const { return hash_type{}(str); }
+};
+
 // Full type representation for template arguments
 // Captures base type, references, pointers, cv-qualifiers, etc.
 // Can also represent non-type template parameters (values)
@@ -393,7 +404,8 @@ public:
 
 	// Look up an alias template by name
 	std::optional<ASTNode> lookup_alias_template(std::string_view name) const {
-		auto it = alias_templates_.find(std::string(name));
+		// Heterogeneous lookup - string_view accepted directly without temporary string allocation
+		auto it = alias_templates_.find(name);
 		if (it != alias_templates_.end()) {
 			return it->second;
 		}
@@ -402,7 +414,8 @@ public:
 
 	// Get template parameter names for a template
 	std::vector<std::string_view> getTemplateParameters(std::string_view name) const {
-		auto it = template_parameters_.find(std::string(name));
+		// Heterogeneous lookup - string_view accepted directly
+		auto it = template_parameters_.find(name);
 		if (it != template_parameters_.end()) {
 			return it->second;
 		}
@@ -411,7 +424,8 @@ public:
 	
 	// Look up a template by name
 	std::optional<ASTNode> lookupTemplate(std::string_view name) const {
-		auto it = templates_.find(std::string(name));
+		// Heterogeneous lookup - string_view accepted directly
+		auto it = templates_.find(name);
 		if (it != templates_.end()) {
 			return it->second;
 		}
@@ -502,9 +516,10 @@ public:
 		out_of_line_members_[key].push_back(std::move(member_func));
 	}
 
-	// Get all out-of-line member functions for a class template
-	std::vector<OutOfLineMemberFunction> getOutOfLineMembers(std::string_view class_name) const {
-		auto it = out_of_line_members_.find(std::string(class_name));
+	// Get out-of-line member functions for a class
+	std::vector<OutOfLineMemberFunction> getOutOfLineMemberFunctions(std::string_view class_name) const {
+		// Heterogeneous lookup - string_view accepted directly
+		auto it = out_of_line_members_.find(class_name);
 		if (it != out_of_line_members_.end()) {
 			return it->second;
 		}
@@ -555,7 +570,8 @@ public:
 	// Find a matching specialization pattern
 	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name, 
 	                                                  const std::vector<TemplateTypeArg>& concrete_args) const {
-		auto patterns_it = specialization_patterns_.find(std::string(template_name));
+		// Heterogeneous lookup - string_view accepted directly
+		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
 			return std::nullopt;  // No patterns for this template
 		}
@@ -595,26 +611,26 @@ public:
 	}
 
 private:
-	// Map from template name to template declaration node
-	std::unordered_map<std::string, ASTNode> templates_;
+	// Map from template name to template declaration node (supports heterogeneous lookup)
+	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> templates_;
 
-	// Map from template name to template parameter names
-	std::unordered_map<std::string, std::vector<std::string_view>> template_parameters_;
+	// Map from template name to template parameter names (supports heterogeneous lookup)
+	std::unordered_map<std::string, std::vector<std::string_view>, TransparentStringHash, std::equal_to<>> template_parameters_;
 
-	// Map from alias template name to TemplateAliasNode
-	std::unordered_map<std::string, ASTNode> alias_templates_;
+	// Map from alias template name to TemplateAliasNode (supports heterogeneous lookup)
+	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
 
-	// Map from class name to out-of-line member function definitions
-	std::unordered_map<std::string, std::vector<OutOfLineMemberFunction>> out_of_line_members_;
+	// Map from class name to out-of-line member function definitions (supports heterogeneous lookup)
+	std::unordered_map<std::string, std::vector<OutOfLineMemberFunction>, TransparentStringHash, std::equal_to<>> out_of_line_members_;
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
 	
-	// Map from template_name to specialization patterns (for pattern matching)
-	std::unordered_map<std::string, std::vector<TemplatePattern>> specialization_patterns_;
+	// Map from template_name to specialization patterns (for pattern matching, supports heterogeneous lookup)
+	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
 };
 
 // Global template registry
