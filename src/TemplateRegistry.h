@@ -412,6 +412,21 @@ public:
 		return std::nullopt;
 	}
 
+	// Register a deduction guide: template<typename T> ClassName(T) -> ClassName<T>;
+	void register_deduction_guide(std::string_view class_name, ASTNode guide_node) {
+		std::string key(class_name);
+		deduction_guides_[key].push_back(guide_node);
+	}
+
+	// Look up deduction guides for a class template
+	std::vector<ASTNode> lookup_deduction_guides(std::string_view class_name) const {
+		auto it = deduction_guides_.find(class_name);
+		if (it != deduction_guides_.end()) {
+			return it->second;
+		}
+		return {};
+	}
+
 	// Get template parameter names for a template
 	std::vector<std::string_view> getTemplateParameters(std::string_view name) const {
 		// Heterogeneous lookup - string_view accepted directly
@@ -608,6 +623,7 @@ public:
 		specializations_.clear();
 		specialization_patterns_.clear();
 		alias_templates_.clear();
+		deduction_guides_.clear();
 	}
 
 private:
@@ -619,6 +635,9 @@ private:
 
 	// Map from alias template name to TemplateAliasNode (supports heterogeneous lookup)
 	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
+
+	// Map from class template name to deduction guides (supports heterogeneous lookup)
+	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> deduction_guides_;
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;

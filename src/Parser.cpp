@@ -4966,6 +4966,10 @@ ParseResult Parser::parse_variable_declaration()
 		first_init_expr = init_list_result.node();
 	}
 
+	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
+		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
+	}
+
 	// Check if there are more declarations (comma-separated)
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
 		// Create a block to hold multiple declarations
@@ -5166,6 +5170,230 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	}
 
 	return ParseResult::success(init_list_node);
+}
+
+bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list)
+{
+	if (init_list.has_any_designated()) {
+		return false;
+	}
+
+	if (type_specifier.type() != Type::UserDefined && type_specifier.type() != Type::Struct) {
+		return false;
+	}
+
+	std::string_view class_name = type_specifier.token().value();
+	if (class_name.empty()) {
+		return false;
+	}
+
+	if (!gTemplateRegistry.lookupTemplate(class_name).has_value()) {
+		return false;
+	}
+
+	auto guide_nodes = gTemplateRegistry.lookup_deduction_guides(class_name);
+	if (guide_nodes.empty()) {
+		return false;
+	}
+
+	std::vector<TypeSpecifierNode> argument_types;
+	argument_types.reserve(init_list.initializers().size());
+	for (const auto& arg_expr : init_list.initializers()) {
+		auto arg_type_opt = get_expression_type(arg_expr);
+		if (!arg_type_opt.has_value()) {
+			return false;
+		}
+		argument_types.push_back(*arg_type_opt);
+	}
+
+	std::vector<TemplateTypeArg> deduced_args;
+	for (const auto& guide_node : guide_nodes) {
+		if (!guide_node.is<DeductionGuideNode>()) {
+			continue;
+		}
+		const auto& guide = guide_node.as<DeductionGuideNode>();
+		if (deduce_template_arguments_from_guide(guide, argument_types, deduced_args)) {
+			if (instantiate_deduced_template(class_name, deduced_args, type_specifier)) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
+	const std::vector<TypeSpecifierNode>& argument_types,
+	std::vector<TemplateTypeArg>& out_template_args) const
+{
+	if (guide.guide_parameters().size() != argument_types.size()) {
+		return false;
+	}
+
+	std::unordered_map<std::string_view, const TemplateParameterNode*> template_params;
+	for (const auto& param_node : guide.template_parameters()) {
+		if (!param_node.is<TemplateParameterNode>()) {
+			continue;
+		}
+		const auto& tparam = param_node.as<TemplateParameterNode>();
+		if (tparam.kind() == TemplateParameterKind::Type) {
+			template_params.emplace(tparam.name(), &tparam);
+		}
+	}
+
+	std::unordered_map<std::string_view, TypeSpecifierNode> bindings;
+	for (size_t i = 0; i < guide.guide_parameters().size(); ++i) {
+		if (!guide.guide_parameters()[i].is<TypeSpecifierNode>()) {
+			return false;
+		}
+		const auto& param_type = guide.guide_parameters()[i].as<TypeSpecifierNode>();
+		const auto& arg_type = argument_types[i];
+		if (!match_template_parameter_type(param_type, arg_type, template_params, bindings)) {
+			return false;
+		}
+	}
+
+	out_template_args.clear();
+	out_template_args.reserve(guide.deduced_template_args_nodes().size());
+	for (const auto& rhs_node : guide.deduced_template_args_nodes()) {
+		if (!rhs_node.is<TypeSpecifierNode>()) {
+			return false;
+		}
+		const auto& rhs_type = rhs_node.as<TypeSpecifierNode>();
+		auto placeholder = extract_template_param_name(rhs_type, template_params);
+		if (placeholder.has_value()) {
+			auto binding_it = bindings.find(*placeholder);
+			if (binding_it == bindings.end()) {
+				return false;
+			}
+			out_template_args.emplace_back(binding_it->second);
+			continue;
+		}
+
+		out_template_args.emplace_back(rhs_type);
+	}
+
+	return !out_template_args.empty();
+}
+
+bool Parser::match_template_parameter_type(TypeSpecifierNode param_type,
+	TypeSpecifierNode argument_type,
+	const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params,
+	std::unordered_map<std::string_view, TypeSpecifierNode>& bindings) const
+{
+	auto bind_placeholder = [&](std::string_view name, const TypeSpecifierNode& deduced_type) {
+		auto [it, inserted] = bindings.emplace(name, deduced_type);
+		if (!inserted && !types_equivalent(it->second, deduced_type)) {
+			return false;
+		}
+		return true;
+	};
+
+	if (param_type.is_reference()) {
+		bool requires_rvalue = param_type.is_rvalue_reference();
+		if (requires_rvalue && argument_type.is_reference() && !argument_type.is_rvalue_reference()) {
+			return false;
+		}
+		param_type.set_lvalue_reference(false);
+		if (argument_type.is_reference()) {
+			argument_type.set_lvalue_reference(false);
+		}
+	}
+
+	while (param_type.pointer_depth() > 0) {
+		if (argument_type.pointer_depth() == 0) {
+			return false;
+		}
+		const auto& param_level = param_type.pointer_levels().back();
+		const auto& arg_level = argument_type.pointer_levels().back();
+		if (param_level.cv_qualifier != arg_level.cv_qualifier) {
+			return false;
+		}
+		param_type.remove_pointer_level();
+		argument_type.remove_pointer_level();
+	}
+
+	auto placeholder = extract_template_param_name(param_type, template_params);
+	if (placeholder.has_value()) {
+		return bind_placeholder(*placeholder, argument_type);
+	}
+
+	return types_equivalent(param_type, argument_type);
+}
+
+std::optional<std::string_view> Parser::extract_template_param_name(const TypeSpecifierNode& type_spec,
+	const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params) const
+{
+	if (!template_params.empty()) {
+		std::string_view token_name = type_spec.token().value();
+		if (!token_name.empty()) {
+			auto it = template_params.find(token_name);
+			if (it != template_params.end()) {
+				return it->first;
+			}
+		}
+	}
+
+	if (type_spec.type_index() < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+		auto it = template_params.find(type_info.name_);
+		if (it != template_params.end()) {
+			return it->first;
+		}
+	}
+
+	return std::nullopt;
+}
+
+bool Parser::types_equivalent(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) const
+{
+	if (lhs.type() != rhs.type()) return false;
+	if (lhs.type_index() != rhs.type_index()) return false;
+	if (lhs.cv_qualifier() != rhs.cv_qualifier()) return false;
+	if (lhs.pointer_depth() != rhs.pointer_depth()) return false;
+	if (lhs.is_reference() != rhs.is_reference()) return false;
+	if (lhs.is_rvalue_reference() != rhs.is_rvalue_reference()) return false;
+
+	const auto& lhs_levels = lhs.pointer_levels();
+	const auto& rhs_levels = rhs.pointer_levels();
+	for (size_t i = 0; i < lhs_levels.size(); ++i) {
+		if (lhs_levels[i].cv_qualifier != rhs_levels[i].cv_qualifier) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool Parser::instantiate_deduced_template(std::string_view class_name,
+	const std::vector<TemplateTypeArg>& template_args,
+	TypeSpecifierNode& type_specifier)
+{
+	if (template_args.empty()) {
+		return false;
+	}
+
+	auto instantiated_class = try_instantiate_class_template(class_name, template_args);
+	if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
+		ast_nodes_.push_back(*instantiated_class);
+	}
+
+	std::string_view instantiated_name = get_instantiated_class_name(class_name, template_args);
+	auto type_it = gTypesByName.find(instantiated_name);
+	if (type_it == gTypesByName.end() || !type_it->second->isStruct()) {
+		return false;
+	}
+
+	const TypeInfo* struct_type_info = type_it->second;
+	unsigned char size_bits = 0;
+	if (const StructTypeInfo* struct_info = struct_type_info->getStructInfo()) {
+		size_bits = static_cast<unsigned char>(struct_info->total_size * 8);
+	}
+
+	TypeSpecifierNode resolved(Type::Struct, struct_type_info->type_index_, size_bits, type_specifier.token(), type_specifier.cv_qualifier());
+	resolved.copy_indirection_from(type_specifier);
+	type_specifier = resolved;
+	return true;
 }
 
 ParseResult Parser::parse_return_statement()
@@ -9968,8 +10196,170 @@ ParseResult Parser::parse_template_declaration() {
 	} else {
 		std::cerr << "DEBUG: Parsing function template (not a class template)" << std::endl;
 		// Could be:
-		// 1. Function template: template<typename T> T max(T a, T b) { ... }
-		// 2. Out-of-line member function: template<typename T> void Vector<T>::push_back(T v) { ... }
+		// 1. Deduction guide: template<typename T> ClassName(T) -> ClassName<T>;
+		// 2. Function template: template<typename T> T max(T a, T b) { ... }
+		// 3. Out-of-line member function: template<typename T> void Vector<T>::push_back(T v) { ... }
+
+		// Check for deduction guide by looking for ClassName(...) -> pattern
+		// Save position to peek ahead
+		std::cerr << "DEBUG: Checking if this is a deduction guide..." << std::endl;
+		auto deduction_guide_check_pos = save_token_position();
+		bool is_deduction_guide = false;
+		std::string_view guide_class_name;
+		
+		// Try to peek: if we see Identifier ( ... ) ->, it's likely a deduction guide
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+			guide_class_name = peek_token()->value();
+			std::cerr << "DEBUG: Found identifier '" << guide_class_name << "'" << std::endl;
+			consume_token();
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				std::cerr << "DEBUG: Found '(', skipping parameter list..." << std::endl;
+				consume_token(); // consume '('
+				// Skip parameter list
+				int paren_depth = 1; // Start at 1 since we already consumed '('
+				while (peek_token().has_value() && paren_depth > 0) {
+					if (peek_token()->value() == "(") paren_depth++;
+					else if (peek_token()->value() == ")") paren_depth--;
+					consume_token();
+				}
+				std::cerr << "DEBUG: After params, next token: " << (peek_token().has_value() ? peek_token()->value() : "<EOF>") << std::endl;
+				// Check for ->
+				if (peek_token().has_value() && peek_token()->value() == "->") {
+					is_deduction_guide = true;
+					std::cerr << "DEBUG: Detected deduction guide pattern for " << guide_class_name << std::endl;
+				}
+			}
+		}
+		restore_token_position(deduction_guide_check_pos);
+		std::cerr << "DEBUG: is_deduction_guide=" << is_deduction_guide << std::endl;
+		
+		if (is_deduction_guide) {
+			std::cerr << "DEBUG: Detected deduction guide for " << guide_class_name << std::endl;
+			
+			// Parse: ClassName(params) -> ClassName<args>;
+			// class name
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected class name in deduction guide", *current_token_);
+			}
+			std::string_view class_name = peek_token()->value();
+			consume_token();
+			
+			// Parse parameter list
+			if (!peek_token().has_value() || peek_token()->value() != "(") {
+				return ParseResult::error("Expected '(' in deduction guide", *current_token_);
+			}
+			consume_token(); // consume '('
+			
+			std::vector<ASTNode> guide_params;
+			if (peek_token().has_value() && peek_token()->value() != ")") {
+				// Parse parameters
+				while (true) {
+					auto param_type_result = parse_type_specifier();
+					if (param_type_result.is_error()) {
+						return param_type_result;
+					}
+					guide_params.push_back(*param_type_result.node());
+
+					// Allow pointer/reference declarators directly in guide parameters (e.g., T*, const T&, etc.)
+					if (!guide_params.empty() && guide_params.back().is<TypeSpecifierNode>()) {
+						TypeSpecifierNode& param_type = guide_params.back().as<TypeSpecifierNode>();
+
+						// Parse pointer levels with optional CV-qualifiers
+						while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+						       peek_token()->value() == "*") {
+							consume_token(); // consume '*'
+
+							CVQualifier ptr_cv = CVQualifier::None;
+							while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+								std::string_view kw = peek_token()->value();
+								if (kw == "const") {
+									ptr_cv = static_cast<CVQualifier>(
+										static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+									consume_token();
+								}
+								else if (kw == "volatile") {
+									ptr_cv = static_cast<CVQualifier>(
+										static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+									consume_token();
+								}
+								else {
+									break;
+								}
+							}
+
+							param_type.add_pointer_level(ptr_cv);
+						}
+
+						// Parse references (& or &&)
+						if (peek_token().has_value() && peek_token()->value() == "&&") {
+							param_type.set_reference(true);
+							consume_token();
+						}
+						else if (peek_token().has_value() && peek_token()->value() == "&") {
+							param_type.set_lvalue_reference(true);
+							consume_token();
+						}
+					}
+					
+					// Optional parameter name (ignored)
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						consume_token();
+					}
+					
+					if (peek_token().has_value() && peek_token()->value() == ",") {
+						consume_token();
+						continue;
+					}
+					break;
+				}
+			}
+			
+			if (!peek_token().has_value() || peek_token()->value() != ")") {
+				return ParseResult::error("Expected ')' in deduction guide", *current_token_);
+			}
+			consume_token(); // consume ')'
+			
+			// Expect ->
+			if (!peek_token().has_value() || peek_token()->value() != "->") {
+				return ParseResult::error("Expected '->' in deduction guide", *current_token_);
+			}
+			consume_token(); // consume '->'
+			
+			// Parse deduced type: ClassName<args>
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected class name after '->' in deduction guide", *current_token_);
+			}
+			consume_token(); // consume class name (should match)
+			
+			// Parse template arguments
+			std::vector<ASTNode> deduced_type_nodes;
+			auto deduced_args_opt = parse_explicit_template_arguments(&deduced_type_nodes);
+			if (!deduced_args_opt.has_value()) {
+				return ParseResult::error("Expected template arguments in deduction guide", *current_token_);
+			}
+			if (deduced_type_nodes.size() != deduced_args_opt->size()) {
+				return ParseResult::error("Unsupported deduction guide arguments", *current_token_);
+			}
+			
+			// Expect semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after deduction guide", *current_token_);
+			}
+			
+			// Create DeductionGuideNode
+			auto guide_node = emplace_node<DeductionGuideNode>(
+				std::move(template_params),
+				class_name,
+				std::move(guide_params),
+				std::move(deduced_type_nodes)
+			);
+			
+			// Register the deduction guide
+			gTemplateRegistry.register_deduction_guide(class_name, guide_node);
+			
+			std::cerr << "DEBUG: Registered deduction guide for " << class_name << std::endl;
+			return saved_position.success();
+		}
 
 		// Try to detect out-of-line member function definition
 		// Pattern: ReturnType ClassName<TemplateArgs>::FunctionName(...)
@@ -10499,7 +10889,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 // Parse explicit template arguments: <int, float, ...>
 // Returns a vector of types if successful, nullopt otherwise
-std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments() {
+std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
 	// Save position in case this isn't template arguments
 	auto saved_pos = save_token_position();
 
@@ -10619,6 +11009,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 		// Create TemplateTypeArg from the fully parsed type
 		template_args.push_back(TemplateTypeArg(type_node));
+		if (out_type_nodes) {
+			out_type_nodes->push_back(*type_result.node());
+		}
 
 		// Check for ',' or '>'
 		if (!peek_token().has_value()) {

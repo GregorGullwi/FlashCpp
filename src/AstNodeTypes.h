@@ -17,6 +17,9 @@
 #include "StackString.h"
 #include "Lexer.h"
 
+// Forward declarations
+struct TemplateTypeArg;
+
 class ASTNode {
 public:
 	ASTNode() = default;
@@ -718,6 +721,7 @@ public:
 	const std::vector<PointerLevel>& pointer_levels() const { return pointer_levels_; }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
 	void remove_pointer_level() { if (!pointer_levels_.empty()) pointer_levels_.pop_back(); }
+	void copy_pointer_levels_from(const TypeSpecifierNode& other) { pointer_levels_ = other.pointer_levels_; }
 
 	// Reference support
 	bool is_reference() const { return is_reference_; }
@@ -745,6 +749,12 @@ public:
 	bool has_function_signature() const { return function_signature_.has_value(); }
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
+	const Token& token() const { return token_; }
+	void copy_indirection_from(const TypeSpecifierNode& other) {
+		pointer_levels_ = other.pointer_levels_;
+		is_reference_ = other.is_reference_;
+		is_rvalue_reference_ = other.is_rvalue_reference_;
+	}
 
 	// Get readable string representation
 	std::string getReadableString() const;
@@ -1140,6 +1150,32 @@ private:
 	std::vector<std::string_view> template_param_names_;  // Parameter names for lookup
 	std::string_view alias_name_;  // The name of the alias (e.g., "Ptr")
 	ASTNode target_type_;  // TypeSpecifierNode - the target type (e.g., T*)
+};
+
+// Deduction guide declaration: template<typename T> ClassName(T) -> ClassName<T>;
+// Enables class template argument deduction (CTAD) in C++17
+class DeductionGuideNode {
+public:
+	DeductionGuideNode() = delete;
+	DeductionGuideNode(std::vector<ASTNode> template_params,
+	                   std::string_view class_name,
+	                   std::vector<ASTNode> guide_params,
+	                   std::vector<ASTNode> deduced_template_args)
+		: template_parameters_(std::move(template_params))
+		, class_name_(class_name)
+		, guide_parameters_(std::move(guide_params))
+		, deduced_template_args_(std::move(deduced_template_args)) {}
+
+	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	std::string_view class_name() const { return class_name_; }
+	const std::vector<ASTNode>& guide_parameters() const { return guide_parameters_; }
+	const std::vector<ASTNode>& deduced_template_args_nodes() const { return deduced_template_args_; }
+
+private:
+	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances for the guide's template params
+	std::string_view class_name_;  // Name of the class template
+	std::vector<ASTNode> guide_parameters_;  // Parameters of the guide (like constructor params)
+	std::vector<ASTNode> deduced_template_args_;  // RHS nodes for template arguments (TypeSpecifierNode instances)
 };
 
 // Forward declaration for TemplateClassDeclarationNode (defined after StructDeclarationNode)

@@ -1936,6 +1936,18 @@ TEST_CASE("Decltype") {
 	run_test_from_file("test_decltype.cpp", "Decltype type deduction", false);
 }
 
+TEST_CASE("CTAD:SimpleGuide") {
+	run_test_from_file("test_ctad_simple.cpp", "Simple deduction guide", false);
+}
+
+TEST_CASE("CTAD:PointerGuide") {
+	run_test_from_file("test_ctad_pointer.cpp", "Pointer-aware deduction guide", false);
+}
+
+TEST_CASE("CTAD:ConstRefGuide") {
+	run_test_from_file("test_ctad_const_ref.cpp", "Const reference deduction guide", false);
+}
+
 TEST_CASE("DesignatedInitializers") {
 	run_test_from_file("test_designated_init.cpp", "Designated initializers", false);
 }
