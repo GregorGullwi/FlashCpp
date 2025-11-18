@@ -5983,6 +5983,11 @@ private:
 
 		// Flush all dirty registers at label boundaries to ensure correct state
 		flushAllDirtyRegisters();
+		
+		// Release all register allocations at merge points (labels)
+		// Different execution paths may have left different values in registers,
+		// so we can't trust that a register still holds a particular variable
+		regAlloc.reset();
 	}
 
 	void handleBranch(const IrInstruction& instruction) {
@@ -7427,10 +7432,14 @@ private:
 				textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
 				value >>= 8;
 			}
+			condition_reg = X64Register::RAX;
 		}
 
-		// Test if condition is non-zero: TEST RAX, RAX
-		std::array<uint8_t, 3> testInst = { 0x48, 0x85, 0xC0 }; // test rax, rax
+		// Test if condition is non-zero: TEST reg, reg
+		// Use the actual register that holds the condition value
+		uint8_t reg_code = static_cast<uint8_t>(condition_reg);
+		uint8_t modrm = 0xC0 | ((reg_code & 0x7) << 3) | (reg_code & 0x7);  // TEST reg, reg
+		std::array<uint8_t, 3> testInst = { 0x48, 0x85, modrm }; // test condition_reg, condition_reg
 		textSectionData.insert(textSectionData.end(), testInst.begin(), testInst.end());
 
 		// Jump if ZERO (JZ/JE) to else_label - inverted logic for better code layout
