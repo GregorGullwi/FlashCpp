@@ -227,6 +227,25 @@ OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t off
 }
 
 /**
+ * @brief Helper function to generate MOV from frame based on operand size.
+ *
+ * Selects between 32-bit and 64-bit MOV based on size_in_bits parameter.
+ * Uses generateMovFromFrame32 for sizes <= 32 bits, otherwise generateMovFromFrame.
+ *
+ * @param destinationRegister The destination register (RAX, RCX, RDX, etc.).
+ * @param offset The signed offset from RBP.
+ * @param size_in_bits The size of the value in bits.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
+	if (size_in_bits <= 32) {
+		return generateMovFromFrame32(destinationRegister, offset);
+	} else {
+		return generateMovFromFrame(destinationRegister, offset);
+	}
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'movzx r32, word ptr [rbp + offset]'.
  *
  * Load a 16-bit value from RBP-relative address and zero-extend to 32/64 bits.
@@ -851,6 +870,25 @@ OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) 
 	return result;
 }
 
+/**
+ * @brief Helper function to generate MOV to frame based on operand size.
+ *
+ * Selects between 32-bit and 64-bit MOV based on size_in_bits parameter.
+ * Uses generateMovToFrame32 for sizes <= 32 bits, otherwise generateMovToFrame.
+ *
+ * @param sourceRegister The source register (RAX, RCX, RDX, etc.).
+ * @param offset The signed offset from RBP.
+ * @param size_in_bits The size of the value in bits.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovToFrameBySize(X64Register sourceRegister, int32_t offset, int size_in_bits) {
+	if (size_in_bits <= 32) {
+		return generateMovToFrame32(sourceRegister, offset);
+	} else {
+		return generateMovToFrame(sourceRegister, offset);
+	}
+}
+
 // CLANG COMPATIBILITY: Generate MOV [rsp+offset], reg instruction for RSP-relative addressing
 OpCodeWithSize generateMovToRsp(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
@@ -1117,6 +1155,7 @@ struct RegisterAllocator
 		bool isAllocated = false;
 		bool isDirty = false;	// Does the stack variable need to be updated on a flush
 		int32_t stackVariableOffset = INT_MIN;
+		int size_in_bits = 0;	// Size of the value stored in this register (for proper spilling)
 	};
 	std::array<AllocatedRegister, REGISTER_COUNT> registers;
 
@@ -1140,7 +1179,7 @@ struct RegisterAllocator
 	void flushAllDirtyRegisters(Func func) {
 		for (auto& reg : registers) {
 			if (reg.isDirty) {
-				func(reg.reg, reg.stackVariableOffset);
+				func(reg.reg, reg.stackVariableOffset, reg.size_in_bits);
 				reg.isDirty = false;
 			}
 		}
@@ -1266,9 +1305,10 @@ struct RegisterAllocator
 		return std::nullopt;
 	}
 
-	void set_stack_variable_offset(X64Register reg, int32_t stackVariableOffset) {
+	void set_stack_variable_offset(X64Register reg, int32_t stackVariableOffset, int size_in_bits = 64) {
 		assert(registers[static_cast<int>(reg)].isAllocated);
 		registers[static_cast<int>(reg)].stackVariableOffset = stackVariableOffset;
+		registers[static_cast<int>(reg)].size_in_bits = size_in_bits;
 		registers[static_cast<int>(reg)].isDirty = true;
 	}
 
@@ -2144,12 +2184,7 @@ private:
 					} else {
 						// For integers, use regular MOV
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						OpCodeWithSize mov_opcodes;
-						if (ctx.size_in_bits <= 32) {
-							mov_opcodes = generateMovFromFrame32(ctx.result_physical_reg, lhs_var_id->second);
-						} else {
-							mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
-						}
+						auto mov_opcodes = generateMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second, ctx.size_in_bits);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 					}
@@ -2201,12 +2236,7 @@ private:
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						OpCodeWithSize mov_opcodes;
-						if (ctx.size_in_bits <= 32) {
-							mov_opcodes = generateMovFromFrame32(ctx.result_physical_reg, lhs_stack_var_addr);
-						} else {
-							mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
-						}
+						auto mov_opcodes = generateMovFromFrameBySize(ctx.result_physical_reg, lhs_stack_var_addr, ctx.size_in_bits);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
@@ -2292,12 +2322,7 @@ private:
 					} else {
 						// For integers, use regular MOV
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						OpCodeWithSize mov_opcodes;
-						if (ctx.size_in_bits <= 32) {
-							mov_opcodes = generateMovFromFrame32(ctx.rhs_physical_reg, rhs_var_id->second);
-						} else {
-							mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
-						}
+						auto mov_opcodes = generateMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second, ctx.size_in_bits);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 					}
@@ -2349,12 +2374,7 @@ private:
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						OpCodeWithSize mov_opcodes;
-						if (ctx.size_in_bits <= 32) {
-							mov_opcodes = generateMovFromFrame32(ctx.rhs_physical_reg, rhs_stack_var_addr);
-						} else {
-							mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
-						}
+						auto mov_opcodes = generateMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, ctx.size_in_bits);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
@@ -2431,7 +2451,7 @@ private:
 			variable_scopes.back().identifier_offset[temp_var.name()] = stack_offset;
 			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
 			if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
-				regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset);
+				regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset, ctx.size_in_bits);
 			}
 		}
 
@@ -2466,7 +2486,7 @@ private:
 				// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
 				// Tell the register allocator that this register now holds this temp variable
 				assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
-				regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr);
+				regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.size_in_bits);
 				// Don't store to memory - keep the value in the register for subsequent operations
 			}
 
@@ -2661,7 +2681,7 @@ private:
 
 	void flushAllDirtyRegisters()
 	{
-		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset)
+		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int size_in_bits)
 			{
 				auto tempVarIndex = getTempVarFromOffset(stackVariableOffset);
 
@@ -2669,11 +2689,28 @@ private:
 					// Note: stackVariableOffset should be within allocated space (scope_stack_space <= stackVariableOffset <= 0)
 					assert(variable_scopes.back().scope_stack_space <= stackVariableOffset && stackVariableOffset <= 0);
 
-					// Store the computed result from register to stack
-					auto store_opcodes = generateMovToFrame(reg, stackVariableOffset);
-					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+					// Store the computed result from register to stack using size-appropriate MOV
+					emitMovToFrameBySize(reg, stackVariableOffset, size_in_bits);
 				}
 			});
+	}
+
+	// Helper to generate and emit size-appropriate MOV to frame
+	void emitMovToFrameBySize(X64Register sourceRegister, int32_t offset, int size_in_bits) {
+		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	}
+
+	// Helper to generate and emit size-appropriate MOV from frame
+	void emitMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
+		auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, size_in_bits);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	}
+
+	// Helper to generate and emit 64-bit MOV from frame (for pointers/references)
+	void emitMovFromFrame(X64Register destinationRegister, int32_t offset) {
+		auto opcodes = generateMovFromFrame(destinationRegister, offset);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
 	// Allocate a register, spilling one to the stack if necessary
@@ -2695,11 +2732,9 @@ private:
 		X64Register spill_reg = reg_to_spill.value();
 		auto& reg_info = regAlloc.registers[static_cast<int>(spill_reg)];
 
-		// If the register is dirty, write it back to the stack
+		// If the register is dirty, write it back to the stack using size-appropriate MOV
 		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
-			auto store_opcodes = generateMovToFrame(spill_reg, reg_info.stackVariableOffset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			emitMovToFrameBySize(spill_reg, reg_info.stackVariableOffset, reg_info.size_in_bits);
 		}
 
 		// Release the register and allocate it again
@@ -2904,13 +2939,7 @@ private:
 					else {
 						// Load from stack using RBP-relative addressing
 						// Use size-appropriate load based on argument size
-						OpCodeWithSize load_opcodes;
-						if (argSize <= 32) {
-							load_opcodes = generateMovFromFrame32(target_reg, var_offset);
-						} else {
-							load_opcodes = generateMovFromFrame(target_reg, var_offset);
-						}
-						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						emitMovFromFrameBySize(target_reg, var_offset, argSize);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
 				}
@@ -3051,8 +3080,7 @@ private:
 						textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
 						// Now load from stack to target register
-						auto load_opcodes = generateMovFromFrame(target_reg, stack_offset);
-						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						emitMovFromFrame(target_reg, stack_offset);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
 				}
@@ -3088,15 +3116,13 @@ private:
 				// Local variable
 				std::string_view var_name = std::get<std::string_view>(arg.value);
 				int var_offset = variable_scopes.back().identifier_offset[var_name];
-				auto load_opcodes = generateMovFromFrame(temp_reg, var_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				emitMovFromFrame(temp_reg, var_offset);
 				regAlloc.flushSingleDirtyRegister(temp_reg);
 			} else if (std::holds_alternative<TempVar>(arg.value)) {
 				// Temp var
 				auto temp_var = std::get<TempVar>(arg.value);
 				int var_offset = getStackOffsetFromTempVar(temp_var);
-				auto load_opcodes = generateMovFromFrame(temp_reg, var_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				emitMovFromFrame(temp_reg, var_offset);
 				regAlloc.flushSingleDirtyRegister(temp_reg);
 			} else if (std::holds_alternative<double>(arg.value)) {
 				// Floating-point literal
@@ -3250,9 +3276,7 @@ private:
 		if (object_is_this_pointer) {
 			// For 'this' pointer: reload the pointer value (not its address)
 			// MOV RCX, [RBP + object_offset]
-			auto load_opcodes = generateMovFromFrame(X64Register::RCX, object_offset);
-			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			emitMovFromFrame(X64Register::RCX, object_offset);
 		} else {
 			// For regular objects: get the address
 			// LEA RCX, [RBP + object_offset]
@@ -3353,9 +3377,7 @@ private:
 					}
 				} else {
 					// For value parameters, load value (MOV)
-					auto load_opcodes = generateMovFromFrame(target_reg, param_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitMovFromFrame(target_reg, param_offset);
 				}
 			} else if (std::holds_alternative<std::string_view>(paramValue)) {
 				// Load from variable
@@ -3381,9 +3403,7 @@ private:
 						}
 					} else {
 						// For value parameters, load value (MOV)
-						auto load_opcodes = generateMovFromFrame(target_reg, param_offset);
-						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-						                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						emitMovFromFrame(target_reg, param_offset);
 					}
 				}
 			}
@@ -4269,16 +4289,15 @@ private:
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
 					allocated_reg_val = allocateRegisterWithSpilling();
-					auto load_opcodes = generateMovFromFrame(allocated_reg_val, src_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitMovFromFrame(allocated_reg_val, src_offset);
 					auto store_opcodes = generateMovToFrame(allocated_reg_val, dst_offset);
 					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+										   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 					regAlloc.release(allocated_reg_val);
 				}
 			} // end else (not literal)
 		} // end if (is_initialized)
-
+		
 		// Add debug information for the local variable
 		if (!current_function_name_.empty()) {
 			uint32_t type_index;
@@ -4776,13 +4795,7 @@ private:
 					else {
 						// Load from stack using RBP-relative addressing
 						// Use 32-bit load for 32-bit types, 64-bit for larger types
-						OpCodeWithSize load_opcodes;
-						if (size_it_bits <= 32) {
-							load_opcodes = generateMovFromFrame32(X64Register::RAX, var_offset);
-						} else {
-							load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
-						}
-						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						emitMovFromFrameBySize(X64Register::RAX, var_offset, size_it_bits);
 						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 					}
 				} else {
@@ -4819,13 +4832,7 @@ private:
 						assert(variable_scopes.back().scope_stack_space <= var_offset);
 						// Load from stack using RBP-relative addressing
 						// Use 32-bit load for 32-bit types, 64-bit for larger types
-						OpCodeWithSize load_opcodes;
-						if (size_in_bits <= 32) {
-							load_opcodes = generateMovFromFrame32(X64Register::RAX, var_offset);
-						} else {
-							load_opcodes = generateMovFromFrame(X64Register::RAX, var_offset);
-						}
-						textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(), load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+						emitMovFromFrameBySize(X64Register::RAX, var_offset, size_in_bits);
 						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 					}
 				}
@@ -6045,10 +6052,10 @@ private:
 	}
 
 	// Helper: Associate result register with result TempVar's stack offset
-	void storeConversionResult(const IrInstruction& instruction, X64Register result_reg) {
+	void storeConversionResult(const IrInstruction& instruction, X64Register result_reg, int size_in_bits) {
 		auto result_var = instruction.getOperandAs<TempVar>(0);
 		int32_t result_offset = getStackOffsetFromTempVar(result_var);
-		regAlloc.set_stack_variable_offset(result_reg, result_offset);
+		regAlloc.set_stack_variable_offset(result_reg, result_offset, size_in_bits);
 		// Don't store to memory yet - keep the value in the register for efficiency
 	}
 
@@ -6155,7 +6162,7 @@ private:
 		}
 
 		// Store result - associate register with result temp variable's stack offset
-		storeConversionResult(instruction, result_reg);
+		storeConversionResult(instruction, result_reg, toSize);
 	}
 
 	void handleZeroExtend(const IrInstruction& instruction) {
@@ -6198,12 +6205,12 @@ private:
 		if (instruction.isOperandType<TempVar>(0)) {
 			auto temp = instruction.getOperandAs<TempVar>(0);
 			auto stack_addr = getStackOffsetFromTempVar(temp);
-			regAlloc.set_stack_variable_offset(result_reg, stack_addr);
+			regAlloc.set_stack_variable_offset(result_reg, stack_addr, toSize);
 		} else if (instruction.isOperandType<std::string_view>(0)) {
 			auto var_name = instruction.getOperandAs<std::string_view>(0);
 			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
 			if (var_id != variable_scopes.back().identifier_offset.end()) {
-				regAlloc.set_stack_variable_offset(result_reg, var_id->second);
+				regAlloc.set_stack_variable_offset(result_reg, var_id->second, toSize);
 			}
 		}
 	}
@@ -6265,7 +6272,7 @@ private:
 		}
 
 		// Store result - associate register with result temp variable's stack offset
-		storeConversionResult(instruction, result_reg);
+		storeConversionResult(instruction, result_reg, toSize);
 	}
 
 	void handleAddAssign(const IrInstruction& instruction) {
@@ -6407,20 +6414,19 @@ private:
 				TempVar rhs_var = std::get<TempVar>(rhs_operand);
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
+
 				// Load function address from RHS stack location into RAX
-				auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				emitMovFromFrame(source_reg, rhs_offset);
 			}
 
 			// Store RAX to LHS stack location (8 bytes for function pointer)
 			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+								   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
 			return;
 		}
-
+	
 		// Special handling for struct assignment
 		if (lhs_type == Type::Struct) {
 			// For struct assignment, we need to copy the entire struct value
@@ -6457,14 +6463,11 @@ private:
 				if (it != variable_scopes.back().identifier_offset.end()) {
 					int32_t rhs_offset = it->second;
 					// Load struct from RHS stack location into RAX (8 bytes for small structs)
-					auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitMovFromFrame(source_reg, rhs_offset);
 				}
 			} else if (std::holds_alternative<TempVar>(rhs_operand)) {
 				TempVar rhs_var = std::get<TempVar>(rhs_operand);
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
-
 				// Check if the value is already in RAX (e.g., from function return)
 				if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
 					source_reg = rhs_reg.value();
@@ -6472,22 +6475,19 @@ private:
 						// Move from source register to RAX
 						auto move_opcodes = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, source_reg, 8);
 						textSectionData.insert(textSectionData.end(), move_opcodes.op_codes.begin(),
-						                       move_opcodes.op_codes.begin() + move_opcodes.size_in_bytes);
+												move_opcodes.op_codes.begin() + move_opcodes.size_in_bytes);
 						source_reg = X64Register::RAX;
 					}
 				} else {
 					// Load struct from RHS stack location into RAX (8 bytes for small structs)
-					auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitMovFromFrame(source_reg, rhs_offset);
 				}
 			}
 
 			// Store RAX to LHS stack location (8 bytes for small structs)
 			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-
+								   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 			return;
 		}
 
@@ -6532,9 +6532,7 @@ private:
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
 					// Load from RHS stack location into RAX
-					auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitMovFromFrame(source_reg, rhs_offset);
 				}
 			}
 		} else if (std::holds_alternative<TempVar>(rhs_operand)) {
@@ -6553,9 +6551,7 @@ private:
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
 					// Load from RHS stack location into RAX
-					auto load_opcodes = generateMovFromFrame(source_reg, rhs_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitMovFromFrame(source_reg, rhs_offset);
 				}
 			}
 		} else if (std::holds_alternative<unsigned long long>(rhs_operand)) {
@@ -7132,9 +7128,7 @@ private:
 			int64_t value_offset = getStackOffsetFromTempVar(value_var);
 
 			// Load value from stack into RAX
-			auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
-			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			emitMovFromFrame(value_reg, value_offset);
 		}
 
 		// Calculate offset directly: base_offset + member_offset + (index * element_size)
@@ -7413,7 +7407,7 @@ private:
 		}
 
 		// Store the result - but keep it in the register for subsequent operations
-		regAlloc.set_stack_variable_offset(temp_reg, result_offset);
+		regAlloc.set_stack_variable_offset(temp_reg, result_offset, member_size_bits);
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
@@ -7575,18 +7569,14 @@ private:
 				return;
 			}
 			int32_t value_offset = it->second;
-			auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
-			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-				               load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			emitMovFromFrame(value_reg, value_offset);
 		} else {
 			int32_t value_offset = getStackOffsetFromTempVar(value_var);
 			auto existing_reg = regAlloc.findRegisterForStackOffset(value_offset);
 			if (existing_reg.has_value()) {
 				value_reg = existing_reg.value();
 			} else {
-				auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-				               load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				emitMovFromFrame(value_reg, value_offset);
 			}
 		}
 
@@ -8035,9 +8025,7 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					auto load_opcodes = generateMovFromFrame(target_reg, arg_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitMovFromFrame(target_reg, arg_offset);
 				}
 			} else if (std::holds_alternative<std::string_view>(argValue)) {
 				std::string_view var_name = std::get<std::string_view>(argValue);
@@ -8048,9 +8036,7 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					auto load_opcodes = generateMovFromFrame(target_reg, arg_offset);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitMovFromFrame(target_reg, arg_offset);
 				}
 			} else if (std::holds_alternative<unsigned long long>(argValue)) {
 				// Immediate value

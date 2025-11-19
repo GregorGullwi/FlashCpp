@@ -2021,6 +2021,7 @@ private:
 		operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
 		operands.emplace_back(type_node.is_reference());
 		operands.emplace_back(type_node.is_rvalue_reference());
+		operands.emplace_back(decl.is_array());  // Add is_array flag
 
 		// For arrays, add the array size
 		if (decl.is_array()) {
