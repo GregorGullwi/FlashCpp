@@ -2911,9 +2911,9 @@ public:
 
 		case IrOpcode::VariableDecl:
 		{
-			// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, (array_size?)?, (initializer?)?]
-			assert(getOperandCount() >= 6 && (getOperandCount() - 6) % 3 == 0 && getOperandCount() <= 12 &&
-			       "VariableDecl instruction must have 6 operands plus optional 3-operand blocks for arrays/initializers");
+			// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, is_array, (array_size?)?, (initializer?)?]
+			assert(getOperandCount() >= 7 && (getOperandCount() - 7) % 3 == 0 && getOperandCount() <= 13 &&
+			       "VariableDecl instruction must have 7 operands plus optional 3-operand blocks for arrays/initializers");
 			oss << "%";
 			if (getOperandCount() > 2 && isOperandType<std::string_view>(2))
 				oss << getOperandAs<std::string_view>(2);

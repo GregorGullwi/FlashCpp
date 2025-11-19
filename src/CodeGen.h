@@ -7,6 +7,7 @@
 #include "TemplateRegistry.h"
 #include "ChunkedString.h"
 #include "NameMangling.h"
+#include "ConstExprEvaluator.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -1944,27 +1945,50 @@ private:
 			operands.emplace_back(var_name);
 
 			// Check if initialized
-			// NOTE: For global variables with constructor call initializers,
-			// we would need compile-time evaluation (constexpr). For now, mark as uninitialized.
-			// The CRT will zero-initialize them.
+			// Try to evaluate initializer as a constant expression using ConstExprEvaluator
 			if (node.initializer()) {
 				const ASTNode& init_node = *node.initializer();
 				
-				// Only handle simple constant initializers (numeric literals)
-				// For constructor calls and other complex expressions, mark as uninitialized
 				if (init_node.is<ExpressionNode>()) {
-					const ExpressionNode& expr = init_node.as<ExpressionNode>();
-					if (std::holds_alternative<NumericLiteralNode>(expr)) {
-						// Simple numeric literal - can use directly
-						auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-						if (init_operands.size() >= 3 && std::holds_alternative<unsigned long long>(init_operands[2])) {
-							operands.emplace_back(true);  // is_initialized
-							operands.emplace_back(init_operands[2]);  // init_value
-						} else {
-							operands.emplace_back(false);  // is_initialized
+					// Try to evaluate as constant expression
+					ConstExpr::EvaluationContext ctx;
+					auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
+					
+					if (eval_result.success) {
+						operands.emplace_back(true);  // is_initialized
+						
+						// Convert the evaluated result to the appropriate storage format
+						// based on the target type
+						unsigned long long init_value = 0;
+						
+						// Check the target type to determine how to store the value
+						Type target_type = type_node.type();
+						
+						if (target_type == Type::Float) {
+							// For float, convert to float then reinterpret as uint32
+							float f = static_cast<float>(eval_result.as_double());
+							uint32_t f_bits;
+							std::memcpy(&f_bits, &f, sizeof(float));
+							init_value = f_bits;
+						} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+							// For double/long double, reinterpret double bits as uint64
+							double d = eval_result.as_double();
+							std::memcpy(&init_value, &d, sizeof(double));
+						} else if (std::holds_alternative<double>(eval_result.value)) {
+							// Floating-point result but target is integer type - convert
+							init_value = static_cast<unsigned long long>(eval_result.as_int());
+						} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+							init_value = std::get<unsigned long long>(eval_result.value);
+							std::cerr << "DEBUG:   Unsigned integer initializer value: " << init_value << "\n";
+						} else if (std::holds_alternative<long long>(eval_result.value)) {
+							init_value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+						} else if (std::holds_alternative<bool>(eval_result.value)) {
+							init_value = std::get<bool>(eval_result.value) ? 1 : 0;
 						}
+						
+						operands.emplace_back(init_value);
 					} else {
-						// Complex expression (constructor call, etc.) - would need constexpr evaluation
+						// Constexpr evaluation failed - mark as uninitialized
 						operands.emplace_back(false);  // is_initialized
 					}
 				} else {
@@ -1989,7 +2013,7 @@ private:
 
 		// Handle local variable
 		// Create variable declaration operands
-		// Format: [type, size_in_bits, var_name, custom_alignment]
+		// Format: [type, size_in_bits, var_name, custom_alignment, is_ref, is_rvalue_ref, is_array, ...]
 		std::vector<IrOperand> operands;
 		operands.emplace_back(type_node.type());
 		operands.emplace_back(static_cast<int>(type_node.size_in_bits()));

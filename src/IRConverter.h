@@ -1108,12 +1108,6 @@ std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
 	return std::nullopt;
 }
 
-int32_t getStackOffsetFromTempVar(TempVar tempVar) {
-	// For RBP-relative addressing, temporary variables use negative offsets
-	// TempVar stores 1-based numbers: TempVar(1) is at [rbp-8], TempVar(2) at [rbp-16], etc.
-	// In member functions, TempVar starts at 2 (number 1 is reserved for 'this')
-	return static_cast<int32_t>(tempVar.var_number * -8);
-}
 
 struct RegisterAllocator
 {
@@ -2150,7 +2144,12 @@ private:
 					} else {
 						// For integers, use regular MOV
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
+						OpCodeWithSize mov_opcodes;
+						if (ctx.size_in_bits <= 32) {
+							mov_opcodes = generateMovFromFrame32(ctx.result_physical_reg, lhs_var_id->second);
+						} else {
+							mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_var_id->second);
+						}
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 					}
@@ -2200,9 +2199,14 @@ private:
 						}
 						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
 					} else {
-						// Not a reference, load normally
+						// Not a reference, load normally with correct size
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
+						OpCodeWithSize mov_opcodes;
+						if (ctx.size_in_bits <= 32) {
+							mov_opcodes = generateMovFromFrame32(ctx.result_physical_reg, lhs_stack_var_addr);
+						} else {
+							mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
+						}
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
@@ -2288,7 +2292,12 @@ private:
 					} else {
 						// For integers, use regular MOV
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
+						OpCodeWithSize mov_opcodes;
+						if (ctx.size_in_bits <= 32) {
+							mov_opcodes = generateMovFromFrame32(ctx.rhs_physical_reg, rhs_var_id->second);
+						} else {
+							mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second);
+						}
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 					}
@@ -2338,9 +2347,14 @@ private:
 						}
 						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
 					} else {
-						// Not a reference, load normally
+						// Not a reference, load normally with correct size
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
+						OpCodeWithSize mov_opcodes;
+						if (ctx.size_in_bits <= 32) {
+							mov_opcodes = generateMovFromFrame32(ctx.rhs_physical_reg, rhs_stack_var_addr);
+						} else {
+							mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
+						}
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
@@ -2525,15 +2539,15 @@ private:
 			return func_stack_space; // No instructions found for this function
 		}
 
-		// Find the maximum TempVar index used in this function
-		int_fast32_t min_stack_offset = 0;
-
 		struct VarDecl {
 			std::string_view var_name{};
 			int size_in_bits{};
 			size_t alignment{};  // Custom alignment from alignas(n), 0 = use natural alignment
 		};
 		std::vector<VarDecl> local_vars;
+		
+		// Track TempVar sizes from instructions that produce them
+		std::unordered_map<std::string_view, int> temp_var_sizes;
 
 		for (const auto& instruction : it->second) {
 			// Look for TempVar operands in the instruction
@@ -2553,13 +2567,14 @@ private:
 				}
 				size_t custom_alignment = instruction.getOperandAs<unsigned long long>(3);
 
-				// Check if this is an array declaration (has array size operand)
-				// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, array_size_type?, array_size_bits?, array_size_value?]
-				constexpr size_t kArrayInfoStart = 6;
-				bool has_array_size = instruction.getOperandCount() >= kArrayInfoStart + 3 &&
-				                       instruction.isOperandType<Type>(kArrayInfoStart);
-				int total_size_bits = size_in_bits;
+				// Check if this is an array declaration
+				// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, is_array, array_size_type?, array_size_bits?, array_size_value?]
 				bool is_reference = instruction.getOperandAs<bool>(4);
+				bool is_array = instruction.getOperandAs<bool>(6);
+				constexpr size_t kArrayInfoStart = 7;
+				bool has_array_size = is_array && instruction.getOperandCount() >= kArrayInfoStart + 3 &&
+									   instruction.isOperandType<Type>(kArrayInfoStart);
+				int total_size_bits = size_in_bits;
 				if (is_reference) {
 					total_size_bits = 64;
 				}
@@ -2567,23 +2582,30 @@ private:
 					uint64_t array_size = instruction.getOperandAs<unsigned long long>(kArrayInfoStart + 2);
 					total_size_bits = size_in_bits * static_cast<int>(array_size);
 				}
-
+				
 				func_stack_space.named_vars_size += (total_size_bits / 8);
 				local_vars.push_back(VarDecl{ .var_name = var_name, .size_in_bits = total_size_bits, .alignment = custom_alignment });
 			}
 			else {
-				for (size_t i = 0; i < instruction.getOperandCount(); ++i) {
-					if (instruction.isOperandType<TempVar>(i)) {
-						auto temp_var = instruction.getOperandAs<TempVar>(i);
-						auto stack_offset = getStackOffsetFromTempVar(temp_var);
-						min_stack_offset = std::min(min_stack_offset, static_cast<int_fast32_t>(stack_offset));
-						var_scope.identifier_offset[temp_var.name()] = stack_offset;
-					}
+				// Track TempVars and their sizes from result positions
+				// Most arithmetic/logic instructions have format: [result_var, type, size, ...]
+				// where operand 0 is result, operand 1 is type, operand 2 is size
+				if (instruction.getOperandCount() >= 3 && 
+				    instruction.isOperandType<TempVar>(0) &&
+				    instruction.isOperandType<int>(2)) {
+					auto temp_var = instruction.getOperandAs<TempVar>(0);
+					int size_in_bits = instruction.getOperandAs<int>(2);
+					temp_var_sizes[temp_var.name()] = size_in_bits;
 				}
 			}
 		}
 
-		int_fast32_t stack_offset = min_stack_offset;
+		// Now add all TempVars to local_vars with their actual sizes
+		for (const auto& [temp_name, size_bits] : temp_var_sizes) {
+			local_vars.push_back(VarDecl{ .var_name = temp_name, .size_in_bits = size_bits, .alignment = static_cast<size_t>((size_bits <= 32) ? 4 : 8) });
+		}
+		
+		int_fast32_t stack_offset = 0;
 		for (const VarDecl& local_var : local_vars) {
 			// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
 			size_t var_alignment = local_var.alignment > 0 ? local_var.alignment : 8;
@@ -2602,9 +2624,10 @@ private:
 			var_scope.identifier_offset.insert_or_assign(local_var.var_name, stack_offset);
 		}
 
-		func_stack_space.temp_vars_size = -min_stack_offset;
-		func_stack_space.named_vars_size = min_stack_offset - stack_offset;
-
+		// Calculate total stack space needed (all variables are now allocated)
+		func_stack_space.temp_vars_size = -stack_offset;  // Total space (stack_offset is most negative value)
+		func_stack_space.named_vars_size = -stack_offset; // Same as temp_vars_size since they're combined now
+		
 		// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
 		//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
 			//return 0;
@@ -2619,6 +2642,21 @@ private:
 		// Note: stack_offset should be within allocated space (scope_stack_space <= stack_offset <= 0)
 		assert(variable_scopes.back().scope_stack_space <= stack_offset && stack_offset <= 0);
 		return stack_offset;
+	}
+
+	// Get stack offset for a TempVar by looking it up in the identifier_offset map
+	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
+		// Look up the TempVar's offset in the identifier_offset map
+		if (!variable_scopes.empty()) {
+			auto it = variable_scopes.back().identifier_offset.find(tempVar.name());
+			if (it != variable_scopes.back().identifier_offset.end()) {
+				return it->second;
+			}
+		}
+		// Fallback for old behavior if not found (shouldn't happen in correct code)
+		// For RBP-relative addressing, temporary variables use negative offsets
+		// TempVar stores 1-based numbers: TempVar(1) is at [rbp-8], TempVar(2) at [rbp-16], etc.
+		return static_cast<int32_t>(tempVar.var_number * -8);
 	}
 
 	void flushAllDirtyRegisters()
@@ -4104,8 +4142,9 @@ private:
 
 		bool is_reference = instruction.getOperandAs<bool>(4);
 		bool is_rvalue_reference = instruction.getOperandAs<bool>(5);
-		constexpr size_t kArrayInfoStart = 6;
-		bool has_array_info = instruction.getOperandCount() >= kArrayInfoStart + 3 &&
+		bool is_array = instruction.getOperandAs<bool>(6);
+		constexpr size_t kArrayInfoStart = 7;
+		bool has_array_info = is_array && instruction.getOperandCount() >= kArrayInfoStart + 3 &&
 		                     instruction.isOperandType<Type>(kArrayInfoStart);
 		size_t initializer_index = has_array_info ? kArrayInfoStart + 3 : kArrayInfoStart;
 		bool is_initialized = instruction.getOperandCount() > initializer_index;
@@ -8168,5 +8207,7 @@ private:
 	// Track which stack offsets hold references (parameters or locals)
 	std::unordered_map<int32_t, ReferenceInfo> reference_stack_info_;
 };
+
+
 
 

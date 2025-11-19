@@ -144,6 +144,11 @@ public:
 			return evaluate_sizeof(std::get<SizeofExprNode>(expr), context);
 		}
 
+		// For ConstructorCallNode (type conversions like float(3.14), int(100))
+		if (std::holds_alternative<ConstructorCallNode>(expr)) {
+			return evaluate_constructor_call(std::get<ConstructorCallNode>(expr), context);
+		}
+
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
 	}
@@ -209,6 +214,62 @@ private:
 		// For sizeof(expression), we would need to evaluate the expression type
 		// For now, just return an error
 		return EvalResult::error("sizeof with expression not yet supported");
+	}
+
+	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, const EvaluationContext& context) {
+		// Constructor calls like float(3.14), int(100), double(2.718)
+		// These are essentially type conversions/casts in constant expressions
+		
+		// Get the target type
+		const ASTNode& type_node = ctor_call.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Constructor call without valid type specifier");
+		}
+		
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		Type target_type = type_spec.type();
+		
+		// Get the argument(s) - for basic type conversions, should have exactly 1 argument
+		const auto& args = ctor_call.arguments();
+		if (args.size() != 1) {
+			return EvalResult::error("Constructor call must have exactly 1 argument for constant evaluation");
+		}
+		
+		// Evaluate the argument
+		const ASTNode& arg = args[0];
+		auto arg_result = evaluate(arg, context);
+		if (!arg_result.success) {
+			return arg_result;
+		}
+		
+		// Convert to target type
+		switch (target_type) {
+			case Type::Bool:
+				return EvalResult::from_bool(arg_result.as_bool());
+			
+			case Type::Char:
+			case Type::Short:
+			case Type::Int:
+			case Type::Long:
+			case Type::LongLong:
+				return EvalResult::from_int(arg_result.as_int());
+			
+			case Type::UnsignedChar:
+			case Type::UnsignedShort:
+			case Type::UnsignedInt:
+			case Type::UnsignedLong:
+			case Type::UnsignedLongLong:
+				// For unsigned types, convert to unsigned
+				return EvalResult::from_uint(static_cast<unsigned long long>(arg_result.as_int()));
+			
+			case Type::Float:
+			case Type::Double:
+			case Type::LongDouble:
+				return EvalResult::from_double(arg_result.as_double());
+			
+			default:
+				return EvalResult::error("Unsupported type in constructor call for constant evaluation");
+		}
 	}
 
 	// Helper functions for overflow-safe arithmetic using compiler builtins
