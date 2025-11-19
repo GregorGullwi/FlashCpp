@@ -402,6 +402,21 @@ public:
 		alias_templates_[key] = alias_node;
 	}
 
+	// Register a variable template: template<typename T> constexpr T pi = T(3.14159...);
+	void registerVariableTemplate(std::string_view name, ASTNode variable_template_node) {
+		std::string key(name);
+		variable_templates_[key] = variable_template_node;
+	}
+
+	// Look up a variable template by name
+	std::optional<ASTNode> lookupVariableTemplate(std::string_view name) const {
+		auto it = variable_templates_.find(name);
+		if (it != variable_templates_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+
 	// Look up an alias template by name
 	std::optional<ASTNode> lookup_alias_template(std::string_view name) const {
 		// Heterogeneous lookup - string_view accepted directly without temporary string allocation
@@ -623,6 +638,7 @@ public:
 		specializations_.clear();
 		specialization_patterns_.clear();
 		alias_templates_.clear();
+		variable_templates_.clear();
 		deduction_guides_.clear();
 	}
 
@@ -635,6 +651,9 @@ private:
 
 	// Map from alias template name to TemplateAliasNode (supports heterogeneous lookup)
 	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
+
+	// Map from variable template name to TemplateVariableDeclarationNode (supports heterogeneous lookup)
+	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> variable_templates_;
 
 	// Map from class template name to deduction guides (supports heterogeneous lookup)
 	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> deduction_guides_;

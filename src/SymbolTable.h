@@ -199,6 +199,27 @@ public:
 		return true;
 	}
 
+	// Insert a symbol into the global scope (scope_level 0) regardless of current scope
+	// This is useful for variable template instantiations that happen during function parsing
+	bool insertGlobal(std::string_view identifier, ASTNode node) {
+		if (symbol_table_stack_.empty()) {
+			return false;  // No global scope exists
+		}
+
+		auto& global_scope = symbol_table_stack_[0];  // Global scope is always at index 0
+		auto it = global_scope.symbols.find(identifier);
+
+		// If this is a new identifier, create a new vector
+		if (it == global_scope.symbols.end()) {
+			global_scope.symbols[identifier] = std::vector<ASTNode>{node};
+			return true;
+		}
+
+		// Identifier exists - for global variables, don't allow duplicates
+		// (We could enhance this to handle overloading if needed)
+		return false;
+	}
+
 	ScopeType get_current_scope_type() const {
 		return symbol_table_stack_.back().scope_type;
 	}

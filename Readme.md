@@ -129,7 +129,7 @@
 - **Compile speed**: Optimized for fast compilation
 - **Code quality**: Generates efficient x86-64 assembly
 - **Type safety**: Comprehensive type checking and promotion
-- **Test coverage**: 153 test cases across all language features ✅
+- **Test coverage**: 154 test cases across all language features ✅
 
 ---
 
@@ -181,7 +181,7 @@ bool test_comparisons(double a, double b) {
 - ✅ **Trailing return types**: `auto func() -> ReturnType` syntax ✅
 - ✅ **Designated initializers**: `Type{.member = value}` aggregate initialization syntax ✅
 
-### **✅ Templates** - 85% Complete (17/19 Features)
+### **✅ Templates** - 90% Complete (18/20 Features)
 - ✅ **Basic templates**: Template instantiation, defaults, nested types, nullptr, type aliases
 - ✅ **Partial specialization**: Full pattern matching (T&, T&&, T*, const T) with specificity scoring
 - ✅ **Member function templates**: Template member functions with argument deduction
@@ -190,7 +190,9 @@ bool test_comparisons(double a, double b) {
 - ✅ **Non-type parameters**: Array size substitution and multiple non-type parameters
 - ✅ **Static members**: Per-instantiation storage for static members in templates
 - ✅ **Variadic templates**: Parameter packs, function templates, perfect forwarding, sizeof... operator
-- ⏳ **Non-type parameters in expressions**: Beyond array sizes
+- ✅ **Class template argument deduction (CTAD)**: Deduction guides with reference semantics support
+- ✅ **Variable templates**: Template variables with instantiation and global variable generation
+- ⏳ **Non-type parameters in expressions**: Beyond array sizes (complex expressions)
 - ⏳ **Fold expressions**: Optional advanced feature
 
 ### **⏳ Remaining Features**
@@ -201,6 +203,12 @@ bool test_comparisons(double a, double b) {
 **Type System:**
 - **Remaining**: Advanced template metaprogramming features
 - **Control flow analysis**: Unreachable code detection, return path validation
+
+**Compile-Time Evaluation:**
+- **Constexpr evaluator**: Compile-time constant expression evaluation for variable template initializers
+  - Currently: Variable template initializers are zero-initialized
+  - Need: Evaluate expressions like `T(3.14159)` at compile-time
+  - Impact: Proper initialization of `template<typename T> constexpr T pi = T(3.14159);`
 
 **C++20 Features:**
 - **Concepts**: Template constraints and requirements
@@ -222,16 +230,18 @@ bool test_comparisons(double a, double b) {
 ### **Critical/Commonly Used** (High Priority)
 These features are essential for modern C++ and widely used in production code:
 
-1. **Templates** ⭐⭐⭐⭐⭐ ✅ **85% COMPLETE**
+1. **Templates** ⭐⭐⭐⭐⭐ ✅ **90% COMPLETE**
    - ✅ Function templates with type deduction
    - ✅ Class templates with specialization
    - ✅ Variadic templates and parameter packs
    - ✅ Perfect forwarding with rvalue references
    - ✅ Template template parameters
-   - ⏳ Non-type parameters in expressions (remaining)
+   - ✅ Class template argument deduction (CTAD)
+   - ✅ Variable templates
+   - ⏳ Non-type parameters in complex expressions (remaining)
    - ⏳ Fold expressions (optional)
-   - **Status**: 17/19 features complete, ~85% STL compatibility
-   - **Remaining effort**: 25-40 hours
+   - **Status**: 18/20 features complete, ~90% STL compatibility
+   - **Remaining effort**: 15-25 hours
 
 2. **Range-based for loops** ⭐⭐⭐⭐
    - `for (auto x : container)` syntax
@@ -239,11 +249,12 @@ These features are essential for modern C++ and widely used in production code:
    - **Impact**: Modern loop syntax, container iteration
    - **Estimated effort**: 2 weeks
 
-3. **Constexpr functions** ⭐⭐⭐⭐
-   - Compile-time function evaluation
-   - Constexpr variables and arrays
-   - **Impact**: Compile-time computation, optimization
-   - **Estimated effort**: 2 weeks
+3. **Constexpr evaluator** ⭐⭐⭐⭐
+   - Compile-time constant expression evaluation
+   - Required for variable template initializers: `template<typename T> constexpr T pi = T(3.14159);`
+   - Constexpr functions and variables
+   - **Impact**: Proper initialization of variable templates, compile-time computation
+   - **Estimated effort**: 2-3 weeks
 
 4. **Concepts** ⭐⭐⭐⭐
    - Template constraints and requirements
@@ -277,9 +288,9 @@ These features are essential for modern C++ and widely used in production code:
 
 | Category | Missing | Priority | Status |
 |----------|---------|----------|--------|
-| **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | ✅ 85% |
+| **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | ✅ 90% |
 | **Modern Loops** | Range-based for | ⭐⭐⭐⭐ | ⏳ Pending |
-| **Compile-time** | Constexpr, static_assert | ⭐⭐⭐⭐ | ⏳ Pending |
+| **Compile-time** | Constexpr evaluator, static_assert | ⭐⭐⭐⭐ | ⏳ Pending |
 | **Comparison** | Spaceship operator | ⭐⭐⭐ | ⏳ Pending |
 | **Advanced Features** | Ranges library | ⭐⭐⭐ | ⏳ Pending |
 
@@ -496,7 +507,7 @@ This project is open source. See the repository for license details.
 - ✅ **Modern instruction generation**: SSE/AVX2 optimizations for floating-point
 - ✅ **IEEE 754 compliance**: Proper floating-point semantics
 - ✅ **Type-aware compilation**: Automatic optimization based on operand types
-- ✅ **Comprehensive testing**: 153 test cases ensuring correctness ✅
+- ✅ **Comprehensive testing**: 154 test cases ensuring correctness ✅
 - ✅ **Production-ready**: Suitable for object-oriented and numerical computing applications
 
 **The compiler has evolved from basic arithmetic to a comprehensive system capable of handling complex C++ programs with:**
@@ -513,7 +524,8 @@ This project is open source. See the repository for license details.
 **It's now ready for real-world C++ development!** 🚀
 
 **Foundation complete!** The compiler now has all essential language features. Next milestones:
-1. **Templates: 85% complete** - 17/19 features done, variadic templates with perfect forwarding working
-2. **Template completion** - Non-type parameters in expressions and fold expressions
-3. **OOP Completeness** - Friends and nested classes
-4. **C++20 features** - Concepts, ranges, range-based for loops
+1. **Templates: 90% complete** - 18/20 features done, CTAD and variable templates working
+2. **Constexpr evaluator** - Compile-time constant evaluation for variable template initializers
+3. **Template completion** - Non-type parameters in complex expressions and fold expressions
+4. **OOP Completeness** - Friends and nested classes
+5. **C++20 features** - Concepts, ranges, range-based for loops

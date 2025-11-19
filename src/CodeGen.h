@@ -146,6 +146,11 @@ public:
 			// The type is resolved during parsing when the alias is used
 			return;
 		}
+		else if (node.is<TemplateVariableDeclarationNode>()) {
+			// Template variable declarations don't generate code yet - they're stored for later instantiation
+			// Instantiations are generated when the template is used with explicit template arguments
+			return;
+		}
 		else if (node.is<ExpressionNode>()) {
 			// Expression statement (e.g., function call, lambda expression, etc.)
 			// Evaluate the expression but discard the result
@@ -1939,15 +1944,27 @@ private:
 			operands.emplace_back(var_name);
 
 			// Check if initialized
+			// NOTE: For global variables with constructor call initializers,
+			// we would need compile-time evaluation (constexpr). For now, mark as uninitialized.
+			// The CRT will zero-initialize them.
 			if (node.initializer()) {
 				const ASTNode& init_node = *node.initializer();
+				
+				// Only handle simple constant initializers (numeric literals)
+				// For constructor calls and other complex expressions, mark as uninitialized
 				if (init_node.is<ExpressionNode>()) {
-					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-					// init_operands = [type, size, value]
-					if (init_operands.size() >= 3) {
-						operands.emplace_back(true);  // is_initialized
-						operands.emplace_back(init_operands[2]);  // init_value
+					const ExpressionNode& expr = init_node.as<ExpressionNode>();
+					if (std::holds_alternative<NumericLiteralNode>(expr)) {
+						// Simple numeric literal - can use directly
+						auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+						if (init_operands.size() >= 3 && std::holds_alternative<unsigned long long>(init_operands[2])) {
+							operands.emplace_back(true);  // is_initialized
+							operands.emplace_back(init_operands[2]);  // init_value
+						} else {
+							operands.emplace_back(false);  // is_initialized
+						}
 					} else {
+						// Complex expression (constructor call, etc.) - would need constexpr evaluation
 						operands.emplace_back(false);  // is_initialized
 					}
 				} else {
@@ -1958,8 +1975,6 @@ private:
 			}
 
 			ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(operands), decl.identifier_token());
-
-			// For static locals, store the mapping from local name to mangled name and type info
 			// (The parser already added it to the symbol table)
 			if (is_static_local) {
 				StaticLocalInfo info;

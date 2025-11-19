@@ -7239,6 +7239,7 @@ ParseResult Parser::parse_primary_expression()
 		         !identifierType->is<FunctionDeclarationNode>() && 
 		         !identifierType->is<VariableDeclarationNode>() &&
 		         !identifierType->is<TemplateFunctionDeclarationNode>() &&
+		         !identifierType->is<TemplateVariableDeclarationNode>() &&
 		         !identifierType->is<TemplateParameterReferenceNode>())) {
 			std::cerr << "DEBUG: Identifier type check failed, type_name=" << identifierType->type_name() << "\n";
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
@@ -7260,6 +7261,25 @@ ParseResult Parser::parse_primary_expression()
 						auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
 						result = emplace_node<ExpressionNode>(qualified_node);
 						return ParseResult::success(*result);
+					}
+				}
+				
+				// Check if this is a variable template usage (identifier<args> without following '(')
+				if (explicit_template_args.has_value() && 
+				    (!peek_token().has_value() || peek_token()->value() != "(")) {
+					// Try to instantiate as variable template
+					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(idenfifier_token.value());
+					if (var_template_opt.has_value()) {
+						auto instantiated_var = try_instantiate_variable_template(idenfifier_token.value(), *explicit_template_args);
+						if (instantiated_var.has_value() && instantiated_var->is<VariableDeclarationNode>()) {
+							const auto& var_decl = instantiated_var->as<VariableDeclarationNode>();
+							const auto& decl = var_decl.declaration();
+							// Return identifier reference to the instantiated variable
+							Token inst_token(Token::Type::Identifier, decl.identifier_token().value(), 
+							                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+							result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+							return ParseResult::success(*result);
+						}
 					}
 				}
 			}
@@ -9580,7 +9600,47 @@ ParseResult Parser::parse_template_declaration() {
 	                         peek_token()->type() == Token::Type::Keyword &&
 	                         (peek_token()->value() == "class" || peek_token()->value() == "struct");
 
+	// Check if it's a variable template (constexpr, inline, etc. + type + identifier)
+	bool is_variable_template = false;
+	if (!is_alias_template && !is_class_template && peek_token().has_value()) {
+		// Variable templates usually start with constexpr, inline, or a type directly
+		// Save position to check
+		auto var_check_pos = save_token_position();
+		
+		// Skip storage class specifiers (constexpr, inline, static, etc.)
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view kw = peek_token()->value();
+			if (kw == "constexpr" || kw == "inline" || kw == "static" || 
+			    kw == "const" || kw == "volatile" || kw == "extern") {
+				consume_token();
+			} else {
+				break;
+			}
+		}
+		
+		// Try to parse type specifier
+		auto var_type_result = parse_type_specifier();
+		if (!var_type_result.is_error()) {
+			// After type, expect identifier (variable name)
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+				std::string_view var_name = peek_token()->value();
+				consume_token();
+				
+				// After identifier, expect '=' for variable template
+				// (function would have '(' here)
+				if (peek_token().has_value() && peek_token()->value() == "=") {
+					is_variable_template = true;
+				}
+			}
+		}
+		
+		// Restore position for actual parsing
+		restore_token_position(var_check_pos);
+	}
+
+	std::cerr << "DEBUG: is_alias_template=" << is_alias_template << std::endl;
 	std::cerr << "DEBUG: is_class_template=" << is_class_template << std::endl;
+	std::cerr << "DEBUG: is_variable_template=" << is_variable_template << std::endl;
 	if (peek_token().has_value()) {
 		std::cerr << "DEBUG: Next token after template params: '" << peek_token()->value() << "' (type=" << static_cast<int>(peek_token()->type()) << ")" << std::endl;
 	}
@@ -9670,6 +9730,88 @@ ParseResult Parser::parse_template_declaration() {
 		gTemplateRegistry.register_alias_template(std::string(alias_name), alias_node);
 		
 		return saved_position.success(alias_node);
+	}
+	else if (is_variable_template) {
+		std::cerr << "DEBUG: Parsing variable template" << std::endl;
+		
+		// Parse storage class specifiers manually (constexpr, inline, static, etc.)
+		bool is_constexpr = false;
+		StorageClass storage_class = StorageClass::None;
+		
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view kw = peek_token()->value();
+			if (kw == "constexpr") {
+				is_constexpr = true;
+				consume_token();
+			} else if (kw == "inline") {
+				consume_token(); // consume but don't store for now
+			} else if (kw == "static") {
+				storage_class = StorageClass::Static;
+				consume_token();
+			} else {
+				break; // Not a storage class specifier
+			}
+		}
+		
+		// Now parse the variable declaration: Type name = initializer;
+		// We need to manually parse type, name, and initializer
+		auto type_result = parse_type_specifier();
+		if (type_result.is_error()) {
+			return type_result;
+		}
+		
+		// Parse variable name
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected variable name in variable template", *current_token_);
+		}
+		Token var_name_token = *peek_token();
+		consume_token();
+		
+		// Create DeclarationNode
+		auto decl_node = emplace_node<DeclarationNode>(
+			type_result.node().value(),
+			var_name_token
+		);
+		
+		// Parse initializer
+		std::optional<ASTNode> init_expr;
+		if (peek_token().has_value() && peek_token()->value() == "=") {
+			consume_token(); // consume '='
+			
+			// Parse the initializer expression
+			auto init_result = parse_expression();
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			init_expr = init_result.node();
+		}
+		
+		// Expect semicolon
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after variable template declaration", *current_token_);
+		}
+		
+		// Create VariableDeclarationNode
+		auto var_decl_node = emplace_node<VariableDeclarationNode>(
+			decl_node,
+			init_expr,
+			storage_class
+		);
+		
+		// Create TemplateVariableDeclarationNode
+		auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
+			std::move(template_params),
+			var_decl_node
+		);
+		
+		// Register in template registry
+		std::string_view var_name = var_name_token.value();
+		gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+		
+		// Also add to symbol table so identifier lookup works
+		gSymbolTable.insert(var_name, template_var_node);
+		
+		return saved_position.success(template_var_node);
 	}
 	else if (is_class_template) {
 		std::cerr << "DEBUG: Parsing class template" << std::endl;
@@ -11794,8 +11936,227 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 	return result.commit();
 }
 
+// Helper function to substitute template parameters in an expression
+// This recursively traverses the expression tree and replaces constructor calls with template parameter types
+ASTNode Parser::substitute_template_params_in_expression(
+	const ASTNode& expr,
+	const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map) {
+	
+	// ASTNode wraps types via std::any, check if it contains an ExpressionNode
+	if (!expr.is<ExpressionNode>()) {
+		return expr; // Return as-is if not an expression
+	}
+	
+	const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
+	
+	// Handle constructor call: T(value) -> ConcreteType(value)
+	if (std::holds_alternative<ConstructorCallNode>(expr_variant)) {
+		const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr_variant);
+		const TypeSpecifierNode& ctor_type = ctor.type_node().as<TypeSpecifierNode>();
+		
+		// Check if this constructor type is in our substitution map
+		// For variable templates with cleaned-up template parameters, the constructor
+		// might have type_index=0 or some other invalid value. So we check if there's
+		// exactly one entry in the map and assume any UserDefined constructor is for that type.
+		if (ctor_type.type() == Type::UserDefined) {
+			// If we have exactly one type substitution and this is a UserDefined constructor,
+			// assume it's for the template parameter
+			if (type_substitution_map.size() == 1) {
+				const TemplateTypeArg& arg = type_substitution_map.begin()->second;
+				
+				// Create a new type specifier with the concrete type
+				TypeSpecifierNode new_type(
+					arg.base_type,
+					TypeQualifier::None,
+					get_type_size_bits(arg.base_type),
+					ctor.called_from()
+				);
+				
+				// Recursively substitute in arguments
+				ChunkedVector<ASTNode> new_args;
+				for (size_t i = 0; i < ctor.arguments().size(); ++i) {
+					new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map));
+				}
+				
+				// Create new constructor call with substituted type
+				auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+				ConstructorCallNode new_ctor(new_type_node, std::move(new_args), ctor.called_from());
+				return emplace_node<ExpressionNode>(new_ctor);
+			}
+		}
+		
+		// Not a template parameter constructor - recursively substitute in arguments
+		ChunkedVector<ASTNode> new_args;
+		for (size_t i = 0; i < ctor.arguments().size(); ++i) {
+			new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map));
+		}
+		ConstructorCallNode new_ctor(ctor.type_node(), std::move(new_args), ctor.called_from());
+		return emplace_node<ExpressionNode>(new_ctor);
+	}
+	
+	// Handle binary operators - recursively substitute in both operands
+	if (std::holds_alternative<BinaryOperatorNode>(expr_variant)) {
+		const BinaryOperatorNode& binop = std::get<BinaryOperatorNode>(expr_variant);
+		auto new_left = substitute_template_params_in_expression(
+			binop.get_lhs(), type_substitution_map);
+		auto new_right = substitute_template_params_in_expression(
+			binop.get_rhs(), type_substitution_map);
+		
+		BinaryOperatorNode new_binop(
+			binop.get_token(),
+			new_left,
+			new_right
+		);
+		return emplace_node<ExpressionNode>(new_binop);
+	}
+	
+	// Handle unary operators - recursively substitute in operand
+	if (std::holds_alternative<UnaryOperatorNode>(expr_variant)) {
+		const UnaryOperatorNode& unop = std::get<UnaryOperatorNode>(expr_variant);
+		auto new_operand = substitute_template_params_in_expression(
+			unop.get_operand(), type_substitution_map);
+		
+		UnaryOperatorNode new_unop(
+			unop.get_token(),
+			new_operand,
+			unop.is_prefix()
+		);
+		return emplace_node<ExpressionNode>(new_unop);
+	}
+	
+	// For other expression types (literals, identifiers, etc.), return as-is
+	return expr;
+}
+
 // Try to instantiate a class template with explicit template arguments
 // Returns the instantiated StructDeclarationNode if successful
+// Try to instantiate a variable template with the given template arguments
+// Returns the instantiated variable declaration node or nullopt if already instantiated
+std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
+	// Look up the variable template
+	auto template_opt = gTemplateRegistry.lookupVariableTemplate(template_name);
+	if (!template_opt.has_value()) {
+		std::cerr << "ERROR: Variable template '" << template_name << "' not found\n";
+		return std::nullopt;
+	}
+	
+	if (!template_opt->is<TemplateVariableDeclarationNode>()) {
+		std::cerr << "ERROR: Expected TemplateVariableDeclarationNode\n";
+		return std::nullopt;
+	}
+	
+	const TemplateVariableDeclarationNode& var_template = template_opt->as<TemplateVariableDeclarationNode>();
+	
+	// Generate unique name for the instantiation
+	std::string instantiated_name = std::string(template_name);
+	for (const auto& arg : template_args) {
+		instantiated_name += "_";
+		instantiated_name += std::string(TemplateRegistry::typeToString(arg.base_type));
+		if (arg.is_rvalue_reference) instantiated_name += "_rvalref";
+		else if (arg.is_reference) instantiated_name += "_ref";
+		for (size_t i = 0; i < arg.pointer_depth; ++i) {
+			instantiated_name += "_ptr";
+		}
+	}
+	std::string_view persistent_name = StringBuilder().append(instantiated_name).commit();
+	
+	// Check if already instantiated
+	if (gSymbolTable.lookup(persistent_name).has_value()) {
+		return gSymbolTable.lookup(persistent_name);
+	}
+	
+	// Perform template substitution
+	const std::vector<ASTNode>& template_params = var_template.template_parameters();
+	if (template_args.size() != template_params.size()) {
+		std::cerr << "ERROR: Template argument count mismatch: expected " << template_params.size() 
+		          << ", got " << template_args.size() << "\n";
+		return std::nullopt;
+	}
+	
+	// Get the original variable declaration
+	const VariableDeclarationNode& orig_var_decl = var_template.variable_decl_node();
+	const DeclarationNode& orig_decl = orig_var_decl.declaration();
+	const TypeSpecifierNode& orig_type = orig_decl.type_node().as<TypeSpecifierNode>();
+	
+	// Build a map from template parameter type_index to concrete type for substitution
+	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
+	
+	// Substitute template parameter with concrete type
+	// For now, assume simple case where the type is just the template parameter
+	TypeSpecifierNode substituted_type = orig_type;
+	
+	// Check if the type is a template parameter
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) continue;
+		
+		const auto& tparam = template_params[i].as<TemplateParameterNode>();
+		if (tparam.kind() != TemplateParameterKind::Type) continue;
+		
+		// For variable templates, if the variable type is UserDefined, it's likely the template parameter
+		// We can't look it up in gTypesByName because it was cleaned up after parsing
+		// So we'll assume the orig_type IS the template parameter and add it to the map
+		if (orig_type.type() == Type::UserDefined) {
+			const TemplateTypeArg& arg = template_args[i];
+			
+			// Add to substitution map
+			type_substitution_map[orig_type.type_index()] = arg;
+			
+			substituted_type = TypeSpecifierNode(
+				arg.base_type,
+				TypeQualifier::None,
+				get_type_size_bits(arg.base_type),
+				Token()
+			);
+			// Apply cv-qualifiers, references, and pointers from template argument
+			if (arg.is_rvalue_reference) {
+				substituted_type.set_reference(true);
+			} else if (arg.is_reference) {
+				substituted_type.set_lvalue_reference(true);
+			}
+			for (size_t p = 0; p < arg.pointer_depth; ++p) {
+				substituted_type.add_pointer_level(CVQualifier::None);
+			}
+			break;
+		}
+	}
+	
+	// Create new declaration with substituted type and instantiated name
+	Token instantiated_name_token(Token::Type::Identifier, persistent_name, 0, 0, 0);
+	auto new_type_node = emplace_node<TypeSpecifierNode>(substituted_type);
+	auto new_decl_node = emplace_node<DeclarationNode>(new_type_node, instantiated_name_token);
+	
+	// Substitute template parameters in initializer expression
+	std::optional<ASTNode> new_initializer = std::nullopt;
+	if (orig_var_decl.initializer().has_value()) {
+		new_initializer = substitute_template_params_in_expression(
+			orig_var_decl.initializer().value(),
+			type_substitution_map
+		);
+	}
+	
+	// Create instantiated variable declaration
+	auto instantiated_var_decl = emplace_node<VariableDeclarationNode>(
+		new_decl_node,
+		new_initializer,
+		orig_var_decl.storage_class()
+	);
+	
+	// Register the DeclarationNode in symbol table (not the VariableDeclarationNode)
+	// This is how normal variables are registered
+	// IMPORTANT: Use insertGlobal because we might be called during function parsing
+	// but we need to insert into global scope
+	bool insert_result = gSymbolTable.insertGlobal(persistent_name, new_decl_node);
+	
+	// Verify it's there
+	auto verify = gSymbolTable.lookup(persistent_name);
+	
+	// Add to AST at the beginning so it gets code-generated before functions that use it
+	// Insert after other global declarations but before function definitions
+	ast_nodes_.insert(ast_nodes_.begin(), instantiated_var_decl);
+	
+	return instantiated_var_decl;
+}
+
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	std::cerr << "DEBUG: try_instantiate_class_template called with template_name='" << template_name << "' and " << template_args.size() << " args\n";
 

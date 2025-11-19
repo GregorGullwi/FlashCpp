@@ -1197,8 +1197,32 @@ private:
 	std::vector<ASTNode> deduced_template_args_;  // RHS nodes for template arguments (TypeSpecifierNode instances)
 };
 
-// Forward declaration for TemplateClassDeclarationNode (defined after StructDeclarationNode)
+// Forward declarations
 class TemplateClassDeclarationNode;
+class VariableDeclarationNode;
+
+// Variable template declaration: template<typename T> constexpr T pi = T(3.14159265358979323846);
+class TemplateVariableDeclarationNode {
+public:
+	TemplateVariableDeclarationNode() = delete;
+	TemplateVariableDeclarationNode(std::vector<ASTNode> template_params, ASTNode variable_decl)
+		: template_parameters_(std::move(template_params)), variable_declaration_(variable_decl) {}
+
+	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
+	ASTNode variable_declaration() const { return variable_declaration_; }
+
+	// Get the underlying VariableDeclarationNode
+	VariableDeclarationNode& variable_decl_node() {
+		return variable_declaration_.as<VariableDeclarationNode>();
+	}
+	const VariableDeclarationNode& variable_decl_node() const {
+		return variable_declaration_.as<VariableDeclarationNode>();
+	}
+
+private:
+	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
+	ASTNode variable_declaration_;  // VariableDeclarationNode
+};
 
 // Member initializer for constructor initializer lists
 struct MemberInitializer {

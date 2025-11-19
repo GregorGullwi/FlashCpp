@@ -2300,3 +2300,7 @@ TEST_CASE("Spec:FuncPtrNullptrBool") {
 TEST_CASE("Templates:QualifiedId") {
 	run_test_from_file("test_template_qualified_id.cpp", "Templates:QualifiedId", false);
 }
+
+TEST_CASE("Templates:VariableTemplates") {
+	run_test_from_file("test_var_template_complete.cpp", "Variable templates with instantiation", false);
+}
