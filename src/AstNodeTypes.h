@@ -167,12 +167,23 @@ struct StructMember {
 	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.)
 	size_t offset;          // Offset in bytes from start of struct
 	size_t size;            // Size in bytes
+	size_t referenced_size_bits; // Size of the referenced value in bits (for references)
 	size_t alignment;       // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
+	bool is_reference;      // True if member is an lvalue reference
+	bool is_rvalue_reference; // True if member is an rvalue reference
 	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
 
-	StructMember(std::string n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public, std::optional<ASTNode> init = std::nullopt)
-		: name(std::move(n)), type(t), type_index(tidx), offset(off), size(sz), alignment(align), access(acc), default_initializer(std::move(init)) {}
+	StructMember(std::string n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
+	            AccessSpecifier acc = AccessSpecifier::Public,
+	            std::optional<ASTNode> init = std::nullopt,
+	            bool is_ref = false,
+	            bool is_rvalue_ref = false,
+	            size_t ref_size_bits = 0)
+		: name(std::move(n)), type(t), type_index(tidx), offset(off), size(sz),
+		  referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
+		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),
+		  default_initializer(std::move(init)) {}
 };
 
 // Forward declaration for member function support
@@ -278,8 +289,11 @@ struct StructTypeInfo {
 		: name(std::move(n)), default_access(default_acc) {}
 
 	void addMember(const std::string& member_name, Type member_type, TypeIndex type_index,
-	               size_t member_size, size_t member_alignment, AccessSpecifier access = AccessSpecifier::Public,
-	               std::optional<ASTNode> default_initializer = std::nullopt) {
+	               size_t member_size, size_t member_alignment, AccessSpecifier access,
+	               std::optional<ASTNode> default_initializer,
+	               bool is_reference,
+	               bool is_rvalue_reference,
+	               size_t referenced_size_bits) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members
 		size_t effective_alignment = member_alignment;
@@ -290,7 +304,12 @@ struct StructTypeInfo {
 		// Calculate offset with effective alignment
 		size_t offset = (total_size + effective_alignment - 1) & ~(effective_alignment - 1);
 
-		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment, access, std::move(default_initializer));
+		if (!referenced_size_bits) {
+			referenced_size_bits = member_size * 8;
+		}
+		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
+			              access, std::move(default_initializer), is_reference, is_rvalue_reference,
+			              referenced_size_bits);
 
 		// Update struct size and alignment
 		total_size = offset + member_size;

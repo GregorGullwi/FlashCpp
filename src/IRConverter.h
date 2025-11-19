@@ -191,6 +191,41 @@ OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, int32_t o
 	return result;
 }
 
+OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	uint8_t rex_prefix = 0x48; // REX.W
+	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+		rex_prefix |= 0x04; // REX.R for registers R8-R15
+	}
+	*current_byte_ptr++ = rex_prefix;
+	result.size_in_bytes++;
+
+	*current_byte_ptr++ = 0x8D; // LEA opcode
+	result.size_in_bytes++;
+
+	uint8_t reg_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+	uint8_t mod_field = (offset >= -128 && offset <= 127) ? 0x01 : 0x02;
+	uint8_t modrm = static_cast<uint8_t>((mod_field << 6) | (reg_bits << 3) | 0x05); // Base = RBP
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
+
+	if (mod_field == 0x01) {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	} else {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
 /**
  * @brief Generates x86-64 binary opcodes for 'movzx r32, word ptr [rbp + offset]'.
  *
@@ -1910,7 +1945,7 @@ public:
 				default:
 					break;
 			}
-			#endif
+			#endif // ENABLE_DETAILED_PROFILING
 		}
 
 		auto ir_processing_end = std::chrono::high_resolution_clock::now();
@@ -2141,10 +2176,35 @@ private:
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
-					// For integers, use regular MOV
-					ctx.result_physical_reg = allocateRegisterWithSpilling();
-					auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					// Check if this is a reference - if so, we need to dereference it
+					auto ref_it = reference_stack_info_.find(lhs_stack_var_addr);
+					if (ref_it != reference_stack_info_.end()) {
+						// This is a reference - load the pointer first, then dereference
+						ctx.result_physical_reg = allocateRegisterWithSpilling();
+						// Load the pointer into the register
+						auto load_ptr = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
+						textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+						// Now dereference: load from [register + 0]
+						int value_size_bits = ref_it->second.value_size_bits;
+						OpCodeWithSize deref_opcodes;
+						if (value_size_bits == 64) {
+							deref_opcodes = generateMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0);
+						} else if (value_size_bits == 32) {
+							deref_opcodes = generateMovFromMemory32(ctx.result_physical_reg, ctx.result_physical_reg, 0);
+						} else if (value_size_bits == 16) {
+							deref_opcodes = generateMovFromMemory16(ctx.result_physical_reg, ctx.result_physical_reg, 0);
+						} else if (value_size_bits == 8) {
+							deref_opcodes = generateMovFromMemory8(ctx.result_physical_reg, ctx.result_physical_reg, 0);
+						} else {
+							assert(false && "Unsupported reference value size");
+						}
+						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+					} else {
+						// Not a reference, load normally
+						ctx.result_physical_reg = allocateRegisterWithSpilling();
+						auto mov_opcodes = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					}
 					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 				}
 			}
@@ -2254,10 +2314,35 @@ private:
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
-					// For integers, use regular MOV
-					ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-					auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					// Check if this is a reference - if so, we need to dereference it
+					auto ref_it = reference_stack_info_.find(rhs_stack_var_addr);
+					if (ref_it != reference_stack_info_.end()) {
+						// This is a reference - load the pointer first, then dereference
+						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+						// Load the pointer into the register
+						auto load_ptr = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
+						textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+						// Now dereference: load from [register + 0]
+						int value_size_bits = ref_it->second.value_size_bits;
+						OpCodeWithSize deref_opcodes;
+						if (value_size_bits == 64) {
+							deref_opcodes = generateMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
+						} else if (value_size_bits == 32) {
+							deref_opcodes = generateMovFromMemory32(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
+						} else if (value_size_bits == 16) {
+							deref_opcodes = generateMovFromMemory16(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
+						} else if (value_size_bits == 8) {
+							deref_opcodes = generateMovFromMemory8(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
+						} else {
+							assert(false && "Unsupported reference value size");
+						}
+						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+					} else {
+						// Not a reference, load normally
+						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+						auto mov_opcodes = generateMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
+						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 				}
 			}
@@ -2425,6 +2510,12 @@ private:
 		int scope_stack_space = 0;
 		std::unordered_map<std::string_view, int> identifier_offset;
 	};
+
+	struct ReferenceInfo {
+		Type value_type = Type::Invalid;
+		int value_size_bits = 0;
+		bool is_rvalue_reference = false;
+	};
 	
 	StackSpaceSize calculateFunctionStackSpace(const std::string& func_name, StackVariableScope& var_scope) {
 		StackSpaceSize func_stack_space{};
@@ -2463,15 +2554,18 @@ private:
 				size_t custom_alignment = instruction.getOperandAs<unsigned long long>(3);
 
 				// Check if this is an array declaration (has array size operand)
-				// Format: [type, size, name, custom_alignment, array_size_type, array_size_bits, array_size_value]
+				// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, array_size_type?, array_size_bits?, array_size_value?]
+				constexpr size_t kArrayInfoStart = 6;
+				bool has_array_size = instruction.getOperandCount() >= kArrayInfoStart + 3 &&
+				                       instruction.isOperandType<Type>(kArrayInfoStart);
 				int total_size_bits = size_in_bits;
-				if (instruction.getOperandCount() >= 7 &&
-				    instruction.isOperandType<Type>(4)) {
-					// This is an array - get the array size
-					if (instruction.isOperandType<unsigned long long>(6)) {
-						uint64_t array_size = instruction.getOperandAs<unsigned long long>(6);
-						total_size_bits = size_in_bits * static_cast<int>(array_size);
-					}
+				bool is_reference = instruction.getOperandAs<bool>(4);
+				if (is_reference) {
+					total_size_bits = 64;
+				}
+				if (has_array_size && instruction.isOperandType<unsigned long long>(kArrayInfoStart + 2)) {
+					uint64_t array_size = instruction.getOperandAs<unsigned long long>(kArrayInfoStart + 2);
+					total_size_bits = size_in_bits * static_cast<int>(array_size);
 				}
 
 				func_stack_space.named_vars_size += (total_size_bits / 8);
@@ -4008,26 +4102,59 @@ private:
 		auto var_it = current_scope.identifier_offset.find(var_name_str);
 		assert(var_it != current_scope.identifier_offset.end());
 
-		// Format: [type, size, name, custom_alignment] for uninitialized
-		//         [type, size, name, custom_alignment, init_type, init_size, init_value] for initialized
-		bool is_initialized = instruction.getOperandCount() > 4;
+		bool is_reference = instruction.getOperandAs<bool>(4);
+		bool is_rvalue_reference = instruction.getOperandAs<bool>(5);
+		constexpr size_t kArrayInfoStart = 6;
+		bool has_array_info = instruction.getOperandCount() >= kArrayInfoStart + 3 &&
+		                     instruction.isOperandType<Type>(kArrayInfoStart);
+		size_t initializer_index = has_array_info ? kArrayInfoStart + 3 : kArrayInfoStart;
+		bool is_initialized = instruction.getOperandCount() > initializer_index;
+		size_t init_value_index = initializer_index + 2;
+
+		if (is_reference) {
+			reference_stack_info_[var_it->second] = ReferenceInfo{
+				.value_type = var_type,
+				.value_size_bits = instruction.getOperandAs<int>(1),
+				.is_rvalue_reference = is_rvalue_reference
+			};
+			int32_t dst_offset = var_it->second;
+			X64Register pointer_reg = allocateRegisterWithSpilling();
+			bool pointer_initialized = false;
+			if (is_initialized) {
+				pointer_initialized = loadAddressForOperand(instruction, init_value_index, pointer_reg);
+				if (!pointer_initialized) {
+					std::cerr << "ERROR: Reference initializer is not an addressable lvalue" << std::endl;
+					assert(false && "Reference initializer must be an lvalue");
+				}
+			} else {
+				moveImmediateToRegister(pointer_reg, 0);
+			}
+			auto store_ptr = generateMovToFrame(pointer_reg, dst_offset);
+			textSectionData.insert(textSectionData.end(), store_ptr.op_codes.begin(),
+				               store_ptr.op_codes.begin() + store_ptr.size_in_bytes);
+			regAlloc.release(pointer_reg);
+			return;
+		}
+
+		// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, ...] for uninitialized
+		//         [type, size, name, custom_alignment, is_ref, is_rvalue_ref, init_type, init_size, init_value] for initialized
 		X64Register allocated_reg_val = X64Register::RAX; // Default
 
 		if (is_initialized) {
 			auto dst_offset = var_it->second;
 
 			// Check if the initializer is a literal value
-			bool is_literal = instruction.isOperandType<unsigned long long>(6) ||
-			                  instruction.isOperandType<int>(6) ||
-			                  instruction.isOperandType<double>(6);
+			bool is_literal = instruction.isOperandType<unsigned long long>(init_value_index) ||
+			                  instruction.isOperandType<int>(init_value_index) ||
+			                  instruction.isOperandType<double>(init_value_index);
 
 			if (is_literal) {
 				// For literal initialization, allocate a register temporarily
 				allocated_reg_val = allocateRegisterWithSpilling();
 				// Load immediate value into register
-				if (instruction.isOperandType<double>(6)) {
+				if (instruction.isOperandType<double>(init_value_index)) {
 					// Handle double/float literals
-					double value = instruction.getOperandAs<double>(6);
+					double value = instruction.getOperandAs<double>(init_value_index);
 
 					// Convert double to bit pattern
 					uint64_t bits;
@@ -4043,8 +4170,8 @@ private:
 					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
 					std::memcpy(&movInst[2], &bits, sizeof(bits));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-				} else if (instruction.isOperandType<unsigned long long>(6)) {
-					uint64_t value = instruction.getOperandAs<unsigned long long>(6);
+				} else if (instruction.isOperandType<unsigned long long>(init_value_index)) {
+					uint64_t value = instruction.getOperandAs<unsigned long long>(init_value_index);
 
 					// MOV reg, imm64
 					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -4052,8 +4179,8 @@ private:
 					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
 					std::memcpy(&movInst[2], &value, sizeof(value));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-				} else if (instruction.isOperandType<int>(6)) {
-					int value = instruction.getOperandAs<int>(6);
+				} else if (instruction.isOperandType<int>(init_value_index)) {
+					int value = instruction.getOperandAs<int>(init_value_index);
 
 					// MOV reg, imm32 (sign-extended to 64-bit)
 					std::array<uint8_t, 7> movInst = { 0x48, 0xC7, 0xC0, 0, 0, 0, 0 };
@@ -4077,11 +4204,11 @@ private:
 				// For non-literal initialization, we don't allocate a register
 				// We just copy the value from source to destination on the stack
 				int src_offset = 0;
-				if (instruction.isOperandType<TempVar>(6)) {
-					auto temp_var = instruction.getOperandAs<TempVar>(6);
+				if (instruction.isOperandType<TempVar>(init_value_index)) {
+					auto temp_var = instruction.getOperandAs<TempVar>(init_value_index);
 					src_offset = getStackOffsetFromTempVar(temp_var);
-				} else if (instruction.isOperandType<std::string_view>(6)) {
-					auto rvalue_var_name = instruction.getOperandAs<std::string_view>(6);
+				} else if (instruction.isOperandType<std::string_view>(init_value_index)) {
+					auto rvalue_var_name = instruction.getOperandAs<std::string_view>(init_value_index);
 					auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
 					if (src_it == current_scope.identifier_offset.end()) {
 						std::cerr << "ERROR: Variable '" << rvalue_var_name << "' not found in symbol table\n";
@@ -4426,7 +4553,7 @@ private:
 		// First pass: collect all parameter information using FunctionDeclLayout constants
 		paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
 		// Clear reference parameter tracking from previous function
-		reference_stack_offsets_.clear();
+		reference_stack_info_.clear();
 		while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
 			auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
@@ -4443,7 +4570,11 @@ private:
 			// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 			bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
 			if (is_reference) {
-				reference_stack_offsets_.insert(offset);
+				reference_stack_info_[offset] = ReferenceInfo{
+					.value_type = param_type,
+					.value_size_bits = param_size,
+					.is_rvalue_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE)
+				};
 			}
 
 			// Add parameter to debug information
@@ -5415,6 +5546,11 @@ private:
 		if (instruction.isOperandType<TempVar>(operand_index)) {
 			auto temp = instruction.getOperandAs<TempVar>(operand_index);
 			auto stack_addr = getStackOffsetFromTempVar(temp);
+			if (auto ref_it = reference_stack_info_.find(stack_addr); ref_it != reference_stack_info_.end()) {
+				reg = allocateRegisterWithSpilling();
+				loadValueFromReferenceSlot(stack_addr, ref_it->second, reg);
+				return reg;
+			}
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
 				reg = reg_opt.value();
 			} else {
@@ -5428,6 +5564,11 @@ private:
 			auto var_name = instruction.getOperandAs<std::string_view>(operand_index);
 			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
 			if (var_id != variable_scopes.back().identifier_offset.end()) {
+				if (auto ref_it = reference_stack_info_.find(var_id->second); ref_it != reference_stack_info_.end()) {
+					reg = allocateRegisterWithSpilling();
+					loadValueFromReferenceSlot(var_id->second, ref_it->second, reg);
+					return reg;
+				}
 				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second); reg_opt.has_value()) {
 					reg = reg_opt.value();
 				} else {
@@ -5443,6 +5584,427 @@ private:
 		return reg;
 	}
 
+	std::optional<int32_t> findIdentifierStackOffset(std::string_view name) const {
+		for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
+			const auto& scope = *scope_it;
+			auto found = scope.identifier_offset.find(name);
+			if (found != scope.identifier_offset.end()) {
+				return found->second;
+			}
+		}
+		return std::nullopt;
+	}
+
+	enum class IncDecKind { PreIncrement, PostIncrement, PreDecrement, PostDecrement };
+
+	struct UnaryOperandLocation {
+		enum class Kind { Stack, Global };
+		Kind kind = Kind::Stack;
+		int32_t stack_offset = 0;
+		std::string global_name;
+
+		static UnaryOperandLocation stack(int32_t offset) {
+			UnaryOperandLocation loc;
+			loc.kind = Kind::Stack;
+			loc.stack_offset = offset;
+			return loc;
+		}
+
+		static UnaryOperandLocation global(std::string name) {
+			UnaryOperandLocation loc;
+			loc.kind = Kind::Global;
+			loc.global_name = name;
+			return loc;
+		}
+	};
+
+	UnaryOperandLocation resolveUnaryOperandLocation(const IrInstruction& instruction, size_t operand_index) {
+		if (instruction.isOperandType<TempVar>(operand_index)) {
+			auto temp = instruction.getOperandAs<TempVar>(operand_index);
+			return UnaryOperandLocation::stack(getStackOffsetFromTempVar(temp));
+		}
+
+		if (instruction.isOperandType<std::string_view>(operand_index)) {
+			auto name = instruction.getOperandAs<std::string_view>(operand_index);
+			if (auto offset = findIdentifierStackOffset(name); offset.has_value()) {
+				return UnaryOperandLocation::stack(offset.value());
+			}
+			return UnaryOperandLocation::global(std::string(name));
+		}
+
+		if (instruction.isOperandType<std::string>(operand_index)) {
+			return UnaryOperandLocation::global(instruction.getOperandAs<std::string>(operand_index));
+		}
+
+		assert(false && "Unsupported operand type for unary operation");
+		return UnaryOperandLocation::stack(0);
+	}
+
+	void appendRipRelativePlaceholder(const std::string& global_name) {
+		uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
+	}
+
+	void loadValueFromStack(int32_t offset, int size_in_bits, X64Register target_reg) {
+		OpCodeWithSize load_opcodes;
+		switch (size_in_bits) {
+		case 64:
+			load_opcodes = generateMovFromFrame(target_reg, offset);
+			break;
+		case 32:
+			load_opcodes = generateMovFromFrame32(target_reg, offset);
+			break;
+		case 16:
+			load_opcodes = generateMovzxFromFrame16(target_reg, offset);
+			break;
+		case 8:
+			load_opcodes = generateMovzxFromFrame8(target_reg, offset);
+			break;
+		default:
+			assert(false && "Unsupported stack load size");
+			return;
+		}
+		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+	}
+
+	void emitStoreWordToFrame(X64Register source_reg, int32_t offset) {
+		textSectionData.push_back(0x66); // Operand-size override for 16-bit
+		bool needs_rex = static_cast<uint8_t>(source_reg) >= static_cast<uint8_t>(X64Register::R8);
+		if (needs_rex) {
+			uint8_t rex = 0x40 | (1 << 2); // REX.R
+			textSectionData.push_back(rex);
+		}
+		textSectionData.push_back(0x89);
+		uint8_t reg_bits = static_cast<uint8_t>(source_reg) & 0x07;
+		uint8_t mod_field = (offset >= -128 && offset <= 127) ? 0x01 : 0x02;
+		if (offset == 0) {
+			mod_field = 0x01;
+		}
+		uint8_t modrm = (mod_field << 6) | (reg_bits << 3) | 0x05;
+		textSectionData.push_back(modrm);
+		if (mod_field == 0x01) {
+			textSectionData.push_back(static_cast<uint8_t>(offset));
+		} else {
+			uint32_t offset_u32 = static_cast<uint32_t>(offset);
+			textSectionData.push_back(offset_u32 & 0xFF);
+			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		}
+	}
+
+	void emitStoreByteToFrame(X64Register source_reg, int32_t offset) {
+		bool needs_rex = static_cast<uint8_t>(source_reg) >= static_cast<uint8_t>(X64Register::R8);
+		if (needs_rex) {
+			uint8_t rex = 0x40 | (1 << 2); // REX.R
+			textSectionData.push_back(rex);
+		}
+		textSectionData.push_back(0x88);
+		uint8_t reg_bits = static_cast<uint8_t>(source_reg) & 0x07;
+		uint8_t mod_field = (offset >= -128 && offset <= 127) ? 0x01 : 0x02;
+		if (offset == 0) {
+			mod_field = 0x01;
+		}
+		uint8_t modrm = (mod_field << 6) | (reg_bits << 3) | 0x05;
+		textSectionData.push_back(modrm);
+		if (mod_field == 0x01) {
+			textSectionData.push_back(static_cast<uint8_t>(offset));
+		} else {
+			uint32_t offset_u32 = static_cast<uint32_t>(offset);
+			textSectionData.push_back(offset_u32 & 0xFF);
+			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		}
+	}
+
+	void storeValueToStack(int32_t offset, int size_in_bits, X64Register source_reg) {
+		OpCodeWithSize store_opcodes;
+		switch (size_in_bits) {
+		case 64:
+			store_opcodes = generateMovToFrame(source_reg, offset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			break;
+		case 32:
+			store_opcodes = generateMovToFrame32(source_reg, offset);
+			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			break;
+		case 16:
+			emitStoreWordToFrame(source_reg, offset);
+			break;
+		case 8:
+			emitStoreByteToFrame(source_reg, offset);
+			break;
+		default:
+			assert(false && "Unsupported stack store size");
+		}
+	}
+
+	void loadValueFromGlobal(const std::string& global_name, int size_in_bits, X64Register target_reg) {
+		uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
+		bool needs_rex = static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8);
+		switch (size_in_bits) {
+		case 64: {
+			uint8_t rex = 0x48;
+			if (needs_rex) {
+				rex |= (1 << 2); // REX.R
+			}
+			textSectionData.push_back(rex);
+			textSectionData.push_back(0x8B);
+			uint8_t modrm = 0x05 | (reg_bits << 3);
+			textSectionData.push_back(modrm);
+			appendRipRelativePlaceholder(global_name);
+			break;
+		}
+		case 32: {
+			if (needs_rex) {
+				uint8_t rex = 0x40 | (1 << 2); // REX.R
+				textSectionData.push_back(rex);
+			}
+			textSectionData.push_back(0x8B);
+			uint8_t modrm = 0x05 | (reg_bits << 3);
+			textSectionData.push_back(modrm);
+			appendRipRelativePlaceholder(global_name);
+			break;
+		}
+		case 16:
+		case 8: {
+			if (needs_rex) {
+				uint8_t rex = 0x40 | (1 << 2); // REX.R
+				textSectionData.push_back(rex);
+			}
+			textSectionData.push_back(0x0F);
+			textSectionData.push_back(size_in_bits == 16 ? 0xB7 : 0xB6);
+			uint8_t modrm = 0x05 | (reg_bits << 3);
+			textSectionData.push_back(modrm);
+			appendRipRelativePlaceholder(global_name);
+			break;
+		}
+		default:
+			assert(false && "Unsupported global load size");
+		}
+	}
+
+	void moveImmediateToRegister(X64Register reg, uint64_t value) {
+		uint8_t rex = 0x48;
+		if (static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex |= 0x01;
+		}
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0xB8 + (static_cast<uint8_t>(reg) & 0x07));
+		for (int i = 0; i < 8; ++i) {
+			textSectionData.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+		}
+	}
+
+	void loadValuePointedByRegister(X64Register reg, int value_size_bits) {
+		int element_size_bytes = value_size_bits / 8;
+		if (value_size_bits <= 8) {
+			element_size_bytes = 1;
+		}
+		if (element_size_bytes != 1 && element_size_bytes != 2 && element_size_bytes != 4 && element_size_bytes != 8) {
+			assert(false && "Unsupported reference load size");
+			return;
+		}
+
+		bool use_temp_reg = reg != X64Register::RAX;
+		if (use_temp_reg) {
+			auto mov_to_rax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg, 8);
+			textSectionData.insert(textSectionData.end(), mov_to_rax.op_codes.begin(),
+				               mov_to_rax.op_codes.begin() + mov_to_rax.size_in_bytes);
+		}
+
+		emitLoadFromAddressInRAX(textSectionData, element_size_bytes);
+
+		if (use_temp_reg) {
+			auto mov_back = regAlloc.get_reg_reg_move_op_code(reg, X64Register::RAX, 8);
+			textSectionData.insert(textSectionData.end(), mov_back.op_codes.begin(),
+				               mov_back.op_codes.begin() + mov_back.size_in_bytes);
+		}
+	}
+
+	void loadValueFromReferenceSlot(int32_t offset, const ReferenceInfo& ref_info, X64Register target_reg) {
+		auto load_ptr = generateMovFromFrame(target_reg, offset);
+		textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
+			               load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+		loadValuePointedByRegister(target_reg, ref_info.value_size_bits);
+	}
+
+	bool loadAddressForOperand(const IrInstruction& instruction, size_t operand_index, X64Register target_reg) {
+		if (instruction.isOperandType<std::string_view>(operand_index)) {
+			auto name = instruction.getOperandAs<std::string_view>(operand_index);
+			auto it = variable_scopes.back().identifier_offset.find(name);
+			if (it == variable_scopes.back().identifier_offset.end()) {
+				return false;
+			}
+			auto lea = generateLeaFromFrame(target_reg, it->second);
+			textSectionData.insert(textSectionData.end(), lea.op_codes.begin(), lea.op_codes.begin() + lea.size_in_bytes);
+			return true;
+		}
+		if (instruction.isOperandType<std::string>(operand_index)) {
+			auto name = instruction.getOperandAs<std::string>(operand_index);
+			auto it = variable_scopes.back().identifier_offset.find(name);
+			if (it == variable_scopes.back().identifier_offset.end()) {
+				return false;
+			}
+			auto lea = generateLeaFromFrame(target_reg, it->second);
+			textSectionData.insert(textSectionData.end(), lea.op_codes.begin(), lea.op_codes.begin() + lea.size_in_bytes);
+			return true;
+		}
+		if (instruction.isOperandType<TempVar>(operand_index)) {
+			auto temp = instruction.getOperandAs<TempVar>(operand_index);
+			int32_t src_offset = getStackOffsetFromTempVar(temp);
+			if (auto ref_it = reference_stack_info_.find(src_offset); ref_it != reference_stack_info_.end()) {
+				auto load_ptr = generateMovFromFrame(target_reg, src_offset);
+				textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
+				               load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+				return true;
+			}
+			auto lea = generateLeaFromFrame(target_reg, src_offset);
+			textSectionData.insert(textSectionData.end(), lea.op_codes.begin(), lea.op_codes.begin() + lea.size_in_bytes);
+			return true;
+		}
+		return false;
+	}
+
+	void storeValueToGlobal(const std::string& global_name, int size_in_bits, X64Register source_reg) {
+		uint8_t reg_bits = static_cast<uint8_t>(source_reg) & 0x07;
+		bool needs_rex = static_cast<uint8_t>(source_reg) >= static_cast<uint8_t>(X64Register::R8);
+		switch (size_in_bits) {
+		case 64: {
+			uint8_t rex = 0x48;
+			if (needs_rex) {
+				rex |= (1 << 2);
+			}
+			textSectionData.push_back(rex);
+			textSectionData.push_back(0x89);
+			uint8_t modrm = 0x05 | (reg_bits << 3);
+			textSectionData.push_back(modrm);
+			appendRipRelativePlaceholder(global_name);
+			break;
+		}
+		case 32: {
+			if (needs_rex) {
+				uint8_t rex = 0x40 | (1 << 2);
+				textSectionData.push_back(rex);
+			}
+			textSectionData.push_back(0x89);
+			uint8_t modrm = 0x05 | (reg_bits << 3);
+			textSectionData.push_back(modrm);
+			appendRipRelativePlaceholder(global_name);
+			break;
+		}
+		case 16: {
+			textSectionData.push_back(0x66);
+			if (needs_rex) {
+				uint8_t rex = 0x40 | (1 << 2);
+				textSectionData.push_back(rex);
+			}
+			textSectionData.push_back(0x89);
+			uint8_t modrm = 0x05 | (reg_bits << 3);
+			textSectionData.push_back(modrm);
+			appendRipRelativePlaceholder(global_name);
+			break;
+		}
+		case 8: {
+			if (needs_rex) {
+				uint8_t rex = 0x40 | (1 << 2);
+				textSectionData.push_back(rex);
+			}
+			textSectionData.push_back(0x88);
+			uint8_t modrm = 0x05 | (reg_bits << 3);
+			textSectionData.push_back(modrm);
+			appendRipRelativePlaceholder(global_name);
+			break;
+		}
+		default:
+			assert(false && "Unsupported global store size");
+		}
+	}
+
+	void loadUnaryOperandValue(const UnaryOperandLocation& location, int size_in_bits, X64Register target_reg) {
+		if (location.kind == UnaryOperandLocation::Kind::Stack) {
+			loadValueFromStack(location.stack_offset, size_in_bits, target_reg);
+		} else {
+			loadValueFromGlobal(location.global_name, size_in_bits, target_reg);
+		}
+	}
+
+	void storeUnaryOperandValue(const UnaryOperandLocation& location, int size_in_bits, X64Register source_reg) {
+		if (location.kind == UnaryOperandLocation::Kind::Stack) {
+			storeValueToStack(location.stack_offset, size_in_bits, source_reg);
+		} else {
+			storeValueToGlobal(location.global_name, size_in_bits, source_reg);
+		}
+	}
+
+	void storeIncDecResultValue(const IrInstruction& instruction, X64Register source_reg, int size_in_bits) {
+		const IrOperand& result_operand = instruction.getOperand(0);
+		if (std::holds_alternative<TempVar>(result_operand)) {
+			auto result_var = std::get<TempVar>(result_operand);
+			storeValueToStack(getStackOffsetFromTempVar(result_var), size_in_bits, source_reg);
+			return;
+		}
+
+		if (std::holds_alternative<std::string_view>(result_operand)) {
+			auto result_name = std::get<std::string_view>(result_operand);
+			if (auto offset = findIdentifierStackOffset(result_name); offset.has_value()) {
+				storeValueToStack(offset.value(), size_in_bits, source_reg);
+				return;
+			}
+			storeValueToGlobal(std::string(result_name), size_in_bits, source_reg);
+			return;
+		}
+
+		if (std::holds_alternative<std::string>(result_operand)) {
+			storeValueToGlobal(std::get<std::string>(result_operand), size_in_bits, source_reg);
+			return;
+		}
+
+		assert(false && "Unsupported result operand for increment/decrement");
+	}
+
+	void emitIncDecInstruction(X64Register target_reg, bool is_increment) {
+		uint8_t rex = 0x48;
+		if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex |= 0x01; // Extend r/m field for high registers
+		}
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x83);
+		uint8_t opcode_base = is_increment ? 0xC0 : 0xE8;
+		textSectionData.push_back(opcode_base + (static_cast<uint8_t>(target_reg) & 0x07));
+		textSectionData.push_back(0x01);
+	}
+
+	void handleIncDecCommon(const IrInstruction& instruction, IncDecKind kind) {
+		assert(instruction.getOperandCount() == 4 && "Increment/decrement requires 4 operands");
+		int size_in_bits = instruction.getOperandAs<int>(2);
+		UnaryOperandLocation operand_location = resolveUnaryOperandLocation(instruction, 3);
+		X64Register target_reg = X64Register::RAX;
+		loadUnaryOperandValue(operand_location, size_in_bits, target_reg);
+
+		bool is_post = (kind == IncDecKind::PostIncrement || kind == IncDecKind::PostDecrement);
+		bool is_increment = (kind == IncDecKind::PreIncrement || kind == IncDecKind::PostIncrement);
+
+		if (is_post) {
+			storeIncDecResultValue(instruction, target_reg, size_in_bits);
+		}
+
+		emitIncDecInstruction(target_reg, is_increment);
+		storeUnaryOperandValue(operand_location, size_in_bits, target_reg);
+
+		if (!is_post) {
+			storeIncDecResultValue(instruction, target_reg, size_in_bits);
+		}
+	}
+
 	// Helper: Associate result register with result TempVar's stack offset
 	void storeConversionResult(const IrInstruction& instruction, X64Register result_reg) {
 		auto result_var = instruction.getOperandAs<TempVar>(0);
@@ -5451,7 +6013,22 @@ private:
 		// Don't store to memory yet - keep the value in the register for efficiency
 	}
 
-	// Helper: Unified handler for unary operations (LogicalNot, BitwiseNot, Negate)
+	void handlePreIncrement(const IrInstruction& instruction) {
+		handleIncDecCommon(instruction, IncDecKind::PreIncrement);
+	}
+
+	void handlePostIncrement(const IrInstruction& instruction) {
+		handleIncDecCommon(instruction, IncDecKind::PostIncrement);
+	}
+
+	void handlePreDecrement(const IrInstruction& instruction) {
+		handleIncDecCommon(instruction, IncDecKind::PreDecrement);
+	}
+
+	void handlePostDecrement(const IrInstruction& instruction) {
+		handleIncDecCommon(instruction, IncDecKind::PostDecrement);
+	}
+
 	void handleUnaryOperation(const IrInstruction& instruction, UnaryOperation op) {
 		// All unary operations have 4 operands: result_var, operand_type, operand_size, operand_val
 		assert(instruction.getOperandCount() == 4 && "Unary operation must have exactly 4 operands");
@@ -6663,12 +7240,16 @@ private:
 
 	void handleMemberAccess(const IrInstruction& instruction) {
 		// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
-		// Format: [result_var, member_type, member_size, object_name/temp_var, member_name, offset]
-		assert(instruction.getOperandCount() == 6 && "MemberAccess must have 6 operands");
+		// Format (new): [result_var, member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits]
+		assert(instruction.getOperandCount() >= 6 && "MemberAccess must have at least 6 operands");
 
 		auto result_var = instruction.getOperandAs<TempVar>(0);
-		//auto member_type = instruction.getOperandAs<Type>(1);
+		auto member_type = instruction.getOperandAs<Type>(1);
 		auto member_size_bits = instruction.getOperandAs<int>(2);
+		bool has_reference_metadata = instruction.getOperandCount() >= 9;
+		bool is_reference_member = has_reference_metadata ? instruction.getOperandAs<bool>(6) : false;
+		bool is_rvalue_reference_member = has_reference_metadata ? instruction.getOperandAs<bool>(7) : false;
+		int referenced_size_bits = has_reference_metadata ? instruction.getOperandAs<int>(8) : member_size_bits;
 		// Operand 3 can be either a string_view (variable name) or TempVar (nested access result)
 		//auto member_name = instruction.getOperandAs<std::string_view>(4);
 		auto member_offset = instruction.getOperandAs<int>(5);
@@ -6691,7 +7272,7 @@ private:
 			object_base_offset = it->second;
 
 			// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
-			if (object_name == "this" || reference_stack_offsets_.count(object_base_offset) > 0) {
+			if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
 				is_pointer_access = true;
 			}
 		} else if (instruction.isOperandType<TempVar>(3)) {
@@ -6779,23 +7360,39 @@ private:
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		}
 
-		// Store the result - but keep it in the register for subsequent operations
-		// Associate the allocated register with the result temp variable's stack offset
-		regAlloc.set_stack_variable_offset(temp_reg, result_offset);
-		// Don't store to memory yet - keep the value in the register for efficiency
-	}
+		if (is_reference_member) {
+			auto store_ptr = generateMovToFrame(temp_reg, result_offset);
+			textSectionData.insert(textSectionData.end(), store_ptr.op_codes.begin(),
+				               store_ptr.op_codes.begin() + store_ptr.size_in_bytes);
+			regAlloc.release(temp_reg);
+			reference_stack_info_[result_offset] = ReferenceInfo{
+				.value_type = member_type,
+				.value_size_bits = referenced_size_bits,
+				.is_rvalue_reference = is_rvalue_reference_member
+			};
+			return;
+		}
 
+		// Store the result - but keep it in the register for subsequent operations
+		regAlloc.set_stack_variable_offset(temp_reg, result_offset);
+	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
 		// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
-		// Format: [member_type, member_size, object_name/temp_var, member_name, offset, value]
-		assert(instruction.getOperandCount() == 6 && "MemberStore must have 6 operands");
+		// Format (new): [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits, value]
+		assert(instruction.getOperandCount() >= 6 && "MemberStore must have at least 6 operands");
 
 		//auto member_type = instruction.getOperandAs<Type>(0);
 		auto member_size_bits = instruction.getOperandAs<int>(1);
 		// Operand 2 can be either a string_view (variable name) or TempVar (nested access result)
 		//auto member_name = instruction.getOperandAs<std::string_view>(3);
 		auto member_offset = instruction.getOperandAs<int>(4);
+
+		bool has_reference_metadata = instruction.getOperandCount() >= 9;
+		bool is_reference_member = has_reference_metadata ? instruction.getOperandAs<bool>(5) : false;
+		bool is_rvalue_reference_member = has_reference_metadata ? instruction.getOperandAs<bool>(6) : false;
+		int referenced_size_bits = has_reference_metadata ? instruction.getOperandAs<int>(7) : member_size_bits;
+		size_t value_operand_index = has_reference_metadata ? 8 : 5;
 
 		// Get the value - it could be a TempVar, a literal (int, unsigned long long, bool, double), or a string_view (variable name)
 		TempVar value_var;
@@ -6806,30 +7403,30 @@ private:
 		bool is_variable = false;
 		std::string variable_name;
 
-		if (instruction.isOperandType<TempVar>(5)) {
-			value_var = instruction.getOperandAs<TempVar>(5);
-		} else if (instruction.isOperandType<int>(5)) {
+		if (instruction.isOperandType<TempVar>(value_operand_index)) {
+			value_var = instruction.getOperandAs<TempVar>(value_operand_index);
+		} else if (instruction.isOperandType<int>(value_operand_index)) {
 			is_literal = true;
-			literal_value = instruction.getOperandAs<int>(5);
-		} else if (instruction.isOperandType<unsigned long long>(5)) {
+			literal_value = instruction.getOperandAs<int>(value_operand_index);
+		} else if (instruction.isOperandType<unsigned long long>(value_operand_index)) {
 			is_literal = true;
-			literal_value = static_cast<int64_t>(instruction.getOperandAs<unsigned long long>(5));
-		} else if (instruction.isOperandType<bool>(5)) {
+			literal_value = static_cast<int64_t>(instruction.getOperandAs<unsigned long long>(value_operand_index));
+		} else if (instruction.isOperandType<bool>(value_operand_index)) {
 			is_literal = true;
-			literal_value = instruction.getOperandAs<bool>(5) ? 1 : 0;
-		} else if (instruction.isOperandType<char>(5)) {
+			literal_value = instruction.getOperandAs<bool>(value_operand_index) ? 1 : 0;
+		} else if (instruction.isOperandType<char>(value_operand_index)) {
 			is_literal = true;
-			literal_value = static_cast<int64_t>(instruction.getOperandAs<char>(5));
-		} else if (instruction.isOperandType<double>(5)) {
+			literal_value = static_cast<int64_t>(instruction.getOperandAs<char>(value_operand_index));
+		} else if (instruction.isOperandType<double>(value_operand_index)) {
 			is_literal = true;
 			is_double_literal = true;
-			literal_double_value = instruction.getOperandAs<double>(5);
-		} else if (instruction.isOperandType<std::string_view>(5)) {
+			literal_double_value = instruction.getOperandAs<double>(value_operand_index);
+		} else if (instruction.isOperandType<std::string_view>(value_operand_index)) {
 			is_variable = true;
-			variable_name = std::string(instruction.getOperandAs<std::string_view>(5));
-		} else if (instruction.isOperandType<std::string>(5)) {
+			variable_name = std::string(instruction.getOperandAs<std::string_view>(value_operand_index));
+		} else if (instruction.isOperandType<std::string>(value_operand_index)) {
 			is_variable = true;
-			variable_name = instruction.getOperandAs<std::string>(5);
+			variable_name = instruction.getOperandAs<std::string>(value_operand_index);
 		} else {
 			assert(false && "Value must be TempVar, int/unsigned long long/bool/double literal, or string_view");
 			return;
@@ -6867,7 +7464,7 @@ private:
 			object_base_offset = it->second;
 
 			// Check if this is the 'this' pointer or a reference parameter
-			if (object_name_str == "this" || reference_stack_offsets_.count(object_base_offset) > 0) {
+			if (object_name_str == "this" || reference_stack_info_.count(object_base_offset) > 0) {
 				is_pointer_access = true;
 			}
 		} else if (instruction.isOperandType<TempVar>(2)) {
@@ -6898,29 +7495,40 @@ private:
 		// Load the value into a register
 		X64Register value_reg = X64Register::RAX;
 
-		if (is_literal) {
+		if (is_reference_member) {
+			value_reg = allocateRegisterWithSpilling();
+			bool pointer_loaded = false;
+			if (!is_literal) {
+				pointer_loaded = loadAddressForOperand(instruction, value_operand_index, value_reg);
+			}
+			if (!pointer_loaded) {
+				if (is_literal && literal_value == 0) {
+					moveImmediateToRegister(value_reg, 0);
+					pointer_loaded = true;
+				}
+			}
+			if (!pointer_loaded) {
+				std::cerr << "ERROR: Reference member initializer must be an lvalue" << std::endl;
+				assert(false && "Reference member initializer must be an lvalue");
+			}
+		} else if (is_literal) {
 			if (is_double_literal) {
-				// For double literals, convert to bit pattern and load
 				uint64_t bits;
 				std::memcpy(&bits, &literal_double_value, sizeof(bits));
-				// MOV RAX, immediate
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg)); // MOV RAX, imm64
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
 				for (int i = 0; i < 8; i++) {
 					textSectionData.push_back((bits >> (i * 8)) & 0xFF);
 				}
 			} else {
-				// MOV RAX, immediate
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg)); // MOV RAX, imm64
-				// For simplicity, use 64-bit immediate even for smaller values
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
 				uint64_t imm64 = static_cast<uint64_t>(literal_value);
 				for (int i = 0; i < 8; i++) {
 					textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
 				}
 			}
 		} else if (is_variable) {
-			// Load from variable's stack location
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.identifier_offset.find(variable_name);
 			if (it == current_scope.identifier_offset.end()) {
@@ -6930,21 +7538,16 @@ private:
 			int32_t value_offset = it->second;
 			auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
 			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				               load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		} else {
-			// Load from value variable's stack location (TempVar)
 			int32_t value_offset = getStackOffsetFromTempVar(value_var);
-			
-			// Check if this value is already in a register (from previous MemberAccess)
 			auto existing_reg = regAlloc.findRegisterForStackOffset(value_offset);
 			if (existing_reg.has_value()) {
-				// Value is already in a register, use it directly
 				value_reg = existing_reg.value();
 			} else {
-				// Need to load from stack
 				auto load_opcodes = generateMovFromFrame(value_reg, value_offset);
 				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				               load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			}
 		}
 
@@ -7091,174 +7694,16 @@ private:
 					textSectionData.push_back(offset_u32 & 0xFF);
 					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
 					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+				}
+			} else {
+				// Array members should use ArrayStore, not MemberStore
+				// If this fires, CodeGen.h is generating incorrect IR - fix it there
+				std::cerr << "ERROR: MemberStore with size " << member_size_bytes << " bytes (array member?)\n";
+				assert(false && "Array elements should use ArrayStore, not MemberStore");
+				return;
 			}
-		} else {
-			// Array members should use ArrayStore, not MemberStore
-			// If this fires, CodeGen.h is generating incorrect IR - fix it there
-			std::cerr << "ERROR: MemberStore with size " << member_size_bytes << " bytes (array member?)\n";
-			assert(false && "Array elements should use ArrayStore, not MemberStore");
-			return;
 		}
-	}
-	}	void handlePreIncrement(const IrInstruction& instruction) {
-		// Pre-increment: ++x
-		// Operands: [result_var, type, size, operand]
-		assert(instruction.getOperandCount() == 4 && "PreIncrement must have 4 operands");
-
-		// Get operand (variable to increment)
-		auto operand = instruction.getOperandAs<std::string_view>(3);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(operand);
-		if (it == current_scope.identifier_offset.end()) {
-			assert(false && "Variable not found in scope");
-			return;
-		}
-		int32_t var_offset = it->second;
-
-		// Load the variable into a register
-		X64Register target_reg = X64Register::RAX;
-		auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
-		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-
-		// Increment the value: add rax, 1
-		// REX.W + ADD r/m64, imm8 (opcode 0x83 /0)
-		std::array<uint8_t, 4> incInst = { 0x48, 0x83, 0xC0, 0x01 };
-		incInst[2] = 0xC0 + static_cast<uint8_t>(target_reg); // ModR/M byte for ADD
-		textSectionData.insert(textSectionData.end(), incInst.begin(), incInst.end());
-
-		// Store the incremented value back to the variable
-		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
-		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-
-		// For pre-increment, the result is the new value (already in RAX)
-		// Store result to result_var
-		auto result_var = instruction.getOperandAs<TempVar>(0);
-		int32_t result_offset = getStackOffsetFromTempVar(result_var);
-		auto result_store = generateMovToFrame(target_reg, result_offset);
-		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
-		                       result_store.op_codes.begin() + result_store.size_in_bytes);
-	}
-
-	void handlePostIncrement(const IrInstruction& instruction) {
-		// Post-increment: x++
-		// Operands: [result_var, type, size, operand]
-		assert(instruction.getOperandCount() == 4 && "PostIncrement must have 4 operands");
-
-		// Get operand (variable to increment)
-		auto operand = instruction.getOperandAs<std::string_view>(3);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(operand);
-		if (it == current_scope.identifier_offset.end()) {
-			assert(false && "Variable not found in scope");
-			return;
-		}
-		int32_t var_offset = it->second;
-
-		// Load the variable into RAX
-		X64Register target_reg = X64Register::RAX;
-		auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
-		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-
-		// Save the old value to result_var (post-increment returns old value)
-		auto result_var = instruction.getOperandAs<TempVar>(0);
-		int32_t result_offset = getStackOffsetFromTempVar(result_var);
-		auto result_store = generateMovToFrame(target_reg, result_offset);
-		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
-		                       result_store.op_codes.begin() + result_store.size_in_bytes);
-
-		// Increment the value: add rax, 1
-		std::array<uint8_t, 4> incInst = { 0x48, 0x83, 0xC0, 0x01 };
-		incInst[2] = 0xC0 + static_cast<uint8_t>(target_reg);
-		textSectionData.insert(textSectionData.end(), incInst.begin(), incInst.end());
-
-		// Store the incremented value back to the variable
-		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
-		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-	}
-
-	void handlePreDecrement(const IrInstruction& instruction) {
-		// Pre-decrement: --x
-		// Operands: [result_var, type, size, operand]
-		assert(instruction.getOperandCount() == 4 && "PreDecrement must have 4 operands");
-
-		// Get operand (variable to decrement)
-		auto operand = instruction.getOperandAs<std::string_view>(3);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(operand);
-		if (it == current_scope.identifier_offset.end()) {
-			assert(false && "Variable not found in scope");
-			return;
-		}
-		int32_t var_offset = it->second;
-
-		// Load the variable into a register
-		X64Register target_reg = X64Register::RAX;
-		auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
-		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-
-		// Decrement the value: sub rax, 1
-		// REX.W + SUB r/m64, imm8 (opcode 0x83 /5)
-		std::array<uint8_t, 4> decInst = { 0x48, 0x83, 0xE8, 0x01 };
-		decInst[2] = 0xE8 + static_cast<uint8_t>(target_reg); // ModR/M byte for SUB
-		textSectionData.insert(textSectionData.end(), decInst.begin(), decInst.end());
-
-		// Store the decremented value back to the variable
-		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
-		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-
-		// For pre-decrement, the result is the new value (already in RAX)
-		// Store result to result_var
-		auto result_var = instruction.getOperandAs<TempVar>(0);
-		int32_t result_offset = getStackOffsetFromTempVar(result_var);
-		auto result_store = generateMovToFrame(target_reg, result_offset);
-		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
-		                       result_store.op_codes.begin() + result_store.size_in_bytes);
-	}
-
-	void handlePostDecrement(const IrInstruction& instruction) {
-		// Post-decrement: x--
-		// Operands: [result_var, type, size, operand]
-		assert(instruction.getOperandCount() == 4 && "PostDecrement must have 4 operands");
-
-		// Get operand (variable to decrement)
-		auto operand = instruction.getOperandAs<std::string_view>(3);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(operand);
-		if (it == current_scope.identifier_offset.end()) {
-			assert(false && "Variable not found in scope");
-			return;
-		}
-		int32_t var_offset = it->second;
-
-		// Load the variable into RAX
-		X64Register target_reg = X64Register::RAX;
-		auto load_opcodes = generateMovFromFrame(target_reg, var_offset);
-		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-		                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-
-		// Save the old value to result_var (post-decrement returns old value)
-		auto result_var = instruction.getOperandAs<TempVar>(0);
-		int32_t result_offset = getStackOffsetFromTempVar(result_var);
-		auto result_store = generateMovToFrame(target_reg, result_offset);
-		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
-		                       result_store.op_codes.begin() + result_store.size_in_bytes);
-
-		// Decrement the value: sub rax, 1
-		std::array<uint8_t, 4> decInst = { 0x48, 0x83, 0xE8, 0x01 };
-		decInst[2] = 0xE8 + static_cast<uint8_t>(target_reg);
-		textSectionData.insert(textSectionData.end(), decInst.begin(), decInst.end());
-
-		// Store the decremented value back to the variable
-		auto store_opcodes = generateMovToFrame(target_reg, var_offset);
-		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 	}
 
 	void handleAddressOf(const IrInstruction& instruction) {
@@ -7720,8 +8165,8 @@ private:
 	};
 	std::vector<PendingGlobalRelocation> pending_global_relocations_;
 
-	// Track which stack offsets hold reference parameters (need pointer dereferencing)
-	std::unordered_set<int32_t> reference_stack_offsets_;
+	// Track which stack offsets hold references (parameters or locals)
+	std::unordered_map<int32_t, ReferenceInfo> reference_stack_info_;
 };
 
 

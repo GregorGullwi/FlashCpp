@@ -2432,6 +2432,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Get member size and alignment
 		size_t member_size = type_spec.size_in_bits() / 8;
+		size_t referenced_size_bits = type_spec.size_in_bits();
 		size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 		// For struct types, get size and alignment from the struct type info
@@ -2447,11 +2448,19 @@ ParseResult Parser::parse_struct_declaration()
 
 			if (member_type_info && member_type_info->getStructInfo()) {
 				member_size = member_type_info->getStructInfo()->total_size;
+				referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
 				member_alignment = member_type_info->getStructInfo()->alignment;
 			}
 		}
 
 		// Add member to struct layout with default initializer
+		bool is_ref_member = type_spec.is_reference();
+		bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+		if (is_ref_member) {
+			member_size = sizeof(void*);
+			referenced_size_bits = referenced_size_bits ? referenced_size_bits : (type_spec.size_in_bits());
+			member_alignment = sizeof(void*);
+		}
 		struct_info->addMember(
 			std::string(decl.identifier_token().value()),
 			type_spec.type(),
@@ -2459,7 +2468,10 @@ ParseResult Parser::parse_struct_declaration()
 			member_size,
 			member_alignment,
 			member_decl.access,
-			member_decl.default_initializer
+			member_decl.default_initializer,
+			is_ref_member,
+			is_rvalue_ref_member,
+			referenced_size_bits
 		);
 	}
 
@@ -2849,7 +2861,62 @@ ParseResult Parser::parse_struct_declaration()
 			// Restore token position to the start of the function body
 			restore_token_position(delayed.body_start);
 
-			if (!delayed.is_constructor && !delayed.is_destructor && delayed.func_node) {
+			if (delayed.is_constructor && delayed.ctor_node) {
+				gSymbolTable.enter_scope(ScopeType::Function);
+				current_function_ = nullptr;
+				member_function_context_stack_.push_back({
+					delayed.struct_name,
+					delayed.struct_type_index,
+					delayed.struct_node
+				});
+
+				for (const auto& param : delayed.ctor_node->parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& param_decl = param.as<DeclarationNode>();
+						gSymbolTable.insert(param_decl.identifier_token().value(), param);
+					}
+				}
+
+				auto block_result = parse_block();
+				if (block_result.is_error()) {
+					current_template_param_names_.clear();
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					struct_parsing_context_stack_.pop_back();
+					return block_result;
+				}
+
+				if (auto block = block_result.node()) {
+					delayed.ctor_node->set_definition(*block);
+				}
+
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+			} else if (delayed.is_destructor && delayed.dtor_node) {
+				gSymbolTable.enter_scope(ScopeType::Function);
+				current_function_ = nullptr;
+				member_function_context_stack_.push_back({
+					delayed.struct_name,
+					delayed.struct_type_index,
+					delayed.struct_node
+				});
+
+				auto block_result = parse_block();
+				if (block_result.is_error()) {
+					current_template_param_names_.clear();
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					struct_parsing_context_stack_.pop_back();
+					return block_result;
+				}
+
+				if (auto block = block_result.node()) {
+					delayed.dtor_node->set_definition(*block);
+				}
+
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+			} else if (delayed.func_node) {
 				// Parse regular member function body
 				gSymbolTable.enter_scope(ScopeType::Function);
 
@@ -2894,10 +2961,11 @@ ParseResult Parser::parse_struct_declaration()
 
 				// Clean up context
 				current_function_ = nullptr;
-				current_template_param_names_.clear();
 				member_function_context_stack_.pop_back();
 				gSymbolTable.exit_scope();
 			}
+
+			current_template_param_names_.clear();
 		}
 
 		// Restore position after struct
@@ -3418,8 +3486,32 @@ ParseResult Parser::parse_typedef_declaration()
 			const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 			size_t member_size = get_type_size_bits(member_type_spec.type()) / 8;
+			size_t referenced_size_bits = member_type_spec.size_in_bits();
 			size_t member_alignment = get_type_alignment(member_type_spec.type(), member_size);
 
+			if (member_type_spec.type() == Type::Struct) {
+				const TypeInfo* member_type_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == member_type_spec.type_index()) {
+						member_type_info = &ti;
+						break;
+					}
+				}
+
+				if (member_type_info && member_type_info->getStructInfo()) {
+					member_size = member_type_info->getStructInfo()->total_size;
+					referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+					member_alignment = member_type_info->getStructInfo()->alignment;
+				}
+			}
+
+			bool is_ref_member = member_type_spec.is_reference();
+			bool is_rvalue_ref_member = member_type_spec.is_rvalue_reference();
+			if (is_ref_member) {
+				member_size = sizeof(void*);
+				referenced_size_bits = referenced_size_bits ? referenced_size_bits : member_type_spec.size_in_bits();
+				member_alignment = sizeof(void*);
+			}
 			struct_info->addMember(
 				std::string(decl.identifier_token().value()),
 				member_type_spec.type(),
@@ -3427,7 +3519,10 @@ ParseResult Parser::parse_typedef_declaration()
 				member_size,
 				member_alignment,
 				member_decl.access,
-				member_decl.default_initializer
+				member_decl.default_initializer,
+				is_ref_member,
+				is_rvalue_ref_member,
+				referenced_size_bits
 			);
 		}
 
@@ -8590,16 +8685,16 @@ ParseResult Parser::parse_lambda_expression() {
             Type member_type;
             TypeIndex type_index = 0;
 
-            if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
-                // By-reference capture: store a pointer (8 bytes on x64)
-                // We store the base type (e.g., Int) but the member will be accessed as a pointer
-                member_size = 8;
-                member_alignment = 8;
-                member_type = var_type.type();
-                if (var_type.type() == Type::Struct) {
-                    type_index = var_type.type_index();
-                }
-            } else {
+			if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+				// By-reference capture: store a pointer (8 bytes on x64)
+				// We store the base type (e.g., Int) but the member will be accessed as a pointer
+				member_size = 8;
+				member_alignment = 8;
+				member_type = var_type.type();
+				if (var_type.type() == Type::Struct) {
+					type_index = var_type.type_index();
+				}
+			} else {
                 // By-value capture: store the actual value
                 member_size = var_type.size_in_bits() / 8;
                 member_alignment = member_size;  // Simple alignment = size
@@ -8609,14 +8704,35 @@ ParseResult Parser::parse_lambda_expression() {
                 }
             }
 
-            closure_struct_info->addMember(
-                std::string(var_name),
-                member_type,
-                type_index,
-                member_size,
-                member_alignment,
-                AccessSpecifier::Public
-            );
+			size_t referenced_size_bits = member_size * 8;
+			bool is_ref_capture = (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference);
+			if (is_ref_capture) {
+				referenced_size_bits = var_type.size_in_bits();
+				if (referenced_size_bits == 0 && var_type.type() == Type::Struct) {
+					const TypeInfo* member_type_info = nullptr;
+					for (const auto& ti : gTypeInfo) {
+						if (ti.type_index_ == var_type.type_index()) {
+							member_type_info = &ti;
+							break;
+						}
+					}
+					if (member_type_info && member_type_info->getStructInfo()) {
+						referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+					}
+				}
+			}
+			closure_struct_info->addMember(
+				std::string(var_name),
+				member_type,
+				type_index,
+				member_size,
+				member_alignment,
+				AccessSpecifier::Public,
+				std::nullopt,
+				is_ref_capture,
+				false,
+				referenced_size_bits
+			);
         }
 
         // addMember() already updates total_size and alignment, but ensure minimum size of 1
@@ -9868,8 +9984,31 @@ ParseResult Parser::parse_template_declaration() {
 
 				// Calculate member size and alignment
 				size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+				size_t referenced_size_bits = type_spec.size_in_bits();
 				size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
+				if (type_spec.type() == Type::Struct) {
+					const TypeInfo* member_type_info = nullptr;
+					for (const auto& ti : gTypeInfo) {
+						if (ti.type_index_ == type_spec.type_index()) {
+							member_type_info = &ti;
+							break;
+						}
+					}
+					if (member_type_info && member_type_info->getStructInfo()) {
+						member_size = member_type_info->getStructInfo()->total_size;
+						referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+						member_alignment = member_type_info->getStructInfo()->alignment;
+					}
+				}
+
+				bool is_ref_member = type_spec.is_reference();
+				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+				if (is_ref_member) {
+					member_size = sizeof(void*);
+					referenced_size_bits = referenced_size_bits ? referenced_size_bits : type_spec.size_in_bits();
+					member_alignment = sizeof(void*);
+				}
 				struct_info->addMember(
 					std::string(decl.identifier_token().value()),
 					type_spec.type(),
@@ -9877,7 +10016,10 @@ ParseResult Parser::parse_template_declaration() {
 					member_size,
 					member_alignment,
 					member_decl.access,
-					member_decl.default_initializer
+					member_decl.default_initializer,
+					is_ref_member,
+					is_rvalue_ref_member,
+					referenced_size_bits
 				);
 			}
 
@@ -10100,6 +10242,8 @@ ParseResult Parser::parse_template_declaration() {
 				size_t member_size = get_type_size_bits(type_spec.type()) / 8;
 				size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 				
+				bool is_ref_member = type_spec.is_reference();
+				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
 				struct_info->addMember(
 					std::string(decl.identifier_token().value()),
 					type_spec.type(),
@@ -10107,7 +10251,10 @@ ParseResult Parser::parse_template_declaration() {
 					member_size,
 					member_alignment,
 					member_decl.access,
-					member_decl.default_initializer
+					member_decl.default_initializer,
+					is_ref_member,
+					is_rvalue_ref_member,
+					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0
 				);
 			}
 			
@@ -11733,6 +11880,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 			
+			bool is_ref_member = type_spec.is_reference();
+			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
 			struct_info->addMember(
 				std::string(decl.identifier_token().value()),
 				type_spec.type(),
@@ -11740,7 +11889,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_size,
 				member_alignment,
 				member_decl.access,
-				member_decl.default_initializer
+				member_decl.default_initializer,
+				is_ref_member,
+				is_rvalue_ref_member,
+				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0
 			);
 		}
 		
@@ -12026,6 +12178,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 		}
 
+		// Preserve reference qualifiers from the original type
+		if (type_spec.is_rvalue_reference()) {
+			substituted_type_spec.set_reference(true);  // true for rvalue reference
+		} else if (type_spec.is_reference()) {
+			substituted_type_spec.set_reference(false);  // false for lvalue reference
+		}
+		
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
 
@@ -12054,8 +12213,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_size = get_type_size_bits(member_type) / 8;
 			}
 		}
-		size_t member_alignment = get_type_alignment(member_type, member_size);
 
+		size_t member_alignment = get_type_alignment(member_type, member_size);
+		bool is_ref_member = type_spec.is_reference();
+		bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+	
+		// For reference members, we need to pass the size of the referenced type, not the pointer size
+		size_t referenced_size_bits = 0;
+		if (is_ref_member || is_rvalue_ref_member) {
+			referenced_size_bits = get_type_size_bits(member_type);
+		}
+	
 		struct_info->addMember(
 			std::string(decl.identifier_token().value()),
 			member_type,
@@ -12063,7 +12231,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_size,
 			member_alignment,
 			member_decl.access,
-			member_decl.default_initializer
+			member_decl.default_initializer,
+			is_ref_member,
+			is_rvalue_ref_member,
+			referenced_size_bits
 		);
 	}
 
@@ -12138,6 +12309,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				size_t member_alignment = get_type_alignment(substituted_type_spec.type(), member_size);
 				
+				bool is_ref_member = substituted_type_spec.is_reference();
+				bool is_rvalue_ref_member = substituted_type_spec.is_rvalue_reference();
 				nested_struct_info->addMember(
 					std::string(decl.identifier_token().value()),
 					substituted_type_spec.type(),
@@ -12145,7 +12318,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_size,
 					member_alignment,
 					member_decl.access,
-					member_decl.default_initializer
+					member_decl.default_initializer,
+					is_ref_member,
+					is_rvalue_ref_member,
+					(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(substituted_type_spec.type()) : 0
 				);
 			}
 			
@@ -12312,7 +12488,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Create a new constructor declaration with substituted body
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-						ctor_decl.struct_name(), ctor_decl.name()
+						instantiated_name,
+						instantiated_name
 					);
 					
 					// Copy parameters
@@ -12379,8 +12556,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::cerr << "DEBUG: substituteTemplateParameters completed for destructor\n";
 					
 					// Create a new destructor declaration with substituted body
+					std::string_view specialized_dtor_name = StringBuilder()
+						.append("~")
+						.append(instantiated_name)
+						.commit();
 					auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
-						dtor_decl.struct_name(), dtor_decl.name()
+						instantiated_name,
+						specialized_dtor_name
 					);
 					
 					new_dtor_ref.set_definition(substituted_body);

@@ -2163,8 +2163,8 @@ public:
 		case IrOpcode::MemberAccess:
 		{
 			// %result = member_access [MemberType][MemberSize] %object, member_name, offset
-			// Format: [result_var, member_type, member_size, object_name, member_name, offset]
-			assert(getOperandCount() == 6 && "MemberAccess instruction must have exactly 6 operands");
+			// Format: [result_var, member_type, member_size, object_name, member_name, offset, is_ref?, is_rvalue_ref?, referenced_bits?]
+			assert(getOperandCount() >= 6 && "MemberAccess instruction must have at least 6 operands");
 			if (getOperandCount() >= 6) {
 				oss << '%';
 				if (isOperandType<TempVar>(0))
@@ -2183,6 +2183,9 @@ public:
 
 				oss << "." << getOperandAs<std::string_view>(4);
 				oss << " (offset: " << getOperandAs<int>(5) << ")";
+				if (getOperandCount() >= 9 && getOperandAs<bool>(6)) {
+					oss << " [ref, size=" << getOperandAs<int>(8) << "]";
+				}
 			}
 		}
 		break;
@@ -2190,8 +2193,8 @@ public:
 		case IrOpcode::MemberStore:
 		{
 			// member_store [MemberType][MemberSize] %object, member_name, offset, %value
-			// Format: [member_type, member_size, object_name, member_name, offset, value]
-			assert(getOperandCount() == 6 && "MemberStore instruction must have exactly 6 operands");
+			// Format: [member_type, member_size, object_name, member_name, offset, is_ref?, is_rvalue_ref?, referenced_bits?, value]
+			assert(getOperandCount() >= 6 && "MemberStore instruction must have at least 6 operands");
 			if (getOperandCount() >= 6) {
 				oss << "member_store ";
 				oss << getOperandAsTypeString(0) << getOperandAsIntSafe(1) << " ";
@@ -2205,17 +2208,22 @@ public:
 				oss << ".";
 				if (getOperandCount() > 3 && isOperandType<std::string_view>(3))
 					oss << getOperandAs<std::string_view>(3);
-				oss << " (offset: " << getOperandAsIntSafe(4) << "), ";
+				oss << " (offset: " << getOperandAsIntSafe(4) << ")";
+				if (getOperandCount() >= 9 && getOperandAs<bool>(5)) {
+					oss << " [ref, size=" << getOperandAsIntSafe(7) << "]";
+				}
+				oss << ", ";
 
 				// Value
-				if (isOperandType<TempVar>(5))
-					oss << '%' << getOperandAs<TempVar>(5).var_number;
-				else if (isOperandType<std::string_view>(5))
-					oss << '%' << getOperandAs<std::string_view>(5);
-				else if (isOperandType<int>(5))
-					oss << getOperandAs<int>(5);
-				else if (isOperandType<unsigned long long>(5))
-					oss << getOperandAs<unsigned long long>(5);
+				size_t value_index = (getOperandCount() >= 9) ? 8 : 5;
+				if (isOperandType<TempVar>(value_index))
+					oss << '%' << getOperandAs<TempVar>(value_index).var_number;
+				else if (isOperandType<std::string_view>(value_index))
+					oss << '%' << getOperandAs<std::string_view>(value_index);
+				else if (isOperandType<int>(value_index))
+					oss << getOperandAs<int>(value_index);
+				else if (isOperandType<unsigned long long>(value_index))
+					oss << getOperandAs<unsigned long long>(value_index);
 			}
 		}
 		break;
@@ -2902,10 +2910,10 @@ public:
 		break;
 
 		case IrOpcode::VariableDecl:
-			// Format: [type, size, name, custom_alignment] or
-			//         [type, size, name, custom_alignment, array_type, array_size_bits, array_size_value] or
-			//         [type, size, name, custom_alignment, init_type, init_size, init_value]
-			assert((getOperandCount() == 4 || getOperandCount() == 7) && "VariableDecl instruction must have exactly 4 or 7 operands");
+		{
+			// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, (array_size?)?, (initializer?)?]
+			assert(getOperandCount() >= 6 && (getOperandCount() - 6) % 3 == 0 && getOperandCount() <= 12 &&
+			       "VariableDecl instruction must have 6 operands plus optional 3-operand blocks for arrays/initializers");
 			oss << "%";
 			if (getOperandCount() > 2 && isOperandType<std::string_view>(2))
 				oss << getOperandAs<std::string_view>(2);
@@ -2916,24 +2924,32 @@ public:
 					oss << " alignas(" << alignment << ")";
 				}
 			}
-			if (getOperandCount() == 7) {
+			oss << (getOperandAs<bool>(4) ? " [&]" : "");
+			const size_t array_info_index = 6;
+			bool has_array_info = getOperandCount() >= array_info_index + 3 &&
+			                     isOperandType<Type>(array_info_index);
+			size_t initializer_index = has_array_info ? array_info_index + 3 : array_info_index;
+			bool has_initializer = getOperandCount() >= initializer_index + 3;
+			if (has_initializer) {
+				size_t init_value_index = initializer_index + 2;
 				oss << "\nassign %";
 				if (isOperandType<std::string_view>(2))
 					oss << getOperandAs<std::string_view>(2);
 				oss << " = ";
-				// Check if operand 6 is a literal value or a variable/TempVar
-				if (isOperandType<unsigned long long>(6))
-					oss << getOperandAs<unsigned long long>(6);
-				else if (isOperandType<int>(6))
-					oss << getOperandAs<int>(6);
-				else if (isOperandType<double>(6))
-					oss << getOperandAs<double>(6);
-				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).var_number;
-				else if (isOperandType<std::string_view>(6))
-					oss << '%' << getOperandAs<std::string_view>(6);
+				// Check if operand is a literal value or a variable/TempVar
+				if (isOperandType<unsigned long long>(init_value_index))
+					oss << getOperandAs<unsigned long long>(init_value_index);
+				else if (isOperandType<int>(init_value_index))
+					oss << getOperandAs<int>(init_value_index);
+				else if (isOperandType<double>(init_value_index))
+					oss << getOperandAs<double>(init_value_index);
+				else if (isOperandType<TempVar>(init_value_index))
+					oss << '%' << getOperandAs<TempVar>(init_value_index).var_number;
+				else if (isOperandType<std::string_view>(init_value_index))
+					oss << '%' << getOperandAs<std::string_view>(init_value_index);
 			}
 			break;
+		}
 
 		case IrOpcode::GlobalVariableDecl:
 		{

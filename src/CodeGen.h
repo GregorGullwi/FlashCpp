@@ -419,6 +419,17 @@ private:
 		return false;
 	}
 
+	const DeclarationNode& requireDeclarationNode(const ASTNode& node, std::string_view context) const {
+		try {
+			return node.as<DeclarationNode>();
+		} catch (...) {
+			std::cerr << "BAD DeclarationNode cast in " << context
+			          << ": type_name=" << node.type_name()
+			          << " has_value=" << node.has_value() << "\n";
+			throw;
+		}
+	}
+
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		if (!node.get_definition().has_value()) {
 			std::cerr << "DEBUG: Function has no definition, skipping\n";
@@ -626,17 +637,26 @@ private:
 							load_operands.emplace_back(std::string_view("other"));  // Load from 'other' parameter
 							load_operands.emplace_back(std::string_view(member.name));
 							load_operands.emplace_back(static_cast<int>(member.offset));
+							load_operands.emplace_back(member.is_reference);
+							load_operands.emplace_back(member.is_rvalue_reference);
+							load_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
+							load_operands.emplace_back(member.is_reference);
+							load_operands.emplace_back(member.is_rvalue_reference);
+							load_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
 
 							ir_.addInstruction(IrOpcode::MemberAccess, std::move(load_operands), func_decl.identifier_token());
 
 							// Then, store the member to 'this'
-							// Format: [member_type, member_size, object_name, member_name, offset, value]
+							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
 							std::vector<IrOperand> store_operands;
 							store_operands.emplace_back(member.type);
 							store_operands.emplace_back(static_cast<int>(member.size * 8));
 							store_operands.emplace_back(std::string_view("this"));  // Store to 'this'
 							store_operands.emplace_back(std::string_view(member.name));
 							store_operands.emplace_back(static_cast<int>(member.offset));
+							store_operands.emplace_back(member.is_reference);
+							store_operands.emplace_back(member.is_rvalue_reference);
+							store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
 							store_operands.emplace_back(member_value);
 
 							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), func_decl.identifier_token());
@@ -708,7 +728,17 @@ private:
 			for (const auto& member_func : node.member_functions()) {
 				std::cerr << "  Visiting member function\n";
 				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
-				visit(member_func.function_declaration);
+				try {
+					visit(member_func.function_declaration);
+				} catch (const std::exception& ex) {
+					std::cerr << "ERROR: Exception while visiting member function in struct "
+					          << struct_name << ": " << ex.what() << "\n";
+					throw;
+				} catch (...) {
+					std::cerr << "ERROR: Unknown exception while visiting member function in struct "
+					          << struct_name << "\n";
+					throw;
+				}
 			}
 
 			// Generate global storage for static members
@@ -755,6 +785,9 @@ private:
 	}
 
 	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
+		std::cerr << "DEBUG visitConstructorDeclarationNode: struct=" << node.struct_name()
+		          << " name=" << node.name()
+		          << " has_definition=" << node.get_definition().has_value() << "\n";
 		if (!node.get_definition().has_value())
 			return;
 
@@ -783,7 +816,8 @@ private:
 		// Generate mangled name for constructor
 		std::vector<TypeSpecifierNode> param_types_for_mangling;
 		for (const auto& param : node.parameter_nodes()) {
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			std::cerr << "DEBUG ctor param node type (mangle): " << param.type_name() << " has_value=" << param.has_value() << "\n";
+			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor mangle params");
 			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
 		}
 		
@@ -805,7 +839,8 @@ private:
 
 		// Add parameter types to constructor declaration
 		for (const auto& param : node.parameter_nodes()) {
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			std::cerr << "DEBUG ctor param node type (decl): " << param.type_name() << " has_value=" << param.has_value() << "\n";
+			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 			ctorDeclOperands.emplace_back(param_type.type());
@@ -844,14 +879,17 @@ private:
 
 		// Add parameters to symbol table
 		for (const auto& param : node.parameter_nodes()) {
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			std::cerr << "DEBUG ctor param node type (symbol): " << param.type_name() << " has_value=" << param.has_value() << "\n";
+			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor symbol table");
 			symbol_table.insert(param_decl.identifier_token().value(), param);
 		}
+		std::cerr << "DEBUG ctor stage: symbol table populated for " << node.parameter_nodes().size() << " params\n";
 
 		// C++11 Delegating constructor: if present, ONLY call the target constructor
 		// No base class or member initialization should happen
 		if (node.delegating_initializer().has_value()) {
 			const auto& delegating_init = node.delegating_initializer().value();
+			std::cerr << "DEBUG ctor stage: delegating initializer detected\n";
 			
 			// Build constructor call: StructName::StructName(this, args...)
 			std::vector<IrOperand> ctor_operands;
@@ -879,6 +917,7 @@ private:
 		// 3. Constructor body
 
 		// Look up the struct type to get base class and member information
+		std::cerr << "DEBUG ctor stage: entering base/member initialization\n";
 		auto struct_type_it = gTypesByName.find(node.struct_name());
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
@@ -1007,6 +1046,9 @@ private:
 							store_operands.emplace_back(std::string_view("this"));
 							store_operands.emplace_back(std::string_view(member.name));
 							store_operands.emplace_back(static_cast<int>(member.offset));
+							store_operands.emplace_back(member.is_reference);
+							store_operands.emplace_back(member.is_rvalue_reference);
+							store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
 							store_operands.emplace_back(member_value);  // Value from 'other'
 
 							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
@@ -1081,6 +1123,12 @@ private:
 						store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
 						store_operands.emplace_back(std::string_view(member.name));  // member name
 						store_operands.emplace_back(static_cast<int>(member.offset));  // member offset
+						store_operands.emplace_back(member.is_reference);
+						store_operands.emplace_back(member.is_rvalue_reference);
+						store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
+						store_operands.emplace_back(member.is_reference);
+						store_operands.emplace_back(member.is_rvalue_reference);
+						store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
 
 						// Check for explicit initializer first (highest precedence)
 						auto explicit_it = explicit_inits.find(member.name);
@@ -1128,10 +1176,15 @@ private:
 		}
 
 		// Visit the constructor body
+		std::cerr << "DEBUG ctor stage: visiting body\n";
 		const BlockNode& block = node.get_definition().value().as<BlockNode>();
+		size_t ctor_stmt_index = 0;
 		block.get_statements().visit([&](const ASTNode& statement) {
+			std::cerr << "DEBUG ctor body stmt " << ctor_stmt_index++
+			          << " type=" << statement.type_name() << "\n";
 			visit(statement);
 		});
+		std::cerr << "DEBUG ctor stage: body visit complete\n";
 
 		// Add implicit return for constructor (constructors don't have explicit return statements)
 		// Format: [type, size, value] - for void return, value is 0
@@ -1142,6 +1195,9 @@ private:
 	}
 
 	void visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
+		std::cerr << "DEBUG visitDestructorDeclarationNode: struct=" << node.struct_name()
+		          << " name=" << node.name()
+		          << " has_definition=" << node.get_definition().has_value() << "\n";
 		if (!node.get_definition().has_value())
 			return;
 
@@ -1924,6 +1980,8 @@ private:
 		operands.emplace_back(static_cast<int>(type_node.size_in_bits()));
 		operands.emplace_back(decl.identifier_token().value());
 		operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
+		operands.emplace_back(type_node.is_reference());
+		operands.emplace_back(type_node.is_rvalue_reference());
 
 		// For arrays, add the array size
 		if (decl.is_array()) {
@@ -2024,6 +2082,9 @@ private:
 									member_store_operands.emplace_back(decl.identifier_token().value());
 									member_store_operands.emplace_back(std::string_view(member.name));
 									member_store_operands.emplace_back(static_cast<int>(member.offset));
+									member_store_operands.emplace_back(member.is_reference);
+									member_store_operands.emplace_back(member.is_rvalue_reference);
+									member_store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
 
 									// Check if this member has an initializer
 									if (member_values.count(member.name)) {
@@ -2274,6 +2335,9 @@ private:
 							ptr_operands.emplace_back(std::string_view("this"));
 							ptr_operands.emplace_back(std::string_view(member->name));
 							ptr_operands.emplace_back(static_cast<int>(member->offset));
+							ptr_operands.emplace_back(member->is_reference);
+							ptr_operands.emplace_back(member->is_rvalue_reference);
+							ptr_operands.emplace_back(static_cast<int>(member->referenced_size_bits));
 							ir_.addInstruction(IrOpcode::MemberAccess, std::move(ptr_operands), Token());
 
 							// The ptr_temp now contains the address of the captured variable
@@ -2335,6 +2399,9 @@ private:
 						operands.emplace_back(std::string_view("this"));  // implicit this pointer
 						operands.emplace_back(std::string_view(member->name));  // member name
 						operands.emplace_back(static_cast<int>(member->offset));
+						operands.emplace_back(member->is_reference);
+						operands.emplace_back(member->is_rvalue_reference);
+						operands.emplace_back(static_cast<int>(member->referenced_size_bits));
 						ir_.addInstruction(IrOpcode::MemberAccess, std::move(operands), Token());
 						return { member->type, static_cast<int>(member->size * 8), result_temp };
 					}
@@ -2670,8 +2737,56 @@ private:
 	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode) {
 		std::vector<IrOperand> irOperands;
 
-		// Generate IR for the operand
-		auto operandIrOperands = visitExpressionNode(unaryOperatorNode.get_operand().as<ExpressionNode>());
+		auto tryBuildIdentifierOperand = [&](const IdentifierNode& identifier, std::vector<IrOperand>& out) -> bool {
+			std::string identifier_name(identifier.name());
+
+			// Static local variables are stored as globals with mangled names
+			auto static_local_it = static_local_names_.find(identifier_name);
+			if (static_local_it != static_local_names_.end()) {
+				out.clear();
+				out.emplace_back(static_local_it->second.type);
+				out.emplace_back(static_cast<int>(static_local_it->second.size_in_bits));
+				out.emplace_back(static_local_it->second.mangled_name);
+				return true;
+			}
+
+			std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(identifier.name());
+			}
+			if (!symbol.has_value()) {
+				return false;
+			}
+
+			const TypeSpecifierNode* type_node = nullptr;
+			if (symbol->is<DeclarationNode>()) {
+				type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			} else if (symbol->is<VariableDeclarationNode>()) {
+				type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+			} else {
+				return false;
+			}
+
+			out.clear();
+			out.emplace_back(type_node->type());
+			out.emplace_back(static_cast<int>(type_node->size_in_bits()));
+			out.emplace_back(identifier.name());
+			return true;
+		};
+
+		std::vector<IrOperand> operandIrOperands;
+		bool operandHandledAsIdentifier = false;
+		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+				operandHandledAsIdentifier = tryBuildIdentifierOperand(identifier, operandIrOperands);
+			}
+		}
+
+		if (!operandHandledAsIdentifier) {
+			operandIrOperands = visitExpressionNode(unaryOperatorNode.get_operand().as<ExpressionNode>());
+		}
 
 		// Get the type of the operand
 		Type operandType = std::get<Type>(operandIrOperands[0]);
@@ -3024,12 +3139,15 @@ private:
 							return { Type::Int, 32, TempVar{0} };
 						}
 
-						// Build MemberStore IR operands: [member_type, member_size, object_name, member_name, offset, value]
+						// Build MemberStore IR operands: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits, value]
 						irOperands.emplace_back(member->type);
 						irOperands.emplace_back(static_cast<int>(member->size * 8));
 						irOperands.emplace_back(object_name);
 						irOperands.emplace_back(member_name);
 						irOperands.emplace_back(static_cast<int>(member->offset));
+						irOperands.emplace_back(member->is_reference);
+						irOperands.emplace_back(member->is_rvalue_reference);
+						irOperands.emplace_back(static_cast<int>(member->referenced_size_bits));
 
 						// Add only the value from RHS (rhsIrOperands = [type, size, value])
 						// We only need the value (index 2)
@@ -3123,13 +3241,16 @@ private:
 							// Generate IR for the RHS value
 							auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
-							// Build MemberStore IR operands: [member_type, member_size, object_name, member_name, offset, value]
+							// Build MemberStore IR operands: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits, value]
 							std::vector<IrOperand> irOperands;
 							irOperands.emplace_back(member->type);
 							irOperands.emplace_back(static_cast<int>(member->size * 8));
 							irOperands.emplace_back(std::string_view("this"));  // implicit this pointer
 							irOperands.emplace_back(lhs_name);
 							irOperands.emplace_back(static_cast<int>(member->offset));
+							irOperands.emplace_back(member->is_reference);
+							irOperands.emplace_back(member->is_rvalue_reference);
+							irOperands.emplace_back(static_cast<int>(member->referenced_size_bits));
 
 							// Add only the value from RHS (rhsIrOperands = [type, size, value])
 							if (rhsIrOperands.size() >= 3) {
@@ -3508,8 +3629,29 @@ private:
 			// For variables, we need to check if the parameter expects a reference
 			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-				const auto& decl_node = symbol->as<DeclarationNode>();
+				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(identifier.name());
+				}
+				if (!symbol.has_value()) {
+					std::cerr << "ERROR: Symbol '" << identifier.name() << "' not found for function argument\n";
+					std::cerr << "  Current function: " << current_function_name_ << "\n";
+					throw std::runtime_error("Missing symbol for function argument");
+				}
+
+				const DeclarationNode* decl_ptr = nullptr;
+				if (symbol->is<DeclarationNode>()) {
+					decl_ptr = &symbol->as<DeclarationNode>();
+				} else if (symbol->is<VariableDeclarationNode>()) {
+					decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
+				}
+
+				if (!decl_ptr) {
+					std::cerr << "ERROR: Function argument '" << identifier.name() << "' is not a DeclarationNode\n";
+					throw std::runtime_error("Unexpected symbol type for function argument");
+				}
+
+				const auto& decl_node = *decl_ptr;
 				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 				// Check if this is an array - arrays decay to pointers when passed to functions
@@ -4412,7 +4554,7 @@ private:
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
-		// Build IR operands: [result_var, member_type, member_size, object_name/temp, member_name, offset]
+		// Build IR operands: [result_var, member_type, member_size, object_name/temp, member_name, offset, is_ref, is_rvalue_ref, referenced_bits]
 		irOperands.emplace_back(result_var);
 		irOperands.emplace_back(member->type);
 		irOperands.emplace_back(static_cast<int>(member->size * 8));  // Convert bytes to bits
@@ -4426,11 +4568,14 @@ private:
 
 		irOperands.emplace_back(std::string_view(member_name));
 		irOperands.emplace_back(static_cast<int>(member->offset));
+	
+		// Add reference metadata (required for proper handling of reference members)
+		irOperands.emplace_back(member->is_reference);
+		irOperands.emplace_back(member->is_rvalue_reference);
+		irOperands.emplace_back(static_cast<int>(member->referenced_size_bits));
 
 		// Add the member access instruction
-		ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());
-
-		// Return the result variable with its type, size, and optionally type_index
+		ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());		// Return the result variable with its type, size, and optionally type_index
 		// For struct types, we need to include type_index for nested member access (e.g., obj.inner.member)
 		// For primitive types, we only return 3 operands to maintain compatibility with binary operators
 		if (member->type == Type::Struct) {
@@ -4955,12 +5100,14 @@ private:
 		std::string closure_var_name = "__closure_" + std::to_string(lambda_info.lambda_id);
 
 		// Declare the closure variable
-		// Format: [type, size, name, custom_alignment]
+		// Format: [type, size, name, custom_alignment, is_reference, is_rvalue_reference]
 		std::vector<IrOperand> decl_operands;
 		decl_operands.emplace_back(Type::Struct);
 		decl_operands.emplace_back(static_cast<int>(closure_type->getStructInfo()->total_size * 8));
 		decl_operands.emplace_back(std::string(closure_var_name));  // Use std::string
 		decl_operands.emplace_back(static_cast<unsigned long long>(0));  // custom_alignment
+		decl_operands.emplace_back(false);  // Lambdas never declare reference closures directly
+		decl_operands.emplace_back(false);
 		ir_.addInstruction(IrOpcode::VariableDecl, std::move(decl_operands), lambda.lambda_token());
 
 		// Now initialize captured members
