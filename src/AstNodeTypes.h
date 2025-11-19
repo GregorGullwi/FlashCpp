@@ -958,11 +958,11 @@ class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
-		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None) {}
+		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
-		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None) {}
+		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
-		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage) {}
+		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -1012,6 +1012,16 @@ public:
 	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
 	bool is_variadic() const { return is_variadic_; }
 
+	// Constexpr/constinit/consteval support
+	void set_is_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
+	bool is_constexpr() const { return is_constexpr_; }
+
+	void set_is_constinit(bool is_constinit) { is_constinit_ = is_constinit; }
+	bool is_constinit() const { return is_constinit_; }
+
+	void set_is_consteval(bool is_consteval) { is_consteval_ = is_consteval; }
+	bool is_consteval() const { return is_consteval_; }
+
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
@@ -1024,6 +1034,9 @@ private:
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
 	CallingConvention calling_convention_ = CallingConvention::Default;  // Calling convention (__cdecl, __stdcall, etc.)
 	TokenPosition template_body_position_;  // Position of template body for delayed parsing
+	bool is_constexpr_;
+	bool is_constinit_;
+	bool is_consteval_;
 };
 
 class FunctionCallNode {
@@ -1222,6 +1235,39 @@ public:
 private:
 	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
 	ASTNode variable_declaration_;  // VariableDeclarationNode
+};
+
+// Storage class specifiers
+enum class StorageClass {
+	None,      // No storage class specified (automatic for local, external for global)
+	Static,    // static keyword
+	Extern,    // extern keyword
+	Register,  // register keyword (deprecated in C++17)
+	Mutable    // mutable keyword (for class members)
+};
+
+class VariableDeclarationNode {
+public:
+	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None)
+		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_constexpr_(false), is_constinit_(false) {}
+
+	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
+	const ASTNode& declaration_node() const { return declaration_node_; }
+	const std::optional<ASTNode>& initializer() const { return initializer_; }
+	StorageClass storage_class() const { return storage_class_; }
+
+	void set_is_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
+	bool is_constexpr() const { return is_constexpr_; }
+
+	void set_is_constinit(bool is_constinit) { is_constinit_ = is_constinit; }
+	bool is_constinit() const { return is_constinit_; }
+
+private:
+	ASTNode declaration_node_;
+	std::optional<ASTNode> initializer_;
+	StorageClass storage_class_;
+	bool is_constexpr_;
+	bool is_constinit_;
 };
 
 // Member initializer for constructor initializer lists
@@ -2064,31 +2110,6 @@ private:
 	std::vector<ASTNode> initializers_;
 	std::vector<bool> is_designated_;
 	std::vector<std::string> member_names_;
-};
-
-// Storage class specifiers
-enum class StorageClass {
-	None,      // No storage class specified (automatic for local, external for global)
-	Static,    // static keyword
-	Extern,    // extern keyword
-	Register,  // register keyword (deprecated in C++17)
-	Mutable    // mutable keyword (for class members)
-};
-
-class VariableDeclarationNode {
-public:
-	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None)
-		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class) {}
-
-	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
-	const ASTNode& declaration_node() const { return declaration_node_; }
-	const std::optional<ASTNode>& initializer() const { return initializer_; }
-	StorageClass storage_class() const { return storage_class_; }
-
-private:
-	ASTNode declaration_node_;
-	std::optional<ASTNode> initializer_;
-	StorageClass storage_class_;
 };
 
 class IfStatementNode {

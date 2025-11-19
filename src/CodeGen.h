@@ -1951,7 +1951,7 @@ private:
 				
 				if (init_node.is<ExpressionNode>()) {
 					// Try to evaluate as constant expression
-					ConstExpr::EvaluationContext ctx;
+					ConstExpr::EvaluationContext ctx(gSymbolTable);
 					auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 					
 					if (eval_result.success) {

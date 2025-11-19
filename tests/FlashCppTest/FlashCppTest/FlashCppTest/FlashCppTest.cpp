@@ -2304,3 +2304,41 @@ TEST_CASE("Templates:QualifiedId") {
 TEST_CASE("Templates:VariableTemplates") {
 	run_test_from_file("test_var_template_complete.cpp", "Variable templates with instantiation", false);
 }
+
+TEST_CASE("ConstExpr:Variables") {
+	run_test_from_file("test_constexpr_var.cpp", "Constexpr variables", false);
+}
+
+TEST_CASE("ConstInit:Variables") {
+	run_test_from_file("test_constinit.cpp", "Constinit variables", false);
+}
+
+TEST_CASE("ConstExpr:Functions") {
+	run_test_from_file("test_constexpr_func.cpp", "Constexpr functions", false);
+}
+
+TEST_CASE("ConstExpr:Loops") {
+	run_test_from_file("test_constexpr_loops.cpp", "Constexpr loops", false);
+}
+
+TEST_CASE("ConstExpr:Structs") {
+	run_test_from_file("test_constexpr_structs.cpp", "Constexpr structs and statics", false);
+}
+
+TEST_CASE("ConstExpr:Complete") {
+	run_test_from_file("test_constexpr_complete.cpp", "Constexpr comprehensive test - all working features", true);
+}
+
+TEST_CASE("ConstExpr:Simple") {
+	run_test_from_file("test_constexpr_simple.cpp", "Constexpr simple test", true);
+}
+
+TEST_CASE("ConstExpr:VarRef") {
+	run_test_from_file("test_constexpr_varref.cpp", "Constexpr variable references", true);
+}
+
+TEST_CASE("ConstExpr:UB") {
+	// This test is expected to fail compilation, but for now we just run it to ensure it doesn't crash the compiler
+	// In a real scenario, we would want to assert that compilation fails with specific errors
+	run_test_from_file("test_ub_fail.cpp", "Constexpr UB detection", false);
+}

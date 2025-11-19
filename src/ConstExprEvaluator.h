@@ -91,19 +91,41 @@ struct EvalResult {
 	}
 };
 
+// Storage duration for variable declarations
+enum class StorageDuration {
+	Automatic,    // Local variables (automatic storage)
+	Static,       // Static locals, static members
+	Thread,       // thread_local variables
+	Global        // Global/namespace scope variables
+};
+
 // Context for evaluation - provides access to compile-time information
 struct EvaluationContext {
-	// Symbol table for looking up constexpr variables/functions (future use)
-	const SymbolTable* symbols = nullptr;
+	// Symbol table for looking up constexpr variables/functions (required)
+	const SymbolTable* symbols;
 
 	// Type information for sizeof, alignof, etc. (future use)
 	const TypeInfo* type_info = nullptr;
 
-	// Maximum recursion depth for constexpr functions (future use)
+	// Storage duration of the variable being evaluated (for constinit validation)
+	StorageDuration storage_duration = StorageDuration::Automatic;
+
+	// Whether we're evaluating for constinit (requires static/thread storage duration)
+	bool is_constinit = false;
+
+	// Complexity limits to prevent infinite loops during evaluation
+	size_t step_count = 0;
+	size_t max_steps = 1000000;
+
+	// Maximum recursion depth for constexpr functions
 	size_t max_recursion_depth = 512;
 
-	// Track current recursion depth (future use)
+	// Track current recursion depth
 	size_t current_depth = 0;
+
+	// Constructor requires symbol table to prevent missing it
+	explicit EvaluationContext(const SymbolTable& symbol_table)
+		: symbols(&symbol_table) {}
 };
 
 // Main constant expression evaluator class
@@ -111,7 +133,12 @@ class Evaluator {
 public:
 	// Main evaluation entry point
 	// Evaluates a constant expression and returns the result
-	static EvalResult evaluate(const ASTNode& expr_node, const EvaluationContext& context) {
+	static EvalResult evaluate(const ASTNode& expr_node, EvaluationContext& context) {
+		// Check complexity limit
+		if (++context.step_count > context.max_steps) {
+			return EvalResult::error("Constexpr evaluation exceeded complexity limit (infinite loop?)");
+		}
+
 		// Evaluate a constant expression
 		// Returns the result or an error if not a constant expression
 
@@ -149,6 +176,21 @@ public:
 			return evaluate_constructor_call(std::get<ConstructorCallNode>(expr), context);
 		}
 
+		// For IdentifierNode (variable references like 'x' in 'constexpr int y = x + 1;')
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			return evaluate_identifier(std::get<IdentifierNode>(expr), context);
+		}
+
+		// For TernaryOperatorNode (condition ? true_expr : false_expr)
+		if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+			return evaluate_ternary_operator(std::get<TernaryOperatorNode>(expr), context);
+		}
+
+		// For FunctionCallNode (constexpr function calls)
+		if (std::holds_alternative<FunctionCallNode>(expr)) {
+			return evaluate_function_call(std::get<FunctionCallNode>(expr), context);
+		}
+
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
 	}
@@ -170,7 +212,7 @@ private:
 	}
 
 	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node, 
-	                                            std::string_view op, const EvaluationContext& context) {
+	                                            std::string_view op, EvaluationContext& context) {
 		// Recursively evaluate left and right operands
 		auto lhs_result = evaluate(lhs_node, context);
 		auto rhs_result = evaluate(rhs_node, context);
@@ -186,7 +228,7 @@ private:
 	}
 
 	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
-	                                           const EvaluationContext& context) {
+	                                           EvaluationContext& context) {
 		// Recursively evaluate operand
 		auto operand_result = evaluate(operand_node, context);
 
@@ -197,7 +239,7 @@ private:
 		return apply_unary_op(operand_result, op);
 	}
 
-	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, const EvaluationContext& context) {
+	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context) {
 		// sizeof is always a constant expression
 		// Get the actual size from the type
 		if (sizeof_expr.is_type()) {
@@ -216,7 +258,7 @@ private:
 		return EvalResult::error("sizeof with expression not yet supported");
 	}
 
-	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, const EvaluationContext& context) {
+	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context) {
 		// Constructor calls like float(3.14), int(100), double(2.718)
 		// These are essentially type conversions/casts in constant expressions
 		
@@ -270,6 +312,291 @@ private:
 			default:
 				return EvalResult::error("Unsupported type in constructor call for constant evaluation");
 		}
+	}
+
+	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context) {
+		// Look up the identifier in the symbol table
+		if (!context.symbols) {
+			return EvalResult::error("Cannot evaluate variable reference: no symbol table provided");
+		}
+
+		std::string_view var_name = identifier.name();
+		auto symbol_opt = context.symbols->lookup(var_name);
+		if (!symbol_opt.has_value()) {
+			return EvalResult::error("Undefined variable in constant expression: " + std::string(var_name));
+		}
+
+		const ASTNode& symbol_node = symbol_opt.value();
+		
+		// Check if it's a VariableDeclarationNode
+		if (!symbol_node.is<VariableDeclarationNode>()) {
+			return EvalResult::error("Identifier in constant expression is not a variable: " + std::string(var_name));
+		}
+
+		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+		
+		// Check if it's a constexpr variable
+		if (!var_decl.is_constexpr()) {
+			return EvalResult::error("Variable in constant expression must be constexpr: " + std::string(var_name));
+		}
+
+		// Get the initializer
+		const auto& initializer = var_decl.initializer();
+		if (!initializer.has_value()) {
+			return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
+		}
+
+		// Recursively evaluate the initializer
+		return evaluate(initializer.value(), context);
+	}
+
+	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context) {
+		// Evaluate the condition
+		auto cond_result = evaluate(ternary.condition(), context);
+		if (!cond_result.success) {
+			return cond_result;
+		}
+
+		// Evaluate the appropriate branch based on the condition
+		if (cond_result.as_bool()) {
+			return evaluate(ternary.true_expr(), context);
+		} else {
+			return evaluate(ternary.false_expr(), context);
+		}
+	}
+
+	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context) {
+		// Check recursion depth
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded");
+		}
+
+		// Get the function declaration
+		const DeclarationNode& func_decl_node = func_call.function_declaration();
+		
+		// Look up the function in the symbol table to get the FunctionDeclarationNode
+		if (!context.symbols) {
+			return EvalResult::error("Cannot evaluate function call: no symbol table provided");
+		}
+
+		std::string_view func_name = func_decl_node.identifier_token().value();
+		auto symbol_opt = context.symbols->lookup(func_name);
+		if (!symbol_opt.has_value()) {
+			return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
+		}
+
+		const ASTNode& symbol_node = symbol_opt.value();
+		
+		// Check if it's a FunctionDeclarationNode
+		if (!symbol_node.is<FunctionDeclarationNode>()) {
+			return EvalResult::error("Identifier is not a function: " + std::string(func_name));
+		}
+
+		const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
+		
+		// Check if it's a constexpr function
+		if (!func_decl.is_constexpr()) {
+			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+		}
+
+		// Get the function body
+		const auto& definition = func_decl.get_definition();
+		if (!definition.has_value()) {
+			return EvalResult::error("Constexpr function has no body: " + std::string(func_name));
+		}
+
+		// Evaluate arguments
+		const auto& arguments = func_call.arguments();
+		const auto& parameters = func_decl.parameter_nodes();
+		
+		if (arguments.size() != parameters.size()) {
+			return EvalResult::error("Function argument count mismatch in constant expression");
+		}
+
+		// Pass empty bindings for top-level function calls
+		std::unordered_map<std::string_view, EvalResult> empty_bindings;
+		return evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+	}
+
+	static EvalResult evaluate_function_call_with_bindings(
+		const FunctionDeclarationNode& func_decl,
+		const ChunkedVector<ASTNode>& arguments,
+		const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
+		EvaluationContext& context) {
+		
+		// Check recursion depth
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded");
+		}
+
+		// Get the function body
+		const auto& definition = func_decl.get_definition();
+		if (!definition.has_value()) {
+			return EvalResult::error("Constexpr function has no body");
+		}
+
+		// Evaluate arguments
+		const auto& parameters = func_decl.parameter_nodes();
+		
+		if (arguments.size() != parameters.size()) {
+			return EvalResult::error("Function argument count mismatch in constant expression");
+		}
+
+		// Create a new symbol table scope for the function
+		// We'll use a simple map to bind parameters to their evaluated values
+		std::unordered_map<std::string_view, EvalResult> param_bindings;
+		
+		for (size_t i = 0; i < arguments.size(); ++i) {
+			// Evaluate the argument with outer bindings (for nested calls)
+			auto arg_result = evaluate_expression_with_bindings(arguments[i], outer_bindings, context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			
+			// Get parameter name
+			const ASTNode& param_node = parameters[i];
+			if (!param_node.is<DeclarationNode>()) {
+				return EvalResult::error("Invalid parameter node");
+			}
+			
+			const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+			std::string_view param_name = param_decl.identifier_token().value();
+			
+			// Bind parameter to its value
+			param_bindings[param_name] = arg_result;
+		}
+
+		// Increase recursion depth
+		context.current_depth++;
+		
+		// Evaluate the function body with parameter bindings
+		const ASTNode& body_node = definition.value();
+		if (!body_node.is<BlockNode>()) {
+			context.current_depth--;
+			return EvalResult::error("Function body is not a block");
+		}
+		
+		const BlockNode& body = body_node.as<BlockNode>();
+		const auto& statements = body.get_statements();
+		
+		// For simple constexpr functions, we expect a single return statement
+		if (statements.size() != 1) {
+			context.current_depth--;
+			return EvalResult::error("Constexpr function must have a single return statement (complex statements not yet supported)");
+		}
+		
+		auto result = evaluate_statement_with_bindings(statements[0], param_bindings, context);
+		context.current_depth--;
+		return result;
+	}
+
+	static EvalResult evaluate_statement_with_bindings(
+		const ASTNode& stmt_node,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		// Check if it's a return statement
+		if (stmt_node.is<ReturnStatementNode>()) {
+			const ReturnStatementNode& ret_stmt = stmt_node.as<ReturnStatementNode>();
+			const auto& return_expr = ret_stmt.expression();
+			
+			if (!return_expr.has_value()) {
+				return EvalResult::error("Constexpr function return statement has no expression");
+			}
+			
+			return evaluate_expression_with_bindings(return_expr.value(), bindings, context);
+		}
+		
+		return EvalResult::error("Unsupported statement type in constexpr function");
+	}
+
+	static EvalResult evaluate_expression_with_bindings(
+		const ASTNode& expr_node,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		if (!expr_node.is<ExpressionNode>()) {
+			return EvalResult::error("Not an expression node");
+		}
+		
+		const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+		
+		// Check if it's an identifier that matches a parameter
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& id = std::get<IdentifierNode>(expr);
+			std::string_view name = id.name();
+			
+			// Check if it's a bound parameter
+			auto it = bindings.find(name);
+			if (it != bindings.end()) {
+				return it->second;  // Return the bound value
+			}
+			
+			// Not a parameter, evaluate normally
+			return evaluate_identifier(id, context);
+		}
+		
+		// For binary operators, recursively evaluate with bindings
+		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+			const auto& bin_op = std::get<BinaryOperatorNode>(expr);
+			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
+			auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+			
+			if (!lhs_result.success) return lhs_result;
+			if (!rhs_result.success) return rhs_result;
+			
+			return apply_binary_op(lhs_result, rhs_result, bin_op.op());
+		}
+		
+		// For ternary operators
+		if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+			const auto& ternary = std::get<TernaryOperatorNode>(expr);
+			auto cond_result = evaluate_expression_with_bindings(ternary.condition(), bindings, context);
+			
+			if (!cond_result.success) return cond_result;
+			
+			if (cond_result.as_bool()) {
+				return evaluate_expression_with_bindings(ternary.true_expr(), bindings, context);
+			} else {
+				return evaluate_expression_with_bindings(ternary.false_expr(), bindings, context);
+			}
+		}
+		
+		// For function calls (for recursion)
+		if (std::holds_alternative<FunctionCallNode>(expr)) {
+			const auto& func_call = std::get<FunctionCallNode>(expr);
+			
+			// Look up the function
+			const DeclarationNode& func_decl_node = func_call.function_declaration();
+			std::string_view func_name = func_decl_node.identifier_token().value();
+			
+			if (!context.symbols) {
+				return EvalResult::error("Cannot evaluate function call: no symbol table provided");
+			}
+			
+			auto symbol_opt = context.symbols->lookup(func_name);
+			if (!symbol_opt.has_value()) {
+				return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
+			}
+			
+			const ASTNode& symbol_node = symbol_opt.value();
+			if (!symbol_node.is<FunctionDeclarationNode>()) {
+				return EvalResult::error("Identifier is not a function: " + std::string(func_name));
+			}
+			
+			const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
+			
+			// Check if it's a constexpr function
+			if (!func_decl.is_constexpr()) {
+				return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+			}
+			
+			// Evaluate the function with bindings passed through
+			return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
+		}
+		
+		// For literals and other expressions without parameters, evaluate normally
+		return evaluate(expr_node, context);
 	}
 
 	// Helper functions for overflow-safe arithmetic using compiler builtins

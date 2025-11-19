@@ -1156,18 +1156,38 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	} else {
 		std::cerr << "<EOF>\n";
 	}
+
+	// Check for constexpr/constinit/consteval keywords
+	bool is_constexpr = false;
+	bool is_constinit = false;
+	bool is_consteval = false;
+
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view kw = peek_token()->value();
+		if (kw == "constexpr") {
+			is_constexpr = true;
+			consume_token();
+		} else if (kw == "constinit") {
+			is_constinit = true;
+			consume_token();
+		} else if (kw == "consteval") {
+			is_consteval = true;
+			consume_token();
+		} else {
+			break;
+		}
+	}
 	
-	// Parse the type specifier and identifier (name)
-	// This will also extract any calling convention that appears after the type
-	// and store it in last_calling_convention_
-	ParseResult type_and_name_result = parse_type_and_name();
-	if (type_and_name_result.is_error())
-		return type_and_name_result;
-	
-	// Use calling convention from attributes if specified, otherwise use the one from parse_type_and_name()
 	if (attr_info.calling_convention == CallingConvention::Default && 
 	    last_calling_convention_ != CallingConvention::Default) {
 		attr_info.calling_convention = last_calling_convention_;
+	}
+
+	// Parse the type specifier and identifier (name)
+	// This will also extract any calling convention that appears after the type
+	ParseResult type_and_name_result = parse_type_and_name();
+	if (type_and_name_result.is_error()) {
+		return type_and_name_result;
 	}
 
 	// First, try to parse as a function definition
@@ -1181,6 +1201,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			if (attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) {
 				func_node.set_linkage(attr_info.linkage);
 			}
+			func_node.set_is_constexpr(is_constexpr);
+			func_node.set_is_constinit(is_constinit);
+			func_node.set_is_consteval(is_consteval);
 		}
 		
 		// Continue with function-specific logic
@@ -1285,13 +1308,47 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 		// Create a global variable declaration node
 		// Reuse the existing decl_node from type_and_name_result
-		auto global_var_node = emplace_node<VariableDeclarationNode>(
+		auto [global_var_node, global_decl_node] = emplace_node_ref<VariableDeclarationNode>(
 			type_and_name_result.node().value(),  // Use the existing DeclarationNode
 			initializer
 		);
+		global_decl_node.set_is_constexpr(is_constexpr);
+		global_decl_node.set_is_constinit(is_constinit);
+
+		// Get identifier token for error reporting
+		const Token& identifier_token = decl_node.identifier_token();
+
+		// Semantic checks for constexpr/constinit - both require constant initializers
+		if (is_constexpr || is_constinit) {
+			const char* keyword_name = is_constexpr ? "constexpr" : "constinit";
+			
+			// Both constexpr and constinit require an initializer
+			if (!initializer.has_value()) {
+				return ParseResult::error(
+					std::string(keyword_name) + " variable must have an initializer", 
+					identifier_token
+				);
+			}
+			
+			// Evaluate the initializer to ensure it's a constant expression
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			eval_ctx.storage_duration = ConstExpr::StorageDuration::Global;  // Global scope
+			eval_ctx.is_constinit = is_constinit;
+			
+			auto eval_result = ConstExpr::Evaluator::evaluate(initializer.value(), eval_ctx);
+			if (!eval_result.success) {
+				return ParseResult::error(
+					std::string(keyword_name) + " variable initializer must be a constant expression: " + eval_result.error_message,
+					identifier_token
+				);
+			}
+			
+			// Note: The evaluated value could be stored in the VariableDeclarationNode for later use
+			// For now, we just validate that it can be evaluated
+		}
+
 
 		// Add to symbol table
-		const Token& identifier_token = decl_node.identifier_token();
 		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
 		}
@@ -3333,7 +3390,7 @@ ParseResult Parser::parse_static_assert()
 	}
 
 	// Evaluate the constant expression using ConstExprEvaluator
-	ConstExpr::EvaluationContext ctx;  // Empty context for now (no symbol table access needed)
+	ConstExpr::EvaluationContext ctx(gSymbolTable);
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 	
 	if (!eval_result.success) {
@@ -9797,6 +9854,9 @@ ParseResult Parser::parse_template_declaration() {
 			init_expr,
 			storage_class
 		);
+		
+		// Set constexpr flag if present
+		var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(is_constexpr);
 		
 		// Create TemplateVariableDeclarationNode
 		auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
