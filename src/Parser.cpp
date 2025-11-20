@@ -1318,8 +1318,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Get identifier token for error reporting
 		const Token& identifier_token = decl_node.identifier_token();
 
-		// Semantic checks for constexpr/constinit - both require constant initializers
-		if (is_constexpr || is_constinit) {
+		// Semantic checks for constexpr/constinit - only enforce for global/static variables
+		// For local constexpr variables, they can fall back to runtime initialization (like const)
+		bool is_global_scope = (gSymbolTable.get_current_scope_type() == ScopeType::Global);
+		
+		if ((is_constexpr || is_constinit) && is_global_scope) {
 			const char* keyword_name = is_constexpr ? "constexpr" : "constinit";
 			
 			// Both constexpr and constinit require an initializer
@@ -1332,7 +1335,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			
 			// Evaluate the initializer to ensure it's a constant expression
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			eval_ctx.storage_duration = ConstExpr::StorageDuration::Global;  // Global scope
+			eval_ctx.storage_duration = ConstExpr::StorageDuration::Global;
 			eval_ctx.is_constinit = is_constinit;
 			
 			auto eval_result = ConstExpr::Evaluator::evaluate(initializer.value(), eval_ctx);
@@ -1346,6 +1349,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// Note: The evaluated value could be stored in the VariableDeclarationNode for later use
 			// For now, we just validate that it can be evaluated
 		}
+		
+		// For local constexpr variables, treat them like const - no validation, just runtime initialization
+		// This follows C++ standard: constexpr means "can be used in constant expressions"
+		// but doesn't require compile-time evaluation for local variables
 
 
 		// Add to symbol table
@@ -4846,6 +4853,9 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"extern", &Parser::parse_variable_declaration},
 			{"register", &Parser::parse_variable_declaration},
 			{"mutable", &Parser::parse_variable_declaration},
+			{"constexpr", &Parser::parse_variable_declaration},
+			{"constinit", &Parser::parse_variable_declaration},
+			{"consteval", &Parser::parse_variable_declaration},
 			{"int", &Parser::parse_variable_declaration},
 			{"float", &Parser::parse_variable_declaration},
 			{"double", &Parser::parse_variable_declaration},
@@ -4984,6 +4994,21 @@ ParseResult Parser::parse_statement_or_declaration()
 
 ParseResult Parser::parse_variable_declaration()
 {
+	// Check for constexpr/constinit keywords (C++11/C++20)
+	bool is_constexpr = false;
+	bool is_constinit = false;
+	
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view keyword = peek_token()->value();
+		if (keyword == "constexpr") {
+			is_constexpr = true;
+			consume_token();
+		} else if (keyword == "constinit") {
+			is_constinit = true;
+			consume_token();
+		}
+	}
+	
 	// Check for storage class specifier (static, extern, etc.)
 	StorageClass storage_class = StorageClass::None;
 	Linkage linkage = Linkage::None;
