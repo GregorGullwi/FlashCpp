@@ -78,6 +78,7 @@
 - **Type casts**: C-style casts `(Type)expr` and C++ casts `static_cast<Type>(expr)` 🆕
 - **Constexpr**: Compile-time constant expression evaluation with `constexpr` variables and functions, including recursion and `static_assert` ✅ 🆕
 - **Preprocessor**: Macro expansion, conditional compilation, file inclusion, `#pragma pack`, function-like macros, variadic macros, token pasting, string concatenation, conditional expressions in macros
+- **Templates**: 95% complete (19/20 features) - class templates, function templates, variadic templates, partial/full specialization, CTAD, deduction guides, variable templates, template template parameters, static members, non-type parameters, if constexpr, fold expressions ✅
 
 ---
 
@@ -182,7 +183,7 @@ bool test_comparisons(double a, double b) {
 - ✅ **Trailing return types**: `auto func() -> ReturnType` syntax ✅
 - ✅ **Designated initializers**: `Type{.member = value}` aggregate initialization syntax ✅
 
-### **✅ Templates** - 90% Complete (18/20 Features)
+### **✅ Templates** - 95% Complete (19/20 Features)
 - ✅ **Basic templates**: Template instantiation, defaults, nested types, nullptr, type aliases
 - ✅ **Partial specialization**: Full pattern matching (T&, T&&, T*, const T) with specificity scoring
 - ✅ **Member function templates**: Template member functions with argument deduction
@@ -193,8 +194,8 @@ bool test_comparisons(double a, double b) {
 - ✅ **Variadic templates**: Parameter packs, function templates, perfect forwarding, sizeof... operator
 - ✅ **Class template argument deduction (CTAD)**: Deduction guides with reference semantics support
 - ✅ **Variable templates**: Template variables with instantiation and global variable generation
+- ✅ **Fold expressions**: C++17 fold expressions with all 4 patterns (unary/binary × left/right)
 - ⏳ **Non-type parameters in expressions**: Beyond array sizes (complex expressions)
-- ⏳ **Fold expressions**: Optional advanced feature
 
 ### **⏳ Remaining Features**
 
@@ -215,8 +216,6 @@ bool test_comparisons(double a, double b) {
 - **Concepts**: Template constraints and requirements
 - **Ranges**: Range adaptors and views (std::ranges)
 - **Range-based for loops**: `for (auto x : container)` syntax
-- **Constexpr functions**: Compile-time function evaluation
-- **Static assertions**: `static_assert` for compile-time checks
 - **Spaceship operator**: `<=>` three-way comparison
 
 **Quality & Error Handling:**
@@ -231,7 +230,7 @@ bool test_comparisons(double a, double b) {
 ### **Critical/Commonly Used** (High Priority)
 These features are essential for modern C++ and widely used in production code:
 
-1. **Templates** ⭐⭐⭐⭐⭐ ✅ **90% COMPLETE**
+1. **Templates** ⭐⭐⭐⭐⭐ ✅ **95% COMPLETE**
    - ✅ Function templates with type deduction
    - ✅ Class templates with specialization
    - ✅ Variadic templates and parameter packs
@@ -239,10 +238,11 @@ These features are essential for modern C++ and widely used in production code:
    - ✅ Template template parameters
    - ✅ Class template argument deduction (CTAD)
    - ✅ Variable templates
+   - ✅ Fold expressions (C++17)
+   - ✅ If constexpr (C++17)
    - ⏳ Non-type parameters in complex expressions (remaining)
-   - ⏳ Fold expressions (optional)
-   - **Status**: 18/20 features complete, ~90% STL compatibility
-   - **Remaining effort**: 15-25 hours
+   - **Status**: 19/20 features complete, ~95% STL compatibility
+   - **Remaining effort**: 5-10 hours
 
 2. **Range-based for loops** ⭐⭐⭐⭐
    - `for (auto x : container)` syntax
@@ -289,9 +289,9 @@ These features are essential for modern C++ and widely used in production code:
 
 | Category | Missing | Priority | Status |
 |----------|---------|----------|--------|
-| **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | ✅ 90% |
+| **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | ✅ 95% |
 | **Modern Loops** | Range-based for | ⭐⭐⭐⭐ | ⏳ Pending |
-| **Compile-time** | Constexpr evaluator, static_assert | ⭐⭐⭐⭐ | ⏳ Pending |
+| **Compile-time** | Constexpr evaluator (variable templates) | ⭐⭐⭐⭐ | ⏳ Pending |
 | **Comparison** | Spaceship operator | ⭐⭐⭐ | ⏳ Pending |
 | **Advanced Features** | Ranges library | ⭐⭐⭐ | ⏳ Pending |
 

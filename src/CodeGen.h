@@ -2379,10 +2379,15 @@ private:
 			const auto& expr = std::get<TemplateParameterReferenceNode>(exprNode);
 			return generateTemplateParameterReferenceIr(expr);
 		}
+		else if (std::holds_alternative<FoldExpressionNode>(exprNode)) {
+			// Fold expressions should have been expanded during template instantiation
+			// If we reach here, it means the fold wasn't properly substituted
+			std::cerr << "ERROR: Fold expression found during code generation - should have been expanded during template instantiation\n";
+			return {};
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
-
 		return {};
 	}
 

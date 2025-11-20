@@ -7907,6 +7907,138 @@ ParseResult Parser::parse_primary_expression()
 		// Could be either:
 		// 1. C-style cast: (Type)expression
 		// 2. Parenthesized expression: (expression)
+		// 3. C++17 Fold expression: (...op pack), (pack op...), (init op...op pack), (pack op...op init)
+		
+		// Check for fold expression patterns
+		TokenPosition fold_check_pos = save_token_position();
+		bool is_fold = false;
+		
+		// Pattern 1: Unary left fold: (... op pack)
+		if (peek_token().has_value() && peek_token()->value() == "...") {
+			consume_token(); // consume ...
+			
+			// Next should be an operator
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+				std::string_view fold_op = peek_token()->value();
+				Token op_token = *peek_token();
+				consume_token(); // consume operator
+				
+				// Next should be the pack identifier
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+					std::string_view pack_name = peek_token()->value();
+					Token pack_token = *peek_token();
+					consume_token(); // consume pack name
+					
+					if (consume_punctuator(")")) {
+						// Valid unary left fold: (... op pack)
+						discard_saved_token(fold_check_pos);
+						result = emplace_node<ExpressionNode>(
+							FoldExpressionNode(pack_name, fold_op, 
+								FoldExpressionNode::Direction::Left, op_token));
+						is_fold = true;
+					}
+				}
+			}
+		}
+		
+		if (!is_fold) {
+			restore_token_position(fold_check_pos);
+			
+			// Pattern 2 & 4: Check if starts with identifier (could be pack or init)
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+				std::string_view first_id = peek_token()->value();
+				Token first_id_token = *peek_token();
+				consume_token(); // consume identifier
+				
+				// Check what follows
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+					std::string_view fold_op = peek_token()->value();
+					Token op_token = *peek_token();
+					consume_token(); // consume operator
+					
+					// Check for ... (fold expression)
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume ...
+						
+						// Check if binary fold or unary right fold
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+							peek_token()->value() == fold_op) {
+							// Binary right fold: (pack op ... op init)
+							consume_token(); // consume second operator
+							
+							ParseResult init_result = parse_expression();
+							if (!init_result.is_error() && init_result.node().has_value() &&
+								consume_punctuator(")")) {
+								discard_saved_token(fold_check_pos);
+								result = emplace_node<ExpressionNode>(
+									FoldExpressionNode(first_id, fold_op,
+										FoldExpressionNode::Direction::Right, *init_result.node(), op_token));
+								is_fold = true;
+							}
+						} else if (consume_punctuator(")")) {
+							// Unary right fold: (pack op ...)
+							discard_saved_token(fold_check_pos);
+							result = emplace_node<ExpressionNode>(
+								FoldExpressionNode(first_id, fold_op,
+									FoldExpressionNode::Direction::Right, op_token));
+							is_fold = true;
+						}
+					}
+				}
+			}
+		}
+		
+		// Pattern 3: Binary left fold: (init op ... op pack)
+		// This is tricky because init can be a complex expression
+		// For now, we'll handle simple cases where init is a literal or identifier
+		if (!is_fold) {
+			restore_token_position(fold_check_pos);
+			
+			// Try to parse as a simple expression
+			TokenPosition init_pos = save_token_position();
+			ParseResult init_result = parse_primary_expression();
+			
+			if (!init_result.is_error() && init_result.node().has_value()) {
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+					std::string_view fold_op = peek_token()->value();
+					Token op_token = *peek_token();
+					consume_token(); // consume operator
+					
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume ...
+						
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+							peek_token()->value() == fold_op) {
+							consume_token(); // consume second operator
+							
+							if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+								std::string_view pack_name = peek_token()->value();
+								consume_token(); // consume pack name
+								
+								if (consume_punctuator(")")) {
+									// Valid binary left fold: (init op ... op pack)
+									discard_saved_token(fold_check_pos);
+									discard_saved_token(init_pos);
+									result = emplace_node<ExpressionNode>(
+										FoldExpressionNode(pack_name, fold_op,
+											FoldExpressionNode::Direction::Left, *init_result.node(), op_token));
+									is_fold = true;
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			if (!is_fold) {
+				restore_token_position(init_pos);
+			}
+		}
+		
+		// If not a fold expression, parse as regular parenthesized expression or cast
+		if (!is_fold) {
+			restore_token_position(fold_check_pos);
+		
 		// Try to parse as type first
 		TokenPosition saved_pos = save_token_position();
 		ParseResult type_result = parse_type_specifier();
@@ -11969,10 +12101,28 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		auto block_result = parse_block();
 		std::cerr << "DEBUG: parse_block() returned, error=" << block_result.is_error() << ", has_value=" << block_result.node().has_value() << std::endl;
 		if (!block_result.is_error() && block_result.node().has_value()) {
-			new_func_ref.set_definition(*block_result.node());
-			std::cerr << "DEBUG: Set function definition" << std::endl;
+			// After parsing, we need to substitute template parameters in the body
+			// This is essential for features like fold expressions that need AST transformation
+			// Convert template_args to TemplateArgument format for substitution
+			std::vector<TemplateArgument> converted_template_args;
+			for (const auto& arg : template_args) {
+				if (arg.kind == TemplateArgument::Kind::Type) {
+					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
+				} else if (arg.kind == TemplateArgument::Kind::Value) {
+					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value));
+				}
+			}
+		
+			ASTNode substituted_body = substituteTemplateParameters(
+				*block_result.node(),
+				template_params,
+				converted_template_args
+			);
+		
+			new_func_ref.set_definition(substituted_body);
+			std::cerr << "DEBUG: Set function definition with substituted body" << std::endl;
 		}
-
+		
 		// Clean up context
 		current_function_ = nullptr;
 		gSymbolTable.exit_scope();
@@ -13762,6 +13912,94 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_array = substituteTemplateParameters(array_sub.array_expr(), template_params, template_args);
 			ASTNode substituted_index = substituteTemplateParameters(array_sub.index_expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(ArraySubscriptNode(substituted_array, substituted_index, array_sub.bracket_token()));
+		} else if (std::holds_alternative<FoldExpressionNode>(expr)) {
+			// C++17 Fold expressions - expand into nested binary operations
+			const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
+		
+			// The fold pack_name refers to a function parameter pack (like "args")
+			// We need to expand it into individual parameter references (like "args_0", "args_1", "args_2")
+			// The number of expansions comes from the number of template arguments
+			std::vector<ASTNode> pack_values;
+		
+			// Count how many times the pack was instantiated by counting template args
+			// For variadic templates, all args from the first variadic parameter onward are pack elements
+			size_t num_pack_elements = 0;
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.is_variadic()) {
+					// All remaining template arguments belong to this pack
+					num_pack_elements = template_args.size() - i;
+					break;
+				}
+			}
+		
+			if (num_pack_elements == 0) {
+				std::cerr << "WARNING: Fold expression pack '" << fold.pack_name() << "' has no elements\n";
+				return node;
+			}
+		
+			// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
+			for (size_t i = 0; i < num_pack_elements; ++i) {
+				StringBuilder param_name_builder;
+				param_name_builder.append(fold.pack_name());
+				param_name_builder.append('_');
+				param_name_builder.append(static_cast<int>(i));
+				std::string_view param_name = param_name_builder.commit();
+		
+				Token param_token(Token::Type::Identifier, param_name,
+								 fold.get_token().line(), fold.get_token().column(),
+								 fold.get_token().file_index());
+				pack_values.push_back(emplace_node<ExpressionNode>(IdentifierNode(param_token)));
+			}
+		
+			if (pack_values.empty()) {
+				std::cerr << "WARNING: Fold expression pack '" << fold.pack_name() << "' is empty\n";
+				return node;
+			}
+		
+			// Expand the fold expression based on type and direction
+			ASTNode result_expr;
+			Token op_token = fold.get_token();
+			
+			if (fold.type() == FoldExpressionNode::Type::Unary) {
+				// Unary fold: (... op pack) or (pack op ...)
+				if (fold.direction() == FoldExpressionNode::Direction::Left) {
+					// Left fold: (... op pack) = ((pack[0] op pack[1]) op pack[2]) ...
+					result_expr = pack_values[0];
+					for (size_t i = 1; i < pack_values.size(); ++i) {
+						result_expr = emplace_node<ExpressionNode>(
+							BinaryOperatorNode(op_token, result_expr, pack_values[i]));
+					}
+				} else {
+					// Right fold: (pack op ...) = pack[0] op (pack[1] op (pack[2] op ...))
+					result_expr = pack_values[pack_values.size() - 1];
+					for (int i = static_cast<int>(pack_values.size()) - 2; i >= 0; --i) {
+						result_expr = emplace_node<ExpressionNode>(
+							BinaryOperatorNode(op_token, pack_values[i], result_expr));
+					}
+				}
+			} else {
+				// Binary fold with init expression
+				ASTNode init = substituteTemplateParameters(*fold.init_expr(), template_params, template_args);
+				
+				if (fold.direction() == FoldExpressionNode::Direction::Left) {
+					// Left binary fold: (init op ... op pack) = (((init op pack[0]) op pack[1]) op ...)
+					result_expr = init;
+					for (size_t i = 0; i < pack_values.size(); ++i) {
+						result_expr = emplace_node<ExpressionNode>(
+							BinaryOperatorNode(op_token, result_expr, pack_values[i]));
+					}
+				} else {
+					// Right binary fold: (pack op ... op init) = pack[0] op (pack[1] op (... op init))
+					result_expr = init;
+					for (int i = static_cast<int>(pack_values.size()) - 1; i >= 0; --i) {
+						result_expr = emplace_node<ExpressionNode>(
+							BinaryOperatorNode(op_token, pack_values[i], result_expr));
+					}
+				}
+			}
+			
+			return result_expr;
 		}
 
 		// For other expression types that don't contain subexpressions, return as-is

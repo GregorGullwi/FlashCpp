@@ -1956,6 +1956,10 @@ TEST_CASE("IfConstexpr") {
 	run_test_from_file("test_if_constexpr.cpp", "C++17 if constexpr compile-time conditionals", false);
 }
 
+TEST_CASE("FoldExpressions") {
+	run_test_from_file("test_fold_expressions.cpp", "C++17 fold expressions", false);
+}
+
 TEST_CASE("DesignatedInitializers") {
 	run_test_from_file("test_designated_init.cpp", "Designated initializers", false);
 }
