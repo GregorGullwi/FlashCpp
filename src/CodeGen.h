@@ -1795,8 +1795,10 @@ private:
 
 	void visitRangedForStatementNode(const RangedForStatementNode& node) {
 		// Desugar ranged for loop into traditional for loop
-		// for (int x : arr) { body } becomes:
-		// for (int __i = 0; __i < array_size; ++__i) { int x = arr[__i]; body }
+		// For arrays: for (int x : arr) { body } becomes:
+		//   for (int __i = 0; __i < array_size; ++__i) { int x = arr[__i]; body }
+		// For types with begin()/end(): for (int x : vec) { body } becomes:
+		//   for (auto __begin = vec.begin(), __end = vec.end(); __begin != __end; ++__begin) { int x = *__begin; body }
 
 		// Generate unique labels and counter for this ranged for loop
 		static size_t ranged_for_counter = 0;
@@ -1804,76 +1806,153 @@ private:
 		std::string loop_body_label = "ranged_for_body_" + std::to_string(ranged_for_counter);
 		std::string loop_increment_label = "ranged_for_increment_" + std::to_string(ranged_for_counter);
 		std::string loop_end_label = "ranged_for_end_" + std::to_string(ranged_for_counter);
-		std::string index_var_name = "__range_index_" + std::to_string(ranged_for_counter);
 		ranged_for_counter++;
 
 		// Get the loop variable declaration and range expression
 		auto loop_var_decl = node.get_loop_variable_decl();
 		auto range_expr = node.get_range_expression();
 
-		// For now, we only support arrays as range expressions
-		// The range expression should be an identifier referring to an array
+		// C++11+ standard: The range expression is bound to a reference for lifetime extension
+		// This ensures temporary objects live for the entire loop duration
+		// For now, we only support simple identifiers (not temporaries), so lifetime is already correct
+		
+		// Check what kind of range expression we have
 		if (!range_expr.is<ExpressionNode>()) {
-			assert(false && "Range expression must be an expression");
+			std::cerr << "error: Range expression must be an expression\n";
 			return;
 		}
 
 		auto& expr_variant = range_expr.as<ExpressionNode>();
 		if (!std::holds_alternative<IdentifierNode>(expr_variant)) {
-			assert(false && "Currently only array identifiers are supported in ranged for loops");
+			std::cerr << "error: Currently only identifiers are supported as range expressions\n";
 			return;
 		}
 
-		const IdentifierNode& array_ident = std::get<IdentifierNode>(expr_variant);
-		std::string_view array_name = array_ident.name();
+		const IdentifierNode& range_ident = std::get<IdentifierNode>(expr_variant);
+		std::string_view range_name = range_ident.name();
 
-		// Look up the array in the symbol table to get its size
-		const std::optional<ASTNode> array_symbol = symbol_table.lookup(array_name);
-		if (!array_symbol.has_value() || !array_symbol->is<DeclarationNode>()) {
-			assert(false && "Array not found in symbol table");
+		// Look up the range object in the symbol table
+		const std::optional<ASTNode> range_symbol = symbol_table.lookup(range_name);
+		if (!range_symbol.has_value() || !range_symbol->is<DeclarationNode>()) {
+			std::cerr << "error: Range object '" << range_name << "' not found in symbol table\n";
 			return;
 		}
 
-		const DeclarationNode& array_decl = array_symbol->as<DeclarationNode>();
-		if (!array_decl.is_array()) {
-			assert(false && "Range expression must be an array");
+		const DeclarationNode& range_decl = range_symbol->as<DeclarationNode>();
+		const TypeSpecifierNode& range_type = range_decl.type_node().as<TypeSpecifierNode>();
+
+		// C++ standard: pointers are NOT valid range expressions (no size information)
+		// Only arrays and types with begin()/end() are allowed
+		if (range_type.pointer_depth() > 0 && !range_decl.is_array()) {
+			std::cerr << "error: Cannot use pointer in range-based for loop; use array or type with begin()/end()\n";
 			return;
 		}
+
+		// Check if it's an array
+		if (range_decl.is_array()) {
+			// Array-based range-for loop
+			visitRangedForArray(node, range_name, range_decl, loop_start_label, loop_body_label, 
+			                    loop_increment_label, loop_end_label, ranged_for_counter - 1);
+		}
+		// Check if it's a struct with begin()/end() methods
+		else if (range_type.type() == Type::Struct) {
+			visitRangedForBeginEnd(node, range_name, range_type, loop_start_label, loop_body_label,
+			                       loop_increment_label, loop_end_label, ranged_for_counter - 1);
+		}
+		else {
+			std::cerr << "error: Range expression must be an array or a type with begin()/end() methods\n";
+			return;
+		}
+	}
+
+	void visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
+	                         const DeclarationNode& array_decl, const std::string& loop_start_label,
+	                         const std::string& loop_body_label, const std::string& loop_increment_label,
+	                         const std::string& loop_end_label, size_t counter) {
+		auto loop_var_decl = node.get_loop_variable_decl();
+
+		// Unified pointer-based approach: use begin/end pointers for arrays too
+		// This is more efficient (no indexing multiplication) and matches what optimizing compilers do
+		// For array: auto __begin = &array[0]; auto __end = &array[size]; for (; __begin != __end; ++__begin)
 
 		// Get array size
 		auto array_size_node = array_decl.array_size();
 		if (!array_size_node.has_value()) {
-			assert(false && "Array must have a size for ranged for loop");
+			std::cerr << "error: Array must have a known size for range-based for loop\n";
 			return;
 		}
 
-		// Create index variable: int __i = 0
-		auto index_type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
-		Token index_token(Token::Type::Identifier, index_var_name, 0, 0, 0);
-		auto index_decl_node = ASTNode::emplace_node<DeclarationNode>(index_type_node, index_token);
+		// Create begin/end pointer variable names
+		StringBuilder sb_begin;
+		sb_begin.append("__range_begin_");
+		sb_begin.append(static_cast<int>(counter));
+		std::string_view begin_var_name = sb_begin.commit();
 
-		// Initialize index to 0
+		StringBuilder sb_end;
+		sb_end.append("__range_end_");
+		sb_end.append(static_cast<int>(counter));
+		std::string_view end_var_name = sb_end.commit();
+
+		Token begin_token(Token::Type::Identifier, begin_var_name, 0, 0, 0);
+		Token end_token(Token::Type::Identifier, end_var_name, 0, 0, 0);
+
+		// Get the array element type to create pointer type
+		const TypeSpecifierNode& array_type = array_decl.type_node().as<TypeSpecifierNode>();
+		
+		// Create pointer type for begin/end (element_type*)
+		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			array_type.type(), array_type.type_index(), array_type.size_in_bits(), Token()
+		);
+		begin_type_node.as<TypeSpecifierNode>().add_pointer_level();
+		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
+
+		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			array_type.type(), array_type.type_index(), array_type.size_in_bits(), Token()
+		);
+		end_type_node.as<TypeSpecifierNode>().add_pointer_level();
+		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
+
+		// Create begin = &array[0]
+		auto array_expr_begin = ASTNode::emplace_node<ExpressionNode>(
+			IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0))
+		);
 		auto zero_literal = ASTNode::emplace_node<ExpressionNode>(
 			NumericLiteralNode(Token(Token::Type::Literal, "0", 0, 0, 0),
-				static_cast<unsigned long long>(0), Type::Int, TypeQualifier::None, 32));
-		auto index_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(index_decl_node, zero_literal);
+				static_cast<unsigned long long>(0), Type::Int, TypeQualifier::None, 32)
+		);
+		auto first_element = ASTNode::emplace_node<ExpressionNode>(
+			ArraySubscriptNode(array_expr_begin, zero_literal, Token(Token::Type::Punctuator, "[", 0, 0, 0))
+		);
+		auto begin_init = ASTNode::emplace_node<ExpressionNode>(
+			UnaryOperatorNode(Token(Token::Type::Operator, "&", 0, 0, 0), first_element, true)
+		);
+		auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_init);
+		visit(begin_var_decl_node);
 
-		// Add index variable to symbol table
-		symbol_table.insert(index_var_name, index_decl_node);
-
-		// Generate IR for index variable declaration
-		visit(index_var_decl_node);
+		// Create end = &array[size] (one past the last element)
+		auto array_expr_end = ASTNode::emplace_node<ExpressionNode>(
+			IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0))
+		);
+		auto past_end_element = ASTNode::emplace_node<ExpressionNode>(
+			ArraySubscriptNode(array_expr_end, array_size_node.value(), Token(Token::Type::Punctuator, "[", 0, 0, 0))
+		);
+		auto end_init = ASTNode::emplace_node<ExpressionNode>(
+			UnaryOperatorNode(Token(Token::Type::Operator, "&", 0, 0, 0), past_end_element, true)
+		);
+		auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_init);
+		visit(end_var_decl_node);
 
 		// Mark loop begin for break/continue support
 		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_increment_label}, Token());
 
-		// Loop start: evaluate condition (__i < array_size)
+		// Loop start: evaluate condition (__begin != __end)
 		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
 
-		// Create condition: __i < array_size
-		auto index_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(index_token));
+		// Create condition: __begin != __end
+		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		auto end_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(end_token));
 		auto condition_expr = ASTNode::emplace_node<ExpressionNode>(
-			BinaryOperatorNode(Token(Token::Type::Operator, "<", 0, 0, 0), index_ident_expr, array_size_node.value())
+			BinaryOperatorNode(Token(Token::Type::Operator, "!=", 0, 0, 0), begin_ident_expr, end_ident_expr)
 		);
 		auto condition_operands = visitExpressionNode(condition_expr.as<ExpressionNode>());
 
@@ -1887,21 +1966,193 @@ private:
 		// Loop body label
 		ir_.addInstruction(IrOpcode::Label, {loop_body_label}, Token());
 
-		// Declare and initialize the loop variable: int x = arr[__i]
-		// Create array subscript: arr[__i]
-		auto array_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0)));
-		auto array_subscript = ASTNode::emplace_node<ExpressionNode>(
-			ArraySubscriptNode(array_expr, index_ident_expr, Token(Token::Type::Punctuator, "[", 0, 0, 0))
+		// Declare and initialize the loop variable: T x = *__begin
+		auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		auto deref_expr = ASTNode::emplace_node<ExpressionNode>(
+			UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_deref_expr, true)
 		);
 
 		// Create the loop variable declaration with initialization
-		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_var_decl, array_subscript);
-
-		// Add loop variable to symbol table
-		if (loop_var_decl.is<DeclarationNode>()) {
-			const DeclarationNode& decl = loop_var_decl.as<DeclarationNode>();
-			symbol_table.insert(decl.identifier_token().value(), loop_var_decl);
+		// loop_var_decl is a VariableDeclarationNode from the parser
+		// We need to extract its DeclarationNode and create a new VariableDeclarationNode with the initializer
+		if (!loop_var_decl.is<VariableDeclarationNode>()) {
+			std::cerr << "ERROR: loop_var_decl is not a VariableDeclarationNode!\n";
+			return;
 		}
+		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
+		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		
+		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, deref_expr);
+
+		// Generate IR for loop variable declaration
+		// Note: visitVariableDeclarationNode will add it to the symbol table
+		visit(loop_var_with_init);
+
+		// Visit loop body
+		auto body_stmt = node.get_body_statement();
+		if (body_stmt.is<BlockNode>()) {
+			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+				visit(statement);
+			});
+		} else {
+			visit(body_stmt);
+		}
+
+		// Loop increment label (for continue statements)
+		ir_.addInstruction(IrOpcode::Label, {loop_increment_label}, Token());
+
+		// Increment pointer: ++__begin
+		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		auto increment_expr = ASTNode::emplace_node<ExpressionNode>(
+			UnaryOperatorNode(Token(Token::Type::Operator, "++", 0, 0, 0), increment_begin, true)
+		);
+		visitExpressionNode(increment_expr.as<ExpressionNode>());
+
+		// Branch back to loop start
+		ir_.addInstruction(IrOpcode::Branch, {loop_start_label}, Token());
+
+		// Loop end label
+		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+
+		// Mark loop end
+		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+	}
+
+	void visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
+	                            const TypeSpecifierNode& range_type, const std::string& loop_start_label,
+	                            const std::string& loop_body_label, const std::string& loop_increment_label,
+	                            const std::string& loop_end_label, size_t counter) {
+		auto loop_var_decl = node.get_loop_variable_decl();
+
+		// Get the struct type info
+		if (range_type.type_index() >= gTypeInfo.size()) {
+			std::cerr << "error: Invalid type index for range expression\n";
+			return;
+		}
+
+		const TypeInfo& type_info = gTypeInfo[range_type.type_index()];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		if (!struct_info) {
+			std::cerr << "error: Range expression is not a struct type\n";
+			return;
+		}
+
+		// Check for begin() and end() methods
+		const StructMemberFunction* begin_func = struct_info->findMemberFunction("begin");
+		const StructMemberFunction* end_func = struct_info->findMemberFunction("end");
+
+		if (!begin_func || !end_func) {
+			std::cerr << "error: Range-based for loop requires type to have both begin() and end() methods\n";
+			return;
+		}
+
+		// Create iterator variables: auto __begin = range.begin(), __end = range.end()
+		StringBuilder sb_begin;
+		sb_begin.append("__range_begin_");
+		sb_begin.append(static_cast<int>(counter));
+		std::string_view begin_var_name = sb_begin.commit();
+
+		StringBuilder sb_end;
+		sb_end.append("__range_end_");
+		sb_end.append(static_cast<int>(counter));
+		std::string_view end_var_name = sb_end.commit();
+
+		// Get return type from begin() - should be a pointer type
+		const FunctionDeclarationNode& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
+		const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+
+		// Standard C++20 range-for with begin()/end() desugars to:
+		//   auto __begin = range.begin();
+		//   auto __end = range.end();
+		//   for (; __begin != __end; ++__begin) { decl = *__begin; body; }
+		
+		Token begin_token(Token::Type::Identifier, begin_var_name, 0, 0, 0);
+		Token end_token(Token::Type::Identifier, end_var_name, 0, 0, 0);
+
+		// Create type nodes for the iterator variables (they're pointers typically)
+		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			begin_return_type.type(), begin_return_type.type_index(), begin_return_type.size_in_bits(), Token()
+		);
+		begin_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
+		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
+
+		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			begin_return_type.type(), begin_return_type.type_index(), begin_return_type.size_in_bits(), Token()
+		);
+		end_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
+		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
+
+		// Create member function calls: range.begin() and range.end()
+		auto range_expr_for_begin = ASTNode::emplace_node<ExpressionNode>(
+			IdentifierNode(Token(Token::Type::Identifier, range_name, 0, 0, 0))
+		);
+		
+		ChunkedVector<ASTNode> empty_args;
+		auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
+			MemberFunctionCallNode(range_expr_for_begin, 
+			                       const_cast<FunctionDeclarationNode&>(begin_func_decl),
+			                       std::move(empty_args), Token())
+		);
+		
+		auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_call_expr);
+		visit(begin_var_decl_node);
+
+		// Similarly for end()
+		const FunctionDeclarationNode& end_func_decl = end_func->function_decl.as<FunctionDeclarationNode>();
+		auto range_expr_for_end = ASTNode::emplace_node<ExpressionNode>(
+			IdentifierNode(Token(Token::Type::Identifier, range_name, 0, 0, 0))
+		);
+		
+		ChunkedVector<ASTNode> empty_args2;
+		auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
+			MemberFunctionCallNode(range_expr_for_end,
+			                       const_cast<FunctionDeclarationNode&>(end_func_decl),
+			                       std::move(empty_args2), Token())
+		);
+		
+		auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_call_expr);
+		visit(end_var_decl_node);
+
+		// Mark loop begin for break/continue support
+		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_increment_label}, Token());
+
+		// Loop start: evaluate condition (__begin != __end)
+		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+
+		// Create condition: __begin != __end
+		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		auto end_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(end_token));
+		auto condition_expr = ASTNode::emplace_node<ExpressionNode>(
+			BinaryOperatorNode(Token(Token::Type::Operator, "!=", 0, 0, 0), begin_ident_expr, end_ident_expr)
+		);
+		auto condition_operands = visitExpressionNode(condition_expr.as<ExpressionNode>());
+
+		// Generate conditional branch
+		std::vector<IrOperand> branch_operands;
+		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
+		branch_operands.emplace_back(loop_body_label);
+		branch_operands.emplace_back(loop_end_label);
+		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+
+		// Loop body label
+		ir_.addInstruction(IrOpcode::Label, {loop_body_label}, Token());
+
+		// Declare and initialize the loop variable: T x = *__begin
+		// Create dereference: *__begin
+		auto begin_ident_deref = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		auto deref_expr = ASTNode::emplace_node<ExpressionNode>(
+			UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_ident_deref, true)
+		);
+
+		// Create the loop variable declaration with initialization
+		if (!loop_var_decl.is<VariableDeclarationNode>()) {
+			assert(false && "loop_var_decl must be a VariableDeclarationNode");
+			return;
+		}
+		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
+		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		
+		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, deref_expr);
 
 		// Generate IR for loop variable declaration
 		visit(loop_var_with_init);
@@ -1919,9 +2170,10 @@ private:
 		// Loop increment label (for continue statements)
 		ir_.addInstruction(IrOpcode::Label, {loop_increment_label}, Token());
 
-		// Increment index: ++__i
+		// Increment iterator: ++__begin
+		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		auto increment_expr = ASTNode::emplace_node<ExpressionNode>(
-			UnaryOperatorNode(Token(Token::Type::Operator, "++", 0, 0, 0), index_ident_expr, true)
+			UnaryOperatorNode(Token(Token::Type::Operator, "++", 0, 0, 0), increment_begin, true)
 		);
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 

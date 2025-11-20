@@ -2350,3 +2350,19 @@ TEST_CASE("ConstExpr:UB") {
 	// In a real scenario, we would want to assert that compilation fails with specific errors
 	run_test_from_file("test_ub_fail.cpp", "Constexpr UB detection", false);
 }
+
+TEST_CASE("RangedFor:Simple") {
+	run_test_from_file("test_range_for_simple.cpp", "Range-based for loop simple test", true);
+}
+
+TEST_CASE("RangedFor:Arrays") {
+	run_test_from_file("test_range_for.cpp", "Range-based for loop with arrays", true);
+}
+
+TEST_CASE("RangedFor:BeginEnd") {
+	run_test_from_file("test_range_for_begin_end.cpp", "Range-based for loop with begin/end methods", true);
+}
+
+TEST_CASE("RangedFor:ConstRef") {
+	run_test_from_file("test_range_for_const_ref.cpp", "Range-based for loop with const reference", true);
+}

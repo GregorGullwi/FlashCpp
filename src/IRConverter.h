@@ -6895,7 +6895,6 @@ private:
 			auto index_it = variable_scopes.back().identifier_offset.find(index_var_name_str);
 			assert(index_it != variable_scopes.back().identifier_offset.end() && "Index variable not found");
 			int64_t index_var_offset = index_it->second;
-			std::cerr << "DEBUG: Variable index (identifier)=" << index_var_name_str << " offset=" << index_var_offset << " array_base=" << array_base_offset << "\n";
 
 			if (is_array_pointer) {
 				// Array is a pointer/temp var
