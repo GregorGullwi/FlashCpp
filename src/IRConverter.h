@@ -1137,10 +1137,11 @@ uint16_t getX64RegisterCodeViewCode(X64Register reg) {
 
 std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
 	// For RBP-relative addressing, temporary variables have negative offsets
-	// TempVar 0 is at offset -8, TempVar 1 is at offset -16, etc.
+	// TempVar with var_number N is at offset -(N * 8)
+	// For example: var_number=1 → offset=-8, var_number=2 → offset=-16, var_number=3 → offset=-24, etc.
 	if (stackVariableOffset < 0 && (stackVariableOffset % 8) == 0) {
-		size_t index = static_cast<size_t>((-stackVariableOffset / 8) - 1);
-		return TempVar(index);
+		size_t var_number = static_cast<size_t>(-stackVariableOffset / 8);
+		return TempVar(var_number);
 	}
 
 	return std::nullopt;
@@ -2551,7 +2552,7 @@ private:
 		bool is_rvalue_reference = false;
 	};
 	
-	StackSpaceSize calculateFunctionStackSpace(const std::string& func_name, StackVariableScope& var_scope) {
+	StackSpaceSize calculateFunctionStackSpace(const std::string& func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
 
 		auto it = function_instructions.find(func_name);
@@ -2625,7 +2626,13 @@ private:
 			local_vars.push_back(VarDecl{ .var_name = temp_name, .size_in_bits = size_bits, .alignment = static_cast<size_t>((size_bits <= 32) ? 4 : 8) });
 		}
 		
-		int_fast32_t stack_offset = 0;
+		// Start stack allocation AFTER parameter home space
+		// Windows x64 ABI: first 4 parameters get home space at [rbp-8], [rbp-16], [rbp-24], [rbp-32]
+		// Additional parameters are passed on the stack at positive RBP offsets
+		// Local variables start AFTER the parameter home space
+		int param_home_space = std::max(static_cast<int>(param_count), 4) * 8;  // At least 32 bytes for register parameters
+		int_fast32_t stack_offset = -param_home_space;
+		
 		for (const VarDecl& local_var : local_vars) {
 			// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
 			size_t var_alignment = local_var.alignment > 0 ? local_var.alignment : 8;
@@ -2676,7 +2683,9 @@ private:
 		// Fallback for old behavior if not found (shouldn't happen in correct code)
 		// For RBP-relative addressing, temporary variables use negative offsets
 		// TempVar stores 1-based numbers: TempVar(1) is at [rbp-8], TempVar(2) at [rbp-16], etc.
-		return static_cast<int32_t>(tempVar.var_number * -8);
+		int32_t fallback = static_cast<int32_t>(tempVar.var_number * -8);
+		std::cerr << "DEBUG [getStackOffset]: TempVar " << tempVar.name() << " NOT in map, using fallback var_number=" << tempVar.var_number << " offset=" << fallback << "\n";
+		return fallback;
 	}
 
 	void flushAllDirtyRegisters()
@@ -4494,18 +4503,22 @@ private:
 		if (nop_count < 16)
 			textSectionData.insert(textSectionData.end(), nop_count, nop);
 
-		// Function debug info is now added in add_function_symbol() with length 0
-		StackVariableScope& var_scope = variable_scopes.emplace_back();
-		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope);
-		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space + func_stack_space.temp_vars_size;
-		
 		// Windows x64 calling convention: Functions must provide home space for parameters
-		// Even if parameters stay in registers, we need space to spill them if needed
-		// Member functions have implicit 'this' pointer as first parameter
+		// Calculate param_count BEFORE calling calculateFunctionStackSpace so it can allocate
+		// local variables/temp vars AFTER the parameter home space
 		size_t param_count = parameter_types.size();
 		if (!struct_name.empty()) {
 			param_count++;  // Count 'this' pointer for member functions
 		}
+
+		// Function debug info is now added in add_function_symbol() with length 0
+		StackVariableScope& var_scope = variable_scopes.emplace_back();
+		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope, param_count);
+		
+		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space + func_stack_space.temp_vars_size;
+		
+		// Even if parameters stay in registers, we need space to spill them if needed
+		// Member functions have implicit 'this' pointer as first parameter
 		if (param_count > 0 && total_stack_space < param_count * 8) {
 			total_stack_space = static_cast<uint32_t>(param_count * 8);
 		}
