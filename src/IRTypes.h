@@ -97,6 +97,7 @@ enum class IrOpcode : int_fast16_t {
 	// Array operations
 	ArrayAccess,
 	ArrayStore,
+	ArrayElementAddress,  // Calculate address of array element without loading value
 	// Pointer operations
 	AddressOf,
 	Dereference,

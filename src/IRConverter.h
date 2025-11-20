@@ -1820,6 +1820,9 @@ public:
 			case IrOpcode::ArrayStore:
 				handleArrayStore(instruction);
 				break;
+			case IrOpcode::ArrayElementAddress:
+				handleArrayElementAddress(instruction);
+				break;
 			case IrOpcode::StringLiteral:
 				handleStringLiteral(instruction);
 				break;
@@ -7072,6 +7075,100 @@ private:
 			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
 			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 		}
+	}
+
+	void handleArrayElementAddress(const IrInstruction& instruction) {
+		// ArrayElementAddress: Calculate address of array[index] without loading the value
+		// Format: [result_var, array_type, element_size, array_name, index_type, index_size, index_value]
+		assert(instruction.getOperandCount() == 7 && "ArrayElementAddress must have 7 operands");
+
+		auto result_var = instruction.getOperandAs<TempVar>(0);
+		auto element_size_bits = instruction.getOperandAs<int>(2);
+		int element_size_bytes = element_size_bits / 8;
+
+		// Get the array base address
+		int64_t array_base_offset = 0;
+		if (instruction.isOperandType<std::string_view>(3)) {
+			std::string_view array_name = instruction.getOperandAs<std::string_view>(3);
+			array_base_offset = variable_scopes.back().identifier_offset[array_name];
+		} else if (instruction.isOperandType<std::string>(3)) {
+			const std::string& array_name = instruction.getOperandAs<std::string>(3);
+			array_base_offset = variable_scopes.back().identifier_offset[array_name];
+		} else {
+			assert(false && "Array must be an identifier for &arr[index]");
+		}
+
+		// Get result storage location
+		int64_t result_offset = getStackOffsetFromTempVar(result_var);
+
+		// Handle constant index
+		if (instruction.isOperandType<unsigned long long>(6)) {
+			uint64_t index_value = instruction.getOperandAs<unsigned long long>(6);
+			
+			// Calculate the absolute address: LEA RAX, [RBP + array_base_offset + index * element_size]
+			int64_t element_offset = array_base_offset + (index_value * element_size_bytes);
+			
+			// LEA RAX, [RBP + element_offset]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8D); // LEA r64, m
+			
+			if (element_offset >= -128 && element_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+				textSectionData.push_back(static_cast<uint8_t>(element_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+				uint32_t offset_u32 = static_cast<uint32_t>(static_cast<int32_t>(element_offset));
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+		} else if (instruction.isOperandType<TempVar>(6)) {
+			// Variable index
+			TempVar index_var = instruction.getOperandAs<TempVar>(6);
+			int64_t index_offset = getStackOffsetFromTempVar(index_var);
+			
+			// Load index into RCX
+			emitMovFromFrame(X64Register::RCX, index_offset);
+			
+			// Multiply by element size if needed
+			if (element_size_bytes > 1) {
+				// IMUL RCX, element_size_bytes
+				textSectionData.push_back(0x48); // REX.W
+				textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
+				textSectionData.push_back(0xC9); // ModR/M: RCX, RCX
+				uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
+				textSectionData.push_back(size_u32 & 0xFF);
+				textSectionData.push_back((size_u32 >> 8) & 0xFF);
+				textSectionData.push_back((size_u32 >> 16) & 0xFF);
+				textSectionData.push_back((size_u32 >> 24) & 0xFF);
+			}
+			
+			// LEA RAX, [RBP + array_base_offset]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8D); // LEA r64, m
+			if (array_base_offset >= -128 && array_base_offset <= 127) {
+				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+				textSectionData.push_back(static_cast<uint8_t>(array_base_offset));
+			} else {
+				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+				uint32_t offset_u32 = static_cast<uint32_t>(static_cast<int32_t>(array_base_offset));
+				textSectionData.push_back(offset_u32 & 0xFF);
+				textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+				textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			}
+			
+			// ADD RAX, RCX (add scaled index to base address)
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x01); // ADD r/m64, r64
+			textSectionData.push_back(0xC8); // ModR/M: RAX, RCX
+		}
+
+		// Store the computed address to result_var
+		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
+		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 	}
 
 	void handleArrayStore(const IrInstruction& instruction) {

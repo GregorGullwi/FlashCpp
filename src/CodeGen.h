@@ -2309,7 +2309,9 @@ private:
 		// Format: [type, size_in_bits, var_name, custom_alignment, is_ref, is_rvalue_ref, is_array, ...]
 		std::vector<IrOperand> operands;
 		operands.emplace_back(type_node.type());
-		operands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
+		int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+		operands.emplace_back(size_in_bits);
 		operands.emplace_back(decl.identifier_token().value());
 		operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
 		operands.emplace_back(type_node.is_reference());
@@ -2812,11 +2814,15 @@ private:
 				ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
 
 				// Return the temp variable that will hold the loaded value
-				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
+				// For pointers, return 64 bits (pointer size)
+				int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+				return { type_node.type(), size_bits, result_temp };
 			}
 
 			// Regular local variable
-			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), identifierNode.name() };
+			// For pointers, return 64 bits (pointer size)
+			int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+			return { type_node.type(), size_bits, identifierNode.name() };
 		}
 
 		// Check if it's a VariableDeclarationNode (global variable)
@@ -2835,7 +2841,7 @@ private:
 			// Return the temp variable that will hold the loaded value
 			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
 		}
-
+		
 		// Check if it's a FunctionDeclarationNode (function name used as value)
 		if (symbol->is<FunctionDeclarationNode>()) {
 			// This is a function name being used as a value (e.g., fp = add)
@@ -2953,7 +2959,9 @@ private:
 			ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
 
 			// Return the temp variable that will hold the loaded value
-			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
+			// For pointers, return 64 bits (pointer size)
+			int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+			return { type_node.type(), size_bits, result_temp };
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {
@@ -3112,6 +3120,36 @@ private:
 			return true;
 		};
 
+		// Special handling for &arr[index] - generate address directly without loading value
+		if (unaryOperatorNode.op() == "&" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<ArraySubscriptNode>(operandExpr)) {
+				const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(operandExpr);
+				
+				// Get the array and index operands
+				auto array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
+				auto index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
+				
+				Type array_type = std::get<Type>(array_operands[0]);
+				int element_size_bits = std::get<int>(array_operands[1]);
+				
+				// Create temporary for the address
+				TempVar addr_var = var_counter.next();
+				
+				// Generate ArrayElementAddress IR instruction (address calculation without load)
+				// Format: [result_var, array_type, element_size, array_name, index_type, index_size, index_value]
+				std::vector<IrOperand> addr_operands;
+				addr_operands.emplace_back(addr_var);
+				addr_operands.insert(addr_operands.end(), array_operands.begin(), array_operands.end());
+				addr_operands.insert(addr_operands.end(), index_operands.begin(), index_operands.end());
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_operands), arraySubscript.bracket_token()));
+				
+				// Return pointer to element (64-bit pointer)
+				return { array_type, 64, addr_var };
+			}
+		}
+
 		std::vector<IrOperand> operandIrOperands;
 		bool operandHandledAsIdentifier = false;
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
@@ -3178,20 +3216,37 @@ private:
 		else if (unaryOperatorNode.op() == "&") {
 			// Address-of operator: &x
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(irOperands), Token()));
+			// Return 64-bit pointer
+		return { operandType, 64, result_var };
+	}
+	else if (unaryOperatorNode.op() == "*") {
+		// Dereference operator: *x
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(irOperands), Token()));
+		
+		// When dereferencing a pointer, the result size is the pointed-to type size,
+		// not the pointer size (64). Use the Type enum to get the actual element size.
+		int element_size;
+		switch (operandType) {
+			case Type::Bool: element_size = 8; break;
+			case Type::Char: element_size = 8; break;
+			case Type::Short: element_size = 16; break;
+			case Type::Int: element_size = 32; break;
+			case Type::Long: element_size = 64; break;
+			case Type::Float: element_size = 32; break;
+			case Type::Double: element_size = 64; break;
+			default: element_size = 64; break;  // Fallback for unknown types
 		}
-		else if (unaryOperatorNode.op() == "*") {
-			// Dereference operator: *x
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(irOperands), Token()));
-		}
-		else {
-			assert(false && "Unary operator not implemented yet");
-		}
-
-		// Return the result
-		return { operandType, std::get<int>(operandIrOperands[1]), result_var };
+		
+		// Return the dereferenced value with the element type size
+		return { operandType, element_size, result_var };
+	}
+	else {
+		assert(false && "Unary operator not implemented yet");
 	}
 
-	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
+	// Return the result
+	return { operandType, std::get<int>(operandIrOperands[1]), result_var };
+}	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
 		// Ternary operator: condition ? true_expr : false_expr
 		// Generate IR:
 		// 1. Evaluate condition
@@ -3651,11 +3706,58 @@ private:
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
-		// Get the types of the operands
+		// Get the types and sizes of the operands
 		Type lhsType = std::get<Type>(lhsIrOperands[0]);
 		Type rhsType = std::get<Type>(rhsIrOperands[0]);
+		int lhsSize = std::get<int>(lhsIrOperands[1]);
+		int rhsSize = std::get<int>(rhsIrOperands[1]);
 
-		// Apply integer promotions and find common type
+	// Special handling for pointer arithmetic (ptr + int or ptr - int)
+	if ((op == "+" || op == "-") && lhsSize == 64 && is_integer_type(rhsType)) {
+		// Left side is a pointer (64-bit), right side is integer
+		// Result should be a pointer (64-bit)
+		// Need to scale the offset by sizeof(pointed-to-type)
+		
+		// Get the element size from the Type enum (since pointer has Type::X with size 64)
+		int element_size;
+		switch (lhsType) {
+			case Type::Bool: element_size = 1; break;
+			case Type::Char: element_size = 1; break;
+			case Type::Short: element_size = 2; break;
+			case Type::Int: element_size = 4; break;
+			case Type::Long: element_size = 8; break;
+			case Type::Float: element_size = 4; break;
+			case Type::Double: element_size = 8; break;
+			default: element_size = 8; break;  // Fallback for unknown types
+		}
+		
+		// Scale the offset: offset_scaled = offset * element_size
+		TempVar scaled_offset = var_counter.next();
+		std::vector<IrOperand> scale_operands;
+		scale_operands.emplace_back(scaled_offset);
+		// Add the offset operand (rhs)
+		scale_operands.insert(scale_operands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
+		// Add the element_size operand
+		scale_operands.emplace_back(Type::Int);  // Type of element_size
+		scale_operands.emplace_back(32);  // Size of element_size (int)
+		scale_operands.emplace_back(static_cast<unsigned long long>(element_size));  // element_size as integer literal
+		ir_.addInstruction(IrOpcode::Multiply, std::move(scale_operands), binaryOperatorNode.get_token());
+		
+		// Now add the scaled offset to the pointer
+		TempVar result_var = var_counter.next();
+		std::vector<IrOperand> ptr_arith_operands;
+		ptr_arith_operands.emplace_back(result_var);
+		ptr_arith_operands.insert(ptr_arith_operands.end(), lhsIrOperands.begin(), lhsIrOperands.end());
+		ptr_arith_operands.emplace_back(Type::Int);  // Use the scaled offset's type
+		ptr_arith_operands.emplace_back(32);  // scaled offset size
+		ptr_arith_operands.emplace_back(scaled_offset);  // scaled offset value
+
+		IrOpcode ptr_opcode = (op == "+") ? IrOpcode::Add : IrOpcode::Subtract;
+		ir_.addInstruction(std::move(ptr_opcode), std::move(ptr_arith_operands), binaryOperatorNode.get_token());
+
+		// Return pointer type with 64-bit size
+		return { lhsType, 64, result_var };
+	}		// Apply integer promotions and find common type
 		Type commonType = get_common_type(lhsType, rhsType);
 
 		// Generate conversions if needed
