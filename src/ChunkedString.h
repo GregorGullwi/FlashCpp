@@ -79,7 +79,7 @@ public:
     explicit StringBuilder(ChunkedStringAllocator& allocator = gChunkedStringAllocator)
         : alloc_(allocator), chunk_(allocator.current_chunk()), buf_start_(chunk_->current_ptr()), write_ptr_(buf_start_) {}
     ~StringBuilder() {
-        assert(buf_start_ == chunk_->current_ptr() && "did you forget to call commit() on the StringBuilder?");
+        assert(buf_start_ == write_ptr_ && "did you forget to call commit() on the StringBuilder?");
     }
 
     StringBuilder& append(std::string_view sv) {
