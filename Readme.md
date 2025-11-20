@@ -76,6 +76,7 @@
 - **Namespaces**: Full namespace support with qualified lookup, `using` directives, `using` declarations, namespace aliases, anonymous namespaces ✅
 - **Auto type deduction**: `auto` keyword for variable declarations with full type inference ✅
 - **Type casts**: C-style casts `(Type)expr` and C++ casts `static_cast<Type>(expr)` 🆕
+- **Constexpr**: Compile-time constant expression evaluation with `constexpr` variables and functions, including recursion and `static_assert` ✅ 🆕
 - **Preprocessor**: Macro expansion, conditional compilation, file inclusion, `#pragma pack`, function-like macros, variadic macros, token pasting, string concatenation, conditional expressions in macros
 
 ---

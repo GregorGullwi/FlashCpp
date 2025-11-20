@@ -5030,6 +5030,18 @@ ParseResult Parser::parse_variable_declaration()
 		}
 	}
 
+	// Check again for constexpr/constinit after storage class (handles "static constinit" order)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view keyword = peek_token()->value();
+		if (keyword == "constexpr") {
+			is_constexpr = true;
+			consume_token();
+		} else if (keyword == "constinit") {
+			is_constinit = true;
+			consume_token();
+		}
+	}
+
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
@@ -8976,6 +8988,14 @@ ParseResult Parser::parse_if_statement() {
         return ParseResult::error("Expected 'if' keyword", *current_token_);
     }
 
+    // Check for C++17 'if constexpr'
+    bool is_constexpr = false;
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+        peek_token()->value() == "constexpr") {
+        consume_keyword("constexpr"sv);
+        is_constexpr = true;
+    }
+
     if (!consume_punctuator("("sv)) {
         return ParseResult::error("Expected '(' after 'if'", *current_token_);
     }
@@ -9058,7 +9078,7 @@ ParseResult Parser::parse_if_statement() {
     if (auto cond_node = condition.node()) {
         if (auto then_node = then_stmt.node()) {
             return ParseResult::success(emplace_node<IfStatementNode>(
-                *cond_node, *then_node, else_stmt, init_statement
+                *cond_node, *then_node, else_stmt, init_statement, is_constexpr
             ));
         }
     }

@@ -2116,9 +2116,11 @@ class IfStatementNode {
 public:
 	explicit IfStatementNode(ASTNode condition, ASTNode then_statement,
 		std::optional<ASTNode> else_statement = std::nullopt,
-		std::optional<ASTNode> init_statement = std::nullopt)
+		std::optional<ASTNode> init_statement = std::nullopt,
+		bool is_constexpr = false)
 		: condition_(condition), then_statement_(then_statement),
-		  else_statement_(else_statement), init_statement_(init_statement) {}
+		  else_statement_(else_statement), init_statement_(init_statement),
+		  is_constexpr_(is_constexpr) {}
 
 	auto get_condition() const { return condition_; }
 	auto get_then_statement() const { return then_statement_; }
@@ -2126,12 +2128,14 @@ public:
 	auto get_init_statement() const { return init_statement_; }
 	bool has_else() const { return else_statement_.has_value(); }
 	bool has_init() const { return init_statement_.has_value(); }
+	bool is_constexpr() const { return is_constexpr_; }
 
 private:
 	ASTNode condition_;
 	ASTNode then_statement_;
 	std::optional<ASTNode> else_statement_;
 	std::optional<ASTNode> init_statement_; // C++20 if (init; condition)
+	bool is_constexpr_; // C++17 if constexpr
 };
 
 class ForStatementNode {

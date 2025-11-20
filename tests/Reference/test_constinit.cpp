@@ -18,3 +18,8 @@ void test() {
 // constinit with non-constant initializer (should fail compilation if uncommented)
 // int runtime_val = 5;
 // constinit int fail_init = runtime_val;
+
+int main() {
+    test();
+    return g_a + g_c; // Should return 110
+}

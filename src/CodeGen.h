@@ -1396,6 +1396,47 @@ private:
 	}
 
 	void visitIfStatementNode(const IfStatementNode& node) {
+		// Handle C++17 if constexpr - evaluate condition at compile time
+		if (node.is_constexpr()) {
+			// Evaluate the condition at compile time
+			ConstExpr::EvaluationContext ctx(gSymbolTable);
+			auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
+			
+			if (!result.success) {
+				std::cerr << "Error: if constexpr condition is not a constant expression: " 
+				          << result.error_message << std::endl;
+				return;
+			}
+
+			// Only compile the taken branch
+			if (result.as_bool()) {
+				// Compile then branch
+				auto then_stmt = node.get_then_statement();
+				if (then_stmt.is<BlockNode>()) {
+					then_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+						visit(statement);
+					});
+				} else {
+					visit(then_stmt);
+				}
+			} else if (node.has_else()) {
+				// Compile else branch
+				auto else_stmt = node.get_else_statement();
+				if (else_stmt.has_value()) {
+					if (else_stmt->is<BlockNode>()) {
+						else_stmt->as<BlockNode>().get_statements().visit([&](ASTNode statement) {
+							visit(statement);
+						});
+					} else {
+						visit(*else_stmt);
+					}
+				}
+			}
+			// Note: Non-taken branch is completely discarded (not compiled)
+			return;
+		}
+
+		// Regular if statement (runtime conditional)
 		// Generate unique labels for this if statement
 		static size_t if_counter = 0;
 		std::string then_label = "if_then_" + std::to_string(if_counter);

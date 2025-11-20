@@ -1952,6 +1952,10 @@ TEST_CASE("CTAD:StructLifecycle") {
 	run_test_from_file("test_ctad_struct_lifecycle.cpp", "Struct CTAD with ctor/dtor tracking", false);
 }
 
+TEST_CASE("IfConstexpr") {
+	run_test_from_file("test_if_constexpr.cpp", "C++17 if constexpr compile-time conditionals", false);
+}
+
 TEST_CASE("DesignatedInitializers") {
 	run_test_from_file("test_designated_init.cpp", "Designated initializers", false);
 }

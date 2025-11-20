@@ -1,6 +1,6 @@
 template <typename T>
 struct RefBox {
-    const T* ptr;
+    const T& ref;
 };
 
 // Deduction guide that binds through a const-lvalue reference
@@ -11,5 +11,5 @@ int main() {
     int value = 9;
     RefBox box{value};
     value = 14;
-    return *box.ptr - 9;
+    return box.ref - 9;
 }
