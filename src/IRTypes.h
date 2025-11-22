@@ -708,7 +708,7 @@ struct StringLiteralOp {
 // Global variable load
 struct GlobalLoadOp {
 	TempVar result;              // Result temp var
-	std::string_view global_name;  // Name of global variable
+	std::string global_name;     // Name of global variable (owned string for qualified names)
 };
 
 // Function address (get address of a function)
