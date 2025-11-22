@@ -2047,66 +2047,219 @@ ParseResult Parser::parse_struct_declaration()
 		}
 	}
 
-		// Check for 'virtual' keyword (for virtual destructors and virtual member functions)
-		bool is_virtual = false;
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-		    peek_token()->value() == "virtual") {
-			is_virtual = true;
-			consume_token();  // consume 'virtual'
+	// Check for 'virtual' keyword (for virtual destructors and virtual member functions)
+	bool is_virtual = false;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+	    peek_token()->value() == "virtual") {
+		is_virtual = true;
+		consume_token();  // consume 'virtual'
+	}
+
+	// Check for destructor (~StructName followed by '(')
+	if (peek_token().has_value() && peek_token()->value() == "~") {
+		consume_token();  // consume '~'
+
+		auto name_token_opt = consume_token();
+		if (!name_token_opt.has_value() || name_token_opt->type() != Token::Type::Identifier ||
+		    name_token_opt->value() != struct_name) {
+			return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt.value_or(Token()));
+		}
+		Token name_token = name_token_opt.value();  // Copy the token to keep it alive
+		std::string_view dtor_name = name_token.value();  // Get the string_view from the token
+
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after destructor name", *peek_token());
 		}
 
-		// Check for destructor (~StructName followed by '(')
-		if (peek_token().has_value() && peek_token()->value() == "~") {
-			consume_token();  // consume '~'
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Destructor cannot have parameters", *peek_token());
+		}
 
-			auto name_token_opt = consume_token();
-			if (!name_token_opt.has_value() || name_token_opt->type() != Token::Type::Identifier ||
-			    name_token_opt->value() != struct_name) {
-				return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt.value_or(Token()));
+		auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(struct_name, dtor_name);
+		dtor_ref.set_is_constexpr(is_constexpr);
+
+		// Parse override/final specifiers for destructors
+		bool is_override = false;
+		bool is_final = false;
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view keyword = peek_token()->value();
+			if (keyword == "override") {
+				is_override = true;
+				consume_token();
+			} else if (keyword == "final") {
+				is_final = true;
+				consume_token();
+			} else {
+				break;  // Not a destructor specifier
 			}
-			Token name_token = name_token_opt.value();  // Copy the token to keep it alive
-			std::string_view dtor_name = name_token.value();  // Get the string_view from the token
+		}
 
-			if (!consume_punctuator("(")) {
-				return ParseResult::error("Expected '(' after destructor name", *peek_token());
-			}
+		// In C++, 'override' or 'final' on destructor implies 'virtual'
+		if (is_override || is_final) {
+			is_virtual = true;
+		}
 
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Destructor cannot have parameters", *peek_token());
-			}
+		// Check for = default or = delete
+		bool is_defaulted = false;
+		bool is_deleted = false;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		    peek_token()->value() == "=") {
+			consume_token(); // consume '='
 
-			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(struct_name, dtor_name);
-			dtor_ref.set_is_constexpr(is_constexpr);
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				if (peek_token()->value() == "default") {
+					consume_token(); // consume 'default'
+					is_defaulted = true;
 
-			// Parse override/final specifiers for destructors
-			bool is_override = false;
-			bool is_final = false;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view keyword = peek_token()->value();
-				if (keyword == "override") {
-					is_override = true;
-					consume_token();
-				} else if (keyword == "final") {
-					is_final = true;
-					consume_token();
+					// Expect ';'
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after '= default'", *peek_token());
+					}
+
+					// Create an empty block for the destructor body
+					auto [block_node, block_ref] = create_node_ref(BlockNode());
+					dtor_ref.set_definition(block_node);
+				} else if (peek_token()->value() == "delete") {
+					consume_token(); // consume 'delete'
+					is_deleted = true;
+
+					// Expect ';'
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+					}
+
+					// For now, we'll just skip deleted destructors
+					// TODO: Track deleted destructors to prevent their use
+					continue; // Don't add deleted destructor to struct
 				} else {
-					break;  // Not a destructor specifier
+					return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
 				}
+			} else {
+				return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+			}
+		}
+
+		// Parse destructor body if present (and not defaulted/deleted)
+		if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
+			// DELAYED PARSING: Save the current position (start of '{')
+			TokenPosition body_start = save_token_position();
+
+			// Look up the struct type
+			auto type_it = gTypesByName.find(struct_name);
+			size_t struct_type_index = 0;
+			if (type_it != gTypesByName.end()) {
+				struct_type_index = type_it->second->type_index_;
 			}
 
-			// In C++, 'override' or 'final' on destructor implies 'virtual'
-			if (is_override || is_final) {
-				is_virtual = true;
+			// Skip over the destructor body by counting braces
+			skip_balanced_braces();
+
+			// Record this for delayed parsing
+			delayed_function_bodies_.push_back({
+				nullptr,  // func_node (not used for destructors)
+				body_start,
+				struct_name,
+				struct_type_index,
+				&struct_ref,
+				false,  // is_constructor
+				true,   // is_destructor
+				nullptr,  // ctor_node
+				&dtor_ref,   // dtor_node
+				current_template_param_names_  // template parameter names
+			});
+		} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
+			return ParseResult::error("Expected '{', ';', '= default', or '= delete' after destructor declaration", *peek_token());
+		}
+
+		// Add destructor to struct (unless deleted)
+		if (!is_deleted) {
+			struct_ref.add_destructor(dtor_node, current_access, is_virtual);
+		}
+		continue;
+	}
+
+	// Parse member declaration (could be data member or member function)
+	// Note: is_virtual was already checked above (line 794)
+	auto member_result = parse_type_and_name();
+	if (member_result.is_error()) {
+		return member_result;
+	}
+
+	// Get the member node - we need to check this exists before proceeding
+	if (!member_result.node().has_value()) {
+		return ParseResult::error("Expected member declaration", *peek_token());
+	}
+
+	// Check if this is a member function (has '(') or data member (has ';')
+	if (peek_token().has_value() && peek_token()->value() == "(") {
+		// This is a member function declaration
+		if (!member_result.node()->is<DeclarationNode>()) {
+			return ParseResult::error("Expected declaration node for member function", *peek_token());
+		}
+
+		DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+
+		// Parse function declaration with parameters
+		auto func_result = parse_function_declaration(decl_node);
+		if (func_result.is_error()) {
+			return func_result;
+		}
+
+		// Mark this as a member function
+		if (!func_result.node().has_value()) {
+			return ParseResult::error("Failed to create function declaration node", *peek_token());
+		}
+
+		FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+
+		// Create a new FunctionDeclarationNode with member function info
+		// Pass string_view directly - FunctionDeclarationNode stores it as string_view
+		auto [member_func_node, member_func_ref] =
+			emplace_node_ref<FunctionDeclarationNode>(decl_node, struct_name);
+		
+		// Set constexpr flag if it was present
+		member_func_ref.set_is_constexpr(is_constexpr);
+
+		// Copy parameters from the parsed function
+		for (const auto& param : func_decl.parameter_nodes()) {
+			member_func_ref.add_parameter_node(param);
+		}
+
+		// Check for override, final, = 0, = default, or = delete after parameters
+		bool is_override = false;
+		bool is_final = false;
+		bool is_pure_virtual = false;
+		bool is_defaulted = false;
+		bool is_deleted = false;
+
+		// Parse override/final specifiers
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view keyword = peek_token()->value();
+			if (keyword == "override") {
+				is_override = true;
+				consume_token();
+			} else if (keyword == "final") {
+				is_final = true;
+				consume_token();
+			} else {
+				break;  // Not a function specifier
 			}
+		}
 
-			// Check for = default or = delete
-			bool is_defaulted = false;
-			bool is_deleted = false;
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-			    peek_token()->value() == "=") {
-				consume_token(); // consume '='
+		// Check for = 0 (pure virtual), = default, or = delete
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		    peek_token()->value() == "=") {
+			consume_token(); // consume '='
 
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			if (peek_token().has_value()) {
+				if (peek_token()->type() == Token::Type::Literal && peek_token()->value() == "0") {
+					// Pure virtual function (= 0)
+					consume_token();  // consume '0'
+					is_pure_virtual = true;
+					if (!is_virtual) {
+						return ParseResult::error("Pure virtual function must be declared with 'virtual' keyword", *peek_token());
+					}
+				} else if (peek_token()->type() == Token::Type::Keyword) {
 					if (peek_token()->value() == "default") {
 						consume_token(); // consume 'default'
 						is_defaulted = true;
@@ -2116,9 +2269,12 @@ ParseResult Parser::parse_struct_declaration()
 							return ParseResult::error("Expected ';' after '= default'", *peek_token());
 						}
 
-						// Create an empty block for the destructor body
+						// Mark as implicit (same behavior as compiler-generated)
+						member_func_ref.set_is_implicit(true);
+
+						// Create an empty block for the function body
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
-						dtor_ref.set_definition(block_node);
+						member_func_ref.set_definition(block_node);
 					} else if (peek_token()->value() == "delete") {
 						consume_token(); // consume 'delete'
 						is_deleted = true;
@@ -2128,239 +2284,98 @@ ParseResult Parser::parse_struct_declaration()
 							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 						}
 
-						// For now, we'll just skip deleted destructors
-						// TODO: Track deleted destructors to prevent their use
-						continue; // Don't add deleted destructor to struct
+						// For now, we'll just skip deleted functions
+						// TODO: Track deleted functions to prevent their use
+						continue; // Don't add deleted function to struct
 					} else {
 						return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
 					}
 				} else {
-					return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+					return ParseResult::error("Expected '0', 'default', or 'delete' after '='", *peek_token());
 				}
 			}
-
-			// Parse destructor body if present (and not defaulted/deleted)
-			if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
-				// DELAYED PARSING: Save the current position (start of '{')
-				TokenPosition body_start = save_token_position();
-
-				// Look up the struct type
-				auto type_it = gTypesByName.find(struct_name);
-				size_t struct_type_index = 0;
-				if (type_it != gTypesByName.end()) {
-					struct_type_index = type_it->second->type_index_;
-				}
-
-				// Skip over the destructor body by counting braces
-				skip_balanced_braces();
-
-				// Record this for delayed parsing
-				delayed_function_bodies_.push_back({
-					nullptr,  // func_node (not used for destructors)
-					body_start,
-					struct_name,
-					struct_type_index,
-					&struct_ref,
-					false,  // is_constructor
-					true,   // is_destructor
-					nullptr,  // ctor_node
-					&dtor_ref,   // dtor_node
-					current_template_param_names_  // template parameter names
-				});
-			} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
-				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after destructor declaration", *peek_token());
-			}
-
-			// Add destructor to struct (unless deleted)
-			if (!is_deleted) {
-				struct_ref.add_destructor(dtor_node, current_access, is_virtual);
-			}
-			continue;
 		}
 
-		// Parse member declaration (could be data member or member function)
-		// Note: is_virtual was already checked above (line 794)
-		auto member_result = parse_type_and_name();
-		if (member_result.is_error()) {
-			return member_result;
+		// Parse function body if present (and not defaulted/deleted)
+		if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
+			// DELAYED PARSING: Save the current position (start of '{')
+			TokenPosition body_start = save_token_position();
+
+			// Look up the struct type to get its type index
+			auto type_it = gTypesByName.find(struct_name);
+			size_t struct_type_index = 0;
+			if (type_it != gTypesByName.end()) {
+				struct_type_index = type_it->second->type_index_;
+			}
+
+			// Skip over the function body by counting braces
+			skip_balanced_braces();
+
+			// Record this for delayed parsing
+			delayed_function_bodies_.push_back({
+				&member_func_ref,
+				body_start,
+				struct_name,
+				struct_type_index,
+				&struct_ref,
+				false,  // is_constructor
+				false,  // is_destructor
+				nullptr,  // ctor_node
+				nullptr,  // dtor_node
+				current_template_param_names_  // template parameter names
+			});
+			// Inline function body consumed, no semicolon needed
+		} else if (!is_defaulted && !is_deleted) {
+			// Function declaration without body - expect semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after member function declaration", *peek_token());
+			}
 		}
 
-		// Get the member node - we need to check this exists before proceeding
-		if (!member_result.node().has_value()) {
-			return ParseResult::error("Expected member declaration", *peek_token());
+		// In C++, 'override' implies 'virtual'
+		if (is_override || is_final) {
+			is_virtual = true;
 		}
 
-		// Check if this is a member function (has '(') or data member (has ';')
-		if (peek_token().has_value() && peek_token()->value() == "(") {
-			// This is a member function declaration
-			if (!member_result.node()->is<DeclarationNode>()) {
-				return ParseResult::error("Expected declaration node for member function", *peek_token());
-			}
-
-			DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-
-			// Parse function declaration with parameters
-			auto func_result = parse_function_declaration(decl_node);
-			if (func_result.is_error()) {
-				return func_result;
-			}
-
-			// Mark this as a member function
-			if (!func_result.node().has_value()) {
-				return ParseResult::error("Failed to create function declaration node", *peek_token());
-			}
-
-			FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
-
-			// Create a new FunctionDeclarationNode with member function info
-			// Pass string_view directly - FunctionDeclarationNode stores it as string_view
-			auto [member_func_node, member_func_ref] =
-				emplace_node_ref<FunctionDeclarationNode>(decl_node, struct_name);
-			
-			// Set constexpr flag if it was present
-			member_func_ref.set_is_constexpr(is_constexpr);
-
-			// Copy parameters from the parsed function
-			for (const auto& param : func_decl.parameter_nodes()) {
-				member_func_ref.add_parameter_node(param);
-			}
-
-			// Check for override, final, = 0, = default, or = delete after parameters
-			bool is_override = false;
-			bool is_final = false;
-			bool is_pure_virtual = false;
-			bool is_defaulted = false;
-			bool is_deleted = false;
-
-			// Parse override/final specifiers
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view keyword = peek_token()->value();
-				if (keyword == "override") {
-					is_override = true;
-					consume_token();
-				} else if (keyword == "final") {
-					is_final = true;
-					consume_token();
-				} else {
-					break;  // Not a function specifier
-				}
-			}
-
-			// Check for = 0 (pure virtual), = default, or = delete
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-			    peek_token()->value() == "=") {
-				consume_token(); // consume '='
-
-				if (peek_token().has_value()) {
-					if (peek_token()->type() == Token::Type::Literal && peek_token()->value() == "0") {
-						// Pure virtual function (= 0)
-						consume_token();  // consume '0'
-						is_pure_virtual = true;
-						if (!is_virtual) {
-							return ParseResult::error("Pure virtual function must be declared with 'virtual' keyword", *peek_token());
-						}
-					} else if (peek_token()->type() == Token::Type::Keyword) {
-						if (peek_token()->value() == "default") {
-							consume_token(); // consume 'default'
-							is_defaulted = true;
-
-							// Expect ';'
-							if (!consume_punctuator(";")) {
-								return ParseResult::error("Expected ';' after '= default'", *peek_token());
-							}
-
-							// Mark as implicit (same behavior as compiler-generated)
-							member_func_ref.set_is_implicit(true);
-
-							// Create an empty block for the function body
-							auto [block_node, block_ref] = create_node_ref(BlockNode());
-							member_func_ref.set_definition(block_node);
-						} else if (peek_token()->value() == "delete") {
-							consume_token(); // consume 'delete'
-							is_deleted = true;
-
-							// Expect ';'
-							if (!consume_punctuator(";")) {
-								return ParseResult::error("Expected ';' after '= delete'", *peek_token());
-							}
-
-							// For now, we'll just skip deleted functions
-							// TODO: Track deleted functions to prevent their use
-							continue; // Don't add deleted function to struct
-						} else {
-							return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
-						}
-					} else {
-						return ParseResult::error("Expected '0', 'default', or 'delete' after '='", *peek_token());
-					}
-				}
-			}
-
-			// Parse function body if present (and not defaulted/deleted)
-			if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
-				// DELAYED PARSING: Save the current position (start of '{')
-				TokenPosition body_start = save_token_position();
-
-				// Look up the struct type to get its type index
-				auto type_it = gTypesByName.find(struct_name);
-				size_t struct_type_index = 0;
-				if (type_it != gTypesByName.end()) {
-					struct_type_index = type_it->second->type_index_;
-				}
-
-				// Skip over the function body by counting braces
-				skip_balanced_braces();
-
-				// Record this for delayed parsing
-				delayed_function_bodies_.push_back({
-					&member_func_ref,
-					body_start,
-					struct_name,
-					struct_type_index,
-					&struct_ref,
-					false,  // is_constructor
-					false,  // is_destructor
-					nullptr,  // ctor_node
-					nullptr,  // dtor_node
-					current_template_param_names_  // template parameter names
-				});
-				// Inline function body consumed, no semicolon needed
-			} else if (!is_defaulted && !is_deleted) {
-				// Function declaration without body - expect semicolon
-				if (!consume_punctuator(";")) {
-					return ParseResult::error("Expected '{', ';', '= default', or '= delete' after member function declaration", *peek_token());
-				}
-			}
-
-			// In C++, 'override' implies 'virtual'
-			if (is_override || is_final) {
-				is_virtual = true;
-			}
-
-			// Check if this is an operator overload
-			std::string_view func_name = decl_node.identifier_token().value();
-			if (func_name.starts_with("operator")) {
-				// Extract the operator symbol (e.g., "operator=" -> "=")
-				std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
-				struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access,
-				                                 is_virtual, is_pure_virtual, is_override, is_final);
-			} else {
-				// Add regular member function to struct
-				struct_ref.add_member_function(member_func_node, current_access,
-				                               is_virtual, is_pure_virtual, is_override, is_final);
-			}
+		// Check if this is an operator overload
+		std::string_view func_name = decl_node.identifier_token().value();
+		if (func_name.starts_with("operator")) {
+			// Extract the operator symbol (e.g., "operator=" -> "=")
+			std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
+			struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access,
+			                                 is_virtual, is_pure_virtual, is_override, is_final);
 		} else {
-			// This is a data member
-			std::optional<ASTNode> default_initializer;
+			// Add regular member function to struct
+			struct_ref.add_member_function(member_func_node, current_access,
+			                               is_virtual, is_pure_virtual, is_override, is_final);
+		}
+	} else {
+		// This is a data member
+		std::optional<ASTNode> default_initializer;
 
-			// Get the type from the member declaration
-			if (!member_result.node()->is<DeclarationNode>()) {
-				return ParseResult::error("Expected declaration node for member", *peek_token());
+		// Get the type from the member declaration
+		if (!member_result.node()->is<DeclarationNode>()) {
+			return ParseResult::error("Expected declaration node for member", *peek_token());
+		}
+		const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+		const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+
+		// Check for direct brace initialization: C c1{ 1 };
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+		    peek_token()->value() == "{") {
+			auto init_result = parse_brace_initializer(type_spec);
+			if (init_result.is_error()) {
+				return init_result;
 			}
-			const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-			const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+			if (init_result.node().has_value()) {
+				default_initializer = *init_result.node();
+			}
+		}
+		// Check for member initialization with '=' (C++11 feature)
+		else if (peek_token().has_value() && peek_token()->value() == "=") {
+			consume_token(); // consume '='
 
-			// Check for direct brace initialization: C c1{ 1 };
+			// Check if this is a brace initializer: B b = { .a = 1 }
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
 			    peek_token()->value() == "{") {
 				auto init_result = parse_brace_initializer(type_spec);
@@ -2371,83 +2386,58 @@ ParseResult Parser::parse_struct_declaration()
 					default_initializer = *init_result.node();
 				}
 			}
-			// Check for member initialization with '=' (C++11 feature)
-			else if (peek_token().has_value() && peek_token()->value() == "=") {
-				consume_token(); // consume '='
+			// Check if this is a type name followed by brace initializer: B b = B{ .a = 2 }
+			else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+				// Save position in case this isn't a type name
+				TokenPosition saved_pos = save_token_position();
 
-				// Check if this is a brace initializer: B b = { .a = 1 }
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-				    peek_token()->value() == "{") {
-					auto init_result = parse_brace_initializer(type_spec);
-					if (init_result.is_error()) {
-						return init_result;
-					}
-					if (init_result.node().has_value()) {
-						default_initializer = *init_result.node();
-					}
-				}
-				// Check if this is a type name followed by brace initializer: B b = B{ .a = 2 }
-				else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-					// Save position in case this isn't a type name
-					TokenPosition saved_pos = save_token_position();
+				// Try to parse as type specifier
+				ParseResult type_result = parse_type_specifier();
+				if (!type_result.is_error() && type_result.node().has_value() &&
+				    peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+				    (peek_token()->value() == "{" || peek_token()->value() == "(")) {
+					// This is a type name followed by initializer: B{...} or B(...)
+					const TypeSpecifierNode& init_type_spec = type_result.node()->as<TypeSpecifierNode>();
 
-					// Try to parse as type specifier
-					ParseResult type_result = parse_type_specifier();
-					if (!type_result.is_error() && type_result.node().has_value() &&
-					    peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-					    (peek_token()->value() == "{" || peek_token()->value() == "(")) {
-						// This is a type name followed by initializer: B{...} or B(...)
-						const TypeSpecifierNode& init_type_spec = type_result.node()->as<TypeSpecifierNode>();
-
-						if (peek_token()->value() == "{") {
-							// Parse brace initializer
-							auto init_result = parse_brace_initializer(init_type_spec);
-							if (init_result.is_error()) {
-								return init_result;
-							}
-							if (init_result.node().has_value()) {
-								default_initializer = *init_result.node();
-							}
-						} else {
-							// Parse parenthesized initializer: B(args)
-							consume_token(); // consume '('
-							std::vector<ASTNode> init_args;
-							if (!peek_token().has_value() || peek_token()->value() != ")") {
-								do {
-									ParseResult arg_result = parse_expression();
-									if (arg_result.is_error()) {
-										return arg_result;
-									}
-									if (auto arg_node = arg_result.node()) {
-										init_args.push_back(*arg_node);
-									}
-								} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
-							}
-							if (!consume_punctuator(")")) {
-								return ParseResult::error("Expected ')' after initializer arguments", *current_token_);
-							}
-
-							// Create an InitializerListNode with the arguments
-							auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-							for (auto& arg : init_args) {
-								init_list_ref.add_initializer(arg);
-							}
-							default_initializer = init_list_node;
-						}
-						discard_saved_token(saved_pos);
-					} else {
-						// Not a type name, restore and parse as expression
-						restore_token_position(saved_pos);
-						auto init_result = parse_expression();
+					if (peek_token()->value() == "{") {
+						// Parse brace initializer
+						auto init_result = parse_brace_initializer(init_type_spec);
 						if (init_result.is_error()) {
 							return init_result;
 						}
 						if (init_result.node().has_value()) {
 							default_initializer = *init_result.node();
 						}
+					} else {
+						// Parse parenthesized initializer: B(args)
+						consume_token(); // consume '('
+						std::vector<ASTNode> init_args;
+						if (!peek_token().has_value() || peek_token()->value() != ")") {
+							do {
+								ParseResult arg_result = parse_expression();
+								if (arg_result.is_error()) {
+									return arg_result;
+								}
+								if (auto arg_node = arg_result.node()) {
+									init_args.push_back(*arg_node);
+								}
+							} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+						}
+						if (!consume_punctuator(")")) {
+							return ParseResult::error("Expected ')' after initializer arguments", *current_token_);
+						}
+
+						// Create an InitializerListNode with the arguments
+						auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+						for (auto& arg : init_args) {
+							init_list_ref.add_initializer(arg);
+						}
+						default_initializer = init_list_node;
 					}
+					discard_saved_token(saved_pos);
 				} else {
-					// Parse regular expression initializer
+					// Not a type name, restore and parse as expression
+					restore_token_position(saved_pos);
 					auto init_result = parse_expression();
 					if (init_result.is_error()) {
 						return init_result;
@@ -2456,109 +2446,119 @@ ParseResult Parser::parse_struct_declaration()
 						default_initializer = *init_result.node();
 					}
 				}
+			} else {
+				// Parse regular expression initializer
+				auto init_result = parse_expression();
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				if (init_result.node().has_value()) {
+					default_initializer = *init_result.node();
+				}
 			}
-
-			// Expect semicolon after member declaration
-			if (!consume_punctuator(";")) {
-				return ParseResult::error("Expected ';' after struct member declaration", *peek_token());
-			}
-
-			// Add member to struct with current access level and default initializer
-			struct_ref.add_member(*member_result.node(), current_access, default_initializer);
 		}
+
+		// Expect semicolon after member declaration
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after struct member declaration", *peek_token());
+		}
+
+		// Add member to struct with current access level and default initializer
+		struct_ref.add_member(*member_result.node(), current_access, default_initializer);
+	}
 	}
 
 	// Expect closing brace
 	if (!consume_punctuator("}")) {
-		return ParseResult::error("Expected '}' at end of struct/class definition", *peek_token());
+	return ParseResult::error("Expected '}' at end of struct/class definition", *peek_token());
 	}
 
 	// Check for variable declarations after struct definition: struct Point { ... } p, q;
 	std::vector<ASTNode> struct_variables;
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-		// Parse variable declarators
-		do {
-			auto var_name_token = consume_token();
-			if (!var_name_token.has_value()) {
-				return ParseResult::error("Expected variable name after struct definition", *current_token_);
-			}
+	// Parse variable declarators
+	do {
+		auto var_name_token = consume_token();
+		if (!var_name_token.has_value()) {
+			return ParseResult::error("Expected variable name after struct definition", *current_token_);
+		}
 
-			// Create a variable declaration node for this variable
-			auto var_type_spec = emplace_node<TypeSpecifierNode>(
-				Type::Struct,
-				struct_type_info.type_index_,
-				static_cast<unsigned char>(0),  // Size will be set later
-				Token(Token::Type::Identifier, struct_name, var_name_token->line(), var_name_token->column(), var_name_token->file_index())
-			);
+		// Create a variable declaration node for this variable
+		auto var_type_spec = emplace_node<TypeSpecifierNode>(
+			Type::Struct,
+			struct_type_info.type_index_,
+			static_cast<unsigned char>(0),  // Size will be set later
+			Token(Token::Type::Identifier, struct_name, var_name_token->line(), var_name_token->column(), var_name_token->file_index())
+		);
 
-			auto var_decl = emplace_node<DeclarationNode>(var_type_spec, *var_name_token);
+		auto var_decl = emplace_node<DeclarationNode>(var_type_spec, *var_name_token);
 
-			// Add to symbol table so it can be referenced later in the code
-			gSymbolTable.insert(var_name_token->value(), var_decl);
+		// Add to symbol table so it can be referenced later in the code
+		gSymbolTable.insert(var_name_token->value(), var_decl);
 
-			// Wrap in VariableDeclarationNode so it gets processed properly by code generator
-			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, std::nullopt);
+		// Wrap in VariableDeclarationNode so it gets processed properly by code generator
+		auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, std::nullopt);
 
-			struct_variables.push_back(var_decl_node);
+		struct_variables.push_back(var_decl_node);
 
-		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+	} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 	}
 
 	// Expect semicolon after struct definition (and optional variable declarations)
 	if (!consume_punctuator(";")) {
-		return ParseResult::error("Expected ';' after struct/class definition", *peek_token());
+	return ParseResult::error("Expected ';' after struct/class definition", *peek_token());
 	}
 
 	// struct_type_info was already registered early (before parsing members)
 	// struct_info was created early (before parsing base classes and members)
 	// Now process data members and calculate layout
 	for (const auto& member_decl : struct_ref.members()) {
-		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+	const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+	const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
-		// Get member size and alignment
-		size_t member_size = type_spec.size_in_bits() / 8;
-		size_t referenced_size_bits = type_spec.size_in_bits();
-		size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+	// Get member size and alignment
+	size_t member_size = type_spec.size_in_bits() / 8;
+	size_t referenced_size_bits = type_spec.size_in_bits();
+	size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
-		// For struct types, get size and alignment from the struct type info
-		if (type_spec.type() == Type::Struct) {
-			// Look up the struct type by type_index
-			const TypeInfo* member_type_info = nullptr;
-			for (const auto& ti : gTypeInfo) {
-				if (ti.type_index_ == type_spec.type_index()) {
-					member_type_info = &ti;
-					break;
-				}
-			}
-
-			if (member_type_info && member_type_info->getStructInfo()) {
-				member_size = member_type_info->getStructInfo()->total_size;
-				referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
-				member_alignment = member_type_info->getStructInfo()->alignment;
+	// For struct types, get size and alignment from the struct type info
+	if (type_spec.type() == Type::Struct) {
+		// Look up the struct type by type_index
+		const TypeInfo* member_type_info = nullptr;
+		for (const auto& ti : gTypeInfo) {
+			if (ti.type_index_ == type_spec.type_index()) {
+				member_type_info = &ti;
+				break;
 			}
 		}
 
-		// Add member to struct layout with default initializer
-		bool is_ref_member = type_spec.is_reference();
-		bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
-		if (is_ref_member) {
-			member_size = sizeof(void*);
-			referenced_size_bits = referenced_size_bits ? referenced_size_bits : (type_spec.size_in_bits());
-			member_alignment = sizeof(void*);
+		if (member_type_info && member_type_info->getStructInfo()) {
+			member_size = member_type_info->getStructInfo()->total_size;
+			referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+			member_alignment = member_type_info->getStructInfo()->alignment;
 		}
-		struct_info->addMember(
-			std::string(decl.identifier_token().value()),
-			type_spec.type(),
-			type_spec.type_index(),
-			member_size,
-			member_alignment,
-			member_decl.access,
-			member_decl.default_initializer,
-			is_ref_member,
-			is_rvalue_ref_member,
-			referenced_size_bits
-		);
+	}
+
+	// Add member to struct layout with default initializer
+	bool is_ref_member = type_spec.is_reference();
+	bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+	if (is_ref_member) {
+		member_size = sizeof(void*);
+		referenced_size_bits = referenced_size_bits ? referenced_size_bits : (type_spec.size_in_bits());
+		member_alignment = sizeof(void*);
+	}
+	struct_info->addMember(
+		std::string(decl.identifier_token().value()),
+		type_spec.type(),
+		type_spec.type_index(),
+		member_size,
+		member_alignment,
+		member_decl.access,
+		member_decl.default_initializer,
+		is_ref_member,
+		is_rvalue_ref_member,
+		referenced_size_bits
+	);
 	}
 
 	// Process member functions, constructors, and destructors
@@ -2570,104 +2570,104 @@ ParseResult Parser::parse_struct_declaration()
 	bool has_user_defined_destructor = false;
 
 	for (const auto& func_decl : struct_ref.member_functions()) {
-		if (func_decl.is_constructor) {
-			// Add constructor to struct type info
-			struct_info->addConstructor(
-				func_decl.function_declaration,
-				func_decl.access
-			);
-			has_user_defined_constructor = true;
+	if (func_decl.is_constructor) {
+		// Add constructor to struct type info
+		struct_info->addConstructor(
+			func_decl.function_declaration,
+			func_decl.access
+		);
+		has_user_defined_constructor = true;
 
-			// Check if this is a copy or move constructor
-			const auto& ctor_node = func_decl.function_declaration.as<ConstructorDeclarationNode>();
-			const auto& params = ctor_node.parameter_nodes();
+		// Check if this is a copy or move constructor
+		const auto& ctor_node = func_decl.function_declaration.as<ConstructorDeclarationNode>();
+		const auto& params = ctor_node.parameter_nodes();
+		if (params.size() == 1) {
+			const auto& param_decl = params[0].as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+			if (param_type.is_reference() && param_type.type() == Type::Struct) {
+				has_user_defined_copy_constructor = true;
+			} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+				has_user_defined_move_constructor = true;
+			}
+		}
+	} else if (func_decl.is_destructor) {
+		// Add destructor to struct type info
+		struct_info->addDestructor(
+			func_decl.function_declaration,
+			func_decl.access,
+			func_decl.is_virtual
+		);
+		has_user_defined_destructor = true;
+	} else if (func_decl.is_operator_overload) {
+		// Operator overload
+		struct_info->addOperatorOverload(
+			func_decl.operator_symbol,
+			func_decl.function_declaration,
+			func_decl.access,
+			func_decl.is_virtual,
+			func_decl.is_pure_virtual,
+			func_decl.is_override,
+			func_decl.is_final
+		);
+
+		// Check if this is a copy or move assignment operator
+		if (func_decl.operator_symbol == "=") {
+			const auto& func_node = func_decl.function_declaration.as<FunctionDeclarationNode>();
+			const auto& params = func_node.parameter_nodes();
 			if (params.size() == 1) {
 				const auto& param_decl = params[0].as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-				if (param_type.is_reference() && param_type.type() == Type::Struct) {
-					has_user_defined_copy_constructor = true;
+				if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+					has_user_defined_copy_assignment = true;
 				} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-					has_user_defined_move_constructor = true;
+					has_user_defined_move_assignment = true;
 				}
 			}
-		} else if (func_decl.is_destructor) {
-			// Add destructor to struct type info
-			struct_info->addDestructor(
-				func_decl.function_declaration,
-				func_decl.access,
-				func_decl.is_virtual
-			);
-			has_user_defined_destructor = true;
-		} else if (func_decl.is_operator_overload) {
-			// Operator overload
-			struct_info->addOperatorOverload(
-				func_decl.operator_symbol,
-				func_decl.function_declaration,
-				func_decl.access,
-				func_decl.is_virtual,
-				func_decl.is_pure_virtual,
-				func_decl.is_override,
-				func_decl.is_final
-			);
-
-			// Check if this is a copy or move assignment operator
-			if (func_decl.operator_symbol == "=") {
-				const auto& func_node = func_decl.function_declaration.as<FunctionDeclarationNode>();
-				const auto& params = func_node.parameter_nodes();
-				if (params.size() == 1) {
-					const auto& param_decl = params[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-					if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-						has_user_defined_copy_assignment = true;
-					} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-						has_user_defined_move_assignment = true;
-					}
-				}
-			}
-		} else {
-			// Regular member function
-			const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
-			const DeclarationNode& decl = func.decl_node();
-
-			// Add member function to struct type info
-			struct_info->addMemberFunction(
-				std::string(decl.identifier_token().value()),
-				func_decl.function_declaration,
-				func_decl.access,
-				func_decl.is_virtual,
-				func_decl.is_pure_virtual,
-				func_decl.is_override,
-				func_decl.is_final
-			);
 		}
+	} else {
+		// Regular member function
+		const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
+		const DeclarationNode& decl = func.decl_node();
+
+		// Add member function to struct type info
+		struct_info->addMemberFunction(
+			std::string(decl.identifier_token().value()),
+			func_decl.function_declaration,
+			func_decl.access,
+			func_decl.is_virtual,
+			func_decl.is_pure_virtual,
+			func_decl.is_override,
+			func_decl.is_final
+		);
+	}
 	}
 
 	// Generate default constructor if no user-defined constructor exists
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_constructor && !parsing_template_class_) {
-		// Create a default constructor node
-		auto [default_ctor_node, default_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			struct_name,
-			struct_name
-		);
+	// Create a default constructor node
+	auto [default_ctor_node, default_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+		struct_name,
+		struct_name
+	);
 
-		// Create an empty block for the constructor body
-		auto [block_node, block_ref] = create_node_ref(BlockNode());
-		default_ctor_ref.set_definition(block_node);
+	// Create an empty block for the constructor body
+	auto [block_node, block_ref] = create_node_ref(BlockNode());
+	default_ctor_ref.set_definition(block_node);
 
-		// Mark this as an implicit default constructor
-		default_ctor_ref.set_is_implicit(true);
+	// Mark this as an implicit default constructor
+	default_ctor_ref.set_is_implicit(true);
 
-		// Add the default constructor to the struct type info
-		struct_info->addConstructor(
-			default_ctor_node,
-			AccessSpecifier::Public  // Default constructors are always public
-		);
+	// Add the default constructor to the struct type info
+	struct_info->addConstructor(
+		default_ctor_node,
+		AccessSpecifier::Public  // Default constructors are always public
+	);
 
-		// Add the default constructor to the struct node
-		struct_ref.add_constructor(default_ctor_node, AccessSpecifier::Public);
+	// Add the default constructor to the struct node
+	struct_ref.add_constructor(default_ctor_node, AccessSpecifier::Public);
 	}
 
 	// Generate copy constructor if no user-defined copy constructor exists
@@ -2676,28 +2676,28 @@ ParseResult Parser::parse_struct_declaration()
 	// - User declared a copy constructor
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_copy_constructor && !has_user_defined_move_constructor && !parsing_template_class_) {
-		// Create a copy constructor node: Type(const Type& other)
-		auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			struct_name,
-			struct_name
-		);
+	// Create a copy constructor node: Type(const Type& other)
+	auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+		struct_name,
+		struct_name
+	);
 
-		// Create parameter: const Type& other
-		TypeIndex struct_type_index = struct_type_info.type_index_;
-		auto param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
-			struct_type_index,
-			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
-			*name_token,
-			CVQualifier::Const  // const qualifier
-		);
+	// Create parameter: const Type& other
+	TypeIndex struct_type_index = struct_type_info.type_index_;
+	auto param_type_node = emplace_node<TypeSpecifierNode>(
+		Type::Struct,
+		struct_type_index,
+		static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+		*name_token,
+		CVQualifier::Const  // const qualifier
+	);
 
-		// Make it a reference type
-		param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+	// Make it a reference type
+	param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
 
-		// Create parameter declaration
-		// Use a static string to ensure the string_view in the token remains valid
-		static const std::string param_name = "other";
+	// Create parameter declaration
+	// Use a static string to ensure the string_view in the token remains valid
+	static const std::string param_name = "other";
 		Token param_token(Token::Type::Identifier, param_name, 0, 0, 0);
 		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
 
