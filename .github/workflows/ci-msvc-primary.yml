@@ -35,16 +35,6 @@ jobs:
           Write-Host "Found test exe: $($testExe.FullName)"
           & $testExe.FullName
 
-      - name: Upload Windows artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-artifacts
-          path: |
-            x64/**
-            **\*.exe
-            tests/Reference/**
-
   linux:
     name: Linux - build & run tests
     runs-on: ubuntu-latest
@@ -81,13 +71,6 @@ jobs:
             echo "Test binary not found; ensure make test produces x64/Test/test"; exit 1
           fi
 
-      - name: Upload Linux artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-${{ matrix.compiler }}-artifacts
-          path: x64/**
-
   macos:
     name: macOS - build & run tests
     runs-on: macos-latest
@@ -115,10 +98,3 @@ jobs:
           else
             echo "Test binary not found; ensure make test produces x64/Test/test"; exit 1
           fi
-
-      - name: Upload macOS artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-artifacts
-          path: x64/**
