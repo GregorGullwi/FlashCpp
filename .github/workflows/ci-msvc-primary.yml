@@ -34,11 +34,11 @@ jobs:
       - name: Setup MSBuild (Visual Studio)
         uses: microsoft/setup-msbuild@v1
 
-      - name: Build solution (Test)
+      - name: Build FlashCppMSVC project (Test)
         shell: powershell
         run: |
-          # Build the solution with MSBuild (Test)
-          msbuild FlashCpp.sln /p:Configuration=Test /m
+          # Build only the FlashCppMSVC project with MSBuild (Test) - uses MSVC toolset
+          msbuild FlashCppMSVC.vcxproj /p:Configuration=Test /p:Platform=x64 /m
 
       - name: Run test executable
         shell: powershell
