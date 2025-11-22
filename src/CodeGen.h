@@ -2037,11 +2037,11 @@ private:
 		auto condition_operands = visitExpressionNode(condition_expr.as<ExpressionNode>());
 
 		// Generate conditional branch
-		std::vector<IrOperand> branch_operands;
-		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
-		branch_operands.emplace_back(loop_body_label);
-		branch_operands.emplace_back(loop_end_label);
-		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+		CondBranchOp cond_branch;
+		cond_branch.label_true = loop_body_label;
+		cond_branch.label_false = loop_end_label;
+		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
@@ -2212,11 +2212,11 @@ private:
 		auto condition_operands = visitExpressionNode(condition_expr.as<ExpressionNode>());
 
 		// Generate conditional branch
-		std::vector<IrOperand> branch_operands;
-		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
-		branch_operands.emplace_back(loop_body_label);
-		branch_operands.emplace_back(loop_end_label);
-		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+		CondBranchOp cond_branch;
+		cond_branch.label_true = loop_body_label;
+		cond_branch.label_false = loop_end_label;
+		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
