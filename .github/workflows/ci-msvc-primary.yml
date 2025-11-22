@@ -18,11 +18,11 @@ jobs:
       - name: Setup MSBuild (Visual Studio)
         uses: microsoft/setup-msbuild@v1
 
-      - name: Build FlashCpp project (Debug)
+      - name: Build FlashCppMSVC project (Debug)
         shell: powershell
         run: |
-          # Build only the FlashCpp project with MSBuild (Debug)
-          msbuild FlashCpp.vcxproj /p:Configuration=Debug /p:Platform=x64 /m
+          # Build only the FlashCppMSVC project with MSBuild (Debug) - uses MSVC toolset
+          msbuild FlashCppMSVC.vcxproj /p:Configuration=Debug /p:Platform=x64 /m
 
   windows-test:
     name: Windows - MSVC - Test
