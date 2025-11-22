@@ -56,6 +56,22 @@ This document summarizes the expanded C++20 constexpr support implemented in the
 - Compile-time conditional compilation
 - Evaluated during constant expression evaluation
 
+### Struct/Class Constexpr Support (C++11/C++14/C++20)
+✅ **Constexpr constructors**
+- Parser support for `constexpr` keyword on constructors
+- Allows literal types to be constructed in constant expressions
+- Member initializer lists in constexpr constructors
+
+✅ **Constexpr member functions**
+- Parser support for `constexpr` keyword on member functions
+- Const and non-const constexpr member functions
+- Static constexpr member functions
+
+🟡 **Constexpr destructors (C++20 - Partial)**
+- Parser support: ✅ Destructors can be marked with `constexpr` keyword
+- Allows types with constexpr destructors to be used in constexpr contexts
+- Note: Full constant evaluation of destructor calls during constexpr evaluation is in progress
+
 ### C++20 Features
 ✅ **consteval (immediate functions)**
 - Functions that must be evaluated at compile time
@@ -162,9 +178,6 @@ static_assert(sum_even_numbers(10) == 20);
 ✅ Complex logic tests passing (factorial, fibonacci, etc.)
 
 ## Limitations and Future Work
-
-### In Progress
-- **constexpr destructors** - Under active development
 
 ### Not Yet Implemented (C++20)
 - constexpr virtual functions
