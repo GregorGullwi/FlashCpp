@@ -266,21 +266,34 @@ constexpr int test_bounds() {
 }
 ```
 
-### Future: STD Template Support (Planned)
+### STD Template Support (In Progress)
 **Strategy for constexpr-compatible standard library templates:**
 
-The implementation will use a hybrid approach combining compiler-intrinsic support for core types with standard template evaluation for algorithms.
+The implementation uses a hybrid approach combining compiler-intrinsic support for core types with standard template evaluation for algorithms.
 
-**Phase 1: Core Containers (High Priority)**
-- **std::array** - Fixed-size array wrapper, all members constexpr
-  - Simplest to implement, no dynamic allocation
-  - Foundation for other containers
+**Phase 1: Core Containers (In Progress) 🔄**
+
+🔄 **std::array** - UNDER ACTIVE DEVELOPMENT
+  - Test suite created: `tests/Reference/test_std_array.cpp`
+  - Implementation approach under consideration:
+    - **Option A (Quick)**: Compiler builtin/intrinsic for std::array specifically
+    - **Option B (Comprehensive)**: General template constexpr support (enables all templates)
+  - Target features:
+    - Aggregate initialization: `std::array<int, 3> arr = {1, 2, 3};`
+    - Element access: `arr[i]` with bounds checking
+    - Member functions: `size()`, `front()`, `back()`, `at()`
+    - Modification support
+  - Blockers identified:
+    - Template type instantiation in constexpr evaluator
+    - Member function calls on templated types
+    - Aggregate initialization for template types
   
-- **std::span** - Non-owning view over contiguous data
+⏳ **std::span** - Planned next
+  - Non-owning view over contiguous data
   - Works with constexpr arrays and pointers
   - Leverages existing bounds checking infrastructure
 
-**Phase 2: Dynamic Containers (Medium Priority)**
+**Phase 2: Dynamic Containers (Planned)**
 - **std::vector** - Dynamic array with constexpr allocations
   - Leverages constexpr new/delete implementation
   - Growth strategy in constexpr context
@@ -290,7 +303,7 @@ The implementation will use a hybrid approach combining compiler-intrinsic suppo
   - Useful for error handling
   - Requires union support in constexpr evaluator
 
-**Phase 3: Algorithms (Medium Priority)**
+**Phase 3: Algorithms (Planned)**
 - Simple algorithms: `std::min`, `std::max`, `std::swap`
 - Iterator algorithms: `std::find`, `std::count`
 - Complex algorithms: `std::sort`, `std::accumulate`
@@ -305,7 +318,7 @@ The implementation will use a hybrid approach combining compiler-intrinsic suppo
 2. **Standard template evaluation** for algorithms - cleaner separation, easier to extend
 3. **Special handling** for containers with allocation (vector, string) - integrates with constexpr new/delete infrastructure
 
-This phased approach ensures stable, incremental progress while maintaining code quality and comprehensive testing.
+This phased, incremental approach ensures stable progress while maintaining code quality and comprehensive testing.
 ```
 
 ### Not Planned (C++23 features - out of scope)
