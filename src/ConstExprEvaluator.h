@@ -45,12 +45,15 @@ struct AllocationInfo {
 	size_t array_size;            // Size of array (1 for non-array)
 	// Allocated data: primitives use variant, objects use ObjectValue
 	std::variant<
-		long long,               // For int, long, short, char
-		unsigned long long,      // For unsigned types
-		double,                  // For float, double
-		bool,                    // For bool
-		ObjectValue,             // For struct/class (single object)
-		std::vector<ObjectValue> // For arrays
+		long long,                   // For int, long, short, char (single value)
+		unsigned long long,          // For unsigned types (single value)
+		double,                      // For float, double (single value)
+		bool,                        // For bool (single value)
+		ObjectValue,                 // For struct/class (single object)
+		std::vector<long long>,      // For int arrays
+		std::vector<double>,         // For float/double arrays
+		std::vector<bool>,           // For bool arrays
+		std::vector<ObjectValue>     // For object arrays
 	> data;
 	bool is_freed;                // Whether delete was called
 	
@@ -59,11 +62,21 @@ struct AllocationInfo {
 		: id(allocation_id), type_name(std::move(type)), is_array(arr), 
 		  array_size(size), is_freed(false) {
 		if (is_array) {
-			std::vector<ObjectValue> objects;
-			for (size_t i = 0; i < array_size; ++i) {
-				objects.emplace_back(type_name);
+			// Initialize array based on type
+			if (type_name == "int" || type_name == "long" || type_name == "short" || type_name == "char") {
+				data = std::vector<long long>(array_size, 0LL);
+			} else if (type_name == "bool") {
+				data = std::vector<bool>(array_size, false);
+			} else if (type_name == "float" || type_name == "double") {
+				data = std::vector<double>(array_size, 0.0);
+			} else {
+				// Struct/class type array
+				std::vector<ObjectValue> objects;
+				for (size_t i = 0; i < array_size; ++i) {
+					objects.emplace_back(type_name);
+				}
+				data = std::move(objects);
 			}
-			data = std::move(objects);
 		} else {
 			// Default initialization for built-in types
 			if (type_name == "int" || type_name == "long" || type_name == "short" || type_name == "char") {
@@ -289,9 +302,90 @@ public:
 		if (std::holds_alternative<FunctionCallNode>(expr)) {
 			return evaluate_function_call(std::get<FunctionCallNode>(expr), context);
 		}
+		
+		// For ArraySubscriptNode (array[index])
+		if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+			return evaluate_array_subscript(std::get<ArraySubscriptNode>(expr), context);
+		}
 
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
+	}
+	
+	// Evaluate array subscript expression
+	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context) {
+		// Evaluate array expression (should be a pointer)
+		auto array_result = evaluate(subscript.array_expression(), context);
+		if (!array_result.success) {
+			return array_result;
+		}
+		
+		// Evaluate index expression
+		auto index_result = evaluate(subscript.index_expression(), context);
+		if (!index_result.success) {
+			return index_result;
+		}
+		
+		// Array must be a pointer
+		if (!std::holds_alternative<PointerValue>(array_result.value)) {
+			return EvalResult::error("Array subscript requires pointer type");
+		}
+		
+		const PointerValue& ptr = std::get<PointerValue>(array_result.value);
+		long long index = index_result.as_int();
+		
+		// Find allocation
+		auto alloc_it = context.allocations.find(ptr.allocation_id);
+		if (alloc_it == context.allocations.end()) {
+			return EvalResult::error("Array subscript on invalid pointer");
+		}
+		
+		const AllocationInfo& alloc = alloc_it->second;
+		if (alloc.is_freed) {
+			return EvalResult::error("Array subscript on deleted pointer");
+		}
+		
+		// Calculate absolute index from base + offset + subscript
+		long long abs_index = static_cast<long long>(ptr.offset) + index;
+		
+		// Bounds check
+		if (abs_index < 0 || abs_index >= static_cast<long long>(alloc.array_size)) {
+			return EvalResult::error("constexpr evaluation failed: array index " + std::to_string(abs_index) + 
+			                         " out of bounds (size " + std::to_string(alloc.array_size) + ")");
+		}
+		
+		// Get the value at the index
+		if (std::holds_alternative<long long>(alloc.data)) {
+			// Single value (non-array)
+			return EvalResult::from_int(std::get<long long>(alloc.data));
+		} else if (std::holds_alternative<std::vector<long long>>(alloc.data)) {
+			// Int array
+			const auto& arr = std::get<std::vector<long long>>(alloc.data);
+			return EvalResult::from_int(arr[abs_index]);
+		} else if (std::holds_alternative<double>(alloc.data)) {
+			// Single value (non-array)
+			return EvalResult::from_double(std::get<double>(alloc.data));
+		} else if (std::holds_alternative<std::vector<double>>(alloc.data)) {
+			// Double array
+			const auto& arr = std::get<std::vector<double>>(alloc.data);
+			return EvalResult::from_double(arr[abs_index]);
+		} else if (std::holds_alternative<bool>(alloc.data)) {
+			// Single value (non-array)
+			return EvalResult::from_bool(std::get<bool>(alloc.data));
+		} else if (std::holds_alternative<std::vector<bool>>(alloc.data)) {
+			// Bool array
+			const auto& arr = std::get<std::vector<bool>>(alloc.data);
+			return EvalResult::from_bool(arr[abs_index]);
+		} else if (std::holds_alternative<ObjectValue>(alloc.data)) {
+			// Single object (non-array)
+			return EvalResult::from_object(std::get<ObjectValue>(alloc.data));
+		} else if (std::holds_alternative<std::vector<ObjectValue>>(alloc.data)) {
+			// Object array
+			const auto& objects = std::get<std::vector<ObjectValue>>(alloc.data);
+			return EvalResult::from_object(objects[abs_index]);
+		}
+		
+		return EvalResult::error("Unsupported array element type");
 	}
 
 private:
@@ -323,7 +417,7 @@ private:
 			return rhs_result;
 		}
 
-		return apply_binary_op(lhs_result, rhs_result, op);
+		return apply_binary_op_with_context(lhs_result, rhs_result, op, context);
 	}
 
 	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
@@ -1716,7 +1810,7 @@ private:
 			if (!lhs_result.success) return lhs_result;
 			if (!rhs_result.success) return rhs_result;
 			
-			return apply_binary_op(lhs_result, rhs_result, bin_op.op());
+			return apply_binary_op_with_context(lhs_result, rhs_result, bin_op.op(), context);
 		}
 		
 		// Handle unary operators (including ++ and --)
@@ -1747,6 +1841,44 @@ private:
 				}
 				
 				EvalResult old_val = it->second;
+				
+				// Handle pointer increment/decrement
+				if (std::holds_alternative<PointerValue>(old_val.value)) {
+					const PointerValue& ptr = std::get<PointerValue>(old_val.value);
+					
+					// Find allocation for bounds checking
+					auto alloc_it = context.allocations.find(ptr.allocation_id);
+					if (alloc_it == context.allocations.end()) {
+						return EvalResult::error("Increment/decrement of invalid pointer");
+					}
+					
+					const AllocationInfo& alloc = alloc_it->second;
+					if (alloc.is_freed) {
+						return EvalResult::error("Increment/decrement of deleted pointer");
+					}
+					
+					// Calculate new offset
+					long long new_offset = static_cast<long long>(ptr.offset);
+					new_offset += (op == "++") ? 1 : -1;
+					
+					// Bounds check
+					if (new_offset < 0 || new_offset >= static_cast<long long>(alloc.array_size)) {
+						return EvalResult::error("constexpr evaluation failed: pointer increment/decrement out of bounds");
+					}
+					
+					// Create new pointer
+					PointerValue new_ptr = ptr;
+					new_ptr.offset = static_cast<size_t>(new_offset);
+					EvalResult new_result = EvalResult::from_pointer(new_ptr);
+					
+					// Update variable
+					bindings[var_name] = new_result;
+					
+					// Return appropriate value based on prefix/postfix
+					return unary_op.is_prefix() ? new_result : old_val;
+				}
+				
+				// Handle integer increment/decrement
 				long long int_val = old_val.as_int();
 				
 				// Compute new value
@@ -1780,6 +1912,84 @@ private:
 			} else {
 				return evaluate_expression_with_bindings_mutable(ternary.false_expr(), bindings, context);
 			}
+		}
+		
+		// For array subscript operators
+		if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+			const auto& subscript = std::get<ArraySubscriptNode>(expr);
+			
+			// Evaluate array expression (should be a pointer)
+			auto array_result = evaluate_expression_with_bindings_mutable(subscript.array_expression(), bindings, context);
+			if (!array_result.success) {
+				return array_result;
+			}
+			
+			// Evaluate index expression
+			auto index_result = evaluate_expression_with_bindings_mutable(subscript.index_expression(), bindings, context);
+			if (!index_result.success) {
+				return index_result;
+			}
+			
+			// Array must be a pointer
+			if (!std::holds_alternative<PointerValue>(array_result.value)) {
+				return EvalResult::error("Array subscript requires pointer type");
+			}
+			
+			const PointerValue& ptr = std::get<PointerValue>(array_result.value);
+			long long index = index_result.as_int();
+			
+			// Find allocation
+			auto alloc_it = context.allocations.find(ptr.allocation_id);
+			if (alloc_it == context.allocations.end()) {
+				return EvalResult::error("Array subscript on invalid pointer");
+			}
+			
+			const AllocationInfo& alloc = alloc_it->second;
+			if (alloc.is_freed) {
+				return EvalResult::error("Array subscript on deleted pointer");
+			}
+			
+			// Calculate absolute index from base + offset + subscript
+			long long abs_index = static_cast<long long>(ptr.offset) + index;
+			
+			// Bounds check
+			if (abs_index < 0 || abs_index >= static_cast<long long>(alloc.array_size)) {
+				return EvalResult::error("constexpr evaluation failed: array index " + std::to_string(abs_index) + 
+				                         " out of bounds (size " + std::to_string(alloc.array_size) + ")");
+			}
+			
+			// Get the value at the index
+			if (std::holds_alternative<long long>(alloc.data)) {
+				// Single value (non-array)
+				return EvalResult::from_int(std::get<long long>(alloc.data));
+			} else if (std::holds_alternative<std::vector<long long>>(alloc.data)) {
+				// Int array
+				const auto& arr = std::get<std::vector<long long>>(alloc.data);
+				return EvalResult::from_int(arr[abs_index]);
+			} else if (std::holds_alternative<double>(alloc.data)) {
+				// Single value (non-array)
+				return EvalResult::from_double(std::get<double>(alloc.data));
+			} else if (std::holds_alternative<std::vector<double>>(alloc.data)) {
+				// Double array
+				const auto& arr = std::get<std::vector<double>>(alloc.data);
+				return EvalResult::from_double(arr[abs_index]);
+			} else if (std::holds_alternative<bool>(alloc.data)) {
+				// Single value (non-array)
+				return EvalResult::from_bool(std::get<bool>(alloc.data));
+			} else if (std::holds_alternative<std::vector<bool>>(alloc.data)) {
+				// Bool array
+				const auto& arr = std::get<std::vector<bool>>(alloc.data);
+				return EvalResult::from_bool(arr[abs_index]);
+			} else if (std::holds_alternative<ObjectValue>(alloc.data)) {
+				// Single object (non-array)
+				return EvalResult::from_object(std::get<ObjectValue>(alloc.data));
+			} else if (std::holds_alternative<std::vector<ObjectValue>>(alloc.data)) {
+				// Object array
+				const auto& objects = std::get<std::vector<ObjectValue>>(alloc.data);
+				return EvalResult::from_object(objects[abs_index]);
+			}
+			
+			return EvalResult::error("Unsupported array element type");
 		}
 		
 		// For function calls (for recursion)
@@ -2078,6 +2288,90 @@ private:
 
 public:
 	// Helper to apply binary operators
+	// Apply binary operator with context (for pointer arithmetic)
+	static EvalResult apply_binary_op_with_context(const EvalResult& lhs, const EvalResult& rhs, std::string_view op, EvaluationContext& context) {
+		// Pointer + integer (pointer arithmetic)
+		if (std::holds_alternative<PointerValue>(lhs.value) && op == "+") {
+			const PointerValue& ptr = std::get<PointerValue>(lhs.value);
+			long long offset = rhs.as_int();
+			
+			// Find allocation to check bounds
+			auto alloc_it = context.allocations.find(ptr.allocation_id);
+			if (alloc_it == context.allocations.end()) {
+				return EvalResult::error("Pointer arithmetic on invalid pointer");
+			}
+			
+			const AllocationInfo& alloc = alloc_it->second;
+			if (alloc.is_freed) {
+				return EvalResult::error("Pointer arithmetic on deleted pointer");
+			}
+			
+			// Calculate new offset
+			long long new_offset = static_cast<long long>(ptr.offset) + offset;
+			
+			// Bounds check: 0 <= new_offset < array_size
+			if (new_offset < 0 || new_offset >= static_cast<long long>(alloc.array_size)) {
+				return EvalResult::error("constexpr evaluation failed: pointer arithmetic out of bounds (offset " + 
+				                         std::to_string(new_offset) + ", size " + std::to_string(alloc.array_size) + ")");
+			}
+			
+			// Return new pointer with updated offset
+			PointerValue new_ptr = ptr;
+			new_ptr.offset = static_cast<size_t>(new_offset);
+			return EvalResult::from_pointer(new_ptr);
+		}
+		
+		// Pointer - integer (pointer arithmetic)
+		if (std::holds_alternative<PointerValue>(lhs.value) && op == "-") {
+			const PointerValue& ptr = std::get<PointerValue>(lhs.value);
+			
+			// Check if RHS is also a pointer (pointer difference)
+			if (std::holds_alternative<PointerValue>(rhs.value)) {
+				const PointerValue& ptr2 = std::get<PointerValue>(rhs.value);
+				
+				// Must be same allocation
+				if (ptr.allocation_id != ptr2.allocation_id) {
+					return EvalResult::error("Pointer difference requires pointers to same allocation");
+				}
+				
+				// Return difference in offsets
+				long long diff = static_cast<long long>(ptr.offset) - static_cast<long long>(ptr2.offset);
+				return EvalResult::from_int(diff);
+			}
+			
+			// Pointer - integer
+			long long offset = rhs.as_int();
+			
+			// Find allocation to check bounds
+			auto alloc_it = context.allocations.find(ptr.allocation_id);
+			if (alloc_it == context.allocations.end()) {
+				return EvalResult::error("Pointer arithmetic on invalid pointer");
+			}
+			
+			const AllocationInfo& alloc = alloc_it->second;
+			if (alloc.is_freed) {
+				return EvalResult::error("Pointer arithmetic on deleted pointer");
+			}
+			
+			// Calculate new offset
+			long long new_offset = static_cast<long long>(ptr.offset) - offset;
+			
+			// Bounds check
+			if (new_offset < 0 || new_offset >= static_cast<long long>(alloc.array_size)) {
+				return EvalResult::error("constexpr evaluation failed: pointer arithmetic out of bounds (offset " + 
+				                         std::to_string(new_offset) + ", size " + std::to_string(alloc.array_size) + ")");
+			}
+			
+			// Return new pointer with updated offset
+			PointerValue new_ptr = ptr;
+			new_ptr.offset = static_cast<size_t>(new_offset);
+			return EvalResult::from_pointer(new_ptr);
+		}
+		
+		// Fall back to regular binary op
+		return apply_binary_op(lhs, rhs, op);
+	}
+	
 	static EvalResult apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op) {
 		long long lhs_val = lhs.as_int();
 		long long rhs_val = rhs.as_int();
@@ -2196,20 +2490,44 @@ public:
 				return EvalResult::error("Dereference of deleted pointer");
 			}
 			
-			// Return the value
-			if (std::holds_alternative<long long>(alloc.data)) {
-				return EvalResult::from_int(std::get<long long>(alloc.data));
-			} else if (std::holds_alternative<unsigned long long>(alloc.data)) {
-				return EvalResult::from_uint(std::get<unsigned long long>(alloc.data));
-			} else if (std::holds_alternative<double>(alloc.data)) {
-				return EvalResult::from_double(std::get<double>(alloc.data));
-			} else if (std::holds_alternative<bool>(alloc.data)) {
-				return EvalResult::from_bool(std::get<bool>(alloc.data));
-			} else if (std::holds_alternative<ObjectValue>(alloc.data)) {
-				return EvalResult::from_object(std::get<ObjectValue>(alloc.data));
-			} else {
-				return EvalResult::error("Array dereference requires subscript operator");
+			// Check bounds for the current offset
+			if (ptr.offset >= alloc.array_size) {
+				return EvalResult::error("Dereference of out-of-bounds pointer (offset " + 
+				                         std::to_string(ptr.offset) + ", size " + std::to_string(alloc.array_size) + ")");
 			}
+			
+			// Return the value at the offset
+			if (std::holds_alternative<long long>(alloc.data)) {
+				// Single value (offset must be 0)
+				return EvalResult::from_int(std::get<long long>(alloc.data));
+			} else if (std::holds_alternative<std::vector<long long>>(alloc.data)) {
+				// Int array
+				const auto& arr = std::get<std::vector<long long>>(alloc.data);
+				return EvalResult::from_int(arr[ptr.offset]);
+			} else if (std::holds_alternative<double>(alloc.data)) {
+				// Single value (offset must be 0)
+				return EvalResult::from_double(std::get<double>(alloc.data));
+			} else if (std::holds_alternative<std::vector<double>>(alloc.data)) {
+				// Double array
+				const auto& arr = std::get<std::vector<double>>(alloc.data);
+				return EvalResult::from_double(arr[ptr.offset]);
+			} else if (std::holds_alternative<bool>(alloc.data)) {
+				// Single value (offset must be 0)
+				return EvalResult::from_bool(std::get<bool>(alloc.data));
+			} else if (std::holds_alternative<std::vector<bool>>(alloc.data)) {
+				// Bool array
+				const auto& arr = std::get<std::vector<bool>>(alloc.data);
+				return EvalResult::from_bool(arr[ptr.offset]);
+			} else if (std::holds_alternative<ObjectValue>(alloc.data)) {
+				// Single object (offset must be 0)
+				return EvalResult::from_object(std::get<ObjectValue>(alloc.data));
+			} else if (std::holds_alternative<std::vector<ObjectValue>>(alloc.data)) {
+				// Object array
+				const auto& objects = std::get<std::vector<ObjectValue>>(alloc.data);
+				return EvalResult::from_object(objects[ptr.offset]);
+			}
+			
+			return EvalResult::error("Unsupported pointer type for dereference");
 		}
 		
 		// For other operators, use regular apply_unary_op
