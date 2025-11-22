@@ -189,8 +189,28 @@ static_assert(sum_even_numbers(10) == 20);
 - constexpr virtual functions
 - try-catch in constexpr functions
 - dynamic_cast/typeid in constexpr
-- new/delete in constexpr (transient allocations)
-- constexpr dynamic memory allocation
+- ~~new/delete in constexpr (transient allocations)~~ ✅ **IMPLEMENTED** (basic support)
+
+### C++20 Constexpr New/Delete - Recently Implemented ✅
+**Transient allocations in constexpr functions:**
+- ✅ `new Type` and `new Type[size]` expressions
+- ✅ `delete ptr` and `delete[] ptr` expressions
+- ✅ **Memory leak detection** - compile error if memory not freed
+- ✅ **Double delete detection** - compile error on double delete
+- ✅ Array/non-array mismatch detection
+- 🟡 Dereference (*), subscript ([]), and arrow (->) operators (future work)
+- 🟡 Constructor argument evaluation (future work)
+- 🟡 Destructor integration (future work)
+
+Example working code:
+```cpp
+constexpr int test() {
+    int* p = new int(42);
+    delete p;  // Must delete or get compile error!
+    return 1;
+}
+static_assert(test() == 1);  // ✅ Compiles
+```
 
 ### Not Planned (C++23 features - out of scope)
 - ~~if consteval (detect constant evaluation context)~~
