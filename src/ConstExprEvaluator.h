@@ -4,12 +4,27 @@
 #include <optional>
 #include <string>
 #include <variant>
+#include <unordered_map>
 
 // Forward declarations
 class SymbolTable;
 struct TypeInfo;
 
 namespace ConstExpr {
+
+// Representation of a struct/class object in constant evaluation
+struct ObjectValue {
+	std::string type_name;  // Name of the struct/class type
+	std::unordered_map<std::string, std::variant<
+		bool,
+		long long,
+		unsigned long long,
+		double
+	>> members;  // Member name -> value mapping
+	
+	ObjectValue() = default;
+	ObjectValue(std::string name) : type_name(std::move(name)) {}
+};
 
 // Result of constant expression evaluation
 struct EvalResult {
@@ -18,7 +33,8 @@ struct EvalResult {
 		bool,                    // Boolean constant
 		long long,               // Signed integer constant
 		unsigned long long,      // Unsigned integer constant
-		double                   // Floating-point constant
+		double,                  // Floating-point constant
+		ObjectValue              // Struct/class instance
 	> value;
 	std::string error_message;
 
@@ -37,6 +53,10 @@ struct EvalResult {
 
 	static EvalResult from_double(double val) {
 		return EvalResult{true, val, ""};
+	}
+
+	static EvalResult from_object(ObjectValue obj) {
+		return EvalResult{true, std::move(obj), ""};
 	}
 
 	static EvalResult error(const std::string& msg) {
@@ -179,6 +199,11 @@ public:
 		// For IdentifierNode (variable references like 'x' in 'constexpr int y = x + 1;')
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			return evaluate_identifier(std::get<IdentifierNode>(expr), context);
+		}
+
+		// For MemberAccessNode (e.g., obj.member)
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			return evaluate_member_access(std::get<MemberAccessNode>(expr), context);
 		}
 
 		// For TernaryOperatorNode (condition ? true_expr : false_expr)
@@ -348,6 +373,35 @@ private:
 
 		// Recursively evaluate the initializer
 		return evaluate(initializer.value(), context);
+	}
+
+	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context) {
+		// This is for evaluating expressions like obj.member
+		// We need to evaluate the object first, then access its member
+		
+		// For now, we'll only support accessing members of objects stored in bindings
+		// The object must be an identifier that resolves to an ObjectValue
+		
+		const ASTNode& object_node = member_access.object();
+		if (!object_node.is<ExpressionNode>()) {
+			return EvalResult::error("Member access object is not an expression");
+		}
+		
+		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+		
+		// Check if it's an identifier
+		if (!std::holds_alternative<IdentifierNode>(object_expr)) {
+			return EvalResult::error("Member access currently only supported on identifiers in constant expressions");
+		}
+		
+		const IdentifierNode& object_id = std::get<IdentifierNode>(object_expr);
+		std::string_view object_name = object_id.name();
+		
+		// Look up the object in the symbol table's runtime bindings
+		// Note: We can't do this with the current design that only has static constexpr variables
+		// We need to extend this to support function-local objects
+		
+		return EvalResult::error("Member access on objects not yet fully implemented in constant expressions");
 	}
 
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context) {
@@ -991,6 +1045,63 @@ private:
 			
 			// Evaluate the function with bindings passed through
 			return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
+		}
+		
+		// For member access (e.g., obj.member)
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			const auto& member_access = std::get<MemberAccessNode>(expr);
+			
+			// Evaluate the object expression
+			const ASTNode& object_node = member_access.object();
+			if (!object_node.is<ExpressionNode>()) {
+				return EvalResult::error("Member access object is not an expression");
+			}
+			
+			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+			
+			// For now, only support identifiers as objects
+			if (!std::holds_alternative<IdentifierNode>(object_expr)) {
+				return EvalResult::error("Member access currently only supported on simple identifiers");
+			}
+			
+			const IdentifierNode& object_id = std::get<IdentifierNode>(object_expr);
+			std::string_view object_name = object_id.name();
+			
+			// Look up the object in bindings
+			auto it = bindings.find(object_name);
+			if (it == bindings.end()) {
+				return EvalResult::error("Undefined object in member access: " + std::string(object_name));
+			}
+			
+			const EvalResult& object_result = it->second;
+			
+			// Check if it's an ObjectValue
+			if (!std::holds_alternative<ObjectValue>(object_result.value)) {
+				return EvalResult::error("Member access on non-object type");
+			}
+			
+			const ObjectValue& obj = std::get<ObjectValue>(object_result.value);
+			std::string member_name_str(member_access.member_name());
+			
+			// Look up the member in the object
+			auto member_it = obj.members.find(member_name_str);
+			if (member_it == obj.members.end()) {
+				return EvalResult::error("Object does not have member: " + member_name_str);
+			}
+			
+			// Convert the member value to EvalResult
+			const auto& member_value = member_it->second;
+			if (std::holds_alternative<bool>(member_value)) {
+				return EvalResult::from_bool(std::get<bool>(member_value));
+			} else if (std::holds_alternative<long long>(member_value)) {
+				return EvalResult::from_int(std::get<long long>(member_value));
+			} else if (std::holds_alternative<unsigned long long>(member_value)) {
+				return EvalResult::from_uint(std::get<unsigned long long>(member_value));
+			} else if (std::holds_alternative<double>(member_value)) {
+				return EvalResult::from_double(std::get<double>(member_value));
+			}
+			
+			return EvalResult::error("Unsupported member value type");
 		}
 		
 		// For literals and other expressions without parameters, evaluate normally
