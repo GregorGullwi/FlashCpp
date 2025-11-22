@@ -1771,10 +1771,11 @@ private:
 					return size_result;
 				}
 				
-				array_size = static_cast<size_t>(size_result.as_int());
-				if (array_size == 0) {
+				long long size_val = size_result.as_int();
+				if (size_val <= 0) {
 					return EvalResult::error("Array size must be greater than zero in constexpr new");
 				}
+				array_size = static_cast<size_t>(size_val);
 			}
 			
 			// Allocate and track
