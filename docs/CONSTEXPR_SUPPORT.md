@@ -163,18 +163,20 @@ static_assert(sum_even_numbers(10) == 20);
 
 ## Limitations and Future Work
 
+### In Progress
+- **constexpr destructors** - Under active development
+
 ### Not Yet Implemented (C++20)
-- constexpr destructors
 - constexpr virtual functions
 - try-catch in constexpr functions
 - dynamic_cast/typeid in constexpr
 - new/delete in constexpr (transient allocations)
 - constexpr dynamic memory allocation
 
-### Not Yet Implemented (C++23)
-- if consteval (detect constant evaluation context)
-- constexpr cmath functions
-- Relaxed constexpr restrictions
+### Not Planned (C++23 features - out of scope)
+- ~~if consteval (detect constant evaluation context)~~
+- ~~constexpr cmath functions~~
+- ~~Relaxed constexpr restrictions~~
 
 ### Current Limitations
 - Do-while loops not yet implemented in constexpr evaluator

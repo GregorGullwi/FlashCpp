@@ -495,14 +495,17 @@ private:
 		
 		for (size_t i = 0; i < statements.size(); ++i) {
 			const ASTNode& stmt = statements[i];
-			auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
 			
-			// If it's a return statement, return immediately
-			if (result.success && std::holds_alternative<long long>(result.value)) {
-				// Check if this is actually a return value (not just an expression result)
-				// We use a special marker - if we got here from a return statement, return it
+			// Check if it's a return statement before evaluating
+			if (stmt.is<ReturnStatementNode>()) {
+				auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+				// Return statements always return the value, regardless of type
 				return result;
-			} else if (!result.success) {
+			}
+			
+			// For non-return statements, evaluate and continue
+			auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+			if (!result.success) {
 				return result;
 			}
 			// Otherwise continue to next statement
@@ -717,39 +720,63 @@ private:
 		}
 		
 		// Execute appropriate branch
-		const std::optional<ASTNode>& branch_opt = cond_result.as_bool() ? std::optional<ASTNode>(if_stmt.get_then_statement()) : if_stmt.get_else_statement();
-		
-		if (!branch_opt.has_value()) {
-			// No else branch and condition was false
-			return EvalResult::from_int(0);
-		}
-		
-		const ASTNode& branch = branch_opt.value();
-		
-		if (branch.is<BlockNode>()) {
-			const BlockNode& block = branch.as<BlockNode>();
-			const auto& statements = block.get_statements();
-			for (size_t i = 0; i < statements.size(); ++i) {
-				const ASTNode& stmt = statements[i];
-				auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+		if (cond_result.as_bool()) {
+			// Execute then branch
+			const ASTNode& branch = if_stmt.get_then_statement();
+			if (branch.is<BlockNode>()) {
+				const BlockNode& block = branch.as<BlockNode>();
+				const auto& statements = block.get_statements();
+				for (size_t i = 0; i < statements.size(); ++i) {
+					const ASTNode& stmt = statements[i];
+					auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+					if (!result.success) {
+						return result;
+					}
+					// If it's a return statement, propagate it up
+					if (stmt.is<ReturnStatementNode>()) {
+						return result;
+					}
+				}
+			} else {
+				auto result = evaluate_statement_with_bindings_mutable(branch, bindings, context);
 				if (!result.success) {
 					return result;
 				}
 				// If it's a return statement, propagate it up
-				if (stmt.is<ReturnStatementNode>()) {
+				if (branch.is<ReturnStatementNode>()) {
 					return result;
 				}
 			}
-		} else {
-			auto result = evaluate_statement_with_bindings_mutable(branch, bindings, context);
-			if (!result.success) {
-				return result;
-			}
-			// If it's a return statement, propagate it up
-			if (branch.is<ReturnStatementNode>()) {
-				return result;
+		} else if (if_stmt.has_else()) {
+			// Execute else branch
+			const std::optional<ASTNode>& else_opt = if_stmt.get_else_statement();
+			const ASTNode& branch = else_opt.value();
+			if (branch.is<BlockNode>()) {
+				const BlockNode& block = branch.as<BlockNode>();
+				const auto& statements = block.get_statements();
+				for (size_t i = 0; i < statements.size(); ++i) {
+					const ASTNode& stmt = statements[i];
+					auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+					if (!result.success) {
+						return result;
+					}
+					// If it's a return statement, propagate it up
+					if (stmt.is<ReturnStatementNode>()) {
+						return result;
+					}
+				}
+			} else {
+				auto result = evaluate_statement_with_bindings_mutable(branch, bindings, context);
+				if (!result.success) {
+					return result;
+				}
+				// If it's a return statement, propagate it up
+				if (branch.is<ReturnStatementNode>()) {
+					return result;
+				}
 			}
 		}
+		// No else branch and condition was false, or branches completed without return
 		
 		// If statements don't return a value
 		return EvalResult::from_int(0);
@@ -761,6 +788,7 @@ private:
 		EvaluationContext& context) {
 		
 		// For backwards compatibility, create mutable copy and delegate
+		// This is only used for evaluating statements in contexts where we don't care about mutations
 		std::unordered_map<std::string_view, EvalResult> mutable_bindings = bindings;
 		return evaluate_statement_with_bindings_mutable(stmt_node, mutable_bindings, context);
 	}
@@ -770,7 +798,9 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context) {
 		
-		// For read-only evaluation, create mutable copy for assignment support
+		// This creates a mutable copy to support potential assignments within the expression
+		// Used primarily for evaluating function arguments where outer scope shouldn't be mutated
+		// Any mutations to the copy are discarded after evaluation
 		std::unordered_map<std::string_view, EvalResult> mutable_bindings = bindings;
 		return evaluate_expression_with_bindings_mutable(expr_node, mutable_bindings, context);
 	}
