@@ -699,6 +699,24 @@ struct ConversionOp {
 	TempVar result;      // 4 bytes
 };
 
+// String literal
+struct StringLiteralOp {
+	TempVar result;              // Result temp var (pointer to string)
+	std::string_view content;    // String content
+};
+
+// Global variable load
+struct GlobalLoadOp {
+	TempVar result;              // Result temp var
+	std::string_view global_name;  // Name of global variable
+};
+
+// Function address (get address of a function)
+struct FunctionAddressOp {
+	TempVar result;              // Result temp var (function pointer)
+	std::string_view function_name;  // Function name
+};
+
 // Helper function to format conversion operations for IR output
 inline std::string formatConversionOp(const char* op_name, const ConversionOp& op) {
 	std::ostringstream oss;

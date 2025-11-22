@@ -2858,10 +2858,10 @@ private:
 
 			// Generate GlobalLoad with mangled name
 			TempVar result_temp = var_counter.next();
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_temp);
-			operands.emplace_back(info.mangled_name);  // Use mangled name
-			ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+			GlobalLoadOp op;
+			op.result = result_temp;
+			op.global_name = info.mangled_name;  // Use mangled name
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
 			return { info.type, info.size_in_bits, result_temp };
@@ -2909,10 +2909,10 @@ private:
 			if (is_global) {
 				// Generate GlobalLoad IR instruction
 				TempVar result_temp = var_counter.next();
-				std::vector<IrOperand> operands;
-				operands.emplace_back(result_temp);
-				operands.emplace_back(identifierNode.name());
-				ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+				GlobalLoadOp op;
+				op.result = result_temp;
+				op.global_name = identifierNode.name();
+				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Return the temp variable that will hold the loaded value
 				// For pointers, return 64 bits (pointer size)
@@ -2934,10 +2934,10 @@ private:
 
 			// This is a global variable - generate GlobalLoad
 			TempVar result_temp = var_counter.next();
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_temp);
-			operands.emplace_back(identifierNode.name());
-			ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+			GlobalLoadOp op;
+			op.result = result_temp;
+			op.global_name = identifierNode.name();
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
 			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
@@ -2948,10 +2948,10 @@ private:
 			// This is a function name being used as a value (e.g., fp = add)
 			// Generate FunctionAddress IR instruction
 			TempVar func_addr_var = var_counter.next();
-			std::vector<IrOperand> func_addr_operands;
-			func_addr_operands.emplace_back(func_addr_var);
-			func_addr_operands.emplace_back(identifierNode.name());
-			ir_.addInstruction(IrOpcode::FunctionAddress, std::move(func_addr_operands), Token());
+			FunctionAddressOp op;
+			op.result = func_addr_var;
+			op.function_name = identifierNode.name();
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
 			return { Type::FunctionPointer, 64, func_addr_var };
@@ -2990,13 +2990,13 @@ private:
 					if (static_member) {
 						// This is a static member access - generate GlobalLoad
 						TempVar result_temp = var_counter.next();
-						std::vector<IrOperand> operands;
-						operands.emplace_back(result_temp);
+						GlobalLoadOp op;
+						op.result = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
 						// Use the actual type name (which may be an instantiated template name like Container_int)
 						std::string qualified_name = struct_type_it->second->name_ + "::" + std::string(qualifiedIdNode.name());
-						operands.emplace_back(qualified_name);
-						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(operands), Token()));
+						op.global_name = std::string_view(qualified_name);
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 						// Return the temp variable that will hold the loaded value
 						return { static_member->type, static_cast<int>(static_member->size * 8), result_temp };
@@ -3033,10 +3033,10 @@ private:
 			if (is_global) {
 				// Generate GlobalLoad for namespace-qualified global variable
 				TempVar result_temp = var_counter.next();
-				std::vector<IrOperand> operands;
-				operands.emplace_back(result_temp);
-				operands.emplace_back(qualifiedIdNode.name());  // Use the identifier name
-				ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+				GlobalLoadOp op;
+				op.result = result_temp;
+				op.global_name = qualifiedIdNode.name();  // Use the identifier name
+				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Return the temp variable that will hold the loaded value
 				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
@@ -3054,10 +3054,10 @@ private:
 			// Namespace-scoped variables are always global
 			// Generate GlobalLoad for namespace-qualified global variable
 			TempVar result_temp = var_counter.next();
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_temp);
-			operands.emplace_back(qualifiedIdNode.name());  // Use the identifier name
-			ir_.addInstruction(IrOpcode::GlobalLoad, std::move(operands), Token());
+			GlobalLoadOp op;
+			op.result = result_temp;
+			op.global_name = qualifiedIdNode.name();  // Use the identifier name
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
@@ -3175,12 +3175,11 @@ private:
 		TempVar result_var = var_counter.next();
 
 		// Add StringLiteral IR instruction
-		// Format: [result_var, string_content]
-		std::vector<IrOperand> operands;
-		operands.emplace_back(result_var);
-		operands.emplace_back(stringLiteralNode.value());
+		StringLiteralOp op;
+		op.result = result_var;
+		op.content = stringLiteralNode.value();
 
-		ir_.addInstruction(IrInstruction(IrOpcode::StringLiteral, std::move(operands), Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::StringLiteral, std::move(op), Token()));
 
 		// Return the result as a char pointer (const char*)
 		// We use Type::Char with 64-bit size to indicate it's a pointer

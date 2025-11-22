@@ -286,6 +286,72 @@ inline bool parseOperands(const IrInstruction& inst, MemberLoadOp& out) {
 	return parseMemberLoadOp(inst, out);
 }
 
+// Parse string literal operation
+inline bool parseStringLiteralOp(const IrInstruction& inst, StringLiteralOp& out) {
+	// StringLiteral must have exactly 2 operands
+	if (inst.getOperandCount() != 2) {
+		return false;
+	}
+
+	if (!inst.isOperandType<TempVar>(0)) return false;
+	out.result = inst.getOperandAs<TempVar>(0);
+
+	if (!inst.isOperandType<std::string_view>(1)) return false;
+	out.content = inst.getOperandAs<std::string_view>(1);
+
+	return true;
+}
+
+inline bool parseOperands(const IrInstruction& inst, StringLiteralOp& out) {
+	return parseStringLiteralOp(inst, out);
+}
+
+// Parse global load operation
+inline bool parseGlobalLoadOp(const IrInstruction& inst, GlobalLoadOp& out) {
+	// GlobalLoad must have exactly 2 operands
+	if (inst.getOperandCount() != 2) {
+		return false;
+	}
+
+	if (!inst.isOperandType<TempVar>(0)) return false;
+	out.result = inst.getOperandAs<TempVar>(0);
+
+	// Global name can be string or string_view
+	if (inst.isOperandType<std::string>(1)) {
+		out.global_name = inst.getOperandAs<std::string>(1);
+	} else if (inst.isOperandType<std::string_view>(1)) {
+		out.global_name = inst.getOperandAs<std::string_view>(1);
+	} else {
+		return false;
+	}
+
+	return true;
+}
+
+inline bool parseOperands(const IrInstruction& inst, GlobalLoadOp& out) {
+	return parseGlobalLoadOp(inst, out);
+}
+
+// Parse function address operation
+inline bool parseFunctionAddressOp(const IrInstruction& inst, FunctionAddressOp& out) {
+	// FunctionAddress must have exactly 2 operands
+	if (inst.getOperandCount() != 2) {
+		return false;
+	}
+
+	if (!inst.isOperandType<TempVar>(0)) return false;
+	out.result = inst.getOperandAs<TempVar>(0);
+
+	if (!inst.isOperandType<std::string_view>(1)) return false;
+	out.function_name = inst.getOperandAs<std::string_view>(1);
+
+	return true;
+}
+
+inline bool parseOperands(const IrInstruction& inst, FunctionAddressOp& out) {
+	return parseFunctionAddressOp(inst, out);
+}
+
 // ============================================================================
 // Typed Payload Helper Functions
 // ============================================================================
