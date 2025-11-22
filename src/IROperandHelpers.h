@@ -242,6 +242,50 @@ inline bool parseOperands(const IrInstruction& inst, ReturnOp& out) {
 	return parseReturnOp(inst, out);
 }
 
+// Parse member load operation
+inline bool parseMemberLoadOp(const IrInstruction& inst, MemberLoadOp& out) {
+	// Member load must have at least 6 operands
+	if (inst.getOperandCount() < 6) {
+		return false;
+	}
+
+	if (!inst.isOperandType<TempVar>(0)) return false;
+	out.result.value = inst.getOperandAs<TempVar>(0);
+
+	if (!inst.isOperandType<Type>(1)) return false;
+	out.result.type = inst.getOperandAs<Type>(1);
+
+	if (!inst.isOperandType<int>(2)) return false;
+	out.result.size_in_bits = inst.getOperandAs<int>(2);
+
+	// Object can be string_view or TempVar
+	if (inst.isOperandType<std::string_view>(3)) {
+		out.object = inst.getOperandAs<std::string_view>(3);
+	} else if (inst.isOperandType<TempVar>(3)) {
+		out.object = inst.getOperandAs<TempVar>(3);
+	} else {
+		return false;
+	}
+
+	if (!inst.isOperandType<std::string_view>(4)) return false;
+	out.member_name = inst.getOperandAs<std::string_view>(4);
+
+	if (!inst.isOperandType<int>(5)) return false;
+	out.offset = inst.getOperandAs<int>(5);
+
+	// Optional reference metadata
+	bool has_reference_metadata = inst.getOperandCount() >= 9;
+	out.is_reference = has_reference_metadata ? inst.getOperandAs<bool>(6) : false;
+	out.is_rvalue_reference = has_reference_metadata ? inst.getOperandAs<bool>(7) : false;
+	out.struct_type_info = nullptr;
+
+	return true;
+}
+
+inline bool parseOperands(const IrInstruction& inst, MemberLoadOp& out) {
+	return parseMemberLoadOp(inst, out);
+}
+
 // ============================================================================
 // Typed Payload Helper Functions
 // ============================================================================
