@@ -2859,7 +2859,9 @@ private:
 			// Generate GlobalLoad with mangled name
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
-			op.result = result_temp;
+			op.result.type = info.type;
+			op.result.size_in_bits = info.size_in_bits;
+			op.result.value = result_temp;
 			op.global_name = info.mangled_name;  // Use mangled name
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
@@ -2909,14 +2911,16 @@ private:
 			if (is_global) {
 				// Generate GlobalLoad IR instruction
 				TempVar result_temp = var_counter.next();
+				int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
-				op.result = result_temp;
+				op.result.type = type_node.type();
+				op.result.size_in_bits = size_bits;
+				op.result.value = result_temp;
 				op.global_name = identifierNode.name();
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Return the temp variable that will hold the loaded value
 				// For pointers, return 64 bits (pointer size)
-				int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 				return { type_node.type(), size_bits, result_temp };
 			}
 
@@ -2935,7 +2939,9 @@ private:
 			// This is a global variable - generate GlobalLoad
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
-			op.result = result_temp;
+			op.result.type = type_node.type();
+			op.result.size_in_bits = static_cast<int>(type_node.size_in_bits());
+			op.result.value = result_temp;
 			op.global_name = identifierNode.name();
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
@@ -2949,7 +2955,9 @@ private:
 			// Generate FunctionAddress IR instruction
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
-			op.result = func_addr_var;
+			op.result.type = Type::FunctionPointer;
+			op.result.size_in_bits = 64;
+			op.result.value = func_addr_var;
 			op.function_name = identifierNode.name();
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
@@ -2991,7 +2999,9 @@ private:
 						// This is a static member access - generate GlobalLoad
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result = result_temp;
+						op.result.type = static_member->type;
+						op.result.size_in_bits = static_cast<int>(static_member->size * 8);
+						op.result.value = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
 						// Use the actual type name (which may be an instantiated template name like Container_int)
 						StringBuilder qualified_name_sb;
@@ -3037,7 +3047,9 @@ private:
 				// Generate GlobalLoad for namespace-qualified global variable
 				TempVar result_temp = var_counter.next();
 				GlobalLoadOp op;
-				op.result = result_temp;
+				op.result.type = type_node.type();
+				op.result.size_in_bits = static_cast<int>(type_node.size_in_bits());
+				op.result.value = result_temp;
 				op.global_name = qualifiedIdNode.name();  // Use the identifier name
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
@@ -3057,14 +3069,16 @@ private:
 			// Namespace-scoped variables are always global
 			// Generate GlobalLoad for namespace-qualified global variable
 			TempVar result_temp = var_counter.next();
+			int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
-			op.result = result_temp;
+			op.result.type = type_node.type();
+			op.result.size_in_bits = size_bits;
+			op.result.value = result_temp;
 			op.global_name = qualifiedIdNode.name();  // Use the identifier name
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
-			int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 			return { type_node.type(), size_bits, result_temp };
 		}
 
@@ -3179,7 +3193,9 @@ private:
 
 		// Add StringLiteral IR instruction
 		StringLiteralOp op;
-		op.result = result_var;
+		op.result.type = Type::Char;
+		op.result.size_in_bits = 64;  // Pointer size
+		op.result.value = result_var;
 		op.content = stringLiteralNode.value();
 
 		ir_.addInstruction(IrInstruction(IrOpcode::StringLiteral, std::move(op), Token()));
