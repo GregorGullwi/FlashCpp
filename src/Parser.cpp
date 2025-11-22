@@ -1787,25 +1787,40 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
-		// Check for constructor (identifier matching struct name followed by '(')
-		// Save position BEFORE checking to allow restoration if not a constructor
-		TokenPosition saved_pos = save_token_position();
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
-		    peek_token()->value() == struct_name) {
-			// Look ahead to see if this is a constructor (next token is '(')
-			// We need to consume the struct name token and check the next token
-			auto name_token_opt = consume_token();
-			if (!name_token_opt.has_value()) {
-				return ParseResult::error("Expected constructor name", Token());
-			}
-			Token name_token = name_token_opt.value();  // Copy the token to keep it alive
-			std::string_view ctor_name = name_token.value();  // Get the string_view from the token
+		// Check for constexpr keyword before constructor/destructor/member function
+		bool is_constexpr = false;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    peek_token()->value() == "constexpr") {
+			is_constexpr = true;
+			consume_token();  // consume 'constexpr'
+		}
 
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				// Discard saved position since we're using this as a constructor
-				discard_saved_token(saved_pos);
-				// This is a constructor
+		// Check for constructor (identifier matching struct name followed by '(')
+		// Only check if we might have a constructor (constexpr or identifier)
+		if (is_constexpr || (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+		    peek_token()->value() == struct_name)) {
+			// Save position to restore if not a constructor
+			TokenPosition saved_pos_ctor = save_token_position();
+			
+			// If we already saw constexpr, check if next is struct name
+			// If we didn't see constexpr, we know current token is struct name
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+			    peek_token()->value() == struct_name) {
+				// Look ahead to see if this is a constructor (next token is '(')
+				// We need to consume the struct name token and check the next token
+				auto name_token_opt = consume_token();
+				if (!name_token_opt.has_value()) {
+					return ParseResult::error("Expected constructor name", Token());
+				}
+				Token name_token = name_token_opt.value();  // Copy the token to keep it alive
+				std::string_view ctor_name = name_token.value();  // Get the string_view from the token
+
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					// Discard saved position since we're using this as a constructor
+					discard_saved_token(saved_pos_ctor);
+					// This is a constructor
 				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(struct_name, ctor_name);
+				ctor_ref.set_is_constexpr(is_constexpr);
 
 				// Parse parameters
 				if (!consume_punctuator("(")) {
@@ -2021,13 +2036,16 @@ ParseResult Parser::parse_struct_declaration()
 				struct_ref.add_constructor(ctor_node, current_access);
 				continue;
 			} else {
-				// Not a constructor, restore position and parse as normal member
-				restore_token_position(saved_pos);
+				// Not a constructor, restore position
+				restore_token_position(saved_pos_ctor);
+				// Fall through - might be a member function or data member with constexpr
 			}
 		} else {
-			// Token doesn't match struct name, discard saved position
-			discard_saved_token(saved_pos);
+			// Not followed by struct name, discard saved position
+			discard_saved_token(saved_pos_ctor);
+			// Fall through - might be a constexpr member function
 		}
+	}
 
 		// Check for 'virtual' keyword (for virtual destructors and virtual member functions)
 		bool is_virtual = false;
@@ -2058,6 +2076,7 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(struct_name, dtor_name);
+			dtor_ref.set_is_constexpr(is_constexpr);
 
 			// Parse override/final specifiers for destructors
 			bool is_override = false;
@@ -2197,6 +2216,9 @@ ParseResult Parser::parse_struct_declaration()
 			// Pass string_view directly - FunctionDeclarationNode stores it as string_view
 			auto [member_func_node, member_func_ref] =
 				emplace_node_ref<FunctionDeclarationNode>(decl_node, struct_name);
+			
+			// Set constexpr flag if it was present
+			member_func_ref.set_is_constexpr(is_constexpr);
 
 			// Copy parameters from the parsed function
 			for (const auto& param : func_decl.parameter_nodes()) {
