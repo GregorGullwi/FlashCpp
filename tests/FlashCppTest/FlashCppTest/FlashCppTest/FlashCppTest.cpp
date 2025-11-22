@@ -2321,6 +2321,10 @@ TEST_CASE("ConstInit:Variables") {
 	run_test_from_file("test_constinit.cpp", "Constinit variables", false);
 }
 
+TEST_CASE("ConstEval:Functions") {
+	run_test_from_file("test_consteval.cpp", "Consteval immediate functions (C++20)", false);
+}
+
 TEST_CASE("ConstExpr:Functions") {
 	run_test_from_file("test_constexpr_func.cpp", "Constexpr functions", false);
 }

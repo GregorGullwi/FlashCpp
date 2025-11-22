@@ -394,9 +394,9 @@ private:
 
 		const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
 		
-		// Check if it's a constexpr function
-		if (!func_decl.is_constexpr()) {
-			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+		// Check if it's a constexpr or consteval function
+		if (!func_decl.is_constexpr() && !func_decl.is_consteval()) {
+			return EvalResult::error("Function in constant expression must be constexpr or consteval: " + std::string(func_name));
 		}
 
 		// Get the function body
@@ -954,9 +954,9 @@ private:
 			
 			const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
 			
-			// Check if it's a constexpr function
-			if (!func_decl.is_constexpr()) {
-				return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+			// Check if it's a constexpr or consteval function
+			if (!func_decl.is_constexpr() && !func_decl.is_consteval()) {
+				return EvalResult::error("Function in constant expression must be constexpr or consteval: " + std::string(func_name));
 			}
 			
 			// Evaluate the function with bindings passed through
