@@ -69,8 +69,11 @@ This document summarizes the expanded C++20 constexpr support implemented in the
 
 🟡 **Constexpr destructors (C++20 - Partial)**
 - Parser support: ✅ Destructors can be marked with `constexpr` keyword
-- Allows types with constexpr destructors to be used in constexpr contexts
-- Note: Full constant evaluation of destructor calls during constexpr evaluation is in progress
+- Object construction: ✅ Objects can be created in constexpr functions
+- Member access: ✅ Member variables can be accessed on constexpr objects
+- Destructor calls: ✅ Implicit at scope exit (no-op in constant evaluation)
+- Status: Basic functionality working, full constructor evaluation in progress
+- Test: `test_constexpr_destructor.cpp` compiles and passes
 
 ### C++20 Features
 ✅ **consteval (immediate functions)**
