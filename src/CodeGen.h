@@ -494,14 +494,16 @@ private:
 		const TypeSpecifierNode& ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 
 		// Create function declaration with return type and name
-		// Use FunctionDeclLayout constants to ensure correct operand ordering
-		std::vector<IrOperand> funcDeclOperands;
-
-		// Fixed operands (must match FunctionDeclLayout)
-		funcDeclOperands.emplace_back(ret_type.type());                                    // [0] RETURN_TYPE
-		funcDeclOperands.emplace_back(static_cast<int>(ret_type.size_in_bits()));         // [1] RETURN_SIZE
-		funcDeclOperands.emplace_back(static_cast<int>(ret_type.pointer_depth()));        // [2] RETURN_POINTER_DEPTH
-		funcDeclOperands.emplace_back(func_decl.identifier_token().value());              // [3] FUNCTION_NAME
+		// Use FunctionDeclOp to store typed payload
+		FunctionDeclOp func_decl_op;
+		
+		// Return type information
+		func_decl_op.return_type = ret_type.type();
+		func_decl_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
+		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
+		
+		// Function name
+		func_decl_op.function_name = std::string(func_decl.identifier_token().value());
 
 		// Add struct/class name for member functions
 		// Use current_struct_name_ if set (for instantiated template specializations),
@@ -514,11 +516,11 @@ private:
 		} else {
 			struct_name_for_function = "";
 		}
+		func_decl_op.struct_name = std::string(struct_name_for_function);
 		
-		funcDeclOperands.emplace_back(struct_name_for_function);   // [4] STRUCT_NAME
-
-		funcDeclOperands.emplace_back(static_cast<int>(node.linkage()));                  // [5] LINKAGE
-		funcDeclOperands.emplace_back(node.is_variadic());                                // [6] IS_VARIADIC
+		// Linkage and variadic flag
+		func_decl_op.linkage = node.linkage();
+		func_decl_op.is_variadic = node.is_variadic();
 
 		// Generate mangled name now while we have full type information with CV-qualifiers
 		// Extract parameter types for mangling
@@ -535,42 +537,33 @@ private:
 			node.is_variadic(),
 			node.is_member_function() ? std::string(struct_name_for_function) : ""
 		);
-		
-		funcDeclOperands.emplace_back(mangled_name);                                       // [7] MANGLED_NAME
+		func_decl_op.mangled_name = std::string(mangled_name);
 
-		// Verify we have the correct number of fixed operands
-		assert(funcDeclOperands.size() == FunctionDeclLayout::FIRST_PARAM_INDEX &&
-		       "FunctionDecl fixed operands mismatch - update FunctionDeclLayout constants!");
-
-		// Add parameter types to function declaration
-		//size_t paramCount = 0;
+		// Add parameters to function declaration
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-			// Add parameter operands (must match FunctionDeclLayout::OPERANDS_PER_PARAM)
-			funcDeclOperands.emplace_back(param_type.type());                             // PARAM_TYPE
-			funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));   // PARAM_SIZE
-
+			FunctionParam param_info;
+			param_info.type = param_type.type();
+			param_info.size_in_bits = static_cast<int>(param_type.size_in_bits());
+			
 			// References are treated like pointers in the IR (they're both addresses)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
 			if (param_type.is_reference()) {
 				pointer_depth += 1;  // Add 1 for reference (ABI treats it as an additional pointer level)
 			}
-			funcDeclOperands.emplace_back(pointer_depth);                                 // PARAM_POINTER_DEPTH
-			funcDeclOperands.emplace_back(param_decl.identifier_token().value());         // PARAM_NAME
-			funcDeclOperands.emplace_back(param_type.is_reference());                     // PARAM_IS_REFERENCE
-			funcDeclOperands.emplace_back(param_type.is_rvalue_reference());              // PARAM_IS_RVALUE_REFERENCE
-			funcDeclOperands.emplace_back(static_cast<int>(param_type.cv_qualifier()));   // PARAM_CV_QUALIFIER
+			param_info.pointer_depth = pointer_depth;
+			param_info.name = std::string(param_decl.identifier_token().value());
+			param_info.is_reference = param_type.is_reference();
+			param_info.is_rvalue_reference = param_type.is_rvalue_reference();
+			param_info.cv_qualifier = param_type.cv_qualifier();
 
+			func_decl_op.parameters.push_back(std::move(param_info));
 			var_counter.next();
 		}
 
-		// Verify the total operand count is valid
-		assert(FunctionDeclLayout::isValidOperandCount(funcDeclOperands.size()) &&
-		       "FunctionDecl operand count is invalid - parameter operands don't align!");
-
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), func_decl.identifier_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), func_decl.identifier_token()));
 
 		symbol_table.enter_scope(ScopeType::Function);
 
@@ -654,18 +647,18 @@ private:
 
 							// Then, store the member to 'this'
 							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
-							std::vector<IrOperand> store_operands;
-							store_operands.emplace_back(member.type);
-							store_operands.emplace_back(static_cast<int>(member.size * 8));
-							store_operands.emplace_back(std::string_view("this"));  // Store to 'this'
-							store_operands.emplace_back(std::string_view(member.name));
-							store_operands.emplace_back(static_cast<int>(member.offset));
-							store_operands.emplace_back(member.is_reference);
-							store_operands.emplace_back(member.is_rvalue_reference);
-							store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
-							store_operands.emplace_back(member_value);
+							MemberStoreOp member_store;
+							member_store.value.type = member.type;
+							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+							member_store.value.value = member_value;
+							member_store.object = std::string_view("this");
+							member_store.member_name = std::string_view(member.name);
+							member_store.offset = static_cast<int>(member.offset);
+							member_store.is_reference = member.is_reference;
+							member_store.is_rvalue_reference = member.is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
 
-							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), func_decl.identifier_token());
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
 						}
 
 						// Return *this (the return value is the 'this' pointer dereferenced)
@@ -674,18 +667,20 @@ private:
 						TempVar this_deref = var_counter.next();
 						std::vector<IrOperand> deref_operands;
 						deref_operands.emplace_back(this_deref);  // result variable
-						deref_operands.emplace_back(Type::Struct);  // type
-						deref_operands.emplace_back(static_cast<int>(struct_info->total_size * 8));  // size in bits
-						deref_operands.emplace_back(std::string_view("this"));  // operand (this pointer)
+						DereferenceOp deref_op;
+						deref_op.result = this_deref;
+						deref_op.pointee_type = Type::Struct;
+						deref_op.pointee_size_in_bits = static_cast<int>(struct_info->total_size * 8);
+						deref_op.pointer = std::string_view("this");
 
-						ir_.addInstruction(IrOpcode::Dereference, std::move(deref_operands), func_decl.identifier_token());
+						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
 
 						// Return the dereferenced value
-						std::vector<IrOperand> ret_operands;
-						ret_operands.emplace_back(Type::Struct);
-						ret_operands.emplace_back(static_cast<int>(struct_info->total_size * 8));
-						ret_operands.emplace_back(this_deref);
-						ir_.addInstruction(IrOpcode::Return, std::move(ret_operands), func_decl.identifier_token());
+						ReturnOp ret_op;
+						ret_op.return_value = this_deref;
+						ret_op.return_type = Type::Struct;
+						ret_op.return_size = static_cast<int>(struct_info->total_size * 8);
+						ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
 					}
 				}
 			}
@@ -702,7 +697,8 @@ private:
 
 		// Add implicit return for void functions if no explicit return was added
 		if (ret_type.type() == Type::Void) {
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, {}, func_decl.identifier_token()));
+			ReturnOp ret_op;  // No return value for void
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
 		}
 
 		symbol_table.exit_scope();
@@ -801,68 +797,60 @@ private:
 		// Constructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
 
-		// Set current function name for static local variable mangling
-		current_function_name_ = std::string(node.name());
-		static_local_names_.clear();
+	// Set current function name for static local variable mangling
+	current_function_name_ = std::string(node.name());
+	static_local_names_.clear();
 
-		// Create constructor declaration with struct name
-		std::vector<IrOperand> ctorDeclOperands;
-		ctorDeclOperands.emplace_back(Type::Void);  // Constructors don't have a return type
-		ctorDeclOperands.emplace_back(0);  // Size is 0 for void
-		ctorDeclOperands.emplace_back(0);  // Pointer depth is 0 for void
-		ctorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Constructor name (same as struct)
-		ctorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
+	// Create constructor declaration with typed payload
+	FunctionDeclOp ctor_decl_op;
+	ctor_decl_op.function_name = std::string(node.struct_name());  // Constructor name (same as struct)
+	ctor_decl_op.struct_name = std::string(node.struct_name());  // Struct name for member function
+	ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
+	ctor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
+	ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
+	ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
+	ctor_decl_op.is_variadic = false;  // Constructors are never variadic
 
-		// Add linkage information (C++ linkage for constructors)
-		ctorDeclOperands.emplace_back(static_cast<int>(Linkage::CPlusPlus));
+	// Generate mangled name for constructor
+	std::vector<TypeSpecifierNode> param_types_for_mangling;
+	for (const auto& param : node.parameter_nodes()) {
+		std::cerr << "DEBUG ctor param node type (mangle): " << param.type_name() << " has_value=" << param.has_value() << "\n";
+		const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor mangle params");
+		param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+	}
+	
+	// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
+	std::string ctor_name = std::string(node.struct_name());
+	TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
+	ctor_decl_op.mangled_name = generateMangledNameForCall(
+		ctor_name,
+		void_type,
+		param_types_for_mangling,
+		false,  // not variadic
+		std::string(node.struct_name())  // struct name for member function mangling
+	);
 
-		// Add variadic flag (constructors are never variadic)
-		ctorDeclOperands.emplace_back(false);
+	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
+	// We don't add it here to avoid duplication
 
-		// Generate mangled name for constructor
-		std::vector<TypeSpecifierNode> param_types_for_mangling;
-		for (const auto& param : node.parameter_nodes()) {
-			std::cerr << "DEBUG ctor param node type (mangle): " << param.type_name() << " has_value=" << param.has_value() << "\n";
-			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor mangle params");
-			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
-		}
-		
-		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
-		std::string ctor_name = std::string(node.struct_name());
-		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-		std::string_view mangled_name = generateMangledNameForCall(
-			ctor_name,
-			void_type,
-			param_types_for_mangling,
-			false,  // not variadic
-			std::string(node.struct_name())  // struct name for member function mangling
-		);
-		
-		ctorDeclOperands.emplace_back(mangled_name);  // [7] MANGLED_NAME
+	// Add parameter types to constructor declaration
+	for (const auto& param : node.parameter_nodes()) {
+		std::cerr << "DEBUG ctor param node type (decl): " << param.type_name() << " has_value=" << param.has_value() << "\n";
+		const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
+		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
-		// We don't add it here to avoid duplication
+		FunctionParam func_param;
+		func_param.type = param_type.type();
+		func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+		func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+		func_param.name = std::string(param_decl.identifier_token().value());
+		func_param.is_reference = param_type.is_reference();
+		func_param.is_rvalue_reference = param_type.is_rvalue_reference();
+		func_param.cv_qualifier = param_type.cv_qualifier();
+		ctor_decl_op.parameters.push_back(func_param);
+	}
 
-		// Add parameter types to constructor declaration
-		for (const auto& param : node.parameter_nodes()) {
-			std::cerr << "DEBUG ctor param node type (decl): " << param.type_name() << " has_value=" << param.has_value() << "\n";
-			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
-			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-			ctorDeclOperands.emplace_back(param_type.type());
-			ctorDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
-			ctorDeclOperands.emplace_back(static_cast<int>(param_type.pointer_depth()));  // Add pointer depth
-			ctorDeclOperands.emplace_back(param_decl.identifier_token().value());
-			
-			// Add reference and CV-qualifier information for proper mangling
-			ctorDeclOperands.emplace_back(param_type.is_reference());
-			ctorDeclOperands.emplace_back(param_type.is_rvalue_reference());
-			ctorDeclOperands.emplace_back(static_cast<int>(param_type.cv_qualifier()));
-		}
-
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctorDeclOperands), node.name_token()));
-
-		symbol_table.enter_scope(ScopeType::Function);
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), node.name_token()));		symbol_table.enter_scope(ScopeType::Function);
 
 		// Add 'this' pointer to symbol table for member access
 		// Look up the struct type to get its type index and size
@@ -913,7 +901,8 @@ private:
 			
 			// Delegating constructors don't execute the body or initialize members
 			// Just return
-			ir_.addInstruction(IrOpcode::Return, { Type::Void, 0, 0ULL }, node.name_token());
+			ReturnOp ret_op;  // No return value for void
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.name_token()));
 			return;
 		}
 
@@ -1046,67 +1035,84 @@ private:
 
 							// Then, store the member to 'this'
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
-							std::vector<IrOperand> store_operands;
-							store_operands.emplace_back(member.type);
-							store_operands.emplace_back(static_cast<int>(member.size * 8));
-							store_operands.emplace_back(std::string_view("this"));
-							store_operands.emplace_back(std::string_view(member.name));
-							store_operands.emplace_back(static_cast<int>(member.offset));
-							store_operands.emplace_back(member.is_reference);
-							store_operands.emplace_back(member.is_rvalue_reference);
-							store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
-							store_operands.emplace_back(member_value);  // Value from 'other'
+							MemberStoreOp member_store;
+							member_store.value.type = member.type;
+							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+							member_store.value.value = member_value;
+							member_store.object = std::string_view("this");
+							member_store.member_name = std::string_view(member.name);
+							member_store.offset = static_cast<int>(member.offset);
+							member_store.is_reference = member.is_reference;
+							member_store.is_rvalue_reference = member.is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
 
-							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 						}
 					} else {
 						// Implicit default constructor: use default member initializers or zero-initialize
 						for (const auto& member : struct_info->members) {
 							// Generate MemberStore IR to initialize the member
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
-							std::vector<IrOperand> store_operands;
-							store_operands.emplace_back(member.type);  // member type
-							store_operands.emplace_back(static_cast<int>(member.size * 8));  // member size in bits
-							store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
-							store_operands.emplace_back(std::string_view(member.name));  // member name
-							store_operands.emplace_back(static_cast<int>(member.offset));  // member offset
-
+							
+							// Determine the initial value
+							IrValue member_value;
 							// Check if member has a default initializer (C++11 feature)
 							if (member.default_initializer.has_value()) {
 								const ASTNode& init_node = member.default_initializer.value();
 								if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 									// Use the default member initializer
 									auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-									// Add just the value (third element of init_operands)
-									store_operands.emplace_back(init_operands[2]);
+									// Extract just the value (third element of init_operands)
+									if (std::holds_alternative<TempVar>(init_operands[2])) {
+										member_value = std::get<TempVar>(init_operands[2]);
+									} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+										member_value = std::get<unsigned long long>(init_operands[2]);
+									} else if (std::holds_alternative<double>(init_operands[2])) {
+										member_value = std::get<double>(init_operands[2]);
+									} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+										member_value = std::get<std::string_view>(init_operands[2]);
+									} else {
+										member_value = 0ULL;  // fallback
+									}
 								} else {
 									// Default initializer exists but isn't an expression, zero-initialize
 									if (member.type == Type::Int || member.type == Type::Long ||
 									    member.type == Type::Short || member.type == Type::Char) {
-										store_operands.emplace_back(0ULL);
+										member_value = 0ULL;  // Zero for integer types
 									} else if (member.type == Type::Float || member.type == Type::Double) {
-										store_operands.emplace_back(0.0);
+										member_value = 0.0;  // Zero for floating-point types
 									} else if (member.type == Type::Bool) {
-										store_operands.emplace_back(false);
+										member_value = 0ULL;  // False for bool (0)
 									} else {
-										store_operands.emplace_back(0ULL);
+										member_value = 0ULL;  // Default to zero
 									}
 								}
 							} else {
 								// Zero-initialize based on type
 								if (member.type == Type::Int || member.type == Type::Long ||
 								    member.type == Type::Short || member.type == Type::Char) {
-									store_operands.emplace_back(0ULL);  // Zero for integer types
+									member_value = 0ULL;  // Zero for integer types
 								} else if (member.type == Type::Float || member.type == Type::Double) {
-									store_operands.emplace_back(0.0);  // Zero for floating-point types
+									member_value = 0.0;  // Zero for floating-point types
 								} else if (member.type == Type::Bool) {
-									store_operands.emplace_back(false);  // False for bool
+									member_value = 0ULL;  // False for bool (0)
 								} else {
-									store_operands.emplace_back(0ULL);  // Default to zero
+									member_value = 0ULL;  // Default to zero
 								}
 							}
 
-							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+							MemberStoreOp member_store;
+							member_store.value.type = member.type;
+							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+							member_store.value.value = member_value;
+							member_store.object = std::string_view("this");
+							member_store.member_name = std::string_view(member.name);
+							member_store.offset = static_cast<int>(member.offset);
+							member_store.is_reference = member.is_reference;
+							member_store.is_rvalue_reference = member.is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
+
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 						}
 					}
 				} else {
@@ -1122,60 +1128,82 @@ private:
 					// Initialize all members
 					for (const auto& member : struct_info->members) {
 						// Generate MemberStore IR to initialize the member
-						// Format: [member_type, member_size, object_name, member_name, offset, value]
-						std::vector<IrOperand> store_operands;
-						store_operands.emplace_back(member.type);  // member type
-						store_operands.emplace_back(static_cast<int>(member.size * 8));  // member size in bits
-						store_operands.emplace_back(std::string_view("this"));  // object name (use 'this' in constructor)
-						store_operands.emplace_back(std::string_view(member.name));  // member name
-						store_operands.emplace_back(static_cast<int>(member.offset));  // member offset
-						store_operands.emplace_back(member.is_reference);
-						store_operands.emplace_back(member.is_rvalue_reference);
-						store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
-						store_operands.emplace_back(member.is_reference);
-						store_operands.emplace_back(member.is_rvalue_reference);
-						store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
-
+						
+						// Determine the initial value
+						IrValue member_value;
 						// Check for explicit initializer first (highest precedence)
 						auto explicit_it = explicit_inits.find(member.name);
 						if (explicit_it != explicit_inits.end()) {
 							// Use explicit initializer from constructor initializer list
 							auto init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
-							store_operands.emplace_back(init_operands[2]);
+							// Extract just the value (third element of init_operands)
+							if (std::holds_alternative<TempVar>(init_operands[2])) {
+								member_value = std::get<TempVar>(init_operands[2]);
+							} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+								member_value = std::get<unsigned long long>(init_operands[2]);
+							} else if (std::holds_alternative<double>(init_operands[2])) {
+								member_value = std::get<double>(init_operands[2]);
+							} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+								member_value = std::get<std::string_view>(init_operands[2]);
+							} else {
+								member_value = 0ULL;  // fallback
+							}
 						} else if (member.default_initializer.has_value()) {
 							const ASTNode& init_node = member.default_initializer.value();
 							if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 								// Use default member initializer (C++11 feature)
 								auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-								store_operands.emplace_back(init_operands[2]);
+								// Extract just the value (third element of init_operands)
+								if (std::holds_alternative<TempVar>(init_operands[2])) {
+									member_value = std::get<TempVar>(init_operands[2]);
+								} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+									member_value = std::get<unsigned long long>(init_operands[2]);
+								} else if (std::holds_alternative<double>(init_operands[2])) {
+									member_value = std::get<double>(init_operands[2]);
+								} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+									member_value = std::get<std::string_view>(init_operands[2]);
+								} else {
+									member_value = 0ULL;  // fallback
+								}
 							} else {
 								// Default initializer exists but isn't an expression, zero-initialize
 								if (member.type == Type::Int || member.type == Type::Long ||
 								    member.type == Type::Short || member.type == Type::Char) {
-									store_operands.emplace_back(0ULL);
+									member_value = 0ULL;
 								} else if (member.type == Type::Float || member.type == Type::Double) {
-									store_operands.emplace_back(0.0);
+									member_value = 0.0;
 								} else if (member.type == Type::Bool) {
-									store_operands.emplace_back(false);
+									member_value = 0ULL;  // False for bool (0)
 								} else {
-									store_operands.emplace_back(0ULL);
+									member_value = 0ULL;
 								}
 							}
 						} else {
 							// Zero-initialize based on type
 							if (member.type == Type::Int || member.type == Type::Long ||
 							    member.type == Type::Short || member.type == Type::Char) {
-								store_operands.emplace_back(0ULL);  // Zero for integer types
+								member_value = 0ULL;  // Zero for integer types
 							} else if (member.type == Type::Float || member.type == Type::Double) {
-								store_operands.emplace_back(0.0);  // Zero for floating-point types
+								member_value = 0.0;  // Zero for floating-point types
 							} else if (member.type == Type::Bool) {
-								store_operands.emplace_back(false);  // False for bool
+								member_value = 0ULL;  // False for bool (0)
 							} else {
-								store_operands.emplace_back(0ULL);  // Default to zero
+								member_value = 0ULL;  // Default to zero
 							}
 						}
 
-						ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), node.name_token());
+						MemberStoreOp member_store;
+						member_store.value.type = member.type;
+						member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+						member_store.value.value = member_value;
+						member_store.object = std::string_view("this");
+						member_store.member_name = std::string_view(member.name);
+						member_store.offset = static_cast<int>(member.offset);
+						member_store.is_reference = member.is_reference;
+						member_store.is_rvalue_reference = member.is_rvalue_reference;
+						member_store.struct_type_info = nullptr;
+
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 					}
 				}
 			}
@@ -1193,8 +1221,8 @@ private:
 		std::cerr << "DEBUG ctor stage: body visit complete\n";
 
 		// Add implicit return for constructor (constructors don't have explicit return statements)
-		// Format: [type, size, value] - for void return, value is 0
-		ir_.addInstruction(IrOpcode::Return, {Type::Void, 0, 0ULL}, node.name_token());
+		ReturnOp ret_op;  // No return value for void
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.name_token()));
 
 		symbol_table.exit_scope();
 		current_function_name_.clear();
@@ -1211,45 +1239,37 @@ private:
 		// Destructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
 
-		// Set current function name for static local variable mangling
-		current_function_name_ = std::string(node.name());
-		static_local_names_.clear();
+	// Set current function name for static local variable mangling
+	current_function_name_ = std::string(node.name());
+	static_local_names_.clear();
 
-		// Create destructor declaration with struct name
-		std::vector<IrOperand> dtorDeclOperands;
-		dtorDeclOperands.emplace_back(Type::Void);  // Destructors don't have a return type
-		dtorDeclOperands.emplace_back(0);  // Size is 0 for void
-		dtorDeclOperands.emplace_back(0);  // Pointer depth is 0 for void
-		dtorDeclOperands.emplace_back(std::string("~") + std::string(node.struct_name()));  // Destructor name
-		dtorDeclOperands.emplace_back(std::string_view(node.struct_name()));  // Struct name for member function
+	// Create destructor declaration with typed payload
+	FunctionDeclOp dtor_decl_op;
+	dtor_decl_op.function_name = std::string("~") + std::string(node.struct_name());  // Destructor name
+	dtor_decl_op.struct_name = std::string(node.struct_name());  // Struct name for member function
+	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
+	dtor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
+	dtor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
+	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors
+	dtor_decl_op.is_variadic = false;  // Destructors are never variadic
 
-		// Add linkage information (C++ linkage for destructors)
-		dtorDeclOperands.emplace_back(static_cast<int>(Linkage::CPlusPlus));
+	// Generate mangled name for destructor (MSVC format: ?~ClassName@ClassName@@...)
+	// Destructors have no parameters (except implicit 'this')
+	std::vector<TypeSpecifierNode> empty_params;
+	std::string dtor_name = std::string("~") + std::string(node.struct_name());
+	TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
+	dtor_decl_op.mangled_name = generateMangledNameForCall(
+		dtor_name,
+		void_type,
+		empty_params,
+		false,  // not variadic
+		std::string(node.struct_name())  // struct name for member function mangling
+	);
 
-		// Add variadic flag (destructors are never variadic)
-		dtorDeclOperands.emplace_back(false);
+	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
+	// We don't add it here to avoid duplication
 
-		// Generate mangled name for destructor (MSVC format: ?~ClassName@ClassName@@...)
-		// Destructors have no parameters (except implicit 'this')
-		std::vector<TypeSpecifierNode> empty_params;
-		std::string dtor_name = std::string("~") + std::string(node.struct_name());
-		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-		std::string_view mangled_name = generateMangledNameForCall(
-			dtor_name,
-			void_type,
-			empty_params,
-			false,  // not variadic
-			std::string(node.struct_name())  // struct name for member function mangling
-		);
-		
-		dtorDeclOperands.emplace_back(mangled_name);  // [7] MANGLED_NAME
-
-		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
-		// We don't add it here to avoid duplication
-
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(dtorDeclOperands), node.name_token()));
-
-		symbol_table.enter_scope(ScopeType::Function);
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(dtor_decl_op), node.name_token()));		symbol_table.enter_scope(ScopeType::Function);
 
 		// Add 'this' pointer to symbol table for member access
 		// Look up the struct type to get its type index and size
@@ -1311,8 +1331,8 @@ private:
 		}
 
 		// Add implicit return for destructor (destructors don't have explicit return statements)
-		// Format: [type, size, value] - for void return, value is 0
-		ir_.addInstruction(IrOpcode::Return, {Type::Void, 0, 0ULL}, node.name_token());
+		ReturnOp ret_op;  // No return value for void
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.name_token()));
 
 		symbol_table.exit_scope();
 		current_function_name_.clear();
@@ -1354,29 +1374,41 @@ private:
 			assert(expr_opt->is<ExpressionNode>());
 			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>());
 			
-			// Convert to the function's return type if necessary
-			if (!operands.empty() && operands.size() >= 2) {
-				Type expr_type = std::get<Type>(operands[0]);
-				int expr_size = std::get<int>(operands[1]);
-				
-				// Get the current function's return type
-				Type return_type = current_function_return_type_;
-				int return_size = current_function_return_size_;
-				
-				// Convert if types don't match
-				if (expr_type != return_type || expr_size != return_size) {
-					// Update operands with the converted value
-					operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
-				}
-			}
+		// Convert to the function's return type if necessary
+		if (!operands.empty() && operands.size() >= 2) {
+			Type expr_type = std::get<Type>(operands[0]);
+			int expr_size = std::get<int>(operands[1]);
 			
-			// Add the return value's type and size information
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(operands), node.return_token()));
-
+			// Get the current function's return type
+			Type return_type = current_function_return_type_;
+			int return_size = current_function_return_size_;
+			
+			// Convert if types don't match
+			if (expr_type != return_type || expr_size != return_size) {
+				// Update operands with the converted value
+				operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+			}
 		}
+		
+		// Create ReturnOp with the return value
+		ReturnOp ret_op;
+		// Extract IrValue from operand[2] - it could be various types
+		if (std::holds_alternative<unsigned long long>(operands[2])) {
+			ret_op.return_value = std::get<unsigned long long>(operands[2]);
+		} else if (std::holds_alternative<TempVar>(operands[2])) {
+			ret_op.return_value = std::get<TempVar>(operands[2]);
+		} else if (std::holds_alternative<std::string_view>(operands[2])) {
+			ret_op.return_value = std::get<std::string_view>(operands[2]);
+		} else if (std::holds_alternative<double>(operands[2])) {
+			ret_op.return_value = std::get<double>(operands[2]);
+		}
+		ret_op.return_type = std::get<Type>(operands[0]);
+		ret_op.return_size = std::get<int>(operands[1]);
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));		}
 		else {
 			// For void returns, we don't need any operands
-			ir_.addInstruction(IrOpcode::Return, {}, node.return_token());
+			ReturnOp ret_op;  // No return value for void
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
 		}
 	}
 
@@ -1436,15 +1468,17 @@ private:
 			return;
 		}
 
-		// Regular if statement (runtime conditional)
-		// Generate unique labels for this if statement
-		static size_t if_counter = 0;
-		std::string then_label = "if_then_" + std::to_string(if_counter);
-		std::string else_label = "if_else_" + std::to_string(if_counter);
-		std::string end_label = "if_end_" + std::to_string(if_counter);
-		if_counter++;
-
-		// Handle C++20 if-with-initializer
+	// Regular if statement (runtime conditional)
+	// Generate unique labels for this if statement
+	static size_t if_counter = 0;
+	StringBuilder then_sb, else_sb, end_sb;
+	then_sb.append("if_then_").append(static_cast<int>(if_counter));
+	else_sb.append("if_else_").append(static_cast<int>(if_counter));
+	end_sb.append("if_end_").append(static_cast<int>(if_counter));
+	std::string_view then_label = then_sb.commit();
+	std::string_view else_label = else_sb.commit();
+	std::string_view end_label = end_sb.commit();
+	if_counter++;		// Handle C++20 if-with-initializer
 		if (node.has_init()) {
 			auto init_stmt = node.get_init_statement();
 			if (init_stmt.has_value()) {
@@ -1456,14 +1490,14 @@ private:
 		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
 		// Generate conditional branch
-		std::vector<IrOperand> branch_operands;
-		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
-		branch_operands.emplace_back(then_label);
-		branch_operands.emplace_back(node.has_else() ? else_label : end_label);
-		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+		CondBranchOp cond_branch;
+		cond_branch.label_true = then_label;
+		cond_branch.label_false = node.has_else() ? else_label : end_label;
+		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Then block
-		ir_.addInstruction(IrOpcode::Label, {then_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = then_label}, Token()));
 
 		// Visit then statement
 		auto then_stmt = node.get_then_statement();
@@ -1477,12 +1511,14 @@ private:
 
 		// Branch to end after then block (skip else)
 		if (node.has_else()) {
-			ir_.addInstruction(IrOpcode::Branch, {end_label}, Token());
+			BranchOp branch_to_end;
+			branch_to_end.target_label = end_label;
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_end), Token()));
 		}
 
 		// Else block (if present)
 		if (node.has_else()) {
-			ir_.addInstruction(IrOpcode::Label, {else_label}, Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = else_label}, Token()));
 
 			auto else_stmt = node.get_else_statement();
 			if (else_stmt.has_value()) {
@@ -1497,19 +1533,22 @@ private:
 		}
 
 		// End label
-		ir_.addInstruction(IrOpcode::Label, {end_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, Token()));
 	}
 
 	void visitForStatementNode(const ForStatementNode& node) {
 		// Generate unique labels for this for loop
 		static size_t for_counter = 0;
-		std::string loop_start_label = "for_start_" + std::to_string(for_counter);
-		std::string loop_body_label = "for_body_" + std::to_string(for_counter);
-		std::string loop_increment_label = "for_increment_" + std::to_string(for_counter);
-		std::string loop_end_label = "for_end_" + std::to_string(for_counter);
-		for_counter++;
-
-		// Execute init statement (if present)
+		StringBuilder start_sb, body_sb, inc_sb, end_sb;
+		start_sb.append("for_start_").append(static_cast<int>(for_counter));
+		body_sb.append("for_body_").append(static_cast<int>(for_counter));
+		inc_sb.append("for_increment_").append(static_cast<int>(for_counter));
+		end_sb.append("for_end_").append(static_cast<int>(for_counter));
+		std::string_view loop_start_label = start_sb.commit();
+		std::string_view loop_body_label = body_sb.commit();
+		std::string_view loop_increment_label = inc_sb.commit();
+		std::string_view loop_end_label = end_sb.commit();
+		for_counter++;		// Execute init statement (if present)
 		if (node.has_init()) {
 			auto init_stmt = node.get_init_statement();
 			if (init_stmt.has_value()) {
@@ -1518,25 +1557,29 @@ private:
 		}
 
 		// Mark loop begin for break/continue support
-		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_increment_label}, Token());
+		LoopBeginOp loop_begin;
+		loop_begin.loop_start_label = loop_start_label;
+		loop_begin.loop_end_label = loop_end_label;
+		loop_begin.loop_increment_label = loop_increment_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition
-		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Evaluate condition (if present, otherwise infinite loop)
 		if (node.has_condition()) {
 			auto condition_operands = visitExpressionNode(node.get_condition()->as<ExpressionNode>());
 
 			// Generate conditional branch: if true goto body, else goto end
-			std::vector<IrOperand> branch_operands;
-			branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
-			branch_operands.emplace_back(loop_body_label);
-			branch_operands.emplace_back(loop_end_label);
-			ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+			CondBranchOp cond_branch;
+			cond_branch.label_true = loop_body_label;
+			cond_branch.label_false = loop_end_label;
+			cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 		}
 
 		// Loop body label
-		ir_.addInstruction(IrOpcode::Label, {loop_body_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Visit loop body
 		auto body_stmt = node.get_body_statement();
@@ -1549,7 +1592,7 @@ private:
 		}
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrOpcode::Label, {loop_increment_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
 
 		// Execute update/increment expression (if present)
 		if (node.has_update()) {
@@ -1557,10 +1600,10 @@ private:
 		}
 
 		// Branch back to loop start
-		ir_.addInstruction(IrOpcode::Branch, {loop_start_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -1569,30 +1612,40 @@ private:
 	void visitWhileStatementNode(const WhileStatementNode& node) {
 		// Generate unique labels for this while loop
 		static size_t while_counter = 0;
-		std::string loop_start_label = "while_start_" + std::to_string(while_counter);
-		std::string loop_body_label = "while_body_" + std::to_string(while_counter);
-		std::string loop_end_label = "while_end_" + std::to_string(while_counter);
+		StringBuilder start_sb, body_sb, end_sb;
+		start_sb.append("while_start_").append(static_cast<int>(while_counter));
+		body_sb.append("while_body_").append(static_cast<int>(while_counter));
+		end_sb.append("while_end_").append(static_cast<int>(while_counter));
+		std::string_view loop_start_label = start_sb.commit();
+		std::string_view loop_body_label = body_sb.commit();
+		std::string_view loop_end_label = end_sb.commit();
 		while_counter++;
-
+		
 		// Mark loop begin for break/continue support
 		// For while loops, continue jumps to loop_start (re-evaluate condition)
-		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_start_label}, Token());
+		LoopBeginOp loop_begin;
+		loop_begin.loop_start_label = loop_start_label;
+		loop_begin.loop_end_label = loop_end_label;
+		loop_begin.loop_increment_label = loop_start_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition
-		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+		LabelOp start_lbl;
+		start_lbl.label_name = loop_start_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, std::move(start_lbl), Token()));
 
 		// Evaluate condition
 		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
 		// Generate conditional branch: if true goto body, else goto end
-		std::vector<IrOperand> branch_operands;
-		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
-		branch_operands.emplace_back(loop_body_label);
-		branch_operands.emplace_back(loop_end_label);
-		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+		CondBranchOp cond_branch;
+		cond_branch.label_true = loop_body_label;
+		cond_branch.label_false = loop_end_label;
+		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
-		ir_.addInstruction(IrOpcode::Label, {loop_body_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Visit loop body
 		auto body_stmt = node.get_body_statement();
@@ -1605,10 +1658,12 @@ private:
 		}
 
 		// Branch back to loop start (re-evaluate condition)
-		ir_.addInstruction(IrOpcode::Branch, {loop_start_label}, Token());
+		BranchOp branch_to_start;
+		branch_to_start.target_label = loop_start_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_start), Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -1617,17 +1672,25 @@ private:
 	void visitDoWhileStatementNode(const DoWhileStatementNode& node) {
 		// Generate unique labels for this do-while loop
 		static size_t do_while_counter = 0;
-		std::string loop_start_label = "do_while_start_" + std::to_string(do_while_counter);
-		std::string loop_condition_label = "do_while_condition_" + std::to_string(do_while_counter);
-		std::string loop_end_label = "do_while_end_" + std::to_string(do_while_counter);
+		StringBuilder start_sb, condition_sb, end_sb;
+		start_sb.append("do_while_start_").append(static_cast<int>(do_while_counter));
+		condition_sb.append("do_while_condition_").append(static_cast<int>(do_while_counter));
+		end_sb.append("do_while_end_").append(static_cast<int>(do_while_counter));
+		std::string_view loop_start_label = start_sb.commit();
+		std::string_view loop_condition_label = condition_sb.commit();
+		std::string_view loop_end_label = end_sb.commit();
 		do_while_counter++;
-
+		
 		// Mark loop begin for break/continue support
 		// For do-while loops, continue jumps to condition check (not body start)
-		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_condition_label}, Token());
+		LoopBeginOp loop_begin;
+		loop_begin.loop_start_label = loop_start_label;
+		loop_begin.loop_end_label = loop_end_label;
+		loop_begin.loop_increment_label = loop_condition_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: execute body first (do-while always executes at least once)
-		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Visit loop body
 		auto body_stmt = node.get_body_statement();
@@ -1640,20 +1703,20 @@ private:
 		}
 
 		// Condition check label (for continue statements)
-		ir_.addInstruction(IrOpcode::Label, {loop_condition_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_condition_label}, Token()));
 
 		// Evaluate condition
 		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
 		// Generate conditional branch: if true goto start, else goto end
-		std::vector<IrOperand> branch_operands;
-		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
-		branch_operands.emplace_back(loop_start_label);
-		branch_operands.emplace_back(loop_end_label);
-		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+		CondBranchOp cond_branch;
+		cond_branch.label_true = loop_start_label;
+		cond_branch.label_false = loop_end_label;
+		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -1662,10 +1725,13 @@ private:
 	void visitSwitchStatementNode(const SwitchStatementNode& node) {
 		// Generate unique labels for this switch statement
 		static size_t switch_counter = 0;
-		std::string switch_end_label = "switch_end_" + std::to_string(switch_counter);
-		std::string default_label = "switch_default_" + std::to_string(switch_counter);
+		StringBuilder end_sb, default_sb;
+		end_sb.append("switch_end_").append(static_cast<int>(switch_counter));
+		default_sb.append("switch_default_").append(static_cast<int>(switch_counter));
+		std::string_view switch_end_label = end_sb.commit();
+		std::string_view default_label = default_sb.commit();
 		switch_counter++;
-
+		
 		// Evaluate the switch condition
 		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
@@ -1675,7 +1741,11 @@ private:
 
 		// Mark switch begin for break support (switch acts like a loop for break)
 		// Continue is not allowed in switch, but break is
-		ir_.addInstruction(IrOpcode::LoopBegin, {switch_end_label, switch_end_label, switch_end_label}, Token());
+		LoopBeginOp loop_begin;
+		loop_begin.loop_start_label = switch_end_label;
+		loop_begin.loop_end_label = switch_end_label;
+		loop_begin.loop_increment_label = switch_end_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Process the switch body to collect case labels
 		auto body = node.get_body();
@@ -1685,14 +1755,14 @@ private:
 		}
 
 		const BlockNode& block = body.as<BlockNode>();
-		std::vector<std::pair<std::string, ASTNode>> case_labels;  // label name, case value
-		bool has_default = false;
-
-		// First pass: generate labels and collect case values
+		std::vector<std::pair<std::string_view, ASTNode>> case_labels;  // label name, case value
+		bool has_default = false;		// First pass: generate labels and collect case values
 		size_t case_index = 0;
 		block.get_statements().visit([&](const ASTNode& stmt) {
 			if (stmt.is<CaseLabelNode>()) {
-				std::string case_label = "switch_case_" + std::to_string(switch_counter - 1) + "_" + std::to_string(case_index);
+				StringBuilder case_sb;
+				case_sb.append("switch_case_").append(static_cast<int>(switch_counter - 1)).append("_").append(static_cast<int>(case_index));
+				std::string_view case_label = case_sb.commit();
 				case_labels.push_back({case_label, stmt.as<CaseLabelNode>().get_case_value()});
 				case_index++;
 			} else if (stmt.is<DefaultLabelNode>()) {
@@ -1719,40 +1789,45 @@ private:
 			ir_.addInstruction(IrOpcode::Equal, std::move(cmp_operands), Token());
 
 			// Branch to case label if equal, otherwise check next case
-			std::string next_check_label = "switch_check_" + std::to_string(switch_counter - 1) + "_" +
-			                               std::to_string(check_index + 1);
+			StringBuilder next_check_sb;
+			next_check_sb.append("switch_check_").append(static_cast<int>(switch_counter - 1)).append("_").append(static_cast<int>(check_index + 1));
+			std::string_view next_check_label = next_check_sb.commit();
 
-			std::vector<IrOperand> branch_operands;
-			branch_operands.push_back(cmp_result);
-			branch_operands.push_back(Type::Bool);
-			branch_operands.push_back(1);
-			branch_operands.push_back(case_label);
-			branch_operands.push_back(next_check_label);
-			ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
+			CondBranchOp cond_branch;
+			cond_branch.label_true = case_label;
+			cond_branch.label_false = next_check_label;
+			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_result};
+			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 			// Next check label
-			ir_.addInstruction(IrOpcode::Label, {next_check_label}, Token());
+			LabelOp next_lbl;
+			next_lbl.label_name = next_check_label;
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, std::move(next_lbl), Token()));
 			check_index++;
 		}
 
 		// If no case matched, jump to default or end
 		if (has_default) {
-			ir_.addInstruction(IrOpcode::Branch, {default_label}, Token());
+			BranchOp branch_to_default;
+			branch_to_default.target_label = default_label;
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_default), Token()));
 		} else {
-			ir_.addInstruction(IrOpcode::Branch, {switch_end_label}, Token());
+			BranchOp branch_to_end;
+			branch_to_end.target_label = switch_end_label;
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_end), Token()));
 		}
 
 		// Second pass: generate code for each case/default
 		case_index = 0;
 		block.get_statements().visit([&](const ASTNode& stmt) {
 			if (stmt.is<CaseLabelNode>()) {
-				const CaseLabelNode& case_node = stmt.as<CaseLabelNode>();
-				std::string case_label = "switch_case_" + std::to_string(switch_counter - 1) + "_" + std::to_string(case_index);
+			const CaseLabelNode& case_node = stmt.as<CaseLabelNode>();
+			StringBuilder case_sb;
+			case_sb.append("switch_case_").append(static_cast<int>(switch_counter - 1)).append("_").append(static_cast<int>(case_index));
+			std::string_view case_label = case_sb.commit();
 
-				// Case label
-				ir_.addInstruction(IrOpcode::Label, {case_label}, Token());
-
-				// Execute case statements
+			// Case label
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = case_label}, Token()));				// Execute case statements
 				if (case_node.has_statement()) {
 					auto case_stmt = case_node.get_statement();
 					if (case_stmt->is<BlockNode>()) {
@@ -1767,12 +1842,10 @@ private:
 
 				case_index++;
 			} else if (stmt.is<DefaultLabelNode>()) {
-				const DefaultLabelNode& default_node = stmt.as<DefaultLabelNode>();
+			const DefaultLabelNode& default_node = stmt.as<DefaultLabelNode>();
 
-				// Default label
-				ir_.addInstruction(IrOpcode::Label, {default_label}, Token());
-
-				// Execute default statements
+			// Default label
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = default_label}, Token()));				// Execute default statements
 				if (default_node.has_statement()) {
 					auto default_stmt = default_node.get_statement();
 					if (default_stmt->is<BlockNode>()) {
@@ -1787,7 +1860,7 @@ private:
 		});
 
 		// Switch end label
-		ir_.addInstruction(IrOpcode::Label, {switch_end_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = switch_end_label}, Token()));
 
 		// Mark switch end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -1802,13 +1875,16 @@ private:
 
 		// Generate unique labels and counter for this ranged for loop
 		static size_t ranged_for_counter = 0;
-		std::string loop_start_label = "ranged_for_start_" + std::to_string(ranged_for_counter);
-		std::string loop_body_label = "ranged_for_body_" + std::to_string(ranged_for_counter);
-		std::string loop_increment_label = "ranged_for_increment_" + std::to_string(ranged_for_counter);
-		std::string loop_end_label = "ranged_for_end_" + std::to_string(ranged_for_counter);
-		ranged_for_counter++;
-
-		// Get the loop variable declaration and range expression
+		StringBuilder start_sb, body_sb, increment_sb, end_sb;
+		start_sb.append("ranged_for_start_").append(static_cast<int>(ranged_for_counter));
+		body_sb.append("ranged_for_body_").append(static_cast<int>(ranged_for_counter));
+		increment_sb.append("ranged_for_increment_").append(static_cast<int>(ranged_for_counter));
+		end_sb.append("ranged_for_end_").append(static_cast<int>(ranged_for_counter));
+		std::string_view loop_start_label = start_sb.commit();
+		std::string_view loop_body_label = body_sb.commit();
+		std::string_view loop_increment_label = increment_sb.commit();
+		std::string_view loop_end_label = end_sb.commit();
+		ranged_for_counter++;		// Get the loop variable declaration and range expression
 		auto loop_var_decl = node.get_loop_variable_decl();
 		auto range_expr = node.get_range_expression();
 
@@ -1866,9 +1942,9 @@ private:
 	}
 
 	void visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
-	                         const DeclarationNode& array_decl, const std::string& loop_start_label,
-	                         const std::string& loop_body_label, const std::string& loop_increment_label,
-	                         const std::string& loop_end_label, size_t counter) {
+	                         const DeclarationNode& array_decl, std::string_view loop_start_label,
+	                         std::string_view loop_body_label, std::string_view loop_increment_label,
+	                         std::string_view loop_end_label, size_t counter) {
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Unified pointer-based approach: use begin/end pointers for arrays too
@@ -1943,10 +2019,14 @@ private:
 		visit(end_var_decl_node);
 
 		// Mark loop begin for break/continue support
-		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_increment_label}, Token());
+		LoopBeginOp loop_begin;
+		loop_begin.loop_start_label = loop_start_label;
+		loop_begin.loop_end_label = loop_end_label;
+		loop_begin.loop_increment_label = loop_increment_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition (__begin != __end)
-		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Create condition: __begin != __end
 		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -1964,7 +2044,7 @@ private:
 		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
 
 		// Loop body label
-		ir_.addInstruction(IrOpcode::Label, {loop_body_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Declare and initialize the loop variable: T x = *__begin
 		auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -1999,7 +2079,7 @@ private:
 		}
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrOpcode::Label, {loop_increment_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
 
 		// Increment pointer: ++__begin
 		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -2009,19 +2089,19 @@ private:
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 
 		// Branch back to loop start
-		ir_.addInstruction(IrOpcode::Branch, {loop_start_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
 	}
 
 	void visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
-	                            const TypeSpecifierNode& range_type, const std::string& loop_start_label,
-	                            const std::string& loop_body_label, const std::string& loop_increment_label,
-	                            const std::string& loop_end_label, size_t counter) {
+	                            const TypeSpecifierNode& range_type, std::string_view loop_start_label,
+	                            std::string_view loop_body_label, std::string_view loop_increment_label,
+	                            std::string_view loop_end_label, size_t counter) {
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Get the struct type info
@@ -2114,10 +2194,14 @@ private:
 		visit(end_var_decl_node);
 
 		// Mark loop begin for break/continue support
-		ir_.addInstruction(IrOpcode::LoopBegin, {loop_start_label, loop_end_label, loop_increment_label}, Token());
+		LoopBeginOp loop_begin;
+		loop_begin.loop_start_label = loop_start_label;
+		loop_begin.loop_end_label = loop_end_label;
+		loop_begin.loop_increment_label = loop_increment_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition (__begin != __end)
-		ir_.addInstruction(IrOpcode::Label, {loop_start_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Create condition: __begin != __end
 		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -2135,7 +2219,7 @@ private:
 		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), Token());
 
 		// Loop body label
-		ir_.addInstruction(IrOpcode::Label, {loop_body_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Declare and initialize the loop variable: T x = *__begin
 		// Create dereference: *__begin
@@ -2168,7 +2252,7 @@ private:
 		}
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrOpcode::Label, {loop_increment_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
 
 		// Increment iterator: ++__begin
 		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -2178,10 +2262,10 @@ private:
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 
 		// Branch back to loop start
-		ir_.addInstruction(IrOpcode::Branch, {loop_start_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrOpcode::Label, {loop_end_label}, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -2200,13 +2284,13 @@ private:
 	void visitGotoStatementNode(const GotoStatementNode& node) {
 		// Generate Branch IR instruction (unconditional jump) with the target label name
 		std::string label_name(node.label_name());
-		ir_.addInstruction(IrOpcode::Branch, {label_name}, node.goto_token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = label_name}, node.goto_token()));
 	}
 
 	void visitLabelStatementNode(const LabelStatementNode& node) {
 		// Generate Label IR instruction with the label name
 		std::string label_name(node.label_name());
-		ir_.addInstruction(IrOpcode::Label, {label_name}, node.label_token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label_name}, node.label_token()));
 	}
 
 	void visitVariableDeclarationNode(const ASTNode& ast_node) {
@@ -2411,16 +2495,8 @@ private:
 
 								// Generate member stores for each struct member
 								for (const StructMember& member : struct_info.members) {
-									std::vector<IrOperand> member_store_operands;
-									member_store_operands.emplace_back(member.type);
-									member_store_operands.emplace_back(static_cast<int>(member.size * 8));
-									member_store_operands.emplace_back(decl.identifier_token().value());
-									member_store_operands.emplace_back(std::string_view(member.name));
-									member_store_operands.emplace_back(static_cast<int>(member.offset));
-									member_store_operands.emplace_back(member.is_reference);
-									member_store_operands.emplace_back(member.is_rvalue_reference);
-									member_store_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
-
+									// Determine the initial value
+									IrValue member_value;
 									// Check if this member has an initializer
 									if (member_values.count(member.name)) {
 										const ASTNode& init_expr = *member_values[member.name];
@@ -2432,16 +2508,38 @@ private:
 										}
 
 										if (init_operands.size() >= 3) {
-											member_store_operands.emplace_back(init_operands[2]);
+											// Extract value from init_operands[2]
+											if (std::holds_alternative<TempVar>(init_operands[2])) {
+												member_value = std::get<TempVar>(init_operands[2]);
+											} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+												member_value = std::get<unsigned long long>(init_operands[2]);
+											} else if (std::holds_alternative<double>(init_operands[2])) {
+												member_value = std::get<double>(init_operands[2]);
+											} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+												member_value = std::get<std::string_view>(init_operands[2]);
+											} else {
+												member_value = 0ULL;  // fallback
+											}
 										} else {
 											assert(false && "Invalid initializer operands");
 										}
 									} else {
 										// Zero-initialize unspecified members
-										member_store_operands.emplace_back(0ULL);
+										member_value = 0ULL;
 									}
 
-									ir_.addInstruction(IrOpcode::MemberStore, std::move(member_store_operands), decl.identifier_token());
+									MemberStoreOp member_store;
+									member_store.value.type = member.type;
+									member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+									member_store.value.value = member_value;
+									member_store.object = decl.identifier_token().value();
+									member_store.member_name = std::string_view(member.name);
+									member_store.offset = static_cast<int>(member.offset);
+									member_store.is_reference = member.is_reference;
+									member_store.is_rvalue_reference = member.is_rvalue_reference;
+									member_store.struct_type_info = nullptr;
+
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), decl.identifier_token()));
 								}
 							}
 
@@ -2689,11 +2787,12 @@ private:
 								// Generate Dereference to load the value
 								TempVar result_temp = var_counter.next();
 								std::vector<IrOperand> deref_operands;
-								deref_operands.emplace_back(result_temp);
-								deref_operands.emplace_back(orig_type.type());
-								deref_operands.emplace_back(static_cast<int>(orig_type.size_in_bits()));
-								deref_operands.emplace_back(ptr_temp);  // Dereference this pointer
-								ir_.addInstruction(IrOpcode::Dereference, std::move(deref_operands), Token());
+								DereferenceOp deref_op;
+								deref_op.result = result_temp;
+								deref_op.pointee_type = orig_type.type();
+								deref_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
+								deref_op.pointer = ptr_temp;
+								ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 
 								return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp };
 							}
@@ -3038,25 +3137,31 @@ private:
 
 		// For non-literal values (variables, TempVars), create a conversion instruction
 		TempVar resultVar = var_counter.next();
-		std::vector<IrOperand> conversionOperands;
-		conversionOperands.push_back(resultVar);
-		conversionOperands.push_back(fromType);
-		conversionOperands.push_back(fromSize);
-		conversionOperands.insert(conversionOperands.end(), operands.begin() + 2, operands.end()); // Skip type and size, add value
-		conversionOperands.push_back(toSize);
 
 		if (fromSize < toSize) {
 			// Extension needed
+			ConversionOp conv_op{
+				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.to_type = toType,
+				.to_size = toSize,
+				.result = resultVar
+			};
+		
 			if (is_signed_integer_type(fromType)) {
-				ir_.addInstruction(IrInstruction(IrOpcode::SignExtend, std::move(conversionOperands), source_token));
+				ir_.addInstruction(IrInstruction(IrOpcode::SignExtend, std::move(conv_op), source_token));
 			} else {
-				ir_.addInstruction(IrInstruction(IrOpcode::ZeroExtend, std::move(conversionOperands), source_token));
+				ir_.addInstruction(IrInstruction(IrOpcode::ZeroExtend, std::move(conv_op), source_token));
 			}
 		} else if (fromSize > toSize) {
 			// Truncation needed
-			ir_.addInstruction(IrInstruction(IrOpcode::Truncate, std::move(conversionOperands), source_token));
+			ConversionOp conv_op{
+				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.to_type = toType,
+				.to_size = toSize,
+				.result = resultVar
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Truncate, std::move(conv_op), source_token));
 		}
-
 		// Return the converted operands
 		return { toType, toSize, resultVar };
 	}
@@ -3130,23 +3235,32 @@ private:
 				auto array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 				auto index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 				
-				Type array_type = std::get<Type>(array_operands[0]);
+				Type element_type = std::get<Type>(array_operands[0]);
 				int element_size_bits = std::get<int>(array_operands[1]);
 				
 				// Create temporary for the address
 				TempVar addr_var = var_counter.next();
 				
-				// Generate ArrayElementAddress IR instruction (address calculation without load)
-				// Format: [result_var, array_type, element_size, array_name, index_type, index_size, index_value]
-				std::vector<IrOperand> addr_operands;
-				addr_operands.emplace_back(addr_var);
-				addr_operands.insert(addr_operands.end(), array_operands.begin(), array_operands.end());
-				addr_operands.insert(addr_operands.end(), index_operands.begin(), index_operands.end());
+				// Create typed payload for ArrayElementAddress
+				ArrayElementAddressOp payload;
+				payload.result = addr_var;
+				payload.element_type = element_type;
+				payload.element_size_in_bits = element_size_bits;
 				
-				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_operands), arraySubscript.bracket_token()));
+				// Set array (either variable name or temp)
+				if (std::holds_alternative<std::string_view>(array_operands[2])) {
+					payload.array = std::get<std::string_view>(array_operands[2]);
+				} else if (std::holds_alternative<TempVar>(array_operands[2])) {
+					payload.array = std::get<TempVar>(array_operands[2]);
+				}
+				
+				// Set index as TypedValue
+				payload.index = toTypedValue(std::span<const IrOperand>(&index_operands[0], 3)); 
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 				
 				// Return pointer to element (64-bit pointer)
-				return { array_type, 64, addr_var };
+				return { element_type, 64, addr_var };
 			}
 		}
 
@@ -3166,87 +3280,138 @@ private:
 
 		// Get the type of the operand
 		Type operandType = std::get<Type>(operandIrOperands[0]);
+		int operandSize = std::get<int>(operandIrOperands[1]);
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
-		// Add the result variable first
-		irOperands.emplace_back(result_var);
-
-		// Add the operand
-		irOperands.insert(irOperands.end(), operandIrOperands.begin(), operandIrOperands.end());
-
 		// Generate the IR for the operation based on the operator
 		if (unaryOperatorNode.op() == "!") {
-			// Logical NOT
-			ir_.addInstruction(IrInstruction(IrOpcode::LogicalNot, std::move(irOperands), Token()));
+			// Logical NOT - use UnaryOp struct
+			UnaryOp unary_op{
+				.value = toTypedValue(operandIrOperands),
+				.result = result_var
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::LogicalNot, unary_op, Token()));
 		}
 		else if (unaryOperatorNode.op() == "~") {
-			// Bitwise NOT
-			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseNot, std::move(irOperands), Token()));
+			// Bitwise NOT - use UnaryOp struct
+			UnaryOp unary_op{
+				.value = toTypedValue(operandIrOperands),
+				.result = result_var
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::BitwiseNot, unary_op, Token()));
 		}
 		else if (unaryOperatorNode.op() == "-") {
-			// Unary minus (negation)
-			ir_.addInstruction(IrInstruction(IrOpcode::Negate, std::move(irOperands), Token()));
+			// Unary minus (negation) - use UnaryOp struct
+			UnaryOp unary_op{
+				.value = toTypedValue(operandIrOperands),
+				.result = result_var
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Negate, unary_op, Token()));
 		}
 		else if (unaryOperatorNode.op() == "+") {
 			// Unary plus (no-op, just return the operand)
 			return operandIrOperands;
 		}
 		else if (unaryOperatorNode.op() == "++") {
-			// Increment operator (prefix or postfix)
+			// Increment operator (prefix or postfix) - use UnaryOp struct
+			UnaryOp unary_op{
+				.value = toTypedValue(operandIrOperands),
+				.result = result_var
+			};
+
 			if (unaryOperatorNode.is_prefix()) {
 				// Prefix increment: ++x
-				ir_.addInstruction(IrInstruction(IrOpcode::PreIncrement, std::move(irOperands), Token()));
+				ir_.addInstruction(IrInstruction(IrOpcode::PreIncrement, unary_op, Token()));
 			} else {
 				// Postfix increment: x++
-				ir_.addInstruction(IrInstruction(IrOpcode::PostIncrement, std::move(irOperands), Token()));
+				ir_.addInstruction(IrInstruction(IrOpcode::PostIncrement, unary_op, Token()));
 			}
 		}
 		else if (unaryOperatorNode.op() == "--") {
-			// Decrement operator (prefix or postfix)
+			// Decrement operator (prefix or postfix) - use UnaryOp struct
+			UnaryOp unary_op{
+				.value = toTypedValue(operandIrOperands),
+				.result = result_var
+			};
+
 			if (unaryOperatorNode.is_prefix()) {
 				// Prefix decrement: --x
-				ir_.addInstruction(IrInstruction(IrOpcode::PreDecrement, std::move(irOperands), Token()));
+				ir_.addInstruction(IrInstruction(IrOpcode::PreDecrement, unary_op, Token()));
 			} else {
 				// Postfix decrement: x--
-				ir_.addInstruction(IrInstruction(IrOpcode::PostDecrement, std::move(irOperands), Token()));
+				ir_.addInstruction(IrInstruction(IrOpcode::PostDecrement, unary_op, Token()));
 			}
 		}
 		else if (unaryOperatorNode.op() == "&") {
 			// Address-of operator: &x
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(irOperands), Token()));
+			// Create typed payload
+			AddressOfOp op;
+			op.result = result_var;
+			op.pointee_type = operandType;
+			op.pointee_size_in_bits = std::get<int>(operandIrOperands[1]);
+			
+			// Get the operand - it's at index 2 in operandIrOperands
+			if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
+				op.operand = std::get<std::string_view>(operandIrOperands[2]);
+			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
+				op.operand = std::get<TempVar>(operandIrOperands[2]);
+			} else if (std::holds_alternative<std::string>(operandIrOperands[2])) {
+				op.operand = std::get<std::string>(operandIrOperands[2]);
+			} else {
+				assert(false && "AddressOf operand must be string_view, string, or TempVar");
+			}
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 			// Return 64-bit pointer
-		return { operandType, 64, result_var };
-	}
-	else if (unaryOperatorNode.op() == "*") {
-		// Dereference operator: *x
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(irOperands), Token()));
-		
-		// When dereferencing a pointer, the result size is the pointed-to type size,
-		// not the pointer size (64). Use the Type enum to get the actual element size.
-		int element_size;
-		switch (operandType) {
-			case Type::Bool: element_size = 8; break;
-			case Type::Char: element_size = 8; break;
-			case Type::Short: element_size = 16; break;
-			case Type::Int: element_size = 32; break;
-			case Type::Long: element_size = 64; break;
-			case Type::Float: element_size = 32; break;
-			case Type::Double: element_size = 64; break;
-			default: element_size = 64; break;  // Fallback for unknown types
+			return { operandType, 64, result_var };
 		}
+		else if (unaryOperatorNode.op() == "*") {
+			// Dereference operator: *x
+			// When dereferencing a pointer, the result size is the pointed-to type size,
+			// not the pointer size (64). Use the Type enum to get the actual element size.
+			int element_size;
+			switch (operandType) {
+				case Type::Bool: element_size = 8; break;
+				case Type::Char: element_size = 8; break;
+				case Type::Short: element_size = 16; break;
+				case Type::Int: element_size = 32; break;
+				case Type::Long: element_size = 64; break;
+				case Type::Float: element_size = 32; break;
+				case Type::Double: element_size = 64; break;
+				default: element_size = 64; break;  // Fallback for unknown types
+			}
 		
-		// Return the dereferenced value with the element type size
-		return { operandType, element_size, result_var };
-	}
-	else {
-		assert(false && "Unary operator not implemented yet");
+			// Create typed payload
+			DereferenceOp op;
+			op.result = result_var;
+			op.pointee_type = operandType;
+			op.pointee_size_in_bits = element_size;
+		
+			// Get the pointer operand - it's at index 2 in operandIrOperands
+			if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
+				op.pointer = std::get<std::string_view>(operandIrOperands[2]);
+			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
+				op.pointer = std::get<TempVar>(operandIrOperands[2]);
+			} else {
+				assert(false && "Dereference pointer must be string_view or TempVar");
+			}
+		
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
+		
+			// Return the dereferenced value with the element type size
+			return { operandType, element_size, result_var };
+		}
+		else {
+			assert(false && "Unary operator not implemented yet");
+		}
+
+		// Return the result
+		return { operandType, std::get<int>(operandIrOperands[1]), result_var };
 	}
 
-	// Return the result
-	return { operandType, std::get<int>(operandIrOperands[1]), result_var };
-}	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
+	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
 		// Ternary operator: condition ? true_expr : false_expr
 		// Generate IR:
 		// 1. Evaluate condition
@@ -3257,24 +3422,27 @@ private:
 
 		// Generate unique labels for this ternary
 		static size_t ternary_counter = 0;
-		std::string true_label = "ternary_true_" + std::to_string(ternary_counter);
-		std::string false_label = "ternary_false_" + std::to_string(ternary_counter);
-		std::string end_label = "ternary_end_" + std::to_string(ternary_counter);
-		ternary_counter++;
+		StringBuilder true_sb, false_sb, end_sb;
+		true_sb.append("ternary_true_").append(static_cast<int>(ternary_counter));
+		false_sb.append("ternary_false_").append(static_cast<int>(ternary_counter));
+		end_sb.append("ternary_end_").append(static_cast<int>(ternary_counter));
+		std::string_view true_label = true_sb.commit();
+		std::string_view false_label = false_sb.commit();
+		std::string_view end_label = end_sb.commit();
+		ternary_counter++;		// Evaluate the condition
 
-		// Evaluate the condition
 		auto condition_operands = visitExpressionNode(ternaryNode.condition().as<ExpressionNode>());
-		
+	
 		// Generate conditional branch: if condition true goto true_label, else goto false_label
-		std::vector<IrOperand> branch_operands;
-		branch_operands.insert(branch_operands.end(), condition_operands.begin(), condition_operands.end());
-		branch_operands.emplace_back(true_label);
-		branch_operands.emplace_back(false_label);
-		ir_.addInstruction(IrOpcode::ConditionalBranch, std::move(branch_operands), ternaryNode.get_token());
+		CondBranchOp cond_branch;
+		cond_branch.label_true = true_label;
+		cond_branch.label_false = false_label;
+		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
+		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), ternaryNode.get_token()));
 
 		// True branch label
-		ir_.addInstruction(IrOpcode::Label, { true_label }, ternaryNode.get_token());
-
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
+		
 		// Evaluate true expression
 		auto true_operands = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
 		
@@ -3295,11 +3463,11 @@ private:
 		ir_.addInstruction(IrOpcode::Assignment, std::move(assign_true_operands), ternaryNode.get_token());
 
 		// Unconditional branch to end
-		ir_.addInstruction(IrOpcode::Branch, { end_label }, ternaryNode.get_token());
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, ternaryNode.get_token()));
 
 		// False branch label
-		ir_.addInstruction(IrOpcode::Label, { false_label }, ternaryNode.get_token());
-
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = false_label}, ternaryNode.get_token()));
+	
 		// Evaluate false expression
 		auto false_operands = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
 
@@ -3315,8 +3483,8 @@ private:
 		ir_.addInstruction(IrOpcode::Assignment, std::move(assign_false_operands), ternaryNode.get_token());
 
 		// End label (merge point)
-		ir_.addInstruction(IrOpcode::Label, { end_label }, ternaryNode.get_token());
-
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
+		
 		// Return the result variable
 		return { result_type, result_size, result_var };
 	}
@@ -3418,18 +3586,36 @@ private:
 												
 												int element_size = element_size_bytes * 8;  // Convert to bits
 
-												// Build ArrayStore IR operands for member array
-												// Format: [element_type, element_size, object_name.member_name, index_type, index_size, index_value, value]
-												std::vector<IrOperand> arrayStoreOperands;
-												arrayStoreOperands.emplace_back(element_type);                           // element type
-												arrayStoreOperands.emplace_back(element_size);                          // element size
-												arrayStoreOperands.emplace_back(std::string(object_name) + "." + std::string(member_name)); // qualified name
-												arrayStoreOperands.emplace_back(std::get<Type>(indexIrOperands[0]));   // index type
-												arrayStoreOperands.emplace_back(std::get<int>(indexIrOperands[1]));    // index size
-												arrayStoreOperands.emplace_back(indexIrOperands[2]);                    // index value
-												arrayStoreOperands.emplace_back(rhsIrOperands[2]);                      // value to store
+												// Create typed payload for member ArrayStore
+												ArrayStoreOp payload;
+												payload.element_type = element_type;
+												payload.element_size_in_bits = element_size;
+												payload.array = std::string(object_name) + "." + std::string(member_name);
+												payload.member_offset = static_cast<int64_t>(member->offset);
+												
+												// Set index as TypedValue
+												payload.index.type = std::get<Type>(indexIrOperands[0]);
+												payload.index.size_in_bits = std::get<int>(indexIrOperands[1]);
+												if (std::holds_alternative<unsigned long long>(indexIrOperands[2])) {
+													payload.index.value = std::get<unsigned long long>(indexIrOperands[2]);
+												} else if (std::holds_alternative<TempVar>(indexIrOperands[2])) {
+													payload.index.value = std::get<TempVar>(indexIrOperands[2]);
+												} else if (std::holds_alternative<std::string_view>(indexIrOperands[2])) {
+													payload.index.value = std::get<std::string_view>(indexIrOperands[2]);
+												}
+												
+												// Set value as TypedValue
+												payload.value.type = std::get<Type>(rhsIrOperands[0]);
+												payload.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
+												if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+													payload.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
+												} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+													payload.value.value = std::get<TempVar>(rhsIrOperands[2]);
+												} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
+													payload.value.value = std::get<std::string_view>(rhsIrOperands[2]);
+												}
 
-												ir_.addInstruction(IrOpcode::ArrayStore, std::move(arrayStoreOperands), binaryOperatorNode.get_token());
+												ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), binaryOperatorNode.get_token()));
 
 												// Return the RHS value as the result
 												return rhsIrOperands;
@@ -3464,17 +3650,36 @@ private:
 				// Get index information
 				auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
 
-				// Build ArrayStore IR operands
-				std::vector<IrOperand> arrayStoreOperands;
-				arrayStoreOperands.emplace_back(std::get<Type>(arrayAccessIrOperands[0])); // element type
-				arrayStoreOperands.emplace_back(std::get<int>(arrayAccessIrOperands[1]));   // element size
-				arrayStoreOperands.emplace_back(array_name);                                 // array name
-				arrayStoreOperands.emplace_back(std::get<Type>(indexIrOperands[0]));        // index type
-				arrayStoreOperands.emplace_back(std::get<int>(indexIrOperands[1]));         // index size
-				arrayStoreOperands.emplace_back(indexIrOperands[2]);                         // index value
-				arrayStoreOperands.emplace_back(rhsIrOperands[2]);                           // value to store
+				// Create typed payload for ArrayStore
+				ArrayStoreOp payload;
+				payload.element_type = std::get<Type>(arrayAccessIrOperands[0]);
+				payload.element_size_in_bits = std::get<int>(arrayAccessIrOperands[1]);
+				payload.array = array_name;
+				payload.member_offset = 0;  // Not a member array
+				
+				// Set index as TypedValue
+				payload.index.type = std::get<Type>(indexIrOperands[0]);
+				payload.index.size_in_bits = std::get<int>(indexIrOperands[1]);
+				if (std::holds_alternative<unsigned long long>(indexIrOperands[2])) {
+					payload.index.value = std::get<unsigned long long>(indexIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(indexIrOperands[2])) {
+					payload.index.value = std::get<TempVar>(indexIrOperands[2]);
+				} else if (std::holds_alternative<std::string_view>(indexIrOperands[2])) {
+					payload.index.value = std::get<std::string_view>(indexIrOperands[2]);
+				}
+				
+				// Set value as TypedValue
+				payload.value.type = std::get<Type>(rhsIrOperands[0]);
+				payload.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
+				if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+					payload.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+					payload.value.value = std::get<TempVar>(rhsIrOperands[2]);
+				} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
+					payload.value.value = std::get<std::string_view>(rhsIrOperands[2]);
+				}
 
-				ir_.addInstruction(IrOpcode::ArrayStore, std::move(arrayStoreOperands), binaryOperatorNode.get_token());
+				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), binaryOperatorNode.get_token()));
 
 				// Return the RHS value as the result
 				return rhsIrOperands;
@@ -3532,26 +3737,40 @@ private:
 							return { Type::Int, 32, TempVar{0} };
 						}
 
-						// Build MemberStore IR operands: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits, value]
-						irOperands.emplace_back(member->type);
-						irOperands.emplace_back(static_cast<int>(member->size * 8));
-						irOperands.emplace_back(object_name);
-						irOperands.emplace_back(member_name);
-						irOperands.emplace_back(static_cast<int>(member->offset));
-						irOperands.emplace_back(member->is_reference);
-						irOperands.emplace_back(member->is_rvalue_reference);
-						irOperands.emplace_back(static_cast<int>(member->referenced_size_bits));
-
+						// Build MemberStore operation
+						IrValue member_value;
 						// Add only the value from RHS (rhsIrOperands = [type, size, value])
 						// We only need the value (index 2)
 						if (rhsIrOperands.size() >= 3) {
-							irOperands.emplace_back(rhsIrOperands[2]);
+							// Extract value from rhsIrOperands[2]
+							if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+								member_value = std::get<TempVar>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+								member_value = std::get<unsigned long long>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
+								member_value = std::get<double>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
+								member_value = std::get<std::string_view>(rhsIrOperands[2]);
+							} else {
+								member_value = 0ULL;  // fallback
+							}
 						} else {
 							// Error: invalid RHS operands
 							return { Type::Int, 32, TempVar{0} };
 						}
 
-						ir_.addInstruction(IrOpcode::MemberStore, std::move(irOperands), binaryOperatorNode.get_token());
+						MemberStoreOp member_store;
+						member_store.value.type = member->type;
+						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+						member_store.value.value = member_value;
+						member_store.object = object_name;
+						member_store.member_name = member_name;
+						member_store.offset = static_cast<int>(member->offset);
+						member_store.is_reference = member->is_reference;
+						member_store.is_rvalue_reference = member->is_rvalue_reference;
+						member_store.struct_type_info = nullptr;
+
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
 
 						// Return the RHS value as the result
 						return rhsIrOperands;
@@ -3628,34 +3847,45 @@ private:
 					if (struct_info) {
 						const StructMember* member = struct_info->findMemberRecursive(std::string(lhs_name));
 						if (member) {
-							// This is an assignment to a member variable: member = value
-							// Generate MemberStore instead of regular Assignment
+						// This is an assignment to a member variable: member = value
+						// Generate MemberStore instead of regular Assignment
 
-							// Generate IR for the RHS value
-							auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+						// Generate IR for the RHS value
+						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
-							// Build MemberStore IR operands: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits, value]
-							std::vector<IrOperand> irOperands;
-							irOperands.emplace_back(member->type);
-							irOperands.emplace_back(static_cast<int>(member->size * 8));
-							irOperands.emplace_back(std::string_view("this"));  // implicit this pointer
-							irOperands.emplace_back(lhs_name);
-							irOperands.emplace_back(static_cast<int>(member->offset));
-							irOperands.emplace_back(member->is_reference);
-							irOperands.emplace_back(member->is_rvalue_reference);
-							irOperands.emplace_back(static_cast<int>(member->referenced_size_bits));
-
-							// Add only the value from RHS (rhsIrOperands = [type, size, value])
-							if (rhsIrOperands.size() >= 3) {
-								irOperands.emplace_back(rhsIrOperands[2]);
+						// Build MemberStore operation
+						IrValue member_value;
+						// Add only the value from RHS (rhsIrOperands = [type, size, value])
+						if (rhsIrOperands.size() >= 3) {
+							// Extract value from rhsIrOperands[2]
+							if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+								member_value = std::get<TempVar>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+								member_value = std::get<unsigned long long>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
+								member_value = std::get<double>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
+								member_value = std::get<std::string_view>(rhsIrOperands[2]);
 							} else {
-								// Error: invalid RHS operands
-								return { Type::Int, 32, TempVar{0} };
+								member_value = 0ULL;  // fallback
 							}
+						} else {
+							// Error: invalid RHS operands
+							return { Type::Int, 32, TempVar{0} };
+						}
 
-							ir_.addInstruction(IrOpcode::MemberStore, std::move(irOperands), binaryOperatorNode.get_token());
+						MemberStoreOp member_store;
+						member_store.value.type = member->type;
+						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+						member_store.value.value = member_value;
+						member_store.object = std::string_view("this");  // implicit this pointer
+						member_store.member_name = lhs_name;
+						member_store.offset = static_cast<int>(member->offset);
+						member_store.is_reference = member->is_reference;
+						member_store.is_rvalue_reference = member->is_rvalue_reference;
+						member_store.struct_type_info = nullptr;
 
-							// Return the RHS value as the result
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));							// Return the RHS value as the result
 							return rhsIrOperands;
 						}
 					}
@@ -3712,52 +3942,84 @@ private:
 		int lhsSize = std::get<int>(lhsIrOperands[1]);
 		int rhsSize = std::get<int>(rhsIrOperands[1]);
 
-	// Special handling for pointer arithmetic (ptr + int or ptr - int)
-	if ((op == "+" || op == "-") && lhsSize == 64 && is_integer_type(rhsType)) {
-		// Left side is a pointer (64-bit), right side is integer
-		// Result should be a pointer (64-bit)
-		// Need to scale the offset by sizeof(pointed-to-type)
-		
-		// Get the element size from the Type enum (since pointer has Type::X with size 64)
-		int element_size;
-		switch (lhsType) {
-			case Type::Bool: element_size = 1; break;
-			case Type::Char: element_size = 1; break;
-			case Type::Short: element_size = 2; break;
-			case Type::Int: element_size = 4; break;
-			case Type::Long: element_size = 8; break;
-			case Type::Float: element_size = 4; break;
-			case Type::Double: element_size = 8; break;
-			default: element_size = 8; break;  // Fallback for unknown types
+		// Try to get pointer depth for pointer arithmetic
+		int lhs_pointer_depth = 0;
+		if (binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+				const auto& lhs_id = std::get<IdentifierNode>(lhs_expr);
+				auto symbol = symbol_table.lookup(lhs_id.name());
+				if (symbol && symbol->is<VariableDeclarationNode>()) {
+					const auto& var_decl = symbol->as<VariableDeclarationNode>();
+					const auto& decl = var_decl.declaration();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				} else if (symbol && symbol->is<DeclarationNode>()) {
+					const auto& decl = symbol->as<DeclarationNode>();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				}
+			}
 		}
+
+		// Special handling for pointer arithmetic (ptr + int or ptr - int)
+		if ((op == "+" || op == "-") && lhsSize == 64 && is_integer_type(rhsType)) {
+			// Left side is a pointer (64-bit), right side is integer
+			// Result should be a pointer (64-bit)
+			// Need to scale the offset by sizeof(pointed-to-type)
 		
-		// Scale the offset: offset_scaled = offset * element_size
-		TempVar scaled_offset = var_counter.next();
-		std::vector<IrOperand> scale_operands;
-		scale_operands.emplace_back(scaled_offset);
-		// Add the offset operand (rhs)
-		scale_operands.insert(scale_operands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
-		// Add the element_size operand
-		scale_operands.emplace_back(Type::Int);  // Type of element_size
-		scale_operands.emplace_back(32);  // Size of element_size (int)
-		scale_operands.emplace_back(static_cast<unsigned long long>(element_size));  // element_size as integer literal
-		ir_.addInstruction(IrOpcode::Multiply, std::move(scale_operands), binaryOperatorNode.get_token());
+			// Determine element size based on pointer depth:
+			// - int*   (pointer_depth=1): element_size = sizeof(int) = 4
+			// - int**  (pointer_depth=2): element_size = sizeof(int*) = 8
+			// - int*** (pointer_depth=3): element_size = sizeof(int**) = 8
+			int element_size;
+			if (lhs_pointer_depth > 1) {
+				// Multi-level pointer: element is a pointer, so 8 bytes
+				element_size = 8;
+			} else {
+				// Single-level pointer: element size is the base type size
+				switch (lhsType) {
+					case Type::Bool: element_size = 1; break;
+					case Type::Char: element_size = 1; break;
+					case Type::Short: element_size = 2; break;
+					case Type::Int: element_size = 4; break;
+					case Type::Long: element_size = 8; break;
+					case Type::Float: element_size = 4; break;
+					case Type::Double: element_size = 8; break;
+					case Type::Struct: element_size = 8; break;  // Struct pointers
+					default: element_size = 8; break;  // Fallback for unknown types
+				}
+			}
 		
+			// Scale the offset: offset_scaled = offset * element_size
+			TempVar scaled_offset = var_counter.next();
+			
+		// Use typed BinaryOp for the multiply operation
+		BinaryOp scale_op{
+			.lhs = toTypedValue(rhsIrOperands),
+			.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+			.result = scaled_offset,
+		};
+		ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(scale_op), binaryOperatorNode.get_token()));
+	
 		// Now add the scaled offset to the pointer
 		TempVar result_var = var_counter.next();
-		std::vector<IrOperand> ptr_arith_operands;
-		ptr_arith_operands.emplace_back(result_var);
-		ptr_arith_operands.insert(ptr_arith_operands.end(), lhsIrOperands.begin(), lhsIrOperands.end());
-		ptr_arith_operands.emplace_back(Type::Int);  // Use the scaled offset's type
-		ptr_arith_operands.emplace_back(32);  // scaled offset size
-		ptr_arith_operands.emplace_back(scaled_offset);  // scaled offset value
-
+		
+		// Use typed BinaryOp for pointer addition/subtraction
+		BinaryOp ptr_arith_op{
+			.lhs = { lhsType, lhsSize, toIrValue(lhsIrOperands[2]) },
+			.rhs = { Type::Int, 32, scaled_offset },
+			.result = result_var,
+		};
+		
 		IrOpcode ptr_opcode = (op == "+") ? IrOpcode::Add : IrOpcode::Subtract;
-		ir_.addInstruction(std::move(ptr_opcode), std::move(ptr_arith_operands), binaryOperatorNode.get_token());
+		ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
-		// Return pointer type with 64-bit size
-		return { lhsType, 64, result_var };
-	}		// Apply integer promotions and find common type
+			// Return pointer type with 64-bit size
+			return { lhsType, 64, result_var };
+		}
+	
+		// Apply integer promotions and find common type
 		Type commonType = get_common_type(lhsType, rhsType);
 
 		// Generate conversions if needed
@@ -3774,108 +4036,287 @@ private:
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
-		// Add the result variable first
-		irOperands.emplace_back(result_var);
-
-		// Add the left-hand side operands
-		irOperands.insert(irOperands.end(), lhsIrOperands.begin(), lhsIrOperands.end());
-
-		// Add the right-hand side operands
-		irOperands.insert(irOperands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
-
 		// Generate the IR for the operation based on the operator and operand types
 		// Use a lookup table approach for better performance and maintainability
 		IrOpcode opcode;
 
-		// Simple operators (no type variants)
-		static const std::unordered_map<std::string_view, IrOpcode> simple_ops = {
-			{"&", IrOpcode::BitwiseAnd}, {"|", IrOpcode::BitwiseOr}, {"^", IrOpcode::BitwiseXor},
-			{"%", IrOpcode::Modulo}, {"<<", IrOpcode::ShiftLeft},
-			{"&&", IrOpcode::LogicalAnd}, {"||", IrOpcode::LogicalOr},
-			{"=", IrOpcode::Assignment}, {"+=", IrOpcode::AddAssign}, {"-=", IrOpcode::SubAssign},
-			{"*=", IrOpcode::MulAssign}, {"/=", IrOpcode::DivAssign}, {"%=", IrOpcode::ModAssign},
-			{"&=", IrOpcode::AndAssign}, {"|=", IrOpcode::OrAssign}, {"^=", IrOpcode::XorAssign},
-			{"<<=", IrOpcode::ShlAssign}, {">>=", IrOpcode::ShrAssign}
+		// New typed operand goes in here. Goal is that all operands live here
+		static const std::unordered_map<std::string_view, IrOpcode> bin_ops = {
+			{"+", IrOpcode::Add}, {"-", IrOpcode::Subtract}, {"*", IrOpcode::Multiply},
+			{"<<", IrOpcode::ShiftLeft}, {"%", IrOpcode::Modulo},
+			{"&", IrOpcode::BitwiseAnd}, {"|", IrOpcode::BitwiseOr}, {"^", IrOpcode::BitwiseXor}
 		};
 
-		auto simple_it = simple_ops.find(op);
-		if (simple_it != simple_ops.end()) {
-			opcode = simple_it->second;
+		auto bin_ops_it = !is_floating_point_op ? bin_ops.find(op) : bin_ops.end();
+		if (bin_ops_it != bin_ops.end()) {
+			opcode = bin_ops_it->second;
+
+			// Use fully typed instruction (zero vector allocation!)
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+			
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		// Arithmetic operators (float vs int)
-		else if (op == "+") {
-			opcode = is_floating_point_op ? IrOpcode::FloatAdd : IrOpcode::Add;
+		// Division operations (typed)
+		else if (op == "/" && !is_floating_point_op) {
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedDivide : IrOpcode::Divide;
+			
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+			
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		else if (op == "-") {
-			opcode = is_floating_point_op ? IrOpcode::FloatSubtract : IrOpcode::Subtract;
-		}
-		else if (op == "*") {
-			opcode = is_floating_point_op ? IrOpcode::FloatMultiply : IrOpcode::Multiply;
-		}
-		// Division (float vs unsigned vs signed)
-		else if (op == "/") {
-			if (is_floating_point_op) {
-				opcode = IrOpcode::FloatDivide;
-			} else if (is_unsigned_integer_type(commonType)) {
-				opcode = IrOpcode::UnsignedDivide;
-			} else {
-				opcode = IrOpcode::Divide;
-			}
-		}
-		// Right shift (unsigned vs signed)
+		// Right shift operations (typed)
 		else if (op == ">>") {
 			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedShiftRight : IrOpcode::ShiftRight;
+			
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+			
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		// Comparison operators (float vs unsigned vs signed)
-		else if (op == "==") {
-			opcode = is_floating_point_op ? IrOpcode::FloatEqual : IrOpcode::Equal;
+		// Logical operations (typed, always i1/bool)
+		else if (op == "&&") {
+			BinaryOp bin_op{
+				.lhs = { Type::Bool, 1, toIrValue(lhsIrOperands[2]) },
+				.rhs = { Type::Bool, 1, toIrValue(rhsIrOperands[2]) },
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::LogicalAnd, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		else if (op == "!=") {
-			opcode = is_floating_point_op ? IrOpcode::FloatNotEqual : IrOpcode::NotEqual;
+		else if (op == "||") {
+			BinaryOp bin_op{
+				.lhs = { Type::Bool, 1, toIrValue(lhsIrOperands[2]) },
+				.rhs = { Type::Bool, 1, toIrValue(rhsIrOperands[2]) },
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		else if (op == "<") {
-			if (is_floating_point_op) {
-				opcode = IrOpcode::FloatLessThan;
-			} else if (is_unsigned_integer_type(commonType)) {
-				opcode = IrOpcode::UnsignedLessThan;
-			} else {
-				opcode = IrOpcode::LessThan;
-			}
+		// Comparison operations (typed)
+		else if (op == "==" && !is_floating_point_op) {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		else if (op == "<=") {
-			if (is_floating_point_op) {
-				opcode = IrOpcode::FloatLessEqual;
-			} else if (is_unsigned_integer_type(commonType)) {
-				opcode = IrOpcode::UnsignedLessEqual;
-			} else {
-				opcode = IrOpcode::LessEqual;
-			}
+		else if (op == "!=" && !is_floating_point_op) {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		else if (op == ">") {
-			if (is_floating_point_op) {
-				opcode = IrOpcode::FloatGreaterThan;
-			} else if (is_unsigned_integer_type(commonType)) {
-				opcode = IrOpcode::UnsignedGreaterThan;
-			} else {
-				opcode = IrOpcode::GreaterThan;
-			}
+		else if (op == "<" && !is_floating_point_op) {
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedLessThan : IrOpcode::LessThan;
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		else if (op == ">=") {
-			if (is_floating_point_op) {
-				opcode = IrOpcode::FloatGreaterEqual;
-			} else if (is_unsigned_integer_type(commonType)) {
-				opcode = IrOpcode::UnsignedGreaterEqual;
-			} else {
-				opcode = IrOpcode::GreaterEqual;
-			}
+		else if (op == "<=" && !is_floating_point_op) {
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedLessEqual : IrOpcode::LessEqual;
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		else {
-			assert(false && "Unsupported binary operator");
-			return {};
+		else if (op == ">" && !is_floating_point_op) {
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedGreaterThan : IrOpcode::GreaterThan;
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
+		else if (op == ">=" && !is_floating_point_op) {
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedGreaterEqual : IrOpcode::GreaterEqual;
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
+		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		// Compound assignment operations (typed)
+		// For compound assignments, result is stored back in LHS variable
+		else if (op == "+=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),  // Store result in LHS variable
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::AddAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == "-=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::SubAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == "*=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::MulAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == "/=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::DivAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == "%=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::ModAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == "&=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::AndAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == "|=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::OrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == "^=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::XorAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == "<<=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::ShlAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else if (op == ">>=") {
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = toIrValue(lhsIrOperands[2]),
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+		}
+		else { // Build operands differently based on whether we're using typed struct
+			// Float operations use typed BinaryOp
+			if (is_floating_point_op && (op == "+" || op == "-" || op == "*" || op == "/")) {
+				// Determine float opcode
+				IrOpcode float_opcode;
+				if (op == "+") float_opcode = IrOpcode::FloatAdd;
+				else if (op == "-") float_opcode = IrOpcode::FloatSubtract;
+				else if (op == "*") float_opcode = IrOpcode::FloatMultiply;
+				else if (op == "/") float_opcode = IrOpcode::FloatDivide;
+				else {
+					assert(false && "Unsupported float operator");
+					return {};
+				}
 
-		ir_.addInstruction(IrInstruction(opcode, std::move(irOperands), binaryOperatorNode.get_token()));
+			// Create typed BinaryOp for float arithmetic
+			BinaryOp bin_op{
+				.lhs = toTypedValue(lhsIrOperands),
+				.rhs = toTypedValue(rhsIrOperands),
+				.result = result_var,
+			};
 
+			ir_.addInstruction(IrInstruction(float_opcode, std::move(bin_op), binaryOperatorNode.get_token()));			// Return the result variable with float type and size
+				return { commonType, get_type_size_bits(commonType), result_var };
+			}
+
+			// Float comparison operations use typed BinaryOp
+			if (is_floating_point_op && (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=")) {
+				// Determine float comparison opcode
+				IrOpcode float_cmp_opcode;
+				if (op == "==") float_cmp_opcode = IrOpcode::FloatEqual;
+				else if (op == "!=") float_cmp_opcode = IrOpcode::FloatNotEqual;
+				else if (op == "<") float_cmp_opcode = IrOpcode::FloatLessThan;
+				else if (op == "<=") float_cmp_opcode = IrOpcode::FloatLessEqual;
+				else if (op == ">") float_cmp_opcode = IrOpcode::FloatGreaterThan;
+				else if (op == ">=") float_cmp_opcode = IrOpcode::FloatGreaterEqual;
+				else {
+					assert(false && "Unsupported float comparison operator");
+					return {};
+				}
+
+				// Create typed BinaryOp for float comparison
+				BinaryOp bin_op{
+					.lhs = toTypedValue(lhsIrOperands),
+					.rhs = toTypedValue(rhsIrOperands),
+					.result = result_var,
+				};
+
+				ir_.addInstruction(IrInstruction(float_cmp_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
+
+				// Float comparisons return boolean (i1)
+				return { Type::Bool, 1, result_var };
+			}
+
+			// Old path for Assignment only
+			// Add the result variable first
+			irOperands.emplace_back(result_var);
+		
+			// Add the left-hand side operands
+			irOperands.insert(irOperands.end(), lhsIrOperands.begin(), lhsIrOperands.end());
+
+			// Add the right-hand side operands
+			irOperands.insert(irOperands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
+
+			// Determine opcode for non-typed-struct operations
+			// Simple operators - Assignment only
+			static const std::unordered_map<std::string_view, IrOpcode> simple_ops = {
+				{"=", IrOpcode::Assignment}
+			};
+			auto simple_it = simple_ops.find(op);
+			if (simple_it != simple_ops.end()) {
+				opcode = simple_it->second;
+			}
+			else {
+				assert(false && "Unsupported binary operator");
+				return {};
+			}
+
+			// Legacy path: use operand vector
+			ir_.addInstruction(IrInstruction(opcode, std::move(irOperands), binaryOperatorNode.get_token()));
+		}
+	
 		// For comparison operations, return boolean type (1 bit)
 		// For other operations, return the common type
 		if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
@@ -4101,12 +4542,12 @@ private:
 					TempVar addr_var = var_counter.next();
 
 					// Generate AddressOf IR instruction to get the address of the array
-					std::vector<IrOperand> addrOfOperands;
-					addrOfOperands.emplace_back(addr_var);
-					addrOfOperands.emplace_back(type_node.type());
-					addrOfOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-					addrOfOperands.emplace_back(identifier.name());
-					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addrOfOperands), Token()));
+					AddressOfOp addr_op;
+					addr_op.result = addr_var;
+					addr_op.pointee_type = type_node.type();
+					addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+					addr_op.operand = identifier.name();
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 					// Add the pointer (address) to the function call operands
 					// For now, we use the element type with 64-bit size to indicate it's a pointer
@@ -4125,12 +4566,12 @@ private:
 						// Argument is a value - take its address
 						TempVar addr_var = var_counter.next();
 
-						std::vector<IrOperand> addrOfOperands;
-						addrOfOperands.emplace_back(addr_var);
-						addrOfOperands.emplace_back(type_node.type());
-						addrOfOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-						addrOfOperands.emplace_back(identifier.name());
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addrOfOperands), Token()));
+						AddressOfOp addr_op;
+						addr_op.result = addr_var;
+						addr_op.pointee_type = type_node.type();
+						addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+						addr_op.operand = identifier.name();
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 						// Pass the address
 						irOperands.emplace_back(type_node.type());
@@ -4139,16 +4580,14 @@ private:
 					}
 				} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
-					TempVar deref_var = var_counter.next();
+				TempVar deref_var = var_counter.next();
 
-					std::vector<IrOperand> derefOperands;
-					derefOperands.emplace_back(deref_var);
-					derefOperands.emplace_back(type_node.type());
-					derefOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-					derefOperands.emplace_back(identifier.name());
-					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(derefOperands), Token()));
-
-					// Pass the dereferenced value
+				DereferenceOp deref_op;
+				deref_op.result = deref_var;
+				deref_op.pointee_type = type_node.type();
+				deref_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+				deref_op.pointer = identifier.name();
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));					// Pass the dereferenced value
 					irOperands.emplace_back(type_node.type());
 					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
 					irOperands.emplace_back(deref_var);
@@ -4193,12 +4632,12 @@ private:
 						
 						// Now take the address of the temporary
 						TempVar addr_var = var_counter.next();
-						std::vector<IrOperand> addrOfOperands;
-						addrOfOperands.emplace_back(addr_var);
-						addrOfOperands.emplace_back(literal_type);
-						addrOfOperands.emplace_back(literal_size);
-						addrOfOperands.emplace_back(temp_var);
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addrOfOperands), Token()));
+						AddressOfOp addr_op;
+						addr_op.result = addr_var;
+						addr_op.pointee_type = literal_type;
+						addr_op.pointee_size_in_bits = literal_size;
+						addr_op.operand = temp_var;
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 						
 						// Pass the address
 						irOperands.emplace_back(literal_type);
@@ -4215,11 +4654,27 @@ private:
 			}
 		});
 
-		// Add the function call instruction
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), functionCallNode.called_from()));
+		// Create CallOp structure
+		CallOp call_op;
+		call_op.result = ret_var;
+		call_op.function_name = function_name;
+		
+		// Get return type information
+		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		call_op.return_type = return_type.type();
+		call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+		call_op.is_member_function = false;
+		
+		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
+		for (size_t i = 2, e = irOperands.size(); i < irOperands.size(); i += 3) {
+			assert(i + 2 < irOperands.size());
+			call_op.args.push_back(toTypedValue(std::span<const IrOperand>(&irOperands[i], 3)));
+		}
+
+		// Add the function call instruction with typed payload
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
 		// Return the result variable with its type and size
-		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var };
 	}
 
@@ -4606,9 +5061,8 @@ private:
 			// Add the virtual call instruction
 			ir_.addInstruction(IrInstruction(IrOpcode::VirtualCall, std::move(irOperands), memberFunctionCallNode.called_from()));
 		} else {
-			// Generate regular (non-virtual) member function call
-			irOperands.emplace_back(ret_var);
-
+			// Generate regular (non-virtual) member function call using CallOp typed payload
+			
 			// Check if this is an instantiated template function
 			std::string function_name;
 			std::string_view func_name = func_decl_node.identifier_token().value();
@@ -4618,12 +5072,9 @@ private:
 				std::string_view struct_name = struct_info->name;
 				std::string qualified_template_name = std::string(struct_name) + "::" + std::string(func_name);
 				
-				// DEBUG removed
-				
 				// Check if this is a template that has been instantiated
 				auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
 				if (template_opt.has_value() && template_opt->is<TemplateFunctionDeclarationNode>()) {
-					// DEBUG removed
 					// This is a member function template - use the mangled name
 					
 					// Deduce template arguments from call arguments
@@ -4649,7 +5100,6 @@ private:
 					
 					// Generate the mangled name
 					std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
-					// DEBUG removed
 					
 					// Build qualified function name with mangled template name
 					function_name.reserve(struct_name.size() + 2 + mangled_func_name.size());
@@ -4668,15 +5118,25 @@ private:
 				function_name = std::string(func_name);
 			}
 			
-			irOperands.emplace_back(std::move(function_name));
-
+			// Create CallOp structure
+			CallOp call_op;
+			call_op.result = ret_var;
+			call_op.function_name = std::move(function_name);
+			
+			// Get return type information
+			const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
+			call_op.return_type = return_type.type();
+			call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+			call_op.is_member_function = true;
+			
 			// Add the object as the first argument (this pointer)
-			// We need to pass the address of the object
-			irOperands.emplace_back(object_type.type());
-			irOperands.emplace_back(static_cast<int>(object_type.size_in_bits()));
-			irOperands.emplace_back(object_name);
+			call_op.args.push_back(TypedValue{
+				.type = object_type.type(),
+				.size_in_bits = static_cast<int>(object_type.size_in_bits()),
+				.value = IrValue(object_name)
+			});
 
-			// Generate IR for function arguments
+			// Generate IR for function arguments and add to CallOp
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 				auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 				// For variables, we need to add the type and size
@@ -4685,17 +5145,20 @@ private:
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 					const auto& decl_node = symbol->as<DeclarationNode>();
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-					irOperands.emplace_back(type_node.type());
-					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-					irOperands.emplace_back(identifier.name());
+					call_op.args.push_back(TypedValue{
+						.type = type_node.type(),
+						.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+						.value = IrValue(identifier.name())
+					});
 				}
 				else {
-					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+					// Use toTypedValue helper to convert from operand vector
+					call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
 				}
 			});
 
-			// Add the function call instruction
-			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+			// Add the function call instruction with typed payload
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 		}
 
 		// Return the result variable with its type and size
@@ -4707,6 +5170,105 @@ private:
 		// Generate IR for array[index] expression
 		// This computes the address: base_address + (index * element_size)
 
+		// Check if the array expression is a member access (e.g., obj.array[index])
+		const ExpressionNode& array_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
+		if (std::holds_alternative<MemberAccessNode>(array_expr)) {
+			const MemberAccessNode& member_access = std::get<MemberAccessNode>(array_expr);
+			const ASTNode& object_node = member_access.object();
+			std::string_view member_name = member_access.member_name();
+
+			// Handle simple case: obj.array[index]
+			if (object_node.is<ExpressionNode>()) {
+				const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+					const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
+					std::string_view object_name = object_ident.name();
+
+					// Look up the object to get struct type
+					const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+						const auto& decl_node = symbol->as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+
+						if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) {
+							TypeIndex struct_type_index = type_node.type_index();
+							if (struct_type_index < gTypeInfo.size()) {
+								const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+								const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+								
+								if (struct_info) {
+									const StructMember* member = struct_info->findMember(std::string(member_name));
+									if (member) {
+										// Get index expression
+										auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+
+										// Get element type and size from the member
+										Type element_type = member->type;
+										int element_size_bits = static_cast<int>(member->size * 8);
+										
+										// For array members, member->size is the total size, we need element size
+										// This is a simplified assumption - we need better array type info
+										// For now, assume arrays of primitives and compute element size
+										int array_length = 1;  // Default if not an array
+										// TODO: Get actual array length from type info
+										// For now, use a heuristic: if size is larger than element type, it's an array
+										int base_element_size = 0;
+										if (element_type == Type::Int || element_type == Type::UnsignedInt) {
+											base_element_size = 32;
+										} else if (element_type == Type::Long || element_type == Type::UnsignedLong) {
+											base_element_size = 64;
+										} else if (element_type == Type::Short || element_type == Type::UnsignedShort) {
+											base_element_size = 16;
+										} else if (element_type == Type::Char || element_type == Type::UnsignedChar || element_type == Type::Bool) {
+											base_element_size = 8;
+										} else if (element_type == Type::Float) {
+											base_element_size = 32;
+										} else if (element_type == Type::Double) {
+											base_element_size = 64;
+										}
+										
+										if (base_element_size > 0 && element_size_bits > base_element_size) {
+											// It's an array
+											element_size_bits = base_element_size;
+										}
+
+										// Create a temporary variable for the result
+										TempVar result_var = var_counter.next();
+
+										// Create typed payload for ArrayAccess with qualified member name
+										ArrayAccessOp payload;
+										payload.result = result_var;
+										payload.element_type = element_type;
+										payload.element_size_in_bits = element_size_bits;
+										payload.array = std::string(object_name) + "." + std::string(member_name);
+										payload.member_offset = static_cast<int64_t>(member->offset);
+										
+										// Set index as TypedValue
+										payload.index.type = std::get<Type>(index_operands[0]);
+										payload.index.size_in_bits = std::get<int>(index_operands[1]);
+										if (std::holds_alternative<unsigned long long>(index_operands[2])) {
+											payload.index.value = std::get<unsigned long long>(index_operands[2]);
+										} else if (std::holds_alternative<TempVar>(index_operands[2])) {
+											payload.index.value = std::get<TempVar>(index_operands[2]);
+										} else if (std::holds_alternative<std::string_view>(index_operands[2])) {
+											payload.index.value = std::get<std::string_view>(index_operands[2]);
+										}
+
+										// Create instruction with typed payload
+										ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
+
+										// Return the result with the element type
+										return { element_type, element_size_bits, result_var };
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Fall back to default handling for regular arrays
 		// Get the array expression (should be an identifier for now)
 		auto array_operands = visitExpressionNode(arraySubscriptNode.array_expr().as<ExpressionNode>());
 
@@ -4714,30 +5276,45 @@ private:
 		auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 		// Get array type information
-		Type array_type = std::get<Type>(array_operands[0]);
+		Type element_type = std::get<Type>(array_operands[0]);
 		int element_size_bits = std::get<int>(array_operands[1]);
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
-		// Build operands for array access IR instruction
-		// Format: [result_var, array_type, element_size, array_name/temp, index_type, index_size, index_value]
-		std::vector<IrOperand> irOperands;
-		irOperands.emplace_back(result_var);
+		// Create typed payload for ArrayAccess
+		ArrayAccessOp payload;
+		payload.result = result_var;
+		payload.element_type = element_type;
+		payload.element_size_in_bits = element_size_bits;
+		payload.member_offset = 0;  // Not a member array
+		
+		// Set array (either variable name or temp)
+		if (std::holds_alternative<std::string_view>(array_operands[2])) {
+			payload.array = std::get<std::string_view>(array_operands[2]);
+		} else if (std::holds_alternative<TempVar>(array_operands[2])) {
+			payload.array = std::get<TempVar>(array_operands[2]);
+		}
+		
+		// Set index as TypedValue
+		Type index_type = std::get<Type>(index_operands[0]);
+		int index_size = std::get<int>(index_operands[1]);
+		payload.index.type = index_type;
+		payload.index.size_in_bits = index_size;
+		
+		if (std::holds_alternative<unsigned long long>(index_operands[2])) {
+			payload.index.value = std::get<unsigned long long>(index_operands[2]);
+		} else if (std::holds_alternative<TempVar>(index_operands[2])) {
+			payload.index.value = std::get<TempVar>(index_operands[2]);
+		} else if (std::holds_alternative<std::string_view>(index_operands[2])) {
+			payload.index.value = std::get<std::string_view>(index_operands[2]);
+		}
 
-		// Array operands (type, size, name/temp)
-		irOperands.insert(irOperands.end(), array_operands.begin(), array_operands.end());
-
-		// Index operands (type, size, value)
-		irOperands.insert(irOperands.end(), index_operands.begin(), index_operands.end());
-
-		// For now, we'll use a Load-like instruction to read from the computed address
-		// The IRConverter will handle the address calculation
-		// We'll add a new IR opcode for this: ArrayAccess
-		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(irOperands), arraySubscriptNode.bracket_token()));
+		// Create instruction with typed payload
+		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 		// Return the result with the element type
-		return { array_type, element_size_bits, result_var };
+		return { element_type, element_size_bits, result_var };
 	}
 
 	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode) {
@@ -5321,6 +5898,48 @@ private:
 			return { target_type, target_size, expr_operands[2] };
 		}
 
+		// For float-to-int conversions, generate FloatToInt IR
+		if (is_floating_point_type(source_type) && is_integer_type(target_type)) {
+			TempVar result_temp = var_counter.next();
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_temp);     // Result
+			operands.emplace_back(source_type);     // From type
+			operands.emplace_back(source_size);     // From size
+			operands.emplace_back(expr_operands[2]); // Value
+			operands.emplace_back(target_type);     // To type
+			operands.emplace_back(target_size);     // To size
+			ir_.addInstruction(IrOpcode::FloatToInt, std::move(operands), staticCastNode.cast_token());
+			return { target_type, target_size, result_temp };
+		}
+
+		// For int-to-float conversions, generate IntToFloat IR
+		if (is_integer_type(source_type) && is_floating_point_type(target_type)) {
+			TempVar result_temp = var_counter.next();
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_temp);     // Result
+			operands.emplace_back(source_type);     // From type
+			operands.emplace_back(source_size);     // From size
+			operands.emplace_back(expr_operands[2]); // Value
+			operands.emplace_back(target_type);     // To type
+			operands.emplace_back(target_size);     // To size
+			ir_.addInstruction(IrOpcode::IntToFloat, std::move(operands), staticCastNode.cast_token());
+			return { target_type, target_size, result_temp };
+		}
+
+		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
+		if (is_floating_point_type(source_type) && is_floating_point_type(target_type) && source_type != target_type) {
+			TempVar result_temp = var_counter.next();
+			std::vector<IrOperand> operands;
+			operands.emplace_back(result_temp);     // Result
+			operands.emplace_back(source_type);     // From type
+			operands.emplace_back(source_size);     // From size
+			operands.emplace_back(expr_operands[2]); // Value
+			operands.emplace_back(target_type);     // To type
+			operands.emplace_back(target_size);     // To size
+			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(operands), staticCastNode.cast_token());
+			return { target_type, target_size, result_temp };
+		}
+
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
 		return { target_type, target_size, expr_operands[2] };
@@ -5579,37 +6198,39 @@ private:
 
 							// Generate AddressOf: [result_var, type, size, operand]
 							TempVar addr_temp = var_counter.next();
-							std::vector<IrOperand> addr_operands;
-							addr_operands.emplace_back(addr_temp);
-							addr_operands.emplace_back(orig_type.type());
-							addr_operands.emplace_back(static_cast<int>(orig_type.size_in_bits()));
-							addr_operands.emplace_back(std::string(var_name));  // Use std::string to avoid dangling reference
-							ir_.addInstruction(IrOpcode::AddressOf, std::move(addr_operands), lambda.lambda_token());
+							AddressOfOp addr_op;
+							addr_op.result = addr_temp;
+							addr_op.pointee_type = orig_type.type();
+							addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
+							addr_op.operand = std::string(var_name);  // Use std::string to avoid dangling reference
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 
 							// Store the address in the closure member
-							// Format: [member_type, member_size, object_name, member_name, offset, value]
-							std::vector<IrOperand> store_operands;
-							store_operands.emplace_back(member->type);
-							store_operands.emplace_back(static_cast<int>(member->size * 8));
-							store_operands.emplace_back(std::string(closure_var_name));  // Use std::string
-							store_operands.emplace_back(std::string(member->name));  // Use std::string
-							store_operands.emplace_back(static_cast<int>(member->offset));
-							store_operands.emplace_back(addr_temp);
-							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), lambda.lambda_token());
-						} else {
-							// By-value: copy the value
-							// Format: [member_type, member_size, object_name, member_name, offset, value]
-							std::vector<IrOperand> store_operands;
-							store_operands.emplace_back(member->type);
-							store_operands.emplace_back(static_cast<int>(member->size * 8));
-							store_operands.emplace_back(std::string(closure_var_name));  // Use std::string
-							store_operands.emplace_back(std::string(member->name));  // Use std::string
-							store_operands.emplace_back(static_cast<int>(member->offset));
-							store_operands.emplace_back(std::string(var_name));  // Use std::string
-							ir_.addInstruction(IrOpcode::MemberStore, std::move(store_operands), lambda.lambda_token());
-						}
-
-						capture_index++;
+							MemberStoreOp member_store;
+							member_store.value.type = member->type;
+							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+							member_store.value.value = addr_temp;
+							member_store.object = std::string_view(closure_var_name);
+							member_store.member_name = std::string_view(member->name);
+							member_store.offset = static_cast<int>(member->offset);
+							member_store.is_reference = member->is_reference;
+							member_store.is_rvalue_reference = member->is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
+					} else {
+						// By-value: copy the value
+						MemberStoreOp member_store;
+						member_store.value.type = member->type;
+						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+						member_store.value.value = std::string_view(var_name);
+						member_store.object = std::string_view(closure_var_name);
+						member_store.member_name = std::string_view(member->name);
+						member_store.offset = static_cast<int>(member->offset);
+						member_store.is_reference = member->is_reference;
+						member_store.is_rvalue_reference = member->is_rvalue_reference;
+						member_store.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
+					}						capture_index++;
 					}
 				}
 			}
@@ -5642,24 +6263,30 @@ private:
 	// Generate the operator() member function for a lambda
 	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info) {
 		// Generate function declaration for operator()
-		std::vector<IrOperand> funcDeclOperands;
-		funcDeclOperands.emplace_back(lambda_info.return_type);
-		funcDeclOperands.emplace_back(lambda_info.return_size);
-		funcDeclOperands.emplace_back(0);  // pointer depth
-		funcDeclOperands.emplace_back(std::string_view("operator()"));
-		funcDeclOperands.emplace_back(std::string_view(lambda_info.closure_type_name));  // struct name (member function)
-		funcDeclOperands.emplace_back(static_cast<int>(Linkage::None));  // C++ linkage
+		FunctionDeclOp func_decl_op;
+		func_decl_op.function_name = "operator()";
+		func_decl_op.struct_name = lambda_info.closure_type_name;  // struct name (member function)
+		func_decl_op.return_type = lambda_info.return_type;
+		func_decl_op.return_size_in_bits = lambda_info.return_size;
+		func_decl_op.return_pointer_depth = 0;  // pointer depth
+		func_decl_op.linkage = Linkage::None;  // C++ linkage
+		func_decl_op.is_variadic = false;
+		func_decl_op.mangled_name = "";  // Lambda operator() doesn't need mangled name
 
 		// Add parameters
 		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
-			funcDeclOperands.emplace_back(type);
-			funcDeclOperands.emplace_back(size);
-			funcDeclOperands.emplace_back(pointer_depth);
-			funcDeclOperands.emplace_back(std::string_view(name));
+			FunctionParam func_param;
+			func_param.type = type;
+			func_param.size_in_bits = size;
+			func_param.pointer_depth = pointer_depth;
+			func_param.name = std::string(name);
+			func_param.is_reference = false;
+			func_param.is_rvalue_reference = false;
+			func_param.cv_qualifier = CVQualifier::None;
+			func_decl_op.parameters.push_back(func_param);
 		}
 
-		ir_.addInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), lambda_info.lambda_token);
-
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 		symbol_table.enter_scope(ScopeType::Function);
 
 		// Set lambda context for captured variable access
@@ -5719,24 +6346,30 @@ private:
 	// Generate the __invoke static function for a lambda
 	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info) {
 		// Generate function declaration for __invoke
-		std::vector<IrOperand> funcDeclOperands;
-		funcDeclOperands.emplace_back(lambda_info.return_type);
-		funcDeclOperands.emplace_back(lambda_info.return_size);
-		funcDeclOperands.emplace_back(0);  // pointer depth
-		funcDeclOperands.emplace_back(std::string_view(lambda_info.invoke_name));
-		funcDeclOperands.emplace_back(std::string_view(""));  // no struct name (static function)
-		funcDeclOperands.emplace_back(static_cast<int>(Linkage::None));  // C++ linkage
+		FunctionDeclOp func_decl_op;
+		func_decl_op.function_name = lambda_info.invoke_name;
+		func_decl_op.struct_name = "";  // no struct name (static function)
+		func_decl_op.return_type = lambda_info.return_type;
+		func_decl_op.return_size_in_bits = lambda_info.return_size;
+		func_decl_op.return_pointer_depth = 0;  // pointer depth
+		func_decl_op.linkage = Linkage::None;  // C++ linkage
+		func_decl_op.is_variadic = false;
+		func_decl_op.mangled_name = "";  // Lambda __invoke doesn't need mangled name
 
 		// Add parameters
 		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
-			funcDeclOperands.emplace_back(type);
-			funcDeclOperands.emplace_back(size);
-			funcDeclOperands.emplace_back(pointer_depth);
-			funcDeclOperands.emplace_back(std::string_view(name));
+			FunctionParam func_param;
+			func_param.type = type;
+			func_param.size_in_bits = size;
+			func_param.pointer_depth = pointer_depth;
+			func_param.name = std::string(name);
+			func_param.is_reference = false;
+			func_param.is_rvalue_reference = false;
+			func_param.cv_qualifier = CVQualifier::None;
+			func_decl_op.parameters.push_back(func_param);
 		}
 
-		ir_.addInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), lambda_info.lambda_token);
-
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 		symbol_table.enter_scope(ScopeType::Function);
 
 		// Add lambda parameters to symbol table
@@ -5866,27 +6499,27 @@ private:
 		struct_name_builder.append(inst_info.struct_name);
 		std::string_view struct_name_view = struct_name_builder.commit();
 
-		// Generate function declaration IR
-		// Format: [return_type, return_size, return_pointer_depth, func_name, struct_name, linkage, params...]
-		std::vector<IrOperand> funcDeclOperands;
-
+		// Generate function declaration IR using typed payload
+		FunctionDeclOp func_decl_op;
+		
 		// Add return type
 		const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
-		funcDeclOperands.emplace_back(return_type.type());
-		funcDeclOperands.emplace_back(static_cast<int>(return_type.size_in_bits()));
-		funcDeclOperands.emplace_back(static_cast<int>(return_type.pointer_depth()));
+		func_decl_op.return_type = return_type.type();
+		func_decl_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+		func_decl_op.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
 		
-		// Add function name
-		funcDeclOperands.emplace_back(full_func_name);
-		
-		// Add struct name for member functions
-		funcDeclOperands.emplace_back(struct_name_view);
+		// Add function name and struct name
+		func_decl_op.function_name = std::string(full_func_name);
+		func_decl_op.struct_name = std::string(struct_name_view);
 		
 		// Add linkage (C++)
-		funcDeclOperands.emplace_back(static_cast<int>(Linkage::None));
+		func_decl_op.linkage = Linkage::None;
 
 		// Add variadic flag (template functions are typically not variadic, but check anyway)
-		funcDeclOperands.emplace_back(template_func_decl.is_variadic());
+		func_decl_op.is_variadic = template_func_decl.is_variadic();
+
+		// Mangled name is the full function name
+		func_decl_op.mangled_name = std::string(full_func_name);
 
 		// Add function parameters with concrete types
 		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
@@ -5894,26 +6527,31 @@ private:
 			if (param_node.is<DeclarationNode>()) {
 				const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
 
+				FunctionParam func_param;
 				// Use concrete type if this parameter uses a template parameter
 				if (i < inst_info.template_args.size()) {
 					Type concrete_type = inst_info.template_args[i];
-					funcDeclOperands.emplace_back(concrete_type);
-					funcDeclOperands.emplace_back(static_cast<int>(get_type_size_bits(concrete_type)));
-					funcDeclOperands.emplace_back(static_cast<int>(0));  // pointer depth
-					funcDeclOperands.emplace_back(param_decl.identifier_token().value());
+					func_param.type = concrete_type;
+					func_param.size_in_bits = static_cast<int>(get_type_size_bits(concrete_type));
+					func_param.pointer_depth = 0;  // pointer depth
+					func_param.name = std::string(param_decl.identifier_token().value());
 				} else {
 					// Use original parameter type
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					funcDeclOperands.emplace_back(param_type.type());
-					funcDeclOperands.emplace_back(static_cast<int>(param_type.size_in_bits()));
-					funcDeclOperands.emplace_back(static_cast<int>(param_type.pointer_depth()));
-					funcDeclOperands.emplace_back(param_decl.identifier_token().value());
+					func_param.type = param_type.type();
+					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+					func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+					func_param.name = std::string(param_decl.identifier_token().value());
 				}
+				func_param.is_reference = false;
+				func_param.is_rvalue_reference = false;
+				func_param.cv_qualifier = CVQualifier::None;
+				func_decl_op.parameters.push_back(func_param);
 			}
 		}
 
 		// Emit function declaration IR (declaration only, no body)
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(funcDeclOperands), mangled_token));
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), mangled_token));
 	}
 
 	// Generate an instantiated member function template
@@ -6025,7 +6663,8 @@ private:
 		// Add implicit return for void functions
 		const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
 		if (return_type.type() == Type::Void) {
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, {}, mangled_token));
+			ReturnOp ret_op;  // No return value for void
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), mangled_token));
 		}
 
 		// Exit function scope
@@ -6085,5 +6724,7 @@ private:
 	}
 
 };
+
+
 
 

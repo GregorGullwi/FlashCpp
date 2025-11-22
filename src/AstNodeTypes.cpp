@@ -218,8 +218,9 @@ int get_type_size_bits(Type type) {
 }
 
 Type promote_integer_type(Type type) {
-    // C++ integer promotion rules: char and short promote to int
+    // C++ integer promotion rules: bool, char, and short promote to int
     switch (type) {
+        case Type::Bool:
         case Type::Char:
         case Type::Short:
             return Type::Int;
@@ -241,11 +242,6 @@ Type promote_floating_point_type(Type type) {
 }
 
 Type get_common_type(Type left, Type right) {
-    // If both types are the same, return that type
-    if (left == right) {
-        return left;
-    }
-
     // Floating-point types have higher precedence than integer types
     bool left_is_fp = is_floating_point_type(left);
     bool right_is_fp = is_floating_point_type(right);
@@ -266,8 +262,14 @@ Type get_common_type(Type left, Type right) {
     }
 
     // Both are integer types: apply integer promotions first
+    // This handles bool -> int, char -> int, short -> int
     left = promote_integer_type(left);
     right = promote_integer_type(right);
+
+    // After promotion, check if types are the same
+    if (left == right) {
+        return left;
+    }
 
     // If one is signed and the other unsigned, and they have the same rank
     int left_rank = get_integer_rank(left);

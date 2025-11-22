@@ -204,6 +204,7 @@
     <ClInclude Include="src\FileTree.h" />
     <ClInclude Include="src\CompileContext.h" />
     <ClInclude Include="src\IRConverter.h" />
+    <ClInclude Include="src\IROperandHelpers.h" />
     <ClInclude Include="src\IRTypes.h" />
     <ClInclude Include="src\Lexer.h" />
     <ClInclude Include="src\AstNodeTypes.h" />

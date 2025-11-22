@@ -2517,6 +2517,19 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
+		// For array members, multiply element size by array count
+		if (decl.is_array() && decl.array_size().has_value()) {
+			// Evaluate the array size expression to get the count
+			ConstExpr::EvaluationContext ctx(gSymbolTable);
+			auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
+			
+			if (eval_result.success) {
+				size_t array_count = static_cast<size_t>(eval_result.as_int());
+				member_size *= array_count;
+				referenced_size_bits *= array_count;
+			}
+		}
+
 		// Add member to struct layout with default initializer
 		bool is_ref_member = type_spec.is_reference();
 		bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
@@ -4628,6 +4641,16 @@ ParseResult Parser::parse_type_specifier()
 			if (is_typedef) {
 				resolved_type = type_it->second->type_;
 				type_size = type_it->second->type_size_;
+			} else if (user_type_index < gTypeInfo.size()) {
+				// Not a typedef - might be a struct type without size set in TypeInfo
+				// Look up actual size from struct info if available
+				const TypeInfo& actual_type_info = gTypeInfo[user_type_index];
+				if (actual_type_info.isStruct()) {
+					const StructTypeInfo* struct_info = actual_type_info.getStructInfo();
+					if (struct_info) {
+						type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+					}
+				}
 			}
 		}
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
