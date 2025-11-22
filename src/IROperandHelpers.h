@@ -273,10 +273,17 @@ inline bool parseMemberLoadOp(const IrInstruction& inst, MemberLoadOp& out) {
 	if (!inst.isOperandType<int>(5)) return false;
 	out.offset = inst.getOperandAs<int>(5);
 
-	// Optional reference metadata
-	bool has_reference_metadata = inst.getOperandCount() >= 9;
-	out.is_reference = has_reference_metadata ? inst.getOperandAs<bool>(6) : false;
-	out.is_rvalue_reference = has_reference_metadata ? inst.getOperandAs<bool>(7) : false;
+	// Optional reference metadata (must have all 3 or none)
+	if (inst.getOperandCount() >= 9) {
+		if (!inst.isOperandType<bool>(6)) return false;
+		out.is_reference = inst.getOperandAs<bool>(6);
+		
+		if (!inst.isOperandType<bool>(7)) return false;
+		out.is_rvalue_reference = inst.getOperandAs<bool>(7);
+	} else {
+		out.is_reference = false;
+		out.is_rvalue_reference = false;
+	}
 	out.struct_type_info = nullptr;
 
 	return true;
