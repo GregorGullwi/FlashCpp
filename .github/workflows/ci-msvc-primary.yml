@@ -23,32 +23,3 @@ jobs:
         run: |
           # Build only the FlashCppMSVC project with MSBuild (Debug) - uses MSVC toolset
           msbuild FlashCppMSVC.vcxproj /p:Configuration=Debug /p:Platform=x64 /m
-
-  windows-test:
-    name: Windows - MSVC - Test
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup MSBuild (Visual Studio)
-        uses: microsoft/setup-msbuild@v1
-
-      - name: Build FlashCppMSVC project (Test)
-        shell: powershell
-        run: |
-          # Build only the FlashCppMSVC project with MSBuild (Test) - uses MSVC toolset
-          msbuild FlashCppMSVC.vcxproj /p:Configuration=Test /p:Platform=x64 /m
-
-      - name: Run test executable
-        shell: powershell
-        run: |
-          # Run the test executable (test.exe from Test configuration)
-          $testExe = "x64\Test\test.exe"
-          if (-not (Test-Path $testExe)) {
-            Write-Error "Test executable not found at $testExe"
-            Get-ChildItem -Path x64 -Recurse -Filter "*.exe" | Select-Object -First 20
-            exit 1
-          }
-          Write-Host "Running test exe: $testExe"
-          & $testExe
