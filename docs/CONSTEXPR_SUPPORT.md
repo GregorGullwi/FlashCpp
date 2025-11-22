@@ -189,27 +189,44 @@ static_assert(sum_even_numbers(10) == 20);
 - constexpr virtual functions
 - try-catch in constexpr functions
 - dynamic_cast/typeid in constexpr
-- ~~new/delete in constexpr (transient allocations)~~ ✅ **IMPLEMENTED** (basic support)
+- ~~new/delete in constexpr (transient allocations)~~ ✅ **FULLY IMPLEMENTED**
+- Pointer subscript operator ([]) for array access (future enhancement)
+- Arrow operator (->) for member access through pointers (future enhancement)
 
-### C++20 Constexpr New/Delete - Recently Implemented ✅
+### C++20 Constexpr New/Delete - FULLY IMPLEMENTED ✅
 **Transient allocations in constexpr functions:**
 - ✅ `new Type` and `new Type[size]` expressions
 - ✅ `delete ptr` and `delete[] ptr` expressions
 - ✅ **Memory leak detection** - compile error if memory not freed
 - ✅ **Double delete detection** - compile error on double delete
 - ✅ Array/non-array mismatch detection
-- 🟡 Dereference (*), subscript ([]), and arrow (->) operators (future work)
-- 🟡 Constructor argument evaluation (future work)
-- 🟡 Destructor integration (future work)
+- ✅ **Dereference operator (*)** - Read values through pointers
+- ✅ **Constructor argument evaluation** - Initialize with `new Type(args)`
+- ✅ **Destructor integration** - Validates constexpr destructors, enforces C++20 rules
 
 Example working code:
 ```cpp
 constexpr int test() {
-    int* p = new int(42);
-    delete p;  // Must delete or get compile error!
-    return 1;
+    int* p = new int(42);  // Constructor arg evaluated
+    int val = *p;          // Dereference to read value
+    delete p;              // Destructor validated, memory freed
+    return val;
 }
-static_assert(test() == 1);  // ✅ Compiles
+static_assert(test() == 42);  // ✅ Compiles
+
+struct Counter {
+    int value;
+    constexpr Counter(int v) : value(v) {}
+    constexpr ~Counter() {}  // Constexpr destructor required
+};
+
+constexpr int test_struct() {
+    Counter* c = new Counter(99);  // Constructor evaluated
+    Counter obj = *c;              // Dereference to get object
+    delete c;                      // Destructor called (validated)
+    return obj.value;
+}
+static_assert(test_struct() == 99);  // ✅ Compiles
 ```
 
 ### Not Planned (C++23 features - out of scope)
