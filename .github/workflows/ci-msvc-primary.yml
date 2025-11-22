@@ -1,0 +1,123 @@
+name: CI - MSVC primary, Linux & macOS
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  windows:
+    name: Windows - MSVC (primary) - Build & Run Tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild (Visual Studio)
+        uses: microsoft/setup-msbuild@v1
+
+      - name: Build solution (Debug)
+        shell: powershell
+        run: |
+          # Build the solution with MSBuild (Debug)
+          msbuild FlashCpp.sln /p:Configuration=Debug /m
+
+      - name: Locate and run test executable
+        shell: powershell
+        run: |
+          # Find the first test .exe that looks like the test runner and run it
+          $testExe = Get-ChildItem -Path . -Filter "test*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $testExe) {
+            Write-Error "Test executable not found. Search output:"; Get-ChildItem -Path . -Filter "*.exe" -Recurse | Select-Object -First 50; exit 1
+          }
+          Write-Host "Found test exe: $($testExe.FullName)"
+          & $testExe.FullName
+
+      - name: Upload Windows artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            x64/**
+            **\*.exe
+            tests/Reference/**
+
+  linux:
+    name: Linux - build & run tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler: [clang, gcc]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang make
+
+      - name: Set CXX
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            echo "CXX=clang++" > $GITHUB_ENV
+          else
+            echo "CXX=g++" > $GITHUB_ENV
+          fi
+
+      - name: Build & run tests
+        env:
+          CXX: ${{ env.CXX }}
+        run: |
+          make clean
+          make test
+          if [ -x "x64/Test/test" ]; then
+            ./x64/Test/test || exit $?
+          elif [ -f "x64/Test/test.exe" ]; then
+            ./x64/Test/test.exe || exit $?
+          else
+            echo "Test binary not found; ensure make test produces x64/Test/test"; exit 1
+          fi
+
+      - name: Upload Linux artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.compiler }}-artifacts
+          path: x64/**
+
+  macos:
+    name: macOS - build & run tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update || true
+          brew install make || true
+
+      - name: Set CXX=clang++
+        run: echo "CXX=clang++" > $GITHUB_ENV
+
+      - name: Build & run tests
+        env:
+          CXX: ${{ env.CXX }}
+        run: |
+          make clean
+          make test
+          if [ -x "x64/Test/test" ]; then
+            ./x64/Test/test || exit $?
+          elif [ -f "x64/Test/test.exe" ]; then
+            ./x64/Test/test.exe || exit $?
+          else
+            echo "Test binary not found; ensure make test produces x64/Test/test"; exit 1
+          fi
+
+      - name: Upload macOS artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: x64/**
