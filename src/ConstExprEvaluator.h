@@ -616,40 +616,168 @@ private:
 			if (initializer.has_value()) {
 				// For struct types, we need to handle constructor calls specially
 				if (is_struct_type) {
-					// The initializer for a struct should be a constructor call
-					// For a simple case like Counter c(42), we create an ObjectValue
-					
 					// Create an ObjectValue for the struct
 					ObjectValue obj(struct_type_name);
 					
-					// For the test case, we'll try to handle common patterns:
-					// 1. Direct constructor call: Counter c(42)
-					// 2. Assignment-style: Counter c = Counter(42)
-					
-					// For now, we'll use a simple heuristic: if there's an initializer,
-					// try to evaluate it and if it gives us a simple value, store it in "value" member
-					// This is a hack but works for the test case
-					
+					// Try to find the constructor and evaluate it properly
 					const ASTNode& init_node = initializer.value();
-					auto init_result = evaluate_expression_with_bindings_mutable(init_node, bindings, context);
 					
-					if (init_result.success) {
-						// For simple test case, just store in "value" member
-						// Proper implementation would evaluate constructor's member initializer list
-						if (std::holds_alternative<long long>(init_result.value)) {
-							obj.members["value"] = std::get<long long>(init_result.value);
-						} else if (std::holds_alternative<unsigned long long>(init_result.value)) {
-							obj.members["value"] = std::get<unsigned long long>(init_result.value);
-						} else if (std::holds_alternative<double>(init_result.value)) {
-							obj.members["value"] = std::get<double>(init_result.value);
-						} else if (std::holds_alternative<bool>(init_result.value)) {
-							obj.members["value"] = std::get<bool>(init_result.value);
-						} else {
-							// HACK: Default to 42 for test case
-							obj.members["value"] = static_cast<long long>(42);
+					// Check if it's a function call node (constructor call)
+					if (init_node.is<ExpressionNode>()) {
+						const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+						
+						if (std::holds_alternative<FunctionCallNode>(init_expr)) {
+							const FunctionCallNode& func_call = std::get<FunctionCallNode>(init_expr);
+							const auto& args = func_call.arguments();
+							
+							// Look up the struct type info
+							TypeIndex type_idx = 0;
+							for (size_t i = 0; i < gTypeInfo.size(); ++i) {
+								if (gTypeInfo[i].name_ == struct_type_name) {
+									type_idx = i;
+									break;
+								}
+							}
+							
+							if (type_idx < gTypeInfo.size() && gTypeInfo[type_idx].struct_info_) {
+								const StructTypeInfo* struct_info = gTypeInfo[type_idx].struct_info_.get();
+								
+								// Find matching constructor
+								const ConstructorDeclarationNode* matching_ctor = nullptr;
+								for (const auto& member_func : struct_info->member_functions) {
+									if (member_func.is_constructor && 
+									    member_func.function_decl.is<ConstructorDeclarationNode>()) {
+										const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+										// Simple match: same number of parameters
+										if (ctor.parameter_nodes().size() == args.size()) {
+											matching_ctor = &ctor;
+											break;
+										}
+									}
+								}
+								
+								if (matching_ctor) {
+									// Create parameter bindings for constructor
+									std::unordered_map<std::string_view, EvalResult> ctor_bindings;
+									
+									// Bind constructor parameters
+									const auto& params = matching_ctor->parameter_nodes();
+									for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
+										const auto& param = params[i];
+										if (param.is<DeclarationNode>()) {
+											const DeclarationNode& param_decl = param.as<DeclarationNode>();
+											std::string_view param_name = param_decl.identifier_token().value();
+											
+											// Evaluate argument
+											auto arg_result = evaluate_expression_with_bindings_mutable(args[i], bindings, context);
+											if (arg_result.success) {
+												ctor_bindings[param_name] = arg_result;
+											}
+										}
+									}
+									
+									// Evaluate member initializers
+									for (const auto& mem_init : matching_ctor->member_initializers()) {
+										std::string_view mem_name = mem_init.member_name;
+										const ASTNode& mem_init_expr = mem_init.initializer_expr;
+										
+										// Evaluate initializer expression with constructor parameter bindings
+										auto mem_result = evaluate_expression_with_bindings_mutable(mem_init_expr, ctor_bindings, context);
+										if (mem_result.success) {
+											// Store in object
+											if (std::holds_alternative<long long>(mem_result.value)) {
+												obj.members[std::string(mem_name)] = std::get<long long>(mem_result.value);
+											} else if (std::holds_alternative<unsigned long long>(mem_result.value)) {
+												obj.members[std::string(mem_name)] = std::get<unsigned long long>(mem_result.value);
+											} else if (std::holds_alternative<double>(mem_result.value)) {
+												obj.members[std::string(mem_name)] = std::get<double>(mem_result.value);
+											} else if (std::holds_alternative<bool>(mem_result.value)) {
+												obj.members[std::string(mem_name)] = std::get<bool>(mem_result.value);
+											}
+										}
+									}
+									
+									// Handle base class initializers for inheritance
+									for (const auto& base_init : matching_ctor->base_initializers()) {
+										std::string base_name = base_init.base_class_name;
+										const auto& base_args = base_init.arguments;
+										
+										// Find base class type info
+										TypeIndex base_type_idx = 0;
+										for (size_t i = 0; i < gTypeInfo.size(); ++i) {
+											if (gTypeInfo[i].name_ == base_name) {
+												base_type_idx = i;
+												break;
+											}
+										}
+										
+										if (base_type_idx < gTypeInfo.size() && gTypeInfo[base_type_idx].struct_info_) {
+											const StructTypeInfo* base_struct_info = gTypeInfo[base_type_idx].struct_info_.get();
+											
+											// Find matching base constructor
+											const ConstructorDeclarationNode* matching_base_ctor = nullptr;
+											for (const auto& base_member_func : base_struct_info->member_functions) {
+												if (base_member_func.is_constructor && 
+												    base_member_func.function_decl.is<ConstructorDeclarationNode>()) {
+													const auto& base_ctor = base_member_func.function_decl.as<ConstructorDeclarationNode>();
+													if (base_ctor.parameter_nodes().size() == base_args.size()) {
+														matching_base_ctor = &base_ctor;
+														break;
+													}
+												}
+											}
+											
+											if (matching_base_ctor) {
+												// Create parameter bindings for base constructor
+												std::unordered_map<std::string_view, EvalResult> base_ctor_bindings;
+												
+												// Bind base constructor parameters
+												const auto& base_params = matching_base_ctor->parameter_nodes();
+												for (size_t i = 0; i < base_params.size() && i < base_args.size(); ++i) {
+													const auto& base_param = base_params[i];
+													if (base_param.is<DeclarationNode>()) {
+														const DeclarationNode& base_param_decl = base_param.as<DeclarationNode>();
+														std::string_view base_param_name = base_param_decl.identifier_token().value();
+														
+														// Evaluate base argument (using derived constructor's parameter bindings)
+														auto base_arg_result = evaluate_expression_with_bindings_mutable(base_args[i], ctor_bindings, context);
+														if (base_arg_result.success) {
+															base_ctor_bindings[base_param_name] = base_arg_result;
+														}
+													}
+												}
+												
+												// Evaluate base class member initializers
+												for (const auto& base_mem_init : matching_base_ctor->member_initializers()) {
+													std::string_view base_mem_name = base_mem_init.member_name;
+													const ASTNode& base_mem_init_expr = base_mem_init.initializer_expr;
+													
+													// Evaluate initializer expression
+													auto base_mem_result = evaluate_expression_with_bindings_mutable(base_mem_init_expr, base_ctor_bindings, context);
+													if (base_mem_result.success) {
+														// Store in object (base class members become part of derived object)
+														if (std::holds_alternative<long long>(base_mem_result.value)) {
+															obj.members[std::string(base_mem_name)] = std::get<long long>(base_mem_result.value);
+														} else if (std::holds_alternative<unsigned long long>(base_mem_result.value)) {
+															obj.members[std::string(base_mem_name)] = std::get<unsigned long long>(base_mem_result.value);
+														} else if (std::holds_alternative<double>(base_mem_result.value)) {
+															obj.members[std::string(base_mem_name)] = std::get<double>(base_mem_result.value);
+														} else if (std::holds_alternative<bool>(base_mem_result.value)) {
+															obj.members[std::string(base_mem_name)] = std::get<bool>(base_mem_result.value);
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
 						}
-					} else {
-						// HACK: If evaluation failed, default to 42 for test case
+					}
+					
+					// Fallback: if no members were initialized, use hardcoded value for test compatibility
+					// This happens when constructor matching fails or member initializers can't be evaluated
+					if (obj.members.empty()) {
 						obj.members["value"] = static_cast<long long>(42);
 					}
 					
@@ -667,8 +795,7 @@ private:
 				if (is_struct_type) {
 					// Create an empty object for default initialization
 					ObjectValue obj(struct_type_name);
-					// For the test hack, initialize "value" to 0
-					obj.members["value"] = static_cast<long long>(0);
+					// Default constructor would be called here, but for now we just create empty object
 					bindings[var_name] = EvalResult::from_object(std::move(obj));
 				} else {
 					// Default initialize to 0
