@@ -4336,30 +4336,8 @@ private:
 	}
 
 	void handleGlobalLoad(const IrInstruction& instruction) {
-		// Try to get typed payload first (new format)
-		GlobalLoadOp op;
-		bool has_typed_payload = false;
-		
-		if (instruction.hasTypedPayload()) {
-			const GlobalLoadOp* typed_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload());
-			if (typed_op) {
-				op = *typed_op;
-				has_typed_payload = true;
-			}
-		}
-		
-		if (!has_typed_payload) {
-			// Fall back to old format: [result_temp, global_name]
-			assert(instruction.getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
-
-			op.result.value = instruction.getOperandAs<TempVar>(0);
-			// Global name can be either std::string (for static locals) or std::string_view (for regular globals)
-			if (std::holds_alternative<std::string>(instruction.getOperand(1))) {
-				op.global_name = instruction.getOperandAs<std::string>(1);
-			} else {
-				op.global_name = instruction.getOperandAs<std::string_view>(1);
-			}
-		}
+		// Extract typed payload - all GlobalLoad instructions use typed payloads
+		const GlobalLoadOp& op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
 		
 		TempVar result_temp = std::get<TempVar>(op.result.value);
 		std::string global_name(op.global_name);
@@ -7652,24 +7630,8 @@ private:
 
 
 	void handleStringLiteral(const IrInstruction& instruction) {
-		// Try to get typed payload first (new format)
-		StringLiteralOp op;
-		bool has_typed_payload = false;
-		
-		if (instruction.hasTypedPayload()) {
-			const StringLiteralOp* typed_op = std::any_cast<StringLiteralOp>(&instruction.getTypedPayload());
-			if (typed_op) {
-				op = *typed_op;
-				has_typed_payload = true;
-			}
-		}
-		
-		if (!has_typed_payload) {
-			// Fall back to old format: [result_var, string_content]
-			assert(instruction.getOperandCount() == 2 && "StringLiteral must have 2 operands");
-			op.result.value = instruction.getOperandAs<TempVar>(0);
-			op.content = instruction.getOperandAs<std::string_view>(1);
-		}
+		// Extract typed payload - all StringLiteral instructions use typed payloads
+		const StringLiteralOp& op = std::any_cast<const StringLiteralOp&>(instruction.getTypedPayload());
 		
 		auto result_var = std::get<TempVar>(op.result.value);
 		auto string_content = op.content;
@@ -7719,44 +7681,8 @@ private:
 	void handleMemberAccess(const IrInstruction& instruction) {
 		// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
 		
-		// Try to get typed payload first (new format)
-		MemberLoadOp op;
-		bool has_typed_payload = false;
-		
-		if (instruction.hasTypedPayload()) {
-			const MemberLoadOp* typed_op = std::any_cast<MemberLoadOp>(&instruction.getTypedPayload());
-			if (typed_op) {
-				op = *typed_op;
-				has_typed_payload = true;
-			}
-		}
-		
-		if (!has_typed_payload) {
-			// Fall back to old format parsing: [result_var, member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits]
-			assert(instruction.getOperandCount() >= 6 && "MemberAccess must have at least 6 operands");
-
-			op.result.value = instruction.getOperandAs<TempVar>(0);
-			op.result.type = instruction.getOperandAs<Type>(1);
-			op.result.size_in_bits = instruction.getOperandAs<int>(2);
-			
-			// Object can be string_view or TempVar
-			if (instruction.isOperandType<std::string_view>(3)) {
-				op.object = instruction.getOperandAs<std::string_view>(3);
-			} else if (instruction.isOperandType<TempVar>(3)) {
-				op.object = instruction.getOperandAs<TempVar>(3);
-			} else {
-				assert(false && "MemberAccess operand 3 must be string_view or TempVar");
-				return;
-			}
-			
-			op.member_name = instruction.getOperandAs<std::string_view>(4);
-			op.offset = instruction.getOperandAs<int>(5);
-			
-			bool has_reference_metadata = instruction.getOperandCount() >= 9;
-			op.is_reference = has_reference_metadata ? instruction.getOperandAs<bool>(6) : false;
-			op.is_rvalue_reference = has_reference_metadata ? instruction.getOperandAs<bool>(7) : false;
-			op.struct_type_info = nullptr;
-		}
+		// Extract typed payload - all MemberAccess instructions use typed payloads
+		const MemberLoadOp& op = std::any_cast<const MemberLoadOp&>(instruction.getTypedPayload());
 
 		// Get the object's base stack offset or pointer
 		int32_t object_base_offset = 0;
@@ -7879,70 +7805,10 @@ private:
 	void handleMemberStore(const IrInstruction& instruction) {
 		// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
 		
-		// Try to get typed payload first (new format)
-		MemberStoreOp op;
-		bool has_typed_payload = false;
-		
-		if (instruction.hasTypedPayload()) {
-			const MemberStoreOp* typed_op = std::any_cast<MemberStoreOp>(&instruction.getTypedPayload());
-			if (typed_op) {
-				op = *typed_op;
-				has_typed_payload = true;
-			}
-		}
-		
-		if (!has_typed_payload) {
-			// Parse old format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits, value]
-			assert(instruction.getOperandCount() >= 6 && "MemberStore must have at least 6 operands");
-			
-			op.value.type = instruction.getOperandAs<Type>(0);
-			op.value.size_in_bits = instruction.getOperandAs<int>(1);
-			
-			// Object can be string_view or TempVar
-			if (instruction.isOperandType<std::string_view>(2)) {
-				op.object = instruction.getOperandAs<std::string_view>(2);
-			} else if (instruction.isOperandType<std::string>(2)) {
-				op.object = std::string_view(instruction.getOperandAs<std::string>(2));
-			} else if (instruction.isOperandType<TempVar>(2)) {
-				op.object = instruction.getOperandAs<TempVar>(2);
-			} else {
-				assert(false && "MemberStore operand 2 must be string_view or TempVar");
-				return;
-			}
-			
-			op.member_name = instruction.getOperandAs<std::string_view>(3);
-			op.offset = instruction.getOperandAs<int>(4);
-			
-			bool has_reference_metadata = instruction.getOperandCount() >= 9;
-			op.is_reference = has_reference_metadata ? instruction.getOperandAs<bool>(5) : false;
-			op.is_rvalue_reference = has_reference_metadata ? instruction.getOperandAs<bool>(6) : false;
-			size_t value_operand_index = has_reference_metadata ? 8 : 5;
-			op.struct_type_info = nullptr;
+		// Extract typed payload - all MemberStore instructions use typed payloads
+		const MemberStoreOp& op = std::any_cast<const MemberStoreOp&>(instruction.getTypedPayload());
 
-			// Get the value - parse from old operand format
-			if (instruction.isOperandType<TempVar>(value_operand_index)) {
-				op.value.value = instruction.getOperandAs<TempVar>(value_operand_index);
-			} else if (instruction.isOperandType<int>(value_operand_index)) {
-				op.value.value = static_cast<unsigned long long>(instruction.getOperandAs<int>(value_operand_index));
-			} else if (instruction.isOperandType<unsigned long long>(value_operand_index)) {
-				op.value.value = instruction.getOperandAs<unsigned long long>(value_operand_index);
-			} else if (instruction.isOperandType<bool>(value_operand_index)) {
-				op.value.value = instruction.getOperandAs<bool>(value_operand_index) ? 1ULL : 0ULL;
-			} else if (instruction.isOperandType<char>(value_operand_index)) {
-				op.value.value = static_cast<unsigned long long>(instruction.getOperandAs<char>(value_operand_index));
-			} else if (instruction.isOperandType<double>(value_operand_index)) {
-				op.value.value = instruction.getOperandAs<double>(value_operand_index);
-			} else if (instruction.isOperandType<std::string_view>(value_operand_index)) {
-				op.value.value = instruction.getOperandAs<std::string_view>(value_operand_index);
-			} else if (instruction.isOperandType<std::string>(value_operand_index)) {
-				op.value.value = std::string_view(instruction.getOperandAs<std::string>(value_operand_index));
-			} else {
-				assert(false && "Value must be TempVar, int/unsigned long long/bool/double literal, or string_view");
-				return;
-			}
-		}
-
-		// Now process the MemberStoreOp (same logic for both old and new format)
+		// Now process the MemberStoreOp
 		// Get the value - it could be a TempVar, a literal (unsigned long long, double), or a string_view (variable name)
 		bool is_literal = false;
 		int64_t literal_value = 0;
@@ -8417,24 +8283,8 @@ private:
 	}
 	
 	void handleFunctionAddress(const IrInstruction& instruction) {
-		// Try to get typed payload first (new format)
-		FunctionAddressOp op;
-		bool has_typed_payload = false;
-		
-		if (instruction.hasTypedPayload()) {
-			const FunctionAddressOp* typed_op = std::any_cast<FunctionAddressOp>(&instruction.getTypedPayload());
-			if (typed_op) {
-				op = *typed_op;
-				has_typed_payload = true;
-			}
-		}
-		
-		if (!has_typed_payload) {
-			// Fall back to old format: [result_temp, function_name]
-			assert(instruction.getOperandCount() == 2 && "FunctionAddress must have exactly 2 operands");
-			op.result.value = instruction.getOperandAs<TempVar>(0);
-			op.function_name = instruction.getOperandAs<std::string_view>(1);
-		}
+		// Extract typed payload - all FunctionAddress instructions use typed payloads
+		const FunctionAddressOp& op = std::any_cast<const FunctionAddressOp&>(instruction.getTypedPayload());
 
 		flushAllDirtyRegisters();
 
