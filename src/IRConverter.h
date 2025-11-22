@@ -4336,17 +4336,34 @@ private:
 	}
 
 	void handleGlobalLoad(const IrInstruction& instruction) {
-		// Format: [result_temp, global_name]
-		assert(instruction.getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
-
-		TempVar result_temp = instruction.getOperandAs<TempVar>(0);
-		// Global name can be either std::string (for static locals) or std::string_view (for regular globals)
-		std::string global_name;
-		if (std::holds_alternative<std::string>(instruction.getOperand(1))) {
-			global_name = instruction.getOperandAs<std::string>(1);
-		} else {
-			global_name = std::string(instruction.getOperandAs<std::string_view>(1));
+		// Try to get typed payload first (new format)
+		GlobalLoadOp op;
+		bool has_typed_payload = false;
+		
+		if (instruction.hasTypedPayload()) {
+			try {
+				op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
+				has_typed_payload = true;
+			} catch (...) {
+				has_typed_payload = false;
+			}
 		}
+		
+		if (!has_typed_payload) {
+			// Fall back to old format: [result_temp, global_name]
+			assert(instruction.getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
+
+			op.result = instruction.getOperandAs<TempVar>(0);
+			// Global name can be either std::string (for static locals) or std::string_view (for regular globals)
+			if (std::holds_alternative<std::string>(instruction.getOperand(1))) {
+				op.global_name = instruction.getOperandAs<std::string>(1);
+			} else {
+				op.global_name = instruction.getOperandAs<std::string_view>(1);
+			}
+		}
+		
+		TempVar result_temp = op.result;
+		std::string global_name(op.global_name);
 
 		// Load global variable using RIP-relative addressing
 		// MOV EAX, [RIP + displacement]
@@ -7636,12 +7653,28 @@ private:
 
 
 	void handleStringLiteral(const IrInstruction& instruction) {
-		// StringLiteral: %result = string_literal "content"
-		// Format: [result_var, string_content]
-		assert(instruction.getOperandCount() == 2 && "StringLiteral must have 2 operands");
-
-		auto result_var = instruction.getOperandAs<TempVar>(0);
-		auto string_content = instruction.getOperandAs<std::string_view>(1);
+		// Try to get typed payload first (new format)
+		StringLiteralOp op;
+		bool has_typed_payload = false;
+		
+		if (instruction.hasTypedPayload()) {
+			try {
+				op = std::any_cast<const StringLiteralOp&>(instruction.getTypedPayload());
+				has_typed_payload = true;
+			} catch (...) {
+				has_typed_payload = false;
+			}
+		}
+		
+		if (!has_typed_payload) {
+			// Fall back to old format: [result_var, string_content]
+			assert(instruction.getOperandCount() == 2 && "StringLiteral must have 2 operands");
+			op.result = instruction.getOperandAs<TempVar>(0);
+			op.content = instruction.getOperandAs<std::string_view>(1);
+		}
+		
+		auto result_var = op.result;
+		auto string_content = op.content;
 
 		// Add the string literal to the .rdata section and get its symbol name
 		std::string symbol_name = writer.add_string_literal(std::string(string_content));
@@ -8387,14 +8420,30 @@ private:
 	}
 	
 	void handleFunctionAddress(const IrInstruction& instruction) {
-		// FunctionAddress: Load address of a function into a register
-		// Format: [result_temp, function_name]
-		assert(instruction.getOperandCount() == 2 && "FunctionAddress must have exactly 2 operands");
+		// Try to get typed payload first (new format)
+		FunctionAddressOp op;
+		bool has_typed_payload = false;
+		
+		if (instruction.hasTypedPayload()) {
+			try {
+				op = std::any_cast<const FunctionAddressOp&>(instruction.getTypedPayload());
+				has_typed_payload = true;
+			} catch (...) {
+				has_typed_payload = false;
+			}
+		}
+		
+		if (!has_typed_payload) {
+			// Fall back to old format: [result_temp, function_name]
+			assert(instruction.getOperandCount() == 2 && "FunctionAddress must have exactly 2 operands");
+			op.result = instruction.getOperandAs<TempVar>(0);
+			op.function_name = instruction.getOperandAs<std::string_view>(1);
+		}
 
 		flushAllDirtyRegisters();
 
-		auto result_var = instruction.getOperandAs<TempVar>(0);
-		std::string_view func_name = instruction.getOperandAs<std::string_view>(1);
+		auto result_var = op.result;
+		std::string_view func_name = op.function_name;
 
 		// Get result offset
 		int result_offset = getStackOffsetFromTempVar(result_var);
