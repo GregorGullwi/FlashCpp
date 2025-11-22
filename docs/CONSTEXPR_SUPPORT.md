@@ -71,9 +71,11 @@ This document summarizes the expanded C++20 constexpr support implemented in the
 - Parser support: ✅ Destructors can be marked with `constexpr` keyword
 - Virtual destructors: ✅ `constexpr virtual` destructors fully supported
 - Object construction: ✅ Objects can be created in constexpr functions
+- Constructor evaluation: 🟡 Member initializer list evaluation implemented, testing in progress
+- Inheritance: 🟡 Base class initialization implemented, testing in progress
 - Member access: ✅ Member variables can be accessed on constexpr objects
 - Destructor calls: ✅ Implicit at scope exit (no-op in constant evaluation)
-- Status: Basic functionality working, full constructor evaluation in progress
+- Status: Core functionality working, full constructor/inheritance evaluation being finalized
 - Tests: `test_constexpr_destructor.cpp`, `test_constexpr_virtual_dtor_simple.cpp` compile and pass
 
 ### C++20 Features
