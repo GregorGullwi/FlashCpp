@@ -190,22 +190,33 @@ static_assert(sum_even_numbers(10) == 20);
 - try-catch in constexpr functions
 - dynamic_cast/typeid in constexpr
 - ~~new/delete in constexpr (transient allocations)~~ ✅ **FULLY IMPLEMENTED**
-- Pointer subscript operator ([]) for array access (future enhancement)
+- ~~Pointer subscript operator ([]) for array access~~ ✅ **FULLY IMPLEMENTED**
 - Arrow operator (->) for member access through pointers (future enhancement)
 
 ### C++20 Constexpr New/Delete - FULLY IMPLEMENTED ✅
-**Transient allocations in constexpr functions:**
+**Transient allocations in constexpr functions with full memory safety:**
 - ✅ `new Type` and `new Type[size]` expressions
 - ✅ `delete ptr` and `delete[] ptr` expressions
 - ✅ **Memory leak detection** - compile error if memory not freed
 - ✅ **Double delete detection** - compile error on double delete
 - ✅ Array/non-array mismatch detection
-- ✅ **Dereference operator (*)** - Read values through pointers
+- ✅ **Dereference operator (*)** - Read values through pointers with offset tracking
 - ✅ **Constructor argument evaluation** - Initialize with `new Type(args)`
 - ✅ **Destructor integration** - Validates constexpr destructors, enforces C++20 rules
+- ✅ **Pointer arithmetic** - Full support for `ptr + N`, `ptr - N`, `ptr++`, `ptr--` with bounds checking
+- ✅ **Array subscript operator ([])** - Access array elements with bounds checking
+- ✅ **Comprehensive bounds checking** - All memory access validated at compile time
+
+**Memory Safety Guarantees:**
+- Out-of-bounds array access causes compile error
+- Pointer arithmetic past array end causes compile error  
+- Use-after-free causes compile error
+- Memory leaks cause compile error
+- Double delete causes compile error
 
 Example working code:
 ```cpp
+// Basic allocation
 constexpr int test() {
     int* p = new int(42);  // Constructor arg evaluated
     int val = *p;          // Dereference to read value
@@ -214,6 +225,24 @@ constexpr int test() {
 }
 static_assert(test() == 42);  // ✅ Compiles
 
+// Array allocation with pointer arithmetic
+constexpr int test_array() {
+    int* arr = new int[5];
+    arr[0] = 10;
+    arr[4] = 50;
+    
+    int* p = arr + 2;      // Pointer arithmetic
+    *p = 30;               // Dereference at offset
+    ++p;                   // Pointer increment
+    *p = 40;              
+    
+    int sum = arr[0] + arr[2] + arr[4];  // Array subscript
+    delete[] arr;
+    return sum;  // Returns 90
+}
+static_assert(test_array() == 90);  // ✅ Compiles
+
+// Struct allocation
 struct Counter {
     int value;
     constexpr Counter(int v) : value(v) {}
@@ -227,6 +256,56 @@ constexpr int test_struct() {
     return obj.value;
 }
 static_assert(test_struct() == 99);  // ✅ Compiles
+
+// Memory safety - out of bounds detection
+constexpr int test_bounds() {
+    int* arr = new int[5];
+    int bad = arr[10];  // ❌ ERROR: array index 10 out of bounds (size 5)
+    delete[] arr;
+    return bad;
+}
+```
+
+### Future: STD Template Support (Planned)
+**Strategy for constexpr-compatible standard library templates:**
+
+The implementation will use a hybrid approach combining compiler-intrinsic support for core types with standard template evaluation for algorithms.
+
+**Phase 1: Core Containers (High Priority)**
+- **std::array** - Fixed-size array wrapper, all members constexpr
+  - Simplest to implement, no dynamic allocation
+  - Foundation for other containers
+  
+- **std::span** - Non-owning view over contiguous data
+  - Works with constexpr arrays and pointers
+  - Leverages existing bounds checking infrastructure
+
+**Phase 2: Dynamic Containers (Medium Priority)**
+- **std::vector** - Dynamic array with constexpr allocations
+  - Leverages constexpr new/delete implementation
+  - Growth strategy in constexpr context
+  - Full bounds checking
+
+- **std::optional** - Maybe type for constexpr computations
+  - Useful for error handling
+  - Requires union support in constexpr evaluator
+
+**Phase 3: Algorithms (Medium Priority)**
+- Simple algorithms: `std::min`, `std::max`, `std::swap`
+- Iterator algorithms: `std::find`, `std::count`
+- Complex algorithms: `std::sort`, `std::accumulate`
+
+**Phase 4: Advanced Features (Long-term)**
+- **std::string** - Complex allocation patterns
+- **std::unique_ptr**, **std::shared_ptr** - Smart pointers
+- Full algorithm library coverage
+
+**Implementation Approach:**
+1. **Compiler-intrinsic support** for core types (array, span) - provides optimized implementations with better error messages
+2. **Standard template evaluation** for algorithms - cleaner separation, easier to extend
+3. **Special handling** for containers with allocation (vector, string) - integrates with constexpr new/delete infrastructure
+
+This phased approach ensures stable, incremental progress while maintaining code quality and comprehensive testing.
 ```
 
 ### Not Planned (C++23 features - out of scope)
