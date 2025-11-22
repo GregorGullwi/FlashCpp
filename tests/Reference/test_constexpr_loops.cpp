@@ -15,5 +15,5 @@ constexpr int sum_loop(int n) {
     return sum;
 }
 
-// Uncomment if loops are supported
-// static_assert(sum_loop(10) == 55, "sum_loop(10) should be 55");
+// Now loops are supported!
+static_assert(sum_loop(10) == 55, "sum_loop(10) should be 55");

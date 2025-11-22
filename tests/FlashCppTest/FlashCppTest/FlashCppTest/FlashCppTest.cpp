@@ -2329,6 +2329,10 @@ TEST_CASE("ConstExpr:Loops") {
 	run_test_from_file("test_constexpr_loops.cpp", "Constexpr loops", false);
 }
 
+TEST_CASE("ConstExpr:LoopsAdvanced") {
+	run_test_from_file("test_constexpr_loops_advanced.cpp", "Advanced constexpr loops (C++14/C++20)", true);
+}
+
 TEST_CASE("ConstExpr:Structs") {
 	run_test_from_file("test_constexpr_structs.cpp", "Constexpr structs and statics", false);
 }

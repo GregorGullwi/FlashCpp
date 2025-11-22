@@ -479,20 +479,43 @@ private:
 		const BlockNode& body = body_node.as<BlockNode>();
 		const auto& statements = body.get_statements();
 		
-		// For simple constexpr functions, we expect a single return statement
-		if (statements.size() != 1) {
-			context.current_depth--;
-			return EvalResult::error("Constexpr function must have a single return statement (complex statements not yet supported)");
-		}
-		
-		auto result = evaluate_statement_with_bindings(statements[0], param_bindings, context);
+		// Evaluate all statements in the function body
+		// Support multiple statements for C++14/C++20 constexpr functions with loops and local variables
+		auto result = evaluate_block_with_bindings(statements, param_bindings, context);
 		context.current_depth--;
 		return result;
 	}
 
-	static EvalResult evaluate_statement_with_bindings(
+	// Evaluate a block of statements with mutable bindings
+	// Returns the result of a return statement, or error if no return
+	static EvalResult evaluate_block_with_bindings(
+		const ChunkedVector<ASTNode, 128, 256>& statements,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		for (size_t i = 0; i < statements.size(); ++i) {
+			const ASTNode& stmt = statements[i];
+			auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+			
+			// If it's a return statement, return immediately
+			if (result.success && std::holds_alternative<long long>(result.value)) {
+				// Check if this is actually a return value (not just an expression result)
+				// We use a special marker - if we got here from a return statement, return it
+				return result;
+			} else if (!result.success) {
+				return result;
+			}
+			// Otherwise continue to next statement
+		}
+		
+		return EvalResult::error("Constexpr function reached end without return statement");
+	}
+
+	// Evaluate a single statement with mutable bindings
+	// This allows variable declarations and assignments
+	static EvalResult evaluate_statement_with_bindings_mutable(
 		const ASTNode& stmt_node,
-		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context) {
 		
 		// Check if it's a return statement
@@ -504,15 +527,257 @@ private:
 				return EvalResult::error("Constexpr function return statement has no expression");
 			}
 			
-			return evaluate_expression_with_bindings(return_expr.value(), bindings, context);
+			return evaluate_expression_with_bindings_mutable(return_expr.value(), bindings, context);
+		}
+		
+		// Check if it's a variable declaration
+		if (stmt_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = stmt_node.as<VariableDeclarationNode>();
+			const DeclarationNode& decl = var_decl.declaration();
+			
+			std::string_view var_name = decl.identifier_token().value();
+			
+			// Evaluate the initializer if present
+			const auto& initializer = var_decl.initializer();
+			if (initializer.has_value()) {
+				auto init_result = evaluate_expression_with_bindings_mutable(initializer.value(), bindings, context);
+				if (!init_result.success) {
+					return init_result;
+				}
+				bindings[var_name] = init_result;
+			} else {
+				// Default initialize to 0
+				bindings[var_name] = EvalResult::from_int(0);
+			}
+			
+			// Variable declarations don't return a value, return success marker
+			return EvalResult::from_int(0);
+		}
+		
+		// Check if it's a for loop
+		if (stmt_node.is<ForStatementNode>()) {
+			return evaluate_for_loop(stmt_node.as<ForStatementNode>(), bindings, context);
+		}
+		
+		// Check if it's a while loop
+		if (stmt_node.is<WhileStatementNode>()) {
+			return evaluate_while_loop(stmt_node.as<WhileStatementNode>(), bindings, context);
+		}
+		
+		// Check if it's an expression statement (e.g., assignment)
+		if (stmt_node.is<ExpressionNode>()) {
+			auto result = evaluate_expression_with_bindings_mutable(stmt_node, bindings, context);
+			// Expression statements don't return a value for the function
+			return EvalResult::from_int(0);
+		}
+		
+		// Check if it's an if statement
+		if (stmt_node.is<IfStatementNode>()) {
+			return evaluate_if_statement(stmt_node.as<IfStatementNode>(), bindings, context);
 		}
 		
 		return EvalResult::error("Unsupported statement type in constexpr function");
 	}
 
+	// Evaluate a for loop
+	static EvalResult evaluate_for_loop(
+		const ForStatementNode& for_loop,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		// Execute init statement if present
+		if (for_loop.has_init()) {
+			auto init_result = evaluate_statement_with_bindings_mutable(for_loop.get_init_statement().value(), bindings, context);
+			if (!init_result.success) {
+				return init_result;
+			}
+		}
+		
+		// Loop until condition is false
+		while (true) {
+			// Check condition if present
+			if (for_loop.has_condition()) {
+				auto cond_result = evaluate_expression_with_bindings_mutable(for_loop.get_condition().value(), bindings, context);
+				if (!cond_result.success) {
+					return cond_result;
+				}
+				if (!cond_result.as_bool()) {
+					break;  // Condition is false, exit loop
+				}
+			}
+			
+			// Execute body
+			const ASTNode& body = for_loop.get_body_statement();
+			if (body.is<BlockNode>()) {
+				const BlockNode& block = body.as<BlockNode>();
+				const auto& statements = block.get_statements();
+				for (size_t i = 0; i < statements.size(); ++i) {
+					const ASTNode& stmt = statements[i];
+					auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+					if (!result.success) {
+						return result;
+					}
+					// If it's a return statement, propagate it up
+					if (stmt.is<ReturnStatementNode>()) {
+						return result;
+					}
+				}
+			} else {
+				auto result = evaluate_statement_with_bindings_mutable(body, bindings, context);
+				if (!result.success) {
+					return result;
+				}
+				// If it's a return statement, propagate it up
+				if (body.is<ReturnStatementNode>()) {
+					return result;
+				}
+			}
+			
+			// Execute update expression if present
+			if (for_loop.has_update()) {
+				auto update_result = evaluate_expression_with_bindings_mutable(for_loop.get_update_expression().value(), bindings, context);
+				if (!update_result.success) {
+					return update_result;
+				}
+			}
+			
+			// Safety check to prevent infinite loops
+			if (++context.step_count > context.max_steps) {
+				return EvalResult::error("Constexpr evaluation exceeded complexity limit (infinite loop?)");
+			}
+		}
+		
+		// For loops don't return a value
+		return EvalResult::from_int(0);
+	}
+
+	// Evaluate a while loop
+	static EvalResult evaluate_while_loop(
+		const WhileStatementNode& while_loop,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		while (true) {
+			// Evaluate condition
+			auto cond_result = evaluate_expression_with_bindings_mutable(while_loop.get_condition(), bindings, context);
+			if (!cond_result.success) {
+				return cond_result;
+			}
+			if (!cond_result.as_bool()) {
+				break;  // Condition is false, exit loop
+			}
+			
+			// Execute body
+			const ASTNode& body = while_loop.get_body_statement();
+			if (body.is<BlockNode>()) {
+				const BlockNode& block = body.as<BlockNode>();
+				const auto& statements = block.get_statements();
+				for (size_t i = 0; i < statements.size(); ++i) {
+					const ASTNode& stmt = statements[i];
+					auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+					if (!result.success) {
+						return result;
+					}
+					// If it's a return statement, propagate it up
+					if (stmt.is<ReturnStatementNode>()) {
+						return result;
+					}
+				}
+			} else {
+				auto result = evaluate_statement_with_bindings_mutable(body, bindings, context);
+				if (!result.success) {
+					return result;
+				}
+				// If it's a return statement, propagate it up
+				if (body.is<ReturnStatementNode>()) {
+					return result;
+				}
+			}
+			
+			// Safety check to prevent infinite loops
+			if (++context.step_count > context.max_steps) {
+				return EvalResult::error("Constexpr evaluation exceeded complexity limit (infinite loop?)");
+			}
+		}
+		
+		// While loops don't return a value
+		return EvalResult::from_int(0);
+	}
+
+	// Evaluate an if statement  
+	static EvalResult evaluate_if_statement(
+		const IfStatementNode& if_stmt,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		// Evaluate condition
+		auto cond_result = evaluate_expression_with_bindings_mutable(if_stmt.get_condition(), bindings, context);
+		if (!cond_result.success) {
+			return cond_result;
+		}
+		
+		// Execute appropriate branch
+		const std::optional<ASTNode>& branch_opt = cond_result.as_bool() ? std::optional<ASTNode>(if_stmt.get_then_statement()) : if_stmt.get_else_statement();
+		
+		if (!branch_opt.has_value()) {
+			// No else branch and condition was false
+			return EvalResult::from_int(0);
+		}
+		
+		const ASTNode& branch = branch_opt.value();
+		
+		if (branch.is<BlockNode>()) {
+			const BlockNode& block = branch.as<BlockNode>();
+			const auto& statements = block.get_statements();
+			for (size_t i = 0; i < statements.size(); ++i) {
+				const ASTNode& stmt = statements[i];
+				auto result = evaluate_statement_with_bindings_mutable(stmt, bindings, context);
+				if (!result.success) {
+					return result;
+				}
+				// If it's a return statement, propagate it up
+				if (stmt.is<ReturnStatementNode>()) {
+					return result;
+				}
+			}
+		} else {
+			auto result = evaluate_statement_with_bindings_mutable(branch, bindings, context);
+			if (!result.success) {
+				return result;
+			}
+			// If it's a return statement, propagate it up
+			if (branch.is<ReturnStatementNode>()) {
+				return result;
+			}
+		}
+		
+		// If statements don't return a value
+		return EvalResult::from_int(0);
+	}
+
+	static EvalResult evaluate_statement_with_bindings(
+		const ASTNode& stmt_node,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		// For backwards compatibility, create mutable copy and delegate
+		std::unordered_map<std::string_view, EvalResult> mutable_bindings = bindings;
+		return evaluate_statement_with_bindings_mutable(stmt_node, mutable_bindings, context);
+	}
+
 	static EvalResult evaluate_expression_with_bindings(
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		// For read-only evaluation, create mutable copy for assignment support
+		std::unordered_map<std::string_view, EvalResult> mutable_bindings = bindings;
+		return evaluate_expression_with_bindings_mutable(expr_node, mutable_bindings, context);
+	}
+
+	static EvalResult evaluate_expression_with_bindings_mutable(
+		const ASTNode& expr_node,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context) {
 		
 		if (!expr_node.is<ExpressionNode>()) {
@@ -536,11 +801,65 @@ private:
 			return evaluate_identifier(id, context);
 		}
 		
-		// For binary operators, recursively evaluate with bindings
+		// For binary operators, check for assignment first
 		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 			const auto& bin_op = std::get<BinaryOperatorNode>(expr);
-			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
-			auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+			std::string_view op = bin_op.op();
+			
+			// Handle assignment operators (=, +=, -=, etc.)
+			if (op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" ||
+			    op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=") {
+				
+				// LHS must be an identifier
+				const ASTNode& lhs = bin_op.get_lhs();
+				if (!lhs.is<ExpressionNode>()) {
+					return EvalResult::error("Assignment LHS is not an expression");
+				}
+				
+				const ExpressionNode& lhs_expr = lhs.as<ExpressionNode>();
+				if (!std::holds_alternative<IdentifierNode>(lhs_expr)) {
+					return EvalResult::error("Assignment LHS must be an identifier");
+				}
+				
+				const IdentifierNode& id = std::get<IdentifierNode>(lhs_expr);
+				std::string_view var_name = id.name();
+				
+				// Evaluate RHS
+				auto rhs_result = evaluate_expression_with_bindings_mutable(bin_op.get_rhs(), bindings, context);
+				if (!rhs_result.success) {
+					return rhs_result;
+				}
+				
+				// Perform the assignment
+				if (op == "=") {
+					bindings[var_name] = rhs_result;
+					return rhs_result;
+				} else {
+					// Compound assignment - get current value
+					auto it = bindings.find(var_name);
+					if (it == bindings.end()) {
+						return EvalResult::error("Undefined variable in compound assignment: " + std::string(var_name));
+					}
+					
+					EvalResult lhs_val = it->second;
+					
+					// Extract the base operator (e.g., "+=" -> "+")
+					std::string base_op = std::string(op.substr(0, op.length() - 1));
+					
+					// Apply the operation
+					auto result = apply_binary_op(lhs_val, rhs_result, base_op);
+					if (!result.success) {
+						return result;
+					}
+					
+					bindings[var_name] = result;
+					return result;
+				}
+			}
+			
+			// Regular binary operators
+			auto lhs_result = evaluate_expression_with_bindings_mutable(bin_op.get_lhs(), bindings, context);
+			auto rhs_result = evaluate_expression_with_bindings_mutable(bin_op.get_rhs(), bindings, context);
 			
 			if (!lhs_result.success) return lhs_result;
 			if (!rhs_result.success) return rhs_result;
@@ -548,17 +867,66 @@ private:
 			return apply_binary_op(lhs_result, rhs_result, bin_op.op());
 		}
 		
+		// Handle unary operators (including ++ and --)
+		if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+			const auto& unary_op = std::get<UnaryOperatorNode>(expr);
+			std::string_view op = unary_op.op();
+			
+			// Handle increment/decrement
+			if (op == "++" || op == "--") {
+				// Operand must be an identifier
+				const ASTNode& operand = unary_op.get_operand();
+				if (!operand.is<ExpressionNode>()) {
+					return EvalResult::error("Increment/decrement operand is not an expression");
+				}
+				
+				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+				if (!std::holds_alternative<IdentifierNode>(operand_expr)) {
+					return EvalResult::error("Increment/decrement operand must be an identifier");
+				}
+				
+				const IdentifierNode& id = std::get<IdentifierNode>(operand_expr);
+				std::string_view var_name = id.name();
+				
+				// Get current value
+				auto it = bindings.find(var_name);
+				if (it == bindings.end()) {
+					return EvalResult::error("Undefined variable in increment/decrement: " + std::string(var_name));
+				}
+				
+				EvalResult old_val = it->second;
+				long long int_val = old_val.as_int();
+				
+				// Compute new value
+				long long new_val = (op == "++") ? (int_val + 1) : (int_val - 1);
+				EvalResult new_result = EvalResult::from_int(new_val);
+				
+				// Update variable
+				bindings[var_name] = new_result;
+				
+				// Return appropriate value based on prefix/postfix
+				return unary_op.is_prefix() ? new_result : old_val;
+			}
+			
+			// Regular unary operators
+			auto operand_result = evaluate_expression_with_bindings_mutable(unary_op.get_operand(), bindings, context);
+			if (!operand_result.success) {
+				return operand_result;
+			}
+			return apply_unary_op(operand_result, op);
+		}
+		
 		// For ternary operators
 		if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 			const auto& ternary = std::get<TernaryOperatorNode>(expr);
-			auto cond_result = evaluate_expression_with_bindings(ternary.condition(), bindings, context);
+			auto cond_result = evaluate_expression_with_bindings_mutable(ternary.condition(), bindings, context);
 			
 			if (!cond_result.success) return cond_result;
 			
 			if (cond_result.as_bool()) {
-				return evaluate_expression_with_bindings(ternary.true_expr(), bindings, context);
+				return evaluate_expression_with_bindings_mutable(ternary.true_expr(), bindings, context);
 			} else {
-				return evaluate_expression_with_bindings(ternary.false_expr(), bindings, context);
+				return evaluate_expression_with_bindings_mutable(ternary.false_expr(), bindings, context);
 			}
 		}
 		
