@@ -1335,7 +1335,7 @@ class ConstructorDeclarationNode {
 public:
 	ConstructorDeclarationNode() = delete;
 	ConstructorDeclarationNode(std::string_view struct_name, std::string_view name)
-		: struct_name_(struct_name), name_(name), is_implicit_(false) {}
+		: struct_name_(struct_name), name_(name), is_implicit_(false), is_constexpr_(false) {}
 
 	std::string_view struct_name() const { return struct_name_; }
 	std::string_view name() const { return name_; }
@@ -1366,6 +1366,14 @@ public:
 		is_implicit_ = implicit;
 	}
 
+	void set_is_constexpr(bool is_constexpr) {
+		is_constexpr_ = is_constexpr;
+	}
+
+	bool is_constexpr() const {
+		return is_constexpr_;
+	}
+
 	const std::optional<ASTNode>& get_definition() const {
 		return definition_block_;
 	}
@@ -1386,6 +1394,7 @@ private:
 	std::optional<DelegatingInitializer> delegating_initializer_;  // Delegating constructor call
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
+	bool is_constexpr_;  // True if declared with constexpr keyword
 };
 
 // Destructor declaration node
@@ -1393,7 +1402,7 @@ class DestructorDeclarationNode {
 public:
 	DestructorDeclarationNode() = delete;
 	DestructorDeclarationNode(std::string_view struct_name, std::string_view name)
-		: struct_name_(struct_name), name_(name) {}
+		: struct_name_(struct_name), name_(name), is_constexpr_(false) {}
 
 	std::string_view struct_name() const { return struct_name_; }
 	std::string_view name() const { return name_; }
@@ -1410,10 +1419,19 @@ public:
 		return true;
 	}
 
+	void set_is_constexpr(bool is_constexpr) {
+		is_constexpr_ = is_constexpr;
+	}
+
+	bool is_constexpr() const {
+		return is_constexpr_;
+	}
+
 private:
 	std::string_view struct_name_;  // Points directly into source text from lexer token
 	std::string_view name_;         // Points directly into source text from lexer token
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
+	bool is_constexpr_;  // True if declared with constexpr keyword
 };
 
 // Struct member with access specifier
