@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <variant>
+#include <climits>  // For LLONG_MAX, LLONG_MIN
 
 // Forward declarations
 class SymbolTable;
@@ -604,21 +605,60 @@ private:
 	// Perform addition with overflow checking, return result or nullopt on overflow
 	static std::optional<long long> safe_add(long long a, long long b) {
 		long long result;
+#if defined(_MSC_VER) && !defined(__clang__)
+		// MSVC implementation using manual overflow detection
+		if ((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) {
+			return std::nullopt; // Overflow
+		}
+		result = a + b;
+		bool overflow = false;
+#else
 		bool overflow = __builtin_add_overflow(a, b, &result);
+#endif
 		return overflow ? std::nullopt : std::optional<long long>(result);
 	}
 
 	// Perform subtraction with overflow checking, return result or nullopt on overflow
 	static std::optional<long long> safe_sub(long long a, long long b) {
 		long long result;
+#if defined(_MSC_VER) && !defined(__clang__)
+		// MSVC implementation using manual overflow detection
+		if ((b < 0 && a > LLONG_MAX + b) || (b > 0 && a < LLONG_MIN + b)) {
+			return std::nullopt; // Overflow
+		}
+		result = a - b;
+		bool overflow = false;
+#else
 		bool overflow = __builtin_sub_overflow(a, b, &result);
+#endif
 		return overflow ? std::nullopt : std::optional<long long>(result);
 	}
 
 	// Perform multiplication with overflow checking, return result or nullopt on overflow
 	static std::optional<long long> safe_mul(long long a, long long b) {
 		long long result;
+#if defined(_MSC_VER) && !defined(__clang__)
+		// MSVC implementation using manual overflow detection
+		if (a == 0 || b == 0) {
+			result = 0;
+		} else if (a == LLONG_MIN || b == LLONG_MIN) {
+			// Special case: LLONG_MIN * anything except 0 or 1 overflows
+			if ((a == LLONG_MIN && (b < -1 || b > 1)) || (b == LLONG_MIN && (a < -1 || a > 1))) {
+				return std::nullopt;
+			}
+			result = a * b;
+		} else if ((a > 0 && b > 0 && a > LLONG_MAX / b) ||
+		           (a > 0 && b < 0 && b < LLONG_MIN / a) ||
+		           (a < 0 && b > 0 && a < LLONG_MIN / b) ||
+		           (a < 0 && b < 0 && a < LLONG_MAX / b)) {
+			return std::nullopt; // Overflow
+		} else {
+			result = a * b;
+		}
+		bool overflow = false;
+#else
 		bool overflow = __builtin_mul_overflow(a, b, &result);
+#endif
 		return overflow ? std::nullopt : std::optional<long long>(result);
 	}
 
