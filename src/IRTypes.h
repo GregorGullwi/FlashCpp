@@ -701,19 +701,19 @@ struct ConversionOp {
 
 // String literal
 struct StringLiteralOp {
-	TempVar result;              // Result temp var (pointer to string)
+	TypedValue result;           // Result with type, size, and temp var (pointer to string)
 	std::string_view content;    // String content
 };
 
 // Global variable load
 struct GlobalLoadOp {
-	TempVar result;              // Result temp var
+	TypedValue result;           // Result with type, size, and temp var
 	std::string_view global_name;  // Name of global variable (from source token or StringBuilder)
 };
 
 // Function address (get address of a function)
 struct FunctionAddressOp {
-	TempVar result;              // Result temp var (function pointer)
+	TypedValue result;           // Result with type, size, and temp var (function pointer)
 	std::string_view function_name;  // Function name
 };
 

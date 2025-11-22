@@ -4352,7 +4352,7 @@ private:
 			// Fall back to old format: [result_temp, global_name]
 			assert(instruction.getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
 
-			op.result = instruction.getOperandAs<TempVar>(0);
+			op.result.value = instruction.getOperandAs<TempVar>(0);
 			// Global name can be either std::string (for static locals) or std::string_view (for regular globals)
 			if (std::holds_alternative<std::string>(instruction.getOperand(1))) {
 				op.global_name = instruction.getOperandAs<std::string>(1);
@@ -4361,7 +4361,7 @@ private:
 			}
 		}
 		
-		TempVar result_temp = op.result;
+		TempVar result_temp = std::get<TempVar>(op.result.value);
 		std::string global_name(op.global_name);
 
 		// Load global variable using RIP-relative addressing
@@ -7667,11 +7667,11 @@ private:
 		if (!has_typed_payload) {
 			// Fall back to old format: [result_var, string_content]
 			assert(instruction.getOperandCount() == 2 && "StringLiteral must have 2 operands");
-			op.result = instruction.getOperandAs<TempVar>(0);
+			op.result.value = instruction.getOperandAs<TempVar>(0);
 			op.content = instruction.getOperandAs<std::string_view>(1);
 		}
 		
-		auto result_var = op.result;
+		auto result_var = std::get<TempVar>(op.result.value);
 		auto string_content = op.content;
 
 		// Add the string literal to the .rdata section and get its symbol name
@@ -8432,13 +8432,13 @@ private:
 		if (!has_typed_payload) {
 			// Fall back to old format: [result_temp, function_name]
 			assert(instruction.getOperandCount() == 2 && "FunctionAddress must have exactly 2 operands");
-			op.result = instruction.getOperandAs<TempVar>(0);
+			op.result.value = instruction.getOperandAs<TempVar>(0);
 			op.function_name = instruction.getOperandAs<std::string_view>(1);
 		}
 
 		flushAllDirtyRegisters();
 
-		auto result_var = op.result;
+		auto result_var = std::get<TempVar>(op.result.value);
 		std::string_view func_name = op.function_name;
 
 		// Get result offset

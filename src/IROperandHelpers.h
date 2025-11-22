@@ -301,7 +301,7 @@ inline bool parseStringLiteralOp(const IrInstruction& inst, StringLiteralOp& out
 	}
 
 	if (!inst.isOperandType<TempVar>(0)) return false;
-	out.result = inst.getOperandAs<TempVar>(0);
+	out.result.value = inst.getOperandAs<TempVar>(0);
 
 	if (!inst.isOperandType<std::string_view>(1)) return false;
 	out.content = inst.getOperandAs<std::string_view>(1);
@@ -321,7 +321,7 @@ inline bool parseGlobalLoadOp(const IrInstruction& inst, GlobalLoadOp& out) {
 	}
 
 	if (!inst.isOperandType<TempVar>(0)) return false;
-	out.result = inst.getOperandAs<TempVar>(0);
+	out.result.value = inst.getOperandAs<TempVar>(0);
 
 	// Global name can be string or string_view
 	if (inst.isOperandType<std::string>(1)) {
@@ -347,7 +347,7 @@ inline bool parseFunctionAddressOp(const IrInstruction& inst, FunctionAddressOp&
 	}
 
 	if (!inst.isOperandType<TempVar>(0)) return false;
-	out.result = inst.getOperandAs<TempVar>(0);
+	out.result.value = inst.getOperandAs<TempVar>(0);
 
 	if (!inst.isOperandType<std::string_view>(1)) return false;
 	out.function_name = inst.getOperandAs<std::string_view>(1);
