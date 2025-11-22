@@ -7687,32 +7687,46 @@ private:
 
 	void handleMemberAccess(const IrInstruction& instruction) {
 		// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
-		// Format (old): [result_var, member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits]
-		assert(instruction.getOperandCount() >= 6 && "MemberAccess must have at least 6 operands");
-
-		// Parse into MemberLoadOp structure
-		MemberLoadOp op;
-		op.result.value = instruction.getOperandAs<TempVar>(0);
-		op.result.type = instruction.getOperandAs<Type>(1);
-		op.result.size_in_bits = instruction.getOperandAs<int>(2);
 		
-		// Object can be string_view or TempVar
-		if (instruction.isOperandType<std::string_view>(3)) {
-			op.object = instruction.getOperandAs<std::string_view>(3);
-		} else if (instruction.isOperandType<TempVar>(3)) {
-			op.object = instruction.getOperandAs<TempVar>(3);
-		} else {
-			assert(false && "MemberAccess operand 3 must be string_view or TempVar");
-			return;
+		// Try to get typed payload first (new format)
+		MemberLoadOp op;
+		bool has_typed_payload = false;
+		
+		if (instruction.hasTypedPayload()) {
+			try {
+				op = std::any_cast<const MemberLoadOp&>(instruction.getTypedPayload());
+				has_typed_payload = true;
+			} catch (...) {
+				has_typed_payload = false;
+			}
 		}
 		
-		op.member_name = instruction.getOperandAs<std::string_view>(4);
-		op.offset = instruction.getOperandAs<int>(5);
-		
-		bool has_reference_metadata = instruction.getOperandCount() >= 9;
-		op.is_reference = has_reference_metadata ? instruction.getOperandAs<bool>(6) : false;
-		op.is_rvalue_reference = has_reference_metadata ? instruction.getOperandAs<bool>(7) : false;
-		op.struct_type_info = nullptr; // TODO: Pass TypeInfo* from codegen when available
+		if (!has_typed_payload) {
+			// Fall back to old format parsing: [result_var, member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, referenced_bits]
+			assert(instruction.getOperandCount() >= 6 && "MemberAccess must have at least 6 operands");
+
+			op.result.value = instruction.getOperandAs<TempVar>(0);
+			op.result.type = instruction.getOperandAs<Type>(1);
+			op.result.size_in_bits = instruction.getOperandAs<int>(2);
+			
+			// Object can be string_view or TempVar
+			if (instruction.isOperandType<std::string_view>(3)) {
+				op.object = instruction.getOperandAs<std::string_view>(3);
+			} else if (instruction.isOperandType<TempVar>(3)) {
+				op.object = instruction.getOperandAs<TempVar>(3);
+			} else {
+				assert(false && "MemberAccess operand 3 must be string_view or TempVar");
+				return;
+			}
+			
+			op.member_name = instruction.getOperandAs<std::string_view>(4);
+			op.offset = instruction.getOperandAs<int>(5);
+			
+			bool has_reference_metadata = instruction.getOperandCount() >= 9;
+			op.is_reference = has_reference_metadata ? instruction.getOperandAs<bool>(6) : false;
+			op.is_rvalue_reference = has_reference_metadata ? instruction.getOperandAs<bool>(7) : false;
+			op.struct_type_info = nullptr;
+		}
 
 		// Get the object's base stack offset or pointer
 		int32_t object_base_offset = 0;

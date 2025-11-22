@@ -627,23 +627,19 @@ private:
 						// Generate memberwise assignment
 						for (const auto& member : struct_info->members) {
 							// First, load the member from 'other'
-							// Format: [result_var, member_type, member_size, object_name, member_name, offset]
 							TempVar member_value = var_counter.next();
-							std::vector<IrOperand> load_operands;
-							load_operands.emplace_back(member_value);
-							load_operands.emplace_back(member.type);
-							load_operands.emplace_back(static_cast<int>(member.size * 8));
-							load_operands.emplace_back(std::string_view("other"));  // Load from 'other' parameter
-							load_operands.emplace_back(std::string_view(member.name));
-							load_operands.emplace_back(static_cast<int>(member.offset));
-							load_operands.emplace_back(member.is_reference);
-							load_operands.emplace_back(member.is_rvalue_reference);
-							load_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
-							load_operands.emplace_back(member.is_reference);
-							load_operands.emplace_back(member.is_rvalue_reference);
-							load_operands.emplace_back(static_cast<int>(member.referenced_size_bits));
+							MemberLoadOp member_load;
+							member_load.result.value = member_value;
+							member_load.result.type = member.type;
+							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
+							member_load.object = std::string_view("other");  // Load from 'other' parameter
+							member_load.member_name = std::string_view(member.name);
+							member_load.offset = static_cast<int>(member.offset);
+							member_load.is_reference = member.is_reference;
+							member_load.is_rvalue_reference = member.is_rvalue_reference;
+							member_load.struct_type_info = nullptr;
 
-							ir_.addInstruction(IrOpcode::MemberAccess, std::move(load_operands), func_decl.identifier_token());
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
 
 							// Then, store the member to 'this'
 							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
@@ -1021,17 +1017,19 @@ private:
 						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
 							// First, load the member from 'other'
-							// Format: [result_var, member_type, member_size, object_name, member_name, offset]
 							TempVar member_value = var_counter.next();
-							std::vector<IrOperand> load_operands;
-							load_operands.emplace_back(member_value);
-							load_operands.emplace_back(member.type);
-							load_operands.emplace_back(static_cast<int>(member.size * 8));
-							load_operands.emplace_back(std::string_view("other"));  // Load from 'other' parameter
-							load_operands.emplace_back(std::string_view(member.name));
-							load_operands.emplace_back(static_cast<int>(member.offset));
+							MemberLoadOp member_load;
+							member_load.result.value = member_value;
+							member_load.result.type = member.type;
+							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
+							member_load.object = std::string_view("other");  // Load from 'other' parameter
+							member_load.member_name = std::string_view(member.name);
+							member_load.offset = static_cast<int>(member.offset);
+							member_load.is_reference = member.is_reference;
+							member_load.is_rvalue_reference = member.is_rvalue_reference;
+							member_load.struct_type_info = nullptr;
 
-							ir_.addInstruction(IrOpcode::MemberAccess, std::move(load_operands), node.name_token());
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), node.name_token()));
 
 							// Then, store the member to 'this'
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
@@ -2766,17 +2764,18 @@ private:
 							// By-reference capture: member is a pointer, need to dereference
 							// First, load the pointer from the closure
 							TempVar ptr_temp = var_counter.next();
-							std::vector<IrOperand> ptr_operands;
-							ptr_operands.emplace_back(ptr_temp);
-							ptr_operands.emplace_back(member->type);  // Base type (e.g., Int)
-							ptr_operands.emplace_back(64);  // pointer size in bits
-							ptr_operands.emplace_back(std::string_view("this"));
-							ptr_operands.emplace_back(std::string_view(member->name));
-							ptr_operands.emplace_back(static_cast<int>(member->offset));
-							ptr_operands.emplace_back(member->is_reference);
-							ptr_operands.emplace_back(member->is_rvalue_reference);
-							ptr_operands.emplace_back(static_cast<int>(member->referenced_size_bits));
-							ir_.addInstruction(IrOpcode::MemberAccess, std::move(ptr_operands), Token());
+							MemberLoadOp member_load;
+							member_load.result.value = ptr_temp;
+							member_load.result.type = member->type;  // Base type (e.g., Int)
+							member_load.result.size_in_bits = 64;  // pointer size in bits
+							member_load.object = std::string_view("this");
+							member_load.member_name = std::string_view(member->name);
+							member_load.offset = static_cast<int>(member->offset);
+							member_load.is_reference = member->is_reference;
+							member_load.is_rvalue_reference = member->is_rvalue_reference;
+							member_load.struct_type_info = nullptr;
+
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
 							// The ptr_temp now contains the address of the captured variable
 							// We need to dereference it using PointerDereference
@@ -2801,16 +2800,19 @@ private:
 							return { member->type, 64, ptr_temp };
 						} else {
 							// By-value capture: direct member access
-							// Format: [result_var, member_type, member_size, object_name, member_name, offset]
 							TempVar result_temp = var_counter.next();
-							std::vector<IrOperand> operands;
-							operands.emplace_back(result_temp);
-							operands.emplace_back(member->type);
-							operands.emplace_back(static_cast<int>(member->size * 8));  // size in bits
-							operands.emplace_back(std::string_view("this"));  // implicit this pointer
-							operands.emplace_back(std::string_view(member->name));  // member name
-							operands.emplace_back(static_cast<int>(member->offset));
-							ir_.addInstruction(IrOpcode::MemberAccess, std::move(operands), Token());
+							MemberLoadOp member_load;
+							member_load.result.value = result_temp;
+							member_load.result.type = member->type;
+							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+							member_load.object = std::string_view("this");  // implicit this pointer
+							member_load.member_name = std::string_view(member->name);
+							member_load.offset = static_cast<int>(member->offset);
+							member_load.is_reference = member->is_reference;
+							member_load.is_rvalue_reference = member->is_rvalue_reference;
+							member_load.struct_type_info = nullptr;
+
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 							return { member->type, static_cast<int>(member->size * 8), result_temp };
 						}
 					}
@@ -2829,19 +2831,19 @@ private:
 					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
 					if (member) {
 						// This is a member variable access - generate MemberAccess IR with implicit 'this'
-						// Format: [result_var, member_type, member_size, object_name, member_name, offset]
 						TempVar result_temp = var_counter.next();
-						std::vector<IrOperand> operands;
-						operands.emplace_back(result_temp);
-						operands.emplace_back(member->type);
-						operands.emplace_back(static_cast<int>(member->size * 8));  // size in bits
-						operands.emplace_back(std::string_view("this"));  // implicit this pointer
-						operands.emplace_back(std::string_view(member->name));  // member name
-						operands.emplace_back(static_cast<int>(member->offset));
-						operands.emplace_back(member->is_reference);
-						operands.emplace_back(member->is_rvalue_reference);
-						operands.emplace_back(static_cast<int>(member->referenced_size_bits));
-						ir_.addInstruction(IrOpcode::MemberAccess, std::move(operands), Token());
+						MemberLoadOp member_load;
+						member_load.result.value = result_temp;
+						member_load.result.type = member->type;
+						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.object = std::string_view("this");  // implicit this pointer
+						member_load.member_name = std::string_view(member->name);
+						member_load.offset = static_cast<int>(member->offset);
+						member_load.is_reference = member->is_reference;
+						member_load.is_rvalue_reference = member->is_rvalue_reference;
+						member_load.struct_type_info = nullptr;
+
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 						return { member->type, static_cast<int>(member->size * 8), result_temp };
 					}
 				}
@@ -4846,11 +4848,10 @@ private:
 							TempVar func_ptr_temp = var_counter.next();
 							
 							// Generate member access IR to load the function pointer
-							// Format: [result_var, member_type, member_size, object_name/temp, member_name, offset]
-							std::vector<IrOperand> member_access_operands;
-							member_access_operands.emplace_back(func_ptr_temp);
-							member_access_operands.emplace_back(member.type);
-							member_access_operands.emplace_back(static_cast<int>(member.size * 8));  // Convert bytes to bits
+							MemberLoadOp member_load;
+							member_load.result.value = func_ptr_temp;
+							member_load.result.type = member.type;
+							member_load.result.size_in_bits = static_cast<int>(member.size * 8);  // Convert bytes to bits
 							
 							// Add object operand
 							if (object_name.empty()) {
@@ -4858,12 +4859,16 @@ private:
 								// TODO: Need to handle object expression properly
 								assert(false && "Function pointer member call on expression not yet supported");
 							} else {
-								member_access_operands.emplace_back(object_name);
+								member_load.object = object_name;
 							}
 							
-							member_access_operands.emplace_back(func_name);  // Member name
-							member_access_operands.emplace_back(static_cast<int>(member.offset));  // Member offset
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_access_operands), Token()));
+							member_load.member_name = func_name;  // Member name
+							member_load.offset = static_cast<int>(member.offset);  // Member offset
+							member_load.is_reference = member.is_reference;
+							member_load.is_rvalue_reference = member.is_rvalue_reference;
+							member_load.struct_type_info = nullptr;
+
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 							
 							// Now add the indirect call with the function pointer temp var
 							irOperands.emplace_back(func_ptr_temp);
@@ -5571,28 +5576,29 @@ private:
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
-		// Build IR operands: [result_var, member_type, member_size, object_name/temp, member_name, offset, is_ref, is_rvalue_ref, referenced_bits]
-		irOperands.emplace_back(result_var);
-		irOperands.emplace_back(member->type);
-		irOperands.emplace_back(static_cast<int>(member->size * 8));  // Convert bytes to bits
+		// Build MemberLoadOp
+		MemberLoadOp member_load;
+		member_load.result.value = result_var;
+		member_load.result.type = member->type;
+		member_load.result.size_in_bits = static_cast<int>(member->size * 8);  // Convert bytes to bits
 
 		// Add the base object (either string_view or TempVar)
 		if (std::holds_alternative<std::string_view>(base_object)) {
-			irOperands.emplace_back(std::get<std::string_view>(base_object));
+			member_load.object = std::get<std::string_view>(base_object);
 		} else {
-			irOperands.emplace_back(std::get<TempVar>(base_object));
+			member_load.object = std::get<TempVar>(base_object);
 		}
 
-		irOperands.emplace_back(std::string_view(member_name));
-		irOperands.emplace_back(static_cast<int>(member->offset));
+		member_load.member_name = std::string_view(member_name);
+		member_load.offset = static_cast<int>(member->offset);
 	
 		// Add reference metadata (required for proper handling of reference members)
-		irOperands.emplace_back(member->is_reference);
-		irOperands.emplace_back(member->is_rvalue_reference);
-		irOperands.emplace_back(static_cast<int>(member->referenced_size_bits));
+		member_load.is_reference = member->is_reference;
+		member_load.is_rvalue_reference = member->is_rvalue_reference;
+		member_load.struct_type_info = nullptr;
 
 		// Add the member access instruction
-		ir_.addInstruction(IrOpcode::MemberAccess, std::move(irOperands), Token());		// Return the result variable with its type, size, and optionally type_index
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));		// Return the result variable with its type, size, and optionally type_index
 		// For struct types, we need to include type_index for nested member access (e.g., obj.inner.member)
 		// For primitive types, we only return 3 operands to maintain compatibility with binary operators
 		if (member->type == Type::Struct) {
