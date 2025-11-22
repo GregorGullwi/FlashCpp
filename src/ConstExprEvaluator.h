@@ -42,9 +42,18 @@ struct AllocationInfo {
 	std::string type_name;        // Type that was allocated
 	bool is_array;                // Whether this is an array allocation
 	size_t array_size;            // Size of array (1 for non-array)
-	std::variant<ObjectValue, std::vector<ObjectValue>> data;  // The allocated object(s)
+	// Allocated data: primitives use variant, objects use ObjectValue
+	std::variant<
+		long long,               // For int, long, short, char
+		unsigned long long,      // For unsigned types
+		double,                  // For float, double
+		bool,                    // For bool
+		ObjectValue,             // For struct/class (single object)
+		std::vector<ObjectValue> // For arrays
+	> data;
 	bool is_freed;                // Whether delete was called
 	
+	// Constructor for built-in types
 	AllocationInfo(size_t allocation_id, std::string type, bool arr, size_t size)
 		: id(allocation_id), type_name(std::move(type)), is_array(arr), 
 		  array_size(size), is_freed(false) {
@@ -55,7 +64,17 @@ struct AllocationInfo {
 			}
 			data = std::move(objects);
 		} else {
-			data = ObjectValue(type_name);
+			// Default initialization for built-in types
+			if (type_name == "int" || type_name == "long" || type_name == "short" || type_name == "char") {
+				data = 0LL;
+			} else if (type_name == "bool") {
+				data = false;
+			} else if (type_name == "float" || type_name == "double") {
+				data = 0.0;
+			} else {
+				// Struct/class type
+				data = ObjectValue(type_name);
+			}
 		}
 	}
 };
@@ -315,7 +334,7 @@ private:
 			return operand_result;
 		}
 
-		return apply_unary_op(operand_result, op);
+		return apply_unary_op_with_context(operand_result, op, context);
 	}
 
 	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context) {
@@ -628,6 +647,113 @@ private:
 		}
 		
 		return EvalResult::error("Constexpr function reached end without return statement");
+	}
+
+	// Helper function to evaluate constructor with arguments
+	static ObjectValue evaluate_constructor_with_args(
+		const ConstructorDeclarationNode& ctor,
+		const std::vector<ASTNode>& args,
+		const std::string& type_name,
+		TypeIndex type_idx,
+		std::unordered_map<std::string_view, EvalResult>& outer_bindings,
+		EvaluationContext& context,
+		std::string& error_out) {
+		
+		ObjectValue obj(type_name);
+		error_out.clear();
+		
+		// Create parameter bindings for constructor
+		std::unordered_map<std::string_view, EvalResult> ctor_bindings;
+		
+		// Bind constructor parameters
+		const auto& params = ctor.parameters();
+		for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
+			const auto& param = params[i];
+			if (param.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param.as<DeclarationNode>();
+				std::string_view param_name = param_decl.identifier_token().value();
+				
+				// Evaluate argument
+				auto arg_result = evaluate_expression_with_bindings_mutable(args[i], outer_bindings, context);
+				if (arg_result.success) {
+					ctor_bindings[param_name] = arg_result;
+				} else {
+					error_out = arg_result.error_message;
+					return obj;
+				}
+			}
+		}
+		
+		// Evaluate member initializers
+		for (const auto& mem_init : ctor.member_initializers()) {
+			std::string_view mem_name = mem_init.member_name;
+			const ASTNode& mem_init_expr = mem_init.initializer_expr;
+			
+			// Evaluate initializer expression with constructor parameter bindings
+			auto mem_result = evaluate_expression_with_bindings_mutable(mem_init_expr, ctor_bindings, context);
+			if (mem_result.success) {
+				// Store in object
+				if (std::holds_alternative<long long>(mem_result.value)) {
+					obj.members[std::string(mem_name)] = std::get<long long>(mem_result.value);
+				} else if (std::holds_alternative<unsigned long long>(mem_result.value)) {
+					obj.members[std::string(mem_name)] = std::get<unsigned long long>(mem_result.value);
+				} else if (std::holds_alternative<double>(mem_result.value)) {
+					obj.members[std::string(mem_name)] = std::get<double>(mem_result.value);
+				} else if (std::holds_alternative<bool>(mem_result.value)) {
+					obj.members[std::string(mem_name)] = std::get<bool>(mem_result.value);
+				}
+			} else {
+				error_out = mem_result.error_message;
+				return obj;
+			}
+		}
+		
+		// Handle base class initializers for inheritance
+		for (const auto& base_init : ctor.base_initializers()) {
+			std::string base_name = base_init.base_class_name;
+			const auto& base_args = base_init.arguments;
+			
+			// Find base class type info
+			TypeIndex base_type_idx = SIZE_MAX;
+			for (size_t i = 0; i < gTypeInfo.size(); ++i) {
+				if (gTypeInfo[i].name_ == base_name) {
+					base_type_idx = i;
+					break;
+				}
+			}
+			
+			if (base_type_idx < gTypeInfo.size()) {
+				const TypeInfo& base_type_info = gTypeInfo[base_type_idx];
+				
+				// Find matching base constructor
+				ConstructorDeclarationNode* matching_base_ctor = nullptr;
+				for (auto& base_ctor : base_type_info.constructors_) {
+					if (base_ctor->parameters().size() == base_args.size()) {
+						matching_base_ctor = base_ctor.get();
+						break;
+					}
+				}
+				
+				if (matching_base_ctor) {
+					// Recursively evaluate base constructor
+					std::string base_error;
+					ObjectValue base_obj = evaluate_constructor_with_args(
+						*matching_base_ctor, base_args, base_name, base_type_idx, ctor_bindings, context, base_error);
+					
+					if (!base_error.empty()) {
+						error_out = base_error;
+						return obj;
+					}
+					
+					// Copy base class members to derived object
+					for (const auto& [base_mem_name, base_mem_value] : base_obj.members) {
+						obj.members[base_mem_name] = base_mem_value;
+					}
+				}
+			}
+		}
+		
+		return obj;
 	}
 
 	// Evaluate a single statement with mutable bindings
@@ -1223,8 +1349,39 @@ private:
 					return EvalResult::error("constexpr evaluation failed: double delete detected");
 				}
 				
-				// Mark as freed (destructor calls would happen here in full implementation)
-				alloc_it->second.is_freed = true;
+				// Call destructor if type has one (C++20 constexpr destructor integration)
+				AllocationInfo& alloc = alloc_it->second;
+				const std::string& type_name = alloc.type_name;
+				
+				// Check if this is a struct type with a destructor
+				TypeIndex type_idx = SIZE_MAX;
+				for (size_t i = 0; i < gTypeInfo.size(); ++i) {
+					if (gTypeInfo[i].name_ == type_name) {
+						type_idx = i;
+						break;
+					}
+				}
+				
+				if (type_idx < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_idx];
+					
+					// Check if type has a destructor
+					if (type_info.destructor_) {
+						const DestructorDeclarationNode& dtor = *type_info.destructor_;
+						
+						// In C++20, destructor must be constexpr to be called in constexpr context
+						if (!dtor.is_constexpr()) {
+							return EvalResult::error("Cannot delete object with non-constexpr destructor in constexpr context");
+						}
+						
+						// For constexpr destructors, the call is implicit and effectively a no-op
+						// during constant evaluation (no side effects allowed)
+						// The destructor is validated but not actually executed
+					}
+				}
+				
+				// Mark as freed
+				alloc.is_freed = true;
 				
 				// delete is a statement, return success
 				return EvalResult::from_int(0);
@@ -1607,7 +1764,7 @@ private:
 			if (!operand_result.success) {
 				return operand_result;
 			}
-			return apply_unary_op(operand_result, op);
+			return apply_unary_op_with_context(operand_result, op, context);
 		}
 		
 		// For ternary operators
@@ -1782,7 +1939,83 @@ private:
 			size_t alloc_id = context.next_allocation_id++;
 			context.allocations.emplace(alloc_id, AllocationInfo(alloc_id, type_name, new_expr.is_array(), array_size));
 			
-			// TODO: Initialize with constructor if needed (future enhancement)
+			// Get the allocation we just created
+			AllocationInfo& alloc = context.allocations.at(alloc_id);
+			
+			// Evaluate constructor arguments (if present)
+			if (new_expr.has_initializer() && !new_expr.is_array()) {
+				const auto& init_node = new_expr.initializer().value();
+				
+				// Check if it's a list of arguments (InitializerListNode)
+				if (init_node.is<ExpressionNode>()) {
+					const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+					
+					if (std::holds_alternative<InitializerListNode>(init_expr)) {
+						const auto& init_list = std::get<InitializerListNode>(init_expr);
+						const auto& args = init_list.get_elements();
+						
+						// For built-in types with single argument, evaluate and store
+						if (type_name == "int" || type_name == "long" || type_name == "short" || type_name == "char") {
+							if (args.size() == 1) {
+								auto arg_result = evaluate_expression_with_bindings_mutable(args[0], bindings, context);
+								if (!arg_result.success) {
+									return arg_result;
+								}
+								alloc.data = arg_result.as_int();
+							}
+						} else if (type_name == "bool") {
+							if (args.size() == 1) {
+								auto arg_result = evaluate_expression_with_bindings_mutable(args[0], bindings, context);
+								if (!arg_result.success) {
+									return arg_result;
+								}
+								alloc.data = arg_result.as_bool();
+							}
+						} else if (type_name == "float" || type_name == "double") {
+							if (args.size() == 1) {
+								auto arg_result = evaluate_expression_with_bindings_mutable(args[0], bindings, context);
+								if (!arg_result.success) {
+									return arg_result;
+								}
+								alloc.data = arg_result.as_double();
+							}
+						} else {
+							// Struct type - evaluate constructor
+							TypeIndex type_idx = SIZE_MAX;
+							for (size_t i = 0; i < gTypeInfo.size(); ++i) {
+								if (gTypeInfo[i].name_ == type_name) {
+									type_idx = i;
+									break;
+								}
+							}
+							
+							if (type_idx < gTypeInfo.size()) {
+								const TypeInfo& type_info = gTypeInfo[type_idx];
+								
+								// Find matching constructor by parameter count
+								ConstructorDeclarationNode* matching_ctor = nullptr;
+								for (auto& ctor : type_info.constructors_) {
+									if (ctor->parameters().size() == args.size()) {
+										matching_ctor = ctor.get();
+										break;
+									}
+								}
+								
+								if (matching_ctor && matching_ctor->is_constexpr()) {
+									// Evaluate constructor with arguments
+									std::string ctor_error;
+									ObjectValue obj = evaluate_constructor_with_args(
+										*matching_ctor, args, type_name, type_idx, bindings, context, ctor_error);
+									if (!ctor_error.empty()) {
+										return EvalResult::error(ctor_error);
+									}
+									alloc.data = std::move(obj);
+								}
+							}
+						}
+					}
+				}
+			}
 			
 			return EvalResult::from_pointer(PointerValue(alloc_id, new_expr.is_array(), type_name));
 		}
@@ -1937,6 +2170,49 @@ public:
 
 		// Unsupported operator
 		return EvalResult::error("Unary operator '" + std::string(op) + "' not supported in constant expressions");
+	}
+	
+	// Apply unary operator with context (for dereference operator)
+	static EvalResult apply_unary_op_with_context(const EvalResult& operand, std::string_view op, EvaluationContext& context) {
+		if (op == "*") {
+			// Dereference operator - get value from pointer
+			if (!std::holds_alternative<PointerValue>(operand.value)) {
+				return EvalResult::error("Cannot dereference non-pointer value");
+			}
+			
+			const PointerValue& ptr = std::get<PointerValue>(operand.value);
+			
+			// Find the allocation
+			auto alloc_it = context.allocations.find(ptr.allocation_id);
+			if (alloc_it == context.allocations.end()) {
+				return EvalResult::error("Dereference of invalid pointer");
+			}
+			
+			const AllocationInfo& alloc = alloc_it->second;
+			
+			// Check if already freed
+			if (alloc.is_freed) {
+				return EvalResult::error("Dereference of deleted pointer");
+			}
+			
+			// Return the value
+			if (std::holds_alternative<long long>(alloc.data)) {
+				return EvalResult::from_int(std::get<long long>(alloc.data));
+			} else if (std::holds_alternative<unsigned long long>(alloc.data)) {
+				return EvalResult::from_uint(std::get<unsigned long long>(alloc.data));
+			} else if (std::holds_alternative<double>(alloc.data)) {
+				return EvalResult::from_double(std::get<double>(alloc.data));
+			} else if (std::holds_alternative<bool>(alloc.data)) {
+				return EvalResult::from_bool(std::get<bool>(alloc.data));
+			} else if (std::holds_alternative<ObjectValue>(alloc.data)) {
+				return EvalResult::from_object(std::get<ObjectValue>(alloc.data));
+			} else {
+				return EvalResult::error("Array dereference requires subscript operator");
+			}
+		}
+		
+		// For other operators, use regular apply_unary_op
+		return apply_unary_op(operand, op);
 	}
 };
 
