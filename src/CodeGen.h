@@ -2994,7 +2994,11 @@ private:
 						op.result = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
 						// Use the actual type name (which may be an instantiated template name like Container_int)
-						op.global_name = struct_type_it->second->name_ + "::" + std::string(qualifiedIdNode.name());
+						StringBuilder qualified_name_sb;
+						qualified_name_sb.append(struct_type_it->second->name_);
+						qualified_name_sb.append("::");
+						qualified_name_sb.append(qualifiedIdNode.name());
+						op.global_name = qualified_name_sb.commit();
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 						// Return the temp variable that will hold the loaded value
