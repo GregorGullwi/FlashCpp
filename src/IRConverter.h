@@ -4341,11 +4341,10 @@ private:
 		bool has_typed_payload = false;
 		
 		if (instruction.hasTypedPayload()) {
-			try {
-				op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
+			const GlobalLoadOp* typed_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload());
+			if (typed_op) {
+				op = *typed_op;
 				has_typed_payload = true;
-			} catch (...) {
-				has_typed_payload = false;
 			}
 		}
 		
@@ -7658,11 +7657,10 @@ private:
 		bool has_typed_payload = false;
 		
 		if (instruction.hasTypedPayload()) {
-			try {
-				op = std::any_cast<const StringLiteralOp&>(instruction.getTypedPayload());
+			const StringLiteralOp* typed_op = std::any_cast<StringLiteralOp>(&instruction.getTypedPayload());
+			if (typed_op) {
+				op = *typed_op;
 				has_typed_payload = true;
-			} catch (...) {
-				has_typed_payload = false;
 			}
 		}
 		
@@ -7726,11 +7724,10 @@ private:
 		bool has_typed_payload = false;
 		
 		if (instruction.hasTypedPayload()) {
-			try {
-				op = std::any_cast<const MemberLoadOp&>(instruction.getTypedPayload());
+			const MemberLoadOp* typed_op = std::any_cast<MemberLoadOp>(&instruction.getTypedPayload());
+			if (typed_op) {
+				op = *typed_op;
 				has_typed_payload = true;
-			} catch (...) {
-				has_typed_payload = false;
 			}
 		}
 		
@@ -7886,12 +7883,12 @@ private:
 		MemberStoreOp op;
 		bool has_typed_payload = false;
 		
-		try {
-			op = instruction.getTypedPayload<MemberStoreOp>();
-			has_typed_payload = true;
-		} catch (...) {
-			// Fall back to old format parsing
-			has_typed_payload = false;
+		if (instruction.hasTypedPayload()) {
+			const MemberStoreOp* typed_op = std::any_cast<MemberStoreOp>(&instruction.getTypedPayload());
+			if (typed_op) {
+				op = *typed_op;
+				has_typed_payload = true;
+			}
 		}
 		
 		if (!has_typed_payload) {
@@ -8425,11 +8422,10 @@ private:
 		bool has_typed_payload = false;
 		
 		if (instruction.hasTypedPayload()) {
-			try {
-				op = std::any_cast<const FunctionAddressOp&>(instruction.getTypedPayload());
+			const FunctionAddressOp* typed_op = std::any_cast<FunctionAddressOp>(&instruction.getTypedPayload());
+			if (typed_op) {
+				op = *typed_op;
 				has_typed_payload = true;
-			} catch (...) {
-				has_typed_payload = false;
 			}
 		}
 		
