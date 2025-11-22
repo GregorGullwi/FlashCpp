@@ -31,9 +31,10 @@ struct PointerValue {
 	size_t allocation_id;  // Unique ID for this allocation
 	bool is_array;         // true for new[], false for new
 	std::string type_name; // Type of pointed-to object
+	size_t offset;         // Offset from base (for pointer arithmetic)
 	
-	PointerValue(size_t id, bool arr, std::string type)
-		: allocation_id(id), is_array(arr), type_name(std::move(type)) {}
+	PointerValue(size_t id, bool arr, std::string type, size_t off = 0)
+		: allocation_id(id), is_array(arr), type_name(std::move(type)), offset(off) {}
 };
 
 // Allocation tracking for constexpr new/delete
