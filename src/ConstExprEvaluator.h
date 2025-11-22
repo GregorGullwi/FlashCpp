@@ -26,6 +26,40 @@ struct ObjectValue {
 	ObjectValue(std::string name) : type_name(std::move(name)) {}
 };
 
+// Pointer value for constexpr new/delete (C++20)
+struct PointerValue {
+	size_t allocation_id;  // Unique ID for this allocation
+	bool is_array;         // true for new[], false for new
+	std::string type_name; // Type of pointed-to object
+	
+	PointerValue(size_t id, bool arr, std::string type)
+		: allocation_id(id), is_array(arr), type_name(std::move(type)) {}
+};
+
+// Allocation tracking for constexpr new/delete
+struct AllocationInfo {
+	size_t id;                    // Unique allocation ID
+	std::string type_name;        // Type that was allocated
+	bool is_array;                // Whether this is an array allocation
+	size_t array_size;            // Size of array (1 for non-array)
+	std::variant<ObjectValue, std::vector<ObjectValue>> data;  // The allocated object(s)
+	bool is_freed;                // Whether delete was called
+	
+	AllocationInfo(size_t allocation_id, std::string type, bool arr, size_t size)
+		: id(allocation_id), type_name(std::move(type)), is_array(arr), 
+		  array_size(size), is_freed(false) {
+		if (is_array) {
+			std::vector<ObjectValue> objects;
+			for (size_t i = 0; i < array_size; ++i) {
+				objects.emplace_back(type_name);
+			}
+			data = std::move(objects);
+		} else {
+			data = ObjectValue(type_name);
+		}
+	}
+};
+
 // Result of constant expression evaluation
 struct EvalResult {
 	bool success;
@@ -34,7 +68,8 @@ struct EvalResult {
 		long long,               // Signed integer constant
 		unsigned long long,      // Unsigned integer constant
 		double,                  // Floating-point constant
-		ObjectValue              // Struct/class instance
+		ObjectValue,             // Struct/class instance
+		PointerValue             // Pointer from constexpr new (C++20)
 	> value;
 	std::string error_message;
 
@@ -57,6 +92,10 @@ struct EvalResult {
 
 	static EvalResult from_object(ObjectValue obj) {
 		return EvalResult{true, std::move(obj), ""};
+	}
+
+	static EvalResult from_pointer(PointerValue ptr) {
+		return EvalResult{true, std::move(ptr), ""};
 	}
 
 	static EvalResult error(const std::string& msg) {
@@ -143,9 +182,24 @@ struct EvaluationContext {
 	// Track current recursion depth
 	size_t current_depth = 0;
 
+	// C++20 constexpr new/delete tracking
+	size_t next_allocation_id = 1;  // Start at 1 (0 = nullptr)
+	std::unordered_map<size_t, AllocationInfo> allocations;  // allocation_id -> info
+	
 	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
 		: symbols(&symbol_table) {}
+		
+	// Check for memory leaks at end of constexpr evaluation
+	std::optional<std::string> check_for_leaks() const {
+		for (const auto& [id, info] : allocations) {
+			if (!info.is_freed) {
+				return "constexpr evaluation failed: memory leak detected (allocation id " + 
+				       std::to_string(id) + " of type '" + info.type_name + "' not freed)";
+			}
+		}
+		return std::nullopt;
+	}
 };
 
 // Main constant expression evaluator class
@@ -537,6 +591,14 @@ private:
 		// Support multiple statements for C++14/C++20 constexpr functions with loops and local variables
 		auto result = evaluate_block_with_bindings(statements, param_bindings, context);
 		context.current_depth--;
+		
+		// C++20: Check for memory leaks from constexpr new/delete
+		if (result.success) {
+			if (auto leak_error = context.check_for_leaks()) {
+				return EvalResult::error(*leak_error);
+			}
+		}
+		
 		return result;
 	}
 
@@ -1122,6 +1184,53 @@ private:
 			return evaluate_while_loop(stmt_node.as<WhileStatementNode>(), bindings, context);
 		}
 		
+		// Check if it's a delete expression (C++20 constexpr delete)
+		// Must check BEFORE general expression handling
+		if (stmt_node.is<ExpressionNode>()) {
+			const ExpressionNode& expr = stmt_node.as<ExpressionNode>();
+			if (std::holds_alternative<DeleteExpressionNode>(expr)) {
+				const auto& delete_expr = std::get<DeleteExpressionNode>(expr);
+				
+				// Evaluate the pointer expression
+				auto ptr_result = evaluate_expression_with_bindings_mutable(delete_expr.expr(), bindings, context);
+				if (!ptr_result.success) {
+					return ptr_result;
+				}
+				
+				// Check if it's a pointer value
+				if (!std::holds_alternative<PointerValue>(ptr_result.value)) {
+					return EvalResult::error("delete requires a pointer from constexpr new");
+				}
+				
+				const PointerValue& ptr = std::get<PointerValue>(ptr_result.value);
+				
+				// Check for array/non-array mismatch
+				if (ptr.is_array && !delete_expr.is_array()) {
+					return EvalResult::error("delete on array pointer requires delete[]");
+				}
+				if (!ptr.is_array && delete_expr.is_array()) {
+					return EvalResult::error("delete[] on non-array pointer requires delete");
+				}
+				
+				// Find the allocation
+				auto alloc_it = context.allocations.find(ptr.allocation_id);
+				if (alloc_it == context.allocations.end()) {
+					return EvalResult::error("delete on invalid pointer");
+				}
+				
+				// Check for double delete
+				if (alloc_it->second.is_freed) {
+					return EvalResult::error("constexpr evaluation failed: double delete detected");
+				}
+				
+				// Mark as freed (destructor calls would happen here in full implementation)
+				alloc_it->second.is_freed = true;
+				
+				// delete is a statement, return success
+				return EvalResult::from_int(0);
+			}
+		}
+		
 		// Check if it's an expression statement (e.g., assignment)
 		if (stmt_node.is<ExpressionNode>()) {
 			auto result = evaluate_expression_with_bindings_mutable(stmt_node, bindings, context);
@@ -1603,6 +1712,78 @@ private:
 			}
 			
 			return EvalResult::error("Unsupported member value type");
+		}
+		
+		// For new expressions (C++20 constexpr new)
+		if (std::holds_alternative<NewExpressionNode>(expr)) {
+			const auto& new_expr = std::get<NewExpressionNode>(expr);
+			
+			// Get type name
+			const ASTNode& type_node = new_expr.type_node();
+			std::string type_name;
+			
+			// Extract type name from TypeSpecifierNode
+			if (type_node.is<TypeSpecifierNode>()) {
+				const auto& type_spec = type_node.as<TypeSpecifierNode>();
+				Type type = type_spec.type();
+				
+				// Handle built-in types
+				if (type == Type::Int) {
+					type_name = "int";
+				} else if (type == Type::Float) {
+					type_name = "float";
+				} else if (type == Type::Double) {
+					type_name = "double";
+				} else if (type == Type::Bool) {
+					type_name = "bool";
+				} else if (type == Type::Char) {
+					type_name = "char";
+				} else if (type == Type::Long) {
+					type_name = "long";
+				} else if (type == Type::Short) {
+					type_name = "short";
+				} else if (type == Type::Void) {
+					type_name = "void";
+				} else if (type == Type::Struct) {
+					// For struct types, use type_index
+					TypeIndex idx = type_spec.type_index();
+					if (idx < gTypeInfo.size()) {
+						type_name = gTypeInfo[idx].name_;
+					} else {
+						return EvalResult::error("Unknown struct type in constexpr new expression");
+					}
+				} else {
+					return EvalResult::error("Unsupported type in constexpr new expression");
+				}
+			} else {
+				return EvalResult::error("Unsupported type node in constexpr new expression");
+			}
+			
+			// Determine array size
+			size_t array_size = 1;
+			if (new_expr.is_array()) {
+				if (!new_expr.size_expr().has_value()) {
+					return EvalResult::error("Array new requires size expression");
+				}
+				
+				auto size_result = evaluate_expression_with_bindings_mutable(new_expr.size_expr().value(), bindings, context);
+				if (!size_result.success) {
+					return size_result;
+				}
+				
+				array_size = static_cast<size_t>(size_result.as_int());
+				if (array_size == 0) {
+					return EvalResult::error("Array size must be greater than zero in constexpr new");
+				}
+			}
+			
+			// Allocate and track
+			size_t alloc_id = context.next_allocation_id++;
+			context.allocations.emplace(alloc_id, AllocationInfo(alloc_id, type_name, new_expr.is_array(), array_size));
+			
+			// TODO: Initialize with constructor if needed (future enhancement)
+			
+			return EvalResult::from_pointer(PointerValue(alloc_id, new_expr.is_array(), type_name));
 		}
 		
 		// For literals and other expressions without parameters, evaluate normally
