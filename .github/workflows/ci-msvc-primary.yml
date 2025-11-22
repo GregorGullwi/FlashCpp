@@ -24,17 +24,6 @@ jobs:
           # Build the solution with MSBuild (Debug)
           msbuild FlashCpp.sln /p:Configuration=Debug /m
 
-      - name: Locate and run test executable
-        shell: powershell
-        run: |
-          # Find the first test .exe that looks like the test runner and run it
-          $testExe = Get-ChildItem -Path . -Filter "test*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $testExe) {
-            Write-Error "Test executable not found. Search output:"; Get-ChildItem -Path . -Filter "*.exe" -Recurse | Select-Object -First 50; exit 1
-          }
-          Write-Host "Found test exe: $($testExe.FullName)"
-          & $testExe.FullName
-
   windows-test:
     name: Windows - MSVC - Test
     runs-on: windows-latest
@@ -51,13 +40,15 @@ jobs:
           # Build the solution with MSBuild (Test)
           msbuild FlashCpp.sln /p:Configuration=Test /m
 
-      - name: Locate and run test executable
+      - name: Run test executable
         shell: powershell
         run: |
-          # Find the first test .exe that looks like the test runner and run it
-          $testExe = Get-ChildItem -Path . -Filter "test*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $testExe) {
-            Write-Error "Test executable not found. Search output:"; Get-ChildItem -Path . -Filter "*.exe" -Recurse | Select-Object -First 50; exit 1
+          # Run the test executable (test.exe from Test configuration)
+          $testExe = "x64\Test\test.exe"
+          if (-not (Test-Path $testExe)) {
+            Write-Error "Test executable not found at $testExe"
+            Get-ChildItem -Path x64 -Recurse -Filter "*.exe" | Select-Object -First 20
+            exit 1
           }
-          Write-Host "Found test exe: $($testExe.FullName)"
-          & $testExe.FullName
+          Write-Host "Running test exe: $testExe"
+          & $testExe
