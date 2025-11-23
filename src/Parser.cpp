@@ -11163,6 +11163,33 @@ ParseResult Parser::parse_template_declaration() {
 
 		FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
 
+		// Check for trailing requires clause: template<typename T> T func(T x) requires constraint
+		std::optional<ASTNode> trailing_requires_clause;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "requires") {
+			Token requires_token = *peek_token();
+			consume_token(); // consume 'requires'
+			
+			// Parse the constraint expression
+			auto constraint_result = parse_expression();
+			if (constraint_result.is_error()) {
+				return constraint_result;
+			}
+			
+			// Create RequiresClauseNode for trailing requires
+			trailing_requires_clause = emplace_node<RequiresClauseNode>(
+				*constraint_result.node(),
+				requires_token
+			);
+			
+			std::cerr << "DEBUG: Parsed trailing requires clause" << std::endl;
+		}
+		
+		// If we have a trailing requires clause, it takes precedence over the leading one
+		// (or both could be combined in a full implementation, but for simplicity we use trailing if present)
+		if (trailing_requires_clause.has_value()) {
+			requires_clause = trailing_requires_clause;
+		}
+
 		std::cerr << "DEBUG: Checking for function body or semicolon" << std::endl;
 		if (peek_token().has_value()) {
 			std::cerr << "DEBUG: Next token: '" << peek_token()->value() << "'" << std::endl;
