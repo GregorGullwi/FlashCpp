@@ -1243,8 +1243,17 @@ public:
 			uint32_t desc_offset = base_desc_offsets[i];
 			
 			// Add relocation for pTypeDescriptor (offset 0)
-			std::string target_type_desc = (i == 0) ? type_descriptor_symbol : 
-			                                ("??_R0.?AV" + std::string(base_class_names[i-1]) + "@@8");
+			// i=0 is self, i>=1 are base classes
+			std::string target_type_desc;
+			if (i == 0) {
+				target_type_desc = type_descriptor_symbol;
+			} else if (i > 0 && i - 1 < base_class_names.size()) {
+				target_type_desc = "??_R0.?AV" + std::string(base_class_names[i-1]) + "@@8";
+			} else {
+				// Defensive: should not happen, but skip if out of bounds
+				continue;
+			}
+			
 			{
 				uint32_t reloc_offset = desc_offset;
 				uint32_t symbol_index = get_or_create_symbol_index(target_type_desc);
