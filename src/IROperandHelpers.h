@@ -299,13 +299,13 @@ inline bool parseOperands(const IrInstruction& inst, MemberLoadOp& out) {
 
 // Parse string literal operation
 inline bool parseStringLiteralOp(const IrInstruction& inst, StringLiteralOp& out) {
-	// StringLiteral must have exactly 2 operands
+	// StringLiteral must have exactly 2 operands (legacy format)
 	if (inst.getOperandCount() != 2) {
 		return false;
 	}
 
 	if (!inst.isOperandType<TempVar>(0)) return false;
-	out.result.value = inst.getOperandAs<TempVar>(0);
+	out.result = inst.getOperandAs<TempVar>(0);
 
 	if (!inst.isOperandType<std::string_view>(1)) return false;
 	out.content = inst.getOperandAs<std::string_view>(1);

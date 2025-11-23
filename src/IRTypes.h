@@ -641,6 +641,22 @@ struct DestructorCallOp {
 	std::variant<std::string_view, TempVar> object;  // Object instance ('this' or temp)
 };
 
+// Virtual function call through vtable
+struct VirtualCallOp {
+	TempVar result;                                  // Result temporary variable
+	Type object_type;                                // Type of the object
+	int object_size;                                 // Size of object in bits
+	std::variant<std::string_view, TempVar> object;  // Object instance ('this')
+	int vtable_index;                                // Index into vtable
+	std::vector<TypedValue> arguments;               // Call arguments
+};
+
+// String literal
+struct StringLiteralOp {
+	std::variant<std::string_view, TempVar> result;  // Result variable
+	std::string_view content;                         // String content
+};
+
 // Loop begin (marks loop start with labels for break/continue)
 struct LoopBeginOp {
 	std::string_view loop_start_label;                    // Label for loop start
@@ -710,12 +726,6 @@ struct ConversionOp {
 	Type to_type = Type::Void;  // 4 bytes
 	int to_size = 0;     // 4 bytes
 	TempVar result;      // 4 bytes
-};
-
-// String literal
-struct StringLiteralOp {
-	TypedValue result;           // Result with type, size, and temp var (pointer to string)
-	std::string_view content;    // String content
 };
 
 // Global variable load
@@ -1493,42 +1503,49 @@ public:
 		case IrOpcode::VirtualCall:
 		{
 			// %result = virtual_call %object, vtable_index, [args...]
-			// Format: [result_var, object_type, object_size, object_name, vtable_index, arg1_type, arg1_size, arg1_value, ...]
-			if (getOperandCount() >= 5) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-				else if (isOperandType<std::string_view>(0))
-					oss << getOperandAs<std::string_view>(0);
+			const VirtualCallOp& op = getTypedPayload<VirtualCallOp>();
+			oss << '%' << op.result.var_number << " = virtual_call ";
 
-				oss << " = virtual_call ";
+			// Object type and size
+			auto type_info = gNativeTypes.find(op.object_type);
+			if (type_info != gNativeTypes.end()) {
+				oss << type_info->second->name_;
+			}
+			oss << op.object_size << " %";
 
-				// Object (this pointer)
-				oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " %";
-				if (isOperandType<TempVar>(3))
-					oss << getOperandAs<TempVar>(3).var_number;
-				else if (isOperandType<std::string_view>(3))
-					oss << getOperandAs<std::string_view>(3);
+			// Object (this pointer)
+			if (std::holds_alternative<TempVar>(op.object))
+				oss << std::get<TempVar>(op.object).var_number;
+			else if (std::holds_alternative<std::string_view>(op.object))
+				oss << std::get<std::string_view>(op.object);
 
-				// VTable index
-				oss << ", vtable[" << getOperandAs<int>(4) << "]";
+			// VTable index
+			oss << ", vtable[" << op.vtable_index << "]";
 
-				// Arguments (if any)
-				if (getOperandCount() > 5) {
-					oss << "(";
-					for (size_t i = 5; i < getOperandCount(); i += 3) {
-						if (i > 5) oss << ", ";
-						oss << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
-
-						if (isOperandType<unsigned long long>(i + 2))
-							oss << getOperandAs<unsigned long long>(i + 2);
-						else if (isOperandType<TempVar>(i + 2))
-							oss << '%' << getOperandAs<TempVar>(i + 2).var_number;
-						else if (isOperandType<std::string_view>(i + 2))
-							oss << '%' << getOperandAs<std::string_view>(i + 2);
+			// Arguments (if any)
+			if (!op.arguments.empty()) {
+				oss << "(";
+				for (size_t i = 0; i < op.arguments.size(); ++i) {
+					if (i > 0) oss << ", ";
+				
+					const auto& arg = op.arguments[i];
+				
+					// Type and size
+					auto arg_type_info = gNativeTypes.find(arg.type);
+					if (arg_type_info != gNativeTypes.end()) {
+						oss << arg_type_info->second->name_;
 					}
-					oss << ")";
+					oss << arg.size_in_bits << " ";
+				
+					// Value
+					if (std::holds_alternative<unsigned long long>(arg.value))
+						oss << std::get<unsigned long long>(arg.value);
+					else if (std::holds_alternative<TempVar>(arg.value))
+						oss << '%' << std::get<TempVar>(arg.value).var_number;
+					else if (std::holds_alternative<std::string_view>(arg.value))
+						oss << '%' << std::get<std::string_view>(arg.value);
 				}
+				oss << ")";
 			}
 		}
 		break;
@@ -1536,21 +1553,18 @@ public:
 		case IrOpcode::StringLiteral:
 		{
 			// %result = string_literal "content"
-			// Format: [result_var, string_content]
-			assert(getOperandCount() == 2 && "StringLiteral instruction must have exactly 2 operands");
-			if (getOperandCount() >= 2) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-				else if (isOperandType<std::string_view>(0))
-					oss << getOperandAs<std::string_view>(0);
+			const StringLiteralOp& op = getTypedPayload<StringLiteralOp>();
+			oss << '%';
+		
+			if (std::holds_alternative<TempVar>(op.result))
+				oss << std::get<TempVar>(op.result).var_number;
+			else if (std::holds_alternative<std::string_view>(op.result))
+				oss << std::get<std::string_view>(op.result);
 
-				oss << " = string_literal ";
-				oss << getOperandAs<std::string_view>(1);
-			}
+			oss << " = string_literal " << op.content;
 		}
 		break;
-
+		
 		case IrOpcode::HeapAlloc:
 		{
 			// %result = heap_alloc [Type][Size][PointerDepth]

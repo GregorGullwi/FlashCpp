@@ -3773,39 +3773,24 @@ private:
 	}
 
 	void handleVirtualCall(const IrInstruction& instruction) {
-		// Virtual call format: [result_var, object_type, object_size, object_name, vtable_index, arg1_type, arg1_size, arg1_value, ...]
-		assert(instruction.getOperandCount() >= 5 && "VirtualCall must have at least 5 operands");
+		// Extract VirtualCallOp typed payload
+		const VirtualCallOp& op = instruction.getTypedPayload<VirtualCallOp>();
 
 		flushAllDirtyRegisters();
 
-		// Get operands
-		auto result_var = instruction.getOperand(0);
-		//auto object_type = instruction.getOperandAs<Type>(1);
-		//auto object_size = instruction.getOperandAs<int>(2);
-		auto object_name_operand = instruction.getOperand(3);
-		int vtable_index = instruction.getOperandAs<int>(4);
-
 		// Get result offset
 		int result_offset = 0;
-		if (std::holds_alternative<TempVar>(result_var)) {
-			const TempVar temp_var = std::get<TempVar>(result_var);
-			result_offset = getStackOffsetFromTempVar(temp_var);
-			variable_scopes.back().identifier_offset[temp_var.name()] = result_offset;
-		} else {
-			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
-		}
+		const TempVar& result_var = op.result;
+		result_offset = getStackOffsetFromTempVar(result_var);
+		variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
 
 		// Get object offset
 		int object_offset = 0;
-		if (std::holds_alternative<TempVar>(object_name_operand)) {
-			const TempVar temp_var = std::get<TempVar>(object_name_operand);
+		if (std::holds_alternative<TempVar>(op.object)) {
+			const TempVar& temp_var = std::get<TempVar>(op.object);
 			object_offset = getStackOffsetFromTempVar(temp_var);
-		} else if (std::holds_alternative<std::string>(object_name_operand)) {
-			const std::string& var_name_str = std::get<std::string>(object_name_operand);
-			std::string_view var_name(var_name_str);
-			object_offset = variable_scopes.back().identifier_offset[var_name];
 		} else {
-			std::string_view var_name = std::get<std::string_view>(object_name_operand);
+			std::string_view var_name = std::get<std::string_view>(op.object);
 			object_offset = variable_scopes.back().identifier_offset[var_name];
 		}
 
@@ -3820,7 +3805,7 @@ private:
 
 		// Step 2: Load function pointer from vtable into RAX
 		// MOV RAX, [RAX + vtable_index * 8]
-		int vtable_offset = vtable_index * 8;
+		int vtable_offset = op.vtable_index * 8;
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0x8B); // MOV r64, r/m64
 		if (vtable_offset >= -128 && vtable_offset <= 127) {
@@ -3836,22 +3821,19 @@ private:
 
 		// Step 3: Set up 'this' pointer in RCX (first parameter in Windows x64 calling convention)
 		// LEA RCX, [RBP + object_offset]
-		object_offset = 0; // Reset object_offset (we modified it in step 1)
-		if (std::holds_alternative<TempVar>(object_name_operand)) {
-			const TempVar temp_var = std::get<TempVar>(object_name_operand);
+		// Need to recalculate object_offset since we used it in step 1
+		object_offset = 0;
+		if (std::holds_alternative<TempVar>(op.object)) {
+			const TempVar& temp_var = std::get<TempVar>(op.object);
 			object_offset = getStackOffsetFromTempVar(temp_var);
-		} else if (std::holds_alternative<std::string>(object_name_operand)) {
-			const std::string& var_name_str = std::get<std::string>(object_name_operand);
-			std::string_view var_name(var_name_str);
-			object_offset = variable_scopes.back().identifier_offset[var_name];
 		} else {
-			std::string_view var_name = std::get<std::string_view>(object_name_operand);
+			std::string_view var_name = std::get<std::string_view>(op.object);
 			object_offset = variable_scopes.back().identifier_offset[var_name];
 		}
 
 		emitLeaFromFrame(X64Register::RCX, object_offset);
 
-		// TODO: Handle additional function arguments (operands 5+)
+		// TODO: Handle additional function arguments (op.arguments)
 		// For now, we only support virtual calls with no additional arguments beyond 'this'
 
 		// Step 4: Call through function pointer in RAX
@@ -7595,9 +7577,10 @@ private:
 
 	void handleStringLiteral(const IrInstruction& instruction) {
 		// Extract typed payload - all StringLiteral instructions use typed payloads
-		const StringLiteralOp& op = std::any_cast<const StringLiteralOp&>(instruction.getTypedPayload());
+		const StringLiteralOp& op = instruction.getTypedPayload<StringLiteralOp>();
 		
-		auto result_var = std::get<TempVar>(op.result.value);
+		// Get result variable - should always be TempVar
+		TempVar result_var = std::get<TempVar>(op.result);
 		auto string_content = op.content;
 
 		// Add the string literal to the .rdata section and get its symbol name

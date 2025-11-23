@@ -950,12 +950,19 @@ private:
 								ctor_op.arguments.push_back(std::move(tv));
 							}
 						}
+						// If there's an explicit initializer, generate the constructor call
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 					}
-					// If no explicit initializer, call default constructor (no args)
-
-					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+					// If no explicit initializer and this is NOT an implicit copy/move constructor,
+					// call default constructor (no args)
+					// For implicit copy/move constructors, the base constructor call is generated
+					// in the implicit constructor generation code above (lines 1000-1023)
+					else if (!node.is_implicit()) {
+						// Call default constructor with no arguments
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+					}
 				}
-
+				
 				// Step 1.5: Initialize vptr if this class has virtual functions
 				// This must happen after base constructor calls (which set up base vptr)
 				// but before member initialization
@@ -3200,11 +3207,9 @@ private:
 		// Create a temporary variable to hold the address of the string
 		TempVar result_var = var_counter.next();
 
-		// Add StringLiteral IR instruction
+		// Add StringLiteral IR instruction using StringLiteralOp
 		StringLiteralOp op;
-		op.result.type = Type::Char;
-		op.result.size_in_bits = 64;  // Pointer size
-		op.result.value = result_var;
+		op.result = result_var;
 		op.content = stringLiteralNode.value();
 
 		ir_.addInstruction(IrInstruction(IrOpcode::StringLiteral, std::move(op), Token()));
@@ -5064,34 +5069,43 @@ private:
 		TempVar ret_var = var_counter.next();
 
 		if (is_virtual_call && vtable_index >= 0) {
-			// Generate virtual function call
-			// Format: [result_var, object_type, object_size, object_name, vtable_index, arg1_type, arg1_size, arg1_value, ...]
-			irOperands.emplace_back(ret_var);
-			irOperands.emplace_back(object_type.type());
-			irOperands.emplace_back(static_cast<int>(object_type.size_in_bits()));
-			irOperands.emplace_back(object_name);
-			irOperands.emplace_back(vtable_index);
+			// Generate virtual function call using VirtualCallOp
+			VirtualCallOp vcall_op;
+			vcall_op.result = ret_var;
+			vcall_op.object_type = object_type.type();
+			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
+			vcall_op.object = object_name;
+			vcall_op.vtable_index = vtable_index;
 
 			// Generate IR for function arguments
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 				auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+				
 				// For variables, we need to add the type and size
 				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 					const auto& decl_node = symbol->as<DeclarationNode>();
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-					irOperands.emplace_back(type_node.type());
-					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-					irOperands.emplace_back(identifier.name());
+					
+					TypedValue tv;
+					tv.type = type_node.type();
+					tv.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					tv.value = identifier.name();
+					vcall_op.arguments.push_back(tv);
 				}
 				else {
-					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+					// Convert from IrOperand to TypedValue
+					// Format: [type, size, value]
+					if (argumentIrOperands.size() >= 3) {
+						TypedValue tv = toTypedValue(argumentIrOperands);
+						vcall_op.arguments.push_back(tv);
+					}
 				}
 			});
 
 			// Add the virtual call instruction
-			ir_.addInstruction(IrInstruction(IrOpcode::VirtualCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::VirtualCall, std::move(vcall_op), memberFunctionCallNode.called_from()));
 		} else {
 			// Generate regular (non-virtual) member function call using CallOp typed payload
 			
