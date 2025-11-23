@@ -1,5 +1,8 @@
+#pragma once
+
 // Runtime support for dynamic_cast
-// This file provides runtime helper functions for RTTI-based dynamic_cast
+// This file provides inline runtime helper functions for RTTI-based dynamic_cast
+// These functions are inlined to keep the compiler header-only
 
 #include <cstdint>
 #include <cstddef>
@@ -18,7 +21,7 @@ struct RTTIInfo {
 
 // Check if source_rtti is the same as or derived from target_rtti
 // Returns true if the cast should succeed, false otherwise
-extern "C" bool __dynamic_cast_check(RTTIInfo* source_rtti, RTTIInfo* target_rtti) {
+extern "C" inline bool __dynamic_cast_check(RTTIInfo* source_rtti, RTTIInfo* target_rtti) {
     // Null check
     if (!source_rtti || !target_rtti) {
         return false;
@@ -60,6 +63,6 @@ extern "C" bool __dynamic_cast_check(RTTIInfo* source_rtti, RTTIInfo* target_rtt
 
 // Throw bad_cast exception for failed reference casts
 // This function never returns - it always throws
-extern "C" [[noreturn]] void __dynamic_cast_throw_bad_cast() {
+extern "C" [[noreturn]] inline void __dynamic_cast_throw_bad_cast() {
     throw std::bad_cast();
 }
