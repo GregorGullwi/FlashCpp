@@ -483,7 +483,7 @@ class coffi : public coffi_strings,
          * @param[in] name The section name
          * @return A pointer to the newly created section.
          */
-    section* add_section(const std::string& name)
+    section* add_section(std::string_view name)
     {
         std::unique_ptr<section> sec;
         if (architecture_ == COFFI_ARCHITECTURE_TI) {

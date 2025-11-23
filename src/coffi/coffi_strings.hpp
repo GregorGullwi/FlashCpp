@@ -88,14 +88,14 @@ class coffi_strings : public virtual string_to_name_provider
 
     //---------------------------------------------------------------------
     //! @copydoc string_to_name_provider::name_to_string()
-    virtual void name_to_string(const std::string& name, char* str)
+    virtual void name_to_string(std::string_view name, char* str)
     {
         return name_to_string_internal(name, str, false);
     }
 
     //---------------------------------------------------------------------
     //! @copydoc string_to_name_provider::name_to_section_string()
-    virtual void name_to_section_string(const std::string& name, char* str)
+    virtual void name_to_section_string(std::string_view name, char* str)
     {
         return name_to_string_internal(name, str, true);
     }
@@ -191,7 +191,7 @@ class coffi_strings : public virtual string_to_name_provider
 
     //---------------------------------------------------------------------
     virtual void
-    name_to_string_internal(const std::string& name, char* str, bool is_section)
+    name_to_string_internal(std::string_view name, char* str, bool is_section)
     {
         size_t size = name.size();
         if (size > COFFI_NAME_SIZE) {
@@ -212,7 +212,7 @@ class coffi_strings : public virtual string_to_name_provider
                     strings_ = std::move(new_strings);
                 }
             }
-            std::copy(name.c_str(), name.c_str() + size,
+            std::copy(name.data(), name.data() + size,
                       strings_.get() + get_strings_size());
             set_strings_size(get_strings_size() + narrow_cast<uint32_t>(size));
             if (is_section) {

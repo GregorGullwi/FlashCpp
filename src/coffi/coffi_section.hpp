@@ -73,7 +73,7 @@ class section
     //! @endaccessors
 
     virtual const std::string& get_name() const                             = 0;
-    virtual void               set_name(const std::string& name)            = 0;
+    virtual void               set_name(std::string_view name)              = 0;
     virtual const char*        get_data() const                             = 0;
     virtual void               set_data(const char* data, uint32_t size)    = 0;
     virtual void               set_data(const std::string& data)            = 0;
@@ -147,8 +147,9 @@ template <class T> class section_impl_tmpl : public section
     const std::string& get_name() const { return name; }
 
     //------------------------------------------------------------------------------
-    void set_name(const std::string& value)
+    void set_name(std::string_view value)
     {
+        name = value;
         stn_->name_to_section_string(value, header.name);
     }
 
