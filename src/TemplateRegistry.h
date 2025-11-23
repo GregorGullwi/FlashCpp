@@ -736,22 +736,145 @@ extern ConceptRegistry gConceptRegistry;
 // Constraint Evaluation for C++20 Concepts
 // ============================================================================
 
-// Basic constraint evaluator for C++20 concepts
-// For now, this is a simple stub that always returns true
-// Full implementation would evaluate type traits, expressions, etc.
-inline bool evaluateConstraint(const ASTNode& constraint_expr, 
-                               const std::vector<TemplateTypeArg>& template_args) {
-	// TODO: Implement full constraint evaluation
-	// For now, we accept all constraints (no constraint checking)
-	// This allows templates with requires clauses to compile
+// Result of constraint evaluation
+struct ConstraintEvaluationResult {
+	bool satisfied;
+	std::string error_message;
+	std::string failed_requirement;
+	std::string suggestion;
 	
-	// Future implementation should:
-	// 1. Evaluate concept references (look up concept, substitute args, evaluate)
-	// 2. Evaluate type trait expressions (std::is_integral_v<T>, etc.)
-	// 3. Evaluate conjunctions/disjunctions (&& and ||)
-	// 4. Evaluate requires expressions with requirements
+	static ConstraintEvaluationResult success() {
+		return ConstraintEvaluationResult{true, "", "", ""};
+	}
 	
-	return true;  // Always satisfied for now
+	static ConstraintEvaluationResult failure(std::string_view error_msg, 
+	                                          std::string_view failed_req = "",
+	                                          std::string_view suggestion = "") {
+		return ConstraintEvaluationResult{
+			false, 
+			std::string(error_msg), 
+			std::string(failed_req),
+			std::string(suggestion)
+		};
+	}
+};
+
+// Enhanced constraint evaluator for C++20 concepts
+// Evaluates constraints and provides detailed error messages when they fail
+inline ConstraintEvaluationResult evaluateConstraint(
+	const ASTNode& constraint_expr, 
+	const std::vector<TemplateTypeArg>& template_args,
+	const std::vector<std::string_view>& template_param_names = {}) {
+	
+	// For boolean literals (true/false), evaluate directly
+	if (constraint_expr.is<NumericLiteralNode>()) {
+		const auto& literal = constraint_expr.as<NumericLiteralNode>();
+		// Check if the value is 0 (false) or non-zero (true)
+		bool value = true;  // default to true
+		if (std::holds_alternative<unsigned long long>(literal.value())) {
+			value = std::get<unsigned long long>(literal.value()) != 0;
+		} else if (std::holds_alternative<double>(literal.value())) {
+			value = std::get<double>(literal.value()) != 0.0;
+		}
+		
+		if (!value) {
+			return ConstraintEvaluationResult::failure(
+				"constraint not satisfied: literal constraint is false",
+				"false",
+				"use 'true' or a valid concept expression"
+			);
+		}
+		return ConstraintEvaluationResult::success();
+	}
+	
+	// For identifier nodes (concept names)
+	if (constraint_expr.is<IdentifierNode>()) {
+		const auto& ident = constraint_expr.as<IdentifierNode>();
+		std::string_view concept_name = ident.name();
+		
+		// Look up the concept in the registry
+		auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
+		if (!concept_opt.has_value()) {
+			return ConstraintEvaluationResult::failure(
+				std::string("constraint not satisfied: concept '") + std::string(concept_name) + "' not found",
+				std::string(concept_name),
+				std::string("declare the concept before using it in a requires clause")
+			);
+		}
+		
+		// Concept found - would need to evaluate it with template arguments
+		// For now, we assume it's satisfied if it exists
+		return ConstraintEvaluationResult::success();
+	}
+	
+	// For function call nodes (concept with template arguments like Integral<T>)
+	// Note: This won't work directly with FunctionCallNode as it stores DeclarationNode
+	// For now, we just accept these as satisfied since full evaluation needs type substitution
+	if (constraint_expr.is<FunctionCallNode>()) {
+		// Would need to evaluate concept with substituted template arguments
+		// For now, assume satisfied
+		return ConstraintEvaluationResult::success();
+	}
+	
+	// For binary operators (&&, ||)
+	if (constraint_expr.is<BinaryOperatorNode>()) {
+		const auto& binop = constraint_expr.as<BinaryOperatorNode>();
+		std::string_view op = binop.op();
+		
+		if (op == "&&") {
+			// Conjunction - both must be satisfied
+			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names);
+			if (!left_result.satisfied) {
+				return left_result;  // Return first failure
+			}
+			
+			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names);
+			if (!right_result.satisfied) {
+				return right_result;
+			}
+			
+			return ConstraintEvaluationResult::success();
+		}
+		else if (op == "||") {
+			// Disjunction - at least one must be satisfied
+			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names);
+			if (left_result.satisfied) {
+				return ConstraintEvaluationResult::success();
+			}
+			
+			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names);
+			if (right_result.satisfied) {
+				return ConstraintEvaluationResult::success();
+			}
+			
+			// Both failed
+			return ConstraintEvaluationResult::failure(
+				"constraint not satisfied: neither alternative of disjunction is satisfied",
+				left_result.failed_requirement + " || " + right_result.failed_requirement,
+				"ensure at least one of the constraints is met"
+			);
+		}
+	}
+	
+	// For unary operators (!)
+	if (constraint_expr.is<UnaryOperatorNode>()) {
+		const auto& unop = constraint_expr.as<UnaryOperatorNode>();
+		if (unop.op() == "!") {
+			auto operand_result = evaluateConstraint(unop.get_operand(), template_args, template_param_names);
+			if (operand_result.satisfied) {
+				return ConstraintEvaluationResult::failure(
+					"constraint not satisfied: negated constraint is true",
+					"!" + operand_result.failed_requirement,
+					"remove the negation or use a different constraint"
+				);
+			}
+			return ConstraintEvaluationResult::success();
+		}
+	}
+	
+	// Default: assume satisfied for unknown expressions
+	// This allows templates to compile even with complex constraints
+	return ConstraintEvaluationResult::success();
 }
 
 
