@@ -51,6 +51,8 @@ public:
 
 		if (node.is<FunctionDeclarationNode>()) {
 			visitFunctionDeclarationNode(node.as<FunctionDeclarationNode>());
+			// Clear function context after completing a top-level function
+			current_function_name_.clear();
 		}
 		else if (node.is<ReturnStatementNode>()) {
 			visitReturnStatementNode(node.as<ReturnStatementNode>());
@@ -114,9 +116,13 @@ public:
 		}
 		else if (node.is<ConstructorDeclarationNode>()) {
 			visitConstructorDeclarationNode(node.as<ConstructorDeclarationNode>());
+			// Clear function context after completing a top-level constructor
+			current_function_name_.clear();
 		}
 		else if (node.is<DestructorDeclarationNode>()) {
 			visitDestructorDeclarationNode(node.as<DestructorDeclarationNode>());
+			// Clear function context after completing a top-level destructor
+			current_function_name_.clear();
 		}
 		else if (node.is<DeclarationNode>()) {
 			// Forward declarations or global variable declarations
@@ -174,6 +180,22 @@ public:
 	void generateCollectedLambdas() {
 		for (const auto& lambda_info : collected_lambdas_) {
 			generateLambdaFunctions(lambda_info);
+		}
+	}
+	
+	// Generate all collected local struct member functions
+	void generateCollectedLocalStructMembers() {
+		for (const auto& member_info : collected_local_struct_members_) {
+			// Temporarily restore context
+			std::string saved_function = current_function_name_;
+			current_struct_name_ = member_info.struct_name;
+			current_function_name_ = member_info.enclosing_function_name;
+			
+			// Visit the member function
+			visit(member_info.member_function_node);
+			
+			// Restore
+			current_function_name_ = saved_function;
 		}
 	}
 	
@@ -700,10 +722,7 @@ private:
 		} else {
 			// User-defined function body
 			const BlockNode& block = node.get_definition().value().as<BlockNode>();
-			std::cerr << "DEBUG: About to visit " << block.get_statements().size() 
-			          << " statements in function " << func_decl.identifier_token().value() << "\n";
 			block.get_statements().visit([&](ASTNode statement) {
-				std::cerr << "DEBUG: Visiting statement in " << func_decl.identifier_token().value() << "\n";
 				visit(statement);
 			});
 		}
@@ -715,14 +734,15 @@ private:
 		}
 
 		symbol_table.exit_scope();
-		current_function_name_.clear();
+		// Don't clear current_function_name_ here - let the top-level visitor manage it
+		// This allows nested contexts (like local struct member functions) to work properly
 	}
 
 	void visitStructDeclarationNode(const StructDeclarationNode& node) {
 		// Struct declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
 
-		std::cerr << "DEBUG visitStructDeclarationNode: " << node.name() << " with " << node.member_functions().size() << " member functions\n";
+
 
 		// Skip pattern structs - they're templates and shouldn't generate code
 		// Pattern structs have "_pattern_" in their name
@@ -731,26 +751,47 @@ private:
 			return;
 		}
 
-		// Only visit member functions if we're at the top level (not inside a function)
-		// Local struct declarations inside functions should not generate member function IR
-		// because the member functions are already generated when the struct type is registered
-		if (current_function_name_.empty()) {
-			// We're at the top level, visit member functions
-			// Set struct context so member functions know which struct they belong to
-			// NOTE: We don't clear this until the next struct - the string must persist
-			// because IrOperands store string_view references to it
-			// For nested classes, we need to use the fully qualified name from TypeInfo
-			auto type_it = gTypesByName.find(std::string(struct_name));
-			if (type_it != gTypesByName.end()) {
-				current_struct_name_ = std::string(type_it->second->name_);
-			} else {
-				current_struct_name_ = std::string(struct_name);
-			}
+		// Generate member functions for both global and local structs
+		// Save the enclosing function context so member function visits don't clobber it
+		std::string saved_enclosing_function = current_function_name_;
+		
+		// Check if this is a local struct (declared inside a function)
+		bool is_local_struct = !current_function_name_.empty();
+		
+		// Set struct context so member functions know which struct they belong to
+		// NOTE: We don't clear this until the next struct - the string must persist
+		// because IrOperands store string_view references to it
+		// For nested classes, we need to use the fully qualified name from TypeInfo
+		auto type_it = gTypesByName.find(std::string(struct_name));
+		if (type_it != gTypesByName.end()) {
+			current_struct_name_ = std::string(type_it->second->name_);
+		} else {
+			current_struct_name_ = std::string(struct_name);
+		}
+		
+		// For local structs, collect member functions for deferred generation
+		// For global structs, visit them immediately
+		if (is_local_struct) {
 			for (const auto& member_func : node.member_functions()) {
-				std::cerr << "  Visiting member function\n";
+				LocalStructMemberInfo info;
+				info.struct_name = current_struct_name_;
+				info.enclosing_function_name = saved_enclosing_function;
+				info.member_function_node = member_func.function_declaration;
+				collected_local_struct_members_.push_back(std::move(info));
+			}
+		} else {
+			for (const auto& member_func : node.member_functions()) {
 				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 				try {
-					visit(member_func.function_declaration);
+					// Call the specific visitor directly instead of visit() to avoid clearing current_function_name_
+					const ASTNode& func_decl = member_func.function_declaration;
+					if (func_decl.is<FunctionDeclarationNode>()) {
+						visitFunctionDeclarationNode(func_decl.as<FunctionDeclarationNode>());
+					} else if (func_decl.is<ConstructorDeclarationNode>()) {
+						visitConstructorDeclarationNode(func_decl.as<ConstructorDeclarationNode>());
+					} else if (func_decl.is<DestructorDeclarationNode>()) {
+						visitDestructorDeclarationNode(func_decl.as<DestructorDeclarationNode>());
+					}
 				} catch (const std::exception& ex) {
 					std::cerr << "ERROR: Exception while visiting member function in struct "
 					          << struct_name << ": " << ex.what() << "\n";
@@ -761,6 +802,7 @@ private:
 					throw;
 				}
 			}
+		}  // End of if-else for local vs global struct
 			
 			// Visit nested classes recursively
 			for (const auto& nested_class_node : node.nested_classes()) {
@@ -812,8 +854,9 @@ private:
 				}
 			}
 			// Don't clear current_struct_name_ - it will be overwritten by the next struct
-		}
-		// If we're inside a function, just skip - the struct type is already registered
+		
+		// Restore the enclosing function context
+		current_function_name_ = saved_enclosing_function;
 	}
 
 	void visitEnumDeclarationNode(const EnumDeclarationNode& node) {
@@ -1314,7 +1357,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.name_token()));
 
 		symbol_table.exit_scope();
-		current_function_name_.clear();
+		// Don't clear current_function_name_ here - let the top-level visitor manage it
 	}
 
 	void visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
@@ -1424,7 +1467,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.name_token()));
 
 		symbol_table.exit_scope();
-		current_function_name_.clear();
+		// Don't clear current_function_name_ here - let the top-level visitor manage it
 	}
 
 	void visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
@@ -1463,37 +1506,38 @@ private:
 			assert(expr_opt->is<ExpressionNode>());
 			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>());
 			
-		// Convert to the function's return type if necessary
-		if (!operands.empty() && operands.size() >= 2) {
-			Type expr_type = std::get<Type>(operands[0]);
-			int expr_size = std::get<int>(operands[1]);
+			// Convert to the function's return type if necessary
+			if (!operands.empty() && operands.size() >= 2) {
+				Type expr_type = std::get<Type>(operands[0]);
+				int expr_size = std::get<int>(operands[1]);
 			
-			// Get the current function's return type
-			Type return_type = current_function_return_type_;
-			int return_size = current_function_return_size_;
+				// Get the current function's return type
+				Type return_type = current_function_return_type_;
+				int return_size = current_function_return_size_;
 			
-			// Convert if types don't match
-			if (expr_type != return_type || expr_size != return_size) {
-				// Update operands with the converted value
-				operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+				// Convert if types don't match
+				if (expr_type != return_type || expr_size != return_size) {
+					// Update operands with the converted value
+					operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+				}
 			}
-		}
 		
-		// Create ReturnOp with the return value
-		ReturnOp ret_op;
-		// Extract IrValue from operand[2] - it could be various types
-		if (std::holds_alternative<unsigned long long>(operands[2])) {
-			ret_op.return_value = std::get<unsigned long long>(operands[2]);
-		} else if (std::holds_alternative<TempVar>(operands[2])) {
-			ret_op.return_value = std::get<TempVar>(operands[2]);
-		} else if (std::holds_alternative<std::string_view>(operands[2])) {
-			ret_op.return_value = std::get<std::string_view>(operands[2]);
-		} else if (std::holds_alternative<double>(operands[2])) {
-			ret_op.return_value = std::get<double>(operands[2]);
+			// Create ReturnOp with the return value
+			ReturnOp ret_op;
+			// Extract IrValue from operand[2] - it could be various types
+			if (std::holds_alternative<unsigned long long>(operands[2])) {
+				ret_op.return_value = std::get<unsigned long long>(operands[2]);
+			} else if (std::holds_alternative<TempVar>(operands[2])) {
+				ret_op.return_value = std::get<TempVar>(operands[2]);
+			} else if (std::holds_alternative<std::string_view>(operands[2])) {
+				ret_op.return_value = std::get<std::string_view>(operands[2]);
+			} else if (std::holds_alternative<double>(operands[2])) {
+				ret_op.return_value = std::get<double>(operands[2]);
+			}
+			ret_op.return_type = std::get<Type>(operands[0]);
+			ret_op.return_size = std::get<int>(operands[1]);
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
 		}
-		ret_op.return_type = std::get<Type>(operands[0]);
-		ret_op.return_size = std::get<int>(operands[1]);
-		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));		}
 		else {
 			// For void returns, we don't need any operands
 			ReturnOp ret_op;  // No return value for void
@@ -6794,6 +6838,16 @@ private:
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
+	
+	// Structure to hold info for local struct member functions
+	struct LocalStructMemberInfo {
+		std::string struct_name;
+		std::string enclosing_function_name;
+		ASTNode member_function_node;
+	};
+	
+	// Collected local struct member functions for deferred generation
+	std::vector<LocalStructMemberInfo> collected_local_struct_members_;
 	
 	// Structure to hold template instantiation info for deferred generation
 	struct TemplateInstantiationInfo {
