@@ -19,7 +19,8 @@ This document describes the implementation of `dynamic_cast` with RTTI (Run-Time
 3. **Code Generation** (`src/IRConverter.h`)
    - `handleDynamicCast()`: Emits x64 machine code
    - Calls runtime helper `__dynamic_cast_check()`
-   - Returns source pointer on success, nullptr on failure
+   - For pointer casts: Returns source pointer on success, nullptr on failure
+   - For reference casts: Returns source reference on success, throws `std::bad_cast` on failure
 
 4. **RTTI Emission** (`src/ObjFileWriter.h`)
    - `add_vtable()`: Emits RTTI structures to `.rdata` section
@@ -28,6 +29,7 @@ This document describes the implementation of `dynamic_cast` with RTTI (Run-Time
 
 5. **Runtime Helper** (`src/runtime_dynamic_cast.cpp`)
    - `__dynamic_cast_check()`: Performs actual type checking
+   - `__dynamic_cast_throw_bad_cast()`: Throws `std::bad_cast` for failed reference casts
    - Recursive base class traversal
    - Security: Buffer overflow protection
 
@@ -72,7 +74,7 @@ Object memory:
 
 ### Runtime Algorithm
 
-When `dynamic_cast<Derived*>(base_ptr)` is executed:
+**For pointer casts** (`dynamic_cast<Derived*>(base_ptr)`):
 
 1. **Null check**: If `base_ptr` is null, return null
 2. **Load vptr**: Read first 8 bytes of object
@@ -80,6 +82,14 @@ When `dynamic_cast<Derived*>(base_ptr)` is executed:
 4. **Get target RTTI**: Load address of `__rtti_Derived`
 5. **Call helper**: `__dynamic_cast_check(source_rtti, target_rtti)`
 6. **Return**: If helper returns true, return `base_ptr`; else return null
+
+**For reference casts** (`dynamic_cast<Derived&>(base_ref)`):
+
+1. **Load vptr**: Read first 8 bytes of object
+2. **Load source RTTI**: Read `vtable[-1]` (8 bytes before vptr)
+3. **Get target RTTI**: Load address of `__rtti_Derived`
+4. **Call helper**: `__dynamic_cast_check(source_rtti, target_rtti)`
+5. **Return or throw**: If helper returns true, return `base_ref`; else call `__dynamic_cast_throw_bad_cast()` which throws `std::bad_cast`
 
 ### Type Checking Logic
 
@@ -162,17 +172,31 @@ int main() {
     
     Base* base_ptr = &d;
     
-    // Successful downcast
+    // Pointer cast - successful downcast
     Derived* derived_ptr = dynamic_cast<Derived*>(base_ptr);
     if (derived_ptr) {
         return derived_ptr->getValue();  // Returns 30
     }
     
-    // Failed downcast
+    // Pointer cast - failed downcast
     Base b;
     base_ptr = &b;
     derived_ptr = dynamic_cast<Derived*>(base_ptr);
     // derived_ptr is nullptr
+    
+    // Reference cast - successful downcast
+    Base& base_ref = d;
+    Derived& derived_ref = dynamic_cast<Derived&>(base_ref);
+    // Success: derived_ref refers to d
+    
+    // Reference cast - failed downcast (throws std::bad_cast)
+    Base& base_ref2 = b;
+    try {
+        Derived& derived_ref2 = dynamic_cast<Derived&>(base_ref2);
+        // This line is never reached
+    } catch (const std::bad_cast& e) {
+        // Exception caught - cast failed
+    }
     
     return 0;
 }
@@ -209,17 +233,17 @@ __rtti_Derived:
 
 ## Limitations
 
-1. **Reference casts**: `dynamic_cast<Derived&>(base_ref)` doesn't throw `std::bad_cast` on failure
-   - Workaround: Use pointer casts and check for null
-   - Future: Requires exception handling implementation
-
-2. **Cross-casts**: Casts between sibling classes through virtual inheritance
+1. **Cross-casts**: Casts between sibling classes through virtual inheritance
    - Currently supported via recursive base checking
    - May not work with complex diamond inheritance
 
-3. **Visibility**: All RTTI symbols are external
+2. **Visibility**: All RTTI symbols are external
    - May cause issues with private/protected inheritance
    - Future: Implement access control in RTTI
+
+3. **Exception handling**: Requires linking with C++ runtime library for exception support
+   - Reference casts throw `std::bad_cast` on failure
+   - Ensure proper exception handling infrastructure is available in target environment
 
 ## Performance Considerations
 
@@ -239,7 +263,6 @@ To debug RTTI issues:
 
 ## Future Enhancements
 
-1. **Exception support**: Enable reference casts with `std::bad_cast`
-2. **Optimizations**: Cache successful cast results
-3. **Type names**: Store demangled names for better debugging
-4. **Standard compliance**: Full C++ RTTI compatibility
+1. **Optimizations**: Cache successful cast results
+2. **Type names**: Store demangled names for better debugging
+3. **Standard compliance**: Full C++ RTTI compatibility

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <typeinfo>
 
 // RTTI structure layout (must match ObjFileWriter.h):
 //   - 8 bytes: class name hash
@@ -55,4 +56,10 @@ extern "C" bool __dynamic_cast_check(RTTIInfo* source_rtti, RTTIInfo* target_rtt
     }
     
     return false;
+}
+
+// Throw bad_cast exception for failed reference casts
+// This function never returns - it always throws
+extern "C" [[noreturn]] void __dynamic_cast_throw_bad_cast() {
+    throw std::bad_cast();
 }

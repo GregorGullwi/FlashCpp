@@ -4290,10 +4290,34 @@ private:
 		// null_result label:
 		size_t null_result_offset = textSectionData.size();
 		
-		// XOR RAX, RAX  ; set result to nullptr
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x31); // XOR r64, r64
-		textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
+		// Check if this is a reference cast (needs to throw exception on failure)
+		if (is_reference) {
+			// For reference casts, throw std::bad_cast instead of returning nullptr
+			// Call __dynamic_cast_throw_bad_cast (no arguments, never returns)
+			
+			// SUB RSP, 32  ; shadow space for Windows x64 calling convention
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x83); // SUB r/m64, imm8
+			textSectionData.push_back(0xEC); // ModR/M: RSP
+			textSectionData.push_back(0x20); // 32 bytes
+			
+			// CALL __dynamic_cast_throw_bad_cast
+			textSectionData.push_back(0xE8); // CALL rel32
+			size_t throw_call_offset = textSectionData.size();
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			writer.add_relocation(throw_call_offset, "__dynamic_cast_throw_bad_cast");
+			
+			// Note: We don't restore RSP or add code after this because __dynamic_cast_throw_bad_cast never returns
+		} else {
+			// For pointer casts, return nullptr
+			// XOR RAX, RAX  ; set result to nullptr
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x31); // XOR r64, r64
+			textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
+		}
 
 		// end label:
 		size_t end_offset = textSectionData.size();
