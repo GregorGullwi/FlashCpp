@@ -535,11 +535,18 @@ private:
 		// Add struct/class name for member functions
 		// Use current_struct_name_ if set (for instantiated template specializations),
 		// otherwise use the function node's parent_struct_name
+		// For nested classes, we need to use the fully qualified name from TypeInfo
 		std::string_view struct_name_for_function;
 		if (!current_struct_name_.empty()) {
 			struct_name_for_function = current_struct_name_;
 		} else if (node.is_member_function()) {
-			struct_name_for_function = node.parent_struct_name();
+			// Try to get the fully qualified name from TypeInfo (for nested classes)
+			auto type_it = gTypesByName.find(node.parent_struct_name());
+			if (type_it != gTypesByName.end()) {
+				struct_name_for_function = type_it->second->name_;
+			} else {
+				struct_name_for_function = node.parent_struct_name();
+			}
 		} else {
 			struct_name_for_function = "";
 		}
@@ -749,7 +756,13 @@ private:
 			// Set struct context so member functions know which struct they belong to
 			// NOTE: We don't clear this until the next struct - the string must persist
 			// because IrOperands store string_view references to it
-			current_struct_name_ = std::string(struct_name);
+			// For nested classes, we need to use the fully qualified name from TypeInfo
+			auto type_it = gTypesByName.find(std::string(struct_name));
+			if (type_it != gTypesByName.end()) {
+				current_struct_name_ = std::string(type_it->second->name_);
+			} else {
+				current_struct_name_ = std::string(struct_name);
+			}
 			for (const auto& member_func : node.member_functions()) {
 				std::cerr << "  Visiting member function\n";
 				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
@@ -765,11 +778,19 @@ private:
 					throw;
 				}
 			}
+			
+			// Visit nested classes recursively
+			for (const auto& nested_class_node : node.nested_classes()) {
+				if (nested_class_node.is<StructDeclarationNode>()) {
+					std::cerr << "  Visiting nested class\n";
+					visitStructDeclarationNode(nested_class_node.as<StructDeclarationNode>());
+				}
+			}
 
 			// Generate global storage for static members
-			auto type_it = gTypesByName.find(std::string(node.name()));
-			if (type_it != gTypesByName.end()) {
-				const TypeInfo* type_info = type_it->second;
+			auto static_member_type_it = gTypesByName.find(std::string(node.name()));
+			if (static_member_type_it != gTypesByName.end()) {
+				const TypeInfo* type_info = static_member_type_it->second;
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info) {
 					for (const auto& static_member : struct_info->static_members) {
@@ -836,8 +857,23 @@ private:
 
 		// Create constructor declaration with typed payload
 		FunctionDeclOp ctor_decl_op;
-		ctor_decl_op.function_name = std::string(node.struct_name());  // Constructor name (same as struct)
-		ctor_decl_op.struct_name = std::string(node.struct_name());  // Struct name for member function
+		// For nested classes, use current_struct_name_ which contains the fully qualified name
+		std::string_view struct_name_for_ctor = current_struct_name_.empty() ? node.struct_name() : current_struct_name_;
+		
+		// Extract just the last component of the class name for the constructor function name
+		// For "Outer::Inner", we want "Inner" as the function name
+		std::string_view ctor_function_name = struct_name_for_ctor;
+		std::string_view parent_class_name;  // For mangling - all components except the last
+		size_t last_colon = struct_name_for_ctor.rfind("::");
+		if (last_colon != std::string_view::npos) {
+			ctor_function_name = struct_name_for_ctor.substr(last_colon + 2);  // "Inner"
+			parent_class_name = struct_name_for_ctor.substr(0, last_colon);     // "Outer"
+		} else {
+			parent_class_name = struct_name_for_ctor;  // Not nested, use as-is
+		}
+		
+		ctor_decl_op.function_name = std::string(ctor_function_name);  // Constructor name (last component)
+		ctor_decl_op.struct_name = std::string(struct_name_for_ctor);  // Struct name for member function (fully qualified)
 		ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
 		ctor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
 		ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
@@ -852,17 +888,19 @@ private:
 			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
 		}
 	
+	
 		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
-		std::string ctor_name = std::string(node.struct_name());
+		// For nested classes, use just the last component as the constructor name
+		std::string ctor_name = std::string(ctor_function_name);
 		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 		ctor_decl_op.mangled_name = generateMangledNameForCall(
 			ctor_name,
 			void_type,
 			param_types_for_mangling,
 			false,  // not variadic
-			std::string(node.struct_name())  // struct name for member function mangling
+			std::string(parent_class_name)  // parent class name for mangling (e.g., "Outer" for "Outer::Inner::Inner")
 		);
-
+		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
 
@@ -4444,7 +4482,25 @@ private:
 			}
 			builder.append(func_only_name);
 			builder.append('@');
-			builder.append(struct_name);
+			
+			// For nested classes, reverse the order: "Outer::Inner" -> "Inner@Outer"
+			std::vector<std::string_view> class_parts;
+			std::string_view remaining = struct_name;
+			size_t class_pos;
+			while ((class_pos = remaining.find("::")) != std::string_view::npos) {
+				class_parts.push_back(remaining.substr(0, class_pos));
+				remaining = remaining.substr(class_pos + 2);
+			}
+			class_parts.push_back(remaining);  // Add last part
+			
+			// Append in reverse order with @ separators
+			for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
+				builder.append(*it);
+				if (std::next(it) != class_parts.rend()) {
+					builder.append('@');
+				}
+			}
+			
 			builder.append("@@QA");  // @@ + calling convention for member functions (Q = __thiscall-like)
 		} else {
 			// Free function: ?name@@YA...
@@ -5216,7 +5272,12 @@ private:
 			
 			// Check if this is a member function - use struct_info to determine
 			if (struct_info) {
+				// For nested classes, we need the fully qualified name from TypeInfo
 				std::string_view struct_name = struct_info->name;
+				auto type_it = gTypesByName.find(std::string(struct_name));
+				if (type_it != gTypesByName.end()) {
+					struct_name = type_it->second->name_;
+				}
 				std::string qualified_template_name = std::string(struct_name) + "::" + std::string(func_name);
 				
 				// Check if this is a template that has been instantiated
@@ -5284,26 +5345,85 @@ private:
 			});
 
 			// Generate IR for function arguments and add to CallOp
+			size_t arg_index = 0;
+		
+			// Get the actual function declaration with parameters from struct_info if available
+			const FunctionDeclarationNode* actual_func_decl = nullptr;
+			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+				actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
+			} else {
+				actual_func_decl = &func_decl;
+			}
+		
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 				auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+			
+				// Get the parameter type from the function declaration to check if it's a reference
+				const TypeSpecifierNode* param_type = nullptr;
+				if (arg_index < actual_func_decl->parameter_nodes().size()) {
+					const ASTNode& param_node = actual_func_decl->parameter_nodes()[arg_index];
+					if (param_node.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+						param_type = &param_decl.type_node().as<TypeSpecifierNode>();
+					} else if (param_node.is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
+						const DeclarationNode& param_decl = var_decl.declaration();
+						param_type = &param_decl.type_node().as<TypeSpecifierNode>();
+					}
+				}
+			
 				// For variables, we need to add the type and size
 				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 					const auto& decl_node = symbol->as<DeclarationNode>();
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-					call_op.args.push_back(TypedValue{
-						.type = type_node.type(),
-						.size_in_bits = static_cast<int>(type_node.size_in_bits()),
-						.value = IrValue(identifier.name())
-					});
+				
+					// Check if parameter expects a reference
+					if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+						// Parameter expects a reference - pass the address of the argument
+						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+							// Argument is already a reference - just pass it through
+							call_op.args.push_back(TypedValue{
+								.type = type_node.type(),
+								.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+								.value = IrValue(identifier.name())
+							});
+						} else {
+							// Argument is a value - take its address
+							TempVar addr_var = var_counter.next();
+						
+							AddressOfOp addr_op;
+							addr_op.result = addr_var;
+							addr_op.pointee_type = type_node.type();
+							addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+							addr_op.operand = identifier.name();
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+						
+							// Pass the address with pointer size
+							call_op.args.push_back(TypedValue{
+								.type = type_node.type(),
+								.size_in_bits = 64,  // Pointer size
+								.value = IrValue(addr_var)
+							});
+						}
+					} else {
+						// Regular pass by value
+						call_op.args.push_back(TypedValue{
+							.type = type_node.type(),
+							.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+							.value = IrValue(identifier.name())
+						});
+					}
 				}
 				else {
 					// Use toTypedValue helper to convert from operand vector
 					call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
 				}
+			
+				arg_index++;
 			});
-
+			
 			// Add the function call instruction with typed payload
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 		}

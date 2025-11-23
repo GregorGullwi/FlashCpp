@@ -4046,14 +4046,27 @@ private:
 		}
 
 		// Generate the call instruction
-		std::string function_name = struct_name;  // Constructor name is same as struct name (no :: prefix)
+		// For nested classes, split "Outer::Inner" into class="Outer" and function="Inner"
+		std::string function_name;
+		std::string class_name;
+		size_t last_colon_pos = struct_name.rfind("::");
+		if (last_colon_pos != std::string::npos) {
+			// Nested class: "Outer::Inner" -> class="Outer", function="Inner"
+			class_name = struct_name.substr(0, last_colon_pos);
+			function_name = struct_name.substr(last_colon_pos + 2);
+		} else {
+			// Regular class: function_name = class_name = struct_name
+			function_name = struct_name;
+			class_name = struct_name;
+		}
+		
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		// Build FunctionSignature for proper overload resolution
 		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
-		sig.class_name = struct_name;
+		sig.class_name = class_name;
 
 		// Generate the correct mangled name for this specific constructor overload
 		std::string mangled_name = writer.generateMangledName(function_name, sig);

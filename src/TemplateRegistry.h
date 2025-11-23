@@ -522,7 +522,8 @@ public:
 	// Generate a mangled name for a template instantiation
 	// Example: max<int> -> max_int, max<int, 5> -> max_int_5, max<vector> -> max_vector
 	static std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
-		StringBuilder& mangled = StringBuilder().append(base_name).append("_");
+		StringBuilder mangled;
+		mangled.append(base_name).append("_");
 
 		for (size_t i = 0; i < args.size(); ++i) {
 			if (i > 0) mangled.append("_");
@@ -642,6 +643,9 @@ public:
 		deduction_guides_.clear();
 	}
 
+	// Public access to specialization patterns for pattern matching in Parser
+	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
+
 private:
 	// Map from template name to template declaration node (supports heterogeneous lookup)
 	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> templates_;
@@ -666,9 +670,6 @@ private:
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
-	
-	// Map from template_name to specialization patterns (for pattern matching, supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
 };
 
 // Global template registry
