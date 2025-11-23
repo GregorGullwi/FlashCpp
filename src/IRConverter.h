@@ -3001,6 +3001,18 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to generate and emit MOV reg, imm64
+	void emitMovImm64(X64Register destinationRegister, uint64_t immediate_value) {
+		// REX.W prefix for 64-bit operation
+		textSectionData.push_back(0x48);
+		// MOV r64, imm64 opcode (0xB8 + register encoding)
+		textSectionData.push_back(0xB8 + static_cast<uint8_t>(destinationRegister));
+		// Encode the 64-bit immediate value (little-endian)
+		for (int j = 0; j < 8; ++j) {
+			textSectionData.push_back(static_cast<uint8_t>((immediate_value >> (j * 8)) & 0xFF));
+		}
+	}
+
 	// Allocate a register, spilling one to the stack if necessary
 	X64Register allocateRegisterWithSpilling() {
 		// Try to allocate a free register first
@@ -4035,11 +4047,7 @@ private:
 		} else if (std::holds_alternative<unsigned long long>(op.address)) {
 			// Address is a constant - load immediate value
 			uint64_t address_value = std::get<unsigned long long>(op.address);
-			textSectionData.push_back(0x48); // REX.W prefix
-			textSectionData.push_back(0xB8); // MOV RAX, imm64
-			for (int j = 0; j < 8; ++j) {
-				textSectionData.push_back(static_cast<uint8_t>((address_value >> (j * 8)) & 0xFF));
-			}
+			emitMovImm64(X64Register::RAX, address_value);
 		} else {
 			assert(false && "Placement address must be TempVar, identifier, or unsigned long long");
 			return;
@@ -4070,14 +4078,9 @@ private:
 
 			// Load address of type_info into RAX (using a placeholder address for now)
 			// In a real implementation, we'd have a symbol for each type's RTTI data
-			textSectionData.push_back(0x48); // REX.W prefix
-			textSectionData.push_back(0xB8); // MOV RAX, imm64
-
 			// Use a hash of the type name as a placeholder address
 			size_t type_hash = std::hash<std::string>{}(type_name);
-			for (int j = 0; j < 8; ++j) {
-				textSectionData.push_back(static_cast<uint8_t>((type_hash >> (j * 8)) & 0xFF));
-			}
+			emitMovImm64(X64Register::RAX, type_hash);
 		} else {
 			// typeid(expr) - may need runtime lookup for polymorphic types
 			// For polymorphic types, RTTI pointer is at vtable[-1]
@@ -6953,24 +6956,15 @@ private:
 			// RHS is an immediate value
 			unsigned long long rhs_value = std::get<unsigned long long>(op.rhs.value);
 			// MOV RAX, imm64
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0xB8); // MOV RAX, imm64
-			for (size_t i = 0; i < 8; ++i) {
-				textSectionData.push_back(static_cast<uint8_t>(rhs_value & 0xFF));
-				rhs_value >>= 8;
-			}
+			emitMovImm64(X64Register::RAX, rhs_value);
 		}
-
+		
 		// Store source register to LHS stack location
 		if (is_floating_point_type(rhs_type)) {
 			bool is_float = (rhs_type == Type::Float);
-			auto store_opcodes = generateFloatMovToFrame(source_reg, lhs_offset, is_float);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			emitFloatMovFromFrame(source_reg, lhs_offset, is_float);
 		} else {
-			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			emitMovToFrame(source_reg, lhs_offset);
 		}
 	}
 
@@ -7024,10 +7018,12 @@ private:
 	void handleLoopBegin(const IrInstruction& instruction) {
 		// LoopBegin marks the start of a loop and provides labels for break/continue
 		assert(instruction.hasTypedPayload() && "LoopBegin must use typed payload");
-	const auto& op = instruction.getTypedPayload<LoopBeginOp>();
-	std::string_view loop_start_label = op.loop_start_label;
-	std::string_view loop_end_label = op.loop_end_label;
-	std::string_view loop_increment_label = op.loop_increment_label;		// Push loop context onto stack for break/continue handling
+		const auto& op = instruction.getTypedPayload<LoopBeginOp>();
+		std::string_view loop_start_label = op.loop_start_label;
+		std::string_view loop_end_label = op.loop_end_label;
+		std::string_view loop_increment_label = op.loop_increment_label;
+		
+		// Push loop context onto stack for break/continue handling
 		loop_context_stack_.push_back({loop_end_label, loop_increment_label});
 
 		// Flush all dirty registers at loop boundaries
@@ -7387,12 +7383,7 @@ private:
 			if (std::holds_alternative<unsigned long long>(op.value.value)) {
 				// Constant value
 				uint64_t value = std::get<unsigned long long>(op.value.value);
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0xB8); // MOV RAX, imm64
-				for (size_t i = 0; i < 8; ++i) {
-					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
-					value >>= 8;
-				}
+				emitMovImm64(X64Register::RAX, value);
 			} else if (std::holds_alternative<TempVar>(op.value.value)) {
 				// Value from temp var
 				TempVar value_var = std::get<TempVar>(op.value.value);
@@ -8109,12 +8100,7 @@ private:
 			unsigned long long value = std::get<unsigned long long>(condition_value);
 
 			// MOV RAX, imm64
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0xB8); // MOV RAX, imm64
-			for (size_t i = 0; i < 8; ++i) {
-				textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
-				value >>= 8;
-			}
+			emitMovImm64(X64Register::RAX, value);
 			condition_reg = X64Register::RAX;
 		}
 
