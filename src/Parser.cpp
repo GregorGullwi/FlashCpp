@@ -11387,7 +11387,97 @@ ParseResult Parser::parse_requires_expression() {
 	// Parse requirements (expressions that must be valid)
 	std::vector<ASTNode> requirements;
 	while (peek_token().has_value() && peek_token()->value() != "}") {
-		// Parse requirement expression
+		// Check for different types of requirements:
+		// 1. Type requirement: typename TypeName;
+		// 2. Compound requirement: { expression } -> Type; or just { expression };
+		// 3. Nested requirement: requires constraint;
+		// 4. Simple requirement: expression;
+		
+		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "typename") {
+			// Type requirement: typename T::type;
+			consume_token(); // consume 'typename'
+			
+			// Parse the type name (simplified - just parse an identifier for now)
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected type name after 'typename' in requires expression", *current_token_);
+			}
+			Token type_name = *peek_token();
+			consume_token();
+			
+			// For now, just create an identifier node for the type requirement
+			// Full implementation would parse full nested-name-specifier
+			auto type_req_node = emplace_node<IdentifierNode>(type_name);
+			requirements.push_back(type_req_node);
+			
+			// Expect ';' after type requirement
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after type requirement in requires expression", *current_token_);
+			}
+			continue;
+		}
+		
+		if (peek_token()->value() == "{") {
+			// Compound requirement: { expression } or { expression } -> Type;
+			consume_token(); // consume '{'
+			
+			// Parse the expression
+			auto expr_result = parse_expression();
+			if (expr_result.is_error()) {
+				return expr_result;
+			}
+			requirements.push_back(*expr_result.node());
+			
+			// Expect '}'
+			if (!consume_punctuator("}")) {
+				return ParseResult::error("Expected '}' after compound requirement expression", *current_token_);
+			}
+			
+			// Check for optional return type constraint: -> Type
+			if (peek_token().has_value() && peek_token()->value() == "->") {
+				consume_token(); // consume '->'
+				
+				// Parse the return type constraint
+				auto type_result = parse_type_specifier();
+				if (type_result.is_error()) {
+					return type_result;
+				}
+				// Store the type constraint (simplified - just parse and discard for now)
+				// Full implementation would validate the return type
+			}
+			
+			// Expect ';' after compound requirement
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after compound requirement in requires expression", *current_token_);
+			}
+			continue;
+		}
+		
+		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "requires") {
+			// Nested requirement: requires constraint;
+			Token nested_requires_token = *peek_token();
+			consume_token(); // consume 'requires'
+			
+			// Parse the nested constraint expression
+			auto constraint_result = parse_expression();
+			if (constraint_result.is_error()) {
+				return constraint_result;
+			}
+			
+			// Create a RequiresClauseNode for the nested requirement
+			auto nested_req = emplace_node<RequiresClauseNode>(
+				*constraint_result.node(),
+				nested_requires_token
+			);
+			requirements.push_back(nested_req);
+			
+			// Expect ';' after nested requirement
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after nested requirement in requires expression", *current_token_);
+			}
+			continue;
+		}
+		
+		// Simple requirement: just an expression
 		auto req_result = parse_expression();
 		if (req_result.is_error()) {
 			return req_result;
