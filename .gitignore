@@ -3,10 +3,10 @@ Debug/
 .vs/
 .ccls-cache/
 */*.obj
-*.obj
 core.*
 *.user
 
 # Prevent reserved-name file on Windows
 nul
+
 
