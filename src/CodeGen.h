@@ -5203,6 +5203,15 @@ private:
 					
 					auto existing_inst = gTemplateRegistry.getInstantiation(inst_key);
 					if (!existing_inst.has_value()) {
+						// TODO: Check requires clause constraint before instantiation
+						// For now, constraint checking is not implemented - all constraints are considered satisfied
+						// if (template_func.has_requires_clause()) {
+						//     const RequiresClauseNode& requires_clause = 
+						//         template_func.requires_clause()->as<RequiresClauseNode>();
+						//     bool constraint_satisfied = evaluateConstraint(requires_clause.constraint_expr(), ...);
+						//     if (!constraint_satisfied) { /* don't instantiate */ }
+						// }
+						
 						// Create new instantiation - collect it for deferred generation
 						gTemplateRegistry.registerInstantiation(inst_key, template_func.function_declaration());
 						
