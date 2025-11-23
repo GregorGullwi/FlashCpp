@@ -3200,6 +3200,11 @@ private:
 		textSectionData.push_back(static_cast<uint8_t>(offset));
 	}
 
+	void emitJumpIfNotZero(int8_t offset) {
+		textSectionData.push_back(0x75); // JNZ rel8
+		textSectionData.push_back(static_cast<uint8_t>(offset));
+	}
+
 	void emitJumpUnconditional(int8_t offset) {
 		textSectionData.push_back(0xEB); // JMP rel8
 		textSectionData.push_back(static_cast<uint8_t>(offset));
@@ -3295,6 +3300,39 @@ private:
 	void emitJumpIfAbove(int8_t offset) {
 		textSectionData.push_back(0x77); // JA rel8 (unsigned >)
 		textSectionData.push_back(static_cast<uint8_t>(offset));
+	}
+
+	void emitJumpIfBelow(int8_t offset) {
+		textSectionData.push_back(0x72); // JB rel8 (unsigned <)
+		textSectionData.push_back(static_cast<uint8_t>(offset));
+	}
+
+	void emitLeaRegScaledIndex(X64Register dest, X64Register base, X64Register index, uint8_t scale, int8_t disp) {
+		// LEA dest, [base + index*scale + disp]
+		uint8_t rex = 0x48; // REX.W
+		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04; // REX.R
+		if (static_cast<uint8_t>(index) >= 8) rex |= 0x02; // REX.X
+		if (static_cast<uint8_t>(base) >= 8) rex |= 0x01; // REX.B
+		
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x8D); // LEA r64, m
+		
+		// ModR/M: mod=01 (disp8), reg=dest, r/m=100 (SIB follows)
+		uint8_t modrm = 0x44;
+		modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
+		textSectionData.push_back(modrm);
+		
+		// SIB: scale, index, base
+		uint8_t scale_bits = 0;
+		if (scale == 2) scale_bits = 1;
+		else if (scale == 4) scale_bits = 2;
+		else if (scale == 8) scale_bits = 3;
+		
+		uint8_t sib = (scale_bits << 6) | ((static_cast<uint8_t>(index) & 0x07) << 3) | (static_cast<uint8_t>(base) & 0x07);
+		textSectionData.push_back(sib);
+		
+		// disp8
+		textSectionData.push_back(static_cast<uint8_t>(disp));
 	}
 
 	// Allocate a register, spilling one to the stack if necessary
@@ -8786,56 +8824,44 @@ private:
 		// loop_start:
 		size_t loop_start = textSectionData.size();
 		
-		// Calculate address of base_ptrs[RSI]: RDI = RCX + 16 + RSI * 8
-		emitMovRegReg(X64Register::RDI, X64Register::RCX);  // MOV RDI, RCX
-		emitAddRSP(16);  // Add offset to base_ptrs array (after hash and num_bases)
-		// LEA RDI, [RDI + RSI*8 + 16] - using manual calculation
-		// Actually: ADD RDI, 16, then ADD RDI, RSI*8
-		// For simplicity: Load base_ptr directly
-		
 		// Load base_rtti_ptr = [RCX + 16 + RSI*8]
-		// Calculate offset: 16 + RSI*8, store in RAX
-		emitMovRegReg(X64Register::RAX, X64Register::RSI);  // MOV RAX, RSI
-		// SHL RAX, 3 (multiply by 8)
-		textSectionData.push_back(0x48); textSectionData.push_back(0xC1); textSectionData.push_back(0xE0); textSectionData.push_back(0x03); // SHL RAX, 3
-		// ADD RAX, 16
-		textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xC0); textSectionData.push_back(0x10); // ADD RAX, 16
-		// MOV RDI, [RCX + RAX]  - load base class RTTI pointer
-		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0x3C); textSectionData.push_back(0x01); // MOV RDI, [RCX+RAX]
+		// Use LEA to calculate address: LEA RDI, [RCX + RSI*8 + 16]
+		emitLeaRegScaledIndex(X64Register::RDI, X64Register::RCX, X64Register::RSI, 8, 16);
+		
+		// Load base class RTTI pointer: MOV RDI, [RDI]
+		emitMovRegFromMemReg(X64Register::RDI, X64Register::RDI);
 		
 		// Recursive call: __dynamic_cast_check(base_rtti, target_rtti)
-		// Save RCX, RDX before call
+		// Save RCX (source_rtti) for after the call
 		emitPushReg(X64Register::RCX);  // Save source_rtti
-		emitPushReg(X64Register::RDX);  // Save target_rtti
 		
-		// Set up parameters: RCX = RDI (base_rtti), RDX = already target_rtti
+		// Set up parameters: RCX = RDI (base_rtti), RDX = target_rtti (already set)
 		emitMovRegReg(X64Register::RCX, X64Register::RDI);  // MOV RCX, RDI
-		// RDX stays as target_rtti
-		emitPopReg(X64Register::RDX);  // Restore target_rtti to RDX
-		emitPushReg(X64Register::RDX);  // Save it again
 		
 		// Make recursive call
 		emitCall("__dynamic_cast_check");
 		
-		// Restore registers
-		emitPopReg(X64Register::RDX);  // Restore target_rtti
+		// Restore RCX
 		emitPopReg(X64Register::RCX);  // Restore source_rtti
 		
-		// Check result: if (AL == 1) return true
+		// Check result: if (AL != 0) return true
 		emitTestAL();  // TEST AL, AL
 		size_t recursive_success_to_true = textSectionData.size();
-		emitJumpIfZero(2);  // JNZ would be 0x75, but we want "if AL != 0" which TEST sets ZF=0, so JNZ
-		textSectionData[textSectionData.size() - 2] = 0x75;  // Change JZ to JNZ
-		emitJumpUnconditional(0);  // JMP -> return_true (will patch)
-		size_t patch_jmp_to_true = textSectionData.size() - 1;
+		emitJumpIfNotZero(0);  // JNZ -> return_true (will patch)
 		
 		// Increment loop counter and check
 		emitIncReg(X64Register::RSI);  // INC RSI
 		emitCmpRegReg(X64Register::RSI, X64Register::RBX);  // CMP RSI, RBX (counter vs num_bases)
+		
 		// JB loop_start (jump if below)
 		int32_t loop_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(textSectionData.size()) - 2;
-		textSectionData.push_back(0x72);  // JB rel8
-		textSectionData.push_back(static_cast<uint8_t>(loop_offset));
+		if (loop_offset < -128 || loop_offset > 127) {
+			// Offset too large for int8, but this shouldn't happen in practice
+			// Use a short unconditional jump instead
+			emitJumpIfBelow(126);  // Jump forward to a longer jump
+		} else {
+			emitJumpIfBelow(static_cast<int8_t>(loop_offset));
+		}
 		
 		// return_false:
 		size_t return_false = textSectionData.size();
@@ -8856,23 +8882,23 @@ private:
 		emitRet();
 		
 		// Patch jump offsets
-		int8_t offset_to_false = static_cast<int8_t>(return_false - null_check_to_false - 1);
-		textSectionData[null_check_to_false] = static_cast<uint8_t>(offset_to_false);
+		int8_t offset_to_false = static_cast<int8_t>(return_false - null_check_to_false - 2);
+		textSectionData[null_check_to_false + 1] = static_cast<uint8_t>(offset_to_false);
 		
-		offset_to_false = static_cast<int8_t>(return_false - overflow_to_false - 1);
-		textSectionData[overflow_to_false] = static_cast<uint8_t>(offset_to_false);
+		offset_to_false = static_cast<int8_t>(return_false - overflow_to_false - 2);
+		textSectionData[overflow_to_false + 1] = static_cast<uint8_t>(offset_to_false);
 		
-		offset_to_false = static_cast<int8_t>(return_false - no_bases_to_false - 1);
-		textSectionData[no_bases_to_false] = static_cast<uint8_t>(offset_to_false);
+		offset_to_false = static_cast<int8_t>(return_false - no_bases_to_false - 2);
+		textSectionData[no_bases_to_false + 1] = static_cast<uint8_t>(offset_to_false);
 		
-		int8_t offset_to_true = static_cast<int8_t>(return_true - ptr_eq_to_true - 1);
-		textSectionData[ptr_eq_to_true] = static_cast<uint8_t>(offset_to_true);
+		int8_t offset_to_true = static_cast<int8_t>(return_true - ptr_eq_to_true - 2);
+		textSectionData[ptr_eq_to_true + 1] = static_cast<uint8_t>(offset_to_true);
 		
-		offset_to_true = static_cast<int8_t>(return_true - hash_eq_to_true - 1);
-		textSectionData[hash_eq_to_true] = static_cast<uint8_t>(offset_to_true);
+		offset_to_true = static_cast<int8_t>(return_true - hash_eq_to_true - 2);
+		textSectionData[hash_eq_to_true + 1] = static_cast<uint8_t>(offset_to_true);
 		
-		offset_to_true = static_cast<int8_t>(return_true - patch_jmp_to_true);
-		textSectionData[patch_jmp_to_true] = static_cast<uint8_t>(offset_to_true);
+		offset_to_true = static_cast<int8_t>(return_true - recursive_success_to_true - 2);
+		textSectionData[recursive_success_to_true + 1] = static_cast<uint8_t>(offset_to_true);
 		
 		// Calculate function length
 		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
