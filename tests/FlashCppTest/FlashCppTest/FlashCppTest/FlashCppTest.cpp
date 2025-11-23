@@ -8,6 +8,7 @@
 #include "IRConverter.h"
 #include "ChunkedAnyVector.h"
 #include "TemplateRegistry.h"
+#include "ConceptRegistry.h"
 #include <string>
 #include <algorithm>
 #include <cctype>
@@ -50,6 +51,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 	gNativeTypes.clear();  // Clear native types map before reinitializing
 	gTypesByName.clear();  // Clear types by name map as well
 	gTemplateRegistry.clear();
+	gConceptRegistry.clear();  // Clear concept registry
     Lexer lexer(code, file_reader.get_line_map(), file_reader.get_file_paths());
     Parser parser(lexer, test_context);
 #if WITH_DEBUG_INFO
@@ -2373,4 +2375,9 @@ TEST_CASE("Struct:PassingByReference") {
 
 TEST_CASE("Struct:ReferencePassingSimple") {
 	run_test_from_file("test_struct_ref_simple.cpp", "Simple struct reference passing test", false);
+}
+
+// C++20 Concepts Tests
+TEST_CASE("Concepts:Simple") {
+	run_test_from_file("test_concept_simple.cpp", "C++20 simple concept declarations", false);
 }

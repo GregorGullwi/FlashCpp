@@ -602,6 +602,18 @@ ParseResult Parser::parse_top_level_node()
 		return saved_position.propagate(std::move(result));
 	}
 
+	// Check if it's a concept declaration (C++20)
+	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "concept") {
+		auto result = parse_concept_declaration();
+		if (!result.is_error()) {
+			if (auto node = result.node()) {
+				ast_nodes_.push_back(*node);
+			}
+			return saved_position.success();
+		}
+		return saved_position.propagate(std::move(result));
+	}
+
 	// Check if it's a class or struct declaration
 	// Note: alignas can appear before struct, but we handle that in parse_struct_declaration
 	// If alignas appears before a variable declaration, it will be handled by parse_declaration_or_function_definition
@@ -11139,6 +11151,67 @@ ParseResult Parser::parse_template_declaration() {
 	} else {
 		return ParseResult::error("Unsupported template declaration type", *current_token_);
 	}
+}
+
+// Parse a C++20 concept declaration
+// Syntax: concept Name = constraint_expression;
+// Where constraint_expression can be a requires expression, a type trait, or a conjunction/disjunction
+ParseResult Parser::parse_concept_declaration() {
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'concept' keyword
+	Token concept_token = *peek_token();
+	if (!consume_keyword("concept")) {
+		return ParseResult::error("Expected 'concept' keyword", *peek_token());
+	}
+
+	// Parse the concept name
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected concept name after 'concept'", *current_token_);
+	}
+	Token concept_name_token = *peek_token();
+	consume_token(); // consume concept name
+
+	// For now, we'll support simple concepts without explicit template parameters
+	// In full C++20, concepts can have template parameters: template<typename T> concept Name = ...
+	// But the simplified syntax is: concept Name = ...;
+	// We'll parse the simplified form for now
+
+	// Expect '=' before the constraint expression
+	if (!peek_token().has_value() || peek_token()->value() != "=") {
+		return ParseResult::error("Expected '=' after concept name", *current_token_);
+	}
+	consume_token(); // consume '='
+
+	// Parse the constraint expression
+	// This is typically a requires expression, a type trait, or a boolean expression
+	// For now, we'll accept any expression
+	auto constraint_result = parse_expression();
+	if (constraint_result.is_error()) {
+		return constraint_result;
+	}
+
+	// Expect ';' at the end
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after concept definition", *current_token_);
+	}
+
+	// Create the ConceptDeclarationNode
+	// For simplified concepts (without template<>), we use an empty template parameter list
+	std::vector<TemplateParameterNode> template_params;
+	
+	auto concept_node = emplace_node<ConceptDeclarationNode>(
+		concept_name_token,
+		std::move(template_params),
+		*constraint_result.node(),
+		concept_token
+	);
+
+	// Register the concept in the global concept registry
+	// This will be done in the semantic analysis phase
+	// For now, we just return the node
+
+	return saved_position.success(concept_node);
 }
 
 // Parse template parameter list: typename T, int N, ...
