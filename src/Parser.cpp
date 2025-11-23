@@ -13127,17 +13127,80 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (func_decl.get_definition().has_value()) {
 				std::cerr << "DEBUG: Substituting template parameters in member function body\n";
 
-				// Create a new function declaration with substituted body
+				// Substitute return type
+				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				auto [return_type, return_type_index] = substitute_template_parameter(
+					return_type_spec, template_params, template_args_to_use
+				);
+
+				// Create substituted return type node
+				TypeSpecifierNode substituted_return_type(
+					return_type,
+					return_type_spec.qualifier(),
+					get_type_size_bits(return_type),
+					decl.identifier_token()
+				);
+				substituted_return_type.set_type_index(return_type_index);
+
+				// Copy pointer levels and reference qualifiers from original
+				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				if (return_type_spec.is_rvalue_reference()) {
+					substituted_return_type.set_reference(true);
+				} else if (return_type_spec.is_reference()) {
+					substituted_return_type.set_reference(false);
+				}
+
+				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+
+				// Create a new function declaration with substituted return type
 				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
-					decl.type_node(), decl.identifier_token()
+					substituted_return_node, decl.identifier_token()
 				);
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
 
-				// Copy parameters
+				// Substitute and copy parameters
 				for (const auto& param : func_decl.parameter_nodes()) {
-					new_func_ref.add_parameter_node(param);
+					if (param.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param.as<DeclarationNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+						// Substitute parameter type
+						auto [param_type, param_type_index] = substitute_template_parameter(
+							param_type_spec, template_params, template_args_to_use
+						);
+
+						// Create substituted parameter type
+						TypeSpecifierNode substituted_param_type(
+							param_type,
+							param_type_spec.qualifier(),
+							get_type_size_bits(param_type),
+							param_decl.identifier_token()
+						);
+						substituted_param_type.set_type_index(param_type_index);
+
+						// Copy pointer levels and reference qualifiers
+						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+						}
+						if (param_type_spec.is_rvalue_reference()) {
+							substituted_param_type.set_reference(true);
+						} else if (param_type_spec.is_reference()) {
+							substituted_param_type.set_reference(false);
+						}
+
+						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+						auto substituted_param_decl = emplace_node<DeclarationNode>(
+							substituted_param_type_node, param_decl.identifier_token()
+						);
+						new_func_ref.add_parameter_node(substituted_param_decl);
+					} else {
+						// Non-declaration parameter, copy as-is
+						new_func_ref.add_parameter_node(param);
+					}
 				}
 
 				// Substitute template parameters in the function body
