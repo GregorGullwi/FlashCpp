@@ -373,6 +373,7 @@ private:
         ParseResult parse_friend_declaration();  // NEW: Parse friend declarations
         ParseResult parse_template_declaration();  // NEW: Parse template declarations
         ParseResult parse_concept_declaration();   // NEW: Parse C++20 concept declarations
+       ParseResult parse_requires_expression();   // NEW: Parse C++20 requires expressions
         ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member function templates
         ParseResult parse_template_parameter_list(std::vector<ASTNode>& out_params);  // NEW: Parse template parameter list
         ParseResult parse_template_parameter();  // NEW: Parse a single template parameter

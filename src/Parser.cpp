@@ -6436,8 +6436,17 @@ ParseResult Parser::parse_primary_expression()
 {
 	std::optional<ASTNode> result;
 
+	// Check for requires expression: requires(params) { requirements; } or requires { requirements; }
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "requires") {
+		ParseResult requires_result = parse_requires_expression();
+		if (requires_result.is_error()) {
+			return requires_result;
+		}
+		result = requires_result.node();
+		// Don't return here - continue to handle potential postfix operators
+	}
 	// Check for lambda expression first (starts with '[')
-	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "[") {
+	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "[") {
 		ParseResult lambda_result = parse_lambda_expression();
 		if (lambda_result.is_error()) {
 			return lambda_result;
@@ -11293,6 +11302,89 @@ ParseResult Parser::parse_concept_declaration() {
 	// For now, we just return the node
 
 	return saved_position.success(concept_node);
+}
+
+// Parse C++20 requires expression: requires(params) { requirements; } or requires { requirements; }
+ParseResult Parser::parse_requires_expression() {
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'requires' keyword
+	Token requires_token = *current_token_;
+	if (!consume_keyword("requires")) {
+		return ParseResult::error("Expected 'requires' keyword", *current_token_);
+	}
+
+	// Check if there are parameters: requires(T a, T b) { ... }
+	// or no parameters: requires { ... }
+	std::vector<ASTNode> parameters;
+	if (peek_token().has_value() && peek_token()->value() == "(") {
+		consume_token(); // consume '('
+		
+		// Parse parameter list (similar to function parameters)
+		// For now, we'll accept a simple parameter list
+		// Full implementation would parse: Type name, Type name, ...
+		while (peek_token().has_value() && peek_token()->value() != ")") {
+			// Parse type
+			auto type_result = parse_type_specifier();
+			if (type_result.is_error()) {
+				return type_result;
+			}
+			
+			// Parse parameter name
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected parameter name in requires expression", *current_token_);
+			}
+			Token param_name = *peek_token();
+			consume_token();
+			
+			// Create a declaration node for the parameter
+			auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
+			parameters.push_back(decl_node);
+			
+			// Check for comma (more parameters) or end
+			if (peek_token().has_value() && peek_token()->value() == ",") {
+				consume_token(); // consume ','
+			}
+		}
+		
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after requires expression parameters", *current_token_);
+		}
+	}
+
+	// Expect '{'
+	if (!consume_punctuator("{")) {
+		return ParseResult::error("Expected '{' to begin requires expression body", *current_token_);
+	}
+
+	// Parse requirements (expressions that must be valid)
+	std::vector<ASTNode> requirements;
+	while (peek_token().has_value() && peek_token()->value() != "}") {
+		// Parse requirement expression
+		auto req_result = parse_expression();
+		if (req_result.is_error()) {
+			return req_result;
+		}
+		requirements.push_back(*req_result.node());
+		
+		// Expect ';' after each requirement
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after requirement in requires expression", *current_token_);
+		}
+	}
+
+	// Expect '}'
+	if (!consume_punctuator("}")) {
+		return ParseResult::error("Expected '}' to end requires expression", *current_token_);
+	}
+
+	// Create RequiresExpressionNode
+	auto requires_expr_node = emplace_node<RequiresExpressionNode>(
+		std::move(requirements),
+		requires_token
+	);
+
+	return saved_position.success(requires_expr_node);
 }
 
 // Parse template parameter list: typename T, int N, ...
