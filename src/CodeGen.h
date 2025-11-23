@@ -5142,17 +5142,61 @@ private:
 					
 					auto existing_inst = gTemplateRegistry.getInstantiation(inst_key);
 					if (!existing_inst.has_value()) {
-						// TODO: Check requires clause constraint before instantiation
-						// For now, constraint checking is not implemented - all constraints are considered satisfied
-						// if (template_func.has_requires_clause()) {
-						//     const RequiresClauseNode& requires_clause = 
-						//         template_func.requires_clause()->as<RequiresClauseNode>();
-						//     bool constraint_satisfied = evaluateConstraint(requires_clause.constraint_expr(), ...);
-						//     if (!constraint_satisfied) { /* don't instantiate */ }
-						// }
+						// Check requires clause constraint before instantiation
+						bool should_instantiate = true;
+						if (template_func.has_requires_clause()) {
+							const RequiresClauseNode& requires_clause = 
+								template_func.requires_clause()->as<RequiresClauseNode>();
+							
+							// Get template parameter names for evaluation
+							std::vector<std::string_view> eval_param_names;
+							for (const auto& tparam_node : template_func.template_parameters()) {
+								if (tparam_node.is<TemplateParameterNode>()) {
+									eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+								}
+							}
+							
+							// Convert arg_types to TemplateTypeArg for evaluation
+							std::vector<TemplateTypeArg> type_args;
+							for (const auto& arg_type : arg_types) {
+								TemplateTypeArg type_arg;
+								type_arg.base_type = arg_type;
+								type_arg.type_index = 0;
+								type_args.push_back(type_arg);
+							}
+							
+							// Evaluate the constraint with the template arguments
+							auto constraint_result = evaluateConstraint(
+								requires_clause.constraint_expr(), type_args, eval_param_names);
+							
+							if (!constraint_result.satisfied) {
+								// Constraint not satisfied - report detailed error
+								std::cerr << "\n";
+								std::cerr << "error: constraint not satisfied for template function '" 
+								          << func_name << "'\n";
+								std::cerr << "  " << constraint_result.error_message << "\n";
+								if (!constraint_result.failed_requirement.empty()) {
+									std::cerr << "  failed requirement: " << constraint_result.failed_requirement << "\n";
+								}
+								if (!constraint_result.suggestion.empty()) {
+									std::cerr << "  suggestion: " << constraint_result.suggestion << "\n";
+								}
+								std::cerr << "  template arguments: ";
+								for (size_t i = 0; i < arg_types.size(); ++i) {
+									if (i > 0) std::cerr << ", ";
+									std::cerr << TemplateRegistry::typeToString(arg_types[i]);
+								}
+								std::cerr << "\n\n";
+								
+								// Don't create instantiation - constraint failed
+								should_instantiate = false;
+							}
+						}
 						
-						// Create new instantiation - collect it for deferred generation
-						gTemplateRegistry.registerInstantiation(inst_key, template_func.function_declaration());
+						// Create new instantiation only if constraint was satisfied (or no constraint)
+						if (should_instantiate) {
+							gTemplateRegistry.registerInstantiation(inst_key, template_func.function_declaration());
+						}
 						
 						// Get template parameter names
 						std::vector<std::string_view> param_names;
