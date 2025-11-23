@@ -30,6 +30,7 @@ THE SOFTWARE.
 #define COFFI_TYPES_HPP
 
 #include <string>
+#include <string_view>
 
 namespace COFFI {
 
@@ -1064,9 +1065,9 @@ class string_to_name_provider
     //! @note Section short names that reference the string table start with "/".
     virtual std::string section_string_to_name(const char* str) const = 0;
     //! Converts symbol full name into an 8-bytes short name, eventually creating an entry in the strings table.
-    virtual void name_to_string(const std::string& name, char* str) = 0;
+    virtual void name_to_string(std::string_view name, char* str) = 0;
     //! Converts section full name into an 8-bytes short name, eventually creating an entry in the strings table.
-    virtual void name_to_section_string(const std::string& name, char* str) = 0;
+    virtual void name_to_section_string(std::string_view name, char* str) = 0;
 };
 
 //------------------------------------------------------------------------------
@@ -1079,13 +1080,13 @@ class symbol_provider
     //! Gets a symbol from its index.
     virtual symbol* get_symbol(uint32_t index) = 0;
     //! Gets a symbol from its name.
-    virtual const symbol* get_symbol(const std::string& name) const = 0;
+    virtual const symbol* get_symbol(std::string_view name) const = 0;
     //! Gets a symbol from its name.
-    virtual symbol* get_symbol(const std::string& name) = 0;
+    virtual symbol* get_symbol(std::string_view name) = 0;
     //! @brief Adds a symbol in the table.
     //!
     //! Eventually creates an entry in the strings table for the symbol name.
-    virtual symbol* add_symbol(const std::string& name) = 0;
+    virtual symbol* add_symbol(std::string_view name) = 0;
 };
 
 //------------------------------------------------------------------------------

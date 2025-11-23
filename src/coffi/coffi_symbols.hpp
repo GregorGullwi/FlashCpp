@@ -78,7 +78,7 @@ class symbol
     }
 
     //---------------------------------------------------------------------
-    void set_name(const std::string& value)
+    void set_name(std::string_view value)
     {
         stn_->name_to_string(value, header.name);
     }
@@ -174,15 +174,15 @@ class coffi_symbols : public virtual symbol_provider,
     }
 
     //---------------------------------------------------------------------
-    //! @copydoc symbol_provider::get_symbol(const std::string &)
-    virtual symbol* get_symbol(const std::string& name)
+    //! @copydoc symbol_provider::get_symbol(std::string_view)
+    virtual symbol* get_symbol(std::string_view name)
     {
         return (symbol*)((const coffi_symbols*)this)->get_symbol(name);
     }
 
     //---------------------------------------------------------------------
-    //! @copydoc symbol_provider::get_symbol(const std::string &)
-    virtual const symbol* get_symbol(const std::string& name) const
+    //! @copydoc symbol_provider::get_symbol(std::string_view)
+    virtual const symbol* get_symbol(std::string_view name) const
     {
         for (auto s = symbols_.begin(); s != symbols_.end(); s++) {
             if (s->get_name() == name) {
@@ -200,7 +200,7 @@ class coffi_symbols : public virtual symbol_provider,
 
     //---------------------------------------------------------------------
     //! @copydoc symbol_provider::add_symbol()
-    symbol* add_symbol(const std::string& name)
+    symbol* add_symbol(std::string_view name)
     {
         uint32_t index = 0;
         if (symbols_.size() > 0) {
