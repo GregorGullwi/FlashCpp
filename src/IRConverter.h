@@ -3149,6 +3149,7 @@ private:
 		modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
 		textSectionData.push_back(modrm);
 		
+		// LEA uses RIP-relative addressing, different from CALL's rel32 (can't use emitCall here)
 		size_t relocation_offset = textSectionData.size();
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
@@ -4463,9 +4464,22 @@ private:
 		// Mark that we need the dynamic_cast runtime helpers
 		needs_dynamic_cast_runtime_ = true;
 
-		// Implementation using runtime helper function __dynamic_cast_check
-		// Calling convention: Windows x64 (first 4 args in RCX, RDX, R8, R9)
+		// Implementation using auto-generated runtime helper __dynamic_cast_check
+		// (Generated at end of compilation - see emit_dynamic_cast_check_function)
 		// 
+		// C++ equivalent logic:
+		//   bool __dynamic_cast_check(RTTIInfo* source, RTTIInfo* target) {
+		//     if (!source || !target) return false;
+		//     if (source == target) return true;
+		//     if (source->class_hash == target->class_hash) return true;
+		//     // Check each base class recursively
+		//     for (size_t i = 0; i < source->num_bases && i < 64; i++) {
+		//       if (__dynamic_cast_check(source->base_ptrs[i], target)) return true;
+		//     }
+		//     return false;
+		//   }
+		//
+		// Calling convention: Windows x64 (first 4 args in RCX, RDX, R8, R9)
 		// Arguments:
 		//   RCX = source RTTI pointer (loaded from vtable[-1])
 		//   RDX = target RTTI pointer
