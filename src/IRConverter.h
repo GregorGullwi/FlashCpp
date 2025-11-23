@@ -4177,20 +4177,9 @@ private:
 		//   RDX = target RTTI pointer
 		// Returns: RAX = 1 if cast is valid, 0 otherwise
 		
-		// Step 1: Load source pointer
+		// Step 1: Load source pointer from stack
 		int source_offset = getStackOffsetFromTempVar(source_var);
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		if (source_offset >= -128 && source_offset <= 127) {
-			textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
-			textSectionData.push_back(static_cast<uint8_t>(source_offset));
-		} else {
-			textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
-			for (int j = 0; j < 4; ++j) {
-				textSectionData.push_back(static_cast<uint8_t>(source_offset & 0xFF));
-				source_offset >>= 8;
-			}
-		}
+		emitMovFromFrame(X64Register::RAX, source_offset);
 
 		// Step 2: Save source pointer to R8 (we'll need it later if cast succeeds)
 		// MOV R8, RAX
@@ -4338,20 +4327,9 @@ private:
 		int8_t success_jmp_delta = static_cast<int8_t>(end_offset - success_jmp_offset - 1);
 		textSectionData[success_jmp_offset] = static_cast<uint8_t>(success_jmp_delta);
 
-		// Step 10: Store result
+		// Step 10: Store result to stack
 		int result_offset = getStackOffsetFromTempVar(result_var);
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x89); // MOV r/m64, r64
-		if (result_offset >= -128 && result_offset <= 127) {
-			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-			textSectionData.push_back(static_cast<uint8_t>(result_offset));
-		} else {
-			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-			for (int j = 0; j < 4; ++j) {
-				textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
-				result_offset >>= 8;
-			}
-		}
+		emitMovToFrame(X64Register::RAX, result_offset);
 
 		regAlloc.reset();
 	}
