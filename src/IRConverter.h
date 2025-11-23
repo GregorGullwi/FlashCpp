@@ -3051,8 +3051,7 @@ private:
 	}
 
 	// Helper to emit CALL instruction with relocation
-	// Returns the offset where the relocation displacement should be added
-	size_t emitCall(const std::string& symbol_name) {
+	void emitCall(const std::string& symbol_name) {
 		textSectionData.push_back(0xE8); // CALL rel32
 		size_t relocation_offset = textSectionData.size();
 		textSectionData.push_back(0x00);
@@ -3060,7 +3059,6 @@ private:
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
 		writer.add_relocation(relocation_offset, symbol_name);
-		return relocation_offset;
 	}
 
 	// Allocate a register, spilling one to the stack if necessary
