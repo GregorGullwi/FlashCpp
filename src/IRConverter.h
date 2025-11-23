@@ -3034,6 +3034,35 @@ private:
 		}
 	}
 
+	// Helper to emit SUB RSP, imm8 for stack allocation
+	void emitSubRSP(uint8_t amount) {
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x83); // SUB r/m64, imm8
+		textSectionData.push_back(0xEC); // ModR/M: RSP
+		textSectionData.push_back(amount);
+	}
+
+	// Helper to emit ADD RSP, imm8 for stack deallocation
+	void emitAddRSP(uint8_t amount) {
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x83); // ADD r/m64, imm8
+		textSectionData.push_back(0xC4); // ModR/M: RSP
+		textSectionData.push_back(amount);
+	}
+
+	// Helper to emit CALL instruction with relocation
+	// Returns the offset where the relocation displacement should be added
+	size_t emitCall(const std::string& symbol_name) {
+		textSectionData.push_back(0xE8); // CALL rel32
+		size_t relocation_offset = textSectionData.size();
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		writer.add_relocation(relocation_offset, symbol_name);
+		return relocation_offset;
+	}
+
 	// Allocate a register, spilling one to the stack if necessary
 	X64Register allocateRegisterWithSpilling() {
 		// Try to allocate a free register first
@@ -4230,26 +4259,9 @@ private:
 		writer.add_relocation(rtti_relocation_offset, target_rtti_symbol);
 
 		// Step 7: Call __dynamic_cast_check(source_rtti, target_rtti)
-		// SUB RSP, 32  ; shadow space for Windows x64 calling convention
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x83); // SUB r/m64, imm8
-		textSectionData.push_back(0xEC); // ModR/M: RSP
-		textSectionData.push_back(0x20); // 32 bytes
-
-		// CALL __dynamic_cast_check
-		textSectionData.push_back(0xE8); // CALL rel32
-		size_t call_relocation_offset = textSectionData.size();
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		writer.add_relocation(call_relocation_offset, "__dynamic_cast_check");
-
-		// ADD RSP, 32  ; restore stack
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x83); // ADD r/m64, imm8
-		textSectionData.push_back(0xC4); // ModR/M: RSP
-		textSectionData.push_back(0x20); // 32 bytes
+		emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+		emitCall("__dynamic_cast_check");
+		emitAddRSP(32);  // Restore stack
 
 		// Step 8: Check return value (RAX contains 0 or 1)
 		// TEST AL, AL
@@ -4283,22 +4295,8 @@ private:
 		if (is_reference) {
 			// For reference casts, throw std::bad_cast instead of returning nullptr
 			// Call __dynamic_cast_throw_bad_cast (no arguments, never returns)
-			
-			// SUB RSP, 32  ; shadow space for Windows x64 calling convention
-			textSectionData.push_back(0x48); // REX.W prefix
-			textSectionData.push_back(0x83); // SUB r/m64, imm8
-			textSectionData.push_back(0xEC); // ModR/M: RSP
-			textSectionData.push_back(0x20); // 32 bytes
-			
-			// CALL __dynamic_cast_throw_bad_cast
-			textSectionData.push_back(0xE8); // CALL rel32
-			size_t throw_call_offset = textSectionData.size();
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			writer.add_relocation(throw_call_offset, "__dynamic_cast_throw_bad_cast");
-			
+			emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+			emitCall("__dynamic_cast_throw_bad_cast");
 			// Note: We don't restore RSP or add code after this because __dynamic_cast_throw_bad_cast never returns
 		} else {
 			// For pointer casts, return nullptr

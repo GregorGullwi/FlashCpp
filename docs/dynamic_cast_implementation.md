@@ -37,7 +37,8 @@ This document describes the implementation of `dynamic_cast` with RTTI (Run-Time
 struct RTTIInfo {
     uint64_t class_name_hash;  // Hash of class name for identity
     uint64_t num_bases;        // Number of base classes
-    // RTTIInfo* base_ptrs[];  // Inline array of base class RTTI pointers
+    // Base class RTTI pointers follow immediately after this structure
+    // Access them via: RTTIInfo** base_ptrs = (RTTIInfo**)((char*)this + 16);
 };
 ```
 
