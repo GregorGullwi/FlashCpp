@@ -13,9 +13,26 @@
 #include <vector>
 #include <unordered_map>
 #include <assert.h>
+#include <cstdint>
+#include <typeinfo>
 #include "IRConverter.h"
 
 class Parser;
+
+// RTTI structure layout (must match ObjFileWriter.h):
+//   - 8 bytes: class name hash
+//   - 8 bytes: number of base classes
+//   - 8*N bytes: pointers to base class RTTI structures (inline array)
+struct RTTIInfo {
+	uint64_t class_name_hash;
+	uint64_t num_bases;
+	RTTIInfo* base_ptrs[0];  // Flexible array member - base class RTTI pointers follow
+	// Access via: auto** bases = reinterpret_cast<RTTIInfo**>((char*)this + 16);
+};
+
+// Note: Runtime helpers __dynamic_cast_check() and __dynamic_cast_throw_bad_cast()
+// are now auto-generated as native x64 functions by the compiler when dynamic_cast is used.
+// See IRConverter.h: emit_dynamic_cast_check_function() and emit_dynamic_cast_throw_function()
 
 // Structure to hold lambda information for deferred generation
 struct LambdaInfo {

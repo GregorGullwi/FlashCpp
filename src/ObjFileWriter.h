@@ -1049,31 +1049,124 @@ public:
 		          << " in " << (is_initialized ? ".data" : ".bss") << " section (size: " << size_in_bytes << " bytes)" << std::endl;
 	}
 
-	// Add a vtable to .rdata section
+	// Add a vtable to .rdata section with RTTI support
 	// vtable_symbol: mangled vtable symbol name (e.g., "??_7Base@@6B@")
 	// function_symbols: vector of mangled function names in vtable order
-	void add_vtable(std::string_view vtable_symbol, const std::vector<std::string_view>& function_symbols) {
+	// class_name: name of the class for RTTI
+	// base_class_names: vector of base class names for RTTI
+	void add_vtable(std::string_view vtable_symbol, const std::vector<std::string_view>& function_symbols,
+	                std::string_view class_name, const std::vector<std::string_view>& base_class_names) {
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
-		uint32_t offset = static_cast<uint32_t>(rdata_section->get_data_size());
-
+		
 		std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
-		          << " with " << function_symbols.size() << " entries" << std::endl;
+		          << " class=" << class_name
+		          << " with " << function_symbols.size() << " entries"
+		          << " and " << base_class_names.size() << " base classes" << std::endl;
 
-		// Each vtable entry is an 8-byte pointer to a function
-		// We'll add placeholder data and relocations for each function pointer
-		size_t vtable_size = function_symbols.size() * 8;  // 8 bytes per pointer
+		// Step 1: Emit RTTI data structure for this class
+		// RTTI structure layout (simplified):
+		//   - 8 bytes: pointer to class name string (or hash)
+		//   - 8 bytes: number of base classes
+		//   - 8*N bytes: pointers to base class RTTI structures
+		
+		uint32_t rtti_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::string rtti_symbol = "__rtti_" + std::string(class_name);
+		
+		// For simplicity, we'll use a pointer-sized value (class name hash) instead of a full type_info structure
+		// In a full implementation, we'd have complete RTTI structures
+		
+		// Calculate class name hash (simplified type_info)
+		std::hash<std::string_view> hasher;
+		uint64_t class_name_hash = hasher(class_name);
+		
+		// RTTI data: [class_name_hash (8 bytes), num_bases (8 bytes), base_rtti_ptrs...]
+		std::vector<char> rtti_data;
+		uint64_t num_bases = base_class_names.size();
+		rtti_data.reserve(16 + num_bases * 8); // Pre-allocate: hash + num_bases + base pointers
+		
+		// Add class name hash
+		for (int i = 0; i < 8; ++i) {
+			rtti_data.push_back(static_cast<char>((class_name_hash >> (i * 8)) & 0xFF));
+		}
+		
+		// Add number of base classes
+		for (int i = 0; i < 8; ++i) {
+			rtti_data.push_back(static_cast<char>((num_bases >> (i * 8)) & 0xFF));
+		}
+		
+		// Reserve space for base class RTTI pointers (we'll add relocations for these)
+		size_t base_ptrs_start = rtti_data.size();
+		for (size_t i = 0; i < base_class_names.size(); ++i) {
+			for (int j = 0; j < 8; ++j) {
+				rtti_data.push_back(0);
+			}
+		}
+		
+		// Add RTTI data to .rdata section
+		add_data(rtti_data, SectionType::RDATA);
+		
+		// Add a symbol for RTTI data
+		auto rtti_sym = coffi_.add_symbol(rtti_symbol);
+		rtti_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		rtti_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		rtti_sym->set_section_number(rdata_section->get_index() + 1);
+		rtti_sym->set_value(rtti_offset);
+		
+		std::cerr << "  Added RTTI structure '" << rtti_symbol << "' at offset " << rtti_offset << std::endl;
+		
+		// Add relocations for base class RTTI pointers
+		for (size_t i = 0; i < base_class_names.size(); ++i) {
+			std::string base_rtti_symbol = "__rtti_" + std::string(base_class_names[i]);
+			// 16 bytes = sizeof(class_name_hash) + sizeof(num_bases)
+			constexpr uint32_t RTTI_HEADER_SIZE = 16;
+			uint32_t reloc_offset = rtti_offset + RTTI_HEADER_SIZE + static_cast<uint32_t>(i * 8);
+			
+			uint32_t base_symbol_index = get_or_create_symbol_index(base_rtti_symbol);
+			
+			COFFI::rel_entry_generic relocation;
+			relocation.virtual_address = reloc_offset;
+			relocation.symbol_table_index = base_symbol_index;
+			relocation.type = IMAGE_REL_AMD64_ADDR64;
+			
+			rdata_section->add_relocation_entry(&relocation);
+			
+			std::cerr << "  Added RTTI relocation for base class " << base_class_names[i] << std::endl;
+		}
+		
+		// Step 2: Emit vtable structure
+		// Layout: [RTTI pointer (8 bytes), function pointers...]
+		uint32_t vtable_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		
+		// Add RTTI pointer + function pointers
+		size_t vtable_size = (1 + function_symbols.size()) * 8;  // 1 RTTI ptr + N function ptrs
 		std::vector<char> vtable_data(vtable_size, 0);
 		
 		// Add the vtable data to .rdata section
 		add_data(vtable_data, SectionType::RDATA);
-
-		// Add a symbol for this vtable
+		
+		// Add relocation for RTTI pointer at vtable[0] (before actual vtable)
+		{
+			uint32_t rtti_reloc_offset = vtable_offset;
+			uint32_t rtti_symbol_index = get_or_create_symbol_index(rtti_symbol);
+			
+			COFFI::rel_entry_generic relocation;
+			relocation.virtual_address = rtti_reloc_offset;
+			relocation.symbol_table_index = rtti_symbol_index;
+			relocation.type = IMAGE_REL_AMD64_ADDR64;
+			
+			rdata_section->add_relocation_entry(&relocation);
+			
+			std::cerr << "  Added RTTI pointer relocation at vtable[-1]" << std::endl;
+		}
+		
+		// Step 3: Add a symbol for vtable (points to first virtual function, AFTER RTTI pointer)
+		uint32_t vtable_symbol_offset = vtable_offset + 8;  // Skip RTTI pointer
 		auto symbol = coffi_.add_symbol(std::string(vtable_symbol));
 		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);  // Vtables are external
 		symbol->set_section_number(rdata_section->get_index() + 1);
-		symbol->set_value(offset);
-
+		symbol->set_value(vtable_symbol_offset);
+		
 		// Add relocations for each function pointer in the vtable
 		for (size_t i = 0; i < function_symbols.size(); ++i) {
 			if (function_symbols[i].empty()) {
@@ -1081,7 +1174,7 @@ public:
 				continue;
 			}
 			
-			uint32_t reloc_offset = offset + static_cast<uint32_t>(i * 8);
+			uint32_t reloc_offset = vtable_offset + 8 + static_cast<uint32_t>(i * 8);  // +8 to skip RTTI ptr
 			
 			// Add IMAGE_REL_AMD64_ADDR64 relocation for the function pointer
 			uint32_t symbol_index = get_or_create_symbol_index(std::string(function_symbols[i]));
@@ -1097,8 +1190,8 @@ public:
 			          << " at offset " << reloc_offset << std::endl;
 		}
 
-		std::cerr << "Added vtable '" << vtable_symbol << "' at offset " << offset
-		          << " in .rdata section (size: " << vtable_size << " bytes)" << std::endl;
+		std::cerr << "Added vtable '" << vtable_symbol << "' at offset " << vtable_symbol_offset
+		          << " in .rdata section (total size with RTTI: " << vtable_size << " bytes)" << std::endl;
 	}
 
 	// Helper: get or create symbol index for a function name
