@@ -4701,6 +4701,68 @@ private:
 		// For now, use file ID 0 (first source file)
 		writer.set_current_function_for_debug(func_name_str, 0);
 
+		// If this is a member function, check if we need to register vtable for this class
+		if (!struct_name.empty()) {
+			// Look up the struct type info
+			auto struct_it = gTypesByName.find(struct_name);
+			if (struct_it != gTypesByName.end()) {
+				const TypeInfo* type_info = struct_it->second;
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
+				
+				if (struct_info && struct_info->has_vtable) {
+					// Check if we've already registered this vtable
+					bool vtable_exists = false;
+					std::string vtable_symbol = "??_7";
+					vtable_symbol += struct_name;
+					vtable_symbol += "@@6B@";
+					
+					for (const auto& vt : vtables_) {
+						if (vt.vtable_symbol == vtable_symbol) {
+							vtable_exists = true;
+							break;
+						}
+					}
+					
+					if (!vtable_exists) {
+						// Register this vtable - we'll populate function symbols as we encounter them
+						VTableInfo vtable_info;
+						vtable_info.vtable_symbol = vtable_symbol;
+						vtable_info.class_name = std::string(struct_name);
+						
+						// Reserve space for vtable entries
+						vtable_info.function_symbols.resize(struct_info->vtable.size());
+						
+						vtables_.push_back(std::move(vtable_info));
+						std::cerr << "Registered vtable for class " << struct_name << " with " 
+						          << struct_info->vtable.size() << " entries" << std::endl;
+					}
+					
+					// Check if this function is virtual and add it to the vtable
+					const StructMemberFunction* member_func = nullptr;
+					for (const auto& func : struct_info->member_functions) {
+						if (func.name == func_name_str) {
+							member_func = &func;
+							break;
+						}
+					}
+					
+					if (member_func && member_func->vtable_index >= 0) {
+						// Find the vtable entry and update it with the mangled name
+						for (auto& vt : vtables_) {
+							if (vt.vtable_symbol == vtable_symbol) {
+								if (member_func->vtable_index < static_cast<int>(vt.function_symbols.size())) {
+									vt.function_symbols[member_func->vtable_index] = std::string(mangled_name);
+									std::cerr << "  Added virtual function " << func_name_str 
+									          << " at vtable index " << member_func->vtable_index << std::endl;
+								}
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Add line mapping for function declaration (now that current function is set)
 		if (instruction.getLineNumber() > 0) {
 			// Also add line mapping for function opening brace (next line)
@@ -7755,6 +7817,54 @@ private:
 		// Extract typed payload - all MemberStore instructions use typed payloads
 		const MemberStoreOp& op = std::any_cast<const MemberStoreOp&>(instruction.getTypedPayload());
 
+		// Check if this is a vtable pointer initialization (vptr)
+		if (!op.vtable_symbol.empty()) {
+			// This is a vptr initialization - load vtable address and store to offset 0
+			// Get the object's base stack offset
+			int32_t object_base_offset = 0;
+			const StackVariableScope& current_scope = variable_scopes.back();
+			
+			if (std::holds_alternative<std::string_view>(op.object)) {
+				std::string_view object_name = std::get<std::string_view>(op.object);
+				auto it = current_scope.identifier_offset.find(object_name);
+				if (it == current_scope.identifier_offset.end()) {
+					assert(false && "Struct object not found in scope");
+					return;
+				}
+				object_base_offset = it->second;
+			}
+			
+			// Load vtable address using LEA with relocation
+			// LEA RAX, [RIP + vtable_symbol]
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x8D); // LEA
+			textSectionData.push_back(0x05); // ModR/M: [RIP + disp32], RAX
+			
+			// Add placeholder for the displacement (will be filled by relocation)
+			uint32_t relocation_offset = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			
+			// Add a relocation for the vtable symbol
+			writer.add_relocation(relocation_offset, op.vtable_symbol);
+			
+			// Store vtable pointer to [RCX + 0] (this pointer is in RCX, vptr is at offset 0)
+			// First load 'this' pointer into RCX
+			auto load_ptr_opcodes = generateMovFromFrame(X64Register::RCX, object_base_offset);
+			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+			
+			// Store RAX (vtable address) to [RCX + 0]
+			// MOV [RCX], RAX
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x89); // MOV r/m64, r64
+			textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+			
+			return;  // Done with vptr initialization
+		}
+
 		// Now process the MemberStoreOp
 		// Get the value - it could be a TempVar, a literal (unsigned long long, double), or a string_view (variable name)
 		bool is_literal = false;
@@ -7866,6 +7976,8 @@ private:
 				}
 			}
 		} else if (is_variable) {
+			// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
+			// This will be handled separately below
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.identifier_offset.find(variable_name);
 			if (it == current_scope.identifier_offset.end()) {
@@ -8368,6 +8480,11 @@ private:
 			writer.add_global_variable(global.name, global.size_in_bytes, global.is_initialized, global.init_value);
 		}
 
+		// Emit vtables to .rdata section
+		for (const auto& vtable : vtables_) {
+			writer.add_vtable(vtable.vtable_symbol, vtable.function_symbols);
+		}
+
 		// Now add pending global variable relocations (after symbols are created)
 		for (const auto& reloc : pending_global_relocations_) {
 			writer.add_text_relocation(reloc.offset, reloc.symbol_name, reloc.type);
@@ -8478,6 +8595,14 @@ private:
 		unsigned long long init_value = 0;
 	};
 	std::vector<GlobalVariableInfo> global_variables_;
+
+	// VTable tracking
+	struct VTableInfo {
+		std::string vtable_symbol;  // e.g., "??_7Base@@6B@"
+		std::string class_name;
+		std::vector<std::string> function_symbols;  // Mangled function names in vtable order
+	};
+	std::vector<VTableInfo> vtables_;
 
 	// Pending global variable relocations (added after symbols are created)
 	struct PendingGlobalRelocation {

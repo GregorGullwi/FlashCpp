@@ -967,12 +967,34 @@ private:
 				// This must happen after base constructor calls (which set up base vptr)
 				// but before member initialization
 				if (struct_info->has_vtable) {
-					// TODO: Generate vptr initialization
-					// For now, we skip this - vtable generation is complex and requires:
-					// 1. Generating vtable data structure in .rdata section
-					// 2. Creating vtable symbol
-					// 3. Storing vtable address in vptr (first 8 bytes of object)
-					// This will be implemented in a future phase
+					// Generate vptr initialization by storing vtable address at offset 0
+					// The vtable symbol will be generated during object file writing
+					// Symbol format: ??_7<ClassName>@@6B@ (MSVC vtable mangling)
+					
+					// Build vtable symbol name using MSVC mangling convention
+					// Format: ??_7<ClassName>@@6B@
+					std::string vtable_symbol = "??_7";
+					vtable_symbol += node.struct_name();
+					vtable_symbol += "@@6B@";
+					
+					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
+					MemberStoreOp vptr_store;
+					vptr_store.object = std::string_view("this");
+					vptr_store.member_name = "__vptr";  // Virtual pointer (synthetic member)
+					vptr_store.offset = 0;  // vptr is always at offset 0
+					vptr_store.struct_type_info = struct_type_info;  // Use TypeInfo pointer
+					vptr_store.is_reference = false;
+					vptr_store.is_rvalue_reference = false;
+					vptr_store.vtable_symbol = std::move(vtable_symbol);  // Store vtable symbol
+					
+					// The value is a vtable symbol reference
+					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
+					// The actual symbol will be loaded using the vtable_symbol field
+					vptr_store.value.type = Type::Void;
+					vptr_store.value.size_in_bits = 64;
+					vptr_store.value.value = static_cast<unsigned long long>(0);  // Placeholder
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
 				}
 			}
 		}

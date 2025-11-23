@@ -1005,6 +1005,79 @@ public:
 		          << " in " << (is_initialized ? ".data" : ".bss") << " section (size: " << size_in_bytes << " bytes)" << std::endl;
 	}
 
+	// Add a vtable to .rdata section
+	// vtable_symbol: mangled vtable symbol name (e.g., "??_7Base@@6B@")
+	// function_symbols: vector of mangled function names in vtable order
+	void add_vtable(const std::string& vtable_symbol, const std::vector<std::string>& function_symbols) {
+		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+		uint32_t offset = static_cast<uint32_t>(rdata_section->get_data_size());
+
+		std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
+		          << " with " << function_symbols.size() << " entries" << std::endl;
+
+		// Each vtable entry is an 8-byte pointer to a function
+		// We'll add placeholder data and relocations for each function pointer
+		size_t vtable_size = function_symbols.size() * 8;  // 8 bytes per pointer
+		std::vector<char> vtable_data(vtable_size, 0);
+		
+		// Add the vtable data to .rdata section
+		add_data(vtable_data, SectionType::RDATA);
+
+		// Add a symbol for this vtable
+		auto symbol = coffi_.add_symbol(vtable_symbol);
+		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);  // Vtables are external
+		symbol->set_section_number(rdata_section->get_index() + 1);
+		symbol->set_value(offset);
+
+		// Add relocations for each function pointer in the vtable
+		for (size_t i = 0; i < function_symbols.size(); ++i) {
+			if (function_symbols[i].empty()) {
+				// Skip empty entries (pure virtual functions might be empty initially)
+				continue;
+			}
+			
+			uint32_t reloc_offset = offset + static_cast<uint32_t>(i * 8);
+			
+			// Add IMAGE_REL_AMD64_ADDR64 relocation for the function pointer
+			uint32_t symbol_index = get_or_create_symbol_index(function_symbols[i]);
+			
+			COFFI::rel_entry_generic relocation;
+			relocation.virtual_address = reloc_offset;
+			relocation.symbol_table_index = symbol_index;
+			relocation.type = IMAGE_REL_AMD64_ADDR64;  // 64-bit absolute address
+			
+			rdata_section->add_relocation_entry(&relocation);
+			
+			std::cerr << "  Added relocation for vtable[" << i << "] -> " << function_symbols[i] 
+			          << " at offset " << reloc_offset << std::endl;
+		}
+
+		std::cerr << "Added vtable '" << vtable_symbol << "' at offset " << offset
+		          << " in .rdata section (size: " << vtable_size << " bytes)" << std::endl;
+	}
+
+	// Helper: get or create symbol index for a function name
+	uint32_t get_or_create_symbol_index(const std::string& symbol_name) {
+		// First, check if symbol already exists
+		auto symbols = coffi_.get_symbols();
+		for (size_t i = 0; i < symbols->size(); ++i) {
+			if ((*symbols)[i].get_name() == symbol_name) {
+				return static_cast<uint32_t>(i);
+			}
+		}
+		
+		// Symbol doesn't exist, create it as an external reference
+		auto symbol = coffi_.add_symbol(symbol_name);
+		symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
+		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		symbol->set_section_number(0);  // External reference
+		symbol->set_value(0);
+		
+		// Return the index of the newly added symbol
+		return static_cast<uint32_t>(symbols->size());
+	}
+
 protected:
 	COFFI::coffi coffi_;
 	std::unordered_map<SectionType, std::string> sectiontype_to_name;
