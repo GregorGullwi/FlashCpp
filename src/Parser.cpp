@@ -9884,6 +9884,11 @@ ParseResult Parser::parse_template_declaration() {
 		}
 	} cleanup_guard{template_type_infos};
 
+	// Check if it's a concept template: template<typename T> concept Name = ...;
+	bool is_concept_template = peek_token().has_value() &&
+	                           peek_token()->type() == Token::Type::Keyword &&
+	                           peek_token()->value() == "concept";
+
 	// Check if it's an alias template: template<typename T> using Ptr = T*;
 	bool is_alias_template = peek_token().has_value() &&
 	                         peek_token()->type() == Token::Type::Keyword &&
@@ -9932,6 +9937,7 @@ ParseResult Parser::parse_template_declaration() {
 		restore_token_position(var_check_pos);
 	}
 
+	std::cerr << "DEBUG: is_concept_template=" << is_concept_template << std::endl;
 	std::cerr << "DEBUG: is_alias_template=" << is_alias_template << std::endl;
 	std::cerr << "DEBUG: is_class_template=" << is_class_template << std::endl;
 	std::cerr << "DEBUG: is_variable_template=" << is_variable_template << std::endl;
@@ -9940,7 +9946,57 @@ ParseResult Parser::parse_template_declaration() {
 	}
 
 	ParseResult decl_result;
-	if (is_alias_template) {
+	if (is_concept_template) {
+		// Parse concept template: template<typename T> concept Name = constraint;
+		// Consume 'concept' keyword
+		Token concept_token = *peek_token();
+		consume_token();
+		
+		// Parse the concept name
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected concept name after 'concept' in template", *current_token_);
+		}
+		Token concept_name_token = *peek_token();
+		consume_token();
+		
+		// Expect '=' before the constraint expression
+		if (!peek_token().has_value() || peek_token()->value() != "=") {
+			return ParseResult::error("Expected '=' after concept name", *current_token_);
+		}
+		consume_token(); // consume '='
+		
+		// Parse the constraint expression
+		auto constraint_result = parse_expression();
+		if (constraint_result.is_error()) {
+			return constraint_result;
+		}
+		
+		// Expect ';' at the end
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after concept definition", *current_token_);
+		}
+		
+		// Convert template_params (ASTNode vector) to TemplateParameterNode vector
+		std::vector<TemplateParameterNode> template_param_nodes;
+		for (const auto& param : template_params) {
+			if (param.is<TemplateParameterNode>()) {
+				template_param_nodes.push_back(param.as<TemplateParameterNode>());
+			}
+		}
+		
+		// Create the ConceptDeclarationNode with template parameters
+		auto concept_node = emplace_node<ConceptDeclarationNode>(
+			concept_name_token,
+			std::move(template_param_nodes),
+			*constraint_result.node(),
+			concept_token
+		);
+		
+		// Register the concept in the global concept registry
+		gConceptRegistry.registerConcept(concept_name_token.value(), concept_node);
+		
+		return saved_position.success(concept_node);
+	} else if (is_alias_template) {
 		// Consume 'using' keyword
 		consume_token();
 		

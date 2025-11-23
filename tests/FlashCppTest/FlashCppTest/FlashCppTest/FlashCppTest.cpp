@@ -2381,3 +2381,7 @@ TEST_CASE("Struct:ReferencePassingSimple") {
 TEST_CASE("Concepts:Simple") {
 	run_test_from_file("test_concept_simple.cpp", "C++20 simple concept declarations", false);
 }
+
+TEST_CASE("Concepts:Template") {
+	run_test_from_file("test_concept_template.cpp", "C++20 concept with template parameters", false);
+}
