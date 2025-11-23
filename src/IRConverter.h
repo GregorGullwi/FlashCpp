@@ -4184,21 +4184,138 @@ private:
 			}
 		}
 
-		// For a full implementation, we would:
-		// 1. Check if source pointer is null (return null if so)
-		// 2. Load vtable pointer from object
-		// 3. Load RTTI pointer from vtable[-1]
-		// 4. Call isDerivedFrom() to check if cast is valid
-		// 5. Return source pointer if valid, nullptr if not
+		// Implement proper dynamic_cast runtime type checking
+		// Algorithm:
+		// 1. Check if source pointer is null -> return null
+		// 2. Load vtable pointer from object (first 8 bytes)
+		// 3. Load RTTI pointer from vtable[-1] (8 bytes before vtable)
+		// 4. Get target type RTTI pointer
+		// 5. Compare type pointers
+		// 6. Return source pointer if valid, nullptr if not
 
-		// Simplified implementation: just return the source pointer
-		// (assumes all casts succeed - this is a placeholder)
-		// In a real implementation, we'd generate a call to a runtime function
+		// Step 1: Check if source pointer is null
+		// TEST RAX, RAX
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x85); // TEST r64, r64
+		textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
 
-		// For now, just copy source to result (optimistic cast)
-		// A proper implementation would check RTTI and potentially return nullptr
+		// JZ to null_result (if source is null, skip to returning null)
+		// We'll need to patch this offset later
+		textSectionData.push_back(0x0F); // Two-byte opcode prefix
+		textSectionData.push_back(0x84); // JZ rel32
+		size_t null_check_offset = textSectionData.size();
+		// Placeholder for 32-bit relative offset (will be patched)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
 
-		// Store result (RAX already contains source pointer)
+		// Step 2: Load vtable pointer from object (first 8 bytes)
+		// MOV RAX, [RAX]  ; load vptr from object
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		textSectionData.push_back(0x00); // ModR/M: RAX, [RAX]
+
+		// Step 3: Load RTTI type_info pointer from vtable[-1]
+		// MOV RCX, [RAX - 8]  ; load type_info pointer from vtable[-1]
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		textSectionData.push_back(0x48); // ModR/M: RCX, [RAX + disp8]
+		textSectionData.push_back(static_cast<uint8_t>(-8)); // -8 offset
+
+		// Step 4 & 5: Load target RTTI and compare
+		// Get RTTI symbol for target type
+		std::string target_rtti_symbol = "__rtti_" + target_type;
+
+		// Load address of target RTTI into RDX
+		// LEA RDX, [RIP + target_rtti_symbol]
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8D); // LEA r64, m
+		textSectionData.push_back(0x15); // ModR/M: RDX, [RIP + disp32]
+		
+		// Add relocation for target RTTI symbol
+		size_t rtti_relocation_offset = textSectionData.size();
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		writer.add_relocation(rtti_relocation_offset, target_rtti_symbol);
+
+		// Compare source RTTI (in RCX) with target RTTI (in RDX)
+		// CMP RCX, RDX
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x39); // CMP r/m64, r64
+		textSectionData.push_back(0xD1); // ModR/M: RCX, RDX
+
+		// JE to success (if types match, cast succeeds)
+		textSectionData.push_back(0x0F); // Two-byte opcode prefix
+		textSectionData.push_back(0x84); // JE rel32
+		size_t success_check_offset = textSectionData.size();
+		// Placeholder for 32-bit relative offset (will be patched)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// TODO: For a complete implementation, we should also check base classes
+		// by walking the inheritance chain using the base_types array in RTTI
+		// For now, we only support exact type matches
+
+		// Type mismatch - fall through to null_result
+		
+		// null_result label:
+		size_t null_result_offset = textSectionData.size();
+		
+		// XOR RAX, RAX  ; set result to nullptr
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x31); // XOR r64, r64
+		textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
+
+		// JMP to end
+		textSectionData.push_back(0xEB); // JMP rel8
+		size_t null_jmp_offset = textSectionData.size();
+		textSectionData.push_back(0x00); // Placeholder for 8-bit relative offset
+
+		// success label:
+		size_t success_offset = textSectionData.size();
+		
+		// Reload source pointer into RAX (it was overwritten by vtable load)
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		if (source_offset >= -128 && source_offset <= 127) {
+			textSectionData.push_back(0x45); // ModR/M: RAX, [RBP + disp8]
+			textSectionData.push_back(static_cast<uint8_t>(source_offset));
+		} else {
+			textSectionData.push_back(0x85); // ModR/M: RAX, [RBP + disp32]
+			for (int j = 0; j < 4; ++j) {
+				textSectionData.push_back(static_cast<uint8_t>(source_offset & 0xFF));
+				source_offset >>= 8;
+			}
+		}
+
+		// end label:
+		size_t end_offset = textSectionData.size();
+
+		// Patch the jump offsets
+		// Patch null_check JZ to null_result
+		int32_t null_check_delta = static_cast<int32_t>(null_result_offset - null_check_offset - 4);
+		textSectionData[null_check_offset - 4] = static_cast<uint8_t>(null_check_delta & 0xFF);
+		textSectionData[null_check_offset - 3] = static_cast<uint8_t>((null_check_delta >> 8) & 0xFF);
+		textSectionData[null_check_offset - 2] = static_cast<uint8_t>((null_check_delta >> 16) & 0xFF);
+		textSectionData[null_check_offset - 1] = static_cast<uint8_t>((null_check_delta >> 24) & 0xFF);
+
+		// Patch success_check JE to success
+		int32_t success_check_delta = static_cast<int32_t>(success_offset - success_check_offset - 4);
+		textSectionData[success_check_offset - 4] = static_cast<uint8_t>(success_check_delta & 0xFF);
+		textSectionData[success_check_offset - 3] = static_cast<uint8_t>((success_check_delta >> 8) & 0xFF);
+		textSectionData[success_check_offset - 2] = static_cast<uint8_t>((success_check_delta >> 16) & 0xFF);
+		textSectionData[success_check_offset - 1] = static_cast<uint8_t>((success_check_delta >> 24) & 0xFF);
+
+		// Patch null_jmp to end
+		int8_t null_jmp_delta = static_cast<int8_t>(end_offset - null_jmp_offset - 1);
+		textSectionData[null_jmp_offset] = static_cast<uint8_t>(null_jmp_delta);
+
+		// Store result (RAX contains either source pointer or nullptr)
 		int result_offset = getStackOffsetFromTempVar(result_var);
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0x89); // MOV r/m64, r64
@@ -4691,9 +4808,23 @@ private:
 						// Reserve space for vtable entries
 						vtable_info.function_symbols.resize(struct_info->vtable.size());
 						
+						// Populate base class names for RTTI
+						for (const auto& base : struct_info->base_classes) {
+							if (base.type_index < gTypeInfo.size()) {
+								const TypeInfo& base_type = gTypeInfo[base.type_index];
+								if (base_type.isStruct()) {
+									const StructTypeInfo* base_struct = base_type.getStructInfo();
+									if (base_struct) {
+										vtable_info.base_class_names.push_back(base_struct->name);
+									}
+								}
+							}
+						}
+						
 						vtables_.push_back(std::move(vtable_info));
 						std::cerr << "Registered vtable for class " << struct_name << " with " 
-						          << struct_info->vtable.size() << " entries" << std::endl;
+						          << struct_info->vtable.size() << " entries and "
+						          << vtable_info.base_class_names.size() << " base classes" << std::endl;
 					}
 					
 					// Check if this function is virtual and add it to the vtable
@@ -8385,7 +8516,7 @@ private:
 
 		// Emit vtables to .rdata section
 		for (const auto& vtable : vtables_) {
-			writer.add_vtable(vtable.vtable_symbol, vtable.function_symbols);
+			writer.add_vtable(vtable.vtable_symbol, vtable.function_symbols, vtable.class_name, vtable.base_class_names);
 		}
 
 		// Now add pending global variable relocations (after symbols are created)
@@ -8504,6 +8635,7 @@ private:
 		std::string_view vtable_symbol;  // e.g., "??_7Base@@6B@"
 		std::string_view class_name;
 		std::vector<std::string_view> function_symbols;  // Mangled function names in vtable order
+		std::vector<std::string_view> base_class_names;  // Base class names for RTTI
 	};
 	std::vector<VTableInfo> vtables_;
 
