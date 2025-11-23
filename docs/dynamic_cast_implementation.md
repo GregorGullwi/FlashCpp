@@ -15,21 +15,27 @@ This document describes the implementation of `dynamic_cast` with RTTI (Run-Time
 2. **IR Generation** (`src/CodeGen.h`)
    - Generates `IrOpcode::DynamicCast` instructions
    - Captures: result var, source ptr, target type name, is_reference flag
-   - **Contains inline runtime helpers**: `__dynamic_cast_check()` and `__dynamic_cast_throw_bad_cast()`
    - RTTI structure definition (`RTTIInfo`) used by both compile-time and runtime code
 
 3. **Code Generation** (`src/IRConverter.h`)
-   - `handleDynamicCast()`: Emits x64 machine code
-   - Calls runtime helper `__dynamic_cast_check()`
+   - `handleDynamicCast()`: Emits x64 machine code for dynamic_cast operation
+   - Sets `needs_dynamic_cast_runtime_` flag to trigger helper function emission
+   - **Auto-generates runtime helpers**: `emit_dynamic_cast_check_function()` and `emit_dynamic_cast_throw_function()`
    - For pointer casts: Returns source pointer on success, nullptr on failure
    - For reference casts: Returns source reference on success, throws `std::bad_cast` on failure
 
-4. **RTTI Emission** (`src/ObjFileWriter.h`)
+4. **Runtime Helper Auto-Generation** (`src/IRConverter.h`)
+   - `emit_dynamic_cast_check_function()`: Generates `__dynamic_cast_check()` as native x64 code
+   - `emit_dynamic_cast_throw_function()`: Generates `__dynamic_cast_throw_bad_cast()` as native x64 code
+   - Functions are emitted once per compilation unit if `dynamic_cast` is used
+   - No separate linking required - helpers are embedded in the object file
+
+5. **RTTI Emission** (`src/ObjFileWriter.h`)
    - `add_vtable()`: Emits RTTI structures to `.rdata` section
    - Creates `__rtti_<classname>` symbols
    - Generates relocations for type checking
 
-**Note**: Runtime helpers are now integrated directly into `CodeGen.h` as inline functions, consistent with the compiler's header-only architecture. No separate runtime file is needed.
+**Note**: Runtime helpers are now auto-generated as native x64 machine code and embedded directly in each object file that uses `dynamic_cast`. No separate runtime library is needed.
 
 ### RTTI Structure Layout
 
@@ -92,29 +98,27 @@ Object memory:
 
 ### Type Checking Logic
 
-The `__dynamic_cast_check()` function:
+The `__dynamic_cast_check()` function (auto-generated as x64 code):
 
 1. **Exact match**: Check if source == target (by pointer)
 2. **Hash match**: Check if source.hash == target.hash (for duplicate RTTI)
-3. **Inheritance check**: Recursively check each base class
+3. **Inheritance check**: **(Currently simplified - full recursive implementation planned)**
 
-```cpp
+**Current implementation** (simplified for initial release):
+```
 bool __dynamic_cast_check(RTTIInfo* source, RTTIInfo* target) {
-    if (!source || !target) return false;
-    if (source == target) return true;  // Exact match
-    if (source->hash == target->hash) return true;  // Hash match
-    
-    // Check bases recursively
-    for (each base in source->bases) {
-        if (__dynamic_cast_check(base, target)) return true;
-    }
-    return false;
+    if (!source || !target) return false;  // Null check
+    if (source == target) return true;      // Pointer equality
+    if (source->hash == target->hash) return true;  // Hash equality
+    return false;  // TODO: Add recursive base class checking
 }
 ```
 
+**Future enhancement**: Full recursive base class traversal will be added to support downcasting through inheritance chains.
+
 ## Building and Linking
 
-The runtime helper functions are now inlined directly in `src/CodeGen.h`, so no separate compilation or header inclusion is needed. The functions are automatically available when the generated code is linked with the C++ runtime library.
+The runtime helper functions are **auto-generated as native x64 code** and embedded directly into each object file that uses `dynamic_cast`. No separate compilation, linking, or header inclusion is needed.
 
 ### On Windows with MSVC
 

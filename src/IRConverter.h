@@ -2192,6 +2192,12 @@ public:
 			writer.add_source_file(actual_source_file);
 		}
 
+		// Emit dynamic_cast runtime helpers if needed
+		if (needs_dynamic_cast_runtime_) {
+			ProfilingTimer timer("Emit dynamic_cast runtime helpers", show_timing);
+			emit_dynamic_cast_runtime_helpers();
+		}
+
 		{
 			ProfilingTimer timer("Finalize sections", show_timing);
 			finalizeSections();
@@ -4275,6 +4281,9 @@ private:
 		auto& op = instruction.getTypedPayload<DynamicCastOp>();
 
 		flushAllDirtyRegisters();
+
+		// Mark that we need the dynamic_cast runtime helpers
+		needs_dynamic_cast_runtime_ = true;
 
 		// Implementation using runtime helper function __dynamic_cast_check
 		// Calling convention: Windows x64 (first 4 args in RCX, RDX, R8, R9)
@@ -8575,6 +8584,113 @@ private:
 		writer.finalize_debug_info();
 	}
 
+	// Emit runtime helper functions for dynamic_cast as native x64 code
+	void emit_dynamic_cast_runtime_helpers() {
+		// Emit both __dynamic_cast_check and __dynamic_cast_throw_bad_cast functions
+		// These are auto-generated as native x64 machine code
+		emit_dynamic_cast_check_function();
+		emit_dynamic_cast_throw_function();
+	}
+
+	// Emit __dynamic_cast_check function
+	//   bool __dynamic_cast_check(RTTIInfo* source_rtti, RTTIInfo* target_rtti)
+	// Parameters: RCX = source_rtti, RDX = target_rtti
+	// Returns: AL = 1 if cast valid, 0 otherwise
+	void emit_dynamic_cast_check_function() {
+		// TODO: Full implementation requires recursive calls, loops, and complex control flow
+		// For now, generating a simplified version that handles the common case
+		// This will be expanded to full implementation
+		
+		// Record function start
+		uint32_t function_offset = static_cast<uint32_t>(textSectionData.size());
+		
+		// Function prologue
+		textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(0x5C); 
+		textSectionData.push_back(0x24); textSectionData.push_back(0x08); // MOV [RSP+8], RBX - save RBX
+		textSectionData.push_back(0x48); textSectionData.push_back(0x89); textSectionData.push_back(0x6C);
+		textSectionData.push_back(0x24); textSectionData.push_back(0x10); // MOV [RSP+16], RBP - save RBP
+		
+		// Null check: if (!source_rtti || !target_rtti) return false
+		// TEST RCX, RCX
+		textSectionData.push_back(0x48); textSectionData.push_back(0x85); textSectionData.push_back(0xC9);
+		// JZ -> return_false
+		textSectionData.push_back(0x74); textSectionData.push_back(0x10); // JZ +16 bytes
+		
+		// TEST RDX, RDX
+		textSectionData.push_back(0x48); textSectionData.push_back(0x85); textSectionData.push_back(0xD2);
+		// JZ -> return_false
+		textSectionData.push_back(0x74); textSectionData.push_back(0x0C); // JZ +12 bytes
+		
+		// Pointer equality check: if (source_rtti == target_rtti) return true
+		// CMP RCX, RDX
+		textSectionData.push_back(0x48); textSectionData.push_back(0x39); textSectionData.push_back(0xD1);
+		// JE -> return_true
+		textSectionData.push_back(0x74); textSectionData.push_back(0x0F); // JE +15 bytes
+		
+		// Hash comparison: if (source->hash == target->hash) return true
+		// MOV RAX, [RCX]   ; Load source hash
+		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0x01);
+		// CMP RAX, [RDX]   ; Compare with target hash
+		textSectionData.push_back(0x48); textSectionData.push_back(0x3B); textSectionData.push_back(0x02);
+		// JE -> return_true
+		textSectionData.push_back(0x74); textSectionData.push_back(0x07); // JE +7 bytes
+		
+		// return_false:
+		// XOR AL, AL  ; Set AL = 0
+		textSectionData.push_back(0x30); textSectionData.push_back(0xC0);
+		// Epilogue and return
+		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0x5C);
+		textSectionData.push_back(0x24); textSectionData.push_back(0x08); // MOV RBX, [RSP+8]
+		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0x6C);
+		textSectionData.push_back(0x24); textSectionData.push_back(0x10); // MOV RBP, [RSP+16]
+		textSectionData.push_back(0xC3); // RET
+		
+		// return_true:
+		// MOV AL, 1  ; Set AL = 1
+		textSectionData.push_back(0xB0); textSectionData.push_back(0x01);
+		// Epilogue and return
+		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0x5C);
+		textSectionData.push_back(0x24); textSectionData.push_back(0x08); // MOV RBX, [RSP+8]
+		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0x6C);
+		textSectionData.push_back(0x24); textSectionData.push_back(0x10); // MOV RBP, [RSP+16]
+		textSectionData.push_back(0xC3); // RET
+		
+		// Calculate function length
+		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
+		
+		// Add function symbol (extern "C" linkage - no name mangling)
+		writer.add_function_symbol("__dynamic_cast_check", function_offset, 0, Linkage::C);
+		writer.update_function_length("__dynamic_cast_check", function_length);
+	}
+
+	// Emit __dynamic_cast_throw_bad_cast function
+	//   [[noreturn]] void __dynamic_cast_throw_bad_cast()
+	// This function throws std::bad_cast exception
+	void emit_dynamic_cast_throw_function() {
+		// Record function start
+		uint32_t function_offset = static_cast<uint32_t>(textSectionData.size());
+		
+		// For now, this is a stub that will call a C++ runtime function
+		// TODO: Implement proper exception throwing or link to C++ runtime
+		
+		// Simple implementation: Call abort() or similar
+		// For a complete implementation, we'd need to:
+		// 1. Allocate exception object
+		// 2. Call __CxxThrowException or similar runtime function
+		// 3. Set up exception handling tables
+		
+		// Minimal stub: infinite loop (better than returning)
+		// JMP $-2 (jump to self)
+		textSectionData.push_back(0xEB); textSectionData.push_back(0xFE);
+		
+		// Calculate function length
+		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
+		
+		// Add function symbol (extern "C" linkage - no name mangling)
+		writer.add_function_symbol("__dynamic_cast_throw_bad_cast", function_offset, 0, Linkage::C);
+		writer.update_function_length("__dynamic_cast_throw_bad_cast", function_length);
+	}
+
 	void patchBranches() {
 		// Patch all pending branch instructions with correct offsets
 		for (const auto& branch : pending_branches_) {
@@ -8671,6 +8787,9 @@ private:
 
 	// Track which stack offsets hold references (parameters or locals)
 	std::unordered_map<int32_t, ReferenceInfo> reference_stack_info_;
+
+	// Track if dynamic_cast runtime helpers need to be emitted
+	bool needs_dynamic_cast_runtime_ = false;
 };
 
 
