@@ -212,12 +212,73 @@ struct StructMemberFunction {
 		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
 };
 
-// Runtime Type Information (RTTI) structure
+// MSVC RTTI structures for runtime type information
+// These match the MSVC C++ runtime implementation for compatibility with __dynamic_cast
+
+// Type Descriptor (??_R0) - describes a type
+struct TypeDescriptor {
+	const void* pVFTable;      // Pointer to type_info vtable (typically nullptr in our implementation)
+	void* spare;               // Reserved field (nullptr)
+	char name[1];              // Mangled name (variable length, null-terminated)
+	
+	TypeDescriptor() : pVFTable(nullptr), spare(nullptr), name{0} {}
+};
+
+// Base Class Descriptor (??_R1) - describes a single base class relationship
+struct BaseClassDescriptor {
+	uint32_t pTypeDescriptor;  // RVA to Type Descriptor of the base class
+	uint32_t numContainedBases; // Number of nested bases (for multiple inheritance)
+	int32_t mdisp;             // Member displacement (offset in the class)
+	int32_t pdisp;             // Vbtable displacement (-1 if not a virtual base)
+	int32_t vdisp;             // Displacement inside vbtable (0 if not a virtual base)
+	uint32_t attributes;       // Flags (0 = normal base, 1 = virtual base, etc.)
+	uint32_t pClassDescriptor; // RVA to Class Hierarchy Descriptor of the base
+	
+	BaseClassDescriptor() : pTypeDescriptor(0), numContainedBases(0), 
+	                        mdisp(0), pdisp(-1), vdisp(0), attributes(0), pClassDescriptor(0) {}
+};
+
+// Base Class Array (??_R2) - array of pointers to Base Class Descriptors
+struct BaseClassArray {
+	std::vector<uint32_t> arrayOfBaseClassDescriptors; // RVAs to Base Class Descriptors
+};
+
+// Class Hierarchy Descriptor (??_R3) - describes the inheritance hierarchy
+struct ClassHierarchyDescriptor {
+	uint32_t signature;        // Always 0 in MSVC
+	uint32_t attributes;       // Bit flags (0 = single inheritance, 1 = multiple, 2 = virtual)
+	uint32_t numBaseClasses;   // Number of base classes (including this class)
+	uint32_t pBaseClassArray;  // RVA to Base Class Array
+	
+	ClassHierarchyDescriptor() : signature(0), attributes(0), numBaseClasses(0), pBaseClassArray(0) {}
+};
+
+// Complete Object Locator (??_R4) - the main RTTI structure
+struct CompleteObjectLocator {
+	uint32_t signature;        // Always 1 for 64-bit (0 for 32-bit)
+	uint32_t offset;           // Offset of this vtable in the complete class
+	uint32_t cdOffset;         // Constructor displacement offset
+	uint32_t pTypeDescriptor;  // RVA to Type Descriptor
+	uint32_t pClassDescriptor; // RVA to Class Hierarchy Descriptor
+	uint32_t pSelf;            // RVA to self (for position-independent code)
+	
+	CompleteObjectLocator() : signature(1), offset(0), cdOffset(0), 
+	                         pTypeDescriptor(0), pClassDescriptor(0), pSelf(0) {}
+};
+
+// Runtime Type Information (RTTI) structure - holds MSVC RTTI component symbols
 struct RTTITypeInfo {
 	const char* type_name;           // Mangled type name
 	const char* demangled_name;      // Human-readable type name
 	size_t num_bases;                // Number of base classes
 	const RTTITypeInfo** base_types; // Array of pointers to base class type_info
+
+	// MSVC RTTI symbol names (generated during buildRTTI)
+	std::string type_descriptor_symbol;      // ??_R0 symbol
+	std::string class_hierarchy_symbol;      // ??_R3 symbol
+	std::string base_class_array_symbol;     // ??_R2 symbol
+	std::string complete_object_locator_symbol; // ??_R4 symbol
+	std::vector<std::string> base_class_descriptor_symbols; // ??_R1 symbols for each base
 
 	RTTITypeInfo(const char* mangled, const char* demangled, size_t num_base = 0)
 		: type_name(mangled), demangled_name(demangled), num_bases(num_base), base_types(nullptr) {}

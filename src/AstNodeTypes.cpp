@@ -787,14 +787,32 @@ void StructTypeInfo::buildRTTI() {
     rtti_storage.emplace_back(mangled_name.c_str(), name.c_str(), base_classes.size());
     rtti_info = &rtti_storage.back();
 
+    // Generate MSVC RTTI symbol names
+    // MSVC uses mangled names like: .?AVClassName@@ for classes
+    std::string msvc_mangled_class = ".?AV" + name + "@@";
+    
+    // Type Descriptor: ??_R0.?AVClassName@@8
+    rtti_info->type_descriptor_symbol = "??_R0" + msvc_mangled_class + "8";
+    
+    // Class Hierarchy Descriptor: ??_R3ClassName@@8
+    rtti_info->class_hierarchy_symbol = "??_R3" + name + "@@8";
+    
+    // Base Class Array: ??_R2ClassName@@8
+    rtti_info->base_class_array_symbol = "??_R2" + name + "@@8";
+    
+    // Complete Object Locator: ??_R4ClassName@@6B@
+    rtti_info->complete_object_locator_symbol = "??_R4" + name + "@@6B@";
+
     // Build array of base class type_info pointers
     if (!base_classes.empty()) {
         static std::vector<const RTTITypeInfo*> base_array_storage;
         size_t base_array_start = base_array_storage.size();
 
-        for (const auto& base : base_classes) {
+        for (size_t i = 0; i < base_classes.size(); ++i) {
+            const auto& base = base_classes[i];
             if (base.type_index >= gTypeInfo.size()) {
                 base_array_storage.push_back(nullptr);
+                rtti_info->base_class_descriptor_symbols.push_back("");
                 continue;
             }
 
@@ -803,8 +821,14 @@ void StructTypeInfo::buildRTTI() {
 
             if (base_info && base_info->rtti_info) {
                 base_array_storage.push_back(base_info->rtti_info);
+                
+                // Generate Base Class Descriptor symbol: ??_R1A@?0A@EA@BaseClassName@@8
+                // For simplicity, use: ??_R1...@BaseClassName@@8
+                std::string base_class_desc = "??_R1A@?0A@EA@" + base_info->name + "@@8";
+                rtti_info->base_class_descriptor_symbols.push_back(base_class_desc);
             } else {
                 base_array_storage.push_back(nullptr);
+                rtti_info->base_class_descriptor_symbols.push_back("");
             }
         }
 
