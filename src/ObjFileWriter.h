@@ -970,7 +970,7 @@ public:
 	}
 
 	// Add a global variable to .data or .bss section
-	void add_global_variable(const std::string& var_name, size_t size_in_bytes, bool is_initialized, unsigned long long init_value = 0) {
+	void add_global_variable(std::string_view var_name, size_t size_in_bytes, bool is_initialized, unsigned long long init_value = 0) {
 		SectionType section_type = is_initialized ? SectionType::DATA : SectionType::BSS;
 		auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
 		uint32_t offset = static_cast<uint32_t>(section->get_data_size());

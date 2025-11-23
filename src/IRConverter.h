@@ -2800,32 +2800,27 @@ private:
 			func_stack_space.shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall));
 
 			if (instruction.getOpcode() == IrOpcode::VariableDecl) {
-				auto size_in_bits = instruction.getOperandAs<int>(1);
-				// Operand 2 can be string_view or string
+				const VariableDeclOp& op = std::any_cast<const VariableDeclOp&>(instruction.getTypedPayload());
+				auto size_in_bits = op.size_in_bits;
+				// Get variable name as string_view
 				std::string_view var_name;
-				if (instruction.isOperandType<std::string_view>(2)) {
-					var_name = instruction.getOperandAs<std::string_view>(2);
-				} else if (instruction.isOperandType<std::string>(2)) {
-					var_name = instruction.getOperandAs<std::string>(2);
+				if (std::holds_alternative<std::string_view>(op.var_name)) {
+					var_name = std::get<std::string_view>(op.var_name);
 				} else {
-					assert(false && "VariableDecl operand 2 must be string_view or string");
-					continue;
+					// For std::string, create a temporary string to get string_view from
+					// This is safe because we're only using it within this scope
+					var_name = std::get<std::string>(op.var_name);
 				}
-				size_t custom_alignment = instruction.getOperandAs<unsigned long long>(3);
+				size_t custom_alignment = op.custom_alignment;
 
-				// Check if this is an array declaration
-				// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, is_array, array_size_type?, array_size_bits?, array_size_value?]
-				bool is_reference = instruction.getOperandAs<bool>(4);
-				bool is_array = instruction.getOperandAs<bool>(6);
-				constexpr size_t kArrayInfoStart = 7;
-				bool has_array_size = is_array && instruction.getOperandCount() >= kArrayInfoStart + 3 &&
-									   instruction.isOperandType<Type>(kArrayInfoStart);
+				bool is_reference = op.is_reference;
+				bool is_array = op.is_array;
 				int total_size_bits = size_in_bits;
 				if (is_reference) {
 					total_size_bits = 64;
 				}
-				if (has_array_size && instruction.isOperandType<unsigned long long>(kArrayInfoStart + 2)) {
-					uint64_t array_size = instruction.getOperandAs<unsigned long long>(kArrayInfoStart + 2);
+				if (is_array && op.array_count.has_value()) {
+					uint64_t array_size = op.array_count.value();
 					total_size_bits = size_in_bits * static_cast<int>(array_size);
 				}
 				
@@ -4241,36 +4236,27 @@ private:
 	}
 
 	void handleGlobalVariableDecl(const IrInstruction& instruction) {
-		// Format: [type, size_in_bits, var_name, is_initialized, init_value?]
-		assert(instruction.getOperandCount() >= 4 && "GlobalVariableDecl must have at least 4 operands");
-
-		Type var_type = instruction.getOperandAs<Type>(0);
-		int size_in_bits = instruction.getOperandAs<int>(1);
-		// var_name can be either std::string (for static locals) or std::string_view (for regular globals)
-		std::string var_name;
-		if (std::holds_alternative<std::string>(instruction.getOperand(2))) {
-			var_name = instruction.getOperandAs<std::string>(2);
-		} else {
-			var_name = std::string(instruction.getOperandAs<std::string_view>(2));
-		}
-		bool is_initialized = instruction.getOperandAs<bool>(3);
+		// Extract typed payload
+		const GlobalVariableDeclOp& op = std::any_cast<const GlobalVariableDeclOp&>(instruction.getTypedPayload());
 
 		// Store global variable info for later use
 		// We'll need to create .data or .bss sections and add symbols
 		// For now, just track the global variable
 		GlobalVariableInfo global_info;
-		global_info.name = var_name;  // Already a std::string
-		global_info.type = var_type;
-		global_info.size_in_bytes = size_in_bits / 8;
-		global_info.is_initialized = is_initialized;
+		global_info.name = op.var_name;
+		global_info.type = op.type;
+		global_info.size_in_bytes = op.size_in_bits / 8;
+		global_info.is_initialized = op.is_initialized;
 
-		if (is_initialized && instruction.getOperandCount() >= 5) {
+		if (op.is_initialized && op.init_value.has_value()) {
 			// Get the initialization value
-			const IrOperand& init_operand = instruction.getOperand(4);
-			if (std::holds_alternative<unsigned long long>(init_operand)) {
-				global_info.init_value = std::get<unsigned long long>(init_operand);
-			} else if (std::holds_alternative<int>(init_operand)) {
-				global_info.init_value = static_cast<unsigned long long>(std::get<int>(init_operand));
+			const IrValue& init_val = op.init_value.value();
+			if (std::holds_alternative<unsigned long long>(init_val)) {
+				global_info.init_value = std::get<unsigned long long>(init_val);
+			} else if (std::holds_alternative<double>(init_val)) {
+				// Store double as bits
+				double d = std::get<double>(init_val);
+				global_info.init_value = *reinterpret_cast<unsigned long long*>(&d);
 			}
 		}
 
@@ -4335,44 +4321,54 @@ private:
 	}
 
 	void handleVariableDecl(const IrInstruction& instruction) {
-		auto var_type = instruction.getOperandAs<Type>(0);
-		// Operand 2 can be string_view or string
+		// Extract typed payload
+		const VariableDeclOp& op = std::any_cast<const VariableDeclOp&>(instruction.getTypedPayload());
+
+		// Get variable name as string
 		std::string var_name_str;
-		if (instruction.isOperandType<std::string_view>(2)) {
-			var_name_str = std::string(instruction.getOperandAs<std::string_view>(2));
-		} else if (instruction.isOperandType<std::string>(2)) {
-			var_name_str = instruction.getOperandAs<std::string>(2);
+		if (std::holds_alternative<std::string_view>(op.var_name)) {
+			var_name_str = std::string(std::get<std::string_view>(op.var_name));
 		} else {
-			assert(false && "VariableDecl operand 2 must be string_view or string");
-			return;
+			var_name_str = std::get<std::string>(op.var_name);
 		}
-		// Operand 3 is custom_alignment (added for alignas support)
+
+		Type var_type = op.type;
 		StackVariableScope& current_scope = variable_scopes.back();
 		auto var_it = current_scope.identifier_offset.find(var_name_str);
 		assert(var_it != current_scope.identifier_offset.end());
 
-		bool is_reference = instruction.getOperandAs<bool>(4);
-		bool is_rvalue_reference = instruction.getOperandAs<bool>(5);
-		bool is_array = instruction.getOperandAs<bool>(6);
-		constexpr size_t kArrayInfoStart = 7;
-		// FIX: Only check is_array flag, don't check if operand[7] is Type
-		// because initializers also have a Type at operand[7]
-		bool has_array_info = is_array && instruction.getOperandCount() >= kArrayInfoStart + 3;
-		size_t initializer_index = has_array_info ? kArrayInfoStart + 3 : kArrayInfoStart;
-		bool is_initialized = instruction.getOperandCount() > initializer_index;
-		size_t init_value_index = initializer_index + 2;
+		bool is_reference = op.is_reference;
+		bool is_rvalue_reference = op.is_rvalue_reference;
+		bool is_array = op.is_array;
+		bool is_initialized = op.initializer.has_value();
 
 		if (is_reference) {
 			reference_stack_info_[var_it->second] = ReferenceInfo{
 				.value_type = var_type,
-				.value_size_bits = instruction.getOperandAs<int>(1),
+				.value_size_bits = op.size_in_bits,
 				.is_rvalue_reference = is_rvalue_reference
 			};
 			int32_t dst_offset = var_it->second;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
 			if (is_initialized) {
-				pointer_initialized = loadAddressForOperand(instruction, init_value_index, pointer_reg);
+				// For reference initialization from typed payload
+				// We need to handle TempVar or string_view in the initializer value
+				const TypedValue& init = op.initializer.value();
+				if (std::holds_alternative<TempVar>(init.value)) {
+					auto temp_var = std::get<TempVar>(init.value);
+					int src_offset = getStackOffsetFromTempVar(temp_var);
+					// Load address of the source variable
+					emitLeaFromFrame(pointer_reg, src_offset);
+					pointer_initialized = true;
+				} else if (std::holds_alternative<std::string_view>(init.value)) {
+					auto rvalue_var_name = std::get<std::string_view>(init.value);
+					auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
+					if (src_it != current_scope.identifier_offset.end()) {
+						emitLeaFromFrame(pointer_reg, src_it->second);
+						pointer_initialized = true;
+					}
+				}
 				if (!pointer_initialized) {
 					std::cerr << "ERROR: Reference initializer is not an addressable lvalue" << std::endl;
 					assert(false && "Reference initializer must be an lvalue");
@@ -4387,25 +4383,23 @@ private:
 			return;
 		}
 
-		// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, ...] for uninitialized
-		//         [type, size, name, custom_alignment, is_ref, is_rvalue_ref, init_type, init_size, init_value] for initialized
 		X64Register allocated_reg_val = X64Register::RAX; // Default
 
 		if (is_initialized) {
 			auto dst_offset = var_it->second;
+			const TypedValue& init = op.initializer.value();
 
 			// Check if the initializer is a literal value
-			bool is_literal = instruction.isOperandType<unsigned long long>(init_value_index) ||
-			                  instruction.isOperandType<int>(init_value_index) ||
-			                  instruction.isOperandType<double>(init_value_index);
+			bool is_literal = std::holds_alternative<unsigned long long>(init.value) ||
+			                  std::holds_alternative<double>(init.value);
 
 			if (is_literal) {
 				// For literal initialization, allocate a register temporarily
 				allocated_reg_val = allocateRegisterWithSpilling();
 				// Load immediate value into register
-				if (instruction.isOperandType<double>(init_value_index)) {
+				if (std::holds_alternative<double>(init.value)) {
 					// Handle double/float literals
-					double value = instruction.getOperandAs<double>(init_value_index);
+					double value = std::get<double>(init.value);
 
 					// Convert double to bit pattern
 					uint64_t bits;
@@ -4430,8 +4424,8 @@ private:
 					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
 					std::memcpy(&movInst[2], &bits, sizeof(bits));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-				} else if (instruction.isOperandType<unsigned long long>(init_value_index)) {
-					uint64_t value = instruction.getOperandAs<unsigned long long>(init_value_index);
+				} else if (std::holds_alternative<unsigned long long>(init.value)) {
+					uint64_t value = std::get<unsigned long long>(init.value);
 
 					// MOV reg, imm64
 					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -4439,36 +4433,25 @@ private:
 					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
 					std::memcpy(&movInst[2], &value, sizeof(value));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-				} else if (instruction.isOperandType<int>(init_value_index)) {
-					int value = instruction.getOperandAs<int>(init_value_index);
-
-					// MOV reg, imm32 (sign-extended to 64-bit)
-					std::array<uint8_t, 7> movInst = { 0x48, 0xC7, 0xC0, 0, 0, 0, 0 };
-					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
-					movInst[2] = 0xC0 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
-					std::memcpy(&movInst[3], &value, sizeof(value));
-					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				}
 
 				// Store the value from register to stack
-				// This is necessary so that later accesses to the variable can read from the stack
 				auto store_opcodes = generateMovToFrame(allocated_reg_val, dst_offset);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
 				// Release the register since the value is now in the stack
-				// This ensures future accesses will load from the stack instead of using a stale register value
 				regAlloc.release(allocated_reg_val);
 			} else {
 				// Load from memory (TempVar or variable)
 				// For non-literal initialization, we don't allocate a register
 				// We just copy the value from source to destination on the stack
 				int src_offset = 0;
-				if (instruction.isOperandType<TempVar>(init_value_index)) {
-					auto temp_var = instruction.getOperandAs<TempVar>(init_value_index);
+				if (std::holds_alternative<TempVar>(init.value)) {
+					auto temp_var = std::get<TempVar>(init.value);
 					src_offset = getStackOffsetFromTempVar(temp_var);
-				} else if (instruction.isOperandType<std::string_view>(init_value_index)) {
-					auto rvalue_var_name = instruction.getOperandAs<std::string_view>(init_value_index);
+				} else if (std::holds_alternative<std::string_view>(init.value)) {
+					auto rvalue_var_name = std::get<std::string_view>(init.value);
 					auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
 					if (src_it == current_scope.identifier_offset.end()) {
 						std::cerr << "ERROR: Variable '" << rvalue_var_name << "' not found in symbol table\n";
@@ -6841,9 +6824,8 @@ private:
 	}
 
 	void handleAssignment(const IrInstruction& instruction) {
-		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();
-
-		Type lhs_type = op.lhs.type;
+		// Use typed payload format
+		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();		Type lhs_type = op.lhs.type;
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
 		// Special handling for function pointer assignment
@@ -8443,7 +8425,7 @@ private:
 
 	// Global variable tracking
 	struct GlobalVariableInfo {
-		std::string name;
+		std::string_view name;
 		Type type;
 		size_t size_in_bytes;
 		bool is_initialized;
