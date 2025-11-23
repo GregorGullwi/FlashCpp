@@ -1074,8 +1074,8 @@ public:
 		symbol->set_section_number(0);  // External reference
 		symbol->set_value(0);
 		
-		// Return the index of the newly added symbol
-		return static_cast<uint32_t>(symbols->size());
+		// Return the index of the newly added symbol (size - 1 because we just added it)
+		return static_cast<uint32_t>(symbols->size() - 1);
 	}
 
 protected:
