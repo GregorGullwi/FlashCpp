@@ -3,6 +3,7 @@ Debug/
 .vs/
 .ccls-cache/
 */*.obj
+!tests/Reference/*.obj
 core.*
 *.user
 
