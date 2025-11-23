@@ -616,7 +616,7 @@ public:
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None) {
 		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
-		auto symbol_func = coffi_.add_symbol(std::string(mangled_name));
+		auto symbol_func = coffi_.add_symbol(mangled_name);
 		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol_func->set_section_number(section_text->get_index() + 1);
@@ -679,8 +679,8 @@ public:
 
 	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type) {
 		// Get the function symbol using mangled name
-		std::string mangled_name = getMangledName(std::string(symbol_name));
-		auto* symbol = coffi_.get_symbol(std::string(mangled_name));
+		std::string mangled_name = getMangledName(symbol_name);
+		auto* symbol = coffi_.get_symbol(mangled_name);
 		if (!symbol) {
 			// Symbol not found - add it as an external symbol (for C library functions like puts, printf, etc.)
 
@@ -734,7 +734,7 @@ public:
 		std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
 		// Get the function symbol using mangled name
-		auto* function_symbol = coffi_.get_symbol(std::string(mangled_name));
+		auto* function_symbol = coffi_.get_symbol(mangled_name);
 		if (!function_symbol) {
 			throw std::runtime_error(std::string("Function symbol not found: ") + std::string(mangled_name));
 		}
@@ -970,7 +970,7 @@ public:
 	}
 
 	// Add a global variable to .data or .bss section
-	void add_global_variable(const std::string& var_name, size_t size_in_bytes, bool is_initialized, unsigned long long init_value = 0) {
+	void add_global_variable(std::string_view var_name, size_t size_in_bytes, bool is_initialized, unsigned long long init_value = 0) {
 		SectionType section_type = is_initialized ? SectionType::DATA : SectionType::BSS;
 		auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
 		uint32_t offset = static_cast<uint32_t>(section->get_data_size());

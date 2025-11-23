@@ -203,27 +203,37 @@ public:
 			}
 			
 			for (const auto& static_member : struct_info->static_members) {
-				std::vector<IrOperand> global_operands;
-				global_operands.emplace_back(static_member.type);
-				global_operands.emplace_back(static_cast<int>(static_member.size * 8));
-				std::string mangled_name = type_name + "::" + static_member.name;
-				global_operands.emplace_back(mangled_name);
+				GlobalVariableDeclOp op;
+				op.type = static_member.type;
+				op.size_in_bits = static_cast<int>(static_member.size * 8);
+				op.var_name = StringBuilder().append(type_name).append("::").append(static_member.name).commit();
 
 				// Check if static member has an initializer
-				bool has_initializer = static_member.initializer.has_value();
-				global_operands.emplace_back(has_initializer);
-				if (has_initializer) {
+				op.is_initialized = static_member.initializer.has_value();
+				if (op.is_initialized) {
 					// Evaluate the initializer expression
 					auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
 					// Add only the initializer value (init_operands[2] is the value)
 					if (init_operands.size() >= 3) {
-						global_operands.emplace_back(init_operands[2]);
+						// Convert IrOperand to IrValue
+						if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+							op.init_value = std::get<unsigned long long>(init_operands[2]);
+						} else if (std::holds_alternative<double>(init_operands[2])) {
+							op.init_value = std::get<double>(init_operands[2]);
+						} else if (std::holds_alternative<TempVar>(init_operands[2])) {
+							op.init_value = std::get<TempVar>(init_operands[2]);
+						} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+							op.init_value = std::get<std::string_view>(init_operands[2]);
+						} else {
+							// Fallback to zero if type not recognized
+							op.init_value = 0ULL;
+						}
 					} else {
 						// Fallback to zero if initializer evaluation failed
-						global_operands.emplace_back(0ULL);
+						op.init_value = 0ULL;
 					}
 				}
-				ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(global_operands), Token());
+				ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
 			}
 		}
 	}
@@ -746,27 +756,37 @@ private:
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info) {
 					for (const auto& static_member : struct_info->static_members) {
-						std::vector<IrOperand> global_operands;
-						global_operands.emplace_back(static_member.type);
-						global_operands.emplace_back(static_cast<int>(static_member.size * 8));
-						std::string mangled_name = std::string(node.name()) + "::" + static_member.name;
-						global_operands.emplace_back(mangled_name);
+						GlobalVariableDeclOp op;
+						op.type = static_member.type;
+						op.size_in_bits = static_cast<int>(static_member.size * 8);
+						op.var_name = std::string(node.name()) + "::" + static_member.name;
 
 						// Check if static member has an initializer
-						bool has_initializer = static_member.initializer.has_value();
-						global_operands.emplace_back(has_initializer);
-						if (has_initializer) {
+						op.is_initialized = static_member.initializer.has_value();
+						if (op.is_initialized) {
 							// Evaluate the initializer expression
 							auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
 							// Add only the initializer value (init_operands[2] is the value)
 							if (init_operands.size() >= 3) {
-								global_operands.emplace_back(init_operands[2]);
+								// Convert IrOperand to IrValue
+								if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+									op.init_value = std::get<unsigned long long>(init_operands[2]);
+								} else if (std::holds_alternative<double>(init_operands[2])) {
+									op.init_value = std::get<double>(init_operands[2]);
+								} else if (std::holds_alternative<TempVar>(init_operands[2])) {
+									op.init_value = std::get<TempVar>(init_operands[2]);
+								} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+									op.init_value = std::get<std::string_view>(init_operands[2]);
+								} else {
+									// Fallback to zero if type not recognized
+									op.init_value = 0ULL;
+								}
 							} else {
 								// Fallback to zero if initializer evaluation failed
-								global_operands.emplace_back(0ULL);
+								op.init_value = 0ULL;
 							}
 						}
-						ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(global_operands), Token());
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
 					}
 				}
 			}
@@ -793,60 +813,62 @@ private:
 		// Constructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
 
-	// Set current function name for static local variable mangling
-	current_function_name_ = std::string(node.name());
-	static_local_names_.clear();
+		// Set current function name for static local variable mangling
+		current_function_name_ = std::string(node.name());
+		static_local_names_.clear();
 
-	// Create constructor declaration with typed payload
-	FunctionDeclOp ctor_decl_op;
-	ctor_decl_op.function_name = std::string(node.struct_name());  // Constructor name (same as struct)
-	ctor_decl_op.struct_name = std::string(node.struct_name());  // Struct name for member function
-	ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
-	ctor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
-	ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
-	ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
-	ctor_decl_op.is_variadic = false;  // Constructors are never variadic
+		// Create constructor declaration with typed payload
+		FunctionDeclOp ctor_decl_op;
+		ctor_decl_op.function_name = std::string(node.struct_name());  // Constructor name (same as struct)
+		ctor_decl_op.struct_name = std::string(node.struct_name());  // Struct name for member function
+		ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
+		ctor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
+		ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
+		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
+		ctor_decl_op.is_variadic = false;  // Constructors are never variadic
 
-	// Generate mangled name for constructor
-	std::vector<TypeSpecifierNode> param_types_for_mangling;
-	for (const auto& param : node.parameter_nodes()) {
-		std::cerr << "DEBUG ctor param node type (mangle): " << param.type_name() << " has_value=" << param.has_value() << "\n";
-		const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor mangle params");
-		param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
-	}
+		// Generate mangled name for constructor
+		std::vector<TypeSpecifierNode> param_types_for_mangling;
+		for (const auto& param : node.parameter_nodes()) {
+			std::cerr << "DEBUG ctor param node type (mangle): " << param.type_name() << " has_value=" << param.has_value() << "\n";
+			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor mangle params");
+			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+		}
 	
-	// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
-	std::string ctor_name = std::string(node.struct_name());
-	TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-	ctor_decl_op.mangled_name = generateMangledNameForCall(
-		ctor_name,
-		void_type,
-		param_types_for_mangling,
-		false,  // not variadic
-		std::string(node.struct_name())  // struct name for member function mangling
-	);
+		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
+		std::string ctor_name = std::string(node.struct_name());
+		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
+		ctor_decl_op.mangled_name = generateMangledNameForCall(
+			ctor_name,
+			void_type,
+			param_types_for_mangling,
+			false,  // not variadic
+			std::string(node.struct_name())  // struct name for member function mangling
+		);
 
-	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
-	// We don't add it here to avoid duplication
+		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
+		// We don't add it here to avoid duplication
 
-	// Add parameter types to constructor declaration
-	for (const auto& param : node.parameter_nodes()) {
-		std::cerr << "DEBUG ctor param node type (decl): " << param.type_name() << " has_value=" << param.has_value() << "\n";
-		const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
-		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		// Add parameter types to constructor declaration
+		for (const auto& param : node.parameter_nodes()) {
+			std::cerr << "DEBUG ctor param node type (decl): " << param.type_name() << " has_value=" << param.has_value() << "\n";
+			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
+			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-		FunctionParam func_param;
-		func_param.type = param_type.type();
-		func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
-		func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
-		func_param.name = std::string(param_decl.identifier_token().value());
-		func_param.is_reference = param_type.is_reference();
-		func_param.is_rvalue_reference = param_type.is_rvalue_reference();
-		func_param.cv_qualifier = param_type.cv_qualifier();
-		ctor_decl_op.parameters.push_back(func_param);
-	}
+			FunctionParam func_param;
+			func_param.type = param_type.type();
+			func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+			func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+			func_param.name = std::string(param_decl.identifier_token().value());
+			func_param.is_reference = param_type.is_reference();
+			func_param.is_rvalue_reference = param_type.is_rvalue_reference();
+			func_param.cv_qualifier = param_type.cv_qualifier();
+			ctor_decl_op.parameters.push_back(func_param);
+		}
 
-	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), node.name_token()));		symbol_table.enter_scope(ScopeType::Function);
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), node.name_token()));
+		
+		symbol_table.enter_scope(ScopeType::Function);
 
 		// Add 'this' pointer to symbol table for member access
 		// Look up the struct type to get its type index and size
@@ -2344,11 +2366,11 @@ private:
 				var_name = std::string(decl.identifier_token().value());
 			}
 
-			// Format: [type, size_in_bits, var_name, is_initialized, init_value?]
-			std::vector<IrOperand> operands;
-			operands.emplace_back(type_node.type());
-			operands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-			operands.emplace_back(var_name);
+			// Create GlobalVariableDeclOp
+			GlobalVariableDeclOp op;
+			op.type = type_node.type();
+			op.size_in_bits = static_cast<int>(type_node.size_in_bits());
+			op.var_name = var_name;
 
 			// Check if initialized
 			// Try to evaluate initializer as a constant expression using ConstExprEvaluator
@@ -2361,7 +2383,7 @@ private:
 					auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 					
 					if (eval_result.success) {
-						operands.emplace_back(true);  // is_initialized
+						op.is_initialized = true;
 						
 						// Convert the evaluated result to the appropriate storage format
 						// based on the target type
@@ -2392,19 +2414,19 @@ private:
 							init_value = std::get<bool>(eval_result.value) ? 1 : 0;
 						}
 						
-						operands.emplace_back(init_value);
+						op.init_value = init_value;
 					} else {
 						// Constexpr evaluation failed - mark as uninitialized
-						operands.emplace_back(false);  // is_initialized
+						op.is_initialized = false;
 					}
 				} else {
-					operands.emplace_back(false);  // is_initialized
+					op.is_initialized = false;
 				}
 			} else {
-				operands.emplace_back(false);  // is_initialized
+				op.is_initialized = false;
 			}
 
-			ir_.addInstruction(IrOpcode::GlobalVariableDecl, std::move(operands), decl.identifier_token());
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), decl.identifier_token()));
 			// (The parser already added it to the symbol table)
 			if (is_static_local) {
 				StaticLocalInfo info;
@@ -2456,7 +2478,15 @@ private:
 				}
 
 				// Add the variable declaration without initializer
-				ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), node.declaration().identifier_token());
+				VariableDeclOp decl_op;
+				decl_op.type = type_node.type();
+				decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+				decl_op.var_name = decl.identifier_token().value();
+				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
+				decl_op.is_reference = type_node.is_reference();
+				decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+				decl_op.is_array = decl.is_array();
+				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 				// Check if this struct has a constructor
 				if (type_node.type() == Type::Struct) {
@@ -2609,7 +2639,26 @@ private:
 			assert(false && "Expected identifier to be unique");
 		}
 
-		ir_.addInstruction(IrOpcode::VariableDecl, std::move(operands), node.declaration().identifier_token());
+		VariableDeclOp decl_op;
+		decl_op.type = type_node.type();
+		decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+		decl_op.var_name = decl.identifier_token().value();
+		decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
+		decl_op.is_reference = type_node.is_reference();
+		decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+		decl_op.is_array = decl.is_array();
+		if (decl.is_array() && operands.size() >= 10) {
+			decl_op.array_element_type = std::get<Type>(operands[7]);
+			decl_op.array_element_size = std::get<int>(operands[8]);
+			if (std::holds_alternative<unsigned long long>(operands[9])) {
+				decl_op.array_count = std::get<unsigned long long>(operands[9]);
+			}
+		}
+		if (node.initializer() && !decl.is_array() && operands.size() >= 10) {
+			TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
+			decl_op.initializer = std::move(tv);
+		}
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 		// If this is a struct type with a constructor, generate a constructor call
 		if (type_node.type() == Type::Struct) {
@@ -3958,19 +4007,16 @@ private:
 						// Generate IR for the RHS (which should be a function address)
 						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
-						// Generate Assignment IR
-						// Format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
+						// Generate Assignment IR using typed payload
 						TempVar result_var = var_counter.next();
-						std::vector<IrOperand> assign_operands;
-						assign_operands.emplace_back(result_var);  // result_var
-						assign_operands.emplace_back(lhs_type.type());  // lhs_type
-						assign_operands.emplace_back(static_cast<int>(lhs_type.size_in_bits()));  // lhs_size
-						assign_operands.emplace_back(lhs_name);  // lhs_value
-						assign_operands.emplace_back(rhsIrOperands[0]);  // rhs_type
-						assign_operands.emplace_back(rhsIrOperands[1]);  // rhs_size
-						assign_operands.emplace_back(rhsIrOperands[2]);  // rhs_value (TempVar with function address)
-						ir_.addInstruction(IrOpcode::Assignment, std::move(assign_operands), binaryOperatorNode.get_token());
-
+						AssignmentOp assign_op;
+						assign_op.result = result_var;
+						assign_op.lhs.type = lhs_type.type();
+						assign_op.lhs.size_in_bits = static_cast<int>(lhs_type.size_in_bits());
+						assign_op.lhs.value = lhs_name;
+						assign_op.rhs = toTypedValue(rhsIrOperands);
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+						
 						// Return the result
 						return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), result_var };
 					}
@@ -4335,32 +4381,18 @@ private:
 				return { Type::Bool, 1, result_var };
 			}
 
-			// Old path for Assignment only
-			// Add the result variable first
-			irOperands.emplace_back(result_var);
-		
-			// Add the left-hand side operands
-			irOperands.insert(irOperands.end(), lhsIrOperands.begin(), lhsIrOperands.end());
-
-			// Add the right-hand side operands
-			irOperands.insert(irOperands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
-
-			// Determine opcode for non-typed-struct operations
-			// Simple operators - Assignment only
-			static const std::unordered_map<std::string_view, IrOpcode> simple_ops = {
-				{"=", IrOpcode::Assignment}
-			};
-			auto simple_it = simple_ops.find(op);
-			if (simple_it != simple_ops.end()) {
-				opcode = simple_it->second;
+			// Assignment using typed payload
+			if (op == "=") {
+				AssignmentOp assign_op;
+				assign_op.result = result_var;
+				assign_op.lhs = toTypedValue(lhsIrOperands);
+				assign_op.rhs = toTypedValue(rhsIrOperands);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			}
 			else {
-				assert(false && "Unsupported binary operator");
+				assert(false && "Unsupported binary operator in this code path");
 				return {};
 			}
-
-			// Legacy path: use operand vector
-			ir_.addInstruction(IrInstruction(opcode, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 	
 		// For comparison operations, return boolean type (1 bit)
@@ -4664,17 +4696,23 @@ private:
 						// Create a temporary variable to hold the literal value
 						TempVar temp_var = var_counter.next();
 						
-						// Generate an assignment IR to store the literal
-						// Format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
-						std::vector<IrOperand> assignOperands;
-						assignOperands.emplace_back(temp_var);            // result_var (unused for assign)
-						assignOperands.push_back(argumentIrOperands[0]);  // lhs_type
-						assignOperands.push_back(argumentIrOperands[1]);  // lhs_size
-						assignOperands.emplace_back(temp_var);            // lhs_value (temp var)
-						assignOperands.push_back(argumentIrOperands[0]);  // rhs_type
-						assignOperands.push_back(argumentIrOperands[1]);  // rhs_size
-						assignOperands.push_back(argumentIrOperands[2]);  // rhs_value (literal)
-						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assignOperands), Token()));
+						// Generate an assignment IR to store the literal using typed payload
+						AssignmentOp assign_op;
+						assign_op.result = temp_var;  // unused but required
+						
+						// Convert IrOperand to IrValue for the literal
+						IrValue rhs_value;
+						if (std::holds_alternative<unsigned long long>(argumentIrOperands[2])) {
+							rhs_value = std::get<unsigned long long>(argumentIrOperands[2]);
+						} else if (std::holds_alternative<double>(argumentIrOperands[2])) {
+							rhs_value = std::get<double>(argumentIrOperands[2]);
+						}
+						
+						// Create TypedValue for lhs and rhs
+						assign_op.lhs = TypedValue{literal_type, literal_size, temp_var};
+						assign_op.rhs = TypedValue{literal_type, literal_size, rhs_value};
+						
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 						
 						// Now take the address of the temporary
 						TempVar addr_var = var_counter.next();
@@ -5790,15 +5828,24 @@ private:
 			// Evaluate the placement address expression
 			auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
-			// Format: [result_var, type, size_in_bytes, pointer_depth, address_operand]
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_var);
-			operands.emplace_back(type);
-			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
-			operands.emplace_back(pointer_depth);
-			operands.emplace_back(address_operands[2]);  // placement address (TempVar, identifier, or constant)
+			// Create PlacementNewOp
+			PlacementNewOp op;
+			op.result = result_var;
+			op.type = type;
+			op.size_in_bytes = size_in_bits / 8;
+			op.pointer_depth = pointer_depth;
+			// Convert IrOperand to IrValue
+			if (std::holds_alternative<unsigned long long>(address_operands[2])) {
+				op.address = std::get<unsigned long long>(address_operands[2]);
+			} else if (std::holds_alternative<TempVar>(address_operands[2])) {
+				op.address = std::get<TempVar>(address_operands[2]);
+			} else if (std::holds_alternative<std::string_view>(address_operands[2])) {
+				op.address = std::get<std::string_view>(address_operands[2]);
+			} else if (std::holds_alternative<double>(address_operands[2])) {
+				op.address = std::get<double>(address_operands[2]);
+			}
 
-			ir_.addInstruction(IrOpcode::PlacementNew, std::move(operands), Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 
 			// If this is a struct type with a constructor, generate constructor call
 			if (type == Type::Struct) {
@@ -5839,26 +5886,33 @@ private:
 			// Evaluate the size expression
 			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
-			// Format: [result_var, type, size_in_bytes, pointer_depth, count_operand]
-			// count_operand can be either TempVar or a constant value (int/unsigned long long)
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_var);
-			operands.emplace_back(type);
-			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
-			operands.emplace_back(pointer_depth);
-			operands.emplace_back(size_operands[2]);  // size expression result (TempVar or constant)
+			// Create HeapAllocArrayOp
+			HeapAllocArrayOp op;
+			op.result = result_var;
+			op.type = type;
+			op.size_in_bytes = size_in_bits / 8;
+			op.pointer_depth = pointer_depth;
+			// Convert IrOperand to IrValue for count
+			if (std::holds_alternative<unsigned long long>(size_operands[2])) {
+				op.count = std::get<unsigned long long>(size_operands[2]);
+			} else if (std::holds_alternative<TempVar>(size_operands[2])) {
+				op.count = std::get<TempVar>(size_operands[2]);
+			} else if (std::holds_alternative<std::string_view>(size_operands[2])) {
+				op.count = std::get<std::string_view>(size_operands[2]);
+			} else if (std::holds_alternative<double>(size_operands[2])) {
+				op.count = std::get<double>(size_operands[2]);
+			}
 
-			ir_.addInstruction(IrOpcode::HeapAllocArray, std::move(operands), Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::HeapAllocArray, std::move(op), Token()));
 		} else {
 			// Single object allocation: new Type or new Type(args)
-			// Format: [result_var, type, size_in_bytes, pointer_depth]
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_var);
-			operands.emplace_back(type);
-			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
-			operands.emplace_back(pointer_depth);
+			HeapAllocOp op;
+			op.result = result_var;
+			op.type = type;
+			op.size_in_bytes = size_in_bits / 8;
+			op.pointer_depth = pointer_depth;
 
-			ir_.addInstruction(IrOpcode::HeapAlloc, std::move(operands), Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::HeapAlloc, std::move(op), Token()));
 
 			// If this is a struct type with a constructor, generate constructor call
 			if (type == Type::Struct) {
@@ -5919,14 +5973,26 @@ private:
 		}
 
 		// Generate the appropriate free instruction
-		// Pass the pointer operand directly (can be TempVar or std::string_view)
-		std::vector<IrOperand> operands;
-		operands.emplace_back(ptr_operands[2]);  // The pointer value (TempVar or identifier)
+		// Convert IrOperand to IrValue
+		IrValue ptr_value;
+		if (std::holds_alternative<unsigned long long>(ptr_operands[2])) {
+			ptr_value = std::get<unsigned long long>(ptr_operands[2]);
+		} else if (std::holds_alternative<TempVar>(ptr_operands[2])) {
+			ptr_value = std::get<TempVar>(ptr_operands[2]);
+		} else if (std::holds_alternative<std::string_view>(ptr_operands[2])) {
+			ptr_value = std::get<std::string_view>(ptr_operands[2]);
+		} else if (std::holds_alternative<double>(ptr_operands[2])) {
+			ptr_value = std::get<double>(ptr_operands[2]);
+		}
 
 		if (deleteExpr.is_array()) {
-			ir_.addInstruction(IrOpcode::HeapFreeArray, std::move(operands), Token());
+			HeapFreeArrayOp op;
+			op.pointer = ptr_value;
+			ir_.addInstruction(IrInstruction(IrOpcode::HeapFreeArray, std::move(op), Token()));
 		} else {
-			ir_.addInstruction(IrOpcode::HeapFree, std::move(operands), Token());
+			HeapFreeOp op;
+			op.pointer = ptr_value;
+			ir_.addInstruction(IrInstruction(IrOpcode::HeapFree, std::move(op), Token()));
 		}
 
 		// delete is a statement, not an expression, so return empty
@@ -6225,15 +6291,15 @@ private:
 		std::string closure_var_name = "__closure_" + std::to_string(lambda_info.lambda_id);
 
 		// Declare the closure variable
-		// Format: [type, size, name, custom_alignment, is_reference, is_rvalue_reference]
-		std::vector<IrOperand> decl_operands;
-		decl_operands.emplace_back(Type::Struct);
-		decl_operands.emplace_back(static_cast<int>(closure_type->getStructInfo()->total_size * 8));
-		decl_operands.emplace_back(std::string(closure_var_name));  // Use std::string
-		decl_operands.emplace_back(static_cast<unsigned long long>(0));  // custom_alignment
-		decl_operands.emplace_back(false);  // Lambdas never declare reference closures directly
-		decl_operands.emplace_back(false);
-		ir_.addInstruction(IrOpcode::VariableDecl, std::move(decl_operands), lambda.lambda_token());
+		VariableDeclOp lambda_decl_op;
+		lambda_decl_op.type = Type::Struct;
+		lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
+		lambda_decl_op.var_name = std::string(closure_var_name);
+		lambda_decl_op.custom_alignment = 0;
+		lambda_decl_op.is_reference = false;
+		lambda_decl_op.is_rvalue_reference = false;
+		lambda_decl_op.is_array = false;
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
 
 		// Now initialize captured members
 		// The key insight: we need to generate the initialization code that will be

@@ -755,6 +755,68 @@ struct FunctionAddressOp {
 	std::string_view function_name;  // Function name
 };
 
+// Variable declaration (local)
+struct VariableDeclOp {
+	Type type = Type::Void;
+	int size_in_bits = 0;
+	std::variant<std::string_view, std::string> var_name;
+	unsigned long long custom_alignment = 0;
+	bool is_reference = false;
+	bool is_rvalue_reference = false;
+	bool is_array = false;
+	// Array info (if is_array)
+	std::optional<Type> array_element_type;
+	std::optional<int> array_element_size;
+	std::optional<size_t> array_count;
+	// Initializer (if present)
+	std::optional<TypedValue> initializer;
+};
+
+// Global variable declaration
+struct GlobalVariableDeclOp {
+	Type type = Type::Void;
+	int size_in_bits = 0;
+	std::string_view var_name;
+	bool is_initialized = false;
+	std::optional<IrValue> init_value;  // Only if is_initialized
+};
+
+// Heap allocation (new operator)
+struct HeapAllocOp {
+	TempVar result;              // Result pointer variable
+	Type type = Type::Void;
+	int size_in_bytes = 0;
+	int pointer_depth = 0;
+};
+
+// Heap array allocation (new[] operator)
+struct HeapAllocArrayOp {
+	TempVar result;              // Result pointer variable
+	Type type = Type::Void;
+	int size_in_bytes = 0;
+	int pointer_depth = 0;
+	IrValue count;               // Array element count (TempVar or constant)
+};
+
+// Heap free (delete operator)
+struct HeapFreeOp {
+	IrValue pointer;             // Pointer to free (TempVar or string_view)
+};
+
+// Heap array free (delete[] operator)
+struct HeapFreeArrayOp {
+	IrValue pointer;             // Pointer to free (TempVar or string_view)
+};
+
+// Placement new operator
+struct PlacementNewOp {
+	TempVar result;              // Result pointer variable
+	Type type = Type::Void;
+	int size_in_bytes = 0;
+	int pointer_depth = 0;
+	IrValue address;             // Placement address (TempVar, string_view, or constant)
+};
+
 // Helper function to format conversion operations for IR output
 inline std::string formatConversionOp(const char* op_name, const ConversionOp& op) {
 	std::ostringstream oss;
@@ -1148,23 +1210,23 @@ public:
 		case IrOpcode::FunctionCall:
 		{
 			const auto& op = getTypedPayload<CallOp>();
-		
+	
 			// Result variable
 			oss << '%' << op.result.var_number << " = call @" << op.function_name << "(";
-		
+	
 			// Arguments
 			for (size_t i = 0; i < op.args.size(); ++i) {
 				if (i > 0) oss << ", ";
-			
+		
 				const auto& arg = op.args[i];
-			
+		
 				// Type and size
 				auto type_info = gNativeTypes.find(arg.type);
 				if (type_info != gNativeTypes.end()) {
 					oss << type_info->second->name_;
 				}
 				oss << arg.size_in_bits << " ";
-			
+		
 				// Value
 				if (std::holds_alternative<unsigned long long>(arg.value)) {
 					oss << std::get<unsigned long long>(arg.value);
@@ -1174,31 +1236,31 @@ public:
 					oss << '%' << std::get<std::string_view>(arg.value);
 				}
 			}
-		
+	
 			oss << ")";
 		}
 		break;
 		
-	case IrOpcode::StackAlloc:
-	{
-		const StackAllocOp& op = getTypedPayload<StackAllocOp>();
-		// %name = alloca [Type][SizeInBits]
-		oss << '%';
-		if (std::holds_alternative<std::string_view>(op.result))
-			oss << std::get<std::string_view>(op.result);
-		else
-			oss << std::get<TempVar>(op.result).var_number;
-		oss << " = alloca ";
-		auto type_info = gNativeTypes.find(op.type);
-		if (type_info != gNativeTypes.end())
-			oss << type_info->second->name_;
-		oss << op.size_in_bits;
-	}
-	break;
+		case IrOpcode::StackAlloc:
+		{
+			const StackAllocOp& op = getTypedPayload<StackAllocOp>();
+			// %name = alloca [Type][SizeInBits]
+			oss << '%';
+			if (std::holds_alternative<std::string_view>(op.result))
+				oss << std::get<std::string_view>(op.result);
+			else
+				oss << std::get<TempVar>(op.result).var_number;
+			oss << " = alloca ";
+			auto type_info = gNativeTypes.find(op.type);
+			if (type_info != gNativeTypes.end())
+				oss << type_info->second->name_;
+			oss << op.size_in_bits;
+		}
+		break;
 
-	case IrOpcode::Branch:
-	{
-		const auto& op = getTypedPayload<BranchOp>();
+		case IrOpcode::Branch:
+		{
+			const auto& op = getTypedPayload<BranchOp>();
 			oss << "br label %" << op.target_label;
 		}
 		break;
@@ -1560,81 +1622,69 @@ public:
 		case IrOpcode::HeapAlloc:
 		{
 			// %result = heap_alloc [Type][Size][PointerDepth]
-			// Format: [result_var, type, size_in_bytes, pointer_depth]
-			assert(getOperandCount() == 4 && "HeapAlloc instruction must have exactly 4 operands");
-			if (getOperandCount() >= 4) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-
-				oss << " = heap_alloc [" << static_cast<int>(getOperandAs<Type>(1)) << "]["
-				    << getOperandAs<int>(2) << "][" << getOperandAs<int>(3) << "]";
-			}
+			const HeapAllocOp& op = getTypedPayload<HeapAllocOp>();
+			oss << '%' << op.result.var_number << " = heap_alloc [" 
+				<< static_cast<int>(op.type) << "][" 
+				<< op.size_in_bytes << "][" << op.pointer_depth << "]";
 		}
 		break;
-
+		
 		case IrOpcode::HeapAllocArray:
 		{
 			// %result = heap_alloc_array [Type][Size][PointerDepth] %count
-			// Format: [result_var, type, size_in_bytes, pointer_depth, count_var]
-			assert(getOperandCount() == 5 && "HeapAllocArray instruction must have exactly 5 operands");
-			if (getOperandCount() >= 5) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-
-				oss << " = heap_alloc_array [" << static_cast<int>(getOperandAs<Type>(1)) << "]["
-				    << getOperandAs<int>(2) << "][" << getOperandAs<int>(3) << "] %";
-
-				if (isOperandType<TempVar>(4))
-					oss << getOperandAs<TempVar>(4).var_number;
-			}
+			const HeapAllocArrayOp& op = getTypedPayload<HeapAllocArrayOp>();
+			oss << '%' << op.result.var_number << " = heap_alloc_array [" 
+				<< static_cast<int>(op.type) << "][" 
+				<< op.size_in_bytes << "][" << op.pointer_depth << "] ";
+		
+			if (std::holds_alternative<TempVar>(op.count))
+				oss << '%' << std::get<TempVar>(op.count).var_number;
+			else if (std::holds_alternative<unsigned long long>(op.count))
+				oss << std::get<unsigned long long>(op.count);
+			else if (std::holds_alternative<std::string_view>(op.count))
+				oss << '%' << std::get<std::string_view>(op.count);
 		}
 		break;
-
+		
 		case IrOpcode::HeapFree:
 		{
 			// heap_free %ptr
-			// Format: [ptr_var]
-			assert(getOperandCount() == 1 && "HeapFree instruction must have exactly 1 operand");
-			if (getOperandCount() >= 1) {
-				oss << "heap_free %";
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-			}
+			const HeapFreeOp& op = getTypedPayload<HeapFreeOp>();
+			oss << "heap_free ";
+			if (std::holds_alternative<TempVar>(op.pointer))
+				oss << '%' << std::get<TempVar>(op.pointer).var_number;
+			else if (std::holds_alternative<std::string_view>(op.pointer))
+				oss << '%' << std::get<std::string_view>(op.pointer);
 		}
 		break;
-
+		
 		case IrOpcode::HeapFreeArray:
 		{
 			// heap_free_array %ptr
-			// Format: [ptr_var]
-			assert(getOperandCount() == 1 && "HeapFreeArray instruction must have exactly 1 operand");
-			if (getOperandCount() >= 1) {
-				oss << "heap_free_array %";
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-			}
+			const HeapFreeArrayOp& op = getTypedPayload<HeapFreeArrayOp>();
+			oss << "heap_free_array ";
+			if (std::holds_alternative<TempVar>(op.pointer))
+				oss << '%' << std::get<TempVar>(op.pointer).var_number;
+			else if (std::holds_alternative<std::string_view>(op.pointer))
+				oss << '%' << std::get<std::string_view>(op.pointer);
 		}
 		break;
-
+		
 		case IrOpcode::PlacementNew:
 		{
 			// %result = placement_new %address [Type][Size]
-			// Format: [result_var, address_var, type, size_in_bytes]
-			assert(getOperandCount() >= 4 && "PlacementNew instruction must have at least 4 operands");
-			if (getOperandCount() >= 4) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-				oss << " = placement_new %";
-				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).var_number;
-				oss << " [" << getOperandAsTypeString(2) << "][" << getOperandAs<int>(3) << "]";
-			}
+			const PlacementNewOp& op = getTypedPayload<PlacementNewOp>();
+			oss << '%' << op.result.var_number << " = placement_new ";
+			if (std::holds_alternative<TempVar>(op.address))
+				oss << '%' << std::get<TempVar>(op.address).var_number;
+			else if (std::holds_alternative<std::string_view>(op.address))
+				oss << '%' << std::get<std::string_view>(op.address);
+			else if (std::holds_alternative<unsigned long long>(op.address))
+				oss << std::get<unsigned long long>(op.address);
+			oss << " [" << static_cast<int>(op.type) << "][" << op.size_in_bytes << "]";
 		}
 		break;
-
+		
 		case IrOpcode::Typeid:
 		{
 			// %result = typeid [type_name_or_expr] [is_type]
@@ -1688,27 +1738,29 @@ public:
 			oss << formatUnaryOp("post_dec", getTypedPayload<UnaryOp>());
 			break;
 
-	case IrOpcode::AddAssign:
-		oss << formatBinaryOp("add", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::SubAssign:
-		oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::MulAssign:
-		oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>());
-		break;		case IrOpcode::DivAssign:
-			oss << formatBinaryOp("sdiv", getTypedPayload<BinaryOp>());
-			break;
+		case IrOpcode::AddAssign:
+			oss << formatBinaryOp("add", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::SubAssign:
+			oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::MulAssign:
+			oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>());
+			break;		case IrOpcode::DivAssign:
+				oss << formatBinaryOp("sdiv", getTypedPayload<BinaryOp>());
+				break;
 
-	case IrOpcode::ModAssign:
-		oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::AndAssign:
-		oss << formatBinaryOp("and", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::OrAssign:
-		oss << formatBinaryOp("or", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::XorAssign:
-		oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::ShlAssign:
-		oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>());
-		break;		case IrOpcode::ShrAssign:
+		case IrOpcode::ModAssign:
+			oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::AndAssign:
+			oss << formatBinaryOp("and", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::OrAssign:
+			oss << formatBinaryOp("or", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::XorAssign:
+			oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::ShlAssign:
+			oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>());
+			break;
+			
+		case IrOpcode::ShrAssign:
 			oss << formatBinaryOp("ashr", getTypedPayload<BinaryOp>());
 			break;
 
@@ -1751,7 +1803,7 @@ public:
 			const AssignmentOp& op = getTypedPayload<AssignmentOp>();
 			// assign %lhs = %rhs (simple assignment a = b)
 			oss << "assign %";
-		
+
 			// Print LHS
 			if (std::holds_alternative<TempVar>(op.lhs.value))
 				oss << std::get<TempVar>(op.lhs.value).var_number;
@@ -1759,9 +1811,9 @@ public:
 				oss << std::get<std::string_view>(op.lhs.value);
 			else if (std::holds_alternative<unsigned long long>(op.lhs.value))
 				oss << std::get<unsigned long long>(op.lhs.value);
-		
+
 			oss << " = ";
-		
+
 			// Print RHS
 			if (std::holds_alternative<unsigned long long>(op.rhs.value))
 				oss << std::get<unsigned long long>(op.rhs.value);
@@ -1776,86 +1828,76 @@ public:
 		
 		case IrOpcode::VariableDecl:
 		{
-			// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, is_array, (array_size?)?, (initializer?)?]
-			assert(getOperandCount() >= 7 && (getOperandCount() - 7) % 3 == 0 && getOperandCount() <= 13 &&
-			       "VariableDecl instruction must have 7 operands plus optional 3-operand blocks for arrays/initializers");
+			const VariableDeclOp& op = getTypedPayload<VariableDeclOp>();
 			oss << "%";
-			if (getOperandCount() > 2 && isOperandType<std::string_view>(2))
-				oss << getOperandAs<std::string_view>(2);
-			oss << " = alloc " << getOperandAsTypeString(0) << getOperandAsIntSafe(1);
-			if (getOperandCount() > 3 && isOperandType<unsigned long long>(3)) {
-				unsigned long long alignment = getOperandAs<unsigned long long>(3);
-				if (alignment > 0) {
-					oss << " alignas(" << alignment << ")";
-				}
+			if (std::holds_alternative<std::string_view>(op.var_name))
+				oss << std::get<std::string_view>(op.var_name);
+			else
+				oss << std::get<std::string>(op.var_name);
+			oss << " = alloc ";
+			auto type_info = gNativeTypes.find(op.type);
+			if (type_info != gNativeTypes.end())
+				oss << type_info->second->name_;
+			oss << op.size_in_bits;
+			if (op.custom_alignment > 0) {
+				oss << " alignas(" << op.custom_alignment << ")";
 			}
-			oss << (getOperandAs<bool>(4) ? " [&]" : "");
-			const size_t array_info_index = 7;  // First position after base 7 fields
-			// FIX: Check is_array flag (operand 6) instead of checking if operand[7] is a Type
-			// because initializers also have a Type at operand[7]
-			bool has_array_info = getOperandCount() >= array_info_index + 3 &&
-			                     getOperandAs<bool>(6);  // is_array flag
-			size_t initializer_index = has_array_info ? array_info_index + 3 : array_info_index;
-			bool has_initializer = getOperandCount() >= initializer_index + 3;
-			if (has_initializer) {
-				size_t init_value_index = initializer_index + 2;
+			oss << (op.is_reference ? " [&]" : "");
+			if (op.initializer.has_value()) {
 				oss << "\nassign %";
-				if (isOperandType<std::string_view>(2))
-					oss << getOperandAs<std::string_view>(2);
+				if (std::holds_alternative<std::string_view>(op.var_name))
+					oss << std::get<std::string_view>(op.var_name);
+				else
+					oss << std::get<std::string>(op.var_name);
 				oss << " = ";
+				const auto& init = op.initializer.value();
 				// Check if operand is a literal value or a variable/TempVar
-				if (isOperandType<unsigned long long>(init_value_index))
-					oss << getOperandAs<unsigned long long>(init_value_index);
-				else if (isOperandType<int>(init_value_index))
-					oss << getOperandAs<int>(init_value_index);
-				else if (isOperandType<double>(init_value_index))
-					oss << getOperandAs<double>(init_value_index);
-				else if (isOperandType<TempVar>(init_value_index))
-					oss << '%' << getOperandAs<TempVar>(init_value_index).var_number;
-				else if (isOperandType<std::string_view>(init_value_index))
-					oss << '%' << getOperandAs<std::string_view>(init_value_index);
+				if (std::holds_alternative<unsigned long long>(init.value))
+					oss << std::get<unsigned long long>(init.value);
+				else if (std::holds_alternative<double>(init.value))
+					oss << std::get<double>(init.value);
+				else if (std::holds_alternative<TempVar>(init.value))
+					oss << '%' << std::get<TempVar>(init.value).var_number;
+				else if (std::holds_alternative<std::string_view>(init.value))
+					oss << '%' << std::get<std::string_view>(init.value);
 			}
 			break;
 		}
-
+	
 		case IrOpcode::GlobalVariableDecl:
 		{
-			// global_var [Type][Size] @name [is_initialized] [init_value?]
-			// Format: [type, size_in_bits, var_name, is_initialized, init_value?]
-			assert((getOperandCount() == 4 || getOperandCount() == 5) && "GlobalVariableDecl must have 4 or 5 operands");
-			// var_name can be either std::string (for static locals) or std::string_view (for regular globals)
-			std::string var_name;
-			if (std::holds_alternative<std::string>(operands_[2])) {
-				var_name = std::get<std::string>(operands_[2]);
-			} else {
-				var_name = std::string(std::get<std::string_view>(operands_[2]));
-			}
-			oss << "global_var " << getOperandAsTypeString(0) << getOperandAs<int>(1) << " @" << var_name;
-			if (getOperandCount() >= 4) {
-				oss << " " << (getOperandAs<bool>(3) ? "initialized" : "uninitialized");
-				if (getOperandCount() == 5 && getOperandAs<bool>(3)) {
-					oss << " = " << getOperandAs<unsigned long long>(4);
-				}
+			const GlobalVariableDeclOp& op = getTypedPayload<GlobalVariableDeclOp>();
+			std::string_view var_name = op.var_name;
+			
+			oss << "global_var ";
+			auto type_info = gNativeTypes.find(op.type);
+			if (type_info != gNativeTypes.end())
+				oss << type_info->second->name_;
+			oss << op.size_in_bits << " @" << std::string(var_name);
+			oss << " " << (op.is_initialized ? "initialized" : "uninitialized");
+			if (op.is_initialized && op.init_value.has_value()) {
+				const auto& val = op.init_value.value();
+				if (std::holds_alternative<unsigned long long>(val))
+					oss << " = " << std::get<unsigned long long>(val);
+				else if (std::holds_alternative<double>(val))
+					oss << " = " << std::get<double>(val);
 			}
 		}
 		break;
-
+		
 		case IrOpcode::GlobalLoad:
 		{
+			const GlobalLoadOp& op = getTypedPayload<GlobalLoadOp>();
 			// %result = global_load @global_name
-			// Format: [result_temp, global_name]
-			assert(getOperandCount() == 2 && "GlobalLoad must have exactly 2 operands");
-			// global_name can be either std::string (for static locals) or std::string_view (for regular globals)
-			std::string global_name;
-			if (std::holds_alternative<std::string>(operands_[1])) {
-				global_name = std::get<std::string>(operands_[1]);
-			} else {
-				global_name = std::string(std::get<std::string_view>(operands_[1]));
+			if (std::holds_alternative<TempVar>(op.result.value)) {
+				oss << '%' << std::get<TempVar>(op.result.value).var_number;
+			} else if (std::holds_alternative<std::string_view>(op.result.value)) {
+				oss << '%' << std::get<std::string_view>(op.result.value);
 			}
-			oss << '%' << getOperandAs<TempVar>(0).var_number << " = global_load @" << global_name;
+			oss << " = global_load @" << op.global_name;
 		}
 		break;
-
+		
 		case IrOpcode::GlobalStore:
 		{
 			// global_store @global_name, %value
