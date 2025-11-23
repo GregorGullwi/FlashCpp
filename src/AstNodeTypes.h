@@ -1167,11 +1167,16 @@ private:
 class TemplateFunctionDeclarationNode {
 public:
 	TemplateFunctionDeclarationNode() = delete;
-	TemplateFunctionDeclarationNode(std::vector<ASTNode> template_params, ASTNode function_decl)
-		: template_parameters_(std::move(template_params)), function_declaration_(function_decl) {}
+	TemplateFunctionDeclarationNode(std::vector<ASTNode> template_params, ASTNode function_decl, 
+	                                std::optional<ASTNode> requires_clause = std::nullopt)
+		: template_parameters_(std::move(template_params)), 
+		  function_declaration_(function_decl),
+		  requires_clause_(requires_clause) {}
 
 	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
 	ASTNode function_declaration() const { return function_declaration_; }
+	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
+	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
 	// Get the underlying FunctionDeclarationNode
 	FunctionDeclarationNode& function_decl_node() {
@@ -1184,6 +1189,7 @@ public:
 private:
 	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
 	ASTNode function_declaration_;  // FunctionDeclarationNode
+	std::optional<ASTNode> requires_clause_;  // Optional RequiresClauseNode
 };
 
 // Template alias declaration: template<typename T> using Ptr = T*;

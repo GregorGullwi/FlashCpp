@@ -9947,6 +9947,28 @@ ParseResult Parser::parse_template_declaration() {
 		std::cerr << "DEBUG: Next token after template params: '" << peek_token()->value() << "' (type=" << static_cast<int>(peek_token()->type()) << ")" << std::endl;
 	}
 
+	// Check for requires clause after template parameters
+	// Syntax: template<typename T> requires Concept<T> ...
+	std::optional<ASTNode> requires_clause;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "requires") {
+		Token requires_token = *peek_token();
+		consume_token(); // consume 'requires'
+		
+		// Parse the constraint expression
+		auto constraint_result = parse_expression();
+		if (constraint_result.is_error()) {
+			return constraint_result;
+		}
+		
+		// Create RequiresClauseNode
+		requires_clause = emplace_node<RequiresClauseNode>(
+			*constraint_result.node(),
+			requires_token
+		);
+		
+		std::cerr << "DEBUG: Parsed requires clause" << std::endl;
+	}
+
 	ParseResult decl_result;
 	if (is_concept_template) {
 		// Parse concept template: template<typename T> concept Name = constraint;
@@ -11171,7 +11193,8 @@ ParseResult Parser::parse_template_declaration() {
 		// Create a TemplateFunctionDeclarationNode
 		auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
 			std::move(template_params),
-			decl_node
+			decl_node,
+			requires_clause
 		);
 
 		// Register the template in the template registry
@@ -11637,10 +11660,12 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
 
-	// Create a template function declaration node
+	// Create a template function declaration node (member templates don't support requires clauses yet)
+	std::optional<ASTNode> empty_requires_clause;
 	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
 		std::move(template_params),
-		*func_result.node()
+		*func_result.node(),
+		empty_requires_clause
 	);
 
 	// Check if there's a function body or just a semicolon
