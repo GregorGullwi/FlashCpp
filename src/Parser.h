@@ -19,6 +19,7 @@
 #include "SymbolTable.h"
 #include "CompileContext.h"
 #include "TemplateRegistry.h"
+#include "ConceptRegistry.h"
 
 #ifndef WITH_DEBUG_INFO
 #define WITH_DEBUG_INFO 0

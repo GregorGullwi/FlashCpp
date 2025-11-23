@@ -213,7 +213,12 @@ bool test_comparisons(double a, double b) {
   - Impact: Proper initialization of `template<typename T> constexpr T pi = T(3.14159);`
 
 **C++20 Features:**
-- **Concepts**: Template constraints and requirements
+- **Concepts**: Template constraints and requirements ⏳ **In Progress - Basic support added**
+  - ✅ Concept declarations: `concept Name = constraint;`
+  - ✅ Template concepts: `template<typename T> concept Name = constraint;`
+  - ⏳ Requires clauses on templates (parsing in progress)
+  - ⏳ Requires expressions
+  - ⏳ Abbreviated function templates
 - **Ranges**: Range adaptors and views (std::ranges)
 - **Range-based for loops**: `for (auto x : container)` syntax
 - **Spaceship operator**: `<=>` three-way comparison
@@ -257,19 +262,14 @@ These features are essential for modern C++ and widely used in production code:
    - **Impact**: Proper initialization of variable templates, compile-time computation
    - **Estimated effort**: 2-3 weeks
 
-4. **Concepts** ⭐⭐⭐⭐
+4. **Concepts** ⭐⭐⭐⭐ ⏳ **In Progress - Basic Support Added**
    - Template constraints and requirements
-   - Requires clauses
-   - Concept definitions
+   - ✅ Concept declarations (simple and template forms)
+   - ⏳ Requires clauses (parsing in development)
+   - ⏳ Concept definitions and constraint evaluation
    - **Impact**: Template error messages, type safety
-   - **Estimated effort**: 4 weeks (after templates)
-
-8. **Concepts** ⭐⭐⭐⭐
-   - Template constraints and requirements
-   - Requires clauses
-   - Concept definitions
-   - **Impact**: Template error messages, type safety
-   - **Estimated effort**: 4 weeks (after templates)
+   - **Current status**: Basic concept parsing working, constraint checking pending
+   - **Estimated effort**: 2 weeks remaining (after basic parsing)
 
 9. **Ranges library** ⭐⭐⭐
    - `std::ranges` adaptors and views
