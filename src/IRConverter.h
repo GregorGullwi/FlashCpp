@@ -4110,24 +4110,20 @@ private:
 	}
 
 	void handleTypeid(const IrInstruction& instruction) {
-		// Typeid format: [result_var, type_name_or_expr, is_type]
-		// For now, we'll implement a simplified version that returns a pointer to static RTTI data
-		assert(instruction.getOperandCount() == 3 && "Typeid must have exactly 3 operands");
+		// Typeid: returns pointer to type_info
+		auto& op = instruction.getTypedPayload<TypeidOp>();
 
 		flushAllDirtyRegisters();
 
-		TempVar result_var = instruction.getOperandAs<TempVar>(0);
-		bool is_type = instruction.getOperandAs<bool>(2);
-
-		if (is_type) {
+		if (op.is_type) {
 			// typeid(Type) - compile-time constant
 			// For now, return a dummy pointer (in a full implementation, we'd have a .rdata section with type_info)
-			const std::string& type_name = instruction.getOperandAs<std::string>(1);
+			const std::string_view& type_name = std::get<std::string_view>(op.operand);
 
 			// Load address of type_info into RAX (using a placeholder address for now)
 			// In a real implementation, we'd have a symbol for each type's RTTI data
 			// Use a hash of the type name as a placeholder address
-			size_t type_hash = std::hash<std::string>{}(type_name);
+			size_t type_hash = std::hash<std::string_view>{}(type_name);
 			emitMovImm64(X64Register::RAX, type_hash);
 		} else {
 			// typeid(expr) - may need runtime lookup for polymorphic types
@@ -4135,7 +4131,7 @@ private:
 			// For non-polymorphic types, return compile-time constant
 
 			// Load the expression result (should be a pointer to object)
-			TempVar expr_var = instruction.getOperandAs<TempVar>(1);
+			TempVar expr_var = std::get<TempVar>(op.operand);
 			int expr_offset = getStackOffsetFromTempVar(expr_var);
 
 			// Load object pointer into RAX
@@ -4167,7 +4163,7 @@ private:
 		}
 
 		// Store result to stack
-		int result_offset = getStackOffsetFromTempVar(result_var);
+		int result_offset = getStackOffsetFromTempVar(op.result);
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0x89); // MOV r/m64, r64
 		if (result_offset >= -128 && result_offset <= 127) {
@@ -4185,9 +4181,8 @@ private:
 	}
 
 	void handleDynamicCast(const IrInstruction& instruction) {
-		// DynamicCast format: [result_var, source_ptr, target_type_name, is_reference]
-		// Returns nullptr for failed pointer casts, throws for failed reference casts
-		assert(instruction.getOperandCount() == 4 && "DynamicCast must have exactly 4 operands");
+		// DynamicCast: Returns nullptr for failed pointer casts, throws for failed reference casts
+		auto& op = instruction.getTypedPayload<DynamicCastOp>();
 
 		flushAllDirtyRegisters();
 
@@ -6724,25 +6719,22 @@ private:
 
 	void handleFloatToInt(const IrInstruction& instruction) {
 		// FloatToInt: convert float/double to integer
-		// Operands: result_var(0), from_type(1), from_size(2), value(3), to_type(4), to_size(5)
-		Type fromType = instruction.getOperandAs<Type>(1);
-		int fromSize = instruction.getOperandAs<int>(2);
-		int toSize = instruction.getOperandAs<int>(5);
+		auto& op = instruction.getTypedPayload<TypeConversionOp>();
 
 		// Load source value into XMM register
 		X64Register source_xmm = X64Register::Count;
-		if (instruction.isOperandType<TempVar>(3)) {
-			auto temp_var = instruction.getOperandAs<TempVar>(3);
+		if (std::holds_alternative<TempVar>(op.from.value)) {
+			auto temp_var = std::get<TempVar>(op.from.value);
 			auto stack_offset = getStackOffsetFromTempVar(temp_var);
 			source_xmm = allocateXMMRegisterWithSpilling();
-			bool is_float = (fromType == Type::Float);
+			bool is_float = (op.from.type == Type::Float);
 			emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
-		} else if (instruction.isOperandType<std::string_view>(3)) {
-			auto var_name = instruction.getOperandAs<std::string_view>(3);
+		} else if (std::holds_alternative<std::string_view>(op.from.value)) {
+			auto var_name = std::get<std::string_view>(op.from.value);
 			auto var_it = variable_scopes.back().identifier_offset.find(var_name);
 			assert(var_it != variable_scopes.back().identifier_offset.end());
 			source_xmm = allocateXMMRegisterWithSpilling();
-			bool is_float = (fromType == Type::Float);
+			bool is_float = (op.from.type == Type::Float);
 			emitFloatMovFromFrame(source_xmm, var_it->second, is_float);
 		}
 
@@ -6752,11 +6744,11 @@ private:
 		// cvttss2si (float to int) or cvttsd2si (double to int)
 		// For 32-bit: F3 0F 2C /r (cvttss2si r32, xmm) or F2 0F 2C /r (cvttsd2si r32, xmm)
 		// For 64-bit: F3 REX.W 0F 2C /r (cvttss2si r64, xmm) or F2 REX.W 0F 2C /r (cvttsd2si r64, xmm)
-		bool is_float = (fromType == Type::Float);
+		bool is_float = (op.from.type == Type::Float);
 		uint8_t prefix = is_float ? 0xF3 : 0xF2;
 		
 		// Only use REX.W for 64-bit result
-		bool need_rex_w = (toSize == 64);
+		bool need_rex_w = (op.to_size_in_bits == 64);
 		uint8_t rex = need_rex_w ? 0x48 : 0x40;
 		
 		// Add REX.R if result register >= 8
@@ -6781,17 +6773,15 @@ private:
 		regAlloc.release(source_xmm);
 
 		// Store result
-		storeConversionResult(instruction, result_reg, toSize);
+		storeConversionResult(instruction, result_reg, op.to_size_in_bits);
 	}
 
 	void handleIntToFloat(const IrInstruction& instruction) {
 		// IntToFloat: convert integer to float/double
-		// Operands: result_var(0), from_type(1), from_size(2), value(3), to_type(4), to_size(5)
-		Type toType = instruction.getOperandAs<Type>(4);
-		int toSize = instruction.getOperandAs<int>(5);
+		auto& op = instruction.getTypedPayload<TypeConversionOp>();
 
 		// Load source value into GPR
-		X64Register source_reg = loadOperandIntoRegister(instruction, 3);
+		X64Register source_reg = loadTypedValueIntoRegister(op.from);
 
 		// Allocate result XMM register
 		X64Register result_xmm = allocateXMMRegisterWithSpilling();
@@ -6799,7 +6789,7 @@ private:
 		// cvtsi2ss (int to float) or cvtsi2sd (int to double)
 		// Opcode: F3 REX.W 0F 2A /r (cvtsi2ss xmm, r64) for float
 		// Opcode: F2 REX.W 0F 2A /r (cvtsi2sd xmm, r64) for double
-		bool is_float = (toType == Type::Float);
+		bool is_float = (op.to_type == Type::Float);
 		uint8_t prefix = is_float ? 0xF3 : 0xF2;
 		
 		uint8_t rex = 0x48;  // REX.W for 64-bit source
@@ -6815,32 +6805,28 @@ private:
 		regAlloc.release(source_reg);
 
 		// Store result XMM to stack - keep it in register for now
-		auto result_temp = instruction.getOperandAs<TempVar>(0);
-		auto result_offset = getStackOffsetFromTempVar(result_temp);
-		regAlloc.set_stack_variable_offset(result_xmm, result_offset, toSize);
+		auto result_offset = getStackOffsetFromTempVar(op.result);
+		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits);
 	}
 
 	void handleFloatToFloat(const IrInstruction& instruction) {
 		// FloatToFloat: convert float <-> double
-		// Operands: result_var(0), from_type(1), from_size(2), value(3), to_type(4), to_size(5)
-		Type fromType = instruction.getOperandAs<Type>(1);
-		Type toType = instruction.getOperandAs<Type>(4);
-		int toSize = instruction.getOperandAs<int>(5);
+		auto& op = instruction.getTypedPayload<TypeConversionOp>();
 
 		// Load source value into XMM register
 		X64Register source_xmm = X64Register::Count;
-		if (instruction.isOperandType<TempVar>(3)) {
-			auto temp_var = instruction.getOperandAs<TempVar>(3);
+		if (std::holds_alternative<TempVar>(op.from.value)) {
+			auto temp_var = std::get<TempVar>(op.from.value);
 			auto stack_offset = getStackOffsetFromTempVar(temp_var);
 			source_xmm = allocateXMMRegisterWithSpilling();
-			bool is_float = (fromType == Type::Float);
+			bool is_float = (op.from.type == Type::Float);
 			emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
-		} else if (instruction.isOperandType<std::string_view>(3)) {
-			auto var_name = instruction.getOperandAs<std::string_view>(3);
+		} else if (std::holds_alternative<std::string_view>(op.from.value)) {
+			auto var_name = std::get<std::string_view>(op.from.value);
 			auto var_it = variable_scopes.back().identifier_offset.find(var_name);
 			assert(var_it != variable_scopes.back().identifier_offset.end());
 			source_xmm = allocateXMMRegisterWithSpilling();
-			bool is_float = (fromType == Type::Float);
+			bool is_float = (op.from.type == Type::Float);
 			emitFloatMovFromFrame(source_xmm, var_it->second, is_float);
 		}
 
@@ -6848,7 +6834,7 @@ private:
 		X64Register result_xmm = allocateXMMRegisterWithSpilling();
 
 		// cvtss2sd (float to double) or cvtsd2ss (double to float)
-		if (fromType == Type::Float && toType == Type::Double) {
+		if (op.from.type == Type::Float && op.to_type == Type::Double) {
 			// cvtss2sd xmm, xmm (F3 0F 5A /r)
 			uint8_t xmm_src = static_cast<uint8_t>(source_xmm) - static_cast<uint8_t>(X64Register::XMM0);
 			uint8_t xmm_dst = static_cast<uint8_t>(result_xmm) - static_cast<uint8_t>(X64Register::XMM0);
@@ -6868,9 +6854,8 @@ private:
 		regAlloc.release(source_xmm);
 
 		// Store result XMM to stack - keep it in register for now
-		auto result_temp = instruction.getOperandAs<TempVar>(0);
-		auto result_offset = getStackOffsetFromTempVar(result_temp);
-		regAlloc.set_stack_variable_offset(result_xmm, result_offset, toSize);
+		auto result_offset = getStackOffsetFromTempVar(op.result);
+		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits);
 	}
 
 	void handleAddAssign(const IrInstruction& instruction) {
@@ -8411,43 +8396,32 @@ private:
 
 	void handleIndirectCall(const IrInstruction& instruction) {
 		// IndirectCall: Call through function pointer
-		// Format: [result_temp, func_ptr_var, arg1_type, arg1_size, arg1_value, ...]
-		assert(instruction.getOperandCount() >= 2 && "IndirectCall must have at least 2 operands");
+		auto& op = instruction.getTypedPayload<IndirectCallOp>();
 
 		flushAllDirtyRegisters();
 
-		auto result_var = instruction.getOperand(0);
-		auto func_ptr_operand = instruction.getOperand(1);
-
 		// Get result offset
-		int result_offset = 0;
-		if (std::holds_alternative<TempVar>(result_var)) {
-			const TempVar temp_var = std::get<TempVar>(result_var);
-			result_offset = getStackOffsetFromTempVar(temp_var);
-			variable_scopes.back().identifier_offset[temp_var.name()] = result_offset;
-		} else {
-			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
-		}
+		int result_offset = getStackOffsetFromTempVar(op.result);
+		variable_scopes.back().identifier_offset[op.result.name()] = result_offset;
 
-		// Load function pointer into RAX using helper
-		X64Register func_ptr_reg = loadOperandIntoRegister(instruction, 1);
-		if (func_ptr_reg != X64Register::RAX) {
-			// Move to RAX if not already there
-			auto mov_encoding = encodeRegToRegInstruction(X64Register::RAX, func_ptr_reg);
-			std::array<uint8_t, 3> movInst = { mov_encoding.rex_prefix, 0x89, mov_encoding.modrm_byte };
-			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		// Load function pointer into RAX
+		X64Register func_ptr_reg;
+		if (std::holds_alternative<TempVar>(op.function_pointer)) {
+			TempVar func_ptr_temp = std::get<TempVar>(op.function_pointer);
+			int func_ptr_offset = getStackOffsetFromTempVar(func_ptr_temp);
 			func_ptr_reg = X64Register::RAX;
+			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
+		} else {
+			// Function pointer is a variable name
+			std::string_view var_name = std::get<std::string_view>(op.function_pointer);
+			int func_ptr_offset = variable_scopes.back().identifier_offset[var_name];
+			func_ptr_reg = X64Register::RAX;
+			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 		}
-
 		// Process arguments (if any)
-		const size_t first_arg_index = 2; // Start after result and function pointer
-		const size_t arg_stride = 3; // type, size, value
-		const size_t num_args = (instruction.getOperandCount() - first_arg_index) / arg_stride;
-		for (size_t i = 0; i < num_args && i < 4; ++i) {
-			size_t argIndex = first_arg_index + i * arg_stride;
-			Type argType = instruction.getOperandAs<Type>(argIndex);
-			// int argSize = instruction.getOperandAs<int>(argIndex + 1); // unused for now
-			auto argValue = instruction.getOperand(argIndex + 2);
+		for (size_t i = 0; i < op.arguments.size() && i < 4; ++i) {
+			const auto& arg = op.arguments[i];
+			Type argType = arg.type;
 
 			// Determine if this is a floating-point argument
 			bool is_float_arg = is_floating_point_type(argType);
@@ -8456,8 +8430,8 @@ private:
 			X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
 
 			// Load argument into target register
-			if (std::holds_alternative<TempVar>(argValue)) {
-				const TempVar temp_var = std::get<TempVar>(argValue);
+			if (std::holds_alternative<TempVar>(arg.value)) {
+				const TempVar temp_var = std::get<TempVar>(arg.value);
 				int arg_offset = getStackOffsetFromTempVar(temp_var);
 				if (is_float_arg) {
 					bool is_float = (argType == Type::Float);
@@ -8467,8 +8441,8 @@ private:
 				} else {
 					emitMovFromFrame(target_reg, arg_offset);
 				}
-			} else if (std::holds_alternative<std::string_view>(argValue)) {
-				std::string_view var_name = std::get<std::string_view>(argValue);
+			} else if (std::holds_alternative<std::string_view>(arg.value)) {
+				std::string_view var_name = std::get<std::string_view>(arg.value);
 				int arg_offset = variable_scopes.back().identifier_offset[var_name];
 				if (is_float_arg) {
 					bool is_float = (argType == Type::Float);
@@ -8478,16 +8452,10 @@ private:
 				} else {
 					emitMovFromFrame(target_reg, arg_offset);
 				}
-			} else if (std::holds_alternative<unsigned long long>(argValue)) {
+			} else if (std::holds_alternative<unsigned long long>(arg.value)) {
 				// Immediate value
-				unsigned long long value = std::get<unsigned long long>(argValue);
-				// MOV target_reg, imm64
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0xB8 + static_cast<uint8_t>(target_reg)); // MOV reg, imm64
-				for (size_t j = 0; j < 8; ++j) {
-					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
-					value >>= 8;
-				}
+				unsigned long long value = std::get<unsigned long long>(arg.value);
+				emitMovImm64(target_reg, value);
 			}
 		}
 

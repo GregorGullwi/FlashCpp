@@ -10109,6 +10109,10 @@ ParseResult Parser::parse_template_declaration() {
 			// Parse: class ClassName<TemplateArgs> { ... }
 			// We need to parse the class keyword, name, template arguments, and body separately
 
+			// Set parsing context flags
+			parsing_template_class_ = true;
+			parsing_template_body_ = true;
+
 			bool is_class = consume_keyword("class");
 			if (!is_class) {
 				consume_keyword("struct");  // Try struct instead
@@ -10318,6 +10322,34 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_ref.set_definition(definition_opt.value());
 					}
 
+					// Check for function body and use delayed parsing
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						// Save position at start of body
+						TokenPosition body_start = save_token_position();
+
+						// Skip over the function body by counting braces
+						skip_balanced_braces();
+
+						// Record for delayed parsing
+						delayed_function_bodies_.push_back({
+							&member_func_ref,
+							body_start,
+							instantiated_name,
+							struct_type_info.type_index_,
+							&struct_ref,
+							false,  // is_constructor
+							false,  // is_destructor
+							nullptr,  // ctor_node
+							nullptr,  // dtor_node
+							{}  // no template parameter names for specializations
+						});
+					} else {
+						// No body - expect semicolon
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected '{' or ';' after member function declaration", *peek_token());
+						}
+					}
+
 					// Add to struct
 					struct_ref.add_member_function(
 						member_func_node,
@@ -10445,50 +10477,97 @@ ParseResult Parser::parse_template_declaration() {
 			// Finalize the struct layout
 			struct_info->finalize();
 
-		// Store struct info in type info
-		struct_type_info.setStructInfo(std::move(struct_info));
+			// Store struct info in type info
+			struct_type_info.setStructInfo(std::move(struct_info));
 
-		// Register the specialization
-		std::cerr << "DEBUG: Registering specialization for " << template_name << " with " << template_args.size() << " args\n";
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			std::cerr << "  Arg " << i << ": base_type=" << static_cast<int>(template_args[i].base_type)
-			          << " is_ref=" << template_args[i].is_reference << "\n";
-		}
-		// NOTE:
-		// At this point we have parsed a specialization of the primary template.
-		// Two forms are supported:
-		//  - Full/Exact specialization: template<> struct Container<bool> { ... };
-		//  - Partial specialization   : template<typename T> struct Container<T*> { ... };
-		//
-		// Full specializations:
-		//   - template_params is empty (template<>)
-		//   - template_args holds fully concrete TemplateTypeArg values (e.g., bool)
-		//   - We must register an exact specialization that will be preferred for a
-		//     matching instantiation (e.g., Container<bool>).
-		//
-		// Partial specializations:
-		//   - template_params is non-empty (e.g., <typename T>)
-		//   - template_args/pattern_args use TemplateTypeArg to encode the pattern
-		//     (T*, T&, const T, etc.) and are handled via pattern matching.
-		//
-		// Implementation:
-		//   - If template_params is empty, treat as full specialization and register
-		//     via registerSpecialization().
-		//   - Otherwise, treat as partial specialization pattern and register via
-		//     registerSpecializationPattern().
-		if (template_params.empty()) {
-			// Full specialization: exact match on concrete arguments
-			gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
-		} else {
-			// Partial specialization: register as a pattern for matching
-			gTemplateRegistry.registerSpecializationPattern(template_name, template_params, template_args, struct_node);
-		}
-		// Don't create a TemplateClassDeclarationNode for specializations
-		// Just return the struct_node directly so it gets added to AST by the caller
-		// This avoids the issue where the struct gets added to ast_nodes_ here
-		// but then the wrapping TemplateClassDeclarationNode gets added by the caller
-		std::cerr << "DEBUG: Returning specialization struct node directly\n";
-		return saved_position.success(struct_node);
+			// Parse delayed function bodies for specialization member functions
+			TokenPosition position_after_struct = save_token_position();
+			for (auto& delayed : delayed_function_bodies_) {
+				// Restore token position to the start of the function body
+				restore_token_position(delayed.body_start);
+
+				// Set up function context
+				gSymbolTable.enter_scope(ScopeType::Function);
+				member_function_context_stack_.push_back({
+					delayed.struct_name,
+					delayed.struct_type_index,
+					delayed.struct_node
+				});
+
+				// Add function parameters to scope
+				for (const auto& param : delayed.func_node->parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& param_decl = param.as<DeclarationNode>();
+						gSymbolTable.insert(param_decl.identifier_token().value(), param);
+					}
+				}
+
+				// Parse the function body
+				auto block_result = parse_block();
+				if (block_result.is_error()) {
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					return block_result;
+				}
+
+				if (auto block = block_result.node()) {
+					delayed.func_node->set_definition(*block);
+				}
+
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+			}
+
+			// Clear delayed function bodies
+			delayed_function_bodies_.clear();
+
+			// Restore position after struct
+			restore_token_position(position_after_struct);
+
+			// Register the specialization
+			std::cerr << "DEBUG: Registering specialization for " << template_name << " with " << template_args.size() << " args\n";
+			for (size_t i = 0; i < template_args.size(); ++i) {
+				std::cerr << "  Arg " << i << ": base_type=" << static_cast<int>(template_args[i].base_type)
+						  << " is_ref=" << template_args[i].is_reference << "\n";
+			}
+			// NOTE:
+			// At this point we have parsed a specialization of the primary template.
+			// Two forms are supported:
+			//  - Full/Exact specialization: template<> struct Container<bool> { ... };
+			//  - Partial specialization   : template<typename T> struct Container<T*> { ... };
+			//
+			// Full specializations:
+			//   - template_params is empty (template<>)
+			//   - template_args holds fully concrete TemplateTypeArg values (e.g., bool)
+			//   - We must register an exact specialization that will be preferred for a
+			//     matching instantiation (e.g., Container<bool>).
+			//
+			// Partial specializations:
+			//   - template_params is non-empty (e.g., <typename T>)
+			//   - template_args/pattern_args use TemplateTypeArg to encode the pattern
+			//     (T*, T&, const T, etc.) and are handled via pattern matching.
+			//
+			// Implementation:
+			//   - If template_params is empty, treat as full specialization and register
+			//     via registerSpecialization().
+			//   - Otherwise, treat as partial specialization pattern and register via
+			//     registerSpecializationPattern().
+			if (template_params.empty()) {
+				// Full specialization: exact match on concrete arguments
+				gTemplateRegistry.registerSpecialization(template_name, template_args, struct_node);
+			} else {
+				// Partial specialization: register as a pattern for matching
+				gTemplateRegistry.registerSpecializationPattern(template_name, template_params, template_args, struct_node);
+			}
+		
+			// Reset parsing context flags
+			parsing_template_class_ = false;
+			parsing_template_body_ = false;
+		
+			// Don't add specialization to AST - it's stored in the template registry
+			// and will be used when Container<int> is instantiated
+			std::cerr << "DEBUG: Specialization registered, returning no node\n";
+			return saved_position.success();
 		}
 		
 		// Handle partial specialization (template<typename T> struct X<T&>)
@@ -12203,7 +12282,8 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 // Get the mangled name for an instantiated class template
 // Example: Container<int> -> Container_int
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
-	StringBuilder& result = StringBuilder().append(template_name);
+	StringBuilder result;
+	result.append(template_name);
 	result.append("_");
 
 	for (size_t i = 0; i < template_args.size(); ++i) {
