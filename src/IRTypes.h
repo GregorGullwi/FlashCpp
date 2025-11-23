@@ -780,6 +780,42 @@ struct GlobalVariableDeclOp {
 	std::optional<IrValue> init_value;  // Only if is_initialized
 };
 
+// Heap allocation (new operator)
+struct HeapAllocOp {
+	TempVar result;              // Result pointer variable
+	Type type = Type::Void;
+	int size_in_bytes = 0;
+	int pointer_depth = 0;
+};
+
+// Heap array allocation (new[] operator)
+struct HeapAllocArrayOp {
+	TempVar result;              // Result pointer variable
+	Type type = Type::Void;
+	int size_in_bytes = 0;
+	int pointer_depth = 0;
+	IrValue count;               // Array element count (TempVar or constant)
+};
+
+// Heap free (delete operator)
+struct HeapFreeOp {
+	IrValue pointer;             // Pointer to free (TempVar or string_view)
+};
+
+// Heap array free (delete[] operator)
+struct HeapFreeArrayOp {
+	IrValue pointer;             // Pointer to free (TempVar or string_view)
+};
+
+// Placement new operator
+struct PlacementNewOp {
+	TempVar result;              // Result pointer variable
+	Type type = Type::Void;
+	int size_in_bytes = 0;
+	int pointer_depth = 0;
+	IrValue address;             // Placement address (TempVar, string_view, or constant)
+};
+
 // Helper function to format conversion operations for IR output
 inline std::string formatConversionOp(const char* op_name, const ConversionOp& op) {
 	std::ostringstream oss;
@@ -1585,81 +1621,69 @@ public:
 		case IrOpcode::HeapAlloc:
 		{
 			// %result = heap_alloc [Type][Size][PointerDepth]
-			// Format: [result_var, type, size_in_bytes, pointer_depth]
-			assert(getOperandCount() == 4 && "HeapAlloc instruction must have exactly 4 operands");
-			if (getOperandCount() >= 4) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-
-				oss << " = heap_alloc [" << static_cast<int>(getOperandAs<Type>(1)) << "]["
-				    << getOperandAs<int>(2) << "][" << getOperandAs<int>(3) << "]";
-			}
+			const HeapAllocOp& op = getTypedPayload<HeapAllocOp>();
+			oss << '%' << op.result.var_number << " = heap_alloc [" 
+				<< static_cast<int>(op.type) << "][" 
+				<< op.size_in_bytes << "][" << op.pointer_depth << "]";
 		}
 		break;
-
+		
 		case IrOpcode::HeapAllocArray:
 		{
 			// %result = heap_alloc_array [Type][Size][PointerDepth] %count
-			// Format: [result_var, type, size_in_bytes, pointer_depth, count_var]
-			assert(getOperandCount() == 5 && "HeapAllocArray instruction must have exactly 5 operands");
-			if (getOperandCount() >= 5) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-
-				oss << " = heap_alloc_array [" << static_cast<int>(getOperandAs<Type>(1)) << "]["
-				    << getOperandAs<int>(2) << "][" << getOperandAs<int>(3) << "] %";
-
-				if (isOperandType<TempVar>(4))
-					oss << getOperandAs<TempVar>(4).var_number;
-			}
+			const HeapAllocArrayOp& op = getTypedPayload<HeapAllocArrayOp>();
+			oss << '%' << op.result.var_number << " = heap_alloc_array [" 
+				<< static_cast<int>(op.type) << "][" 
+				<< op.size_in_bytes << "][" << op.pointer_depth << "] ";
+		
+			if (std::holds_alternative<TempVar>(op.count))
+				oss << '%' << std::get<TempVar>(op.count).var_number;
+			else if (std::holds_alternative<unsigned long long>(op.count))
+				oss << std::get<unsigned long long>(op.count);
+			else if (std::holds_alternative<std::string_view>(op.count))
+				oss << '%' << std::get<std::string_view>(op.count);
 		}
 		break;
-
+		
 		case IrOpcode::HeapFree:
 		{
 			// heap_free %ptr
-			// Format: [ptr_var]
-			assert(getOperandCount() == 1 && "HeapFree instruction must have exactly 1 operand");
-			if (getOperandCount() >= 1) {
-				oss << "heap_free %";
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-			}
+			const HeapFreeOp& op = getTypedPayload<HeapFreeOp>();
+			oss << "heap_free ";
+			if (std::holds_alternative<TempVar>(op.pointer))
+				oss << '%' << std::get<TempVar>(op.pointer).var_number;
+			else if (std::holds_alternative<std::string_view>(op.pointer))
+				oss << '%' << std::get<std::string_view>(op.pointer);
 		}
 		break;
-
+		
 		case IrOpcode::HeapFreeArray:
 		{
 			// heap_free_array %ptr
-			// Format: [ptr_var]
-			assert(getOperandCount() == 1 && "HeapFreeArray instruction must have exactly 1 operand");
-			if (getOperandCount() >= 1) {
-				oss << "heap_free_array %";
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-			}
+			const HeapFreeArrayOp& op = getTypedPayload<HeapFreeArrayOp>();
+			oss << "heap_free_array ";
+			if (std::holds_alternative<TempVar>(op.pointer))
+				oss << '%' << std::get<TempVar>(op.pointer).var_number;
+			else if (std::holds_alternative<std::string_view>(op.pointer))
+				oss << '%' << std::get<std::string_view>(op.pointer);
 		}
 		break;
-
+		
 		case IrOpcode::PlacementNew:
 		{
 			// %result = placement_new %address [Type][Size]
-			// Format: [result_var, address_var, type, size_in_bytes]
-			assert(getOperandCount() >= 4 && "PlacementNew instruction must have at least 4 operands");
-			if (getOperandCount() >= 4) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-				oss << " = placement_new %";
-				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).var_number;
-				oss << " [" << getOperandAsTypeString(2) << "][" << getOperandAs<int>(3) << "]";
-			}
+			const PlacementNewOp& op = getTypedPayload<PlacementNewOp>();
+			oss << '%' << op.result.var_number << " = placement_new ";
+			if (std::holds_alternative<TempVar>(op.address))
+				oss << '%' << std::get<TempVar>(op.address).var_number;
+			else if (std::holds_alternative<std::string_view>(op.address))
+				oss << '%' << std::get<std::string_view>(op.address);
+			else if (std::holds_alternative<unsigned long long>(op.address))
+				oss << std::get<unsigned long long>(op.address);
+			oss << " [" << static_cast<int>(op.type) << "][" << op.size_in_bytes << "]";
 		}
 		break;
-
+		
 		case IrOpcode::Typeid:
 		{
 			// %result = typeid [type_name_or_expr] [is_type]
@@ -1713,27 +1737,29 @@ public:
 			oss << formatUnaryOp("post_dec", getTypedPayload<UnaryOp>());
 			break;
 
-	case IrOpcode::AddAssign:
-		oss << formatBinaryOp("add", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::SubAssign:
-		oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::MulAssign:
-		oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>());
-		break;		case IrOpcode::DivAssign:
-			oss << formatBinaryOp("sdiv", getTypedPayload<BinaryOp>());
-			break;
+		case IrOpcode::AddAssign:
+			oss << formatBinaryOp("add", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::SubAssign:
+			oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::MulAssign:
+			oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>());
+			break;		case IrOpcode::DivAssign:
+				oss << formatBinaryOp("sdiv", getTypedPayload<BinaryOp>());
+				break;
 
-	case IrOpcode::ModAssign:
-		oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::AndAssign:
-		oss << formatBinaryOp("and", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::OrAssign:
-		oss << formatBinaryOp("or", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::XorAssign:
-		oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>());
-		break;	case IrOpcode::ShlAssign:
-		oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>());
-		break;		case IrOpcode::ShrAssign:
+		case IrOpcode::ModAssign:
+			oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::AndAssign:
+			oss << formatBinaryOp("and", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::OrAssign:
+			oss << formatBinaryOp("or", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::XorAssign:
+			oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>());
+			break;	case IrOpcode::ShlAssign:
+			oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>());
+			break;
+			
+		case IrOpcode::ShrAssign:
 			oss << formatBinaryOp("ashr", getTypedPayload<BinaryOp>());
 			break;
 

@@ -4365,32 +4365,18 @@ private:
 				return { Type::Bool, 1, result_var };
 			}
 
-			// Old path for Assignment only
-			// Add the result variable first
-			irOperands.emplace_back(result_var);
-		
-			// Add the left-hand side operands
-			irOperands.insert(irOperands.end(), lhsIrOperands.begin(), lhsIrOperands.end());
-
-			// Add the right-hand side operands
-			irOperands.insert(irOperands.end(), rhsIrOperands.begin(), rhsIrOperands.end());
-
-			// Determine opcode for non-typed-struct operations
-			// Simple operators - Assignment only
-			static const std::unordered_map<std::string_view, IrOpcode> simple_ops = {
-				{"=", IrOpcode::Assignment}
-			};
-			auto simple_it = simple_ops.find(op);
-			if (simple_it != simple_ops.end()) {
-				opcode = simple_it->second;
+			// Assignment using typed payload
+			if (op == "=") {
+				AssignmentOp assign_op;
+				assign_op.result = result_var;
+				assign_op.lhs = toTypedValue(lhsIrOperands);
+				assign_op.rhs = toTypedValue(rhsIrOperands);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			}
 			else {
-				assert(false && "Unsupported binary operator");
+				assert(false && "Unsupported binary operator in this code path");
 				return {};
 			}
-
-			// Legacy path: use operand vector
-			ir_.addInstruction(IrInstruction(opcode, std::move(irOperands), binaryOperatorNode.get_token()));
 		}
 	
 		// For comparison operations, return boolean type (1 bit)
@@ -4694,17 +4680,23 @@ private:
 						// Create a temporary variable to hold the literal value
 						TempVar temp_var = var_counter.next();
 						
-						// Generate an assignment IR to store the literal
-						// Format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
-						std::vector<IrOperand> assignOperands;
-						assignOperands.emplace_back(temp_var);            // result_var (unused for assign)
-						assignOperands.push_back(argumentIrOperands[0]);  // lhs_type
-						assignOperands.push_back(argumentIrOperands[1]);  // lhs_size
-						assignOperands.emplace_back(temp_var);            // lhs_value (temp var)
-						assignOperands.push_back(argumentIrOperands[0]);  // rhs_type
-						assignOperands.push_back(argumentIrOperands[1]);  // rhs_size
-						assignOperands.push_back(argumentIrOperands[2]);  // rhs_value (literal)
-						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assignOperands), Token()));
+						// Generate an assignment IR to store the literal using typed payload
+						AssignmentOp assign_op;
+						assign_op.result = temp_var;  // unused but required
+						
+						// Convert IrOperand to IrValue for the literal
+						IrValue rhs_value;
+						if (std::holds_alternative<unsigned long long>(argumentIrOperands[2])) {
+							rhs_value = std::get<unsigned long long>(argumentIrOperands[2]);
+						} else if (std::holds_alternative<double>(argumentIrOperands[2])) {
+							rhs_value = std::get<double>(argumentIrOperands[2]);
+						}
+						
+						// Create TypedValue for lhs and rhs
+						assign_op.lhs = TypedValue{literal_type, literal_size, temp_var};
+						assign_op.rhs = TypedValue{literal_type, literal_size, rhs_value};
+						
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 						
 						// Now take the address of the temporary
 						TempVar addr_var = var_counter.next();
@@ -5820,15 +5812,24 @@ private:
 			// Evaluate the placement address expression
 			auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
-			// Format: [result_var, type, size_in_bytes, pointer_depth, address_operand]
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_var);
-			operands.emplace_back(type);
-			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
-			operands.emplace_back(pointer_depth);
-			operands.emplace_back(address_operands[2]);  // placement address (TempVar, identifier, or constant)
+			// Create PlacementNewOp
+			PlacementNewOp op;
+			op.result = result_var;
+			op.type = type;
+			op.size_in_bytes = size_in_bits / 8;
+			op.pointer_depth = pointer_depth;
+			// Convert IrOperand to IrValue
+			if (std::holds_alternative<unsigned long long>(address_operands[2])) {
+				op.address = std::get<unsigned long long>(address_operands[2]);
+			} else if (std::holds_alternative<TempVar>(address_operands[2])) {
+				op.address = std::get<TempVar>(address_operands[2]);
+			} else if (std::holds_alternative<std::string_view>(address_operands[2])) {
+				op.address = std::get<std::string_view>(address_operands[2]);
+			} else if (std::holds_alternative<double>(address_operands[2])) {
+				op.address = std::get<double>(address_operands[2]);
+			}
 
-			ir_.addInstruction(IrOpcode::PlacementNew, std::move(operands), Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 
 			// If this is a struct type with a constructor, generate constructor call
 			if (type == Type::Struct) {
@@ -5869,26 +5870,33 @@ private:
 			// Evaluate the size expression
 			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
-			// Format: [result_var, type, size_in_bytes, pointer_depth, count_operand]
-			// count_operand can be either TempVar or a constant value (int/unsigned long long)
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_var);
-			operands.emplace_back(type);
-			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
-			operands.emplace_back(pointer_depth);
-			operands.emplace_back(size_operands[2]);  // size expression result (TempVar or constant)
+			// Create HeapAllocArrayOp
+			HeapAllocArrayOp op;
+			op.result = result_var;
+			op.type = type;
+			op.size_in_bytes = size_in_bits / 8;
+			op.pointer_depth = pointer_depth;
+			// Convert IrOperand to IrValue for count
+			if (std::holds_alternative<unsigned long long>(size_operands[2])) {
+				op.count = std::get<unsigned long long>(size_operands[2]);
+			} else if (std::holds_alternative<TempVar>(size_operands[2])) {
+				op.count = std::get<TempVar>(size_operands[2]);
+			} else if (std::holds_alternative<std::string_view>(size_operands[2])) {
+				op.count = std::get<std::string_view>(size_operands[2]);
+			} else if (std::holds_alternative<double>(size_operands[2])) {
+				op.count = std::get<double>(size_operands[2]);
+			}
 
-			ir_.addInstruction(IrOpcode::HeapAllocArray, std::move(operands), Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::HeapAllocArray, std::move(op), Token()));
 		} else {
 			// Single object allocation: new Type or new Type(args)
-			// Format: [result_var, type, size_in_bytes, pointer_depth]
-			std::vector<IrOperand> operands;
-			operands.emplace_back(result_var);
-			operands.emplace_back(type);
-			operands.emplace_back(size_in_bits / 8);  // Convert bits to bytes
-			operands.emplace_back(pointer_depth);
+			HeapAllocOp op;
+			op.result = result_var;
+			op.type = type;
+			op.size_in_bytes = size_in_bits / 8;
+			op.pointer_depth = pointer_depth;
 
-			ir_.addInstruction(IrOpcode::HeapAlloc, std::move(operands), Token());
+			ir_.addInstruction(IrInstruction(IrOpcode::HeapAlloc, std::move(op), Token()));
 
 			// If this is a struct type with a constructor, generate constructor call
 			if (type == Type::Struct) {
@@ -5949,14 +5957,26 @@ private:
 		}
 
 		// Generate the appropriate free instruction
-		// Pass the pointer operand directly (can be TempVar or std::string_view)
-		std::vector<IrOperand> operands;
-		operands.emplace_back(ptr_operands[2]);  // The pointer value (TempVar or identifier)
+		// Convert IrOperand to IrValue
+		IrValue ptr_value;
+		if (std::holds_alternative<unsigned long long>(ptr_operands[2])) {
+			ptr_value = std::get<unsigned long long>(ptr_operands[2]);
+		} else if (std::holds_alternative<TempVar>(ptr_operands[2])) {
+			ptr_value = std::get<TempVar>(ptr_operands[2]);
+		} else if (std::holds_alternative<std::string_view>(ptr_operands[2])) {
+			ptr_value = std::get<std::string_view>(ptr_operands[2]);
+		} else if (std::holds_alternative<double>(ptr_operands[2])) {
+			ptr_value = std::get<double>(ptr_operands[2]);
+		}
 
 		if (deleteExpr.is_array()) {
-			ir_.addInstruction(IrOpcode::HeapFreeArray, std::move(operands), Token());
+			HeapFreeArrayOp op;
+			op.pointer = ptr_value;
+			ir_.addInstruction(IrInstruction(IrOpcode::HeapFreeArray, std::move(op), Token()));
 		} else {
-			ir_.addInstruction(IrOpcode::HeapFree, std::move(operands), Token());
+			HeapFreeOp op;
+			op.pointer = ptr_value;
+			ir_.addInstruction(IrInstruction(IrOpcode::HeapFree, std::move(op), Token()));
 		}
 
 		// delete is a statement, not an expression, so return empty
