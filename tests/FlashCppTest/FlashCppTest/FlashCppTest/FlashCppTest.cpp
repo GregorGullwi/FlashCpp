@@ -2385,3 +2385,7 @@ TEST_CASE("Concepts:Simple") {
 TEST_CASE("Concepts:Template") {
 	run_test_from_file("test_concept_template.cpp", "C++20 concept with template parameters", false);
 }
+
+TEST_CASE("Concepts:Comprehensive") {
+	run_test_from_file("test_concept_comprehensive.cpp", "C++20 comprehensive concept test", false);
+}
