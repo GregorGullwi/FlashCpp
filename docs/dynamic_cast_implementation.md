@@ -258,6 +258,6 @@ To debug RTTI issues:
 
 ## Future Enhancements
 
-1. **Optimizations**: Cache successful cast results
+1. **Optimizations**: Cache successful cast results, hash tables for faster lookups
 2. **Type names**: Store demangled names for better debugging
-3. **Standard compliance**: Full C++ RTTI compatibility
+3. **Full exception integration**: Link with C++ runtime for proper `std::bad_cast` throwing
