@@ -2370,3 +2370,7 @@ TEST_CASE("RangedFor:ConstRef") {
 TEST_CASE("Struct:PassingByReference") {
 	run_test_from_file("test_struct_ref_passing.cpp", "Struct passing by value, const ref, and ref", false);
 }
+
+TEST_CASE("Struct:ReferencePassingSimple") {
+	run_test_from_file("test_struct_ref_simple.cpp", "Simple struct reference passing test", false);
+}
