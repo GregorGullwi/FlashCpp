@@ -2348,3 +2348,70 @@ private:
 	ASTNode type_node_;  // The underlying type (TypeSpecifierNode)
 	Token alias_name_;   // The new type alias name
 };
+
+// ============================================================================
+// C++20 Concepts Support
+// ============================================================================
+
+// Requires expression node: requires { expression; }
+// Used inside concept definitions and requires clauses
+class RequiresExpressionNode {
+public:
+	explicit RequiresExpressionNode(
+		std::vector<ASTNode> requirements,
+		Token requires_token = Token())
+		: requirements_(std::move(requirements)),
+		  requires_token_(requires_token) {}
+
+	const std::vector<ASTNode>& requirements() const { return requirements_; }
+	const Token& requires_token() const { return requires_token_; }
+
+private:
+	std::vector<ASTNode> requirements_;  // List of requirement expressions
+	Token requires_token_;               // For error reporting
+};
+
+// Requires clause node: requires constraint
+// Used in template declarations to constrain template parameters
+class RequiresClauseNode {
+public:
+	explicit RequiresClauseNode(
+		ASTNode constraint_expr,
+		Token requires_token = Token())
+		: constraint_expr_(constraint_expr),
+		  requires_token_(requires_token) {}
+
+	const ASTNode& constraint_expr() const { return constraint_expr_; }
+	const Token& requires_token() const { return requires_token_; }
+
+private:
+	ASTNode constraint_expr_;  // The constraint expression (can be a concept name or requires expression)
+	Token requires_token_;     // For error reporting
+};
+
+// Concept declaration node: concept Name = constraint;
+// Defines a named concept that can be used to constrain templates
+class ConceptDeclarationNode {
+public:
+	explicit ConceptDeclarationNode(
+		Token name,
+		std::vector<TemplateParameterNode> template_params,
+		ASTNode constraint_expr,
+		Token concept_token = Token())
+		: name_(name),
+		  template_params_(std::move(template_params)),
+		  constraint_expr_(constraint_expr),
+		  concept_token_(concept_token) {}
+
+	std::string_view name() const { return name_.value(); }
+	const Token& name_token() const { return name_; }
+	const std::vector<TemplateParameterNode>& template_params() const { return template_params_; }
+	const ASTNode& constraint_expr() const { return constraint_expr_; }
+	const Token& concept_token() const { return concept_token_; }
+
+private:
+	Token name_;                                     // Concept name
+	std::vector<TemplateParameterNode> template_params_;  // Template parameters for the concept
+	ASTNode constraint_expr_;                        // The constraint expression
+	Token concept_token_;                            // For error reporting
+};

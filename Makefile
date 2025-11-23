@@ -50,10 +50,10 @@ TEST_DIR := $(BINDIR)/Test
 BENCHMARK_DIR := $(BINDIR)/Benchmark
 
 # Source files needed for the test (excluding main.cpp, benchmark.cpp, LibClangIRGenerator.cpp)
-TEST_SOURCES := $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp $(SRCDIR)/Parser.cpp $(SRCDIR)/CodeViewDebug.cpp
+TEST_SOURCES := $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp $(SRCDIR)/Parser.cpp $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ConceptRegistry.cpp
 
 # Main sources (excluding LLVM-dependent files)
-MAIN_SOURCES := $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp $(SRCDIR)/Parser.cpp $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/main.cpp
+MAIN_SOURCES := $(SRCDIR)/AstNodeTypes.cpp $(SRCDIR)/ChunkedAnyVector.cpp $(SRCDIR)/Parser.cpp $(SRCDIR)/CodeViewDebug.cpp $(SRCDIR)/ConceptRegistry.cpp $(SRCDIR)/main.cpp
 
 # Target executables with proper extensions (matching MSVC structure)
 MAIN_TARGET := $(DEBUG_DIR)/FlashCpp$(EXE_EXT)
