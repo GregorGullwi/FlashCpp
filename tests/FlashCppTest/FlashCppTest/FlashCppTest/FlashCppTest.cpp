@@ -1124,6 +1124,10 @@ TEST_CASE("Comparison operators") {
 	run_test_from_file("comparison_operators.cpp", "Comparison operators", false);
 }
 
+TEST_CASE("Spaceship operator") {
+	run_test_from_file("spaceship_operator.cpp", "Spaceship operator", false);
+}
+
 TEST_CASE("Logical operators") {
 	run_test_from_file("logical_operators.cpp", "Logical operators", false);
 }

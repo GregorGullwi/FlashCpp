@@ -893,12 +893,13 @@ ParseResult Parser::parse_type_and_name() {
             std::string_view operator_symbol = operator_symbol_token.value();
             consume_token(); // consume operator symbol
 
-            // For now, we support operator= and operator()
-            if (operator_symbol != "=") {
-                return ParseResult::error("Only operator= and operator() are currently supported", operator_symbol_token);
+            // For now, we support operator=, operator<=>, and operator()
+            if (operator_symbol != "=" && operator_symbol != "<=>") {
+                return ParseResult::error("Only operator=, operator<=>, and operator() are currently supported", operator_symbol_token);
             }
             static const std::string operator_eq_name = "operator=";
-            operator_name = operator_eq_name;
+            static const std::string operator_spaceship_name = "operator<=>";
+            operator_name = (operator_symbol == "=") ? operator_eq_name : operator_spaceship_name;
         }
         else {
             return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
@@ -2215,6 +2216,22 @@ ParseResult Parser::parse_struct_declaration()
 			// Copy parameters from the parsed function
 			for (const auto& param : func_decl.parameter_nodes()) {
 				member_func_ref.add_parameter_node(param);
+			}
+
+			// Check for const/volatile qualifiers after parameter list
+			bool is_const_member = false;
+			bool is_volatile_member = false;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view keyword = peek_token()->value();
+				if (keyword == "const") {
+					is_const_member = true;
+					consume_token();
+				} else if (keyword == "volatile") {
+					is_volatile_member = true;
+					consume_token();
+				} else {
+					break;  // Not a cv-qualifier
+				}
 			}
 
 			// Check for override, final, = 0, = default, or = delete after parameters
@@ -6200,6 +6217,8 @@ int Parser::get_operator_precedence(const std::string_view& op)
 			{"+", 15},  {"-", 15},
 			// Shift (precedence 14)
 			{"<<", 14}, {">>", 14},
+			// Spaceship/Three-way comparison (precedence 13)
+			{"<=>", 13},
 			// Relational (precedence 13)
 			{"<", 13},  {"<=", 13}, {">", 13},  {">=", 13},
 			// Equality (precedence 12)
