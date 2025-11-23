@@ -1128,6 +1128,10 @@ TEST_CASE("Spaceship operator") {
 	run_test_from_file("spaceship_operator.cpp", "Spaceship operator", false);
 }
 
+TEST_CASE("Spaceship operator manual") {
+	run_test_from_file("spaceship_operator_manual.cpp", "Spaceship operator manual", false);
+}
+
 TEST_CASE("Logical operators") {
 	run_test_from_file("logical_operators.cpp", "Logical operators", false);
 }
