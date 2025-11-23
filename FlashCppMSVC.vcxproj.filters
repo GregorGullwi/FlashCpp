@@ -1,0 +1,71 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="src\AstNodeTypes.cpp" />
+    <ClCompile Include="src\ChunkedAnyVector.cpp" />
+    <ClCompile Include="src\CodeViewDebug.cpp" />
+    <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp" />
+    <ClCompile Include="src\Parser.cpp" />
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\benchmark.cpp" />
+    <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\ChunkedAnyVector.h" />
+    <ClInclude Include="src\ChunkedString.h" />
+    <ClInclude Include="src\CodeGen.h" />
+    <ClInclude Include="src\CodeViewDebug.h" />
+    <ClInclude Include="src\CommandLineParser.h" />
+    <ClInclude Include="src\ConstExprEvaluator.h" />
+    <ClInclude Include="src\FileReader.h" />
+    <ClInclude Include="src\FileTree.h" />
+    <ClInclude Include="src\CompileContext.h" />
+    <ClInclude Include="src\IRConverter.h" />
+    <ClInclude Include="src\IRTypes.h" />
+    <ClInclude Include="src\Lexer.h" />
+    <ClInclude Include="src\AstNodeTypes.h" />
+    <ClInclude Include="src\NameMangling.h" />
+    <ClInclude Include="src\ObjFileWriter.h" />
+    <ClInclude Include="src\Parser.h" />
+    <ClInclude Include="src\StackString.h" />
+    <ClInclude Include="src\SymbolTable.h" />
+    <ClInclude Include="src\TemplateRegistry.h" />
+    <ClInclude Include="src\Token.h" />
+    <ClInclude Include="src\coffi\coffi_directory.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+    <ClInclude Include="src\coffi\coffi_headers.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+    <ClInclude Include="src\coffi\coffi_relocation.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+    <ClInclude Include="src\coffi\coffi_section.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+    <ClInclude Include="src\coffi\coffi_strings.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+    <ClInclude Include="src\coffi\coffi_symbols.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+    <ClInclude Include="src\coffi\coffi_types.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+    <ClInclude Include="src\coffi\coffi_utils.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+    <ClInclude Include="src\coffi\coffi.hpp">
+      <Filter>coffi</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="LICENSE" />
+    <None Include="tests\.runsettings" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="coffi">
+      <UniqueIdentifier>{2b4f5fe7-874a-4eb8-b03d-e0b546e36f87}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
