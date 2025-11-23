@@ -522,7 +522,8 @@ public:
 	// Generate a mangled name for a template instantiation
 	// Example: max<int> -> max_int, max<int, 5> -> max_int_5, max<vector> -> max_vector
 	static std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
-		StringBuilder& mangled = StringBuilder().append(base_name).append("_");
+		StringBuilder mangled;
+		mangled.append(base_name).append("_");
 
 		for (size_t i = 0; i < args.size(); ++i) {
 			if (i > 0) mangled.append("_");
