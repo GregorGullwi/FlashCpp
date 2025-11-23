@@ -406,41 +406,63 @@ public:
 		}
 
 		// Check if this is a member function call (ClassName::FunctionName format)
-		size_t scope_pos = name.find("::");
+		// For nested classes, use the LAST :: to split (e.g., "Outer::Inner::get" -> class="Outer::Inner", func="get")
+		size_t scope_pos = name.rfind("::");
 		if (scope_pos != std::string_view::npos) {
 			// Split into class name and function name using string_view (no allocation)
 			std::string_view class_name = name.substr(0, scope_pos);
 			std::string_view func_name = name.substr(scope_pos + 2);
 
+			// Convert class_name to mangled format for nested classes
+			// "Outer::Inner" -> "Inner@Outer" (reverse order with @ separators)
+			std::string mangled_class;
+			{
+				std::vector<std::string_view> class_parts;
+				std::string_view remaining = class_name;
+				size_t pos;
+				
+				while ((pos = remaining.find("::")) != std::string_view::npos) {
+					class_parts.push_back(remaining.substr(0, pos));
+					remaining = remaining.substr(pos + 2);
+				}
+				class_parts.push_back(remaining);
+				
+				// Reverse and append with @ separators
+				for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
+					if (!mangled_class.empty()) mangled_class += '@';
+					mangled_class += *it;
+				}
+			}
+
 			// Search for a mangled name that matches this member function
 			// The function name in the mangled name might include the class prefix (e.g., "Container::Container")
 			// So we need to search for both patterns:
-			// 1. ?FunctionName@ClassName@@... (func_name without class prefix)
-			// 2. ?ClassName::FunctionName@ClassName@@... (func_name with class prefix, for constructors)
+			// 1. ?FunctionName@MangledClassName@@... (func_name without class prefix)
+			// 2. ?ClassName::FunctionName@MangledClassName@@... (func_name with class prefix, for constructors)
 			for (const auto& [mangled, sig] : function_signatures_) {
 				if (mangled[0] != '?') continue;
 				
-				// Pattern 1: ?FunctionName@ClassName@@...
-				// Check: mangled starts with "?<func_name>@<class_name>@@"
-				size_t expected_class_start = 2 + func_name.size();
-				size_t expected_separator = expected_class_start + class_name.size();
+				// Pattern 1: ?FunctionName@MangledClassName@@...
+				// Check: mangled starts with "?<func_name>@<mangled_class>@@"
+				size_t expected_class_start = 1 + func_name.size() + 1;  // '?' + func_name + '@'
+				size_t expected_separator = expected_class_start + mangled_class.size();
 				if (mangled.size() > expected_separator + 1 &&
 				    mangled.substr(1, func_name.size()) == func_name &&
 				    mangled[1 + func_name.size()] == '@' &&
-				    mangled.substr(expected_class_start, class_name.size()) == class_name &&
+				    mangled.substr(expected_class_start, mangled_class.size()) == mangled_class &&
 				    mangled.substr(expected_separator, 2) == "@@") {  // Ensure class name ends with @@
 					std::cerr << "DEBUG: getMangledName found match (pattern 1) for " << name << " -> " << mangled << "\n";
 					return mangled;
 				}
 				
-				// Pattern 2: ?ClassName::FunctionName@ClassName@@... (for constructors/destructors)
+				// Pattern 2: ?ClassName::FunctionName@MangledClassName@@... (for constructors/destructors)
 				std::string full_func_name = std::string(class_name) + "::" + std::string(func_name);
-				expected_class_start = 2 + full_func_name.size();
-				expected_separator = expected_class_start + class_name.size();
+				expected_class_start = 1 + full_func_name.size() + 1;
+				expected_separator = expected_class_start + mangled_class.size();
 				if (mangled.size() > expected_separator + 1 &&
 				    mangled.substr(1, full_func_name.size()) == full_func_name &&
 				    mangled[1 + full_func_name.size()] == '@' &&
-				    mangled.substr(expected_class_start, class_name.size()) == class_name &&
+				    mangled.substr(expected_class_start, mangled_class.size()) == mangled_class &&
 				    mangled.substr(expected_separator, 2) == "@@") {  // Ensure class name ends with @@
 					std::cerr << "DEBUG: getMangledName found match (pattern 2) for " << name << " -> " << mangled << "\n";
 					return mangled;
@@ -456,19 +478,25 @@ public:
 
 			// If not found in function_signatures_, generate a basic mangled name
 			// This handles forward references to functions that haven't been processed yet
-			// Format: ?FunctionName@ClassName@@QAH@Z (member function, int return, no params)
+			// Format: ?FunctionName@MangledClassName@@QAH@Z (member function, int return, no params)
 			// For constructors (FunctionName == ClassName), use QAX (void return)
 			// Q indicates __thiscall (member function with implicit this pointer)
 			// This is a simplified mangling - the actual signature will be added later
 			// Reserve space to avoid reallocations
 			std::string mangled;
-			mangled.reserve(1 + func_name.size() + 1 + class_name.size() + 7);
+			mangled.reserve(1 + func_name.size() + 1 + mangled_class.size() + 7);
 			mangled += '?';
 			mangled += func_name;
 			mangled += '@';
-			mangled += class_name;
-			// Check if this is a constructor (function name == class name)
-			if (func_name == class_name) {
+			mangled += mangled_class;
+			
+			// Check if this is a constructor (function name == innermost class name)
+			std::string_view innermost_class = class_name;
+			size_t last_colon = class_name.rfind("::");
+			if (last_colon != std::string_view::npos) {
+				innermost_class = class_name.substr(last_colon + 2);
+			}
+			if (func_name == innermost_class) {
 				mangled += "@@QAX@Z";  // __thiscall void return, no params
 			} else {
 				mangled += "@@QAH@Z";  // __thiscall int return, no params (default for member functions)
@@ -534,9 +562,25 @@ public:
 		mangled += name;
 
 		// Add class name if this is a member function
+		// For nested classes (e.g., "Outer::Inner"), reverse the order and use @ separators
+		// Example: "Outer::Inner" becomes "@Inner@Outer"
 		if (!sig.class_name.empty()) {
-			mangled += '@';
-			mangled += sig.class_name;
+			std::vector<std::string_view> class_parts;
+			std::string_view remaining = sig.class_name;
+			size_t pos;
+			
+			// Split class_name by "::" and collect parts
+			while ((pos = remaining.find("::")) != std::string_view::npos) {
+				class_parts.push_back(remaining.substr(0, pos));
+				remaining = remaining.substr(pos + 2);
+			}
+			class_parts.push_back(remaining);  // Add the last part
+			
+			// Reverse and append with @ separators (innermost to outermost)
+			for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
+				mangled += '@';
+				mangled += *it;
+			}
 		}
 
 		mangled += "@@";
