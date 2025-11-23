@@ -3,6 +3,8 @@ Debug/
 .vs/
 .ccls-cache/
 */*.obj
+**/*.obj
+*.obj
 core.*
 *.user
 
