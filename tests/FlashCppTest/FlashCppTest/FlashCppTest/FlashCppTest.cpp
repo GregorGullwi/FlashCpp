@@ -7,8 +7,7 @@
 #include "CodeGen.h"
 #include "IRConverter.h"
 #include "ChunkedAnyVector.h"
-#include "TemplateRegistry.h"
-#include "ConceptRegistry.h"
+#include "TemplateRegistry.h"  // Includes ConceptRegistry as well
 #include <string>
 #include <algorithm>
 #include <cctype>
