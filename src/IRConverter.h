@@ -2994,6 +2994,27 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to emit RIP-relative LEA for loading symbol addresses
+	// Returns the offset where the relocation displacement should be added
+	uint32_t emitLeaRipRelative(X64Register destinationRegister) {
+		// LEA reg, [RIP + disp32]
+		textSectionData.push_back(0x48); // REX.W for 64-bit
+		textSectionData.push_back(0x8D); // LEA opcode
+		
+		// ModR/M byte: mod=00 (indirect), reg=destination, r/m=101 ([RIP+disp32])
+		uint8_t dest_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+		textSectionData.push_back(0x05 | (dest_bits << 3)); // ModR/M: [RIP + disp32]
+		
+		// Add placeholder for the displacement (will be filled by relocation)
+		uint32_t relocation_offset = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		
+		return relocation_offset;
+	}
+
 	// Helper to generate and emit MOV to frame
 	void emitMovToFrame(X64Register sourceRegister, int32_t offset) {
 		auto opcodes = generateMovToFrame(sourceRegister, offset);
@@ -7807,25 +7828,14 @@ private:
 			
 			// Load vtable address using LEA with relocation
 			// LEA RAX, [RIP + vtable_symbol]
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x8D); // LEA
-			textSectionData.push_back(0x05); // ModR/M: [RIP + disp32], RAX
-			
-			// Add placeholder for the displacement (will be filled by relocation)
-			uint32_t relocation_offset = static_cast<uint32_t>(textSectionData.size());
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
+			uint32_t relocation_offset = emitLeaRipRelative(X64Register::RAX);
 			
 			// Add a relocation for the vtable symbol
 			writer.add_relocation(relocation_offset, std::string(op.vtable_symbol));
 			
 			// Store vtable pointer to [RCX + 0] (this pointer is in RCX, vptr is at offset 0)
 			// First load 'this' pointer into RCX
-			auto load_ptr_opcodes = generateMovFromFrame(X64Register::RCX, object_base_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+			emitMovFromFrame(X64Register::RCX, object_base_offset);
 			
 			// Store RAX (vtable address) to [RCX + 0]
 			emitStoreToMemory(textSectionData, X64Register::RAX, X64Register::RCX, 0, 8);
