@@ -3486,16 +3486,14 @@ private:
 		int result_size = std::get<int>(true_operands[1]);
 		
 		// Assign true_expr result to result variable
-		// Assignment format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
-		std::vector<IrOperand> assign_true_operands;
-		assign_true_operands.emplace_back(result_var);  // result_var (unused for simple assignment)
-		assign_true_operands.emplace_back(result_type); // lhs_type
-		assign_true_operands.emplace_back(result_size); // lhs_size
-		assign_true_operands.emplace_back(result_var);  // lhs_value (destination)
-		// Copy RHS operands directly (type, size, value - value can be TempVar, literal, etc.)
-		assign_true_operands.insert(assign_true_operands.end(), true_operands.begin(), true_operands.end());
-		ir_.addInstruction(IrOpcode::Assignment, std::move(assign_true_operands), ternaryNode.get_token());
-
+		AssignmentOp assign_true_op;
+		assign_true_op.result = result_var;
+		assign_true_op.lhs.type = result_type;
+		assign_true_op.lhs.size_in_bits = result_size;
+		assign_true_op.lhs.value = result_var;
+		assign_true_op.rhs = toTypedValue(true_operands);
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_true_op), ternaryNode.get_token()));
+		
 		// Unconditional branch to end
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, ternaryNode.get_token()));
 
@@ -3506,16 +3504,14 @@ private:
 		auto false_operands = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
 
 		// Assign false_expr result to result variable
-		// Assignment format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
-		std::vector<IrOperand> assign_false_operands;
-		assign_false_operands.emplace_back(result_var);  // result_var (unused for simple assignment)
-		assign_false_operands.emplace_back(result_type); // lhs_type
-		assign_false_operands.emplace_back(result_size); // lhs_size
-		assign_false_operands.emplace_back(result_var);  // lhs_value (destination)
-		// Copy RHS operands directly (type, size, value - value can be TempVar, literal, etc.)
-		assign_false_operands.insert(assign_false_operands.end(), false_operands.begin(), false_operands.end());
-		ir_.addInstruction(IrOpcode::Assignment, std::move(assign_false_operands), ternaryNode.get_token());
-
+		AssignmentOp assign_false_op;
+		assign_false_op.result = result_var;
+		assign_false_op.lhs.type = result_type;
+		assign_false_op.lhs.size_in_bits = result_size;
+		assign_false_op.lhs.value = result_var;
+		assign_false_op.rhs = toTypedValue(false_operands);
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
+		
 		// End label (merge point)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
 		
