@@ -1037,6 +1037,8 @@ public:
 		
 		// RTTI data: [class_name_hash (8 bytes), num_bases (8 bytes), base_rtti_ptrs...]
 		std::vector<char> rtti_data;
+		uint64_t num_bases = base_class_names.size();
+		rtti_data.reserve(16 + num_bases * 8); // Pre-allocate: hash + num_bases + base pointers
 		
 		// Add class name hash
 		for (int i = 0; i < 8; ++i) {
@@ -1044,7 +1046,6 @@ public:
 		}
 		
 		// Add number of base classes
-		uint64_t num_bases = base_class_names.size();
 		for (int i = 0; i < 8; ++i) {
 			rtti_data.push_back(static_cast<char>((num_bases >> (i * 8)) & 0xFF));
 		}

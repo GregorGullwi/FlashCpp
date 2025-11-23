@@ -26,8 +26,8 @@ class Parser;
 struct RTTIInfo {
 	uint64_t class_name_hash;
 	uint64_t num_bases;
-	// Base class RTTI pointers follow immediately after this structure
-	// Access them via: RTTIInfo** base_ptrs = (RTTIInfo**)((char*)this + 16);
+	RTTIInfo* base_ptrs[0];  // Flexible array member - base class RTTI pointers follow
+	// Access via: auto** bases = reinterpret_cast<RTTIInfo**>((char*)this + 16);
 };
 
 // Runtime helpers for dynamic_cast - inlined for header-only compiler

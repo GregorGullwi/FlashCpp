@@ -12,6 +12,7 @@
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
 #include "ProfilingTimer.h"
+#include "ChunkedString.h"
 
 // Enable detailed profiling by default in debug builds
 // Can be overridden by defining ENABLE_DETAILED_PROFILING=0 or =1
@@ -3061,6 +3062,95 @@ private:
 		writer.add_relocation(relocation_offset, symbol_name);
 	}
 
+	// Helper to emit MOV reg, reg
+	void emitMovRegReg(X64Register dest, X64Register src) {
+		// Determine REX prefix based on registers
+		uint8_t rex = 0x48; // REX.W for 64-bit
+		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04; // REX.R
+		if (static_cast<uint8_t>(src) >= 8) rex |= 0x01;  // REX.B
+		
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		
+		// ModR/M byte: mod=11 (register), reg=src, r/m=dest
+		uint8_t modrm = 0xC0;
+		modrm |= ((static_cast<uint8_t>(src) & 0x07) << 3);
+		modrm |= (static_cast<uint8_t>(dest) & 0x07);
+		textSectionData.push_back(modrm);
+	}
+
+	// Helper to emit MOV reg, [reg]
+	void emitMovRegFromMemReg(X64Register dest, X64Register src_addr) {
+		uint8_t rex = 0x48; // REX.W
+		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04;
+		if (static_cast<uint8_t>(src_addr) >= 8) rex |= 0x01;
+		
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		
+		// ModR/M: mod=00 (indirect), reg=dest, r/m=src_addr
+		uint8_t modrm = 0x00;
+		modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
+		modrm |= (static_cast<uint8_t>(src_addr) & 0x07);
+		textSectionData.push_back(modrm);
+	}
+
+	// Helper to emit MOV reg, [reg + disp8]
+	void emitMovRegFromMemRegDisp8(X64Register dest, X64Register src_addr, int8_t disp) {
+		uint8_t rex = 0x48; // REX.W
+		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04;
+		if (static_cast<uint8_t>(src_addr) >= 8) rex |= 0x01;
+		
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		
+		// ModR/M: mod=01 (indirect + disp8), reg=dest, r/m=src_addr
+		uint8_t modrm = 0x40;
+		modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
+		modrm |= (static_cast<uint8_t>(src_addr) & 0x07);
+		textSectionData.push_back(modrm);
+		textSectionData.push_back(static_cast<uint8_t>(disp));
+	}
+
+	// Helper to emit TEST reg, reg
+	void emitTestRegReg(X64Register reg) {
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0x85); // TEST r64, r64
+		
+		// ModR/M: mod=11, reg=reg, r/m=reg
+		uint8_t modrm = 0xC0;
+		uint8_t reg_val = static_cast<uint8_t>(reg) & 0x07;
+		modrm |= (reg_val << 3) | reg_val;
+		textSectionData.push_back(modrm);
+	}
+
+	// Helper to emit TEST AL, AL
+	void emitTestAL() {
+		textSectionData.push_back(0x84); // TEST r/m8, r8
+		textSectionData.push_back(0xC0); // ModR/M: AL, AL
+	}
+
+	// Helper to emit LEA reg, [RIP + disp32] with relocation
+	void emitLeaRipRelativeWithRelocation(X64Register dest, std::string_view symbol_name) {
+		uint8_t rex = 0x48; // REX.W
+		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04;
+		
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x8D); // LEA r64, m
+		
+		// ModR/M: mod=00, reg=dest, r/m=101 (RIP-relative)
+		uint8_t modrm = 0x05;
+		modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
+		textSectionData.push_back(modrm);
+		
+		size_t relocation_offset = textSectionData.size();
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		writer.add_relocation(relocation_offset, std::string(symbol_name));
+	}
+
 	// Allocate a register, spilling one to the stack if necessary
 	X64Register allocateRegisterWithSpilling() {
 		// Try to allocate a free register first
@@ -4188,7 +4278,7 @@ private:
 
 		TempVar result_var = instruction.getOperandAs<TempVar>(0);
 		TempVar source_var = instruction.getOperandAs<TempVar>(1);
-		const std::string& target_type = instruction.getOperandAs<std::string>(2);
+		std::string_view target_type = instruction.getOperandAs<std::string>(2);
 		bool is_reference = instruction.getOperandAs<bool>(3);
 
 		// Implementation using runtime helper function __dynamic_cast_check
@@ -4204,16 +4294,10 @@ private:
 		emitMovFromFrame(X64Register::RAX, source_offset);
 
 		// Step 2: Save source pointer to R8 (we'll need it later if cast succeeds)
-		// MOV R8, RAX
-		textSectionData.push_back(0x49); // REX.WB prefix
-		textSectionData.push_back(0x89); // MOV r64, r64
-		textSectionData.push_back(0xC0); // ModR/M: R8, RAX
+		emitMovRegReg(X64Register::R8, X64Register::RAX);
 
 		// Step 3: Check if source pointer is null
-		// TEST RAX, RAX
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x85); // TEST r64, r64
-		textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
+		emitTestRegReg(X64Register::RAX);
 
 		// JZ to null_result (if source is null, return null)
 		textSectionData.push_back(0x0F); // Two-byte opcode prefix
@@ -4225,31 +4309,17 @@ private:
 		textSectionData.push_back(0x00);
 
 		// Step 4: Load vtable pointer from object (first 8 bytes)
-		// MOV RAX, [RAX]
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		textSectionData.push_back(0x00); // ModR/M: RAX, [RAX]
+		emitMovRegFromMemReg(X64Register::RAX, X64Register::RAX);
 
 		// Step 5: Load source RTTI pointer from vtable[-1] into RCX (first argument)
-		// MOV RCX, [RAX - 8]
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		textSectionData.push_back(0x48); // ModR/M: RCX, [RAX + disp8]
-		textSectionData.push_back(static_cast<uint8_t>(-8)); // -8 offset
+		emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
 
 		// Step 6: Load target RTTI pointer into RDX (second argument)
-		// LEA RDX, [RIP + target_rtti_symbol]
-		std::string target_rtti_symbol = "__rtti_" + target_type;
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8D); // LEA r64, m
-		textSectionData.push_back(0x15); // ModR/M: RDX, [RIP + disp32]
-		
-		size_t rtti_relocation_offset = textSectionData.size();
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		writer.add_relocation(rtti_relocation_offset, target_rtti_symbol);
+		StringBuilder sb;
+		sb.append("__rtti_");
+		sb.append(target_type);
+		std::string_view target_rtti_symbol = sb.commit();
+		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
 
 		// Step 7: Call __dynamic_cast_check(source_rtti, target_rtti)
 		emitSubRSP(32);  // Shadow space for Windows x64 calling convention
@@ -4257,9 +4327,7 @@ private:
 		emitAddRSP(32);  // Restore stack
 
 		// Step 8: Check return value (RAX contains 0 or 1)
-		// TEST AL, AL
-		textSectionData.push_back(0x84); // TEST r/m8, r8
-		textSectionData.push_back(0xC0); // ModR/M: AL, AL
+		emitTestAL();
 
 		// JZ to null_result (if check failed, return null)
 		textSectionData.push_back(0x0F); // Two-byte opcode prefix
@@ -4271,10 +4339,7 @@ private:
 		textSectionData.push_back(0x00);
 
 		// Step 9: Cast succeeded - return source pointer (which we saved in R8)
-		// MOV RAX, R8
-		textSectionData.push_back(0x4C); // REX.WR prefix
-		textSectionData.push_back(0x89); // MOV r/m64, r64
-		textSectionData.push_back(0xC0); // ModR/M: RAX, R8
+		emitMovRegReg(X64Register::RAX, X64Register::R8);
 
 		// JMP to end
 		textSectionData.push_back(0xEB); // JMP rel8
@@ -4814,9 +4879,6 @@ private:
 						}
 						
 						vtables_.push_back(std::move(vtable_info));
-						std::cerr << "Registered vtable for class " << struct_name << " with " 
-						          << struct_info->vtable.size() << " entries and "
-						          << vtable_info.base_class_names.size() << " base classes" << std::endl;
 					}
 					
 					// Check if this function is virtual and add it to the vtable
