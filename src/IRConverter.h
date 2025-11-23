@@ -3591,38 +3591,20 @@ private:
 	}
 
 	void handleConstructorCall(const IrInstruction& instruction) {
-		// Constructor call format: [struct_name, object_var, param1_type, param1_size, param1_value, ...]
-		assert(instruction.getOperandCount() >= 2 && "ConstructorCall must have at least 2 operands");
+		// Constructor call format: ConstructorCallOp {struct_name, object, arguments}
+		const ConstructorCallOp& ctor_op = instruction.getTypedPayload<ConstructorCallOp>();
 
 		flushAllDirtyRegisters();
 
-		// Get struct name - it could be either std::string or std::string_view
-		std::string struct_name;
-		if (instruction.isOperandType<std::string>(0)) {
-			struct_name = instruction.getOperandAs<std::string>(0);
-		} else if (instruction.isOperandType<std::string_view>(0)) {
-			struct_name = std::string(instruction.getOperandAs<std::string_view>(0));
-		} else {
-			throw std::runtime_error("Constructor call: first operand must be struct name (string or string_view)");
-		}
-
-		auto object_var = instruction.getOperand(1);
+		const std::string& struct_name = ctor_op.struct_name;
 
 		// Get the object's stack offset
 		int object_offset = 0;
-		if (std::holds_alternative<TempVar>(object_var)) {
-			const TempVar temp_var = std::get<TempVar>(object_var);
+		if (std::holds_alternative<TempVar>(ctor_op.object)) {
+			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 			object_offset = getStackOffsetFromTempVar(temp_var);
-		} else if (std::holds_alternative<std::string>(object_var)) {
-			const std::string& var_name_str = std::get<std::string>(object_var);
-			std::string_view var_name(var_name_str);
-			auto it = variable_scopes.back().identifier_offset.find(var_name);
-			if (it == variable_scopes.back().identifier_offset.end()) {
-				throw std::runtime_error("Constructor call: variable not found in identifier_offset map: " + std::string(var_name));
-			}
-			object_offset = it->second;
 		} else {
-			std::string_view var_name = std::get<std::string_view>(object_var);
+			std::string_view var_name = std::get<std::string_view>(ctor_op.object);
 			auto it = variable_scopes.back().identifier_offset.find(var_name);
 			if (it == variable_scopes.back().identifier_offset.end()) {
 				throw std::runtime_error("Constructor call: variable not found in identifier_offset map: " + std::string(var_name));
@@ -3632,10 +3614,8 @@ private:
 
 		// Check if the object is 'this' (a pointer that needs to be reloaded)
 		bool object_is_this_pointer = false;
-		if (std::holds_alternative<std::string>(object_var)) {
-			object_is_this_pointer = (std::get<std::string>(object_var) == "this");
-		} else if (std::holds_alternative<std::string_view>(object_var)) {
-			object_is_this_pointer = (std::get<std::string_view>(object_var) == "this");
+		if (std::holds_alternative<std::string_view>(ctor_op.object)) {
+			object_is_this_pointer = (std::get<std::string_view>(ctor_op.object) == "this");
 		}
 
 		// Load the address of the object into RCX (first parameter - 'this' pointer)
@@ -3651,16 +3631,14 @@ private:
 		}
 
 		// Process constructor parameters (if any) - similar to function call
-		const size_t first_param_index = 2;
-		const size_t param_stride = 3; // type, size, value
-		const size_t num_params = (instruction.getOperandCount() - first_param_index) / param_stride;
+		const size_t num_params = ctor_op.arguments.size();
 
 		// Extract parameter types for overload resolution
 		std::vector<TypeSpecifierNode> parameter_types;
 		for (size_t i = 0; i < num_params; ++i) {
-			size_t paramIndex = first_param_index + i * param_stride;
-			Type paramType = instruction.getOperandAs<Type>(paramIndex);
-			int paramSize = instruction.getOperandAs<int>(paramIndex + 1);
+			const TypedValue& arg = ctor_op.arguments[i];
+			Type paramType = arg.type;
+			int paramSize = arg.size_in_bits;
 			
 			// Build TypeSpecifierNode for this parameter
 			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(paramSize), Token{});
@@ -3684,10 +3662,10 @@ private:
 
 		// Load parameters into registers
 		for (size_t i = 0; i < num_params && i < 3; ++i) { // Max 3 additional params (RCX is 'this')
-			size_t paramIndex = first_param_index + i * param_stride;
-			Type paramType = instruction.getOperandAs<Type>(paramIndex);
-			int paramSize = instruction.getOperandAs<int>(paramIndex + 1);
-			auto paramValue = instruction.getOperand(paramIndex + 2);
+			const TypedValue& arg = ctor_op.arguments[i];
+			Type paramType = arg.type;
+			int paramSize = arg.size_in_bits;
+			const IrValue& paramValue = arg.value;
 
 			X64Register target_reg = INT_PARAM_REGS[i + 1]; // Skip RCX (index 0)
 
@@ -3761,34 +3739,20 @@ private:
 	}
 
 	void handleDestructorCall(const IrInstruction& instruction) {
-		// Destructor call format: [struct_name, object_var]
-		assert(instruction.getOperandCount() == 2 && "DestructorCall must have exactly 2 operands");
+		// Destructor call format: DestructorCallOp {struct_name, object}
+		const DestructorCallOp& dtor_op = instruction.getTypedPayload<DestructorCallOp>();
 
 		flushAllDirtyRegisters();
 
-		// Get struct name - it could be either std::string or std::string_view
-		std::string struct_name;
-		if (instruction.isOperandType<std::string>(0)) {
-			struct_name = instruction.getOperandAs<std::string>(0);
-		} else if (instruction.isOperandType<std::string_view>(0)) {
-			struct_name = std::string(instruction.getOperandAs<std::string_view>(0));
-		} else {
-			throw std::runtime_error("Destructor call: first operand must be struct name (string or string_view)");
-		}
-
-		auto object_var = instruction.getOperand(1);
+		const std::string& struct_name = dtor_op.struct_name;
 
 		// Get the object's stack offset
 		int object_offset = 0;
-		if (std::holds_alternative<TempVar>(object_var)) {
-			const TempVar temp_var = std::get<TempVar>(object_var);
+		if (std::holds_alternative<TempVar>(dtor_op.object)) {
+			const TempVar temp_var = std::get<TempVar>(dtor_op.object);
 			object_offset = getStackOffsetFromTempVar(temp_var);
-		} else if (std::holds_alternative<std::string>(object_var)) {
-			const std::string& var_name_str = std::get<std::string>(object_var);
-			std::string_view var_name(var_name_str);
-			object_offset = variable_scopes.back().identifier_offset[var_name];
 		} else {
-			std::string_view var_name = std::get<std::string_view>(object_var);
+			std::string_view var_name = std::get<std::string_view>(dtor_op.object);
 			object_offset = variable_scopes.back().identifier_offset[var_name];
 		}
 

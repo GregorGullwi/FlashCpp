@@ -628,6 +628,19 @@ struct DereferenceOp {
 	std::variant<std::string_view, TempVar> pointer; // Pointer to dereference
 };
 
+// Constructor call (invoke constructor on object)
+struct ConstructorCallOp {
+	std::string struct_name;                         // Name of struct/class
+	std::variant<std::string_view, TempVar> object;  // Object instance ('this' or temp)
+	std::vector<TypedValue> arguments;               // Constructor arguments
+};
+
+// Destructor call (invoke destructor on object)
+struct DestructorCallOp {
+	std::string struct_name;                         // Name of struct/class
+	std::variant<std::string_view, TempVar> object;  // Object instance ('this' or temp)
+};
+
 // Loop begin (marks loop start with labels for break/continue)
 struct LoopBeginOp {
 	std::string_view loop_start_label;                    // Label for loop start
@@ -1312,182 +1325,153 @@ public:
 		}
 		break;
 
+		case IrOpcode::ArrayElementAddress:
+		{
+			assert(hasTypedPayload() && "ArrayElementAddress instruction must use typed payload");
+			const auto& op = getTypedPayload<ArrayElementAddressOp>();
+			oss << '%' << op.result.var_number << " = array_element_address ";
+			oss << "[" << static_cast<int>(op.element_type) << "]" << op.element_size_in_bits << " ";
+			
+			// Array
+			if (std::holds_alternative<std::string_view>(op.array))
+				oss << '%' << std::get<std::string_view>(op.array);
+			else if (std::holds_alternative<TempVar>(op.array))
+				oss << '%' << std::get<TempVar>(op.array).var_number;
+			
+			oss << "[";
+			printTypedValue(oss, op.index);
+			oss << "]";
+		}
+		break;
+
 		case IrOpcode::AddressOf:
 		{
-			// Check if this is a typed payload
-			if (hasTypedPayload()) {
-				const auto& op = getTypedPayload<AddressOfOp>();
-				oss << '%' << op.result.var_number << " = addressof ";
-				oss << "[" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
-				
-				if (std::holds_alternative<std::string>(op.operand))
-					oss << '%' << std::get<std::string>(op.operand);
-				else if (std::holds_alternative<std::string_view>(op.operand))
-					oss << '%' << std::get<std::string_view>(op.operand);
-				else if (std::holds_alternative<TempVar>(op.operand))
-					oss << '%' << std::get<TempVar>(op.operand).var_number;
-			} else {
-				// Legacy format: [result_var, type, size, operand]
-				assert(getOperandCount() == 4 && "AddressOf instruction must have exactly 4 operands");
-				if (getOperandCount() >= 4) {
-					oss << '%';
-					if (isOperandType<TempVar>(0))
-						oss << getOperandAs<TempVar>(0).var_number;
-					else if (isOperandType<std::string_view>(0))
-						oss << getOperandAs<std::string_view>(0);
-
-					oss << " = addressof " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
-
-					if (isOperandType<unsigned long long>(3))
-						oss << getOperandAs<unsigned long long>(3);
-					else if (isOperandType<TempVar>(3))
-						oss << '%' << getOperandAs<TempVar>(3).var_number;
-					else if (isOperandType<std::string_view>(3))
-						oss << '%' << getOperandAs<std::string_view>(3);
-				}
-			}
+			assert(hasTypedPayload() && "AddressOf instruction must use typed payload");
+			const auto& op = getTypedPayload<AddressOfOp>();
+			oss << '%' << op.result.var_number << " = addressof ";
+			oss << "[" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
+		
+			if (std::holds_alternative<std::string>(op.operand))
+				oss << '%' << std::get<std::string>(op.operand);
+			else if (std::holds_alternative<std::string_view>(op.operand))
+				oss << '%' << std::get<std::string_view>(op.operand);
+			else if (std::holds_alternative<TempVar>(op.operand))
+				oss << '%' << std::get<TempVar>(op.operand).var_number;
 		}
 		break;
-
+	
 		case IrOpcode::Dereference:
 		{
-			// Check if this is a typed payload
-			if (hasTypedPayload()) {
-				const auto& op = getTypedPayload<DereferenceOp>();
-				oss << '%' << op.result.var_number << " = dereference ";
-				oss << "[" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
-				
-				if (std::holds_alternative<std::string_view>(op.pointer))
-					oss << '%' << std::get<std::string_view>(op.pointer);
-				else if (std::holds_alternative<TempVar>(op.pointer))
-					oss << '%' << std::get<TempVar>(op.pointer).var_number;
-			} else {
-				// Legacy format: [result_var, type, size, operand]
-				assert(getOperandCount() == 4 && "Dereference instruction must have exactly 4 operands");
-				if (getOperandCount() >= 4) {
-					oss << '%';
-					if (isOperandType<TempVar>(0))
-						oss << getOperandAs<TempVar>(0).var_number;
-					else if (isOperandType<std::string_view>(0))
-						oss << getOperandAs<std::string_view>(0);
-
-					oss << " = dereference " << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
-
-					if (isOperandType<unsigned long long>(3))
-						oss << getOperandAs<unsigned long long>(3);
-					else if (isOperandType<TempVar>(3))
-						oss << '%' << getOperandAs<TempVar>(3).var_number;
-					else if (isOperandType<std::string_view>(3))
-						oss << '%' << getOperandAs<std::string_view>(3);
-				}
-			}
+			assert(hasTypedPayload() && "Dereference instruction must use typed payload");
+			const auto& op = getTypedPayload<DereferenceOp>();
+			oss << '%' << op.result.var_number << " = dereference ";
+			oss << "[" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
+		
+			if (std::holds_alternative<std::string_view>(op.pointer))
+				oss << '%' << std::get<std::string_view>(op.pointer);
+			else if (std::holds_alternative<TempVar>(op.pointer))
+				oss << '%' << std::get<TempVar>(op.pointer).var_number;
 		}
 		break;
-
+		
 		case IrOpcode::MemberAccess:
 		{
-			// %result = member_access [MemberType][MemberSize] %object, member_name, offset
-			// Format: [result_var, member_type, member_size, object_name, member_name, offset, is_ref?, is_rvalue_ref?, referenced_bits?]
-			assert(getOperandCount() >= 6 && "MemberAccess instruction must have at least 6 operands");
-			if (getOperandCount() >= 6) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-				else
-					oss << getOperandAs<std::string_view>(0);
+			// %result = member_access [MemberType][MemberSize] %object.member_name (offset: N) [ref]
+			assert(hasTypedPayload() && "MemberAccess instruction must use typed payload");
+			const auto& op = getTypedPayload<MemberLoadOp>();
+		
+			oss << '%';
+			if (std::holds_alternative<TempVar>(op.result.value))
+				oss << std::get<TempVar>(op.result.value).var_number;
+			else if (std::holds_alternative<std::string_view>(op.result.value))
+				oss << std::get<std::string_view>(op.result.value);
 
-				oss << " = member_access ";
-				oss << getOperandAsTypeString(1) << getOperandAs<int>(2) << " ";
+			oss << " = member_access ";
+		
+			// Type and size
+			auto type_info = gNativeTypes.find(op.result.type);
+			if (type_info != gNativeTypes.end()) {
+				oss << type_info->second->name_;
+			}
+			oss << op.result.size_in_bits << " ";
 
-				// Object
-				if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).var_number;
-				else if (isOperandType<std::string_view>(3))
-					oss << '%' << getOperandAs<std::string_view>(3);
+			// Object
+			if (std::holds_alternative<TempVar>(op.object))
+				oss << '%' << std::get<TempVar>(op.object).var_number;
+			else if (std::holds_alternative<std::string_view>(op.object))
+				oss << '%' << std::get<std::string_view>(op.object);
 
-				oss << "." << getOperandAs<std::string_view>(4);
-				oss << " (offset: " << getOperandAs<int>(5) << ")";
-				if (getOperandCount() >= 9 && getOperandAs<bool>(6)) {
-					oss << " [ref, size=" << getOperandAs<int>(8) << "]";
-				}
+			oss << "." << op.member_name;
+			oss << " (offset: " << op.offset << ")";
+			if (op.is_reference) {
+				oss << " [ref]";
+			}
+			if (op.is_rvalue_reference) {
+				oss << " [rvalue_ref]";
 			}
 		}
 		break;
-
+		
 		case IrOpcode::MemberStore:
 		{
-			// member_store [MemberType][MemberSize] %object, member_name, offset, %value
-			// Format: [member_type, member_size, object_name, member_name, offset, is_ref?, is_rvalue_ref?, referenced_bits?, value]
-			assert(getOperandCount() >= 6 && "MemberStore instruction must have at least 6 operands");
-			if (getOperandCount() >= 6) {
-				oss << "member_store ";
-				oss << getOperandAsTypeString(0) << getOperandAsIntSafe(1) << " ";
-
-				// Object
-				if (isOperandType<TempVar>(2))
-					oss << '%' << getOperandAs<TempVar>(2).var_number;
-				else if (isOperandType<std::string_view>(2))
-					oss << '%' << getOperandAs<std::string_view>(2);
-
-				oss << ".";
-				if (getOperandCount() > 3 && isOperandType<std::string_view>(3))
-					oss << getOperandAs<std::string_view>(3);
-				oss << " (offset: " << getOperandAsIntSafe(4) << ")";
-				if (getOperandCount() >= 9 && getOperandAs<bool>(5)) {
-					oss << " [ref, size=" << getOperandAsIntSafe(7) << "]";
-				}
-				oss << ", ";
-
-				// Value
-				size_t value_index = (getOperandCount() >= 9) ? 8 : 5;
-				if (isOperandType<TempVar>(value_index))
-					oss << '%' << getOperandAs<TempVar>(value_index).var_number;
-				else if (isOperandType<std::string_view>(value_index))
-					oss << '%' << getOperandAs<std::string_view>(value_index);
-				else if (isOperandType<int>(value_index))
-					oss << getOperandAs<int>(value_index);
-				else if (isOperandType<unsigned long long>(value_index))
-					oss << getOperandAs<unsigned long long>(value_index);
+			// member_store [MemberType][MemberSize] %object.member_name (offset: N) [ref], %value
+			assert(hasTypedPayload() && "MemberStore instruction must use typed payload");
+			const auto& op = getTypedPayload<MemberStoreOp>();
+		
+			oss << "member_store ";
+		
+			// Type and size
+			auto type_info = gNativeTypes.find(op.value.type);
+			if (type_info != gNativeTypes.end()) {
+				oss << type_info->second->name_;
 			}
+			oss << op.value.size_in_bits << " ";
+
+			// Object
+			if (std::holds_alternative<TempVar>(op.object))
+				oss << '%' << std::get<TempVar>(op.object).var_number;
+			else if (std::holds_alternative<std::string_view>(op.object))
+				oss << '%' << std::get<std::string_view>(op.object);
+
+			oss << "." << op.member_name;
+			oss << " (offset: " << op.offset << ")";
+			if (op.is_reference) {
+				oss << " [ref]";
+			}
+			if (op.is_rvalue_reference) {
+				oss << " [rvalue_ref]";
+			}
+			oss << ", ";
+
+			// Value - use printTypedValue helper
+			printTypedValue(oss, op.value);
 		}
 		break;
-
+		
 		case IrOpcode::ConstructorCall:
 		{
 			// constructor_call StructName %object_var [param1_type, param1_size, param1_value, ...]
-			// Format: [struct_name, object_var, param1_type, param1_size, param1_value, ...]
-			assert(getOperandCount() >= 2 && "ConstructorCall instruction must have at least 2 operands");
-			if (getOperandCount() >= 2) {
-				oss << "constructor_call ";
+			const ConstructorCallOp& op = getTypedPayload<ConstructorCallOp>();
+			oss << "constructor_call " << op.struct_name << " %";
 
-				// Struct name can be either std::string or std::string_view
-				if (isOperandType<std::string>(0))
-					oss << getOperandAs<std::string>(0);
-				else if (isOperandType<std::string_view>(0))
-					oss << getOperandAs<std::string_view>(0);
+			// Object can be either string_view or TempVar
+			if (std::holds_alternative<std::string_view>(op.object))
+				oss << std::get<std::string_view>(op.object);
+			else if (std::holds_alternative<TempVar>(op.object))
+				oss << std::get<TempVar>(op.object).var_number;
 
-				oss << " %";
-
-				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).var_number;
-				else if (isOperandType<std::string_view>(1))
-					oss << getOperandAs<std::string_view>(1);
-				else if (isOperandType<std::string>(1))
-					oss << getOperandAs<std::string>(1);
-
-				// Add parameters if any
-				for (size_t i = 2; i < getOperandCount(); i += 3) {
-					if (i + 2 < getOperandCount()) {
-						oss << " " << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
-
-						if (isOperandType<TempVar>(i + 2))
-							oss << '%' << getOperandAs<TempVar>(i + 2).var_number;
-						else if (isOperandType<std::string_view>(i + 2))
-							oss << '%' << getOperandAs<std::string_view>(i + 2);
-						else if (isOperandType<unsigned long long>(i + 2))
-							oss << getOperandAs<unsigned long long>(i + 2);
-					}
-				}
+			// Add constructor arguments
+			for (const auto& arg : op.arguments) {
+				oss << " " << gNativeTypes.find(arg.type)->second << arg.size_in_bits << " ";
+				// Print the IrValue directly (not TypedValue)
+				if (std::holds_alternative<TempVar>(arg.value))
+					oss << '%' << std::get<TempVar>(arg.value).var_number;
+				else if (std::holds_alternative<std::string_view>(arg.value))
+					oss << '%' << std::get<std::string_view>(arg.value);
+				else if (std::holds_alternative<unsigned long long>(arg.value))
+					oss << std::get<unsigned long long>(arg.value);
+				else if (std::holds_alternative<double>(arg.value))
+					oss << std::get<double>(arg.value);
 			}
 		}
 		break;
@@ -1495,26 +1479,14 @@ public:
 		case IrOpcode::DestructorCall:
 		{
 			// destructor_call StructName %object_var
-			// Format: [struct_name, object_var]
-			assert(getOperandCount() == 2 && "DestructorCall instruction must have exactly 2 operands");
-			if (getOperandCount() >= 2) {
-				oss << "destructor_call ";
+			const DestructorCallOp& op = getTypedPayload<DestructorCallOp>();
+			oss << "destructor_call " << op.struct_name << " %";
 
-				// Struct name can be either std::string or std::string_view
-				if (isOperandType<std::string>(0))
-					oss << getOperandAs<std::string>(0);
-				else if (isOperandType<std::string_view>(0))
-					oss << getOperandAs<std::string_view>(0);
-
-				oss << " %";
-
-				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).var_number;
-				else if (isOperandType<std::string_view>(1))
-					oss << getOperandAs<std::string_view>(1);
-				else if (isOperandType<std::string>(1))
-					oss << getOperandAs<std::string>(1);
-			}
+			// Object can be either string_view or TempVar
+			if (std::holds_alternative<std::string_view>(op.object))
+				oss << std::get<std::string_view>(op.object);
+			else if (std::holds_alternative<TempVar>(op.object))
+				oss << std::get<TempVar>(op.object).var_number;
 		}
 		break;
 

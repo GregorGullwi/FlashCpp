@@ -882,18 +882,21 @@ private:
 			std::cerr << "DEBUG ctor stage: delegating initializer detected\n";
 			
 			// Build constructor call: StructName::StructName(this, args...)
-			std::vector<IrOperand> ctor_operands;
-			ctor_operands.emplace_back(std::string(node.struct_name()));  // Struct name
-			ctor_operands.emplace_back(std::string_view("this"));  // 'this' pointer
+			ConstructorCallOp ctor_op;
+			ctor_op.struct_name = std::string(node.struct_name());
+			ctor_op.object = std::string_view("this");
 
 			// Add constructor arguments from delegating initializer
 			for (const auto& arg : delegating_init.arguments) {
 				auto arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
-				// Add the argument value (type, size, value)
-				ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+				// arg_operands = [type, size, value]
+				if (arg_operands.size() >= 3) {
+					TypedValue tv = toTypedValue(arg_operands);
+					ctor_op.arguments.push_back(std::move(tv));
+				}
 			}
 
-			ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), node.name_token());
+			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 			
 			// Delegating constructors don't execute the body or initialize members
 			// Just return
@@ -933,21 +936,24 @@ private:
 					const TypeInfo& base_type_info = gTypeInfo[base.type_index];
 
 					// Build constructor call: Base::Base(this, args...)
-					std::vector<IrOperand> ctor_operands;
-					ctor_operands.emplace_back(base_type_info.name_);  // Base class name
-					ctor_operands.emplace_back(std::string_view("this"));  // 'this' pointer (base subobject is at offset 0 for now)
+					ConstructorCallOp ctor_op;
+					ctor_op.struct_name = base_type_info.name_;
+					ctor_op.object = std::string_view("this");
 
 					// Add constructor arguments from base initializer
 					if (base_init) {
 						for (const auto& arg : base_init->arguments) {
 							auto arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
-							// Add the argument value (type, size, value)
-							ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+							// arg_operands = [type, size, value]
+							if (arg_operands.size() >= 3) {
+								TypedValue tv = toTypedValue(arg_operands);
+								ctor_op.arguments.push_back(std::move(tv));
+							}
 						}
 					}
 					// If no explicit initializer, call default constructor (no args)
 
-					ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), node.name_token());
+					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 				}
 
 				// Step 1.5: Initialize vptr if this class has virtual functions
@@ -1003,15 +1009,17 @@ private:
 							// Build constructor call: Base::Base(this, other)
 							// For copy constructors, pass 'other' as the copy source
 							// For move constructors, pass 'other' as the move source
-							std::vector<IrOperand> ctor_operands;
-							ctor_operands.emplace_back(base_type_info.name_);  // Base class name
-							ctor_operands.emplace_back(std::string_view("this"));  // 'this' pointer (base subobject is at offset 0 for now)
+							ConstructorCallOp ctor_op;
+							ctor_op.struct_name = std::string(base_type_info.name_);
+							ctor_op.object = std::string_view("this");  // 'this' pointer (base subobject is at offset 0 for now)
 							// Add 'other' parameter for copy/move constructor
-							ctor_operands.emplace_back(Type::Struct);  // Parameter type (struct reference)
-							ctor_operands.emplace_back(static_cast<int>(struct_info->total_size * 8));  // Parameter size in bits
-							ctor_operands.emplace_back(std::string_view("other"));  // Parameter value ('other' object)
+							TypedValue other_arg;
+							other_arg.type = Type::Struct;  // Parameter type (struct reference)
+							other_arg.size_in_bits = static_cast<int>(struct_info->total_size * 8);  // Parameter size in bits
+							other_arg.value = "other"sv;  // Parameter value ('other' object)
+							ctor_op.arguments.push_back(std::move(other_arg));
 
-							ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), node.name_token());
+							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 						}
 
 						// Step 2: Memberwise copy/move from 'other' to 'this'
@@ -1022,7 +1030,7 @@ private:
 							member_load.result.value = member_value;
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
-							member_load.object = std::string_view("other");  // Load from 'other' parameter
+							member_load.object = "other"sv;  // Load from 'other' parameter
 							member_load.member_name = std::string_view(member.name);
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
@@ -1037,7 +1045,7 @@ private:
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
-							member_store.object = std::string_view("this");
+							member_store.object = "this"sv;
 							member_store.member_name = std::string_view(member.name);
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
@@ -1319,11 +1327,11 @@ private:
 					const TypeInfo& base_type_info = gTypeInfo[base.type_index];
 
 					// Build destructor call: Base::~Base(this)
-					std::vector<IrOperand> dtor_operands;
-					dtor_operands.emplace_back(base_type_info.name_);  // Base class name
-					dtor_operands.emplace_back(std::string_view("this"));  // 'this' pointer (base subobject is at offset 0 for now)
+					DestructorCallOp dtor_op;
+					dtor_op.struct_name = base_type_info.name_;
+					dtor_op.object = std::string_view("this");
 
-					ir_.addInstruction(IrOpcode::DestructorCall, std::move(dtor_operands), node.name_token());
+					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), node.name_token()));
 				}
 			}
 		}
@@ -2449,18 +2457,18 @@ private:
 
 							if (struct_info.hasAnyConstructor() && !use_direct_member_init) {
 								// Generate constructor call with parameters from initializer list
-								std::vector<IrOperand> ctor_operands;
-								ctor_operands.emplace_back(type_info.name_);  // Struct name
-								ctor_operands.emplace_back(decl.identifier_token().value());  // Object name (string_view)
+								ConstructorCallOp ctor_op;
+								ctor_op.struct_name = type_info.name_;
+								ctor_op.object = decl.identifier_token().value();
 
 								// Add each initializer as a constructor parameter
 								for (const ASTNode& init_expr : initializers) {
 									if (init_expr.is<ExpressionNode>()) {
 										auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										// init_operands = [type, size, value]
-										// Add all three to match function call parameter format
 										if (init_operands.size() >= 3) {
-											ctor_operands.insert(ctor_operands.end(), init_operands.begin(), init_operands.end());
+											TypedValue tv = toTypedValue(init_operands);
+											ctor_op.arguments.push_back(std::move(tv));
 										} else {
 											assert(false && "Invalid initializer operands - expected [type, size, value]");
 										}
@@ -2468,8 +2476,7 @@ private:
 										assert(false && "Initializer must be an ExpressionNode");
 									}
 								}
-
-								ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), decl.identifier_token());
+								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							} else {
 								// No constructor - use direct member initialization
 								// Build a map of member names to initializer expressions
@@ -2608,20 +2615,22 @@ private:
 						}
 
 						// Generate constructor call
-						std::vector<IrOperand> ctor_operands;
-						ctor_operands.emplace_back(type_info.name_);  // Struct name (std::string)
-						ctor_operands.emplace_back(decl.identifier_token().value());    // Object variable name (string_view)
+						ConstructorCallOp ctor_op;
+						ctor_op.struct_name = std::string(type_info.name_);
+						ctor_op.object = decl.identifier_token().value();    // Object variable name (string_view)
 
 						if (has_copy_init && node.initializer()) {
 							// Add initializer as copy constructor parameter
 							const ASTNode& init_node = *node.initializer();
 							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							// init_operands = [type, size, value]
-							// Add all three to match copy constructor parameter format
-							ctor_operands.insert(ctor_operands.end(), init_operands.begin(), init_operands.end());
+							if (init_operands.size() >= 3) {
+								TypedValue init_arg = toTypedValue(init_operands);
+								ctor_op.arguments.push_back(std::move(init_arg));
+							}
 						}
 
-						ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), decl.identifier_token());
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 					}
 				}
 
@@ -5779,18 +5788,22 @@ private:
 
 						if (type_info.struct_info_->hasConstructor()) {
 							// Generate constructor call on the placement address
-							std::vector<IrOperand> ctor_operands;
-							ctor_operands.emplace_back(type_info.name_);  // Struct name
-							ctor_operands.emplace_back(result_var);       // Pointer to object (placement address)
+							ConstructorCallOp ctor_op;
+							ctor_op.struct_name = type_info.name_;
+							ctor_op.object = result_var;
 
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
 							for (size_t i = 0; i < ctor_args.size(); ++i) {
 								auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-								ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+								// arg_operands = [type, size, value]
+								if (arg_operands.size() >= 3) {
+									TypedValue tv = toTypedValue(arg_operands);
+									ctor_op.arguments.push_back(std::move(tv));
+								}
 							}
-
-							ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), Token());
+							
+							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 						}
 					}
 				}
@@ -5835,18 +5848,21 @@ private:
 
 						if (type_info.struct_info_->hasConstructor()) {
 							// Generate constructor call on the newly allocated object
-							std::vector<IrOperand> ctor_operands;
-							ctor_operands.emplace_back(type_info.name_);  // Struct name
-							ctor_operands.emplace_back(result_var);       // Pointer to object
+							ConstructorCallOp ctor_op;
+							ctor_op.struct_name = type_info.name_;
+							ctor_op.object = result_var;
 
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
 							for (size_t i = 0; i < ctor_args.size(); ++i) {
 								auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-								ctor_operands.insert(ctor_operands.end(), arg_operands.begin(), arg_operands.end());
+								// arg_operands = [type, size, value]
+								if (arg_operands.size() >= 3) {
+									TypedValue tv = toTypedValue(arg_operands);
+									ctor_op.arguments.push_back(std::move(tv));
+								}
 							}
-
-							ir_.addInstruction(IrOpcode::ConstructorCall, std::move(ctor_operands), Token());
+							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 						}
 					}
 				}
@@ -6074,10 +6090,10 @@ private:
 			const auto& scope_vars = scope_stack_.back();
 			for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
 				// Generate destructor call
-				std::vector<IrOperand> dtor_operands;
-				dtor_operands.emplace_back(it->struct_name);  // Struct name
-				dtor_operands.emplace_back(it->variable_name); // Object variable name
-				ir_.addInstruction(IrOpcode::DestructorCall, std::move(dtor_operands), Token());
+				DestructorCallOp dtor_op;
+				dtor_op.struct_name = it->struct_name;
+				dtor_op.object = std::string_view(it->variable_name);
+				ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 			}
 			scope_stack_.pop_back();
 		}
