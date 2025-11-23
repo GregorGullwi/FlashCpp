@@ -4276,11 +4276,6 @@ private:
 
 		flushAllDirtyRegisters();
 
-		TempVar result_var = instruction.getOperandAs<TempVar>(0);
-		TempVar source_var = instruction.getOperandAs<TempVar>(1);
-		std::string_view target_type = instruction.getOperandAs<std::string>(2);
-		bool is_reference = instruction.getOperandAs<bool>(3);
-
 		// Implementation using runtime helper function __dynamic_cast_check
 		// Calling convention: Windows x64 (first 4 args in RCX, RDX, R8, R9)
 		// 
@@ -4290,7 +4285,7 @@ private:
 		// Returns: RAX = 1 if cast is valid, 0 otherwise
 		
 		// Step 1: Load source pointer from stack
-		int source_offset = getStackOffsetFromTempVar(source_var);
+		int source_offset = getStackOffsetFromTempVar(op.source);
 		emitMovFromFrame(X64Register::RAX, source_offset);
 
 		// Step 2: Save source pointer to R8 (we'll need it later if cast succeeds)
@@ -4317,7 +4312,7 @@ private:
 		// Step 6: Load target RTTI pointer into RDX (second argument)
 		StringBuilder sb;
 		sb.append("__rtti_");
-		sb.append(target_type);
+		sb.append(op.target_type_name);
 		std::string_view target_rtti_symbol = sb.commit();
 		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
 
@@ -4350,7 +4345,7 @@ private:
 		size_t null_result_offset = textSectionData.size();
 		
 		// Check if this is a reference cast (needs to throw exception on failure)
-		if (is_reference) {
+		if (op.is_reference) {
 			// For reference casts, throw std::bad_cast instead of returning nullptr
 			// Call __dynamic_cast_throw_bad_cast (no arguments, never returns)
 			emitSubRSP(32);  // Shadow space for Windows x64 calling convention
@@ -4384,7 +4379,7 @@ private:
 		textSectionData[success_jmp_offset] = static_cast<uint8_t>(success_jmp_delta);
 
 		// Step 10: Store result to stack
-		int result_offset = getStackOffsetFromTempVar(result_var);
+		int result_offset = getStackOffsetFromTempVar(op.result);
 		emitMovToFrame(X64Register::RAX, result_offset);
 
 		regAlloc.reset();
