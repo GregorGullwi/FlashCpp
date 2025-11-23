@@ -4712,9 +4712,11 @@ private:
 				if (struct_info && struct_info->has_vtable) {
 					// Check if we've already registered this vtable
 					bool vtable_exists = false;
-					std::string vtable_symbol = "??_7";
-					vtable_symbol += struct_name;
-					vtable_symbol += "@@6B@";
+					StringBuilder vtable_sb;
+					vtable_sb.append("??_7");
+					vtable_sb.append(struct_name);
+					vtable_sb.append("@@6B@");
+					std::string_view vtable_symbol = vtable_sb.commit();
 					
 					for (const auto& vt : vtables_) {
 						if (vt.vtable_symbol == vtable_symbol) {
@@ -4727,7 +4729,7 @@ private:
 						// Register this vtable - we'll populate function symbols as we encounter them
 						VTableInfo vtable_info;
 						vtable_info.vtable_symbol = vtable_symbol;
-						vtable_info.class_name = std::string(struct_name);
+						vtable_info.class_name = struct_name;
 						
 						// Reserve space for vtable entries
 						vtable_info.function_symbols.resize(struct_info->vtable.size());
@@ -4751,7 +4753,7 @@ private:
 						for (auto& vt : vtables_) {
 							if (vt.vtable_symbol == vtable_symbol) {
 								if (member_func->vtable_index < static_cast<int>(vt.function_symbols.size())) {
-									vt.function_symbols[member_func->vtable_index] = std::string(mangled_name);
+									vt.function_symbols[member_func->vtable_index] = mangled_name;
 									std::cerr << "  Added virtual function " << func_name_str 
 									          << " at vtable index " << member_func->vtable_index << std::endl;
 								}
@@ -7848,7 +7850,7 @@ private:
 			textSectionData.push_back(0x00);
 			
 			// Add a relocation for the vtable symbol
-			writer.add_relocation(relocation_offset, op.vtable_symbol);
+			writer.add_relocation(relocation_offset, std::string(op.vtable_symbol));
 			
 			// Store vtable pointer to [RCX + 0] (this pointer is in RCX, vptr is at offset 0)
 			// First load 'this' pointer into RCX
@@ -7857,10 +7859,7 @@ private:
 			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 			
 			// Store RAX (vtable address) to [RCX + 0]
-			// MOV [RCX], RAX
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x89); // MOV r/m64, r64
-			textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+			emitStoreToMemory(textSectionData, X64Register::RAX, X64Register::RCX, 0, 8);
 			
 			return;  // Done with vptr initialization
 		}
@@ -8598,9 +8597,9 @@ private:
 
 	// VTable tracking
 	struct VTableInfo {
-		std::string vtable_symbol;  // e.g., "??_7Base@@6B@"
-		std::string class_name;
-		std::vector<std::string> function_symbols;  // Mangled function names in vtable order
+		std::string_view vtable_symbol;  // e.g., "??_7Base@@6B@"
+		std::string_view class_name;
+		std::vector<std::string_view> function_symbols;  // Mangled function names in vtable order
 	};
 	std::vector<VTableInfo> vtables_;
 

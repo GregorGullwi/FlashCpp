@@ -1008,7 +1008,7 @@ public:
 	// Add a vtable to .rdata section
 	// vtable_symbol: mangled vtable symbol name (e.g., "??_7Base@@6B@")
 	// function_symbols: vector of mangled function names in vtable order
-	void add_vtable(const std::string& vtable_symbol, const std::vector<std::string>& function_symbols) {
+	void add_vtable(std::string_view vtable_symbol, const std::vector<std::string_view>& function_symbols) {
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 		uint32_t offset = static_cast<uint32_t>(rdata_section->get_data_size());
 
@@ -1024,7 +1024,7 @@ public:
 		add_data(vtable_data, SectionType::RDATA);
 
 		// Add a symbol for this vtable
-		auto symbol = coffi_.add_symbol(vtable_symbol);
+		auto symbol = coffi_.add_symbol(std::string(vtable_symbol));
 		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);  // Vtables are external
 		symbol->set_section_number(rdata_section->get_index() + 1);
@@ -1040,7 +1040,7 @@ public:
 			uint32_t reloc_offset = offset + static_cast<uint32_t>(i * 8);
 			
 			// Add IMAGE_REL_AMD64_ADDR64 relocation for the function pointer
-			uint32_t symbol_index = get_or_create_symbol_index(function_symbols[i]);
+			uint32_t symbol_index = get_or_create_symbol_index(std::string(function_symbols[i]));
 			
 			COFFI::rel_entry_generic relocation;
 			relocation.virtual_address = reloc_offset;

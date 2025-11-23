@@ -973,9 +973,11 @@ private:
 					
 					// Build vtable symbol name using MSVC mangling convention
 					// Format: ??_7<ClassName>@@6B@
-					std::string vtable_symbol = "??_7";
-					vtable_symbol += node.struct_name();
-					vtable_symbol += "@@6B@";
+					StringBuilder vtable_sb;
+					vtable_sb.append("??_7");
+					vtable_sb.append(node.struct_name());
+					vtable_sb.append("@@6B@");
+					std::string_view vtable_symbol = vtable_sb.commit();
 					
 					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
 					MemberStoreOp vptr_store;
@@ -985,7 +987,7 @@ private:
 					vptr_store.struct_type_info = struct_type_info;  // Use TypeInfo pointer
 					vptr_store.is_reference = false;
 					vptr_store.is_rvalue_reference = false;
-					vptr_store.vtable_symbol = std::move(vtable_symbol);  // Store vtable symbol
+					vptr_store.vtable_symbol = vtable_symbol;  // Store vtable symbol as string_view
 					
 					// The value is a vtable symbol reference
 					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
