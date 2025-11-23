@@ -2,7 +2,7 @@ x64/
 Debug/
 .vs/
 .ccls-cache/
-*/*.obj
+**/*.obj
 core.*
 *.user
 

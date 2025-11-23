@@ -658,6 +658,20 @@ struct StringLiteralOp {
 	std::string_view content;                         // String content
 };
 
+// Stack allocation
+struct StackAllocOp {
+	std::variant<std::string_view, TempVar> result;  // Variable name
+	Type type = Type::Void;                           // Type being allocated
+	int size_in_bits = 0;                             // Size in bits
+};
+
+// Assignment operation
+struct AssignmentOp {
+	std::variant<std::string_view, TempVar> result;  // Result variable (usually same as lhs)
+	TypedValue lhs;                                   // Left-hand side (destination)
+	TypedValue rhs;                                   // Right-hand side (source)
+};
+
 // Loop begin (marks loop start with labels for break/continue)
 struct LoopBeginOp {
 	std::string_view loop_start_label;                    // Label for loop start
@@ -1165,49 +1179,26 @@ public:
 		}
 		break;
 		
-		case IrOpcode::StackAlloc:
-		{
-			// %name = alloca [Type][SizeInBits]
-			oss << '%';
-			if (getOperandCount() > 2 && isOperandType<std::string_view>(2))
-				oss << getOperandAs<std::string_view>(2);
-			oss << " = alloca ";
-			oss << getOperandAsTypeString(0);
-			if (getOperandCount() > 1 && isOperandType<int>(1))
-				oss << getOperandAs<int>(1);
-		}
-		break;
+	case IrOpcode::StackAlloc:
+	{
+		const StackAllocOp& op = getTypedPayload<StackAllocOp>();
+		// %name = alloca [Type][SizeInBits]
+		oss << '%';
+		if (std::holds_alternative<std::string_view>(op.result))
+			oss << std::get<std::string_view>(op.result);
+		else
+			oss << std::get<TempVar>(op.result).var_number;
+		oss << " = alloca ";
+		auto type_info = gNativeTypes.find(op.type);
+		if (type_info != gNativeTypes.end())
+			oss << type_info->second->name_;
+		oss << op.size_in_bits;
+	}
+	break;
 
-		case IrOpcode::Store:
-		{
-			// store [Type][SizeInBits] [Value] to [Dest]
-			oss << "store ";
-			oss << getOperandAsTypeString(0);
-			if (getOperandCount() > 1 && isOperandType<int>(1))
-				oss << getOperandAs<int>(1);
-			oss << " ";
-
-			// Source register
-			if (getOperandCount() > 3 && isOperandType<int>(3)) {
-				X64Register srcReg = static_cast<X64Register>(getOperandAs<int>(3));
-				switch (srcReg) {
-				case X64Register::RCX: oss << "RCX"; break;
-				case X64Register::RDX: oss << "RDX"; break;
-				case X64Register::R8: oss << "R8"; break;
-				case X64Register::R9: oss << "R9"; break;
-				default: oss << "R" << static_cast<int>(srcReg); break;
-				}
-			}
-
-			oss << " to %";
-			if (getOperandCount() > 2 && isOperandType<std::string_view>(2))
-				oss << getOperandAs<std::string_view>(2);
-		}
-		break;
-
-		case IrOpcode::Branch:
-		{
-			const auto& op = getTypedPayload<BranchOp>();
+	case IrOpcode::Branch:
+	{
+		const auto& op = getTypedPayload<BranchOp>();
 			oss << "br label %" << op.target_label;
 		}
 		break;
@@ -1757,31 +1748,32 @@ public:
 
 		case IrOpcode::Assignment:
 		{
+			const AssignmentOp& op = getTypedPayload<AssignmentOp>();
 			// assign %lhs = %rhs (simple assignment a = b)
-			// Format: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
-			assert(getOperandCount() == 7 && "Assignment instruction must have exactly 7 operands");
-			if (getOperandCount() > 0) {
-				oss << "assign ";
-
-				// Print LHS (operand 3)
-				if (isOperandType<TempVar>(3))
-					oss << '%' << getOperandAs<TempVar>(3).var_number;
-				else if (isOperandType<std::string_view>(3))
-					oss << '%' << getOperandAs<std::string_view>(3);
-
-				oss << " = ";
-
-				// Print RHS (operand 6)
-				if (isOperandType<unsigned long long>(6))
-					oss << getOperandAs<unsigned long long>(6);
-				else if (isOperandType<TempVar>(6))
-					oss << '%' << getOperandAs<TempVar>(6).var_number;
-				else if (isOperandType<std::string_view>(6))
-					oss << '%' << getOperandAs<std::string_view>(6);
-			}
+			oss << "assign %";
+		
+			// Print LHS
+			if (std::holds_alternative<TempVar>(op.lhs.value))
+				oss << std::get<TempVar>(op.lhs.value).var_number;
+			else if (std::holds_alternative<std::string_view>(op.lhs.value))
+				oss << std::get<std::string_view>(op.lhs.value);
+			else if (std::holds_alternative<unsigned long long>(op.lhs.value))
+				oss << std::get<unsigned long long>(op.lhs.value);
+		
+			oss << " = ";
+		
+			// Print RHS
+			if (std::holds_alternative<unsigned long long>(op.rhs.value))
+				oss << std::get<unsigned long long>(op.rhs.value);
+			else if (std::holds_alternative<TempVar>(op.rhs.value))
+				oss << '%' << std::get<TempVar>(op.rhs.value).var_number;
+			else if (std::holds_alternative<std::string_view>(op.rhs.value))
+				oss << '%' << std::get<std::string_view>(op.rhs.value);
+			else if (std::holds_alternative<double>(op.rhs.value))
+				oss << std::get<double>(op.rhs.value);
 		}
 		break;
-
+		
 		case IrOpcode::VariableDecl:
 		{
 			// Format: [type, size, name, custom_alignment, is_ref, is_rvalue_ref, is_array, (array_size?)?, (initializer?)?]

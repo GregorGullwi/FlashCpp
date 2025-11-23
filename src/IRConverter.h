@@ -1799,9 +1799,6 @@ public:
 			case IrOpcode::StackAlloc:
 				handleStackAlloc(instruction);
 				break;
-			case IrOpcode::Store:
-				handleStore(instruction);
-				break;
 			case IrOpcode::Add:
 				handleAdd(instruction);
 				break;
@@ -2145,7 +2142,6 @@ public:
 				case IrOpcode::JumpIfNotZero:
 					control_flow_accum.add(instr_duration);
 					break;
-				case IrOpcode::Store:
 				case IrOpcode::AddressOf:
 				case IrOpcode::Dereference:
 				case IrOpcode::MemberAccess:
@@ -5159,23 +5155,6 @@ private:
 		current_scope.identifier_offset[instruction.getOperandAs<std::string_view>(2)] = stack_offset;*/
 	}
 
-	void handleStore(const IrInstruction& instruction) {
-		assert(instruction.getOperandCount() >= 4);  // type, size, dest, src
-
-		auto var_name = instruction.getOperandAs<std::string_view>(2);
-		auto src_reg = static_cast<X64Register>(instruction.getOperandAs<int>(3));
-
-		// Find the variable's stack offset
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.identifier_offset.find(var_name);
-		if (it != current_scope.identifier_offset.end()) {
-			// Store to stack using RBP-relative addressing
-			int32_t offset = it->second;
-			auto store_opcodes = generateMovToFrame(src_reg, offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-		}
-	}
-
 	void handleAdd(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "addition");
 
@@ -6926,26 +6905,24 @@ private:
 	}
 
 	void handleAssignment(const IrInstruction& instruction) {
-		// Assignment instruction has 7 operands: [result_var, lhs_type, lhs_size, lhs_value, rhs_type, rhs_size, rhs_value]
-		assert(instruction.getOperandCount() == 7 && "Assignment instruction must have exactly 7 operands");
+		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();
 
-		Type lhs_type = instruction.getOperandAs<Type>(1);
+		Type lhs_type = op.lhs.type;
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
 		// Special handling for function pointer assignment
 		if (lhs_type == Type::FunctionPointer) {
 			// Get LHS destination
-			const IrOperand& lhs_operand = instruction.getOperand(3);
 			int32_t lhs_offset = -1;
 
-			if (std::holds_alternative<std::string_view>(lhs_operand)) {
-				std::string_view lhs_var_name = std::get<std::string_view>(lhs_operand);
+			if (std::holds_alternative<std::string_view>(op.lhs.value)) {
+				std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
 				auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
 				if (it != variable_scopes.back().identifier_offset.end()) {
 					lhs_offset = it->second;
 				}
-			} else if (std::holds_alternative<TempVar>(lhs_operand)) {
-				TempVar lhs_var = std::get<TempVar>(lhs_operand);
+			} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
+				TempVar lhs_var = std::get<TempVar>(op.lhs.value);
 				lhs_offset = getStackOffsetFromTempVar(lhs_var);
 			}
 
@@ -6955,18 +6932,17 @@ private:
 			}
 
 			// Get RHS source (function address)
-			const IrOperand& rhs_operand = instruction.getOperand(6);
 			X64Register source_reg = X64Register::RAX;
 
-			if (std::holds_alternative<TempVar>(rhs_operand)) {
-				TempVar rhs_var = std::get<TempVar>(rhs_operand);
+			if (std::holds_alternative<TempVar>(op.rhs.value)) {
+				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
 
 				// Load function address from RHS stack location into RAX
 				emitMovFromFrame(source_reg, rhs_offset);
 			}
-
+			
 			// Store RAX to LHS stack location (8 bytes for function pointer)
 			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
@@ -6982,17 +6958,16 @@ private:
 			// RHS is the source (should be a TempVar from function return, or another variable)
 
 			// Get LHS destination
-			const IrOperand& lhs_operand = instruction.getOperand(3);
 			int32_t lhs_offset = -1;
 
-			if (std::holds_alternative<std::string_view>(lhs_operand)) {
-				std::string_view lhs_var_name = std::get<std::string_view>(lhs_operand);
+			if (std::holds_alternative<std::string_view>(op.lhs.value)) {
+				std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
 				auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
 				if (it != variable_scopes.back().identifier_offset.end()) {
 					lhs_offset = it->second;
 				}
-			} else if (std::holds_alternative<TempVar>(lhs_operand)) {
-				TempVar lhs_var = std::get<TempVar>(lhs_operand);
+			} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
+				TempVar lhs_var = std::get<TempVar>(op.lhs.value);
 				lhs_offset = getStackOffsetFromTempVar(lhs_var);
 			}
 
@@ -7002,19 +6977,18 @@ private:
 			}
 
 			// Get RHS source
-			const IrOperand& rhs_operand = instruction.getOperand(6);
 			X64Register source_reg = X64Register::RAX;
 
-			if (std::holds_alternative<std::string_view>(rhs_operand)) {
-				std::string_view rhs_var_name = std::get<std::string_view>(rhs_operand);
+			if (std::holds_alternative<std::string_view>(op.rhs.value)) {
+				std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
 				auto it = variable_scopes.back().identifier_offset.find(rhs_var_name);
 				if (it != variable_scopes.back().identifier_offset.end()) {
 					int32_t rhs_offset = it->second;
 					// Load struct from RHS stack location into RAX (8 bytes for small structs)
 					emitMovFromFrame(source_reg, rhs_offset);
 				}
-			} else if (std::holds_alternative<TempVar>(rhs_operand)) {
-				TempVar rhs_var = std::get<TempVar>(rhs_operand);
+			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
+				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 				// Check if the value is already in RAX (e.g., from function return)
 				if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
@@ -7040,18 +7014,17 @@ private:
 		}
 
 		// For non-struct types, we need to copy the value from RHS to LHS
-		// Get LHS destination (operand 3)
-		const IrOperand& lhs_operand = instruction.getOperand(3);
+		// Get LHS destination
 		int32_t lhs_offset = -1;
 
-		if (std::holds_alternative<std::string_view>(lhs_operand)) {
-			std::string_view lhs_var_name = std::get<std::string_view>(lhs_operand);
+		if (std::holds_alternative<std::string_view>(op.lhs.value)) {
+			std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
 			auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
 			if (it != variable_scopes.back().identifier_offset.end()) {
 				lhs_offset = it->second;
 			}
-		} else if (std::holds_alternative<TempVar>(lhs_operand)) {
-			TempVar lhs_var = std::get<TempVar>(lhs_operand);
+		} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
+			TempVar lhs_var = std::get<TempVar>(op.lhs.value);
 			lhs_offset = getStackOffsetFromTempVar(lhs_var);
 		}
 
@@ -7060,14 +7033,13 @@ private:
 			return;
 		}
 
-		// Get RHS source (operand 6)
-		const IrOperand& rhs_operand = instruction.getOperand(6);
-		Type rhs_type = instruction.getOperandAs<Type>(4);
+		// Get RHS source
+		Type rhs_type = op.rhs.type;
 		X64Register source_reg = X64Register::RAX;
 
 		// Load RHS value into a register
-		if (std::holds_alternative<std::string_view>(rhs_operand)) {
-			std::string_view rhs_var_name = std::get<std::string_view>(rhs_operand);
+		if (std::holds_alternative<std::string_view>(op.rhs.value)) {
+			std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
 			auto it = variable_scopes.back().identifier_offset.find(rhs_var_name);
 			if (it != variable_scopes.back().identifier_offset.end()) {
 				int32_t rhs_offset = it->second;
@@ -7083,8 +7055,8 @@ private:
 					emitMovFromFrame(source_reg, rhs_offset);
 				}
 			}
-		} else if (std::holds_alternative<TempVar>(rhs_operand)) {
-			TempVar rhs_var = std::get<TempVar>(rhs_operand);
+		} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
+			TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
 			// Check if the value is already in a register
@@ -7102,9 +7074,9 @@ private:
 					emitMovFromFrame(source_reg, rhs_offset);
 				}
 			}
-		} else if (std::holds_alternative<unsigned long long>(rhs_operand)) {
+		} else if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
 			// RHS is an immediate value
-			unsigned long long rhs_value = std::get<unsigned long long>(rhs_operand);
+			unsigned long long rhs_value = std::get<unsigned long long>(op.rhs.value);
 			// MOV RAX, imm64
 			textSectionData.push_back(0x48); // REX.W
 			textSectionData.push_back(0xB8); // MOV RAX, imm64

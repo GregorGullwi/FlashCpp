@@ -2366,3 +2366,11 @@ TEST_CASE("RangedFor:BeginEnd") {
 TEST_CASE("RangedFor:ConstRef") {
 	run_test_from_file("test_range_for_const_ref.cpp", "Range-based for loop with const reference", true);
 }
+
+TEST_CASE("Struct:PassingByReference") {
+	run_test_from_file("test_struct_ref_passing.cpp", "Struct passing by value, const ref, and ref", false);
+}
+
+TEST_CASE("Struct:ReferencePassingSimple") {
+	run_test_from_file("test_struct_ref_simple.cpp", "Simple struct reference passing test", false);
+}
