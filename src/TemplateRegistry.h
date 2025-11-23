@@ -642,6 +642,9 @@ public:
 		deduction_guides_.clear();
 	}
 
+	// Public access to specialization patterns for pattern matching in Parser
+	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
+
 private:
 	// Map from template name to template declaration node (supports heterogeneous lookup)
 	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> templates_;
@@ -666,9 +669,6 @@ private:
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
-	
-	// Map from template_name to specialization patterns (for pattern matching, supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
 };
 
 // Global template registry

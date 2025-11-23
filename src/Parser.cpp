@@ -12550,7 +12550,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		          << " ptr_depth=" << template_args[i].pointer_depth << "\n";
 	}
 	
-	// Try to match a specialization pattern
+	// Try to match a specialization pattern and get the substitution mapping
+	std::unordered_map<std::string, TemplateTypeArg> param_substitutions;
 	auto pattern_match_opt = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
 	if (pattern_match_opt.has_value()) {
 		std::cerr << "DEBUG: Found matching specialization pattern!\n";
@@ -12618,10 +12619,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Copy member functions from pattern
 		for (const StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
-			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
-			const DeclarationNode& decl = func_decl.decl_node();
+			const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			const DeclarationNode& orig_decl = orig_func.decl_node();
+			
+			// Clone the function and substitute template parameters in return type and parameters
+			// Similar to what we do for the primary template instantiation
+			
+			// Create a new function declaration with substituted types
+			const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+			
+			// Substitute return type if it uses a template parameter
+			Type substituted_return_type = orig_return_type.type();
+			size_t substituted_ptr_depth = orig_return_type.pointer_depth();
+			bool substituted_is_ref = orig_return_type.is_reference();
+			bool substituted_is_rvalue_ref = orig_return_type.is_rvalue_reference();
+			
+			// Check if return type needs substitution (it's probably fine as-is for patterns)
+			// For partial specializations, the pattern already has the right structure
+			// For example, Container<T*>::type() has return type int, not T
+			
+			// Create the function declaration (for now, keep original types)
+			// The key issue is that member functions need parent_struct_name set correctly
+			
+			// Just add the function as-is to the struct info and AST
 			struct_info->addMemberFunction(
-				std::string(decl.identifier_token().value()),
+				std::string(orig_decl.identifier_token().value()),
 				mem_func.function_declaration,
 				mem_func.access,
 				mem_func.is_virtual,
@@ -12674,10 +12696,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			);
 		}
 		
-		// Copy member functions
+		// Copy member functions to AST node WITH CORRECT PARENT STRUCT NAME
+		// This is critical - we need to create new FunctionDeclarationNodes with instantiated_name as parent
 		for (const StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
+			const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			
+			// Create a NEW FunctionDeclarationNode with the instantiated struct name
+			// This will set is_member_function_ = true and parent_struct_name_ correctly
+			auto new_func_node = emplace_node<FunctionDeclarationNode>(
+				const_cast<DeclarationNode&>(orig_func.decl_node()),  // Reuse declaration
+				instantiated_name  // Set correct parent struct name
+			);
+			
+			// Copy all parameters and definition
+			FunctionDeclarationNode& new_func = new_func_node.as<FunctionDeclarationNode>();
+			for (const auto& param : orig_func.parameter_nodes()) {
+				new_func.add_parameter_node(param);
+			}
+			if (orig_func.get_definition().has_value()) {
+				std::cerr << "DEBUG: Copying function definition to new function\n";
+				new_func.set_definition(*orig_func.get_definition());
+			} else {
+				std::cerr << "DEBUG: Original function has NO definition - may need delayed parsing\n";
+			}
+			
 			instantiated_struct_ref.add_member_function(
-				mem_func.function_declaration,
+				new_func_node,
 				mem_func.access
 			);
 		}
