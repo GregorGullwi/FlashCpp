@@ -2374,3 +2374,7 @@ TEST_CASE("Struct:PassingByReference") {
 TEST_CASE("Struct:ReferencePassingSimple") {
 	run_test_from_file("test_struct_ref_simple.cpp", "Simple struct reference passing test", false);
 }
+
+TEST_CASE("RTTI:BasicPolymorphicClass") {
+	run_test_from_file("test_rtti_basic.cpp", "Basic RTTI with polymorphic classes", true);
+}
