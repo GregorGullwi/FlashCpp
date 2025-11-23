@@ -817,6 +817,36 @@ struct PlacementNewOp {
 	IrValue address;             // Placement address (TempVar, string_view, or constant)
 };
 
+// Type conversion operations (FloatToInt, IntToFloat, FloatToFloat)
+struct TypeConversionOp {
+	TempVar result;              // Result variable
+	TypedValue from;             // Source value with type information
+	Type to_type = Type::Void;   // Target type
+	int to_size_in_bits = 0;     // Target size
+};
+
+// RTTI: typeid operation
+struct TypeidOp {
+	TempVar result;              // Result variable (pointer to type_info)
+	std::variant<std::string_view, TempVar> operand;  // Type name (string_view) or expression (TempVar)
+	bool is_type = false;        // true if typeid(Type), false if typeid(expr)
+};
+
+// RTTI: dynamic_cast operation
+struct DynamicCastOp {
+	TempVar result;              // Result variable
+	TempVar source;              // Source pointer/reference
+	std::string_view target_type_name;  // Target type name
+	bool is_reference = false;   // true for references (throws on failure), false for pointers (returns nullptr)
+};
+
+// Function pointer call
+struct IndirectCallOp {
+	TempVar result;                      // Result variable
+	std::variant<std::string_view, TempVar> function_pointer;  // Function pointer variable
+	std::vector<TypedValue> arguments;   // Arguments with type information
+};
+
 // Helper function to format conversion operations for IR output
 inline std::string formatConversionOp(const char* op_name, const ConversionOp& op) {
 	std::ostringstream oss;
@@ -1688,37 +1718,24 @@ public:
 		case IrOpcode::Typeid:
 		{
 			// %result = typeid [type_name_or_expr] [is_type]
-			// Format: [result_var, type_name_or_expr, is_type]
-			assert(getOperandCount() == 3 && "Typeid instruction must have exactly 3 operands");
-			if (getOperandCount() >= 3) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-				oss << " = typeid ";
-				if (isOperandType<std::string>(1))
-					oss << getOperandAs<std::string>(1);
-				else if (isOperandType<std::string_view>(1))
-					oss << getOperandAs<std::string_view>(1);
-				oss << " [is_type=" << (getOperandAs<bool>(2) ? "true" : "false") << "]";
+			auto& op = getTypedPayload<TypeidOp>();
+			oss << '%' << op.result.var_number << " = typeid ";
+			if (std::holds_alternative<std::string_view>(op.operand)) {
+				oss << std::get<std::string_view>(op.operand);
+			} else {
+				oss << '%' << std::get<TempVar>(op.operand).var_number;
 			}
+			oss << " [is_type=" << (op.is_type ? "true" : "false") << "]";
 		}
 		break;
 
 		case IrOpcode::DynamicCast:
 		{
 			// %result = dynamic_cast %source_ptr [target_type] [is_reference]
-			// Format: [result_var, source_ptr, target_type_name, is_reference]
-			assert(getOperandCount() == 4 && "DynamicCast instruction must have exactly 4 operands");
-			if (getOperandCount() >= 4) {
-				oss << '%';
-				if (isOperandType<TempVar>(0))
-					oss << getOperandAs<TempVar>(0).var_number;
-				oss << " = dynamic_cast %";
-				if (isOperandType<TempVar>(1))
-					oss << getOperandAs<TempVar>(1).var_number;
-				oss << " [" << getOperandAs<std::string>(2) << "]";
-				oss << " [is_ref=" << (getOperandAs<bool>(3) ? "true" : "false") << "]";
-			}
+			auto& op = getTypedPayload<DynamicCastOp>();
+			oss << '%' << op.result.var_number << " = dynamic_cast %" << op.source.var_number;
+			oss << " [" << op.target_type_name << "]";
+			oss << " [is_ref=" << (op.is_reference ? "true" : "false") << "]";
 		}
 		break;
 
@@ -1910,37 +1927,84 @@ public:
 		case IrOpcode::FunctionAddress:
 		{
 			// %result = function_address @function_name
-			// Format: [result_temp, function_name]
-			assert(getOperandCount() == 2 && "FunctionAddress must have exactly 2 operands");
-			oss << '%' << getOperandAs<TempVar>(0).var_number << " = function_address @" << getOperandAs<std::string_view>(1);
+			auto& op = getTypedPayload<FunctionAddressOp>();
+			if (std::holds_alternative<TempVar>(op.result.value)) {
+				oss << '%' << std::get<TempVar>(op.result.value).var_number;
+			} else if (std::holds_alternative<std::string_view>(op.result.value)) {
+				oss << '%' << std::get<std::string_view>(op.result.value);
+			}
+			oss << " = function_address @" << op.function_name;
 		}
 		break;
-
+		
 		case IrOpcode::IndirectCall:
 		{
-			// %result = indirect_call %func_ptr, arg1_type, arg1_size, arg1_value, ...
-			// Format: [result_temp, func_ptr_var, arg1_type, arg1_size, arg1_value, ...]
-			assert(getOperandCount() >= 2 && "IndirectCall must have at least 2 operands");
-			oss << '%' << getOperandAs<TempVar>(0).var_number << " = indirect_call ";
+			// %result = indirect_call %func_ptr, arg1, arg2, ...
+			auto& op = getTypedPayload<IndirectCallOp>();
+			oss << '%' << op.result.var_number << " = indirect_call ";
 
 			// Function pointer can be either a TempVar or a variable name (string_view)
-			if (isOperandType<TempVar>(1)) {
-				oss << '%' << getOperandAs<TempVar>(1).var_number;
-			} else if (isOperandType<std::string_view>(1)) {
-				oss << '%' << getOperandAs<std::string_view>(1);
+			if (std::holds_alternative<TempVar>(op.function_pointer)) {
+				oss << '%' << std::get<TempVar>(op.function_pointer).var_number;
+			} else {
+				oss << '%' << std::get<std::string_view>(op.function_pointer);
 			}
 
-			// Arguments come in groups of 3: type, size, value
-			for (size_t i = 2; i + 2 < getOperandCount(); i += 3) {
-				oss << ", " << getOperandAsTypeString(i) << getOperandAs<int>(i + 1) << " ";
-				if (isOperandType<TempVar>(i + 2)) {
-					oss << '%' << getOperandAs<TempVar>(i + 2).var_number;
-				} else if (isOperandType<std::string_view>(i + 2)) {
-					oss << '%' << getOperandAs<std::string_view>(i + 2);
-				} else if (isOperandType<unsigned long long>(i + 2)) {
-					oss << getOperandAs<unsigned long long>(i + 2);
+			// Arguments with type information
+			for (const auto& arg : op.arguments) {
+				oss << ", ";
+				auto type_info = gNativeTypes.find(arg.type);
+				if (type_info != gNativeTypes.end()) {
+					oss << type_info->second->name_;
+				}
+				oss << arg.size_in_bits << " ";
+				if (std::holds_alternative<TempVar>(arg.value)) {
+					oss << '%' << std::get<TempVar>(arg.value).var_number;
+				} else if (std::holds_alternative<std::string_view>(arg.value)) {
+					oss << '%' << std::get<std::string_view>(arg.value);
+				} else if (std::holds_alternative<unsigned long long>(arg.value)) {
+					oss << std::get<unsigned long long>(arg.value);
+				} else if (std::holds_alternative<double>(arg.value)) {
+					oss << std::get<double>(arg.value);
 				}
 			}
+		}
+		break;
+		
+		case IrOpcode::FloatToInt:
+		case IrOpcode::IntToFloat:
+		case IrOpcode::FloatToFloat:
+		{
+			// %result = opcode from_val : from_type -> to_type
+			auto& op = getTypedPayload<TypeConversionOp>();
+			oss << '%' << op.result.var_number << " = ";
+			switch (opcode_) {
+				case IrOpcode::FloatToInt: oss << "float_to_int "; break;
+				case IrOpcode::IntToFloat: oss << "int_to_float "; break;
+				case IrOpcode::FloatToFloat: oss << "float_to_float "; break;
+				default: break;
+			}
+			// Format: from_type from_size from_value to to_type to_size
+			auto from_type_info = gNativeTypes.find(op.from.type);
+			if (from_type_info != gNativeTypes.end()) {
+				oss << from_type_info->second->name_;
+			}
+			oss << op.from.size_in_bits << " ";
+			if (std::holds_alternative<TempVar>(op.from.value)) {
+				oss << '%' << std::get<TempVar>(op.from.value).var_number;
+			} else if (std::holds_alternative<std::string_view>(op.from.value)) {
+				oss << '%' << std::get<std::string_view>(op.from.value);
+			} else if (std::holds_alternative<unsigned long long>(op.from.value)) {
+				oss << std::get<unsigned long long>(op.from.value);
+			} else if (std::holds_alternative<double>(op.from.value)) {
+				oss << std::get<double>(op.from.value);
+			}
+			oss << " to ";
+			auto to_type_info = gNativeTypes.find(op.to_type);
+			if (to_type_info != gNativeTypes.end()) {
+				oss << to_type_info->second->name_;
+			}
+			oss << op.to_size_in_bits;
 		}
 		break;
 
@@ -2007,6 +2071,12 @@ public:
 	void addInstruction(IrOpcode&& opcode,
 		std::vector<IrOperand>&& operands, Token first_token) {
 		instructions.emplace_back(opcode, std::move(operands), first_token);
+	}
+
+	// Add instruction with typed payload (template for any payload type)
+	template<typename PayloadType>
+	void addInstruction(IrOpcode&& opcode, PayloadType&& payload, Token first_token) {
+		instructions.emplace_back(opcode, std::forward<PayloadType>(payload), first_token);
 	}
 
 	// Builder-style: start building an instruction
