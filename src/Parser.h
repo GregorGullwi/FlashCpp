@@ -18,8 +18,7 @@
 #include "Token.h"
 #include "SymbolTable.h"
 #include "CompileContext.h"
-#include "TemplateRegistry.h"
-#include "ConceptRegistry.h"
+#include "TemplateRegistry.h"  // Includes ConceptRegistry as well
 
 #ifndef WITH_DEBUG_INFO
 #define WITH_DEBUG_INFO 0

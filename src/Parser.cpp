@@ -22,7 +22,9 @@
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
 ChunkedStringAllocator gChunkedStringAllocator;
+// Global registries
 TemplateRegistry gTemplateRegistry;
+ConceptRegistry gConceptRegistry;
 
 // Type keywords set - used for if-statement initializer detection
 static const std::unordered_set<std::string_view> type_keywords = {
