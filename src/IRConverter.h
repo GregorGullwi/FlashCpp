@@ -4300,16 +4300,16 @@ private:
 
 		// Patch jump offsets
 		int32_t null_check_delta = static_cast<int32_t>(null_result_offset - null_check_offset - 4);
-		textSectionData[null_check_offset - 4] = static_cast<uint8_t>(null_check_delta & 0xFF);
-		textSectionData[null_check_offset - 3] = static_cast<uint8_t>((null_check_delta >> 8) & 0xFF);
-		textSectionData[null_check_offset - 2] = static_cast<uint8_t>((null_check_delta >> 16) & 0xFF);
-		textSectionData[null_check_offset - 1] = static_cast<uint8_t>((null_check_delta >> 24) & 0xFF);
+		textSectionData[null_check_offset + 0] = static_cast<uint8_t>(null_check_delta & 0xFF);
+		textSectionData[null_check_offset + 1] = static_cast<uint8_t>((null_check_delta >> 8) & 0xFF);
+		textSectionData[null_check_offset + 2] = static_cast<uint8_t>((null_check_delta >> 16) & 0xFF);
+		textSectionData[null_check_offset + 3] = static_cast<uint8_t>((null_check_delta >> 24) & 0xFF);
 
 		int32_t check_failed_delta = static_cast<int32_t>(null_result_offset - check_failed_offset - 4);
-		textSectionData[check_failed_offset - 4] = static_cast<uint8_t>(check_failed_delta & 0xFF);
-		textSectionData[check_failed_offset - 3] = static_cast<uint8_t>((check_failed_delta >> 8) & 0xFF);
-		textSectionData[check_failed_offset - 2] = static_cast<uint8_t>((check_failed_delta >> 16) & 0xFF);
-		textSectionData[check_failed_offset - 1] = static_cast<uint8_t>((check_failed_delta >> 24) & 0xFF);
+		textSectionData[check_failed_offset + 0] = static_cast<uint8_t>(check_failed_delta & 0xFF);
+		textSectionData[check_failed_offset + 1] = static_cast<uint8_t>((check_failed_delta >> 8) & 0xFF);
+		textSectionData[check_failed_offset + 2] = static_cast<uint8_t>((check_failed_delta >> 16) & 0xFF);
+		textSectionData[check_failed_offset + 3] = static_cast<uint8_t>((check_failed_delta >> 24) & 0xFF);
 
 		int8_t success_jmp_delta = static_cast<int8_t>(end_offset - success_jmp_offset - 1);
 		textSectionData[success_jmp_offset] = static_cast<uint8_t>(success_jmp_delta);

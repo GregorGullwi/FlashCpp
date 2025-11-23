@@ -33,6 +33,13 @@ extern "C" bool __dynamic_cast_check(RTTIInfo* source_rtti, RTTIInfo* target_rtt
         return true;
     }
     
+    // Validate num_bases to prevent buffer overflow
+    // Reasonable maximum: 64 base classes should be more than enough for any real class hierarchy
+    constexpr uint64_t MAX_BASES = 64;
+    if (source_rtti->num_bases > MAX_BASES) {
+        return false;  // Corrupted RTTI or unreasonably deep hierarchy
+    }
+    
     // Check base classes recursively
     // Base class RTTI pointers are stored immediately after the RTTIInfo structure
     RTTIInfo** base_ptrs = reinterpret_cast<RTTIInfo**>(

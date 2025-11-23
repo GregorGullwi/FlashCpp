@@ -1072,7 +1072,9 @@ public:
 		// Add relocations for base class RTTI pointers
 		for (size_t i = 0; i < base_class_names.size(); ++i) {
 			std::string base_rtti_symbol = "__rtti_" + std::string(base_class_names[i]);
-			uint32_t reloc_offset = rtti_offset + 16 + static_cast<uint32_t>(i * 8); // 16 = sizeof(hash) + sizeof(num_bases)
+			// 16 bytes = sizeof(class_name_hash) + sizeof(num_bases)
+			constexpr uint32_t RTTI_HEADER_SIZE = 16;
+			uint32_t reloc_offset = rtti_offset + RTTI_HEADER_SIZE + static_cast<uint32_t>(i * 8);
 			
 			uint32_t base_symbol_index = get_or_create_symbol_index(base_rtti_symbol);
 			
