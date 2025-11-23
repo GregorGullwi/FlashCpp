@@ -149,7 +149,7 @@ template <class T> class section_impl_tmpl : public section
     //------------------------------------------------------------------------------
     void set_name(std::string_view value)
     {
-        name = value;
+        name = std::string(value);
         stn_->name_to_section_string(value, header.name);
     }
 
