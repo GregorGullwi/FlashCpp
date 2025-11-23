@@ -967,17 +967,9 @@ private:
 				// This must happen after base constructor calls (which set up base vptr)
 				// but before member initialization
 				if (struct_info->has_vtable) {
-					// Generate vptr initialization by storing vtable address at offset 0
-					// The vtable symbol will be generated during object file writing
-					// Symbol format: ??_7<ClassName>@@6B@ (MSVC vtable mangling)
-					
-					// Build vtable symbol name using MSVC mangling convention
-					// Format: ??_7<ClassName>@@6B@
-					StringBuilder vtable_sb;
-					vtable_sb.append("??_7");
-					vtable_sb.append(node.struct_name());
-					vtable_sb.append("@@6B@");
-					std::string_view vtable_symbol = vtable_sb.commit();
+					// Use the pre-generated vtable symbol from struct_info
+					// The vtable symbol is generated once during buildVTable()
+					std::string_view vtable_symbol = struct_info->vtable_symbol;
 					
 					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
 					MemberStoreOp vptr_store;

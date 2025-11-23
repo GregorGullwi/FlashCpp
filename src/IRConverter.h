@@ -4706,14 +4706,11 @@ private:
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				
 				if (struct_info && struct_info->has_vtable) {
+					// Use the pre-generated vtable symbol from struct_info
+					std::string_view vtable_symbol = struct_info->vtable_symbol;
+					
 					// Check if we've already registered this vtable
 					bool vtable_exists = false;
-					StringBuilder vtable_sb;
-					vtable_sb.append("??_7");
-					vtable_sb.append(struct_name);
-					vtable_sb.append("@@6B@");
-					std::string_view vtable_symbol = vtable_sb.commit();
-					
 					for (const auto& vt : vtables_) {
 						if (vt.vtable_symbol == vtable_symbol) {
 							vtable_exists = true;

@@ -1,4 +1,5 @@
 #include "AstNodeTypes.h"
+#include "ChunkedString.h"
 #include <sstream>
 #include <set>
 #include <functional>
@@ -709,6 +710,15 @@ void StructTypeInfo::buildVTable() {
 
     // Update abstract flag after building vtable
     updateAbstractFlag();
+    
+    // Generate vtable symbol name if this struct has a vtable
+    if (has_vtable) {
+        StringBuilder vtable_sb;
+        vtable_sb.append("??_7");
+        vtable_sb.append(name);
+        vtable_sb.append("@@6B@");
+        vtable_symbol = vtable_sb.commit();
+    }
 }
 
 // Update abstract flag based on pure virtual functions in vtable
