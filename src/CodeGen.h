@@ -180,6 +180,11 @@ public:
 			// Concepts are evaluated during template instantiation (constraint checking not yet implemented)
 			return;
 		}
+		else if (node.is<RequiresExpressionNode>()) {
+			// Requires expressions don't generate code - they're compile-time constraints
+			// They are evaluated during constraint checking
+			return;
+		}
 		else if (node.is<ExpressionNode>()) {
 			// Expression statement (e.g., function call, lambda expression, etc.)
 			// Evaluate the expression but discard the result
