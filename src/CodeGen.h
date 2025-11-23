@@ -175,6 +175,11 @@ public:
 			// Instantiations are generated when the template is used with explicit template arguments
 			return;
 		}
+		else if (node.is<ConceptDeclarationNode>()) {
+			// Concept declarations don't generate code - they're compile-time constraints
+			// Concepts are evaluated during template instantiation (constraint checking not yet implemented)
+			return;
+		}
 		else if (node.is<ExpressionNode>()) {
 			// Expression statement (e.g., function call, lambda expression, etc.)
 			// Evaluate the expression but discard the result
