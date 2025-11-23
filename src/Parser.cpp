@@ -2219,6 +2219,12 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Check for const/volatile qualifiers after parameter list
+			// Note: These qualifiers are currently parsed but not stored in the function node.
+			// Full support for const/volatile member function semantics would require:
+			// 1. Adding is_const/is_volatile fields to FunctionDeclarationNode or StructMemberFunction
+			// 2. Updating type checking to enforce const correctness
+			// 3. Adjusting name mangling to include cv-qualifiers
+			// For now, we just consume the tokens to allow parsing to succeed.
 			bool is_const_member = false;
 			bool is_volatile_member = false;
 			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
@@ -6217,14 +6223,14 @@ int Parser::get_operator_precedence(const std::string_view& op)
 			{"+", 15},  {"-", 15},
 			// Shift (precedence 14)
 			{"<<", 14}, {">>", 14},
-			// Spaceship/Three-way comparison (precedence 13)
-			{"<=>", 13},
 			// Relational (precedence 13)
 			{"<", 13},  {"<=", 13}, {">", 13},  {">=", 13},
 			// Equality (precedence 12)
 			{"==", 12}, {"!=", 12},
 			// Bitwise AND (precedence 11)
 			{"&", 11},
+			// Spaceship/Three-way comparison (precedence 10)
+			{"<=>", 10},
 			// Bitwise XOR (precedence 10)
 			{"^", 10},
 			// Bitwise OR (precedence 9)
