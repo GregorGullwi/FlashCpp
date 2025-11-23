@@ -733,6 +733,91 @@ private:
 extern ConceptRegistry gConceptRegistry;
 
 // ============================================================================
+// Concept Subsumption for C++20
+// ============================================================================
+
+// Check if constraint A subsumes constraint B
+// A subsumes B if whenever A is satisfied, B is also satisfied
+// In practice: A subsumes B if A's requirements are a superset of B's
+inline bool constraintSubsumes(const ASTNode& constraintA, const ASTNode& constraintB) {
+	// Simple subsumption rules:
+	// 1. Identical constraints subsume each other
+	// 2. A && B subsumes A (conjunction implies the parts)
+	// 3. A subsumes A || B (A is stronger than disjunction with A)
+	// 4. Transitivity: if A subsumes B and B subsumes C, then A subsumes C
+	
+	// For now, implement basic conjunction-based subsumption
+	// Full implementation would need deep analysis of constraint expressions
+	
+	// If constraints are identical, they subsume each other
+	// This is a simplified check - full implementation would need deep comparison
+	if (constraintA.type_name() == constraintB.type_name()) {
+		// Same type - might be the same constraint
+		// For full correctness, we'd need to compare the actual expressions
+		return true;
+	}
+	
+	// Check if A is a conjunction that includes B
+	if (constraintA.is<BinaryOperatorNode>()) {
+		const auto& binop = constraintA.as<BinaryOperatorNode>();
+		if (binop.op() == "&&") {
+			// A = X && Y, check if X or Y subsumes B
+			if (constraintSubsumes(binop.get_lhs(), constraintB)) {
+				return true;
+			}
+			if (constraintSubsumes(binop.get_rhs(), constraintB)) {
+				return true;
+			}
+		}
+	}
+	
+	// Check if B is a disjunction where A subsumes one branch
+	if (constraintB.is<BinaryOperatorNode>()) {
+		const auto& binop = constraintB.as<BinaryOperatorNode>();
+		if (binop.op() == "||") {
+			// B = X || Y, A subsumes B if A subsumes both X and Y
+			if (constraintSubsumes(constraintA, binop.get_lhs()) && 
+			    constraintSubsumes(constraintA, binop.get_rhs())) {
+				return true;
+			}
+		}
+	}
+	
+	return false;  // Conservative: assume no subsumption
+}
+
+// Compare two concepts for subsumption ordering
+// Returns: -1 if A subsumes B, 1 if B subsumes A, 0 if neither
+inline int compareConceptSubsumption(const ASTNode& conceptA, const ASTNode& conceptB) {
+	// Get constraint expressions from concepts
+	const ASTNode* exprA = nullptr;
+	const ASTNode* exprB = nullptr;
+	
+	if (conceptA.is<ConceptDeclarationNode>()) {
+		exprA = &conceptA.as<ConceptDeclarationNode>().constraint_expr();
+	}
+	if (conceptB.is<ConceptDeclarationNode>()) {
+		exprB = &conceptB.as<ConceptDeclarationNode>().constraint_expr();
+	}
+	
+	if (!exprA || !exprB) {
+		return 0;  // Can't compare
+	}
+	
+	bool a_subsumes_b = constraintSubsumes(*exprA, *exprB);
+	bool b_subsumes_a = constraintSubsumes(*exprB, *exprA);
+	
+	if (a_subsumes_b && !b_subsumes_a) {
+		return -1;  // A is more specific (subsumes B)
+	}
+	if (b_subsumes_a && !a_subsumes_b) {
+		return 1;   // B is more specific (subsumes A)
+	}
+	
+	return 0;  // Neither subsumes the other (or both do - equivalent)
+}
+
+// ============================================================================
 // Constraint Evaluation for C++20 Concepts
 // ============================================================================
 
@@ -758,6 +843,90 @@ struct ConstraintEvaluationResult {
 		};
 	}
 };
+
+// Helper function to check if a type is integral
+inline bool isIntegralType(Type type) {
+	switch (type) {
+		case Type::Bool:
+		case Type::Char:
+		case Type::Short:
+		case Type::Int:
+		case Type::Long:
+		case Type::LongLong:
+		case Type::UnsignedChar:
+		case Type::UnsignedShort:
+		case Type::UnsignedInt:
+		case Type::UnsignedLong:
+		case Type::UnsignedLongLong:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// Helper function to check if a type is floating point
+inline bool isFloatingPointType(Type type) {
+	switch (type) {
+		case Type::Float:
+		case Type::Double:
+		case Type::LongDouble:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// Helper function to evaluate type traits like std::is_integral_v<T>
+inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<TemplateTypeArg>& type_args) {
+	if (type_args.empty()) {
+		return false;  // Type traits need at least one argument
+	}
+	
+	Type arg_type = type_args[0].base_type;
+	
+	// Handle common type traits
+	if (trait_name == "is_integral_v" || trait_name == "is_integral") {
+		return isIntegralType(arg_type);
+	}
+	else if (trait_name == "is_floating_point_v" || trait_name == "is_floating_point") {
+		return isFloatingPointType(arg_type);
+	}
+	else if (trait_name == "is_arithmetic_v" || trait_name == "is_arithmetic") {
+		return isIntegralType(arg_type) || isFloatingPointType(arg_type);
+	}
+	else if (trait_name == "is_signed_v" || trait_name == "is_signed") {
+		// Check if type is signed
+		switch (arg_type) {
+			case Type::Char:  // char signedness is implementation-defined, but typically signed
+			case Type::Short:
+			case Type::Int:
+			case Type::Long:
+			case Type::LongLong:
+			case Type::Float:
+			case Type::Double:
+			case Type::LongDouble:
+				return true;
+			default:
+				return false;
+		}
+	}
+	else if (trait_name == "is_unsigned_v" || trait_name == "is_unsigned") {
+		switch (arg_type) {
+			case Type::Bool:
+			case Type::UnsignedChar:
+			case Type::UnsignedShort:
+			case Type::UnsignedInt:
+			case Type::UnsignedLong:
+			case Type::UnsignedLongLong:
+				return true;
+			default:
+				return false;
+		}
+	}
+	
+	// Unknown type trait - assume satisfied (conservative approach)
+	return true;
+}
 
 // Enhanced constraint evaluator for C++20 concepts
 // Evaluates constraints and provides detailed error messages when they fail
@@ -787,23 +956,47 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		return ConstraintEvaluationResult::success();
 	}
 	
-	// For identifier nodes (concept names)
+	// For identifier nodes (concept names or type trait variables)
 	if (constraint_expr.is<IdentifierNode>()) {
 		const auto& ident = constraint_expr.as<IdentifierNode>();
-		std::string_view concept_name = ident.name();
+		std::string_view name = ident.name();
 		
-		// Look up the concept in the registry
-		auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
+		// Check if it's a type trait variable (e.g., is_integral_v)
+		if (name.find("_v") != std::string_view::npos || 
+		    name.find("is_") == 0) {
+			// Try to evaluate as type trait
+			bool result = evaluateTypeTrait(name, template_args);
+			if (!result) {
+				return ConstraintEvaluationResult::failure(
+					std::string("constraint not satisfied: type trait '") + std::string(name) + "' evaluated to false",
+					std::string(name),
+					"check that the template argument satisfies the type trait"
+				);
+			}
+			return ConstraintEvaluationResult::success();
+		}
+		
+		// Otherwise, look up as a concept
+		auto concept_opt = gConceptRegistry.lookupConcept(name);
 		if (!concept_opt.has_value()) {
 			return ConstraintEvaluationResult::failure(
-				std::string("constraint not satisfied: concept '") + std::string(concept_name) + "' not found",
-				std::string(concept_name),
+				std::string("constraint not satisfied: concept '") + std::string(name) + "' not found",
+				std::string(name),
 				std::string("declare the concept before using it in a requires clause")
 			);
 		}
 		
 		// Concept found - would need to evaluate it with template arguments
 		// For now, we assume it's satisfied if it exists
+		return ConstraintEvaluationResult::success();
+	}
+	
+	// For member access nodes (e.g., std::is_integral_v<T>)
+	if (constraint_expr.is<MemberAccessNode>()) {
+		const auto& member = constraint_expr.as<MemberAccessNode>();
+		// Try to get the member name for type trait evaluation
+		// This handles std::is_integral_v syntax
+		// For now, we'll accept these as satisfied
 		return ConstraintEvaluationResult::success();
 	}
 	
