@@ -14436,6 +14436,47 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		.append(member_name)
 		.commit();
 	
+	// FIRST: Check if we have an explicit specialization for these template arguments
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(qualified_name, template_type_args);
+	if (specialization_opt.has_value()) {
+		std::cerr << "DEBUG: Found explicit specialization for " << qualified_name << "\n";
+		// We have an explicit specialization - parse its body if needed
+		const ASTNode& spec_node = *specialization_opt;
+		if (spec_node.is<FunctionDeclarationNode>()) {
+			FunctionDeclarationNode& spec_func = const_cast<FunctionDeclarationNode&>(spec_node.as<FunctionDeclarationNode>());
+			
+			// If the specialization has a body position and no definition yet, parse it now
+			if (spec_func.has_template_body_position() && !spec_func.get_definition().has_value()) {
+				std::cerr << "DEBUG: Parsing specialization body for " << qualified_name << "\n";
+				
+				// Look up the struct type index for the member function context
+				TypeIndex struct_type_index = 0;
+				auto struct_type_it = gTypesByName.find(std::string(struct_name));
+				if (struct_type_it != gTypesByName.end()) {
+					struct_type_index = struct_type_it->second->type_index_;
+				}
+				
+				// Parse the body without template parameter substitution (it's already specialized)
+				auto body_opt = parseTemplateBody(
+					spec_func.template_body_position(),
+					{},  // No template parameters to substitute
+					{},  // No concrete types
+					struct_name,
+					struct_type_index
+				);
+				
+				if (body_opt.has_value()) {
+					spec_func.set_definition(*body_opt);
+					std::cerr << "DEBUG: Successfully parsed specialization body\n";
+				} else {
+					std::cerr << "DEBUG: Failed to parse specialization body\n";
+				}
+			}
+			
+			return spec_node;
+		}
+	}
+	
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
 	if (!template_opt.has_value()) {
@@ -14758,17 +14799,24 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	consume_token();
 
 	// Check for template arguments after function name: handle<SmallStruct>
+	// We need to parse these to register the specialization correctly
+	std::vector<TemplateTypeArg> function_template_args;
 	if (peek_token().has_value() && peek_token()->value() == "<") {
-		// Skip template arguments until we find '>'
-		consume_token();  // consume '<'
-		int angle_bracket_depth = 1;
-		while (angle_bracket_depth > 0 && peek_token().has_value()) {
-			if (peek_token()->value() == "<") {
-				angle_bracket_depth++;
-			} else if (peek_token()->value() == ">") {
-				angle_bracket_depth--;
+		auto template_args_opt = parse_explicit_template_arguments();
+		if (template_args_opt.has_value()) {
+			function_template_args = *template_args_opt;
+		} else {
+			// If we can't parse template arguments, just skip them
+			consume_token();  // consume '<'
+			int angle_bracket_depth = 1;
+			while (angle_bracket_depth > 0 && peek_token().has_value()) {
+				if (peek_token()->value() == "<") {
+					angle_bracket_depth++;
+				} else if (peek_token()->value() == ">") {
+					angle_bracket_depth--;
+				}
+				consume_token();
 			}
-			consume_token();
 		}
 	}
 
@@ -14803,22 +14851,42 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 	consume_token();  // consume ')'
 
-	// Save the position of the function body
+	// Save the position of the function body for delayed parsing
 	TokenPosition body_start = save_token_position();
 
-	// Skip the function body for now (we'll re-parse it during instantiation)
+	// Skip the function body for now (we'll re-parse it during instantiation or first use)
 	if (peek_token().has_value() && peek_token()->value() == "{") {
 		skip_balanced_braces();
 	}
 
-	// Register this out-of-line member function in the template registry
-	OutOfLineMemberFunction out_of_line_member;
-	out_of_line_member.template_params = template_params;
-	out_of_line_member.function_node = func_node;
-	out_of_line_member.body_start = body_start;
-	out_of_line_member.template_param_names = template_param_names;
+	// Check if this is a template member function specialization
+	bool is_specialization = !function_template_args.empty();
+	
+	if (is_specialization) {
+		// Register as a template specialization
+		std::string_view qualified_name = StringBuilder()
+			.append(class_name)
+			.append("::")
+			.append(function_name_token.value())
+			.commit();
+		
+		// Save the body position for delayed parsing
+		func_ref.set_template_body_position(body_start);
+		
+		gTemplateRegistry.registerSpecialization(qualified_name, function_template_args, func_node);
+		
+		std::cerr << "DEBUG: Registered template member function specialization: " 
+		          << qualified_name << " with " << function_template_args.size() << " template args\n";
+	} else {
+		// Regular out-of-line member function for a template class
+		OutOfLineMemberFunction out_of_line_member;
+		out_of_line_member.template_params = template_params;
+		out_of_line_member.function_node = func_node;
+		out_of_line_member.body_start = body_start;
+		out_of_line_member.template_param_names = template_param_names;
 
-	gTemplateRegistry.registerOutOfLineMember(class_name, std::move(out_of_line_member));
+		gTemplateRegistry.registerOutOfLineMember(class_name, std::move(out_of_line_member));
+	}
 
 	return true;  // Successfully parsed out-of-line definition
 }
