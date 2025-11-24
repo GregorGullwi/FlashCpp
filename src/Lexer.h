@@ -508,15 +508,16 @@ private:
 					column_ += advance;
 					break;
 				}
-				case '<': { // << <= <<=
+				case '<': { // << <= <<= <=>
 					int advance = (second_char == '<') | (second_char == '=');
 					cursor_ += advance;
 					column_ += advance;
-					// Branchless check for three-character operator <<=
-					int is_shift = (second_char == '<');
+					// Branchless check for three-character operators <<= and <=>
 					int has_third = (cursor_ < source_size_);
 					char third_char = has_third ? source_[cursor_] : '\0';
-					int advance3 = is_shift & (third_char == '=');
+					int is_shift = (second_char == '<');
+					int is_spaceship = (second_char == '=');
+					int advance3 = (is_shift & (third_char == '=')) | (is_spaceship & (third_char == '>'));
 					cursor_ += advance3;
 					column_ += advance3;
 					break;

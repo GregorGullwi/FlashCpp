@@ -1542,18 +1542,23 @@ private:
 			if (!operands.empty() && operands.size() >= 2) {
 				Type expr_type = std::get<Type>(operands[0]);
 				int expr_size = std::get<int>(operands[1]);
-			
+		
 				// Get the current function's return type
 				Type return_type = current_function_return_type_;
 				int return_size = current_function_return_size_;
-			
+		
+				std::cerr << "DEBUG visitReturnStatementNode: expr_type=" << static_cast<int>(expr_type) << " expr_size=" << expr_size 
+						  << " return_type=" << static_cast<int>(return_type) << " return_size=" << return_size << "\n";
+		
 				// Convert if types don't match
 				if (expr_type != return_type || expr_size != return_size) {
+					std::cerr << "DEBUG visitReturnStatementNode: calling generateTypeConversion\n";
 					// Update operands with the converted value
 					operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+					std::cerr << "DEBUG visitReturnStatementNode: after conversion, operands[1]=" << std::get<int>(operands[1]) << "\n";
 				}
 			}
-		
+			
 			// Create ReturnOp with the return value
 			ReturnOp ret_op;
 			// Extract IrValue from operand[2] - it could be various types
@@ -2621,8 +2626,36 @@ private:
 							// Check if this is a designated initializer list or aggregate initialization
 							// Designated initializers always use direct member initialization
 							bool use_direct_member_init = init_list.has_any_designated();
+							
+							// Check if there's a constructor that matches the number of initializers
+							// For aggregate initialization Point{1, 2}, we need a constructor with 2 parameters
+							// If no matching constructor exists, use direct member initialization
+							bool has_matching_constructor = false;
+							if (!use_direct_member_init && struct_info.hasAnyConstructor()) {
+								size_t num_initializers = initializers.size();
+								for (const auto& func : struct_info.member_functions) {
+									if (func.is_constructor) {
+										// Get parameter count from the function declaration
+										if (func.function_decl.is<FunctionDeclarationNode>()) {
+											const auto& func_decl = func.function_decl.as<FunctionDeclarationNode>();
+											size_t param_count = func_decl.parameter_nodes().size();
+											if (param_count == num_initializers) {
+												has_matching_constructor = true;
+												break;
+											}
+										} else if (func.function_decl.is<ConstructorDeclarationNode>()) {
+											const auto& ctor_decl = func.function_decl.as<ConstructorDeclarationNode>();
+											size_t param_count = ctor_decl.parameter_nodes().size();
+											if (param_count == num_initializers) {
+												has_matching_constructor = true;
+												break;
+											}
+										}
+									}
+								}
+							}
 
-							if (struct_info.hasAnyConstructor() && !use_direct_member_init) {
+							if (has_matching_constructor) {
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = type_info.name_;
@@ -2737,10 +2770,20 @@ private:
 				// Regular expression initializer
 				// For struct types with copy constructors, don't add initializer to VariableDecl
 				// It will be handled by ConstructorCall below
+				// However, if the struct doesn't have a constructor, we need to evaluate the expression
+				bool is_struct_with_constructor = false;
+				if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+					if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
+						is_struct_with_constructor = true;
+					}
+				}
+				
 				bool is_copy_init_for_struct = (type_node.type() == Type::Struct && 
 				                                 node.initializer() && 
 				                                 init_node.is<ExpressionNode>() && 
-				                                 !init_node.is<InitializerListNode>());
+				                                 !init_node.is<InitializerListNode>() &&
+				                                 is_struct_with_constructor);
 				
 				if (!is_copy_init_for_struct) {
 					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
@@ -2777,8 +2820,12 @@ private:
 		// If this is a struct type with a constructor, generate a constructor call
 		if (type_node.type() == Type::Struct) {
 			TypeIndex type_index = type_node.type_index();
+			std::cerr << "DEBUG visitVariableDeclarationNode: struct var " << decl.identifier_token().value() 
+			          << " type_index=" << type_index << " gTypeInfo.size()=" << gTypeInfo.size() << "\n";
 			if (type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index];
+				std::cerr << "DEBUG: Found type_info for " << type_info.name_ 
+				          << " has_struct_info=" << (type_info.struct_info_ != nullptr) << "\n";
 				if (type_info.struct_info_) {
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
@@ -2786,40 +2833,55 @@ private:
 						assert(false && "Cannot instantiate abstract class");
 					}
 
+					std::cerr << "DEBUG: hasConstructor=" << type_info.struct_info_->hasConstructor() << "\n";
 					if (type_info.struct_info_->hasConstructor()) {
-						// Check if we have an initializer
-						bool has_copy_init = false;
-						if (node.initializer()) {
-							const ASTNode& init_node = *node.initializer();
-							if (init_node.is<ExpressionNode>() && !init_node.is<InitializerListNode>()) {
-								// For copy initialization like "AllSizes b = a;", the initializer
-								// operands were already appended to the VariableDecl instruction.
-								// We need to generate a copy constructor call instead of default constructor.
-								// The initializer operands are in format: [type, size, value]
-								has_copy_init = true;
-							}
+						// Check if the default constructor is implicit (auto-generated)
+						const StructMemberFunction* default_ctor = type_info.struct_info_->findDefaultConstructor();
+						bool is_implicit_constructor = false;
+						if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+							const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+							is_implicit_constructor = ctor_node.is_implicit();
 						}
-
-						// Generate constructor call
-						ConstructorCallOp ctor_op;
-						ctor_op.struct_name = std::string(type_info.name_);
-						ctor_op.object = decl.identifier_token().value();    // Object variable name (string_view)
-
-						if (has_copy_init && node.initializer()) {
-							// Add initializer as copy constructor parameter
-							const ASTNode& init_node = *node.initializer();
-							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-							// init_operands = [type, size, value]
-							if (init_operands.size() >= 3) {
-								TypedValue init_arg = toTypedValue(init_operands);
-								ctor_op.arguments.push_back(std::move(init_arg));
+					
+						// Only generate constructor call for user-defined constructors
+						if (!is_implicit_constructor) {
+							// Check if we have an initializer
+							bool has_copy_init = false;
+							if (node.initializer()) {
+								const ASTNode& init_node = *node.initializer();
+								if (init_node.is<ExpressionNode>() && !init_node.is<InitializerListNode>()) {
+									// For copy initialization like "AllSizes b = a;", the initializer
+									// operands were already appended to the VariableDecl instruction.
+									// We need to generate a copy constructor call instead of default constructor.
+									// The initializer operands are in format: [type, size, value]
+									has_copy_init = true;
+									std::cerr << "DEBUG: Copy init detected for " << decl.identifier_token().value() << "\n";
+								}
 							}
-						}
 
-						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
+							// Generate constructor call
+							ConstructorCallOp ctor_op;
+							ctor_op.struct_name = std::string(type_info.name_);
+							ctor_op.object = decl.identifier_token().value();    // Object variable name (string_view)
+
+							if (has_copy_init && node.initializer()) {
+								// Add initializer as copy constructor parameter
+								const ASTNode& init_node = *node.initializer();
+								std::cerr << "DEBUG: About to visit initializer expression for copy constructor\n";
+								auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+								std::cerr << "DEBUG: After visiting initializer, got " << init_operands.size() << " operands\n";
+								// init_operands = [type, size, value]
+								if (init_operands.size() >= 3) {
+									TypedValue init_arg = toTypedValue(init_operands);
+									ctor_op.arguments.push_back(std::move(init_arg));
+								}
+							}
+
+							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
+						}
 					}
 				}
-
+				
 				// If this struct has a destructor, register it for automatic cleanup
 				if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
 					registerVariableWithDestructor(
@@ -3305,7 +3367,15 @@ private:
 		// Get the actual size from the operands (they already contain the correct size)
 		// operands format: [type, size, value]
 		int fromSize = (operands.size() >= 2) ? std::get<int>(operands[1]) : get_type_size_bits(fromType);
-		int toSize = get_type_size_bits(toType);
+		
+		// For struct types (Struct or UserDefined), use the size from operands, not get_type_size_bits
+		int toSize;
+		if (toType == Type::Struct || toType == Type::UserDefined) {
+			// Preserve the original size for struct types
+			toSize = fromSize;
+		} else {
+			toSize = get_type_size_bits(toType);
+		}
 		
 		if (fromType == toType && fromSize == toSize) {
 			return operands; // No conversion needed
@@ -4147,6 +4217,160 @@ private:
 		Type rhsType = std::get<Type>(rhsIrOperands[0]);
 		int lhsSize = std::get<int>(lhsIrOperands[1]);
 		int rhsSize = std::get<int>(rhsIrOperands[1]);
+
+		// Special handling for spaceship operator <=> on struct types
+		// This should be converted to a member function call: lhs.operator<=>(rhs)
+		if (op == "<=>") {
+			// Check if LHS is a struct type
+			if (lhsType == Type::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+				const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+				
+				// Get the LHS value - can be an identifier, member access, or other expression
+				std::variant<std::string_view, TempVar> lhs_value;
+				TypeIndex lhs_type_index = 0;
+				
+				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+					// Simple identifier case: p1 <=> p2
+					const auto& lhs_id = std::get<IdentifierNode>(lhs_expr);
+					std::string_view lhs_name = lhs_id.name();
+					lhs_value = lhs_name;
+					
+					// Get the struct type info from symbol table
+					auto symbol = symbol_table.lookup(lhs_name);
+					if (symbol && symbol->is<VariableDeclarationNode>()) {
+						const auto& var_decl = symbol->as<VariableDeclarationNode>();
+						const auto& decl = var_decl.declaration();
+						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+						lhs_type_index = type_node.type_index();
+					} else if (symbol && symbol->is<DeclarationNode>()) {
+						const auto& decl = symbol->as<DeclarationNode>();
+						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+						lhs_type_index = type_node.type_index();
+					} else {
+						// Can't find the variable declaration
+						return {};
+					}
+				} else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+					// Member access case: p.member <=> q.member
+					const auto& member_access = std::get<MemberAccessNode>(lhs_expr);
+					
+					// Generate IR for the member access expression
+					std::vector<IrOperand> member_ir = generateMemberAccessIr(member_access);
+					if (member_ir.empty() || member_ir.size() < 4) {
+						return {};
+					}
+					
+					// Extract the result temp var and type index
+					lhs_value = std::get<TempVar>(member_ir[2]);
+					lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(member_ir[3]));
+				} else {
+					// Other expression types - use already-generated lhsIrOperands
+					// The lhsIrOperands were already generated earlier in this function
+					if (lhsIrOperands.size() >= 3 && std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+						lhs_value = std::get<TempVar>(lhsIrOperands[2]);
+					} else {
+						// Complex expression that doesn't produce a temp var
+						return {};
+					}
+					
+					// Try to get type index from lhsIrOperands if available
+					if (lhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+						lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
+					} else {
+						// Can't determine type index for complex expression
+						return {};
+					}
+				}
+				
+				// Look up the operator<=> function in the struct
+				if (lhs_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[lhs_type_index];
+					if (type_info.struct_info_) {
+						const StructTypeInfo& struct_info = *type_info.struct_info_;
+						
+						// Find operator<=> in member functions
+						const StructMemberFunction* spaceship_op = nullptr;
+						for (const auto& func : struct_info.member_functions) {
+							if (func.is_operator_overload && func.operator_symbol == "<=>") {
+								spaceship_op = &func;
+								break;
+							}
+						}
+						
+						if (spaceship_op && spaceship_op->function_decl.is<FunctionDeclarationNode>()) {
+							const auto& func_decl = spaceship_op->function_decl.as<FunctionDeclarationNode>();
+							
+							// Generate a member function call: lhs.operator<=>(rhs)
+							TempVar result_var = var_counter.next();
+							
+							// Get return type from the function declaration
+							const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+							Type return_type = return_type_node.type();
+							int return_size = static_cast<int>(return_type_node.size_in_bits());
+							
+							// Generate mangled name for the operator<=> call
+							std::vector<TypeSpecifierNode> param_types;
+							for (const auto& param_node : func_decl.parameter_nodes()) {
+								if (param_node.is<DeclarationNode>()) {
+									const auto& param_decl = param_node.as<DeclarationNode>();
+									const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+									param_types.push_back(param_type);
+								}
+							}
+							
+							std::string_view mangled_name = generateMangledNameForCall(
+								"operator<=>",
+								return_type_node,
+								param_types,
+								false, // not variadic
+								type_info.name_
+							);
+							
+							// Create the call operation
+							CallOp call_op;
+							call_op.result = result_var;
+							call_op.function_name = std::string(mangled_name);
+							call_op.return_type = return_type;
+							call_op.return_size_in_bits = return_size;
+							call_op.is_member_function = true;
+							
+							// Add the LHS object as the first argument (this pointer)
+							// For member functions, the this pointer is passed by name or temp var
+							TypedValue lhs_arg;
+							lhs_arg.type = lhsType;
+							lhs_arg.size_in_bits = lhsSize;
+							// Convert lhs_value (which can be string_view or TempVar) to IrValue
+							if (std::holds_alternative<std::string_view>(lhs_value)) {
+								lhs_arg.value = IrValue(std::get<std::string_view>(lhs_value));
+							} else {
+								lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
+							}
+							call_op.args.push_back(lhs_arg);
+						
+							// Add the RHS as the second argument
+							// Check if parameter expects a reference
+							TypedValue rhs_arg = toTypedValue(rhsIrOperands);
+							if (param_types.size() > 0) {
+								// Check if first parameter is a reference
+								const TypeSpecifierNode& param_type = param_types[0];
+								if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+									rhs_arg.is_reference = true;
+								}
+							}
+							call_op.args.push_back(rhs_arg);
+						
+							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
+							
+							// Return the result
+							return { return_type, return_size, result_var };
+						}
+					}
+				}
+			}
+			
+			// If we get here, operator<=> is not defined or not found
+			// Fall through to error handling
+		}
 
 		// Try to get pointer depth for pointer arithmetic
 		int lhs_pointer_depth = 0;
@@ -5340,7 +5564,11 @@ private:
 		if (is_virtual_call && vtable_index >= 0) {
 			// Generate virtual function call using VirtualCallOp
 			VirtualCallOp vcall_op;
-			vcall_op.result = ret_var;
+			// Get return type from function declaration
+			const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
+			vcall_op.result.type = return_type.type();
+			vcall_op.result.size_in_bits = static_cast<int>(return_type.size_in_bits());
+			vcall_op.result.value = ret_var;
 			vcall_op.object_type = object_type.type();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			vcall_op.object = object_name;
@@ -5972,7 +6200,9 @@ private:
 		member_load.struct_type_info = nullptr;
 
 		// Add the member access instruction
-		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));		// Return the result variable with its type, size, and optionally type_index
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+
+		// Return the result variable with its type, size, and optionally type_index
 		// For struct types, we need to include type_index for nested member access (e.g., obj.inner.member)
 		// For primitive types, we only return 3 operands to maintain compatibility with binary operators
 		if (member->type == Type::Struct) {
@@ -7164,8 +7394,6 @@ private:
 	}
 
 	std::vector<IrOperand> generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
-		std::vector<IrOperand> irOperands;
-
 		// Get the type being constructed
 		const ASTNode& type_node = constructorCallNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -7175,34 +7403,61 @@ private:
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 
-		// For constructor calls, we need to generate a function call to the constructor
+		// For constructor calls, we need to generate a constructor call instruction
 		// In C++, constructors are named after the class
 		std::string constructor_name;
 		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
-			// Use the type name as the constructor name
-			constructor_name = gTypeInfo[type_spec.type_index()].name_;
+			// If type_index is set, use it
+			if (type_spec.type_index() != 0) {
+				constructor_name = gTypeInfo[type_spec.type_index()].name_;
+			} else {
+				// Otherwise, use the token value (the identifier name)
+				constructor_name = std::string(type_spec.token().value());
+			}
+			std::cerr << "DEBUG generateConstructorCallIr: struct type_index=" << type_spec.type_index() << " name=" << constructor_name << "\n";
 		} else {
 			// For basic types, constructors might not exist, but we can handle them as value construction
-			// For now, treat as a regular function call
 			constructor_name = gTypeInfo[type_spec.type_index()].name_;
 		}
 
 		// Create a temporary variable for the result (the constructed object)
 		TempVar ret_var = var_counter.next();
-		irOperands.emplace_back(ret_var);
-		irOperands.emplace_back(constructor_name);
+		
+		// Get the actual size of the struct from gTypeInfo
+		int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
+		if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+			if (type_info.struct_info_) {
+				actual_size_bits = static_cast<int>(type_info.struct_info_->total_size * 8);
+			}
+		} else {
+			// Fallback: look up by name
+			auto type_it = gTypesByName.find(constructor_name);
+			if (type_it != gTypesByName.end() && type_it->second->struct_info_) {
+				actual_size_bits = static_cast<int>(type_it->second->struct_info_->total_size * 8);
+			}
+		}
+		
+		// Build ConstructorCallOp
+		ConstructorCallOp ctor_op;
+		ctor_op.struct_name = constructor_name;
+		ctor_op.object = ret_var;  // The temporary variable that will hold the result
 
-		// Generate IR for constructor arguments
+		// Generate IR for constructor arguments and add them to ctor_op.arguments
 		constructorCallNode.arguments().visit([&](ASTNode argument) {
 			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-			irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+			// argumentIrOperands = [type, size, value]
+			if (argumentIrOperands.size() >= 3) {
+				TypedValue tv = toTypedValue(argumentIrOperands);
+				ctor_op.arguments.push_back(std::move(tv));
+			}
 		});
 
-		// Add the constructor call instruction
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), constructorCallNode.called_from()));
+		// Add the constructor call instruction (use ConstructorCall opcode)
+		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
 
 		// Return the result variable with the constructed type
-		return { type_spec.type(), static_cast<int>(type_spec.size_in_bits()), ret_var };
+		return { type_spec.type(), actual_size_bits, ret_var };
 	}
 
 };

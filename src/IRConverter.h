@@ -58,7 +58,7 @@ inline uint8_t xmm_modrm_bits(X64Register xmm_reg) {
 /**
  * @brief Generates x86-64 binary opcodes for 'mov destination_register, [rbp + offset]'.
  *
- * This function creates the byte sequence for moving a 64-bit value from a
+ * This function creates the byte sequence for moving a 64-bit pointer value from a
  * frame-relative address (RBP + offset) into a general-purpose 64-bit register.
  * It handles REX prefixes, ModR/M, and 8-bit/32-bit displacements.
  * The generated opcodes are placed into a stack-allocated `std::array` within
@@ -69,7 +69,7 @@ inline uint8_t xmm_modrm_bits(X64Register xmm_reg) {
  * @return An `OpCodeWithSize` struct containing a stack-allocated `std::array`
  *         of `uint8_t` and the actual number of bytes generated.
  */
-OpCodeWithSize generateMovFromFrame(X64Register destinationRegister, int32_t offset) {
+OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0; // Initialize count to 0
 
@@ -231,7 +231,7 @@ OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t off
  * @brief Helper function to generate MOV from frame based on operand size.
  *
  * Selects between 32-bit and 64-bit MOV based on size_in_bits parameter.
- * Uses generateMovFromFrame32 for sizes <= 32 bits, otherwise generateMovFromFrame.
+ * Uses generateMovFromFrame32 for sizes <= 32 bits, otherwise generatePtrMovFromFrame.
  *
  * @param destinationRegister The destination register (RAX, RCX, RDX, etc.).
  * @param offset The signed offset from RBP.
@@ -242,7 +242,7 @@ OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32
 	if (size_in_bits <= 32) {
 		return generateMovFromFrame32(destinationRegister, offset);
 	} else {
-		return generateMovFromFrame(destinationRegister, offset);
+		return generatePtrMovFromFrame(destinationRegister, offset);
 	}
 }
 
@@ -740,7 +740,7 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
 /**
  * @brief Generates x86-64 binary opcodes for 'mov [rbp + offset], source_register'.
  *
- * This function creates the byte sequence for moving a 64-bit value from a
+ * This function creates the byte sequence for moving a 64-bit pointer value from a
  * general-purpose 64-bit register to a frame-relative address (RBP + offset).
  * It handles REX prefixes, ModR/M, and 8-bit/32-bit displacements.
  * The generated opcodes are placed into a stack-allocated `std::array` within
@@ -751,7 +751,7 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
  * @return An `OpCodeWithSize` struct containing a stack-allocated `std::array`
  *         of `uint8_t` and the actual number of bytes generated.
  */
-OpCodeWithSize generateMovToFrame(X64Register sourceRegister, int32_t offset) {
+OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
@@ -875,7 +875,7 @@ OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) 
  * @brief Helper function to generate MOV to frame based on operand size.
  *
  * Selects between 32-bit and 64-bit MOV based on size_in_bits parameter.
- * Uses generateMovToFrame32 for sizes <= 32 bits, otherwise generateMovToFrame.
+ * Uses generateMovToFrame32 for sizes <= 32 bits, otherwise generatePtrMovToFrame.
  *
  * @param sourceRegister The source register (RAX, RCX, RDX, etc.).
  * @param offset The signed offset from RBP.
@@ -886,7 +886,7 @@ OpCodeWithSize generateMovToFrameBySize(X64Register sourceRegister, int32_t offs
 	if (size_in_bits <= 32) {
 		return generateMovToFrame32(sourceRegister, offset);
 	} else {
-		return generateMovToFrame(sourceRegister, offset);
+		return generatePtrMovToFrame(sourceRegister, offset);
 	}
 }
 
@@ -1409,6 +1409,32 @@ struct RegisterAllocator
 		}
 
 		return result;
+	}
+
+	// Invalidate all caller-saved registers after a function call
+	// According to x64 calling convention, RAX, RCX, RDX, R8, R9, R10, R11 and XMM0-XMM15 are volatile
+	void invalidateCallerSavedRegisters() {
+		// Clear general-purpose caller-saved registers
+		const X64Register caller_saved_gpr[] = {
+			X64Register::RAX, X64Register::RCX, X64Register::RDX,
+			X64Register::R8, X64Register::R9, X64Register::R10, X64Register::R11
+		};
+		for (auto reg : caller_saved_gpr) {
+			int idx = static_cast<int>(reg);
+			// Don't release if not allocated, but clear the stack variable mapping
+			if (registers[idx].isAllocated) {
+				registers[idx].stackVariableOffset = INT_MIN;
+				registers[idx].isDirty = false;
+			}
+		}
+		
+		// Clear all XMM registers (all are caller-saved)
+		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
+			if (registers[i].isAllocated) {
+				registers[i].stackVariableOffset = INT_MIN;
+				registers[i].isDirty = false;
+			}
+		}
 	}
 };
 
@@ -2425,7 +2451,7 @@ private:
 						// This is a reference - load the pointer first, then dereference
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						// Load the pointer into the register
-						auto load_ptr = generateMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
+						auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 						textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 						// Now dereference: load from [register + 0]
 						int value_size_bits = ref_it->second.value_size_bits;
@@ -2889,10 +2915,7 @@ private:
 			}
 		}
 
-		// Now add all TempVars to local_vars with their actual sizes
-		for (const auto& [temp_name, size_bits] : temp_var_sizes) {
-			local_vars.push_back(VarDecl{ .var_name = temp_name, .size_in_bits = size_bits, .alignment = static_cast<size_t>((size_bits <= 32) ? 4 : 8) });
-		}
+		// TempVars are now allocated dynamically via formula, not pre-allocated
 		
 		// Start stack allocation AFTER parameter home space
 		// Windows x64 ABI: first 4 parameters get home space at [rbp-8], [rbp-16], [rbp-24], [rbp-32]
@@ -2935,25 +2958,41 @@ private:
 	int allocateStackSlotForTempVar(int32_t index) {
 		auto stack_offset = getStackOffsetFromTempVar(TempVar(index));
 		// Note: stack_offset should be within allocated space (scope_stack_space <= stack_offset <= 0)
+		// However, during code generation, constructors and other operations may create additional
+		// TempVars beyond what was pre-calculated. The fallback calculation in getStackOffsetFromTempVar
+		// handles this by using var_number * -8, which may exceed the original allocation.
+		// We extend the scope_stack_space dynamically if needed.
+		if (stack_offset < variable_scopes.back().scope_stack_space) {
+			// Extend the stack space allocation to accommodate this TempVar
+			variable_scopes.back().scope_stack_space = stack_offset;
+		}
 		assert(variable_scopes.back().scope_stack_space <= stack_offset && stack_offset <= 0);
 		return stack_offset;
 	}
 
-	// Get stack offset for a TempVar by looking it up in the identifier_offset map
+	// Get stack offset for a TempVar using formula-based allocation
+	// TempVars are allocated dynamically after named variables using formula:
+	// TempVar(N) is at [rbp - (named_vars_base + (N-1) * 8)]
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
-		// Look up the TempVar's offset in the identifier_offset map
+		// Check if this TempVar was pre-allocated (named variables)
 		if (!variable_scopes.empty()) {
 			auto it = variable_scopes.back().identifier_offset.find(tempVar.name());
 			if (it != variable_scopes.back().identifier_offset.end()) {
-				return it->second;
+				return it->second;  // Use pre-allocated offset
 			}
 		}
-		// Fallback for old behavior if not found (shouldn't happen in correct code)
-		// For RBP-relative addressing, temporary variables use negative offsets
-		// TempVar stores 1-based numbers: TempVar(1) is at [rbp-8], TempVar(2) at [rbp-16], etc.
-		int32_t fallback = static_cast<int32_t>(tempVar.var_number * -8);
-		std::cerr << "DEBUG [getStackOffset]: TempVar " << tempVar.name() << " NOT in map, using fallback var_number=" << tempVar.var_number << " offset=" << fallback << "\n";
-		return fallback;
+		// Use formula-based allocation for dynamic TempVars
+		// base_offset is already negative (e.g., -64 for 32 bytes param + 32 bytes named vars)
+		int32_t base_offset = variable_scopes.back().scope_stack_space;
+		// TempVar(1) should be first at base_offset - 0, TempVar(2) at base_offset - 8, etc.
+		int32_t offset = base_offset - ((tempVar.var_number - 1) * 8);
+		
+		// Track the maximum TempVar index for stack size calculation
+		if (tempVar.var_number > max_temp_var_index_) {
+			max_temp_var_index_ = tempVar.var_number;
+		}
+		
+		return offset;
 	}
 
 	void flushAllDirtyRegisters()
@@ -2964,6 +3003,11 @@ private:
 
 				if (tempVarIndex.has_value()) {
 					// Note: stackVariableOffset should be within allocated space (scope_stack_space <= stackVariableOffset <= 0)
+					// However, during code generation, constructors may create additional TempVars beyond pre-calculated space.
+					// Extend scope_stack_space dynamically if needed.
+					if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
+						variable_scopes.back().scope_stack_space = stackVariableOffset;
+					}
 					assert(variable_scopes.back().scope_stack_space <= stackVariableOffset && stackVariableOffset <= 0);
 
 					// Store the computed result from register to stack using size-appropriate MOV
@@ -2986,7 +3030,7 @@ private:
 
 	// Helper to generate and emit 64-bit MOV from frame (for pointers/references)
 	void emitMovFromFrame(X64Register destinationRegister, int32_t offset) {
-		auto opcodes = generateMovFromFrame(destinationRegister, offset);
+		auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, 64);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
@@ -3017,9 +3061,9 @@ private:
 		return relocation_offset;
 	}
 
-	// Helper to generate and emit MOV to frame
+	// Helper to generate and emit MOV to frame (64-bit pointers/references)
 	void emitMovToFrame(X64Register sourceRegister, int32_t offset) {
-		auto opcodes = generateMovToFrame(sourceRegister, offset);
+		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, 64);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
@@ -3421,8 +3465,27 @@ private:
 					// First 4 args go in calling convention registers
 					X64Register target_reg = INT_PARAM_REGS[i];
 					
-					// Special handling for member function's "this" pointer (first argument)
-					if (call_op.is_member_function && i == 0 && std::holds_alternative<std::string_view>(arg.value)) {
+					// Special handling for passing addresses (this pointer or large struct references)
+					// For member functions: first arg is always "this" pointer (pass address)
+					// For structs: small structs (≤8 bytes) are passed by VALUE, large structs by reference
+					// UNLESS the parameter is explicitly a reference type
+					bool should_pass_address = false;
+					if (call_op.is_member_function && i == 0) {
+						// First argument of member function is always "this" pointer
+						should_pass_address = true;
+					} else if (arg.is_reference) {
+						// Parameter is explicitly a reference - always pass by address
+						should_pass_address = true;
+					} else if (arg.type == Type::Struct && std::holds_alternative<std::string_view>(arg.value)) {
+						// Check struct size - only pass by address if larger than 8 bytes
+						// x64 Windows ABI: structs of 1, 2, 4, or 8 bytes are passed by value in registers
+						if (arg.size_in_bits > 64) {
+							// Large struct - pass by reference (address)
+							should_pass_address = true;
+						}
+					}
+					
+					if (should_pass_address && std::holds_alternative<std::string_view>(arg.value)) {
 						// Load ADDRESS of object using LEA instead of value
 						std::string_view object_name = std::get<std::string_view>(arg.value);
 						int object_offset = variable_scopes.back().identifier_offset[object_name];
@@ -3498,6 +3561,9 @@ private:
 			// Add relocation for function name
 			const std::string& mangled_name = call_op.function_name;
 			writer.add_relocation(textSectionData.size() - 4, mangled_name);
+			
+			// Invalidate caller-saved registers (function calls clobber them)
+			regAlloc.invalidateCallerSavedRegisters();
 			
 			// Store return value from RAX only if function doesn't return void
 			if (call_op.return_type != Type::Void) {
@@ -3865,6 +3931,9 @@ private:
 		std::cerr << "DEBUG handleFunctionCall: about to add_relocation with: " << mangled_name << "\n";
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
+		// Invalidate caller-saved registers (function calls clobber them)
+		regAlloc.invalidateCallerSavedRegisters();
+
 		// REFERENCE COMPATIBILITY: Don't add closing brace line mappings
 		// The reference compiler (clang) only maps opening brace and actual statements
 		// Closing braces are not mapped in the line information
@@ -4073,6 +4142,9 @@ private:
 		std::cerr << "DEBUG handleConstructorCall: function_name = " << function_name << ", num_params = " << num_params << "\n";
 		std::cerr << "DEBUG handleConstructorCall: mangled_name = " << mangled_name << "\n";
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
+		
+		// Invalidate caller-saved registers (function calls clobber them)
+		regAlloc.invalidateCallerSavedRegisters();
 
 		regAlloc.reset();
 	}
@@ -4107,6 +4179,9 @@ private:
 		// Get the mangled name for the destructor (handles name mangling)
 		std::string mangled_name = writer.getMangledName(function_name);
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
+		
+		// Invalidate caller-saved registers (function calls clobber them)
+		regAlloc.invalidateCallerSavedRegisters();
 
 		regAlloc.reset();
 	}
@@ -4118,9 +4193,9 @@ private:
 		flushAllDirtyRegisters();
 
 		// Get result offset
-		int result_offset = 0;
-		const TempVar& result_var = op.result;
-		result_offset = getStackOffsetFromTempVar(result_var);
+		assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
+		const TempVar& result_var = std::get<TempVar>(op.result.value);
+		int result_offset = getStackOffsetFromTempVar(result_var);
 		variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
 
 		// Get object offset
@@ -4180,10 +4255,10 @@ private:
 		textSectionData.push_back(0xFF); // CALL r/m64
 		textSectionData.push_back(0xD0); // ModR/M: RAX
 
-		// Step 5: Store return value from RAX to result variable
-		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
-		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+		// Step 5: Store return value from RAX to result variable using the correct size
+		if (op.result.type != Type::Void) {
+			emitMovToFrameBySize(X64Register::RAX, result_offset, op.result.size_in_bits);
+		}
 
 		regAlloc.reset();
 	}
@@ -4209,6 +4284,9 @@ private:
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 		writer.add_relocation(textSectionData.size() - 4, "malloc");
+		
+		// Invalidate caller-saved registers (function calls clobber them)
+		regAlloc.invalidateCallerSavedRegisters();
 
 		// Result is in RAX, store it to the result variable
 		int result_offset = getStackOffsetFromTempVar(op.result);
@@ -4273,6 +4351,9 @@ private:
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 		writer.add_relocation(textSectionData.size() - 4, "malloc");
+		
+		// Invalidate caller-saved registers (function calls clobber them)
+		regAlloc.invalidateCallerSavedRegisters();
 
 		// Result is in RAX, store it to the result variable
 		int result_offset = getStackOffsetFromTempVar(op.result);
@@ -4314,6 +4395,9 @@ private:
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 		writer.add_relocation(textSectionData.size() - 4, "free");
+		
+		// Invalidate caller-saved registers (function calls clobber them)
+		regAlloc.invalidateCallerSavedRegisters();
 
 		regAlloc.reset();
 	}
@@ -4353,6 +4437,9 @@ private:
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 		writer.add_relocation(textSectionData.size() - 4, "free");
+		
+		// Invalidate caller-saved registers (function calls clobber them)
+		regAlloc.invalidateCallerSavedRegisters();
 
 		regAlloc.reset();
 	}
@@ -4740,7 +4827,7 @@ private:
 			} else {
 				moveImmediateToRegister(pointer_reg, 0);
 			}
-			auto store_ptr = generateMovToFrame(pointer_reg, dst_offset);
+			auto store_ptr = generatePtrMovToFrame(pointer_reg, dst_offset);
 			textSectionData.insert(textSectionData.end(), store_ptr.op_codes.begin(),
 				               store_ptr.op_codes.begin() + store_ptr.size_in_bytes);
 			regAlloc.release(pointer_reg);
@@ -4799,10 +4886,8 @@ private:
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				}
 
-				// Store the value from register to stack
-				auto store_opcodes = generateMovToFrame(allocated_reg_val, dst_offset);
-				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				// Store the value from register to stack (size-aware)
+				emitMovToFrameBySize(allocated_reg_val, dst_offset, op.size_in_bits);
 
 				// Release the register since the value is now in the stack
 				regAlloc.release(allocated_reg_val);
@@ -4831,14 +4916,14 @@ private:
 				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
 					// Source value is already in a register (e.g., from function return)
 					// Store it directly to the destination stack location
-					auto store_opcodes = generateMovToFrame(src_reg.value(), dst_offset);
+					auto store_opcodes = generateMovToFrameBySize(src_reg.value(), dst_offset, op.size_in_bits);
 					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
 					allocated_reg_val = allocateRegisterWithSpilling();
-					emitMovFromFrame(allocated_reg_val, src_offset);
-					auto store_opcodes = generateMovToFrame(allocated_reg_val, dst_offset);
+					emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits);
+					auto store_opcodes = generateMovToFrameBySize(allocated_reg_val, dst_offset, op.size_in_bits);
 					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 										   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 					regAlloc.release(allocated_reg_val);
@@ -4969,6 +5054,25 @@ private:
 		
 		// Finalize previous function before starting new one
 		if (!current_function_name_.empty()) {
+			// Calculate actual stack space needed: named vars + shadow space + TempVars
+			// Use the stored named_vars_size from when we created the function
+			size_t temp_vars_space = (max_temp_var_index_ > 0) ? (max_temp_var_index_ * 8) : 0;
+			size_t named_and_shadow = current_function_named_vars_size_;
+			size_t total_stack = named_and_shadow + temp_vars_space;
+			// Align to 16 bytes
+			if (total_stack % 16 != 0) {
+				total_stack = ((total_stack / 16) + 1) * 16;
+			}
+			
+			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
+			if (current_function_prologue_offset_ > 0) {
+				uint32_t patch_offset = current_function_prologue_offset_ + 3;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[patch_offset + i] = bytes[i];
+				}
+			}
+			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length (uses unmangled name for debug info)
@@ -4983,6 +5087,9 @@ private:
 			if (!variable_scopes.empty()) {
 				variable_scopes.pop_back();
 			}
+			
+			// Reset for new function
+			max_temp_var_index_ = 0;
 		}
 
 		// align the function to 16 bytes
@@ -5003,7 +5110,8 @@ private:
 		StackVariableScope& var_scope = variable_scopes.emplace_back();
 		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope, param_count);
 		
-		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space + func_stack_space.temp_vars_size;
+		// TempVars are allocated dynamically via formula, so don't include temp_vars_size here
+		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space;
 		
 		// Even if parameters stay in registers, we need space to spill them if needed
 		// Member functions have implicit 'this' pointer as first parameter
@@ -5130,20 +5238,17 @@ private:
 		textSectionData.push_back(0x55); // push rbp
 		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
 
-		if (total_stack_space > 0) {
-			// Generate stack allocation instruction
-			if (total_stack_space <= 127) {
-				// Use 8-bit immediate: sub rsp, imm8
-				textSectionData.push_back(0x48); textSectionData.push_back(0x83); textSectionData.push_back(0xEC);
-				textSectionData.push_back(static_cast<uint8_t>(total_stack_space));
-			} else {
-				// Use 32-bit immediate: sub rsp, imm32
-				textSectionData.push_back(0x48); textSectionData.push_back(0x81); textSectionData.push_back(0xEC);
-				for (int i = 0; i < 4; ++i) {
-					textSectionData.push_back(static_cast<uint8_t>((total_stack_space >> (8 * i)) & 0xFF));
-				}
-			}
-		}
+		// Always emit SUB RSP with 32-bit immediate (7 bytes total) for patching flexibility
+		// We'll patch the actual value at function end after we know max_temp_var_index
+		current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0x81); // SUB with 32-bit immediate
+		textSectionData.push_back(0xEC); // RSP
+		// Placeholder - will be patched with actual stack size
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
 
 		// For RBP-relative addressing, we start with negative offset after total allocated space
 		if (variable_scopes.empty()) {
@@ -5151,6 +5256,9 @@ private:
 			std::abort();
 		}
 		variable_scopes.back().scope_stack_space = -total_stack_space;
+		
+		// Store for later patching
+		current_function_named_vars_size_ = total_stack_space;
 
 		// Handle parameters
 		struct ParameterInfo {
@@ -5161,6 +5269,7 @@ private:
 			int offset;
 			X64Register src_reg;
 			int pointer_depth;
+			bool is_reference;
 		};
 		std::vector<ParameterInfo> parameters;
 
@@ -5175,7 +5284,7 @@ private:
 			writer.add_function_parameter("this", 0x603, this_offset);  // 0x603 = T_64PVOID (pointer type)
 
 			// Store 'this' parameter info
-			parameters.push_back({Type::Struct, 64, "this", 0, this_offset, INT_PARAM_REGS[0]});
+			parameters.push_back({Type::Struct, 64, "this", 0, this_offset, INT_PARAM_REGS[0], 1, false});
 			regAlloc.allocateSpecific(INT_PARAM_REGS[0], this_offset);
 
 			param_offset_adjustment = 1;  // Shift other parameters by 1
@@ -5238,7 +5347,7 @@ private:
 				}
 
 				// Store parameter info for later processing
-				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth});
+				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth, is_reference});
 			}
 
 			paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
@@ -5289,7 +5398,7 @@ private:
 					regAlloc.allocateSpecific(src_reg, offset);
 				}
 
-				parameters.push_back({param.type, param.size_in_bits, param.name, paramNumber, offset, src_reg, param.pointer_depth});
+				parameters.push_back({param.type, param.size_in_bits, param.name, paramNumber, offset, src_reg, param.pointer_depth, param.is_reference});
 			}
 		}
 	}
@@ -5326,16 +5435,9 @@ private:
 				}
 			} else {
 				// For integer parameters, use size-appropriate MOV
-				// Use 32-bit store for 32-bit types (int, char, bool), 64-bit for pointers/64-bit types
-				bool use_32bit_store = (param.param_size <= 32) && (param.pointer_depth == 0);
-				
-				if (use_32bit_store) {
-					auto mov_opcodes = generateMovToFrame32(param.src_reg, param.offset);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-				} else {
-					auto mov_opcodes = generateMovToFrame(param.src_reg, param.offset);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
-				}
+				// References are always passed as 64-bit pointers regardless of the type they refer to
+				int store_size = (param.is_reference || param.pointer_depth > 0) ? 64 : param.param_size;
+				emitMovToFrameBySize(param.src_reg, param.offset, store_size);
 				
 				// Release the parameter register from the register allocator
 				// Parameters are now on the stack, so the register allocator should not
@@ -5409,8 +5511,11 @@ private:
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 						}
 					} else {
-						// Value still in RAX from previous operation
-						// No need to do anything
+						// Value not in identifier_offset - use fallback offset calculation
+						int var_offset = getStackOffsetFromTempVar(return_var);
+						std::cerr << "DEBUG handleReturn TempVar (fallback): var_offset=" << var_offset << " ret_op.return_size=" << ret_op.return_size << "\n";
+						emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
+						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 					}
 				}
 				else if (std::holds_alternative<std::string_view>(ret_val)) {
@@ -5869,14 +5974,14 @@ private:
 					textSectionData.insert(textSectionData.end(), moveOp.op_codes.begin(), moveOp.op_codes.begin() + moveOp.size_in_bytes);
 				}
 			} else {
-				auto mov_opcodes = generateMovToFrame(result_physical_reg, result_stack_var_addr);
+				auto mov_opcodes = generatePtrMovToFrame(result_physical_reg, result_stack_var_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			}
 		} else if (std::holds_alternative<std::string_view>(result_operand)) {
 			auto result_var_name = std::get<std::string_view>(result_operand);
 			auto var_id = variable_scopes.back().identifier_offset.find(result_var_name);
 			if (var_id != variable_scopes.back().identifier_offset.end()) {
-				auto store_opcodes = generateMovToFrame(result_physical_reg, var_id->second);
+				auto store_opcodes = generatePtrMovToFrame(result_physical_reg, var_id->second);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 			}
 		}
@@ -6209,7 +6314,7 @@ private:
 				reg = reg_opt.value();
 			} else {
 				reg = allocateRegisterWithSpilling();
-				auto mov_opcodes = generateMovFromFrame(reg, stack_addr);
+				auto mov_opcodes = generatePtrMovFromFrame(reg, stack_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 					mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(reg);
@@ -6227,7 +6332,7 @@ private:
 					reg = reg_opt.value();
 				} else {
 					reg = allocateRegisterWithSpilling();
-					auto mov_opcodes = generateMovFromFrame(reg, var_id->second);
+					auto mov_opcodes = generatePtrMovFromFrame(reg, var_id->second);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 						mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(reg);
@@ -6253,7 +6358,7 @@ private:
 				reg = reg_opt.value();
 			} else {
 				reg = allocateRegisterWithSpilling();
-				auto mov_opcodes = generateMovFromFrame(reg, stack_addr);
+				auto mov_opcodes = generatePtrMovFromFrame(reg, stack_addr);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 					mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(reg);
@@ -6271,7 +6376,7 @@ private:
 					reg = reg_opt.value();
 				} else {
 					reg = allocateRegisterWithSpilling();
-					auto mov_opcodes = generateMovFromFrame(reg, var_id->second);
+					auto mov_opcodes = generatePtrMovFromFrame(reg, var_id->second);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 						mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(reg);
@@ -6363,16 +6468,18 @@ private:
 		OpCodeWithSize load_opcodes;
 		switch (size_in_bits) {
 		case 64:
-			load_opcodes = generateMovFromFrame(target_reg, offset);
-			break;
 		case 32:
-			load_opcodes = generateMovFromFrame32(target_reg, offset);
+			emitMovFromFrameBySize(target_reg, offset, size_in_bits);
 			break;
 		case 16:
 			load_opcodes = generateMovzxFromFrame16(target_reg, offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			break;
 		case 8:
 			load_opcodes = generateMovzxFromFrame8(target_reg, offset);
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			break;
 		default:
 			assert(false && "Unsupported stack load size");
@@ -6434,17 +6541,10 @@ private:
 	}
 
 	void storeValueToStack(int32_t offset, int size_in_bits, X64Register source_reg) {
-		OpCodeWithSize store_opcodes;
 		switch (size_in_bits) {
 		case 64:
-			store_opcodes = generateMovToFrame(source_reg, offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-			break;
 		case 32:
-			store_opcodes = generateMovToFrame32(source_reg, offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			emitMovToFrameBySize(source_reg, offset, size_in_bits);
 			break;
 		case 16:
 			emitStoreWordToFrame(source_reg, offset);
@@ -6541,7 +6641,7 @@ private:
 	}
 
 	void loadValueFromReferenceSlot(int32_t offset, const ReferenceInfo& ref_info, X64Register target_reg) {
-		auto load_ptr = generateMovFromFrame(target_reg, offset);
+		auto load_ptr = generatePtrMovFromFrame(target_reg, offset);
 		textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
 			               load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 		loadValuePointedByRegister(target_reg, ref_info.value_size_bits);
@@ -6572,7 +6672,7 @@ private:
 			auto temp = instruction.getOperandAs<TempVar>(operand_index);
 			int32_t src_offset = getStackOffsetFromTempVar(temp);
 			if (auto ref_it = reference_stack_info_.find(src_offset); ref_it != reference_stack_info_.end()) {
-				auto load_ptr = generateMovFromFrame(target_reg, src_offset);
+				auto load_ptr = generatePtrMovFromFrame(target_reg, src_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
 				               load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 				return true;
@@ -7288,9 +7388,7 @@ private:
 			}
 			
 			// Store RAX to LHS stack location (8 bytes for function pointer)
-			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-								   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			emitMovToFrame(source_reg, lhs_offset); // Always 64-bit for function pointers
 
 			return;
 		}
@@ -7351,7 +7449,7 @@ private:
 			}
 
 			// Store RAX to LHS stack location (8 bytes for small structs)
-			auto store_opcodes = generateMovToFrame(source_reg, lhs_offset);
+			auto store_opcodes = generatePtrMovToFrame(source_reg, lhs_offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 								   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 			return;
@@ -7618,7 +7716,7 @@ private:
 
 			if (is_array_pointer) {
 				// Array is a pointer/temp var - load pointer and compute address
-				auto load_ptr_opcodes = generateMovFromFrame(X64Register::RAX, array_base_offset);
+				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
@@ -7663,7 +7761,7 @@ private:
 
 			if (is_array_pointer) {
 				// Array is a pointer/temp var
-				auto load_ptr_opcodes = generateMovFromFrame(X64Register::RAX, array_base_offset);
+				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
@@ -7689,7 +7787,7 @@ private:
 			int64_t index_var_offset = index_it->second;
 
 			if (is_array_pointer) {
-				auto load_ptr_opcodes = generateMovFromFrame(X64Register::RAX, array_base_offset);
+				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 			} else {
@@ -7801,7 +7899,7 @@ private:
 			}
 			
 			// Store the computed address to result_var
-			auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
+			auto store_opcodes = generatePtrMovToFrame(X64Register::RAX, result_offset);
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 			return;
@@ -8039,8 +8137,11 @@ private:
 		auto it = current_scope.identifier_offset.find(result_var.name());
 		if (it != current_scope.identifier_offset.end()) {
 			result_offset = it->second;
+			std::cerr << "DEBUG handleMemberAccess: result_var " << result_var.name() << " found at offset=" << result_offset << "\n";
 		} else {
-			result_offset = getStackOffsetFromTempVar(result_var);
+			// Allocate stack space for the result TempVar
+			result_offset = allocateStackSlotForTempVar(result_var.var_number);
+			std::cerr << "DEBUG handleMemberAccess: allocated result_var " << result_var.name() << " at offset=" << result_offset << "\n";
 		}
 
 		// Calculate member size in bytes
@@ -8061,7 +8162,7 @@ private:
 
 		if (is_pointer_access) {
 			// For 'this' pointer: load pointer into RCX, then load from [RCX + member_offset]
-			auto load_ptr_opcodes = generateMovFromFrame(X64Register::RCX, object_base_offset);
+			auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RCX, object_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
@@ -8085,7 +8186,7 @@ private:
 			// For regular struct variables on the stack, use size-appropriate load
 			OpCodeWithSize load_opcodes;
 			if (member_size_bytes == 8) {
-				load_opcodes = generateMovFromFrame(temp_reg, member_stack_offset);
+				load_opcodes = generatePtrMovFromFrame(temp_reg, member_stack_offset);
 			} else if (member_size_bytes == 4) {
 				load_opcodes = generateMovFromFrame32(temp_reg, member_stack_offset);
 			} else if (member_size_bytes == 2) {
@@ -8101,7 +8202,7 @@ private:
 		}
 
 		if (op.is_reference) {
-			auto store_ptr = generateMovToFrame(temp_reg, result_offset);
+			auto store_ptr = generatePtrMovToFrame(temp_reg, result_offset);
 			textSectionData.insert(textSectionData.end(), store_ptr.op_codes.begin(),
 				               store_ptr.op_codes.begin() + store_ptr.size_in_bytes);
 			regAlloc.release(temp_reg);
@@ -8115,6 +8216,9 @@ private:
 
 		// Store the result - but keep it in the register for subsequent operations
 		regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
+		
+		// Add the TempVar to identifier_offset so it can be found later
+		variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
@@ -8277,7 +8381,7 @@ private:
 				return;
 			}
 			int32_t value_offset = it->second;
-			emitMovFromFrame(value_reg, value_offset);
+			emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
 		} else {
 			auto value_var = std::get<TempVar>(op.value.value);
 			int32_t value_offset = getStackOffsetFromTempVar(value_var);
@@ -8285,14 +8389,14 @@ private:
 			if (existing_reg.has_value()) {
 				value_reg = existing_reg.value();
 			} else {
-				emitMovFromFrame(value_reg, value_offset);
+				emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
 			}
 		}
 
 		// Store the value to the member's location
 		if (is_pointer_access) {
 			// For 'this' pointer or reference: load pointer into RCX, then store to [RCX + offset]
-			auto load_ptr_opcodes = generateMovFromFrame(X64Register::RCX, object_base_offset);
+			auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RCX, object_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 			
@@ -8480,7 +8584,7 @@ private:
 
 			// Store the dereferenced value to result_var
 			int32_t result_offset = getStackOffsetFromTempVar(op.result);
-			auto result_store = generateMovToFrame(value_reg, result_offset);
+			auto result_store = generateMovToFrameBySize(value_reg, result_offset, value_size);
 			textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
 			                       result_store.op_codes.begin() + result_store.size_in_bytes);
 			return;
@@ -8555,7 +8659,7 @@ private:
 		// Store the dereferenced value to result_var
 		auto result_var = instruction.getOperandAs<TempVar>(0);
 		int32_t result_offset = getStackOffsetFromTempVar(result_var);
-		auto result_store = generateMovToFrame(value_reg, result_offset);
+		auto result_store = generateMovToFrameBySize(value_reg, result_offset, value_size);
 		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
 		                       result_store.op_codes.begin() + result_store.size_in_bytes);
 	}
@@ -8658,7 +8762,7 @@ private:
 		writer.add_relocation(reloc_position, mangled_name, IMAGE_REL_AMD64_REL32);
 
 		// Store RAX to result variable
-		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
+		auto store_opcodes = generatePtrMovToFrame(X64Register::RAX, result_offset);
 		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
@@ -8736,7 +8840,7 @@ private:
 		textSectionData.push_back(0xD0); // ModR/M: RAX
 
 		// Store return value from RAX to result variable
-		auto store_opcodes = generateMovToFrame(X64Register::RAX, result_offset);
+		auto store_opcodes = generatePtrMovToFrame(X64Register::RAX, result_offset);
 		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
@@ -8765,6 +8869,24 @@ private:
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (!current_function_name_.empty()) {
+			// Calculate actual stack space needed: named vars + shadow space + TempVars
+			size_t temp_vars_space = (max_temp_var_index_ > 0) ? (max_temp_var_index_ * 8) : 0;
+			size_t named_and_shadow = current_function_named_vars_size_;
+			size_t total_stack = named_and_shadow + temp_vars_space;
+			// Align to 16 bytes
+			if (total_stack % 16 != 0) {
+				total_stack = ((total_stack / 16) + 1) * 16;
+			}
+			
+			// Patch the SUB RSP immediate at prologue offset + 3
+			if (current_function_prologue_offset_ > 0) {
+				uint32_t patch_offset = current_function_prologue_offset_ + 3;
+				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+				for (int i = 0; i < 4; i++) {
+					textSectionData[patch_offset + i] = bytes[i];
+				}
+			}
+			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length
@@ -9082,6 +9204,11 @@ private:
 
 	// Track if dynamic_cast runtime helpers need to be emitted
 	bool needs_dynamic_cast_runtime_ = false;
+
+	// Prologue patching for stack allocation
+	uint32_t current_function_prologue_offset_ = 0;  // Offset of SUB RSP instruction for patching
+	int max_temp_var_index_ = 0;  // Highest TempVar number used (for stack size calculation)
+	uint32_t current_function_named_vars_size_ = 0;  // Size of named vars + shadow space for current function
 };
 
 

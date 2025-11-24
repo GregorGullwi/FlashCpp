@@ -11,3 +11,4 @@ nul
 test_*.cpp
 test_*.obj
 *.obj
+*.ilk

@@ -8,6 +8,7 @@
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
+#include <array> // Include array for std::array
 #include "ChunkedString.h"
 
 // Break into the debugger only on Windows
@@ -893,12 +894,13 @@ ParseResult Parser::parse_type_and_name() {
             std::string_view operator_symbol = operator_symbol_token.value();
             consume_token(); // consume operator symbol
 
-            // For now, we support operator= and operator()
-            if (operator_symbol != "=") {
-                return ParseResult::error("Only operator= and operator() are currently supported", operator_symbol_token);
+            // For now, we support operator=, operator<=>, and operator()
+            if (operator_symbol != "=" && operator_symbol != "<=>") {
+                return ParseResult::error("Only operator=, operator<=>, and operator() are currently supported", operator_symbol_token);
             }
             static const std::string operator_eq_name = "operator=";
-            operator_name = operator_eq_name;
+            static const std::string operator_spaceship_name = "operator<=>";
+            operator_name = (operator_symbol == "=") ? operator_eq_name : operator_spaceship_name;
         }
         else {
             return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
@@ -2217,6 +2219,28 @@ ParseResult Parser::parse_struct_declaration()
 				member_func_ref.add_parameter_node(param);
 			}
 
+			// Check for const/volatile qualifiers after parameter list
+			// Note: These qualifiers are currently parsed but not stored in the function node.
+			// Full support for const/volatile member function semantics would require:
+			// 1. Adding is_const/is_volatile fields to FunctionDeclarationNode or StructMemberFunction
+			// 2. Updating type checking to enforce const correctness
+			// 3. Adjusting name mangling to include cv-qualifiers
+			// For now, we just consume the tokens to allow parsing to succeed.
+			bool is_const_member = false;
+			bool is_volatile_member = false;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view keyword = peek_token()->value();
+				if (keyword == "const") {
+					is_const_member = true;
+					consume_token();
+				} else if (keyword == "volatile") {
+					is_volatile_member = true;
+					consume_token();
+				} else {
+					break;  // Not a cv-qualifier
+				}
+			}
+
 			// Check for override, final, = 0, = default, or = delete after parameters
 			bool is_override = false;
 			bool is_final = false;
@@ -2573,6 +2597,7 @@ ParseResult Parser::parse_struct_declaration()
 	bool has_user_defined_copy_assignment = false;
 	bool has_user_defined_move_assignment = false;
 	bool has_user_defined_destructor = false;
+	bool has_user_defined_spaceship = false;  // Track if operator<=> is defined
 
 	for (const auto& func_decl : struct_ref.member_functions()) {
 		if (func_decl.is_constructor) {
@@ -2615,6 +2640,11 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.is_override,
 				func_decl.is_final
 			);
+
+			// Check if this is a spaceship operator
+			if (func_decl.operator_symbol == "<=>") {
+				has_user_defined_spaceship = true;
+			}
 
 			// Check if this is a copy or move assignment operator
 			if (func_decl.operator_symbol == "=") {
@@ -2907,6 +2937,145 @@ ParseResult Parser::parse_struct_declaration()
 		// Add the move assignment operator to the struct node
 		static const std::string_view move_operator_symbol_eq = "=";
 		struct_ref.add_operator_overload(move_operator_symbol_eq, move_func_node, AccessSpecifier::Public);
+	}
+
+	// Generate comparison operators from operator<=> if defined
+	// According to C++20, when operator<=> is defined, the compiler automatically synthesizes
+	// the six comparison operators: ==, !=, <, >, <=, >=
+	// Skip implicit function generation for template classes (they'll be generated during instantiation)
+	if (has_user_defined_spaceship && !parsing_template_class_) {
+		TypeIndex struct_type_index = struct_type_info.type_index_;
+		
+		// Array of comparison operators to synthesize
+		static const std::array<std::pair<std::string_view, std::string>, 6> comparison_ops = {{
+			{"==", "operator=="},
+			{"!=", "operator!="},
+			{"<", "operator<"},
+			{">", "operator>"},
+			{"<=", "operator<="},
+			{">=", "operator>="}
+		}};
+		
+		for (const auto& [op_symbol, op_name] : comparison_ops) {
+			// Create return type: bool
+			auto return_type_node = emplace_node<TypeSpecifierNode>(
+				Type::Bool,
+				0,  // type_index for bool
+				8,  // size in bits
+				*name_token,
+				CVQualifier::None
+			);
+			
+			// Create declaration node for the operator
+			Token operator_name_token(Token::Type::Identifier, op_name,
+			                          name_token->line(), name_token->column(),
+			                          name_token->file_index());
+			
+			auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
+			
+			// Create function declaration node
+			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+				operator_decl_node.as<DeclarationNode>(), struct_name);
+			
+			// Create parameter: const Type& other
+			auto param_type_node = emplace_node<TypeSpecifierNode>(
+				Type::Struct,
+				struct_type_index,
+				static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+				*name_token,
+				CVQualifier::Const  // const qualifier
+			);
+			param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+			
+			// Create parameter declaration
+			static const std::string param_name_comp = "other";
+			Token param_token(Token::Type::Identifier, param_name_comp, 0, 0, 0);
+			auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
+			
+			// Add parameter to function
+			func_ref.add_parameter_node(param_decl_node);
+			
+			// Generate function body that calls operator<=> and compares result
+			// The body should be equivalent to:
+			//   return (this->operator<=>(other)) <op> 0;
+			// where <op> is the appropriate comparison operator
+			
+			// First, find the spaceship operator function in the struct
+			const FunctionDeclarationNode* spaceship_func = nullptr;
+			for (const auto& member_func : struct_ref.member_functions()) {
+				if (member_func.is_operator_overload && member_func.operator_symbol == "<=>") {
+					spaceship_func = &(member_func.function_declaration.as<FunctionDeclarationNode>());
+					break;
+				}
+			}
+			
+			if (!spaceship_func) {
+				// This shouldn't happen since we only get here if has_user_defined_spaceship is true
+				return ParseResult::error("Internal error: spaceship operator not found", *name_token);
+			}
+			
+			// Create the function body
+			auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
+			
+			// Create "this" identifier
+			Token this_token(Token::Type::Keyword, "this",
+			                name_token->line(), name_token->column(),
+			                name_token->file_index());
+			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+			
+			// Create "other" identifier reference
+			Token other_token(Token::Type::Identifier, param_name_comp,
+			                 name_token->line(), name_token->column(),
+			                 name_token->file_index());
+			auto other_node = emplace_node<ExpressionNode>(IdentifierNode(other_token));
+			
+			// Create arguments vector for the spaceship operator call
+			ChunkedVector<ASTNode> spaceship_args;
+			spaceship_args.push_back(other_node);
+			
+			// Create member function call: this->operator<=>(other)
+			auto spaceship_call = emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(this_node, const_cast<FunctionDeclarationNode&>(*spaceship_func), std::move(spaceship_args), operator_name_token));
+			
+			// Create numeric literal for 0
+			Token zero_token(Token::Type::Literal, "0",
+			                name_token->line(), name_token->column(),
+			                name_token->file_index());
+			auto zero_node = emplace_node<ExpressionNode>(
+				NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+			
+			// Create comparison operator token for comparing result with 0
+			Token comparison_token(Token::Type::Operator, op_symbol,
+			                      name_token->line(), name_token->column(),
+			                      name_token->file_index());
+			
+			// Create binary operator node: (spaceship_call) <op> 0
+			auto comparison_expr = emplace_node<ExpressionNode>(
+				BinaryOperatorNode(comparison_token, spaceship_call, zero_node));
+			
+			// Create return statement
+			auto return_stmt = emplace_node<ReturnStatementNode>(
+				std::optional<ASTNode>(comparison_expr), operator_name_token);
+			
+			// Add return statement to block
+			op_block_ref.add_statement_node(return_stmt);
+			
+			func_ref.set_definition(op_block_node);
+			
+			// Note: Not marking as implicit because we want the body to be processed
+			// These are compiler-generated but they have actual function bodies
+			// func_ref.set_is_implicit(true);
+			
+			// Add the operator to the struct type info
+			struct_info->addOperatorOverload(
+				op_symbol,
+				func_node,
+				AccessSpecifier::Public
+			);
+			
+			// Add the operator to the struct node
+			struct_ref.add_operator_overload(op_symbol, func_node, AccessSpecifier::Public);
+		}
 	}
 
 	// Apply custom alignment if specified
@@ -6206,6 +6375,8 @@ int Parser::get_operator_precedence(const std::string_view& op)
 			{"==", 12}, {"!=", 12},
 			// Bitwise AND (precedence 11)
 			{"&", 11},
+			// Spaceship/Three-way comparison (precedence 10)
+			{"<=>", 10},
 			// Bitwise XOR (precedence 10)
 			{"^", 10},
 			// Bitwise OR (precedence 9)
@@ -7104,15 +7275,22 @@ ParseResult Parser::parse_primary_expression()
 						          << current_token_->value() << "\n";
 						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
 					}
-					
+				
 					// Create TypeSpecifierNode for the constructor call
 					TypeIndex type_index = type_it->second->type_index_;
+					unsigned char type_size = 0;
+					// Look up the size
+					if (type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_info.struct_info_) {
+							type_size = static_cast<unsigned char>(type_info.struct_info_->total_size * 8);
+						}
+					}
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(
-						Type::UserDefined, TypeQualifier::None, type_index, idenfifier_token);
-					
+						Type::Struct, type_index, type_size, idenfifier_token);
+				
 					result = emplace_node<ExpressionNode>(
 						ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
-					
 					return ParseResult::success(*result);
 				}
 				
