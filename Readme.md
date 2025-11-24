@@ -167,23 +167,6 @@ double test_mixed_types(int i, float f, double d) {
 bool test_comparisons(double a, double b) {
     return (a > b) && (a <= 2.0 * b);  // fcmp ogt, fmul, fcmp ole
 }
-
-// C++20 Spaceship operator with automatic synthesis
-struct Point {
-    int x, y;
-    
-    // Define spaceship operator - all other comparisons auto-generated
-    auto operator<=>(const Point&) const = default;
-};
-
-int main() {
-    Point p1{1, 2}, p2{1, 3};
-    // All comparison operators work automatically:
-    bool eq = p1 == p2;  // synthesized from <=>
-    bool lt = p1 < p2;   // synthesized from <=>
-    bool ge = p1 >= p2;  // synthesized from <=>
-    return 0;
-}
 ```
 
 ---
@@ -304,15 +287,7 @@ These features are essential for modern C++ and widely used in production code:
    - **Impact**: Functional programming style, performance
    - **Estimated effort**: 4 weeks (after templates)
 
-### **✅ Completed C++20 Features** (Recently Added)
 
-1. **Spaceship operator** ⭐⭐⭐ ✅ **COMPLETE** 🎉
-   - Three-way comparison `<=>`
-   - Automatic synthesis of six comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`
-   - Support for both manual implementation and `= default`
-   - Member function call generation for `operator<=>`
-   - **Impact**: Greatly simplified comparison operator implementation
-   - **Status**: Fully working with comprehensive tests
 
 ### **Summary of Missing Features by Category**
 
@@ -564,9 +539,3 @@ This project is open source. See the repository for license details.
 4. **Template completion** - Non-type parameters in complex expressions  
 5. **OOP Completeness** - Friends and nested classes
 6. **C++20 features** - Concepts, ranges, range-based for loops
-
----
-
-## 🎯 **Next Steps**
-
-For detailed recommendations on what features to implement next, including prioritization and implementation approaches, see **[Recommended Next Features](docs/NEXT_FEATURES.md)**.
