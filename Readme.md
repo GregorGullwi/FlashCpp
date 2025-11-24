@@ -219,16 +219,6 @@ int main() {
 - ✅ **Fold expressions**: C++17 fold expressions with all 4 patterns (unary/binary × left/right)
 - ⏳ **Non-type parameters in expressions**: Beyond array sizes (complex expressions)
 
-### **✅ Completed C++20 Features** (Recently Added)
-
-1. **Spaceship operator** ⭐⭐⭐ ✅ **COMPLETE** 🎉
-   - Three-way comparison `<=>`
-   - Automatic synthesis of six comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`
-   - Support for both manual implementation and `= default`
-   - Member function call generation for `operator<=>`
-   - **Impact**: Greatly simplified comparison operator implementation
-   - **Status**: Fully working with comprehensive tests
-
 ### **⏳ Remaining Features**
 
 **OOP Completeness:**
