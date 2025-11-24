@@ -3468,9 +3468,13 @@ private:
 					// Special handling for passing addresses (this pointer or large struct references)
 					// For member functions: first arg is always "this" pointer (pass address)
 					// For structs: small structs (≤8 bytes) are passed by VALUE, large structs by reference
+					// UNLESS the parameter is explicitly a reference type
 					bool should_pass_address = false;
 					if (call_op.is_member_function && i == 0) {
 						// First argument of member function is always "this" pointer
+						should_pass_address = true;
+					} else if (arg.is_reference) {
+						// Parameter is explicitly a reference - always pass by address
 						should_pass_address = true;
 					} else if (arg.type == Type::Struct && std::holds_alternative<std::string_view>(arg.value)) {
 						// Check struct size - only pass by address if larger than 8 bytes
@@ -4189,9 +4193,9 @@ private:
 		flushAllDirtyRegisters();
 
 		// Get result offset
-		int result_offset = 0;
-		const TempVar& result_var = op.result;
-		result_offset = getStackOffsetFromTempVar(result_var);
+		assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
+		const TempVar& result_var = std::get<TempVar>(op.result.value);
+		int result_offset = getStackOffsetFromTempVar(result_var);
 		variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
 
 		// Get object offset
@@ -4251,8 +4255,10 @@ private:
 		textSectionData.push_back(0xFF); // CALL r/m64
 		textSectionData.push_back(0xD0); // ModR/M: RAX
 
-		// Step 5: Store return value from RAX to result variable (64-bit for now - TODO: track return type)
-		emitMovToFrame(X64Register::RAX, result_offset); // Always 64-bit for now
+		// Step 5: Store return value from RAX to result variable using the correct size
+		if (op.result.type != Type::Void) {
+			emitMovToFrameBySize(X64Register::RAX, result_offset, op.result.size_in_bits);
+		}
 
 		regAlloc.reset();
 	}

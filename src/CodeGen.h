@@ -4346,10 +4346,19 @@ private:
 								lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
 							}
 							call_op.args.push_back(lhs_arg);
-							
+						
 							// Add the RHS as the second argument
-							call_op.args.push_back(toTypedValue(rhsIrOperands));
-							
+							// Check if parameter expects a reference
+							TypedValue rhs_arg = toTypedValue(rhsIrOperands);
+							if (param_types.size() > 0) {
+								// Check if first parameter is a reference
+								const TypeSpecifierNode& param_type = param_types[0];
+								if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+									rhs_arg.is_reference = true;
+								}
+							}
+							call_op.args.push_back(rhs_arg);
+						
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 							
 							// Return the result
@@ -5555,7 +5564,11 @@ private:
 		if (is_virtual_call && vtable_index >= 0) {
 			// Generate virtual function call using VirtualCallOp
 			VirtualCallOp vcall_op;
-			vcall_op.result = ret_var;
+			// Get return type from function declaration
+			const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
+			vcall_op.result.type = return_type.type();
+			vcall_op.result.size_in_bits = static_cast<int>(return_type.size_in_bits());
+			vcall_op.result.value = ret_var;
 			vcall_op.object_type = object_type.type();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			vcall_op.object = object_name;

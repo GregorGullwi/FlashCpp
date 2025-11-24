@@ -504,6 +504,7 @@ struct TypedValue {
 	Type type = Type::Void;	// 4 bytes (enum)
 	int size_in_bits = 0;	// 4 bytes
 	IrValue value;          // 32 bytes (variant)
+	bool is_reference = false;  // True if this should be passed by reference (address)
 };
 
 // Helper function to print TypedValue
@@ -644,7 +645,7 @@ struct DestructorCallOp {
 
 // Virtual function call through vtable
 struct VirtualCallOp {
-	TempVar result;                                  // Result temporary variable
+	TypedValue result;                               // Return value (type, size, and result temp var)
 	Type object_type;                                // Type of the object
 	int object_size;                                 // Size of object in bits
 	std::variant<std::string_view, TempVar> object;  // Object instance ('this')
@@ -1588,7 +1589,8 @@ public:
 		{
 			// %result = virtual_call %object, vtable_index, [args...]
 			const VirtualCallOp& op = getTypedPayload<VirtualCallOp>();
-			oss << '%' << op.result.var_number << " = virtual_call ";
+			assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
+			oss << '%' << std::get<TempVar>(op.result.value).var_number << " = virtual_call ";
 
 			// Object type and size
 			auto type_info = gNativeTypes.find(op.object_type);
@@ -1596,7 +1598,7 @@ public:
 				oss << type_info->second->name_;
 			}
 			oss << op.object_size << " %";
-
+			
 			// Object (this pointer)
 			if (std::holds_alternative<TempVar>(op.object))
 				oss << std::get<TempVar>(op.object).var_number;
