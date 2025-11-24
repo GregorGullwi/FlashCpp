@@ -10035,6 +10035,24 @@ ParseResult Parser::parse_template_declaration() {
 		consume_token(); // consume '>'
 	}
 
+	// Check if this is a nested template specialization (for template member functions of template classes)
+	// Pattern: template<> template<> ReturnType ClassName<Args>::FunctionName<Args>(...)
+	if (is_specialization && peek_token().has_value() && 
+	    peek_token()->type() == Token::Type::Keyword && 
+	    peek_token()->value() == "template") {
+		std::cerr << "DEBUG: Nested template<> detected, parsing inner template\n";
+		
+		// Recursively parse the inner template<>
+		// This handles: template<> template<> int Processor<int>::process<SmallStruct>(...)
+		auto inner_result = parse_template_declaration();
+		if (inner_result.is_error()) {
+			return inner_result;
+		}
+		
+		// The inner parse_template_declaration handles the rest, so we're done
+		return saved_position.success();
+	}
+
 	// Now parse what comes after the template parameter list
 	// We support function templates and class templates
 
@@ -14701,25 +14719,23 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	std::string_view class_name = class_name_token.value();
 	consume_token();
 
-	// Check for template arguments: <T>, <K, V>, etc.
-	if (!peek_token().has_value() || peek_token()->value() != "<") {
-		restore_token_position(saved_pos);
-		return std::nullopt;
-	}
+	// Check for template arguments after class name: ClassName<T>, etc.
+	// This is optional - only present for template classes
+	if (peek_token().has_value() && peek_token()->value() == "<") {
+		// Parse template arguments (these should match the template parameters)
+		// For now, we'll just skip over them - we know they're template parameters
+		consume_token();  // consume '<'
 
-	// Parse template arguments (these should match the template parameters)
-	// For now, we'll just skip over them - we know they're template parameters
-	consume_token();  // consume '<'
-
-	// Skip template arguments until we find '>'
-	int angle_bracket_depth = 1;
-	while (angle_bracket_depth > 0 && peek_token().has_value()) {
-		if (peek_token()->value() == "<") {
-			angle_bracket_depth++;
-		} else if (peek_token()->value() == ">") {
-			angle_bracket_depth--;
+		// Skip template arguments until we find '>'
+		int angle_bracket_depth = 1;
+		while (angle_bracket_depth > 0 && peek_token().has_value()) {
+			if (peek_token()->value() == "<") {
+				angle_bracket_depth++;
+			} else if (peek_token()->value() == ">") {
+				angle_bracket_depth--;
+			}
+			consume_token();
 		}
-		consume_token();
 	}
 
 	// Check for '::'
@@ -14740,6 +14756,21 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	Token function_name_token = *peek_token();
 	consume_token();
+
+	// Check for template arguments after function name: handle<SmallStruct>
+	if (peek_token().has_value() && peek_token()->value() == "<") {
+		// Skip template arguments until we find '>'
+		consume_token();  // consume '<'
+		int angle_bracket_depth = 1;
+		while (angle_bracket_depth > 0 && peek_token().has_value()) {
+			if (peek_token()->value() == "<") {
+				angle_bracket_depth++;
+			} else if (peek_token()->value() == ">") {
+				angle_bracket_depth--;
+			}
+			consume_token();
+		}
+	}
 
 	// Parse parameter list
 	if (!peek_token().has_value() || peek_token()->value() != "(") {
