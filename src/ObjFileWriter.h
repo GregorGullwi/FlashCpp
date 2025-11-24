@@ -1063,126 +1063,256 @@ public:
 		          << " with " << function_symbols.size() << " entries"
 		          << " and " << base_class_names.size() << " base classes" << std::endl;
 
-		// Step 1: Emit RTTI data structure for this class
-		// RTTI structure layout (simplified):
-		//   - 8 bytes: pointer to class name string (or hash)
-		//   - 8 bytes: number of base classes
-		//   - 8*N bytes: pointers to base class RTTI structures
+		// Step 1: Emit MSVC RTTI data structures for this class
+		// MSVC uses a multi-component RTTI format:
+		//   ??_R0 - Type Descriptor
+		//   ??_R1 - Base Class Descriptor(s)
+		//   ??_R2 - Base Class Array
+		//   ??_R3 - Class Hierarchy Descriptor
+		//   ??_R4 - Complete Object Locator
 		
-		uint32_t rtti_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-		std::string rtti_symbol = "__rtti_" + std::string(class_name);
+		std::string mangled_class_name = ".?AV" + class_name + "@@";
 		
-		// For simplicity, we'll use a pointer-sized value (class name hash) instead of a full type_info structure
-		// In a full implementation, we'd have complete RTTI structures
+		// ??_R0 - Type Descriptor (16 bytes header + mangled name)
+		uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::string type_desc_symbol = "??_R0" + mangled_class_name;
 		
-		// Calculate class name hash (simplified type_info)
-		std::hash<std::string_view> hasher;
-		uint64_t class_name_hash = hasher(class_name);
+		std::vector<char> type_desc_data;
+		// vtable pointer (8 bytes) - null
+		for (int i = 0; i < 8; ++i) type_desc_data.push_back(0);
+		// spare pointer (8 bytes) - null
+		for (int i = 0; i < 8; ++i) type_desc_data.push_back(0);
+		// mangled name (null-terminated)
+		for (char c : mangled_class_name) type_desc_data.push_back(c);
+		type_desc_data.push_back(0);
 		
-		// RTTI data: [class_name_hash (8 bytes), num_bases (8 bytes), base_rtti_ptrs...]
-		std::vector<char> rtti_data;
-		uint64_t num_bases = base_class_names.size();
-		rtti_data.reserve(16 + num_bases * 8); // Pre-allocate: hash + num_bases + base pointers
+		add_data(type_desc_data, SectionType::RDATA);
+		auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+		type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+		type_desc_sym->set_value(type_desc_offset);
+		uint32_t type_desc_symbol_index = type_desc_sym->get_index();
 		
-		// Add class name hash
-		for (int i = 0; i < 8; ++i) {
-			rtti_data.push_back(static_cast<char>((class_name_hash >> (i * 8)) & 0xFF));
-		}
+		std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset " 
+		          << type_desc_offset << std::endl;
 		
-		// Add number of base classes
-		for (int i = 0; i < 8; ++i) {
-			rtti_data.push_back(static_cast<char>((num_bases >> (i * 8)) & 0xFF));
-		}
+		// ??_R1 - Base Class Descriptors (one for self + one per base)
+		std::vector<uint32_t> bcd_offsets;
+		std::vector<uint32_t> bcd_symbol_indices;
 		
-		// Reserve space for base class RTTI pointers (we'll add relocations for these)
-		size_t base_ptrs_start = rtti_data.size();
+		// Self descriptor
+		uint32_t self_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::string self_bcd_symbol = "??_R1" + mangled_class_name + "8";  // "8" suffix for self
+		std::vector<char> self_bcd_data;
+		
+		// type_descriptor pointer (8 bytes) - will add relocation
+		for (int i = 0; i < 8; ++i) self_bcd_data.push_back(0);
+		// num_contained_bases (4 bytes)
+		uint32_t num_contained = static_cast<uint32_t>(base_class_names.size());
+		for (int i = 0; i < 4; ++i) self_bcd_data.push_back((num_contained >> (i * 8)) & 0xFF);
+		// mdisp (4 bytes) - 0 for self
+		for (int i = 0; i < 4; ++i) self_bcd_data.push_back(0);
+		// pdisp (4 bytes) - -1 for non-virtual
+		for (int i = 0; i < 4; ++i) self_bcd_data.push_back(0xFF);
+		// vdisp (4 bytes) - 0
+		for (int i = 0; i < 4; ++i) self_bcd_data.push_back(0);
+		// attributes (4 bytes) - 0 for self
+		for (int i = 0; i < 4; ++i) self_bcd_data.push_back(0);
+		
+		add_data(self_bcd_data, SectionType::RDATA);
+		auto self_bcd_sym = coffi_.add_symbol(self_bcd_symbol);
+		self_bcd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		self_bcd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		self_bcd_sym->set_section_number(rdata_section->get_index() + 1);
+		self_bcd_sym->set_value(self_bcd_offset);
+		
+		// Add relocation for type_descriptor pointer in self BCD
+		COFFI::rel_entry_generic self_bcd_reloc;
+		self_bcd_reloc.virtual_address = self_bcd_offset;
+		self_bcd_reloc.symbol_table_index = type_desc_symbol_index;
+		self_bcd_reloc.type = IMAGE_REL_AMD64_ADDR64;
+		rdata_section->add_relocation_entry(&self_bcd_reloc);
+		
+		bcd_offsets.push_back(self_bcd_offset);
+		bcd_symbol_indices.push_back(self_bcd_sym->get_index());
+		
+		std::cerr << "  Added ??_R1 self BCD '" << self_bcd_symbol << "' at offset " 
+		          << self_bcd_offset << std::endl;
+		
+		// Base class descriptors
 		for (size_t i = 0; i < base_class_names.size(); ++i) {
-			for (int j = 0; j < 8; ++j) {
-				rtti_data.push_back(0);
-			}
+			std::string base_mangled = ".?AV" + base_class_names[i] + "@@";
+			std::string base_type_desc_symbol = "??_R0" + base_mangled;
+			
+			uint32_t base_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			std::string base_bcd_symbol = "??_R1" + mangled_class_name + "0" + base_mangled;
+			std::vector<char> base_bcd_data;
+			
+			// type_descriptor pointer (8 bytes) - will add relocation
+			for (int j = 0; j < 8; ++j) base_bcd_data.push_back(0);
+			// num_contained_bases (4 bytes) - 0 for now (simplified)
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
+			// mdisp (4 bytes) - offset in class (0 for now, simplified)
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
+			// pdisp (4 bytes) - -1 for non-virtual
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0xFF);
+			// vdisp (4 bytes) - 0
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
+			// attributes (4 bytes) - 0
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
+			
+			add_data(base_bcd_data, SectionType::RDATA);
+			auto base_bcd_sym = coffi_.add_symbol(base_bcd_symbol);
+			base_bcd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+			base_bcd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			base_bcd_sym->set_section_number(rdata_section->get_index() + 1);
+			base_bcd_sym->set_value(base_bcd_offset);
+			
+			// Add relocation for type_descriptor pointer in base BCD
+			uint32_t base_type_desc_index = get_or_create_symbol_index(base_type_desc_symbol);
+			COFFI::rel_entry_generic base_bcd_reloc;
+			base_bcd_reloc.virtual_address = base_bcd_offset;
+			base_bcd_reloc.symbol_table_index = base_type_desc_index;
+			base_bcd_reloc.type = IMAGE_REL_AMD64_ADDR64;
+			rdata_section->add_relocation_entry(&base_bcd_reloc);
+			
+			bcd_offsets.push_back(base_bcd_offset);
+			bcd_symbol_indices.push_back(base_bcd_sym->get_index());
+			
+			std::cerr << "  Added ??_R1 base BCD for " << base_class_names[i] << std::endl;
 		}
 		
-		// Add RTTI data to .rdata section
-		add_data(rtti_data, SectionType::RDATA);
+		// ??_R2 - Base Class Array (pointers to all BCDs)
+		uint32_t bca_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::string bca_symbol = "??_R2" + mangled_class_name + "8";
+		std::vector<char> bca_data;
 		
-		// Add or update symbol for RTTI data (might already exist as forward reference)
-		std::cerr << "  DEBUG: Adding/updating RTTI symbol '" << rtti_symbol << "' at offset " << rtti_offset << std::endl;
-		auto symbols = coffi_.get_symbols();
-		COFFI::symbol* rtti_sym = nullptr;
-		
-		// Check if symbol already exists (as a forward reference)
-		for (size_t i = 0; i < symbols->size(); ++i) {
-			std::string current_name = (*symbols)[i].get_name();
-			if (current_name == rtti_symbol) {
-				std::cerr << "  DEBUG: Found existing RTTI symbol at array index " << i << std::endl;
-				rtti_sym = &(*symbols)[i];
-				break;
-			}
+		// Array of pointers to BCDs
+		for (size_t i = 0; i < bcd_offsets.size(); ++i) {
+			for (int j = 0; j < 8; ++j) bca_data.push_back(0);
 		}
 		
-		// If not found, add new symbol
-		if (!rtti_sym) {
-			std::cerr << "  DEBUG: Creating new RTTI symbol" << std::endl;
-			rtti_sym = coffi_.add_symbol(rtti_symbol);
+		add_data(bca_data, SectionType::RDATA);
+		auto bca_sym = coffi_.add_symbol(bca_symbol);
+		bca_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		bca_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		bca_sym->set_section_number(rdata_section->get_index() + 1);
+		bca_sym->set_value(bca_offset);
+		uint32_t bca_symbol_index = bca_sym->get_index();
+		
+		// Add relocations for BCD pointers in BCA
+		for (size_t i = 0; i < bcd_offsets.size(); ++i) {
+			COFFI::rel_entry_generic bca_reloc;
+			bca_reloc.virtual_address = bca_offset + static_cast<uint32_t>(i * 8);
+			bca_reloc.symbol_table_index = bcd_symbol_indices[i];
+			bca_reloc.type = IMAGE_REL_AMD64_ADDR64;
+			rdata_section->add_relocation_entry(&bca_reloc);
 		}
 		
-		// Set symbol properties (whether new or existing)
-		rtti_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		rtti_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		rtti_sym->set_section_number(rdata_section->get_index() + 1);
-		rtti_sym->set_value(rtti_offset);
+		std::cerr << "  Added ??_R2 Base Class Array '" << bca_symbol << "' at offset " 
+		          << bca_offset << std::endl;
 		
-		// Get the correct file index from COFFI (includes aux entries)
-		uint32_t rtti_symbol_index = rtti_sym->get_index();
+		// ??_R3 - Class Hierarchy Descriptor
+		uint32_t chd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::string chd_symbol = "??_R3" + mangled_class_name + "8";
+		std::vector<char> chd_data;
 		
-		std::cerr << "  Added RTTI structure '" << rtti_symbol << "' at offset " << rtti_offset 
-		          << " with file symbol index " << rtti_symbol_index << std::endl;
+		// signature (4 bytes) - 0
+		for (int i = 0; i < 4; ++i) chd_data.push_back(0);
+		// attributes (4 bytes) - 0 (can be extended for multiple/virtual inheritance)
+		for (int i = 0; i < 4; ++i) chd_data.push_back(0);
+		// num_base_classes (4 bytes) - total including self
+		uint32_t total_bases = static_cast<uint32_t>(bcd_offsets.size());
+		for (int i = 0; i < 4; ++i) chd_data.push_back((total_bases >> (i * 8)) & 0xFF);
+		// base_class_array pointer (8 bytes) - will add relocation
+		for (int i = 0; i < 8; ++i) chd_data.push_back(0);
 		
-		// Add relocations for base class RTTI pointers
-		for (size_t i = 0; i < base_class_names.size(); ++i) {
-			std::string base_rtti_symbol = "__rtti_" + std::string(base_class_names[i]);
-			// 16 bytes = sizeof(class_name_hash) + sizeof(num_bases)
-			constexpr uint32_t RTTI_HEADER_SIZE = 16;
-			uint32_t reloc_offset = rtti_offset + RTTI_HEADER_SIZE + static_cast<uint32_t>(i * 8);
-			
-			uint32_t base_symbol_index = get_or_create_symbol_index(base_rtti_symbol);
-			
-			COFFI::rel_entry_generic relocation;
-			relocation.virtual_address = reloc_offset;
-			relocation.symbol_table_index = base_symbol_index;
-			relocation.type = IMAGE_REL_AMD64_ADDR64;
-			
-			rdata_section->add_relocation_entry(&relocation);
-			
-			std::cerr << "  Added RTTI relocation for base class " << base_class_names[i] << std::endl;
-		}
+		add_data(chd_data, SectionType::RDATA);
+		auto chd_sym = coffi_.add_symbol(chd_symbol);
+		chd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		chd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		chd_sym->set_section_number(rdata_section->get_index() + 1);
+		chd_sym->set_value(chd_offset);
+		uint32_t chd_symbol_index = chd_sym->get_index();
+		
+		// Add relocation for base_class_array pointer in CHD
+		COFFI::rel_entry_generic chd_reloc;
+		chd_reloc.virtual_address = chd_offset + 12;  // After signature + attributes + num_base_classes
+		chd_reloc.symbol_table_index = bca_symbol_index;
+		chd_reloc.type = IMAGE_REL_AMD64_ADDR64;
+		rdata_section->add_relocation_entry(&chd_reloc);
+		
+		std::cerr << "  Added ??_R3 Class Hierarchy Descriptor '" << chd_symbol << "' at offset " 
+		          << chd_offset << std::endl;
+		
+		// ??_R4 - Complete Object Locator
+		uint32_t col_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		std::string col_symbol = "??_R4" + mangled_class_name + "6B@";  // "6B@" suffix for COL
+		std::vector<char> col_data;
+		
+		// signature (4 bytes) - 1 for 64-bit
+		col_data.push_back(1);
+		for (int i = 1; i < 4; ++i) col_data.push_back(0);
+		// offset (4 bytes) - 0 for primary vtable
+		for (int i = 0; i < 4; ++i) col_data.push_back(0);
+		// cd_offset (4 bytes) - 0
+		for (int i = 0; i < 4; ++i) col_data.push_back(0);
+		// type_descriptor pointer (8 bytes) - will add relocation
+		for (int i = 0; i < 8; ++i) col_data.push_back(0);
+		// hierarchy pointer (8 bytes) - will add relocation
+		for (int i = 0; i < 8; ++i) col_data.push_back(0);
+		
+		add_data(col_data, SectionType::RDATA);
+		auto col_sym = coffi_.add_symbol(col_symbol);
+		col_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		col_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		col_sym->set_section_number(rdata_section->get_index() + 1);
+		col_sym->set_value(col_offset);
+		uint32_t col_symbol_index = col_sym->get_index();
+		
+		// Add relocations for type_descriptor and hierarchy pointers in COL
+		COFFI::rel_entry_generic col_type_reloc;
+		col_type_reloc.virtual_address = col_offset + 12;  // After signature + offset + cd_offset
+		col_type_reloc.symbol_table_index = type_desc_symbol_index;
+		col_type_reloc.type = IMAGE_REL_AMD64_ADDR64;
+		rdata_section->add_relocation_entry(&col_type_reloc);
+		
+		COFFI::rel_entry_generic col_hier_reloc;
+		col_hier_reloc.virtual_address = col_offset + 20;  // After type_descriptor pointer
+		col_hier_reloc.symbol_table_index = chd_symbol_index;
+		col_hier_reloc.type = IMAGE_REL_AMD64_ADDR64;
+		rdata_section->add_relocation_entry(&col_hier_reloc);
+		
+		std::cerr << "  Added ??_R4 Complete Object Locator '" << col_symbol << "' at offset " 
+		          << col_offset << std::endl;
 		
 		// Step 2: Emit vtable structure
-		// Layout: [RTTI pointer (8 bytes), function pointers...]
+		// Layout: [COL pointer (8 bytes), function pointers...]
 		uint32_t vtable_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 		
-		// Add RTTI pointer + function pointers
-		size_t vtable_size = (1 + function_symbols.size()) * 8;  // 1 RTTI ptr + N function ptrs
+		// Add COL pointer + function pointers
+		size_t vtable_size = (1 + function_symbols.size()) * 8;  // 1 COL ptr + N function ptrs
 		std::vector<char> vtable_data(vtable_size, 0);
 		
 		// Add the vtable data to .rdata section
 		add_data(vtable_data, SectionType::RDATA);
 		
-		// Add relocation for RTTI pointer at vtable[0] (before actual vtable)
+		// Add relocation for COL (Complete Object Locator) pointer at vtable[0] (before actual vtable)
 		{
-			uint32_t rtti_reloc_offset = vtable_offset;
+			uint32_t col_reloc_offset = vtable_offset;
 			
-			std::cerr << "  DEBUG: Creating RTTI relocation at offset " << rtti_reloc_offset 
-			          << " pointing to symbol '" << rtti_symbol << "' (file index " << rtti_symbol_index << ")" << std::endl;
+			std::cerr << "  DEBUG: Creating COL relocation at offset " << col_reloc_offset 
+			          << " pointing to symbol '" << col_symbol << "' (file index " << col_symbol_index << ")" << std::endl;
 			
 			COFFI::rel_entry_generic relocation;
-			relocation.virtual_address = rtti_reloc_offset;
-			relocation.symbol_table_index = rtti_symbol_index;
+			relocation.virtual_address = col_reloc_offset;
+			relocation.symbol_table_index = col_symbol_index;
 			relocation.type = IMAGE_REL_AMD64_ADDR64;
 			
 			rdata_section->add_relocation_entry(&relocation);
 			
-			std::cerr << "  Added RTTI pointer relocation at vtable[-1]" << std::endl;
+			std::cerr << "  Added COL pointer relocation at vtable[-1]" << std::endl;
 		}
 		
 		// Step 3: Add a symbol for vtable (points to first virtual function, AFTER RTTI pointer)

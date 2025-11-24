@@ -3,6 +3,8 @@
 #include <sstream>
 #include <set>
 #include <functional>
+#include <cstdlib>
+#include <cstring>
 
 std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<std::string, const TypeInfo*, StringHash, StringEqual> gTypesByName;
@@ -775,19 +777,31 @@ void StructTypeInfo::buildRTTI() {
         return;
     }
 
-    // Create RTTI info
-    // Note: In a real implementation, we'd allocate this properly
-    // For now, we'll use static storage
+    // Create RTTI info with MSVC multi-structure format
     static std::vector<RTTITypeInfo> rtti_storage;
+    static std::vector<MSVCTypeDescriptor*> type_descriptor_storage;
+    static std::vector<MSVCCompleteObjectLocator> col_storage;
+    static std::vector<MSVCClassHierarchyDescriptor> chd_storage;
+    static std::vector<MSVCBaseClassArray*> bca_storage;
+    static std::vector<MSVCBaseClassDescriptor> bcd_storage;
 
     // Create mangled and demangled names
-    std::string mangled_name = "_ZTI" + name;  // Simple mangling: _ZTI + class name
+    std::string mangled_name = ".?AV" + name + "@@";  // MSVC-style mangling for classes
 
     // Allocate RTTI info
     rtti_storage.emplace_back(mangled_name.c_str(), name.c_str(), base_classes.size());
     rtti_info = &rtti_storage.back();
 
-    // Build array of base class type_info pointers
+    // Build ??_R0 - Type Descriptor
+    size_t name_len = mangled_name.length() + 1;
+    MSVCTypeDescriptor* type_desc = (MSVCTypeDescriptor*)malloc(sizeof(MSVCTypeDescriptor) + name_len);
+    type_desc->vtable = nullptr;  // No vtable pointer needed for our purposes
+    type_desc->spare = nullptr;
+    strcpy(type_desc->name, mangled_name.c_str());
+    type_descriptor_storage.push_back(type_desc);
+    rtti_info->type_descriptor = type_desc;
+
+    // Build legacy base class array for compatibility
     if (!base_classes.empty()) {
         static std::vector<const RTTITypeInfo*> base_array_storage;
         size_t base_array_start = base_array_storage.size();
@@ -810,4 +824,71 @@ void StructTypeInfo::buildRTTI() {
 
         rtti_info->base_types = &base_array_storage[base_array_start];
     }
+
+    // Build ??_R1 - Base Class Descriptors (one for each base, plus one for self)
+    size_t total_bases = base_classes.size() + 1;  // +1 for self
+    
+    // Self descriptor (always first)
+    MSVCBaseClassDescriptor self_bcd;
+    self_bcd.type_descriptor = type_desc;
+    self_bcd.num_contained_bases = static_cast<uint32_t>(base_classes.size());
+    self_bcd.mdisp = 0;      // No displacement for self
+    self_bcd.pdisp = -1;     // Not a virtual base
+    self_bcd.vdisp = 0;
+    self_bcd.attributes = 0; // No special attributes for self
+    bcd_storage.push_back(self_bcd);
+    rtti_info->base_descriptors.push_back(&bcd_storage.back());
+
+    // Base class descriptors
+    for (size_t i = 0; i < base_classes.size(); ++i) {
+        const auto& base = base_classes[i];
+        
+        if (base.type_index >= gTypeInfo.size()) {
+            continue;
+        }
+
+        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const StructTypeInfo* base_info = base_type.getStructInfo();
+
+        if (base_info && base_info->rtti_info && base_info->rtti_info->type_descriptor) {
+            MSVCBaseClassDescriptor base_bcd;
+            base_bcd.type_descriptor = base_info->rtti_info->type_descriptor;
+            base_bcd.num_contained_bases = static_cast<uint32_t>(base_info->base_classes.size());
+            base_bcd.mdisp = static_cast<int32_t>(base.offset);  // Offset of base in derived class
+            base_bcd.pdisp = base.is_virtual ? 0 : -1;  // Virtual base handling
+            base_bcd.vdisp = 0;
+            base_bcd.attributes = base.is_virtual ? 1 : 0;  // Mark virtual bases
+            bcd_storage.push_back(base_bcd);
+            rtti_info->base_descriptors.push_back(&bcd_storage.back());
+        }
+    }
+
+    // Build ??_R2 - Base Class Array
+    MSVCBaseClassArray* bca = (MSVCBaseClassArray*)malloc(
+        sizeof(MSVCBaseClassArray) + (rtti_info->base_descriptors.size() - 1) * sizeof(void*)
+    );
+    for (size_t i = 0; i < rtti_info->base_descriptors.size(); ++i) {
+        bca->base_class_descriptors[i] = rtti_info->base_descriptors[i];
+    }
+    bca_storage.push_back(bca);
+    rtti_info->bca = bca;
+
+    // Build ??_R3 - Class Hierarchy Descriptor
+    MSVCClassHierarchyDescriptor chd;
+    chd.signature = 0;
+    chd.attributes = 0;  // Can be extended for multiple/virtual inheritance flags
+    chd.num_base_classes = static_cast<uint32_t>(rtti_info->base_descriptors.size());
+    chd.base_class_array = bca;
+    chd_storage.push_back(chd);
+    rtti_info->chd = &chd_storage.back();
+
+    // Build ??_R4 - Complete Object Locator
+    MSVCCompleteObjectLocator col;
+    col.signature = 1;  // 1 for 64-bit
+    col.offset = 0;     // Offset of vtable in complete class (0 for primary base)
+    col.cd_offset = 0;  // Constructor displacement offset
+    col.type_descriptor = type_desc;
+    col.hierarchy = rtti_info->chd;
+    col_storage.push_back(col);
+    rtti_info->col = &col_storage.back();
 }

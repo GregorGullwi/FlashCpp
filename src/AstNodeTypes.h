@@ -212,15 +212,66 @@ struct StructMemberFunction {
 		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
 };
 
-// Runtime Type Information (RTTI) structure
+// MSVC RTTI structures - multi-component format for runtime compatibility
+// These structures match the MSVC ABI for RTTI to work with __dynamic_cast
+
+// ??_R0 - Type Descriptor (simplified type_info equivalent)
+struct MSVCTypeDescriptor {
+	const void* vtable;              // Pointer to type_info vtable (usually null in our case)
+	const void* spare;               // Reserved/spare pointer (unused)
+	char name[1];                    // Variable-length mangled name (null-terminated)
+};
+
+// ??_R1 - Base Class Descriptor
+struct MSVCBaseClassDescriptor {
+	const MSVCTypeDescriptor* type_descriptor;  // Pointer to base class type descriptor (??_R0)
+	uint32_t num_contained_bases;    // Number of nested base classes
+	int32_t mdisp;                   // Member displacement (offset in class)
+	int32_t pdisp;                   // Vbtable displacement (-1 if not virtual base)
+	int32_t vdisp;                   // Displacement inside vbtable (0 if not virtual base)
+	uint32_t attributes;             // Flags (virtual, ambiguous, etc.)
+};
+
+// ??_R2 - Base Class Array (array of pointers to ??_R1)
+struct MSVCBaseClassArray {
+	const MSVCBaseClassDescriptor* base_class_descriptors[1]; // Variable-length array
+};
+
+// ??_R3 - Class Hierarchy Descriptor
+struct MSVCClassHierarchyDescriptor {
+	uint32_t signature;              // Always 0
+	uint32_t attributes;             // Bit flags (multiple inheritance, virtual inheritance, etc.)
+	uint32_t num_base_classes;       // Number of base classes (including self)
+	const MSVCBaseClassArray* base_class_array;  // Pointer to base class array (??_R2)
+};
+
+// ??_R4 - Complete Object Locator (referenced by vtable)
+struct MSVCCompleteObjectLocator {
+	uint32_t signature;              // 0 for 32-bit, 1 for 64-bit
+	uint32_t offset;                 // Offset of this vtable in the complete class
+	uint32_t cd_offset;              // Constructor displacement offset
+	const MSVCTypeDescriptor* type_descriptor;        // Pointer to type descriptor (??_R0)
+	const MSVCClassHierarchyDescriptor* hierarchy;    // Pointer to class hierarchy (??_R3)
+};
+
+// Legacy RTTITypeInfo for compatibility with existing code
+// This will hold references to the MSVC structures
 struct RTTITypeInfo {
 	const char* type_name;           // Mangled type name
 	const char* demangled_name;      // Human-readable type name
 	size_t num_bases;                // Number of base classes
 	const RTTITypeInfo** base_types; // Array of pointers to base class type_info
 
+	// MSVC RTTI structures (new)
+	MSVCCompleteObjectLocator* col;         // ??_R4 - Complete Object Locator
+	MSVCClassHierarchyDescriptor* chd;      // ??_R3 - Class Hierarchy Descriptor
+	MSVCBaseClassArray* bca;                // ??_R2 - Base Class Array
+	std::vector<MSVCBaseClassDescriptor*> base_descriptors;  // ??_R1 - Base Class Descriptors
+	MSVCTypeDescriptor* type_descriptor;    // ??_R0 - Type Descriptor
+
 	RTTITypeInfo(const char* mangled, const char* demangled, size_t num_base = 0)
-		: type_name(mangled), demangled_name(demangled), num_bases(num_base), base_types(nullptr) {}
+		: type_name(mangled), demangled_name(demangled), num_bases(num_base), base_types(nullptr),
+		  col(nullptr), chd(nullptr), bca(nullptr), type_descriptor(nullptr) {}
 
 	// Check if this type is derived from another type (for dynamic_cast)
 	bool isDerivedFrom(const RTTITypeInfo* base) const {
