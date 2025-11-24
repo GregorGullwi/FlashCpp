@@ -9062,10 +9062,10 @@ private:
 
 	// VTable tracking
 	struct VTableInfo {
-		std::string_view vtable_symbol;  // e.g., "??_7Base@@6B@"
-		std::string_view class_name;
-		std::vector<std::string_view> function_symbols;  // Mangled function names in vtable order
-		std::vector<std::string_view> base_class_names;  // Base class names for RTTI
+		std::string vtable_symbol;  // e.g., "??_7Base@@6B@"
+		std::string class_name;
+		std::vector<std::string> function_symbols;  // Mangled function names in vtable order
+		std::vector<std::string> base_class_names;  // Base class names for RTTI
 	};
 	std::vector<VTableInfo> vtables_;
 

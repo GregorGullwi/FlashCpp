@@ -216,6 +216,9 @@ int main(int argc, char *argv[]) {
         // Generate all collected lambdas after visiting all nodes
         converter.generateCollectedLambdas();
         
+        // Generate all collected local struct member functions after visiting all nodes
+        converter.generateCollectedLocalStructMembers();
+        
         // Template instantiations now happen during parsing
         // converter.generateCollectedTemplateInstantiations();
     }

@@ -1054,8 +1054,8 @@ public:
 	// function_symbols: vector of mangled function names in vtable order
 	// class_name: name of the class for RTTI
 	// base_class_names: vector of base class names for RTTI
-	void add_vtable(std::string_view vtable_symbol, const std::vector<std::string_view>& function_symbols,
-	                std::string_view class_name, const std::vector<std::string_view>& base_class_names) {
+	void add_vtable(const std::string& vtable_symbol, const std::vector<std::string>& function_symbols,
+	                const std::string& class_name, const std::vector<std::string>& base_class_names) {
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 		
 		std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
@@ -1105,14 +1105,38 @@ public:
 		// Add RTTI data to .rdata section
 		add_data(rtti_data, SectionType::RDATA);
 		
-		// Add a symbol for RTTI data
-		auto rtti_sym = coffi_.add_symbol(rtti_symbol);
+		// Add or update symbol for RTTI data (might already exist as forward reference)
+		std::cerr << "  DEBUG: Adding/updating RTTI symbol '" << rtti_symbol << "' at offset " << rtti_offset << std::endl;
+		auto symbols = coffi_.get_symbols();
+		COFFI::symbol* rtti_sym = nullptr;
+		
+		// Check if symbol already exists (as a forward reference)
+		for (size_t i = 0; i < symbols->size(); ++i) {
+			std::string current_name = (*symbols)[i].get_name();
+			if (current_name == rtti_symbol) {
+				std::cerr << "  DEBUG: Found existing RTTI symbol at array index " << i << std::endl;
+				rtti_sym = &(*symbols)[i];
+				break;
+			}
+		}
+		
+		// If not found, add new symbol
+		if (!rtti_sym) {
+			std::cerr << "  DEBUG: Creating new RTTI symbol" << std::endl;
+			rtti_sym = coffi_.add_symbol(rtti_symbol);
+		}
+		
+		// Set symbol properties (whether new or existing)
 		rtti_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 		rtti_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		rtti_sym->set_section_number(rdata_section->get_index() + 1);
 		rtti_sym->set_value(rtti_offset);
 		
-		std::cerr << "  Added RTTI structure '" << rtti_symbol << "' at offset " << rtti_offset << std::endl;
+		// Get the correct file index from COFFI (includes aux entries)
+		uint32_t rtti_symbol_index = rtti_sym->get_index();
+		
+		std::cerr << "  Added RTTI structure '" << rtti_symbol << "' at offset " << rtti_offset 
+		          << " with file symbol index " << rtti_symbol_index << std::endl;
 		
 		// Add relocations for base class RTTI pointers
 		for (size_t i = 0; i < base_class_names.size(); ++i) {
@@ -1147,7 +1171,9 @@ public:
 		// Add relocation for RTTI pointer at vtable[0] (before actual vtable)
 		{
 			uint32_t rtti_reloc_offset = vtable_offset;
-			uint32_t rtti_symbol_index = get_or_create_symbol_index(rtti_symbol);
+			
+			std::cerr << "  DEBUG: Creating RTTI relocation at offset " << rtti_reloc_offset 
+			          << " pointing to symbol '" << rtti_symbol << "' (file index " << rtti_symbol_index << ")" << std::endl;
 			
 			COFFI::rel_entry_generic relocation;
 			relocation.virtual_address = rtti_reloc_offset;
@@ -1176,18 +1202,18 @@ public:
 			
 			uint32_t reloc_offset = vtable_offset + 8 + static_cast<uint32_t>(i * 8);  // +8 to skip RTTI ptr
 			
-			// Add IMAGE_REL_AMD64_ADDR64 relocation for the function pointer
-			uint32_t symbol_index = get_or_create_symbol_index(std::string(function_symbols[i]));
+			// Get the symbol index (COFFI handles aux entries automatically)
+			uint32_t func_symbol_index = get_or_create_symbol_index(std::string(function_symbols[i]));
 			
 			COFFI::rel_entry_generic relocation;
 			relocation.virtual_address = reloc_offset;
-			relocation.symbol_table_index = symbol_index;
+			relocation.symbol_table_index = func_symbol_index;
 			relocation.type = IMAGE_REL_AMD64_ADDR64;  // 64-bit absolute address
 			
 			rdata_section->add_relocation_entry(&relocation);
 			
 			std::cerr << "  Added relocation for vtable[" << i << "] -> " << function_symbols[i] 
-			          << " at offset " << reloc_offset << std::endl;
+			          << " at offset " << reloc_offset << " (file index " << func_symbol_index << ")" << std::endl;
 		}
 
 		std::cerr << "Added vtable '" << vtable_symbol << "' at offset " << vtable_symbol_offset
@@ -1200,19 +1226,25 @@ public:
 		auto symbols = coffi_.get_symbols();
 		for (size_t i = 0; i < symbols->size(); ++i) {
 			if ((*symbols)[i].get_name() == symbol_name) {
-				return static_cast<uint32_t>(i);
+				std::cerr << "    DEBUG get_or_create_symbol_index: Found existing symbol '" << symbol_name 
+				          << "' at array index " << i << ", file index " << (*symbols)[i].get_index() << std::endl;
+				return (*symbols)[i].get_index();
 			}
 		}
 		
 		// Symbol doesn't exist, create it as an external reference
+		std::cerr << "    DEBUG get_or_create_symbol_index: Creating new symbol '" << symbol_name << "'" << std::endl;
 		auto symbol = coffi_.add_symbol(symbol_name);
 		symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol->set_section_number(0);  // External reference
 		symbol->set_value(0);
 		
-		// Return the index of the newly added symbol (size - 1 because we just added it)
-		return static_cast<uint32_t>(symbols->size() - 1);
+		// Return the index from COFFI (which includes aux entries)
+		uint32_t file_index = symbol->get_index();
+		std::cerr << "    DEBUG get_or_create_symbol_index: Created new symbol at file index " << file_index 
+		          << " for '" << symbol_name << "'" << std::endl;
+		return file_index;
 	}
 
 protected:
