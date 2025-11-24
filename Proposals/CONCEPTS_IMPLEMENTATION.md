@@ -50,10 +50,11 @@ T add(T a, T b) {
 }
 ```
 
-**Status:** ⏳ Parser infrastructure ready, implementation pending
-- AST node: `RequiresClauseNode` created but not yet used
-- Needs parsing after template parameters
-- Constraint evaluation not yet implemented
+**Status:** ✅ Basic parsing implemented
+- AST node: `RequiresClauseNode` created and used
+- Parsing after template parameters works
+- Constraint expression parsed (but not evaluated)
+- Note: Constraint checking during instantiation not yet implemented
 
 ### 4. Requires Clauses (Trailing)
 **Syntax:** `template<typename T> return_type function(...) requires constraint`
@@ -80,10 +81,11 @@ concept Addable = requires(T a, T b) {
 };
 ```
 
-**Status:** ⏳ Planned
-- AST node: `RequiresExpressionNode` created
-- Parser needs implementation
-- Constraint checking needs semantic analysis
+**Status:** ✅ Basic parsing implemented
+- AST node: `RequiresExpressionNode` created and used
+- Simple requires expressions parse successfully
+- Constraint body is parsed (but not fully validated)
+- Note: Type requirements and nested requirements need more work
 
 ### 6. Abbreviated Function Templates
 **Syntax:** `auto function(ConceptName auto param)`
