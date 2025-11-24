@@ -12621,6 +12621,9 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// Save current position
 		TokenPosition current_pos = save_token_position();
 		std::cerr << "DEBUG: Saved current position, cursor=" << current_pos.cursor_ << std::endl;
+		
+		// Save current parsing context (will be overwritten during template body parsing)
+		const FunctionDeclarationNode* saved_current_function = current_function_;
 
 		// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
 		restore_lexer_position_only(func_decl.template_body_position());
@@ -12673,6 +12676,9 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// Restore original position (lexer only - keep AST nodes we created)
 		restore_lexer_position_only(current_pos);
 		std::cerr << "DEBUG: Restored original position" << std::endl;
+		
+		// Restore parsing context
+		current_function_ = saved_current_function;
 
 		// Remove temporary type infos
 		for (const auto* type_info : temp_type_infos) {
@@ -12695,21 +12701,8 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	// Add to symbol table at GLOBAL scope (not current scope)
 	// Template instantiations should be globally visible, not scoped to where they're called
-	
-	// Save current scope depth
-	size_t scopes_to_exit = 0;
-	while (gSymbolTable.get_current_scope_type() != ScopeType::Global) {
-		gSymbolTable.exit_scope();
-		scopes_to_exit++;
-	}
-	
-	// Insert at global scope
-	gSymbolTable.insert(mangled_token.value(), new_func_node);
-	
-	// Restore scopes
-	for (size_t i = 0; i < scopes_to_exit; ++i) {
-		gSymbolTable.enter_scope(ScopeType::Function);  // Assume function scopes for now
-	}
+	// Use insertGlobal() to add to global scope without modifying the scope stack
+	gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
 
 	// Add to top-level AST so it gets visited by the code generator
 	ast_nodes_.push_back(new_func_node);
