@@ -964,6 +964,18 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	const std::vector<TemplateTypeArg>& template_args,
 	const std::vector<std::string_view>& template_param_names = {}) {
 	
+	// Handle ExpressionNode wrapper - unwrap it and evaluate the inner node
+	if (constraint_expr.is<ExpressionNode>()) {
+		const ExpressionNode& expr_variant = constraint_expr.as<ExpressionNode>();
+		// ExpressionNode is a variant, visit it to get the actual inner node
+		return std::visit([&](const auto& inner) -> ConstraintEvaluationResult {
+			using T = std::decay_t<decltype(inner)>;
+			// Create an ASTNode wrapper around the inner node
+			ASTNode inner_ast_node(const_cast<T*>(&inner));
+			return evaluateConstraint(inner_ast_node, template_args, template_param_names);
+		}, expr_variant);
+	}
+	
 	// For boolean literals (true/false), evaluate directly
 	if (constraint_expr.is<NumericLiteralNode>()) {
 		const auto& literal = constraint_expr.as<NumericLiteralNode>();
@@ -989,6 +1001,18 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	if (constraint_expr.is<IdentifierNode>()) {
 		const auto& ident = constraint_expr.as<IdentifierNode>();
 		std::string_view name = ident.name();
+		
+		// Check for boolean literals written as identifiers (true/false)
+		if (name == "false") {
+			return ConstraintEvaluationResult::failure(
+				"constraint not satisfied: literal constraint is false",
+				"false",
+				"use 'true' or a valid concept expression"
+			);
+		}
+		if (name == "true") {
+			return ConstraintEvaluationResult::success();
+		}
 		
 		// Check if it's a type trait variable (e.g., is_integral_v)
 		if (name.find("_v") != std::string_view::npos || 

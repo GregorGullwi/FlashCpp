@@ -12414,6 +12414,48 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// Note: Template and value arguments aren't used in type substitution
 	}
 
+	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
+	if (template_func.has_requires_clause()) {
+		const RequiresClauseNode& requires_clause = 
+			template_func.requires_clause()->as<RequiresClauseNode>();
+		
+		// Get template parameter names for evaluation
+		std::vector<std::string_view> eval_param_names;
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			}
+		}
+		
+		// Evaluate the constraint with the template arguments
+		auto constraint_result = evaluateConstraint(
+			requires_clause.constraint_expr(), template_args_as_type_args, eval_param_names);
+		
+		if (!constraint_result.satisfied) {
+			// Constraint not satisfied - report detailed error
+			std::cerr << "\n";
+			std::cerr << "error: constraint not satisfied for template function '" 
+			          << template_name << "'\n";
+			std::cerr << "  " << constraint_result.error_message << "\n";
+			if (!constraint_result.failed_requirement.empty()) {
+				std::cerr << "  failed requirement: " << constraint_result.failed_requirement << "\n";
+			}
+			if (!constraint_result.suggestion.empty()) {
+				std::cerr << "  suggestion: " << constraint_result.suggestion << "\n";
+			}
+			std::cerr << "  template arguments: ";
+			for (size_t i = 0; i < template_args_as_type_args.size(); ++i) {
+				if (i > 0) std::cerr << ", ";
+				std::cerr << template_args_as_type_args[i].toString();
+			}
+			std::cerr << "\n\n";
+			
+			// Don't create instantiation - constraint failed
+			recursion_depth--;
+			return std::nullopt;
+		}
+	}
+
 	// Create a token for the mangled name
 	Token mangled_token(Token::Type::Identifier, mangled_name,
 	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
