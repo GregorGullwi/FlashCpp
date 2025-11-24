@@ -5190,6 +5190,14 @@ private:
 									const StructTypeInfo* base_struct = base_type.getStructInfo();
 									if (base_struct) {
 										vtable_info.base_class_names.push_back(base_struct->name);
+										
+										// Add detailed base class info
+										ObjectFileWriter::BaseClassDescriptorInfo bci;
+										bci.name = base_struct->name;
+										bci.num_contained_bases = static_cast<uint32_t>(base_struct->base_classes.size());
+										bci.offset = static_cast<uint32_t>(base.offset);
+										bci.is_virtual = base.is_virtual;
+										vtable_info.base_class_info.push_back(bci);
 									}
 								}
 							}
@@ -8856,7 +8864,8 @@ private:
 
 		// Emit vtables to .rdata section
 		for (const auto& vtable : vtables_) {
-			writer.add_vtable(vtable.vtable_symbol, vtable.function_symbols, vtable.class_name, vtable.base_class_names);
+			writer.add_vtable(vtable.vtable_symbol, vtable.function_symbols, vtable.class_name, 
+			                  vtable.base_class_names, vtable.base_class_info);
 		}
 
 		// Now add pending global variable relocations (after symbols are created)
@@ -9215,7 +9224,8 @@ private:
 		std::string vtable_symbol;  // e.g., "??_7Base@@6B@"
 		std::string class_name;
 		std::vector<std::string> function_symbols;  // Mangled function names in vtable order
-		std::vector<std::string> base_class_names;  // Base class names for RTTI
+		std::vector<std::string> base_class_names;  // Base class names for RTTI (legacy)
+		std::vector<ObjectFileWriter::BaseClassDescriptorInfo> base_class_info; // Detailed base class info for RTTI
 	};
 	std::vector<VTableInfo> vtables_;
 

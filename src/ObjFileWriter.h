@@ -1049,13 +1049,23 @@ public:
 		          << " in " << (is_initialized ? ".data" : ".bss") << " section (size: " << size_in_bytes << " bytes)" << std::endl;
 	}
 
+	// Base class descriptor info for RTTI emission
+	struct BaseClassDescriptorInfo {
+		std::string name;            // Base class name
+		uint32_t num_contained_bases; // Number of bases this base has
+		uint32_t offset;             // Offset of base in derived class (mdisp)
+		bool is_virtual;             // Whether this is a virtual base
+	};
+
 	// Add a vtable to .rdata section with RTTI support
 	// vtable_symbol: mangled vtable symbol name (e.g., "??_7Base@@6B@")
 	// function_symbols: vector of mangled function names in vtable order
 	// class_name: name of the class for RTTI
-	// base_class_names: vector of base class names for RTTI
+	// base_class_names: vector of base class names for RTTI (legacy)
+	// base_class_info: detailed base class information for proper RTTI
 	void add_vtable(const std::string& vtable_symbol, const std::vector<std::string>& function_symbols,
-	                const std::string& class_name, const std::vector<std::string>& base_class_names) {
+	                const std::string& class_name, const std::vector<std::string>& base_class_names,
+	                const std::vector<BaseClassDescriptorInfo>& base_class_info) {
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 		
 		std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
@@ -1144,8 +1154,9 @@ public:
 		          << self_bcd_offset << std::endl;
 		
 		// Base class descriptors
-		for (size_t i = 0; i < base_class_names.size(); ++i) {
-			std::string base_mangled = ".?AV" + base_class_names[i] + "@@";
+		for (size_t i = 0; i < base_class_info.size(); ++i) {
+			const auto& bci = base_class_info[i];
+			std::string base_mangled = ".?AV" + bci.name + "@@";
 			std::string base_type_desc_symbol = "??_R0" + base_mangled;
 			
 			uint32_t base_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
@@ -1154,16 +1165,25 @@ public:
 			
 			// type_descriptor pointer (8 bytes) - will add relocation
 			for (int j = 0; j < 8; ++j) base_bcd_data.push_back(0);
-			// num_contained_bases (4 bytes) - 0 for now (simplified)
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
-			// mdisp (4 bytes) - offset in class (0 for now, simplified)
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
-			// pdisp (4 bytes) - -1 for non-virtual
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0xFF);
+			
+			// num_contained_bases (4 bytes) - actual value from base class info
+			uint32_t num_contained = bci.num_contained_bases;
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((num_contained >> (j * 8)) & 0xFF);
+			
+			// mdisp (4 bytes) - offset of base in derived class
+			uint32_t mdisp = bci.offset;
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((mdisp >> (j * 8)) & 0xFF);
+			
+			// pdisp (4 bytes) - -1 for non-virtual, 0 for virtual
+			int32_t pdisp = bci.is_virtual ? 0 : -1;
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((pdisp >> (j * 8)) & 0xFF);
+			
 			// vdisp (4 bytes) - 0
 			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
-			// attributes (4 bytes) - 0
-			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
+			
+			// attributes (4 bytes) - 1 for virtual, 0 for non-virtual
+			uint32_t attributes = bci.is_virtual ? 1 : 0;
+			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((attributes >> (j * 8)) & 0xFF);
 			
 			add_data(base_bcd_data, SectionType::RDATA);
 			auto base_bcd_sym = coffi_.add_symbol(base_bcd_symbol);
@@ -1183,7 +1203,7 @@ public:
 			bcd_offsets.push_back(base_bcd_offset);
 			bcd_symbol_indices.push_back(base_bcd_sym->get_index());
 			
-			std::cerr << "  Added ??_R1 base BCD for " << base_class_names[i] << std::endl;
+			std::cerr << "  Added ??_R1 base BCD for " << bci.name << std::endl;
 		}
 		
 		// ??_R2 - Base Class Array (pointers to all BCDs)
@@ -1261,9 +1281,9 @@ public:
 		for (int i = 0; i < 4; ++i) col_data.push_back(0);
 		// cd_offset (4 bytes) - 0
 		for (int i = 0; i < 4; ++i) col_data.push_back(0);
-		// type_descriptor pointer (8 bytes) - will add relocation
+		// type_descriptor pointer (8 bytes) - relocation added at offset+12
 		for (int i = 0; i < 8; ++i) col_data.push_back(0);
-		// hierarchy pointer (8 bytes) - will add relocation
+		// hierarchy pointer (8 bytes) - relocation added at offset+20
 		for (int i = 0; i < 8; ++i) col_data.push_back(0);
 		
 		add_data(col_data, SectionType::RDATA);
