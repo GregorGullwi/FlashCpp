@@ -2197,6 +2197,19 @@ TEST_SUITE("Templates") {
 		run_test_from_file("test_nested_simple.cpp", "Templates:NestedSimple", false);
 	}
 
+	// SFINAE and type traits tests
+	TEST_CASE("SFINAE:EnableIf") {
+		run_test_from_file("test_sfinae_enable_if.cpp", "SFINAE:EnableIf", false);
+	}
+
+	TEST_CASE("SFINAE:IsSame") {
+		run_test_from_file("test_sfinae_is_same.cpp", "SFINAE:IsSame", false);
+	}
+
+	TEST_CASE("SFINAE:TypeTraits") {
+		run_test_from_file("test_sfinae_type_traits.cpp", "SFINAE:TypeTraits", false);
+	}
+
 	TEST_CASE("Templates:ExternCppTemplate") {
 		run_test_from_file("test_extern_cpp_template.cpp", "Templates:ExternCppTemplate", false);
 	}
