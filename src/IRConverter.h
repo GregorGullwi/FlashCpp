@@ -9025,8 +9025,11 @@ private:
 		// JB loop_start (jump if below)
 		int32_t loop_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(textSectionData.size()) - 2;
 		if (loop_offset < -128 || loop_offset > 127) {
-			// Offset too large for int8, use longer form
-			emitJumpIfBelow(126);  // Jump forward to a longer jump (should not happen in practice)
+			// Offset too large for int8, use two-step jump
+			// 126 is the max safe value that fits in int8 range and allows for a subsequent longer jump
+			// This fallback should not occur in practice with normal RTTI structures
+			constexpr int8_t MAX_SHORT_JUMP = 126;
+			emitJumpIfBelow(MAX_SHORT_JUMP);
 		} else {
 			emitJumpIfBelow(static_cast<int8_t>(loop_offset));
 		}

@@ -1071,6 +1071,9 @@ public:
 		//   ??_R3 - Class Hierarchy Descriptor
 		//   ??_R4 - Complete Object Locator
 		
+		// MSVC class name mangling: .?AV<name>@@
+		// Note: This is a simplified mangling for classes. Full MSVC mangling would handle
+		// templates, namespaces, and other complex types. For basic classes, this format works.
 		std::string mangled_class_name = ".?AV" + class_name + "@@";
 		
 		// ??_R0 - Type Descriptor (16 bytes header + mangled name)
