@@ -1,5 +1,5 @@
 @echo off
-cd /d "C:\Projects\FlashCpp"
+cd /d "%~dp0"
 
 echo Building FlashCpp...
 "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" FlashCpp.vcxproj /p:Configuration=Debug /p:Platform=x64

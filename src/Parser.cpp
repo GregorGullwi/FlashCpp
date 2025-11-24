@@ -7275,15 +7275,22 @@ ParseResult Parser::parse_primary_expression()
 						          << current_token_->value() << "\n";
 						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
 					}
-					
+				
 					// Create TypeSpecifierNode for the constructor call
 					TypeIndex type_index = type_it->second->type_index_;
+					unsigned char type_size = 0;
+					// Look up the size
+					if (type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_info.struct_info_) {
+							type_size = static_cast<unsigned char>(type_info.struct_info_->total_size * 8);
+						}
+					}
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(
-						Type::UserDefined, TypeQualifier::None, type_index, idenfifier_token);
-					
+						Type::Struct, type_index, type_size, idenfifier_token);
+				
 					result = emplace_node<ExpressionNode>(
 						ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
-					
 					return ParseResult::success(*result);
 				}
 				
