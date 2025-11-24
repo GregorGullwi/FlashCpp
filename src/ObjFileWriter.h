@@ -1174,14 +1174,17 @@ public:
 			uint32_t mdisp = bci.offset;
 			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((mdisp >> (j * 8)) & 0xFF);
 			
-			// pdisp (4 bytes) - -1 for non-virtual, 0 for virtual
+			// pdisp (4 bytes) - vbtable displacement
+			// -1 for non-virtual bases (not applicable)
+			// 0+ for virtual bases (offset into vbtable)
 			int32_t pdisp = bci.is_virtual ? 0 : -1;
 			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((pdisp >> (j * 8)) & 0xFF);
 			
-			// vdisp (4 bytes) - 0
+			// vdisp (4 bytes) - displacement inside vbtable (0 for simplicity)
 			for (int j = 0; j < 4; ++j) base_bcd_data.push_back(0);
 			
-			// attributes (4 bytes) - 1 for virtual, 0 for non-virtual
+			// attributes (4 bytes) - flags
+			// Bit 0: virtual base (1 if virtual, 0 if non-virtual)
 			uint32_t attributes = bci.is_virtual ? 1 : 0;
 			for (int j = 0; j < 4; ++j) base_bcd_data.push_back((attributes >> (j * 8)) & 0xFF);
 			
