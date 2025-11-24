@@ -2359,6 +2359,29 @@ private:
 // C++20 Concepts Support
 // ============================================================================
 
+// Compound requirement node: { expression } -> ConceptName
+// Used inside requires expressions with return-type-requirements
+class CompoundRequirementNode {
+public:
+	explicit CompoundRequirementNode(
+		ASTNode expression,
+		std::optional<ASTNode> return_type_constraint = std::nullopt,
+		Token lbrace_token = Token())
+		: expression_(expression),
+		  return_type_constraint_(return_type_constraint),
+		  lbrace_token_(lbrace_token) {}
+
+	const ASTNode& expression() const { return expression_; }
+	const std::optional<ASTNode>& return_type_constraint() const { return return_type_constraint_; }
+	bool has_return_type_constraint() const { return return_type_constraint_.has_value(); }
+	const Token& lbrace_token() const { return lbrace_token_; }
+
+private:
+	ASTNode expression_;                          // The expression inside { }
+	std::optional<ASTNode> return_type_constraint_;  // Optional -> ConceptName or -> Type
+	Token lbrace_token_;                          // For error reporting
+};
+
 // Requires expression node: requires { expression; }
 // Used inside concept definitions and requires clauses
 class RequiresExpressionNode {

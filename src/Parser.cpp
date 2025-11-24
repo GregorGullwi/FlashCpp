@@ -11417,7 +11417,8 @@ ParseResult Parser::parse_requires_expression() {
 		}
 		
 		if (peek_token()->value() == "{") {
-			// Compound requirement: { expression } or { expression } -> Type;
+			// Compound requirement: { expression } or { expression } -> ConceptName;
+			Token lbrace_token = *peek_token();
 			consume_token(); // consume '{'
 			
 			// Parse the expression
@@ -11425,25 +11426,33 @@ ParseResult Parser::parse_requires_expression() {
 			if (expr_result.is_error()) {
 				return expr_result;
 			}
-			requirements.push_back(*expr_result.node());
 			
 			// Expect '}'
 			if (!consume_punctuator("}")) {
 				return ParseResult::error("Expected '}' after compound requirement expression", *current_token_);
 			}
 			
-			// Check for optional return type constraint: -> Type
+			// Check for optional return type constraint: -> ConceptName or -> Type
+			std::optional<ASTNode> return_type_constraint;
 			if (peek_token().has_value() && peek_token()->value() == "->") {
 				consume_token(); // consume '->'
 				
-				// Parse the return type constraint
+				// Parse the return type constraint (concept name or type)
+				// This can be a concept name (identifier) or a type specifier
 				auto type_result = parse_type_specifier();
 				if (type_result.is_error()) {
 					return type_result;
 				}
-				// Store the type constraint (simplified - just parse and discard for now)
-				// Full implementation would validate the return type
+				return_type_constraint = *type_result.node();
 			}
+			
+			// Create CompoundRequirementNode
+			auto compound_req = emplace_node<CompoundRequirementNode>(
+				*expr_result.node(),
+				return_type_constraint,
+				lbrace_token
+			);
+			requirements.push_back(compound_req);
 			
 			// Expect ';' after compound requirement
 			if (!consume_punctuator(";")) {
