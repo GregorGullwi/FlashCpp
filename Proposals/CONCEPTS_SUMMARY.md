@@ -89,6 +89,8 @@ Created detailed documentation:
 ✅ Concept name registration  
 ✅ AST node creation  
 ✅ Test suite validation  
+✅ Requires clauses (basic parsing)  
+✅ Requires expressions (basic parsing)  
 
 ### Compilation
 ✅ Builds without errors on clang++  
@@ -98,10 +100,9 @@ Created detailed documentation:
 
 ## What's Not Yet Implemented
 
-### Parsing (Prepared but not active)
-⏳ Requires clauses on function templates  
+### Parsing (Partial or future work)
 ⏳ Requires clauses on class templates  
-⏳ Requires expressions with requirements  
+⏳ Advanced requires expression features (type requirements with ->, nested types)  
 ⏳ Abbreviated function templates (`auto func(Concept auto x)`)  
 ⏳ Constrained template parameters (`template<Concept T>`)  
 

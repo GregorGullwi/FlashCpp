@@ -605,7 +605,7 @@ ParseResult Parser::parse_top_level_node()
 	}
 
 	// Check if it's a concept declaration (C++20)
-	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "concept") {
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "concept") {
 		auto result = parse_concept_declaration();
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
