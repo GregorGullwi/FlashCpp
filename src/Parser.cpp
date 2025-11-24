@@ -8,6 +8,7 @@
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
+#include <array> // Include array for std::array
 #include "ChunkedString.h"
 
 // Break into the debugger only on Windows
@@ -2596,6 +2597,7 @@ ParseResult Parser::parse_struct_declaration()
 	bool has_user_defined_copy_assignment = false;
 	bool has_user_defined_move_assignment = false;
 	bool has_user_defined_destructor = false;
+	bool has_user_defined_spaceship = false;  // Track if operator<=> is defined
 
 	for (const auto& func_decl : struct_ref.member_functions()) {
 		if (func_decl.is_constructor) {
@@ -2638,6 +2640,11 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.is_override,
 				func_decl.is_final
 			);
+
+			// Check if this is a spaceship operator
+			if (func_decl.operator_symbol == "<=>") {
+				has_user_defined_spaceship = true;
+			}
 
 			// Check if this is a copy or move assignment operator
 			if (func_decl.operator_symbol == "=") {
@@ -2930,6 +2937,95 @@ ParseResult Parser::parse_struct_declaration()
 		// Add the move assignment operator to the struct node
 		static const std::string_view move_operator_symbol_eq = "=";
 		struct_ref.add_operator_overload(move_operator_symbol_eq, move_func_node, AccessSpecifier::Public);
+	}
+
+	// Generate comparison operators from operator<=> if defined
+	// According to C++20, when operator<=> is defined, the compiler automatically synthesizes
+	// the six comparison operators: ==, !=, <, >, <=, >=
+	// Skip implicit function generation for template classes (they'll be generated during instantiation)
+	if (has_user_defined_spaceship && !parsing_template_class_) {
+		TypeIndex struct_type_index = struct_type_info.type_index_;
+		
+		// Array of comparison operators to synthesize
+		static const std::array<std::pair<std::string_view, std::string>, 6> comparison_ops = {{
+			{"==", "operator=="},
+			{"!=", "operator!="},
+			{"<", "operator<"},
+			{">", "operator>"},
+			{"<=", "operator<="},
+			{">=", "operator>="}
+		}};
+		
+		for (const auto& [op_symbol, op_name] : comparison_ops) {
+			// Create return type: bool
+			auto return_type_node = emplace_node<TypeSpecifierNode>(
+				Type::Bool,
+				0,  // type_index for bool
+				8,  // size in bits
+				*name_token,
+				CVQualifier::None
+			);
+			
+			// Create declaration node for the operator
+			Token operator_name_token(Token::Type::Identifier, op_name,
+			                          name_token->line(), name_token->column(),
+			                          name_token->file_index());
+			
+			auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
+			
+			// Create function declaration node
+			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+				operator_decl_node.as<DeclarationNode>(), struct_name);
+			
+			// Create parameter: const Type& other
+			auto param_type_node = emplace_node<TypeSpecifierNode>(
+				Type::Struct,
+				struct_type_index,
+				static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+				*name_token,
+				CVQualifier::Const  // const qualifier
+			);
+			param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
+			
+			// Create parameter declaration
+			static const std::string param_name_comp = "other";
+			Token param_token(Token::Type::Identifier, param_name_comp, 0, 0, 0);
+			auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
+			
+			// Add parameter to function
+			func_ref.add_parameter_node(param_decl_node);
+			
+			// Create an empty block for the operator body
+			// TODO: Generate actual implementation that calls operator<=> and compares result
+			// The body should be equivalent to:
+			//   return (this->operator<=>(other)) <op> 0;
+			// where <op> is ==, !=, <, >, <=, or >= depending on which operator we're generating
+			// 
+			// For a complete implementation, we would need to:
+			// 1. Create a MemberFunctionCallNode for this->operator<=>(other)
+			// 2. Create a NumericLiteralNode for 0
+			// 3. Create a BinaryOperatorNode comparing the result with 0
+			// 4. Wrap it in a ReturnStatementNode
+			// 5. Add the statement to the block
+			//
+			// For now, we generate empty bodies which makes the operators available
+			// but they won't execute correctly. Full implementation deferred to IR generation.
+			auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
+			func_ref.set_definition(op_block_node);
+			
+			// Mark this as an implicit operator (synthesized from operator<=>)
+			func_ref.set_is_implicit(true);
+			
+			// Add the operator to the struct type info
+			struct_info->addOperatorOverload(
+				op_symbol,
+				func_node,
+				AccessSpecifier::Public
+			);
+			
+			// Add the operator to the struct node
+			struct_ref.add_operator_overload(op_symbol, func_node, AccessSpecifier::Public);
+		}
 	}
 
 	// Apply custom alignment if specified

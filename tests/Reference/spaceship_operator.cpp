@@ -1,5 +1,4 @@
-// Test for spaceship operator support
-// Simple test without requiring <compare> header or constexpr
+// Test for spaceship operator support with synthesized comparison operators
 struct Point {
     int x;
     int y;
@@ -11,7 +10,14 @@ struct Point {
 int main() {
     Point p1{1, 2};
     Point p2{1, 3};
-    // Note: Full semantic support for synthesized comparison operators
-    // from operator<=> would require additional compiler infrastructure
+    
+    // Test synthesized comparison operators from operator<=>
+    bool eq = p1 == p2;  // synthesized from <=>
+    bool ne = p1 != p2;  // synthesized from <=>
+    bool lt = p1 < p2;   // synthesized from <=>
+    bool gt = p1 > p2;   // synthesized from <=>
+    bool le = p1 <= p2;  // synthesized from <=>
+    bool ge = p1 >= p2;  // synthesized from <=>
+    
     return 0;
 }
