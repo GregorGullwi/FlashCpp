@@ -2995,26 +2995,76 @@ ParseResult Parser::parse_struct_declaration()
 			// Add parameter to function
 			func_ref.add_parameter_node(param_decl_node);
 			
-			// Create an empty block for the operator body
-			// TODO: Generate actual implementation that calls operator<=> and compares result
+			// Generate function body that calls operator<=> and compares result
 			// The body should be equivalent to:
 			//   return (this->operator<=>(other)) <op> 0;
-			// where <op> is ==, !=, <, >, <=, or >= depending on which operator we're generating
-			// 
-			// For a complete implementation, we would need to:
-			// 1. Create a MemberFunctionCallNode for this->operator<=>(other)
-			// 2. Create a NumericLiteralNode for 0
-			// 3. Create a BinaryOperatorNode comparing the result with 0
-			// 4. Wrap it in a ReturnStatementNode
-			// 5. Add the statement to the block
-			//
-			// For now, we generate empty bodies which makes the operators available
-			// but they won't execute correctly. Full implementation deferred to IR generation.
+			// where <op> is the appropriate comparison operator
+			
+			// First, find the spaceship operator function in the struct
+			const FunctionDeclarationNode* spaceship_func = nullptr;
+			for (const auto& member_func : struct_ref.member_functions()) {
+				if (member_func.is_operator_overload && member_func.operator_symbol == "<=>") {
+					spaceship_func = &(member_func.function_declaration.as<FunctionDeclarationNode>());
+					break;
+				}
+			}
+			
+			if (!spaceship_func) {
+				// This shouldn't happen since we only get here if has_user_defined_spaceship is true
+				return ParseResult::error("Internal error: spaceship operator not found", *name_token);
+			}
+			
+			// Create the function body
 			auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
+			
+			// Create "this" identifier
+			Token this_token(Token::Type::Keyword, "this",
+			                name_token->line(), name_token->column(),
+			                name_token->file_index());
+			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+			
+			// Create "other" identifier reference
+			Token other_token(Token::Type::Identifier, param_name_comp,
+			                 name_token->line(), name_token->column(),
+			                 name_token->file_index());
+			auto other_node = emplace_node<ExpressionNode>(IdentifierNode(other_token));
+			
+			// Create arguments vector for the spaceship operator call
+			ChunkedVector<ASTNode> spaceship_args;
+			spaceship_args.push_back(other_node);
+			
+			// Create member function call: this->operator<=>(other)
+			auto spaceship_call = emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(this_node, const_cast<FunctionDeclarationNode&>(*spaceship_func), std::move(spaceship_args), operator_name_token));
+			
+			// Create numeric literal for 0
+			Token zero_token(Token::Type::Literal, "0",
+			                name_token->line(), name_token->column(),
+			                name_token->file_index());
+			auto zero_node = emplace_node<ExpressionNode>(
+				NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+			
+			// Create comparison operator token for comparing result with 0
+			Token comparison_token(Token::Type::Operator, op_symbol,
+			                      name_token->line(), name_token->column(),
+			                      name_token->file_index());
+			
+			// Create binary operator node: (spaceship_call) <op> 0
+			auto comparison_expr = emplace_node<ExpressionNode>(
+				BinaryOperatorNode(comparison_token, spaceship_call, zero_node));
+			
+			// Create return statement
+			auto return_stmt = emplace_node<ReturnStatementNode>(
+				std::optional<ASTNode>(comparison_expr), operator_name_token);
+			
+			// Add return statement to block
+			op_block_ref.add_statement_node(return_stmt);
+			
 			func_ref.set_definition(op_block_node);
 			
-			// Mark this as an implicit operator (synthesized from operator<=>)
-			func_ref.set_is_implicit(true);
+			// Note: Not marking as implicit because we want the body to be processed
+			// These are compiler-generated but they have actual function bodies
+			// func_ref.set_is_implicit(true);
 			
 			// Add the operator to the struct type info
 			struct_info->addOperatorOverload(
