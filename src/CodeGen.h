@@ -4225,33 +4225,61 @@ private:
 			if (lhsType == Type::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 				const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 				
-				// Get the LHS identifier name
-				std::string_view lhs_name;
-				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
-					const auto& lhs_id = std::get<IdentifierNode>(lhs_expr);
-					lhs_name = lhs_id.name();
-				} else {
-					// For now, only support simple identifier LHS
-					// TODO: Support other expressions like p.member <=> q.member
-					assert(false && "operator<=> LHS must be a simple identifier");
-					return {};
-				}
-				
-				// Get the struct type info
+				// Get the LHS value - can be an identifier, member access, or other expression
+				std::variant<std::string_view, TempVar> lhs_value;
 				TypeIndex lhs_type_index = 0;
-				auto symbol = symbol_table.lookup(lhs_name);
-				if (symbol && symbol->is<VariableDeclarationNode>()) {
-					const auto& var_decl = symbol->as<VariableDeclarationNode>();
-					const auto& decl = var_decl.declaration();
-					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-					lhs_type_index = type_node.type_index();
-				} else if (symbol && symbol->is<DeclarationNode>()) {
-					const auto& decl = symbol->as<DeclarationNode>();
-					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-					lhs_type_index = type_node.type_index();
+				
+				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+					// Simple identifier case: p1 <=> p2
+					const auto& lhs_id = std::get<IdentifierNode>(lhs_expr);
+					std::string_view lhs_name = lhs_id.name();
+					lhs_value = lhs_name;
+					
+					// Get the struct type info from symbol table
+					auto symbol = symbol_table.lookup(lhs_name);
+					if (symbol && symbol->is<VariableDeclarationNode>()) {
+						const auto& var_decl = symbol->as<VariableDeclarationNode>();
+						const auto& decl = var_decl.declaration();
+						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+						lhs_type_index = type_node.type_index();
+					} else if (symbol && symbol->is<DeclarationNode>()) {
+						const auto& decl = symbol->as<DeclarationNode>();
+						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+						lhs_type_index = type_node.type_index();
+					} else {
+						// Can't find the variable declaration
+						return {};
+					}
+				} else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+					// Member access case: p.member <=> q.member
+					const auto& member_access = std::get<MemberAccessNode>(lhs_expr);
+					
+					// Generate IR for the member access expression
+					std::vector<IrOperand> member_ir = generateMemberAccessIr(member_access);
+					if (member_ir.empty() || member_ir.size() < 4) {
+						return {};
+					}
+					
+					// Extract the result temp var and type index
+					lhs_value = std::get<TempVar>(member_ir[2]);
+					lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(member_ir[3]));
 				} else {
-					// Can't find the variable declaration
-					return {};
+					// Other expression types - use already-generated lhsIrOperands
+					// The lhsIrOperands were already generated earlier in this function
+					if (lhsIrOperands.size() >= 3 && std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+						lhs_value = std::get<TempVar>(lhsIrOperands[2]);
+					} else {
+						// Complex expression that doesn't produce a temp var
+						return {};
+					}
+					
+					// Try to get type index from lhsIrOperands if available
+					if (lhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+						lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
+					} else {
+						// Can't determine type index for complex expression
+						return {};
+					}
 				}
 				
 				// Look up the operator<=> function in the struct
@@ -4307,11 +4335,16 @@ private:
 							call_op.is_member_function = true;
 							
 							// Add the LHS object as the first argument (this pointer)
-							// For member functions, the this pointer is passed by name (not value)
+							// For member functions, the this pointer is passed by name or temp var
 							TypedValue lhs_arg;
 							lhs_arg.type = lhsType;
 							lhs_arg.size_in_bits = lhsSize;
-							lhs_arg.value = IrValue(lhs_name);
+							// Convert lhs_value (which can be string_view or TempVar) to IrValue
+							if (std::holds_alternative<std::string_view>(lhs_value)) {
+								lhs_arg.value = IrValue(std::get<std::string_view>(lhs_value));
+							} else {
+								lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
+							}
 							call_op.args.push_back(lhs_arg);
 							
 							// Add the RHS as the second argument
