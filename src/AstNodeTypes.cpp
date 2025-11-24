@@ -793,11 +793,18 @@ void StructTypeInfo::buildRTTI() {
     rtti_info = &rtti_storage.back();
 
     // Build ??_R0 - Type Descriptor
+    // Note: Memory is allocated in static storage and persists for program lifetime (RTTI data)
     size_t name_len = mangled_name.length() + 1;
     MSVCTypeDescriptor* type_desc = (MSVCTypeDescriptor*)malloc(sizeof(MSVCTypeDescriptor) + name_len);
+    if (!type_desc) {
+        // Allocation failed - skip RTTI generation for this class
+        return;
+    }
     type_desc->vtable = nullptr;  // No vtable pointer needed for our purposes
     type_desc->spare = nullptr;
-    strcpy(type_desc->name, mangled_name.c_str());
+    // Use safe string copy
+    strncpy(type_desc->name, mangled_name.c_str(), name_len);
+    type_desc->name[name_len - 1] = '\0';  // Ensure null termination
     type_descriptor_storage.push_back(type_desc);
     rtti_info->type_descriptor = type_desc;
 
@@ -864,9 +871,15 @@ void StructTypeInfo::buildRTTI() {
     }
 
     // Build ??_R2 - Base Class Array
+    // Note: Memory is allocated in static storage and persists for program lifetime (RTTI data)
     MSVCBaseClassArray* bca = (MSVCBaseClassArray*)malloc(
         sizeof(MSVCBaseClassArray) + (rtti_info->base_descriptors.size() - 1) * sizeof(void*)
     );
+    if (!bca) {
+        // Allocation failed - skip Base Class Array for this class
+        rtti_info->bca = nullptr;
+        return;
+    }
     for (size_t i = 0; i < rtti_info->base_descriptors.size(); ++i) {
         bca->base_class_descriptors[i] = rtti_info->base_descriptors[i];
     }
