@@ -14449,27 +14449,69 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			if (spec_func.has_template_body_position() && !spec_func.get_definition().has_value()) {
 				std::cerr << "DEBUG: Parsing specialization body for " << qualified_name << "\n";
 				
-				// Look up the struct type index for the member function context
+				// Look up the struct type index and node for the member function context
 				TypeIndex struct_type_index = 0;
+				StructDeclarationNode* struct_node_ptr = nullptr;
 				auto struct_type_it = gTypesByName.find(std::string(struct_name));
 				if (struct_type_it != gTypesByName.end()) {
 					struct_type_index = struct_type_it->second->type_index_;
+					
+					// Try to find the struct node in the symbol table
+					auto struct_symbol_opt = lookup_symbol(struct_name);
+					if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
+						struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
+					}
 				}
 				
-				// Parse the body without template parameter substitution (it's already specialized)
-				auto body_opt = parseTemplateBody(
-					spec_func.template_body_position(),
-					{},  // No template parameters to substitute
-					{},  // No concrete types
-					struct_name,
-					struct_type_index
-				);
+				// Save the current position
+				TokenPosition saved_pos = save_token_position();
 				
-				if (body_opt.has_value()) {
-					spec_func.set_definition(*body_opt);
-					std::cerr << "DEBUG: Successfully parsed specialization body\n";
+				// Enter a function scope
+				gSymbolTable.enter_scope(ScopeType::Function);
+				
+				// Set up member function context
+				member_function_context_stack_.push_back({
+					struct_name,
+					struct_type_index,
+					struct_node_ptr
+				});
+				
+				// Add parameters to symbol table
+				for (const auto& param : spec_func.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& param_decl = param.as<DeclarationNode>();
+						gSymbolTable.insert(param_decl.identifier_token().value(), param);
+					}
+				}
+				
+				// Restore to the body position
+				restore_lexer_position_only(spec_func.template_body_position());
+				
+				// Parse the function body
+				auto body_result = parse_block();
+				
+				// Clean up member function context
+				if (!member_function_context_stack_.empty()) {
+					member_function_context_stack_.pop_back();
+				}
+				
+				// Exit the function scope
+				gSymbolTable.exit_scope();
+				
+				// Restore the original position
+				restore_lexer_position_only(saved_pos);
+				
+				if (body_result.is_error() || !body_result.node().has_value()) {
+					std::cerr << "DEBUG: Failed to parse specialization body: " << body_result.error_message() << "\n";
 				} else {
-					std::cerr << "DEBUG: Failed to parse specialization body\n";
+					spec_func.set_definition(*body_result.node());
+					std::cerr << "DEBUG: Successfully parsed specialization body\n";
+					
+					// Add the specialization to ast_nodes_ so it gets code generated
+					// We need to do this because the specialization was created during parsing
+					// but may not have been added to the top-level AST
+					ast_nodes_.push_back(spec_node);
+					std::cerr << "DEBUG: Added specialization to AST for code generation\n";
 				}
 			}
 			
