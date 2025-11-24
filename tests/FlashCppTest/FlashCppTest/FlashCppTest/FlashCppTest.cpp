@@ -2197,6 +2197,19 @@ TEST_SUITE("Templates") {
 		run_test_from_file("test_nested_simple.cpp", "Templates:NestedSimple", false);
 	}
 
+	// Code generation tests for template features
+	TEST_CASE("Templates:VariadicCodegen") {
+		run_test_from_file("test_variadic_codegen.cpp", "Templates:VariadicCodegen", false);
+	}
+
+	TEST_CASE("Templates:FoldCodegen") {
+		run_test_from_file("test_fold_codegen.cpp", "Templates:FoldCodegen", false);
+	}
+
+	TEST_CASE("Templates:TemplateTemplateCodegen") {
+		run_test_from_file("test_template_template_codegen.cpp", "Templates:TemplateTemplateCodegen", false);
+	}
+
 	// SFINAE and type traits tests
 	TEST_CASE("SFINAE:EnableIf") {
 		run_test_from_file("test_sfinae_enable_if.cpp", "SFINAE:EnableIf", false);
