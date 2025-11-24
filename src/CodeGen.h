@@ -19,10 +19,49 @@
 
 class Parser;
 
-// RTTI structure layout (must match ObjFileWriter.h):
-//   - 8 bytes: class name hash
-//   - 8 bytes: number of base classes
-//   - 8*N bytes: pointers to base class RTTI structures (inline array)
+// MSVC RTTI runtime structures (must match ObjFileWriter.h MSVC format):
+// These are the actual structures that exist at runtime in the object file
+
+// ??_R0 - Type Descriptor (runtime view)
+struct RTTITypeDescriptor {
+	const void* vtable;              // Pointer to type_info vtable (usually null)
+	const void* spare;               // Reserved/spare pointer (unused)
+	char name[1];                    // Variable-length mangled name (null-terminated)
+};
+
+// ??_R1 - Base Class Descriptor (runtime view)
+struct RTTIBaseClassDescriptor {
+	const RTTITypeDescriptor* type_descriptor;  // Pointer to base class type descriptor
+	uint32_t num_contained_bases;    // Number of nested base classes
+	int32_t mdisp;                   // Member displacement (offset in class)
+	int32_t pdisp;                   // Vbtable displacement (-1 if not virtual base)
+	int32_t vdisp;                   // Displacement inside vbtable (0 if not virtual base)
+	uint32_t attributes;             // Flags (virtual, ambiguous, etc.)
+};
+
+// ??_R2 - Base Class Array (runtime view)
+struct RTTIBaseClassArray {
+	const RTTIBaseClassDescriptor* base_class_descriptors[1]; // Variable-length array
+};
+
+// ??_R3 - Class Hierarchy Descriptor (runtime view)
+struct RTTIClassHierarchyDescriptor {
+	uint32_t signature;              // Always 0
+	uint32_t attributes;             // Bit flags (multiple inheritance, virtual inheritance, etc.)
+	uint32_t num_base_classes;       // Number of base classes (including self)
+	const RTTIBaseClassArray* base_class_array;  // Pointer to base class array
+};
+
+// ??_R4 - Complete Object Locator (runtime view)
+struct RTTICompleteObjectLocator {
+	uint32_t signature;              // 0 for 32-bit, 1 for 64-bit
+	uint32_t offset;                 // Offset of this vtable in the complete class
+	uint32_t cd_offset;              // Constructor displacement offset
+	const RTTITypeDescriptor* type_descriptor;        // Pointer to type descriptor
+	const RTTIClassHierarchyDescriptor* hierarchy;    // Pointer to class hierarchy
+};
+
+// Legacy RTTIInfo for backward compatibility with old simple format
 struct RTTIInfo {
 	uint64_t class_name_hash;
 	uint64_t num_bases;

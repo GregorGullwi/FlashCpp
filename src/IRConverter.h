@@ -8920,9 +8920,9 @@ private:
 	}
 
 	// Emit __dynamic_cast_check function
-	//   bool __dynamic_cast_check(RTTIInfo* source_rtti, RTTIInfo* target_rtti)
-	// Full C++ RTTI-compatible implementation with recursive base class checking
-	// Parameters: RCX = source_rtti, RDX = target_rtti
+	//   bool __dynamic_cast_check(RTTICompleteObjectLocator* source_col, RTTICompleteObjectLocator* target_col)
+	// MSVC RTTI-compatible implementation with Complete Object Locator format
+	// Parameters: RCX = source_col, RDX = target_col
 	// Returns: AL = 1 if cast valid, 0 otherwise
 	void emit_dynamic_cast_check_function() {
 		// Record function start
@@ -8934,7 +8934,7 @@ private:
 		emitPushReg(X64Register::RDI);  // Save RDI (will use for base pointer)
 		emitSubRSP(32);  // Shadow space for recursive calls
 		
-		// Null check: if (!source_rtti || !target_rtti) return false
+		// Null check: if (!source_col || !target_col) return false
 		emitTestRegReg(X64Register::RCX);  // TEST RCX, RCX
 		emitJumpIfZero(5);  // JZ to next null check
 		
@@ -8942,61 +8942,81 @@ private:
 		size_t null_check_to_false = textSectionData.size();
 		emitJumpIfZero(0);  // JZ -> return_false (will patch offset)
 		
-		// Pointer equality check: if (source_rtti == target_rtti) return true
+		// COL pointer equality check: if (source_col == target_col) return true
 		emitCmpRegReg(X64Register::RCX, X64Register::RDX);  // CMP RCX, RDX
 		size_t ptr_eq_to_true = textSectionData.size();
 		emitJumpIfEqual(0);  // JE -> return_true (will patch offset)
 		
-		// Hash comparison: if (source->hash == target->hash) return true
-		emitMovRegFromMemReg(X64Register::RAX, X64Register::RCX);  // MOV RAX, [RCX] (load source hash)
-		emitCmpRegWithMem(X64Register::RAX, X64Register::RDX);  // CMP RAX, [RDX] (compare with target hash)
-		size_t hash_eq_to_true = textSectionData.size();
+		// Get type descriptors from COLs
+		// source_type_desc = source_col->type_descriptor (at offset 12)
+		// target_type_desc = target_col->type_descriptor (at offset 12)
+		emitMovRegFromMemRegDisp8(X64Register::R8, X64Register::RCX, 12);   // MOV R8, [RCX+12] (source type_desc)
+		emitMovRegFromMemRegDisp8(X64Register::R9, X64Register::RDX, 12);   // MOV R9, [RDX+12] (target type_desc)
+		
+		// Type descriptor pointer equality: if (source_type_desc == target_type_desc) return true
+		emitCmpRegReg(X64Register::R8, X64Register::R9);  // CMP R8, R9
+		size_t type_desc_eq_to_true = textSectionData.size();
 		emitJumpIfEqual(0);  // JE -> return_true (will patch offset)
 		
-		// Recursive base class checking
-		// Load num_bases from source_rtti (at offset +8)
-		emitMovRegFromMemRegDisp8(X64Register::RBX, X64Register::RCX, 8);  // MOV RBX, [RCX+8] (num_bases)
+		// Get class hierarchy from source COL
+		// source_hierarchy = source_col->hierarchy (at offset 20)
+		emitMovRegFromMemRegDisp8(X64Register::R10, X64Register::RCX, 20);  // MOV R10, [RCX+20] (source hierarchy)
+		
+		// Null check on hierarchy
+		emitTestRegReg(X64Register::R10);  // TEST R10, R10
+		size_t null_hierarchy_to_false = textSectionData.size();
+		emitJumpIfZero(0);  // JZ -> return_false (will patch offset)
+		
+		// Get num_base_classes from hierarchy (at offset 8)
+		emitMovRegFromMemRegDisp8(X64Register::RBX, X64Register::R10, 8);  // MOV RBX, [R10+8] (num_base_classes)
 		
 		// Validate num_bases <= 64 (buffer overflow protection)
 		emitCmpRegImm32(X64Register::RBX, 64);  // CMP RBX, 64
 		size_t overflow_to_false = textSectionData.size();
 		emitJumpIfAbove(0);  // JA -> return_false (will patch offset)
 		
-		// Check if num_bases == 0 (no base classes)
+		// Check if num_bases == 0 (no base classes, should not happen but check anyway)
 		emitTestRegReg(X64Register::RBX);  // TEST RBX, RBX
 		size_t no_bases_to_false = textSectionData.size();
+		emitJumpIfZero(0);  // JZ -> return_false (will patch offset)
+		
+		// Get base class array from hierarchy (at offset 12)
+		emitMovRegFromMemRegDisp8(X64Register::R11, X64Register::R10, 12);  // MOV R11, [R10+12] (base_class_array)
+		
+		// Null check on base class array
+		emitTestRegReg(X64Register::R11);  // TEST R11, R11
+		size_t null_bca_to_false = textSectionData.size();
 		emitJumpIfZero(0);  // JZ -> return_false (will patch offset)
 		
 		// Initialize loop counter: RSI = 0
 		emitXorRegReg(X64Register::RSI);  // XOR RSI, RSI (RSI = 0)
 		
-		// loop_start:
+		// loop_start: iterate through base class descriptors
 		size_t loop_start = textSectionData.size();
 		
-		// Load base_rtti_ptr = [RCX + 16 + RSI*8]
-		// Use LEA to calculate address: LEA RDI, [RCX + RSI*8 + 16]
-		emitLeaRegScaledIndex(X64Register::RDI, X64Register::RCX, X64Register::RSI, 8, 16);
+		// Get base_class_descriptor pointer: [R11 + RSI*8]
+		emitLeaRegScaledIndex(X64Register::RDI, X64Register::R11, X64Register::RSI, 8, 0);
+		emitMovRegFromMemReg(X64Register::RDI, X64Register::RDI);  // MOV RDI, [RDI] (load BCD pointer)
 		
-		// Load base class RTTI pointer: MOV RDI, [RDI]
-		emitMovRegFromMemReg(X64Register::RDI, X64Register::RDI);
+		// Null check on BCD
+		emitTestRegReg(X64Register::RDI);  // TEST RDI, RDI
+		size_t null_bcd_skip = textSectionData.size();
+		emitJumpIfZero(0);  // JZ -> loop_continue (will patch offset to skip this iteration)
 		
-		// Recursive call: __dynamic_cast_check(base_rtti, target_rtti)
-		// Save RCX (source_rtti) for after the call
-		emitPushReg(X64Register::RCX);  // Save source_rtti
+		// Get type descriptor from BCD (at offset 0)
+		emitMovRegFromMemReg(X64Register::RAX, X64Register::RDI);  // MOV RAX, [RDI] (base type_desc)
 		
-		// Set up parameters: RCX = RDI (base_rtti), RDX = target_rtti (already set)
-		emitMovRegReg(X64Register::RCX, X64Register::RDI);  // MOV RCX, RDI
+		// Compare with target type descriptor: if (base_type_desc == target_type_desc) return true
+		emitCmpRegReg(X64Register::RAX, X64Register::R9);  // CMP RAX, R9 (target type_desc)
+		size_t base_match_to_true = textSectionData.size();
+		emitJumpIfEqual(0);  // JE -> return_true (will patch offset)
 		
-		// Make recursive call
-		emitCall("__dynamic_cast_check");
+		// loop_continue:
+		size_t loop_continue = textSectionData.size();
 		
-		// Restore RCX
-		emitPopReg(X64Register::RCX);  // Restore source_rtti
-		
-		// Check result: if (AL != 0) return true
-		emitTestAL();  // TEST AL, AL
-		size_t recursive_success_to_true = textSectionData.size();
-		emitJumpIfNotZero(0);  // JNZ -> return_true (will patch)
+		// Patch null BCD skip jump
+		int8_t skip_offset = static_cast<int8_t>(loop_continue - null_bcd_skip - 2);
+		textSectionData[null_bcd_skip + 1] = static_cast<uint8_t>(skip_offset);
 		
 		// Increment loop counter and check
 		emitIncReg(X64Register::RSI);  // INC RSI
@@ -9005,9 +9025,8 @@ private:
 		// JB loop_start (jump if below)
 		int32_t loop_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(textSectionData.size()) - 2;
 		if (loop_offset < -128 || loop_offset > 127) {
-			// Offset too large for int8, but this shouldn't happen in practice
-			// Use a short unconditional jump instead
-			emitJumpIfBelow(126);  // Jump forward to a longer jump
+			// Offset too large for int8, use longer form
+			emitJumpIfBelow(126);  // Jump forward to a longer jump (should not happen in practice)
 		} else {
 			emitJumpIfBelow(static_cast<int8_t>(loop_offset));
 		}
@@ -9034,20 +9053,26 @@ private:
 		int8_t offset_to_false = static_cast<int8_t>(return_false - null_check_to_false - 2);
 		textSectionData[null_check_to_false + 1] = static_cast<uint8_t>(offset_to_false);
 		
+		offset_to_false = static_cast<int8_t>(return_false - null_hierarchy_to_false - 2);
+		textSectionData[null_hierarchy_to_false + 1] = static_cast<uint8_t>(offset_to_false);
+		
 		offset_to_false = static_cast<int8_t>(return_false - overflow_to_false - 2);
 		textSectionData[overflow_to_false + 1] = static_cast<uint8_t>(offset_to_false);
 		
 		offset_to_false = static_cast<int8_t>(return_false - no_bases_to_false - 2);
 		textSectionData[no_bases_to_false + 1] = static_cast<uint8_t>(offset_to_false);
 		
+		offset_to_false = static_cast<int8_t>(return_false - null_bca_to_false - 2);
+		textSectionData[null_bca_to_false + 1] = static_cast<uint8_t>(offset_to_false);
+		
 		int8_t offset_to_true = static_cast<int8_t>(return_true - ptr_eq_to_true - 2);
 		textSectionData[ptr_eq_to_true + 1] = static_cast<uint8_t>(offset_to_true);
 		
-		offset_to_true = static_cast<int8_t>(return_true - hash_eq_to_true - 2);
-		textSectionData[hash_eq_to_true + 1] = static_cast<uint8_t>(offset_to_true);
+		offset_to_true = static_cast<int8_t>(return_true - type_desc_eq_to_true - 2);
+		textSectionData[type_desc_eq_to_true + 1] = static_cast<uint8_t>(offset_to_true);
 		
-		offset_to_true = static_cast<int8_t>(return_true - recursive_success_to_true - 2);
-		textSectionData[recursive_success_to_true + 1] = static_cast<uint8_t>(offset_to_true);
+		offset_to_true = static_cast<int8_t>(return_true - base_match_to_true - 2);
+		textSectionData[base_match_to_true + 1] = static_cast<uint8_t>(offset_to_true);
 		
 		// Calculate function length
 		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
