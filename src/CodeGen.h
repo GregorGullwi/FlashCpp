@@ -4218,6 +4218,118 @@ private:
 		int lhsSize = std::get<int>(lhsIrOperands[1]);
 		int rhsSize = std::get<int>(rhsIrOperands[1]);
 
+		// Special handling for spaceship operator <=> on struct types
+		// This should be converted to a member function call: lhs.operator<=>(rhs)
+		if (op == "<=>") {
+			// Check if LHS is a struct type
+			if (lhsType == Type::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+				const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+				
+				// Get the LHS identifier name
+				std::string_view lhs_name;
+				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+					const auto& lhs_id = std::get<IdentifierNode>(lhs_expr);
+					lhs_name = lhs_id.name();
+				} else {
+					// For now, only support simple identifier LHS
+					// TODO: Support other expressions like p.member <=> q.member
+					assert(false && "operator<=> LHS must be a simple identifier");
+					return {};
+				}
+				
+				// Get the struct type info
+				TypeIndex lhs_type_index = 0;
+				auto symbol = symbol_table.lookup(lhs_name);
+				if (symbol && symbol->is<VariableDeclarationNode>()) {
+					const auto& var_decl = symbol->as<VariableDeclarationNode>();
+					const auto& decl = var_decl.declaration();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					lhs_type_index = type_node.type_index();
+				} else if (symbol && symbol->is<DeclarationNode>()) {
+					const auto& decl = symbol->as<DeclarationNode>();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					lhs_type_index = type_node.type_index();
+				} else {
+					// Can't find the variable declaration
+					return {};
+				}
+				
+				// Look up the operator<=> function in the struct
+				if (lhs_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[lhs_type_index];
+					if (type_info.struct_info_) {
+						const StructTypeInfo& struct_info = *type_info.struct_info_;
+						
+						// Find operator<=> in member functions
+						const StructMemberFunction* spaceship_op = nullptr;
+						for (const auto& func : struct_info.member_functions) {
+							if (func.is_operator_overload && func.operator_symbol == "<=>") {
+								spaceship_op = &func;
+								break;
+							}
+						}
+						
+						if (spaceship_op && spaceship_op->function_decl.is<FunctionDeclarationNode>()) {
+							const auto& func_decl = spaceship_op->function_decl.as<FunctionDeclarationNode>();
+							
+							// Generate a member function call: lhs.operator<=>(rhs)
+							TempVar result_var = var_counter.next();
+							
+							// Get return type from the function declaration
+							const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+							Type return_type = return_type_node.type();
+							int return_size = static_cast<int>(return_type_node.size_in_bits());
+							
+							// Generate mangled name for the operator<=> call
+							std::vector<TypeSpecifierNode> param_types;
+							for (const auto& param_node : func_decl.parameter_nodes()) {
+								if (param_node.is<DeclarationNode>()) {
+									const auto& param_decl = param_node.as<DeclarationNode>();
+									const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+									param_types.push_back(param_type);
+								}
+							}
+							
+							std::string_view mangled_name = generateMangledNameForCall(
+								"operator<=>",
+								return_type_node,
+								param_types,
+								false, // not variadic
+								type_info.name_
+							);
+							
+							// Create the call operation
+							CallOp call_op;
+							call_op.result = result_var;
+							call_op.function_name = std::string(mangled_name);
+							call_op.return_type = return_type;
+							call_op.return_size_in_bits = return_size;
+							call_op.is_member_function = true;
+							
+							// Add the LHS object as the first argument (this pointer)
+							// For member functions, the this pointer is passed by name (not value)
+							TypedValue lhs_arg;
+							lhs_arg.type = lhsType;
+							lhs_arg.size_in_bits = lhsSize;
+							lhs_arg.value = IrValue(lhs_name);
+							call_op.args.push_back(lhs_arg);
+							
+							// Add the RHS as the second argument
+							call_op.args.push_back(toTypedValue(rhsIrOperands));
+							
+							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
+							
+							// Return the result
+							return { return_type, return_size, result_var };
+						}
+					}
+				}
+			}
+			
+			// If we get here, operator<=> is not defined or not found
+			// Fall through to error handling
+		}
+
 		// Try to get pointer depth for pointer arithmetic
 		int lhs_pointer_depth = 0;
 		if (binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
