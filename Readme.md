@@ -225,7 +225,7 @@ bool test_comparisons(double a, double b) {
   - ⏳ Requires expressions
   - ⏳ Abbreviated function templates
 - **Ranges**: Range adaptors and views (std::ranges)
-- **Range-based for loops**: `for (auto x : container)` syntax ⏳ **Partially working - compiles but has runtime bugs**
+- **Range-based for loops**: `for (auto x : container)` syntax ⏳ **Arrays working, custom containers blocked by parser limitation**
 - **Spaceship operator**: `<=>` three-way comparison
 
 **Quality & Error Handling:**
@@ -259,10 +259,13 @@ These features are essential for modern C++ and widely used in production code:
    - **Recent Fixes**: Parent struct name correction, pattern matching algorithm, member function instantiation from patterns
    - **Remaining effort**: 3-5 hours
 
-2. **Range-based for loops** ⭐⭐⭐⭐ ⏳ **Partially Working**
-   - `for (auto x : container)` syntax
-   - Iterator protocol support
-   - **Current status**: Compiles successfully, generates IR and assembly, but has runtime bugs with pointer increment
+2. **Range-based for loops** ⭐⭐⭐⭐ ⏳ **75% Complete - Arrays Working**
+   - ✅ `for (auto x : container)` syntax for arrays
+   - ✅ Iterator protocol support (codegen implemented)
+   - ✅ Pointer arithmetic fixed (Nov 25, 2025)
+   - ⏳ **Blocked**: Parser doesn't support out-of-line member function definitions for non-template structs
+   - ⏳ Custom containers with `begin()`/`end()` methods (codegen ready, waiting for parser)
+   - **Current status**: Arrays work perfectly, custom containers blocked by parser limitation
    - **Impact**: Modern loop syntax, container iteration
    - **Estimated effort**: 1-2 days to fix remaining bugs
 

@@ -1859,13 +1859,21 @@ TEST_SUITE("new and delete operators") {
 
 		// Check that we have HeapAlloc and ConstructorCall instructions
 		bool has_heap_alloc = false;
+		bool has_heap_dealloc = false;
 		bool has_constructor_call = false;
+		bool has_destructor_call = false;
 		for (const auto& instruction : ir.getInstructions()) {
 			if (instruction.getOpcode() == IrOpcode::HeapAlloc) {
 				has_heap_alloc = true;
 			}
 			if (instruction.getOpcode() == IrOpcode::ConstructorCall) {
 				has_constructor_call = true;
+			}
+			if (instruction.getOpcode() == IrOpcode::DestructorCall) {
+				has_destructor_call = true;
+			}
+			if (instruction.getOpcode() == IrOpcode::HeapFree) {
+				has_heap_dealloc = true;
 			}
 		}
 		CHECK(has_heap_alloc);

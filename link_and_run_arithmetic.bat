@@ -13,4 +13,3 @@ rem "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44
 REM Print the saved errorlevel
 echo.
 echo mytest.exe exited with errorlevel %TEST_ERRORLEVEL%
-pause
