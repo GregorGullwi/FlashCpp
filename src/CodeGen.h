@@ -3018,6 +3018,10 @@ private:
 			const auto& expr = std::get<OffsetofExprNode>(exprNode);
 			return generateOffsetofIr(expr);
 		}
+		else if (std::holds_alternative<TypeTraitExprNode>(exprNode)) {
+			const auto& expr = std::get<TypeTraitExprNode>(exprNode);
+			return generateTypeTraitIr(expr);
+		}
 		else if (std::holds_alternative<NewExpressionNode>(exprNode)) {
 			const auto& expr = std::get<NewExpressionNode>(exprNode);
 			return generateNewExpressionIr(expr);
@@ -6561,6 +6565,107 @@ private:
 		// Return offset as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member->offset) };
+	}
+
+	std::vector<IrOperand> generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
+		// Type traits evaluate to a compile-time boolean constant
+		const ASTNode& type_node = traitNode.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			assert(false && "Type trait argument must be TypeSpecifierNode");
+			return {};
+		}
+
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		Type type = type_spec.type();
+		bool is_reference = type_spec.is_reference();
+		bool is_rvalue_reference = type_spec.is_rvalue_reference();
+		size_t pointer_depth = type_spec.pointer_depth();
+		
+		bool result = false;
+
+		switch (traitNode.kind()) {
+			case TypeTraitKind::IsVoid:
+				result = (type == Type::Void && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsNullptr:
+				// nullptr_t check - in this compiler, we might represent nullptr as a special type
+				// For now, this returns false. TODO: Add proper nullptr_t type tracking
+				result = false;
+				break;
+
+			case TypeTraitKind::IsIntegral:
+				// Integral types: bool, char, short, int, long, long long and their unsigned variants
+				result = (type == Type::Bool ||
+				         type == Type::Char ||
+				         type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				         type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
+				         type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+				         && !is_reference && pointer_depth == 0;
+				break;
+
+			case TypeTraitKind::IsFloatingPoint:
+				result = (type == Type::Float || type == Type::Double || type == Type::LongDouble)
+				         && !is_reference && pointer_depth == 0;
+				break;
+
+			case TypeTraitKind::IsArray:
+				// Array type checking requires looking at the declaration context
+				// In type traits, an array type is detected from the TypeSpecifierNode
+				// TODO: Add proper array type tracking in TypeSpecifierNode
+				result = false;
+				break;
+
+			case TypeTraitKind::IsPointer:
+				result = (pointer_depth > 0) && !is_reference;
+				break;
+
+			case TypeTraitKind::IsLvalueReference:
+				result = is_reference && !is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsRvalueReference:
+				result = is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsMemberObjectPointer:
+				// TODO: Need proper member pointer type tracking
+				result = false;
+				break;
+
+			case TypeTraitKind::IsMemberFunctionPointer:
+				result = (type == Type::MemberFunctionPointer);
+				break;
+
+			case TypeTraitKind::IsEnum:
+				result = (type == Type::Enum);
+				break;
+
+			case TypeTraitKind::IsUnion:
+				// TODO: Add is_union field to StructTypeInfo to distinguish unions from structs/classes
+				// For now, return false
+				result = false;
+				break;
+
+			case TypeTraitKind::IsClass:
+				// A class is a struct or class type that is not a reference
+				// Note: Cannot distinguish unions from classes without is_union field
+				result = (type == Type::Struct && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsFunction:
+				// A function type (not a pointer to function)
+				result = (type == Type::Function);
+				break;
+
+			default:
+				result = false;
+				break;
+		}
+
+		// Return result as a bool constant
+		// Format: [type, size_bits, value]
+		return { Type::Bool, 8, static_cast<unsigned long long>(result ? 1 : 0) };
 	}
 
 	std::vector<IrOperand> generateNewExpressionIr(const NewExpressionNode& newExpr) {

@@ -2223,6 +2223,10 @@ TEST_SUITE("Templates") {
 		run_test_from_file("test_sfinae_type_traits.cpp", "SFINAE:TypeTraits", false);
 	}
 
+	TEST_CASE("TypeTraits:Intrinsics") {
+		run_test_from_file("test_type_traits_intrinsics.cpp", "TypeTraits:Intrinsics", false);
+	}
+
 	TEST_CASE("Templates:ExternCppTemplate") {
 		run_test_from_file("test_extern_cpp_template.cpp", "Templates:ExternCppTemplate", false);
 	}

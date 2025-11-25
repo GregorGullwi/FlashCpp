@@ -1906,6 +1906,60 @@ private:
 	Token offsetof_token_;
 };
 
+// Type trait intrinsic expression node - __is_void(T), __is_integral(T), etc.
+enum class TypeTraitKind {
+	IsVoid,
+	IsNullptr,
+	IsIntegral,
+	IsFloatingPoint,
+	IsArray,
+	IsPointer,
+	IsLvalueReference,
+	IsRvalueReference,
+	IsMemberObjectPointer,
+	IsMemberFunctionPointer,
+	IsEnum,
+	IsUnion,
+	IsClass,
+	IsFunction
+};
+
+class TypeTraitExprNode {
+public:
+	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, Token trait_token)
+		: kind_(kind), type_node_(type_node), trait_token_(trait_token) {}
+
+	TypeTraitKind kind() const { return kind_; }
+	ASTNode type_node() const { return type_node_; }
+	const Token& trait_token() const { return trait_token_; }
+
+	// Get the string name of the trait for error messages
+	std::string_view trait_name() const {
+		switch (kind_) {
+			case TypeTraitKind::IsVoid: return "__is_void";
+			case TypeTraitKind::IsNullptr: return "__is_nullptr";
+			case TypeTraitKind::IsIntegral: return "__is_integral";
+			case TypeTraitKind::IsFloatingPoint: return "__is_floating_point";
+			case TypeTraitKind::IsArray: return "__is_array";
+			case TypeTraitKind::IsPointer: return "__is_pointer";
+			case TypeTraitKind::IsLvalueReference: return "__is_lvalue_reference";
+			case TypeTraitKind::IsRvalueReference: return "__is_rvalue_reference";
+			case TypeTraitKind::IsMemberObjectPointer: return "__is_member_object_pointer";
+			case TypeTraitKind::IsMemberFunctionPointer: return "__is_member_function_pointer";
+			case TypeTraitKind::IsEnum: return "__is_enum";
+			case TypeTraitKind::IsUnion: return "__is_union";
+			case TypeTraitKind::IsClass: return "__is_class";
+			case TypeTraitKind::IsFunction: return "__is_function";
+			default: return "__unknown_trait";
+		}
+	}
+
+private:
+	TypeTraitKind kind_;
+	ASTNode type_node_;      // TypeSpecifierNode for the type argument
+	Token trait_token_;      // Token for the trait (for error reporting)
+};
+
 // New expression node: new Type, new Type(args), new Type[size], new (address) Type
 class NewExpressionNode {
 public:
@@ -2074,7 +2128,7 @@ private:
 
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
-	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, OffsetofExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
+	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode>;
 
 /*class FunctionDefinitionNode {

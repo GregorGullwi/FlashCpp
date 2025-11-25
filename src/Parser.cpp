@@ -6929,6 +6929,64 @@ ParseResult Parser::parse_primary_expression()
 		result = emplace_node<ExpressionNode>(
 			OffsetofExprNode(*type_result.node(), member_name, offsetof_token));
 	}
+	// Check for type trait intrinsics: __is_void(T), __is_integral(T), etc.
+	else if (current_token_->type() == Token::Type::Identifier && current_token_->value().starts_with("__is_")) {
+		// Parse type trait intrinsics
+		std::string_view trait_name = current_token_->value();
+		Token trait_token = *current_token_;
+		consume_token(); // consume the trait name
+
+		// Determine the trait kind
+		TypeTraitKind kind;
+		if (trait_name == "__is_void") {
+			kind = TypeTraitKind::IsVoid;
+		} else if (trait_name == "__is_nullptr") {
+			kind = TypeTraitKind::IsNullptr;
+		} else if (trait_name == "__is_integral") {
+			kind = TypeTraitKind::IsIntegral;
+		} else if (trait_name == "__is_floating_point") {
+			kind = TypeTraitKind::IsFloatingPoint;
+		} else if (trait_name == "__is_array") {
+			kind = TypeTraitKind::IsArray;
+		} else if (trait_name == "__is_pointer") {
+			kind = TypeTraitKind::IsPointer;
+		} else if (trait_name == "__is_lvalue_reference") {
+			kind = TypeTraitKind::IsLvalueReference;
+		} else if (trait_name == "__is_rvalue_reference") {
+			kind = TypeTraitKind::IsRvalueReference;
+		} else if (trait_name == "__is_member_object_pointer") {
+			kind = TypeTraitKind::IsMemberObjectPointer;
+		} else if (trait_name == "__is_member_function_pointer") {
+			kind = TypeTraitKind::IsMemberFunctionPointer;
+		} else if (trait_name == "__is_enum") {
+			kind = TypeTraitKind::IsEnum;
+		} else if (trait_name == "__is_union") {
+			kind = TypeTraitKind::IsUnion;
+		} else if (trait_name == "__is_class") {
+			kind = TypeTraitKind::IsClass;
+		} else if (trait_name == "__is_function") {
+			kind = TypeTraitKind::IsFunction;
+		} else {
+			return ParseResult::error("Unknown type trait intrinsic", trait_token);
+		}
+
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
+		}
+
+		// Parse the type argument
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
+		}
+
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after type trait argument", *current_token_);
+		}
+
+		result = emplace_node<ExpressionNode>(
+			TypeTraitExprNode(kind, *type_result.node(), trait_token));
+	}
 	// Check for global namespace scope operator :: at the beginning
 	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
 		consume_token(); // consume ::
