@@ -6929,15 +6929,19 @@ ParseResult Parser::parse_primary_expression()
 		result = emplace_node<ExpressionNode>(
 			OffsetofExprNode(*type_result.node(), member_name, offsetof_token));
 	}
-	// Check for type trait intrinsics: __is_void(T), __is_integral(T), etc.
-	else if (current_token_->type() == Token::Type::Identifier && current_token_->value().starts_with("__is_")) {
+	// Check for type trait intrinsics: __is_void(T), __is_integral(T), __has_unique_object_representations(T), etc.
+	else if (current_token_->type() == Token::Type::Identifier && 
+	         (current_token_->value().starts_with("__is_") || current_token_->value().starts_with("__has_"))) {
 		// Parse type trait intrinsics
 		std::string_view trait_name = current_token_->value();
 		Token trait_token = *current_token_;
 		consume_token(); // consume the trait name
 
-		// Determine the trait kind
+		// Determine the trait kind and if it's a binary trait
 		TypeTraitKind kind;
+		bool is_binary_trait = false;
+		
+		// Primary type categories
 		if (trait_name == "__is_void") {
 			kind = TypeTraitKind::IsVoid;
 		} else if (trait_name == "__is_nullptr") {
@@ -6966,6 +6970,31 @@ ParseResult Parser::parse_primary_expression()
 			kind = TypeTraitKind::IsClass;
 		} else if (trait_name == "__is_function") {
 			kind = TypeTraitKind::IsFunction;
+		}
+		// Type relationships (binary traits)
+		else if (trait_name == "__is_base_of") {
+			kind = TypeTraitKind::IsBaseOf;
+			is_binary_trait = true;
+		}
+		// Type properties
+		else if (trait_name == "__is_polymorphic") {
+			kind = TypeTraitKind::IsPolymorphic;
+		} else if (trait_name == "__is_final") {
+			kind = TypeTraitKind::IsFinal;
+		} else if (trait_name == "__is_abstract") {
+			kind = TypeTraitKind::IsAbstract;
+		} else if (trait_name == "__is_empty") {
+			kind = TypeTraitKind::IsEmpty;
+		} else if (trait_name == "__is_standard_layout") {
+			kind = TypeTraitKind::IsStandardLayout;
+		} else if (trait_name == "__has_unique_object_representations") {
+			kind = TypeTraitKind::HasUniqueObjectRepresentations;
+		} else if (trait_name == "__is_trivially_copyable") {
+			kind = TypeTraitKind::IsTriviallyCopyable;
+		} else if (trait_name == "__is_trivial") {
+			kind = TypeTraitKind::IsTrivial;
+		} else if (trait_name == "__is_pod") {
+			kind = TypeTraitKind::IsPod;
 		} else {
 			return ParseResult::error("Unknown type trait intrinsic", trait_token);
 		}
@@ -6974,18 +7003,38 @@ ParseResult Parser::parse_primary_expression()
 			return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
 		}
 
-		// Parse the type argument
+		// Parse the first type argument
 		ParseResult type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
 			return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
 		}
 
-		if (!consume_punctuator(")")) {
-			return ParseResult::error("Expected ')' after type trait argument", *current_token_);
-		}
+		if (is_binary_trait) {
+			// Binary trait: parse comma and second type
+			if (!consume_punctuator(",")) {
+				return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
+			}
 
-		result = emplace_node<ExpressionNode>(
-			TypeTraitExprNode(kind, *type_result.node(), trait_token));
+			ParseResult second_type_result = parse_type_specifier();
+			if (second_type_result.is_error() || !second_type_result.node().has_value()) {
+				return ParseResult::error("Expected second type in binary type trait", *current_token_);
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+			}
+
+			result = emplace_node<ExpressionNode>(
+				TypeTraitExprNode(kind, *type_result.node(), *second_type_result.node(), trait_token));
+		} else {
+			// Unary trait: just close paren
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after type trait argument", *current_token_);
+			}
+
+			result = emplace_node<ExpressionNode>(
+				TypeTraitExprNode(kind, *type_result.node(), trait_token));
+		}
 	}
 	// Check for global namespace scope operator :: at the beginning
 	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {

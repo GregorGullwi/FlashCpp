@@ -173,6 +173,126 @@ int test_is_function() {
     return result;  // Expected: 7
 }
 
+// Test __is_base_of(Base, Derived)
+// Note: Requires proper base class information
+int test_is_base_of() {
+    int result = 0;
+    // Test that non-inheritance returns false
+    if (!__is_base_of(MyStruct, MyClass)) result += 1;
+    // Same type should return true
+    if (__is_base_of(MyStruct, MyStruct)) result += 2;
+    if (__is_base_of(MyClass, MyClass)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_polymorphic (has virtual functions)
+int test_is_polymorphic() {
+    int result = 0;
+    // Non-polymorphic classes
+    if (!__is_polymorphic(MyStruct)) result += 1;
+    if (!__is_polymorphic(MyClass)) result += 2;
+    // Scalars are not polymorphic
+    if (!__is_polymorphic(int)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_abstract (has pure virtual functions)
+int test_is_abstract() {
+    int result = 0;
+    // Non-abstract classes
+    if (!__is_abstract(MyStruct)) result += 1;
+    if (!__is_abstract(MyClass)) result += 2;
+    // Scalars are not abstract
+    if (!__is_abstract(int)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_final
+int test_is_final() {
+    int result = 0;
+    // Non-final classes
+    if (!__is_final(MyStruct)) result += 1;
+    if (!__is_final(MyClass)) result += 2;
+    // Scalars are not final (n/a)
+    if (!__is_final(int)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_empty (no non-static data members)
+int test_is_empty() {
+    int result = 0;
+    // MyStruct and MyClass have members, so not empty
+    if (!__is_empty(MyStruct)) result += 1;
+    if (!__is_empty(MyClass)) result += 2;
+    // Scalars are not empty (not applicable)
+    if (!__is_empty(int)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_standard_layout
+int test_is_standard_layout() {
+    int result = 0;
+    // Scalars are standard layout
+    if (__is_standard_layout(int)) result += 1;
+    if (__is_standard_layout(double)) result += 2;
+    // Simple structs are standard layout
+    if (__is_standard_layout(MyStruct)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_trivially_copyable
+int test_is_trivially_copyable() {
+    int result = 0;
+    // Scalars are trivially copyable
+    if (__is_trivially_copyable(int)) result += 1;
+    if (__is_trivially_copyable(double)) result += 2;
+    // Pointers are trivially copyable
+    if (__is_trivially_copyable(int*)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_trivial
+int test_is_trivial() {
+    int result = 0;
+    // Scalars are trivial
+    if (__is_trivial(int)) result += 1;
+    if (__is_trivial(double)) result += 2;
+    // Pointers are trivial
+    if (__is_trivial(int*)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_pod (plain old data)
+int test_is_pod() {
+    int result = 0;
+    // Scalars are POD
+    if (__is_pod(int)) result += 1;
+    if (__is_pod(double)) result += 2;
+    // Pointers are POD
+    if (__is_pod(int*)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __has_unique_object_representations
+int test_has_unique_object_representations() {
+    int result = 0;
+    // Integer types have unique object representations
+    if (__has_unique_object_representations(int)) result += 1;
+    if (__has_unique_object_representations(char)) result += 2;
+    if (__has_unique_object_representations(long)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
 int main() {
     int total = 0;
     
@@ -189,6 +309,16 @@ int main() {
     total += test_is_union();                  // +7
     total += test_is_nullptr();                // +7
     total += test_is_function();               // +7
+    total += test_is_base_of();                // +7
+    total += test_is_polymorphic();            // +7
+    total += test_is_abstract();               // +7
+    total += test_is_final();                  // +7
+    total += test_is_empty();                  // +7
+    total += test_is_standard_layout();        // +7
+    total += test_is_trivially_copyable();     // +7
+    total += test_is_trivial();                // +7
+    total += test_is_pod();                    // +7
+    total += test_has_unique_object_representations(); // +7
     
-    return total;  // Expected: 277
+    return total;  // Expected: 347
 }

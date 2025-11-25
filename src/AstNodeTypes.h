@@ -599,6 +599,16 @@ struct StructTypeInfo {
 	bool hasDestructor() const {
 		return findDestructor() != nullptr;
 	}
+
+	// Check if the class has any user-defined constructor
+	bool hasUserDefinedConstructor() const {
+		for (const auto& func : member_functions) {
+			if (func.is_constructor) {
+				return true;
+			}
+		}
+		return false;
+	}
 };
 
 // Enumerator information
@@ -1924,6 +1934,7 @@ private:
 
 // Type trait intrinsic expression node - __is_void(T), __is_integral(T), etc.
 enum class TypeTraitKind {
+	// Primary type categories
 	IsVoid,
 	IsNullptr,
 	IsIntegral,
@@ -1937,17 +1948,41 @@ enum class TypeTraitKind {
 	IsEnum,
 	IsUnion,
 	IsClass,
-	IsFunction
+	IsFunction,
+	// Type relationships (binary trait - takes 2 types)
+	IsBaseOf,
+	// Type properties
+	IsPolymorphic,
+	IsFinal,
+	IsAbstract,
+	IsEmpty,
+	IsStandardLayout,
+	HasUniqueObjectRepresentations,
+	IsTriviallyCopyable,
+	IsTrivial,
+	IsPod
 };
 
 class TypeTraitExprNode {
 public:
+	// Constructor for unary type traits (single type argument)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, Token trait_token)
-		: kind_(kind), type_node_(type_node), trait_token_(trait_token) {}
+		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), trait_token_(trait_token) {}
+
+	// Constructor for binary type traits (two type arguments, like __is_base_of)
+	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, ASTNode second_type_node, Token trait_token)
+		: kind_(kind), type_node_(type_node), second_type_node_(second_type_node), trait_token_(trait_token) {}
 
 	TypeTraitKind kind() const { return kind_; }
 	ASTNode type_node() const { return type_node_; }
+	bool has_second_type() const { return second_type_node_.has_value(); }
+	ASTNode second_type_node() const { return second_type_node_.value_or(ASTNode()); }
 	const Token& trait_token() const { return trait_token_; }
+
+	// Check if this is a binary trait (takes 2 types)
+	bool is_binary_trait() const {
+		return kind_ == TypeTraitKind::IsBaseOf;
+	}
 
 	// Get the string name of the trait for error messages
 	std::string_view trait_name() const {
@@ -1966,13 +2001,24 @@ public:
 			case TypeTraitKind::IsUnion: return "__is_union";
 			case TypeTraitKind::IsClass: return "__is_class";
 			case TypeTraitKind::IsFunction: return "__is_function";
+			case TypeTraitKind::IsBaseOf: return "__is_base_of";
+			case TypeTraitKind::IsPolymorphic: return "__is_polymorphic";
+			case TypeTraitKind::IsFinal: return "__is_final";
+			case TypeTraitKind::IsAbstract: return "__is_abstract";
+			case TypeTraitKind::IsEmpty: return "__is_empty";
+			case TypeTraitKind::IsStandardLayout: return "__is_standard_layout";
+			case TypeTraitKind::HasUniqueObjectRepresentations: return "__has_unique_object_representations";
+			case TypeTraitKind::IsTriviallyCopyable: return "__is_trivially_copyable";
+			case TypeTraitKind::IsTrivial: return "__is_trivial";
+			case TypeTraitKind::IsPod: return "__is_pod";
 			default: return "__unknown_trait";
 		}
 	}
 
 private:
 	TypeTraitKind kind_;
-	ASTNode type_node_;      // TypeSpecifierNode for the type argument
+	ASTNode type_node_;      // TypeSpecifierNode for the first type argument
+	std::optional<ASTNode> second_type_node_;  // TypeSpecifierNode for the second type argument (for binary traits)
 	Token trait_token_;      // Token for the trait (for error reporting)
 };
 

@@ -6667,6 +6667,240 @@ private:
 				result = (type == Type::Function && !is_reference && pointer_depth == 0);
 				break;
 
+			case TypeTraitKind::IsBaseOf:
+				// __is_base_of(Base, Derived) - Check if Base is a base class of Derived
+				if (traitNode.has_second_type()) {
+					const ASTNode& second_type_node = traitNode.second_type_node();
+					if (second_type_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& derived_spec = second_type_node.as<TypeSpecifierNode>();
+						
+						// Both types must be class types (not references, not pointers)
+						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
+						    !is_reference && pointer_depth == 0 &&
+						    !derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
+						    type_spec.type_index() < gTypeInfo.size() &&
+						    derived_spec.type_index() < gTypeInfo.size()) {
+							
+							const TypeInfo& base_info = gTypeInfo[type_spec.type_index()];
+							const TypeInfo& derived_info = gTypeInfo[derived_spec.type_index()];
+							const StructTypeInfo* base_struct = base_info.getStructInfo();
+							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
+							
+							if (base_struct && derived_struct) {
+								// Same type is considered base of itself
+								if (type_spec.type_index() == derived_spec.type_index()) {
+									result = true;
+								} else {
+									// Check if base_struct is in derived_struct's base classes
+									for (const auto& base_class : derived_struct->base_classes) {
+										if (base_class.type_index == type_spec.type_index()) {
+											result = true;
+											break;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsPolymorphic:
+				// A polymorphic class has at least one virtual function
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				    !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					result = struct_info && struct_info->has_vtable;
+				}
+				break;
+
+			case TypeTraitKind::IsFinal:
+				// A final class cannot be derived from
+				// Note: This requires tracking 'final' keyword on classes
+				// For now, check if any member function is marked final
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				    !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						// Check if any virtual function is marked final
+						for (const auto& func : struct_info->member_functions) {
+							if (func.is_final) {
+								result = true;
+								break;
+							}
+						}
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsAbstract:
+				// An abstract class has at least one pure virtual function
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				    !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					result = struct_info && struct_info->is_abstract;
+				}
+				break;
+
+			case TypeTraitKind::IsEmpty:
+				// An empty class has no non-static data members (excluding empty base classes)
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				    !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						// Check if there are no non-static data members
+						// and no virtual functions (vtable pointer would be a member)
+						result = struct_info->members.empty() && !struct_info->has_vtable;
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsStandardLayout:
+				// A standard-layout class has specific requirements:
+				// - No virtual functions or virtual base classes
+				// - All non-static data members have same access control
+				// - No base classes with non-static data members
+				// - No base classes of the same type as first non-static data member
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				    !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						// Basic check: no virtual functions
+						result = !struct_info->has_vtable;
+						// If all members have the same access specifier, it's a simple standard layout
+						if (result && struct_info->members.size() > 1) {
+							AccessSpecifier first_access = struct_info->members[0].access;
+							for (const auto& member : struct_info->members) {
+								if (member.access != first_access) {
+									result = false;
+									break;
+								}
+							}
+						}
+					}
+				}
+				// Scalar types are standard layout
+				else if ((type == Type::Bool || type == Type::Char || type == Type::Short ||
+				          type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				          type == Type::UnsignedChar || type == Type::UnsignedShort ||
+				          type == Type::UnsignedInt || type == Type::UnsignedLong ||
+				          type == Type::UnsignedLongLong || type == Type::Float ||
+				          type == Type::Double || type == Type::LongDouble || type == Type::Enum)
+				         && !is_reference && pointer_depth == 0) {
+					result = true;
+				}
+				break;
+
+			case TypeTraitKind::HasUniqueObjectRepresentations:
+				// Types with no padding bits have unique object representations
+				// Integral types (except bool), and trivially copyable types without padding
+				if ((type == Type::Char || type == Type::Short || type == Type::Int ||
+				     type == Type::Long || type == Type::LongLong || type == Type::UnsignedChar ||
+				     type == Type::UnsignedShort || type == Type::UnsignedInt ||
+				     type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+				    && !is_reference && pointer_depth == 0) {
+					result = true;
+				}
+				// Note: float/double may have padding or non-unique representations
+				break;
+
+			case TypeTraitKind::IsTriviallyCopyable:
+				// A trivially copyable type can be copied with memcpy
+				// - Scalar types (arithmetic, pointers, enums)
+				// - Classes with trivial copy/move constructors and destructors, no virtual
+				if ((type == Type::Bool || type == Type::Char || type == Type::Short ||
+				     type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				     type == Type::UnsignedChar || type == Type::UnsignedShort ||
+				     type == Type::UnsignedInt || type == Type::UnsignedLong ||
+				     type == Type::UnsignedLongLong || type == Type::Float ||
+				     type == Type::Double || type == Type::LongDouble || type == Type::Enum)
+				    && !is_reference && pointer_depth == 0) {
+					result = true;
+				}
+				// Pointers are trivially copyable
+				else if (pointer_depth > 0 && !is_reference) {
+					result = true;
+				}
+				// Classes: need to check for trivial special members and no virtual
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						// Simple heuristic: no virtual functions means likely trivially copyable
+						// (A more complete check would verify copy/move ctors are trivial)
+						result = !struct_info->has_vtable;
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsTrivial:
+				// A trivial type is trivially copyable and has a trivial default constructor
+				// Same as trivially copyable, plus trivial default constructor
+				if ((type == Type::Bool || type == Type::Char || type == Type::Short ||
+				     type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				     type == Type::UnsignedChar || type == Type::UnsignedShort ||
+				     type == Type::UnsignedInt || type == Type::UnsignedLong ||
+				     type == Type::UnsignedLongLong || type == Type::Float ||
+				     type == Type::Double || type == Type::LongDouble || type == Type::Enum)
+				    && !is_reference && pointer_depth == 0) {
+					result = true;
+				}
+				else if (pointer_depth > 0 && !is_reference) {
+					result = true;
+				}
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						// Simple heuristic: no virtual functions and no user-defined constructors
+						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsPod:
+				// POD (Plain Old Data) = trivial + standard layout (C++03 compatible)
+				// In C++11+, this is deprecated but still useful
+				if ((type == Type::Bool || type == Type::Char || type == Type::Short ||
+				     type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				     type == Type::UnsignedChar || type == Type::UnsignedShort ||
+				     type == Type::UnsignedInt || type == Type::UnsignedLong ||
+				     type == Type::UnsignedLongLong || type == Type::Float ||
+				     type == Type::Double || type == Type::LongDouble || type == Type::Enum)
+				    && !is_reference && pointer_depth == 0) {
+					result = true;
+				}
+				else if (pointer_depth > 0 && !is_reference) {
+					result = true;
+				}
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						// POD: no virtual functions, no user-defined ctors, all members same access
+						bool is_pod = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
+						if (is_pod && struct_info->members.size() > 1) {
+							AccessSpecifier first_access = struct_info->members[0].access;
+							for (const auto& member : struct_info->members) {
+								if (member.access != first_access) {
+									is_pod = false;
+									break;
+								}
+							}
+						}
+						result = is_pod;
+					}
+				}
+				break;
+
 			default:
 				result = false;
 				break;
