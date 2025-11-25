@@ -185,7 +185,7 @@ int main() {
     total += test_is_enum();                   // +15
     total += test_is_array();                  // +7
     total += test_is_member_object_pointer();  // +7
-    total += test_is_member_function_pointer();// +7
+    total += test_is_member_function_pointer(); // +7
     total += test_is_union();                  // +7
     total += test_is_nullptr();                // +7
     total += test_is_function();               // +7
