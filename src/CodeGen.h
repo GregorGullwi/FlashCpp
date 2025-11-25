@@ -6634,11 +6634,13 @@ private:
 				break;
 
 			case TypeTraitKind::IsMemberFunctionPointer:
-				result = (type == Type::MemberFunctionPointer);
+				// Member function pointer type should not have any reference/pointer qualifiers
+				result = (type == Type::MemberFunctionPointer && !is_reference && pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsEnum:
-				result = (type == Type::Enum);
+				// Enum type should not have any reference/pointer qualifiers
+				result = (type == Type::Enum && !is_reference && pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnion:
@@ -6654,8 +6656,8 @@ private:
 				break;
 
 			case TypeTraitKind::IsFunction:
-				// A function type (not a pointer to function)
-				result = (type == Type::Function);
+				// A function type (not a pointer to function, not a reference)
+				result = (type == Type::Function && !is_reference && pointer_depth == 0);
 				break;
 
 			default:
