@@ -11436,13 +11436,99 @@ ParseResult Parser::parse_template_declaration() {
 				is_class
 			);
 			
+			// Create struct type info early so we can add base classes
+			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+			
+			// Create StructTypeInfo for this specialization
+			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			
+			// Parse base class list (if present): : public Base1, private Base2
+			if (peek_token().has_value() && peek_token()->value() == ":") {
+				consume_token();  // consume ':'
+
+				do {
+					// Parse virtual keyword (optional)
+					bool is_virtual_base = false;
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "virtual") {
+						is_virtual_base = true;
+						consume_token();
+					}
+
+					// Parse access specifier (optional, defaults to public for struct, private for class)
+					AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+						std::string_view keyword = peek_token()->value();
+						if (keyword == "public") {
+							base_access = AccessSpecifier::Public;
+							consume_token();
+						} else if (keyword == "protected") {
+							base_access = AccessSpecifier::Protected;
+							consume_token();
+						} else if (keyword == "private") {
+							base_access = AccessSpecifier::Private;
+							consume_token();
+						}
+					}
+
+					// Check for virtual keyword after access specifier
+					if (!is_virtual_base && peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "virtual") {
+						is_virtual_base = true;
+						consume_token();
+					}
+
+					// Parse base class name
+					auto base_name_token = consume_token();
+					if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
+						return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
+					}
+
+					std::string_view base_class_name = base_name_token->value();
+					
+					// Check if this is a template base class (e.g., Base<T>)
+					std::string instantiated_base_name;
+					if (peek_token().has_value() && peek_token()->value() == "<") {
+						// Parse template arguments
+						auto template_args_opt = parse_explicit_template_arguments();
+						if (!template_args_opt.has_value()) {
+							return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
+						}
+						
+						std::vector<TemplateTypeArg> template_args = *template_args_opt;
+						
+						// Check if the base class is a template
+						auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
+						if (template_entry) {
+							// Try to instantiate the base template
+							try_instantiate_class_template(base_class_name, template_args);
+							
+							// Use the instantiated name as the base class
+							instantiated_base_name = get_instantiated_class_name(base_class_name, template_args);
+							base_class_name = instantiated_base_name;
+						}
+					}
+
+					// Look up base class type
+					auto base_type_it = gTypesByName.find(base_class_name);
+					if (base_type_it == gTypesByName.end()) {
+						return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+					}
+
+					const TypeInfo* base_type_info = base_type_it->second;
+					if (base_type_info->type_ != Type::Struct) {
+						return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
+					}
+
+					// Add base class to struct node and type info
+					struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+					struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+				} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+			}
+			
 			// Expect opening brace
 			if (!consume_punctuator("{")) {
 				return ParseResult::error("Expected '{' after partial specialization header", *peek_token());
 			}
-			
-			// Create struct type info
-			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 			
 			AccessSpecifier current_access = struct_ref.default_access();
 			
@@ -11515,10 +11601,7 @@ ParseResult Parser::parse_template_declaration() {
 				return ParseResult::error("Expected ';' after class declaration", *peek_token());
 			}
 			
-			// Create StructTypeInfo with member information
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
-			
-			// Add members to struct info
+			// Add members to struct info (struct_info was created earlier before parsing base classes)
 			for (const auto& member_decl : struct_ref.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
@@ -11558,8 +11641,12 @@ ParseResult Parser::parse_template_declaration() {
 				);
 			}
 			
-			// Finalize the struct layout
-			struct_info->finalize();
+			// Finalize the struct layout with base classes
+			if (!struct_ref.base_classes().empty()) {
+				struct_info->finalizeWithBases();
+			} else {
+				struct_info->finalize();
+			}
 			
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
