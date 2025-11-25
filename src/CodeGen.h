@@ -6589,9 +6589,8 @@ private:
 				break;
 
 			case TypeTraitKind::IsNullptr:
-				// nullptr_t check - in this compiler, we might represent nullptr as a special type
-				// For now, this returns false. TODO: Add proper nullptr_t type tracking
-				result = false;
+				// nullptr_t type check
+				result = (type == Type::Nullptr && !is_reference && pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsIntegral:
@@ -6610,10 +6609,8 @@ private:
 				break;
 
 			case TypeTraitKind::IsArray:
-				// Array type checking requires looking at the declaration context
-				// In type traits, an array type is detected from the TypeSpecifierNode
-				// TODO: Add proper array type tracking in TypeSpecifierNode
-				result = false;
+				// Array type checking - uses the is_array flag in TypeSpecifierNode
+				result = type_spec.is_array() && !is_reference && pointer_depth == 0;
 				break;
 
 			case TypeTraitKind::IsPointer:
@@ -6629,8 +6626,8 @@ private:
 				break;
 
 			case TypeTraitKind::IsMemberObjectPointer:
-				// TODO: Need proper member pointer type tracking
-				result = false;
+				// Member object pointer type (pointer to data member: int MyClass::*)
+				result = (type == Type::MemberObjectPointer && !is_reference && pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsMemberFunctionPointer:
@@ -6644,15 +6641,25 @@ private:
 				break;
 
 			case TypeTraitKind::IsUnion:
-				// TODO: Add is_union field to StructTypeInfo to distinguish unions from structs/classes
-				// For now, return false
-				result = false;
+				// Check if the type is a union using is_union field in StructTypeInfo
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					result = struct_info && struct_info->is_union && !is_reference && pointer_depth == 0;
+				} else {
+					result = false;
+				}
 				break;
 
 			case TypeTraitKind::IsClass:
-				// A class is a struct or class type that is not a reference
-				// Note: Cannot distinguish unions from classes without is_union field
-				result = (type == Type::Struct && !is_reference && pointer_depth == 0);
+				// A class is a struct or class type that is NOT a union
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					result = struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0;
+				} else {
+					result = false;
+				}
 				break;
 
 			case TypeTraitKind::IsFunction:

@@ -344,6 +344,9 @@ static std::string type_to_string(Type type, TypeQualifier qualifier) {
         case Type::Enum: result += "enum"; break;
         case Type::FunctionPointer: result += "function_pointer"; break;
         case Type::MemberFunctionPointer: result += "member_function_pointer"; break;
+        case Type::MemberObjectPointer: result += "member_object_pointer"; break;
+        case Type::Nullptr: result += "nullptr_t"; break;
+        case Type::Invalid: result += "invalid"; break;
     }
 
     return result;

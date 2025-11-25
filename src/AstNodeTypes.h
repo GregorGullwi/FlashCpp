@@ -99,6 +99,8 @@ enum class Type : int_fast16_t {
 	Enum,
 	FunctionPointer,
 	MemberFunctionPointer,
+	MemberObjectPointer,  // Pointer to data member: int MyClass::*
+	Nullptr,              // nullptr_t type
 	Invalid,
 };
 
@@ -315,6 +317,7 @@ struct StructTypeInfo {
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
 	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
+	bool is_union = false;      // True if this is a union, not a struct/class
 
 	// Virtual function support (Phase 2)
 	bool has_vtable = false;    // True if this struct has virtual functions
@@ -337,8 +340,8 @@ struct StructTypeInfo {
 	std::vector<StructTypeInfo*> nested_classes_;    // Nested classes
 	StructTypeInfo* enclosing_class_ = nullptr;      // Enclosing class (if this is nested)
 
-	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public)
-		: name(std::move(n)), default_access(default_acc) {}
+	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
+		: name(std::move(n)), default_access(default_acc), is_union(union_type) {}
 
 	void addMember(const std::string& member_name, Type member_type, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access,
@@ -815,9 +818,18 @@ public:
 	// Function pointer support
 	bool is_function_pointer() const { return type_ == Type::FunctionPointer; }
 	bool is_member_function_pointer() const { return type_ == Type::MemberFunctionPointer; }
+	bool is_member_object_pointer() const { return type_ == Type::MemberObjectPointer; }
 	void set_function_signature(const FunctionSignature& sig) { function_signature_ = sig; }
 	const FunctionSignature& function_signature() const { return *function_signature_; }
 	bool has_function_signature() const { return function_signature_.has_value(); }
+
+	// Array support (for type trait checking)
+	bool is_array() const { return is_array_; }
+	void set_array(bool is_array, std::optional<size_t> array_size = std::nullopt) {
+		is_array_ = is_array;
+		array_size_ = array_size;
+	}
+	std::optional<size_t> array_size() const { return array_size_; }
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
 	const Token& token() const { return token_; }
@@ -825,6 +837,8 @@ public:
 		pointer_levels_ = other.pointer_levels_;
 		is_reference_ = other.is_reference_;
 		is_rvalue_reference_ = other.is_rvalue_reference_;
+		is_array_ = other.is_array_;
+		array_size_ = other.array_size_;
 	}
 
 	// Get readable string representation
@@ -840,6 +854,8 @@ private:
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
 	bool is_reference_ = false;  // True if this is a reference type (&)
 	bool is_rvalue_reference_ = false;  // True if this is an rvalue reference (&&)
+	bool is_array_ = false;      // True if this is an array type (T[N] or T[])
+	std::optional<size_t> array_size_;  // Array size if known (e.g., int[10] -> 10)
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 };
 
