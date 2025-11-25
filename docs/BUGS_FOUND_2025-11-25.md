@@ -329,7 +329,7 @@ template<typename T>
 struct Base1 { T value1; };
 
 template<typename T>
-struct Base2 { value2; };
+struct Base2 { T value2; };
 
 template<typename T, typename U>
 struct Derived { T t; U u; };
