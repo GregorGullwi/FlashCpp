@@ -135,18 +135,44 @@ enum class Operator {
 	Not,
 	OpenParen,
 	CloseParen,
+	// Arithmetic operators
+	Add,
+	Subtract,
+	Multiply,
+	Divide,
+	Modulo,
+	// Bitwise operators
+	LeftShift,
+	RightShift,
+	BitwiseAnd,
+	BitwiseOr,
+	BitwiseXor,
+	BitwiseNot,
 };
 
 static std::unordered_map<Operator, int> precedence_table = {
 	{Operator::And, 1},
 	{Operator::Or, 1},
-	{Operator::Greater, 2},
-	{Operator::Less, 2},
-	{Operator::Equals, 2},
-	{Operator::NotEquals, 2},
-	{Operator::LessEquals, 2},
-	{Operator::GreaterEquals, 2},
-	{Operator::Not, 3},
+	{Operator::Greater, 4},
+	{Operator::Less, 4},
+	{Operator::Equals, 3},
+	{Operator::NotEquals, 3},
+	{Operator::LessEquals, 4},
+	{Operator::GreaterEquals, 4},
+	{Operator::Not, 8},
+	// Arithmetic operators - higher precedence
+	{Operator::Add, 5},
+	{Operator::Subtract, 5},
+	{Operator::Multiply, 6},
+	{Operator::Divide, 6},
+	{Operator::Modulo, 6},
+	// Bitwise operators
+	{Operator::LeftShift, 5},
+	{Operator::RightShift, 5},
+	{Operator::BitwiseAnd, 2},
+	{Operator::BitwiseOr, 1},
+	{Operator::BitwiseXor, 2},
+	{Operator::BitwiseNot, 8},
 };
 
 static Operator string_to_operator(std::string_view op) {
@@ -161,6 +187,19 @@ static Operator string_to_operator(std::string_view op) {
 	if (op == "!") return Operator::Not;
 	if (op == "(") return Operator::OpenParen;
 	if (op == ")") return Operator::CloseParen;
+	// Arithmetic operators
+	if (op == "+") return Operator::Add;
+	if (op == "-") return Operator::Subtract;
+	if (op == "*") return Operator::Multiply;
+	if (op == "/") return Operator::Divide;
+	if (op == "%") return Operator::Modulo;
+	// Bitwise operators
+	if (op == "<<") return Operator::LeftShift;
+	if (op == ">>") return Operator::RightShift;
+	if (op == "&") return Operator::BitwiseAnd;
+	if (op == "|") return Operator::BitwiseOr;
+	if (op == "^") return Operator::BitwiseXor;
+	if (op == "~") return Operator::BitwiseNot;
 	std::cerr << "Invalid operator " << op;
 	throw std::invalid_argument(std::string("Invalid operator: ") + std::string(op));
 }
@@ -174,11 +213,19 @@ static std::unordered_map<char, CharInfo> char_info_table = {
 	{'(', {Operator::OpenParen, false}},
 	{')', {Operator::OpenParen, false}}, // Placeholder, will be handled in code
 	{'!', {Operator::Not, true}},
-	{'&', {Operator::And, true}},
-	{'|', {Operator::Or, true}},
+	{'&', {Operator::BitwiseAnd, true}},  // Single & is bitwise, && is logical
+	{'|', {Operator::BitwiseOr, true}},   // Single | is bitwise, || is logical
 	{'>', {Operator::Greater, true}},
 	{'<', {Operator::Less, true}},
 	{'=', {Operator::Equals, true}},
+	// Arithmetic operators
+	{'+', {Operator::Add, false}},
+	{'-', {Operator::Subtract, false}},
+	{'*', {Operator::Multiply, false}},
+	{'/', {Operator::Divide, false}},
+	{'%', {Operator::Modulo, false}},
+	{'^', {Operator::BitwiseXor, false}},
+	{'~', {Operator::BitwiseNot, false}},
 };
 
 static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
@@ -1165,10 +1212,16 @@ private:
 			return;
 		}
 
+		// Unary operators
 		if (op == Operator::Not) {
 			auto value = values.top();
 			values.pop();
 			values.push(!value);
+		}
+		else if (op == Operator::BitwiseNot) {
+			auto value = values.top();
+			values.pop();
+			values.push(~value);
 		}
 		else if (values.size() >= 2) {
 			auto right = values.top();
@@ -1200,6 +1253,48 @@ private:
 				break;
 			case Operator::GreaterEquals:
 				values.push(left >= right);
+				break;
+			// Arithmetic operators
+			case Operator::Add:
+				values.push(left + right);
+				break;
+			case Operator::Subtract:
+				values.push(left - right);
+				break;
+			case Operator::Multiply:
+				values.push(left * right);
+				break;
+			case Operator::Divide:
+				if (right != 0) {
+					values.push(left / right);
+				} else {
+					std::cerr << "Warning: Division by zero in preprocessor expression" << std::endl;
+					values.push(0);
+				}
+				break;
+			case Operator::Modulo:
+				if (right != 0) {
+					values.push(left % right);
+				} else {
+					std::cerr << "Warning: Modulo by zero in preprocessor expression" << std::endl;
+					values.push(0);
+				}
+				break;
+			// Bitwise operators
+			case Operator::LeftShift:
+				values.push(left << right);
+				break;
+			case Operator::RightShift:
+				values.push(left >> right);
+				break;
+			case Operator::BitwiseAnd:
+				values.push(left & right);
+				break;
+			case Operator::BitwiseOr:
+				values.push(left | right);
+				break;
+			case Operator::BitwiseXor:
+				values.push(left ^ right);
 				break;
 			default:
 				std::cerr << "Internal compiler error, unknown operator!" << std::endl;
@@ -1300,6 +1395,14 @@ private:
 							}
 						}
 						values.push(exists);
+					}
+					else {
+						// Unknown __ identifier (like __cpp_exceptions, __SANITIZE_THREAD__, etc.)
+						// Treat as 0 (undefined) per C++ preprocessor rules
+						if (settings_.isVerboseMode()) {
+							std::cout << "Unknown __ identifier in #if directive: " << keyword << " (treating as 0)" << std::endl;
+						}
+						values.push(0);
 					}
 				}
 				else if (keyword.find("defined") == 0) {

@@ -6,26 +6,17 @@ This document reports on the current state of standard C++ header support in Fla
 
 ## Test Results Summary
 
-All standard headers currently fail to include due to issues in the preprocessor when handling `bits/c++config.h`, which is the foundational configuration header included by all other standard headers.
+Standard headers now pass the preprocessor stage (Issue 1 and Issue 1b below have been fixed). The headers fail during parsing due to missing compiler builtin types like `__SIZE_TYPE__`.
 
-### Key Issues Identified
+### Fixed Issues
 
-#### Issue 1: Undefined `__` Prefixed Identifiers in Preprocessor Conditions
+#### Issue 1: Undefined `__` Prefixed Identifiers in Preprocessor Conditions (FIXED)
 
 **Location**: `src/FileReader.h`, `evaluate_expression()` function, around line 1288
 
 **Problem**: When the preprocessor encounters an identifier starting with `__` in a `#if` directive (like `__cpp_exceptions`), it only handles `__has_include` specially. All other `__` prefixed identifiers that aren't defined as macros don't push any value to the values stack, causing a "values stack is empty" error.
 
-**Example failing code** (from `bits/c++config.h:233`):
-```cpp
-#if __cpp_exceptions
-#  define _GLIBCXX_THROW_OR_ABORT(_EXC) (throw (_EXC))
-#else
-#  define _GLIBCXX_THROW_OR_ABORT(_EXC) (__builtin_abort())
-#endif
-```
-
-**Fix Required**: In `evaluate_expression()`, after the `if (keyword.find("__has_include") == 0)` block, add an `else` clause that treats unknown `__` identifiers as undefined (pushing 0):
+**Fix Applied**: Added an `else` clause that treats unknown `__` identifiers as undefined (pushing 0):
 
 ```cpp
 if (keyword.find("__") == 0) {  // __ is reserved for the compiler
@@ -38,6 +29,14 @@ if (keyword.find("__") == 0) {  // __ is reserved for the compiler
     }
 }
 ```
+
+#### Issue 1b: Missing Arithmetic and Bitwise Operators in Preprocessor (FIXED)
+
+**Problem**: The preprocessor expression evaluator didn't support arithmetic operators (`+`, `-`, `*`, `/`, `%`) or bitwise operators (`<<`, `>>`, `&`, `|`, `^`, `~`). These are used in standard library headers for version checks like `((2) << 16) + (15)`.
+
+**Fix Applied**: Added support for all arithmetic and bitwise operators in `evaluate_expression()` and `apply_operator()`.
+
+### Remaining Issues
 
 #### Issue 2: Missing C++ Feature Test Macros
 
@@ -90,6 +89,28 @@ if (keyword.find("__") == 0) {  // __ is reserved for the compiler
 - `__SANITIZE_ADDRESS__`
 - `__SANITIZE_UNDEFINED__`
 
+#### Issue 5: Missing Compiler Builtin Types (CURRENT BLOCKER)
+
+**Problem**: The standard library headers use compiler-specific builtin types like:
+- `__SIZE_TYPE__` - the underlying type for `size_t`
+- `__PTRDIFF_TYPE__` - the underlying type for `ptrdiff_t`
+- `__WCHAR_TYPE__` - the underlying type for `wchar_t`
+- `__INT8_TYPE__`, `__INT16_TYPE__`, etc.
+
+These need to be defined as preprocessor macros or handled specially in the parser.
+
+**Example failing code** (from `bits/c++config.h:58`):
+```cpp
+typedef __SIZE_TYPE__ 	size_t;
+```
+
+**Potential Fix**: Add these as preprocessor defines in `addBuiltinDefines()`:
+```cpp
+defines_["__SIZE_TYPE__"] = DefineDirective{ "unsigned long", {} };
+defines_["__PTRDIFF_TYPE__"] = DefineDirective{ "long", {} };
+// etc.
+```
+
 ### How to Reproduce
 
 Run the test script:
@@ -105,13 +126,15 @@ Or run the doctest test case:
 
 ### Recommended Fix Order
 
-1. **First Priority**: Fix the `evaluate_expression()` bug where `__` prefixed identifiers don't push a value. This is the immediate crash cause.
+1. ~~**First Priority**: Fix the `evaluate_expression()` bug where `__` prefixed identifiers don't push a value. This is the immediate crash cause.~~ **DONE**
 
-2. **Second Priority**: Add basic feature test macros (`__cpp_exceptions`, `__cpp_rtti`, `__cpp_constexpr`, etc.) to `addBuiltinDefines()`.
+2. **Second Priority (Current)**: Add compiler builtin types (`__SIZE_TYPE__`, etc.) as preprocessor macros.
 
-3. **Third Priority**: Implement `__has_feature`, `__has_builtin`, etc. as preprocessor intrinsics.
+3. **Third Priority**: Add basic feature test macros (`__cpp_exceptions`, `__cpp_rtti`, `__cpp_constexpr`, etc.) to `addBuiltinDefines()`.
 
-4. **Fourth Priority**: Add sanitizer macro handling.
+4. **Fourth Priority**: Implement `__has_feature`, `__has_builtin`, etc. as preprocessor intrinsics.
+
+5. **Fifth Priority**: Add sanitizer macro handling.
 
 ### Test File Location
 
@@ -121,12 +144,12 @@ The diagnostic test case is located at:
 ### Additional Notes
 
 - The test shell script `tests/test_standard_headers.sh` provides a comprehensive test of all major standard headers
-- Once the preprocessor issues are fixed, additional parser and semantic issues may be discovered
+- ~~Once the preprocessor issues are fixed, additional parser and semantic issues may be discovered~~ The preprocessor issues have been fixed; headers now fail at the parser stage
 - Standard library support is a significant undertaking that will require ongoing development
 
 ## Headers Tested
 
-The following headers were tested (all currently fail at the preprocessor stage):
+The following headers were tested (currently fail at the parser stage due to missing `__SIZE_TYPE__` etc.):
 
 ### C Library Wrappers
 - `<cstddef>`, `<cstdint>`, `<cstdlib>`, `<cstring>`, `<climits>`, `<cstdio>`, `<cmath>`, `<cassert>`, `<cerrno>`, `<cfloat>`
