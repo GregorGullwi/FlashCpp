@@ -2,15 +2,41 @@
 # Standard Header Test Script for FlashCpp
 # This script tests inclusion of various standard headers and generates a report
 
-cd /home/runner/work/FlashCpp/FlashCpp
+# Navigate to the repository root (relative to this script's location)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
 # Build the compiler if not built
 if [ ! -f "x64/Debug/FlashCpp" ]; then
     make main CXX=clang++ 2>&1
 fi
 
-# Include paths for standard library (GCC 14)
-INCLUDE_PATHS="-I/usr/include/c++/14 -I/usr/include/x86_64-linux-gnu/c++/14 -I/usr/include/c++/14/backward -I/usr/lib/llvm-18/lib/clang/18/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include"
+# Auto-detect include paths by querying the compiler
+# This makes the script portable across different systems
+detect_include_paths() {
+    local paths=""
+    local output
+    output=$(echo | clang++ -E -x c++ - -v 2>&1 | sed -n '/#include <...> search starts here:/,/End of search list/p' | grep '^ ')
+    
+    while IFS= read -r path; do
+        # Trim whitespace
+        path=$(echo "$path" | xargs)
+        if [ -n "$path" ] && [ -d "$path" ]; then
+            paths="$paths -I$path"
+        fi
+    done <<< "$output"
+    
+    echo "$paths"
+}
+
+# Try to auto-detect, fall back to common paths if detection fails
+INCLUDE_PATHS=$(detect_include_paths)
+if [ -z "$INCLUDE_PATHS" ]; then
+    echo "Warning: Could not auto-detect include paths, using fallback paths"
+    # Fallback to common Linux paths - adjust these for your system
+    INCLUDE_PATHS="-I/usr/include/c++/14 -I/usr/include/x86_64-linux-gnu/c++/14 -I/usr/include/c++/14/backward -I/usr/lib/llvm-18/lib/clang/18/include -I/usr/local/include -I/usr/include/x86_64-linux-gnu -I/usr/include"
+fi
 
 # Test headers
 HEADERS=(
