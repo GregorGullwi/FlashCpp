@@ -687,15 +687,25 @@ void StructTypeInfo::buildVTable() {
 
         // Check if this function overrides a base class virtual function
         int override_index = -1;
+        const StructMemberFunction* base_func_ptr = nullptr;
         for (size_t i = 0; i < vtable.size(); ++i) {
             const StructMemberFunction* base_func = vtable[i];
             if (base_func != nullptr && base_func->name == func_name) {
                 override_index = static_cast<int>(i);
+                base_func_ptr = base_func;
                 break;
             }
         }
 
         if (override_index >= 0) {
+            // Check if base function is final
+            if (base_func_ptr && base_func_ptr->is_final) {
+                // Error: attempting to override a final function
+                // For now, we'll just ignore this - proper error handling would require
+                // access to the parser's error reporting mechanism
+                // TODO: Report error "cannot override final function"
+            }
+            
             // Override existing vtable entry
             vtable[override_index] = &func;
             func.vtable_index = override_index;

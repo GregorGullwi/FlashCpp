@@ -1837,9 +1837,22 @@ ParseResult Parser::parse_struct_declaration()
 			return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
 		}
 
+		// Check if base class is final
+		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
+			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", *base_name_token);
+		}
+
 		// Add base class to struct node and type info
 		struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
 		struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+	}
+
+	// Check for 'final' keyword (after class/struct name or base class list)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+	    peek_token()->value() == "final") {
+		consume_token();  // consume 'final'
+		struct_ref.set_is_final(true);
+		struct_info->is_final = true;
 	}
 
 	// Check for forward declaration (struct Name;)

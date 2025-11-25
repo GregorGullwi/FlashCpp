@@ -318,6 +318,7 @@ struct StructTypeInfo {
 	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
 	bool is_union = false;      // True if this is a union (all members at offset 0)
+	bool is_final = false;      // True if this class/struct is declared with 'final' keyword
 
 	// Virtual function support (Phase 2)
 	bool has_vtable = false;    // True if this struct has virtual functions
@@ -1612,6 +1613,8 @@ public:
 	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
 	const std::vector<BaseClassSpecifier>& base_classes() const { return base_classes_; }
 	bool is_class() const { return is_class_; }
+	bool is_final() const { return is_final_; }
+	void set_is_final(bool final) { is_final_ = final; }
 	AccessSpecifier default_access() const {
 		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
 	}
@@ -1710,6 +1713,7 @@ private:
 	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
+	bool is_final_ = false;  // true if declared with 'final' keyword
 };
 
 // Template class declaration node - represents a class template
