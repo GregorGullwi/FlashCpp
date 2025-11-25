@@ -1206,8 +1206,277 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		return type_and_name_result;
 	}
 
-	// First, try to parse as a function definition
+	// Check for out-of-line member function definition: ClassName::functionName(...)
+	// Pattern: ReturnType ClassName::functionName(...) { ... }
 	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
+	if (peek_token().has_value() && peek_token()->value() == "::") {
+		// This is an out-of-line member function definition
+		consume_token();  // consume '::'
+		
+		// The class name is in decl_node.identifier_token()
+		std::string_view class_name = decl_node.identifier_token().value();
+		
+		// Parse the actual function name
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			std::cerr << "error: Expected function name after '::'\n";
+			return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
+		}
+		
+		Token function_name_token = *peek_token();
+		consume_token();
+		
+		// Find the struct in the type registry
+		auto struct_iter = gTypesByName.find(class_name);
+		if (struct_iter == gTypesByName.end()) {
+			std::cerr << "error: Unknown class '" << class_name << "' in out-of-line member function definition\n";
+			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
+		}
+		
+		const TypeInfo* type_info = struct_iter->second;
+		StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_info->getStructInfo());
+		if (!struct_info) {
+			std::cerr << "error: '" << class_name << "' is not a struct/class type\n";
+			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
+		}
+		
+		// Create a new declaration node with the function name
+		ASTNode return_type_node = decl_node.type_node();
+		auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+		
+		// Create the FunctionDeclarationNode with parent struct name (marks it as member function)
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, class_name);
+		
+		// Parse the function parameters
+		if (!peek_token().has_value() || peek_token()->value() != "(") {
+			std::cerr << "error: Expected '(' after function name\n";
+			return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
+		}
+		consume_token();  // consume '('
+		
+		while (peek_token().has_value() && peek_token()->value() != ")") {
+			auto param_result = parse_type_and_name();
+			if (param_result.is_error()) {
+				std::cerr << "DEBUG: Error parsing parameter\n";
+				return param_result;
+			}
+			
+			if (param_result.node().has_value()) {
+				func_ref.add_parameter_node(*param_result.node());
+			}
+			
+			if (peek_token().has_value() && peek_token()->value() == ",") {
+				consume_token();
+			}
+		}
+		
+		if (!peek_token().has_value() || peek_token()->value() != ")") {
+			std::cerr << "error: Expected ')' after parameter list\n";
+			return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
+		}
+		consume_token();  // consume ')'
+		
+		// Apply attributes
+		func_ref.set_calling_convention(attr_info.calling_convention);
+		if (attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) {
+			func_ref.set_linkage(attr_info.linkage);
+		}
+		func_ref.set_is_constexpr(is_constexpr);
+		func_ref.set_is_constinit(is_constinit);
+		func_ref.set_is_consteval(is_consteval);
+		
+		// Search for existing member function declaration with the same name
+		StructMemberFunction* existing_member = nullptr;
+		for (auto& member : struct_info->member_functions) {
+			if (member.name == function_name_token.value()) {
+				existing_member = &member;
+				break;
+			}
+		}
+		
+		if (!existing_member) {
+			std::cerr << "error: Out-of-line definition of '" << class_name << "::" << function_name_token.value() 
+			          << "' does not match any declaration in the class\n";
+			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+		}
+		
+		// Validate that the existing declaration is a FunctionDeclarationNode
+		if (!existing_member->function_decl.is<FunctionDeclarationNode>()) {
+			std::cerr << "error: Member '" << function_name_token.value() << "' is not a function\n";
+			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+		}
+	
+		FunctionDeclarationNode& existing_func_ref = const_cast<FunctionDeclarationNode&>(
+			existing_member->function_decl.as<FunctionDeclarationNode>());
+	
+		// Validate parameter count
+		if (func_ref.parameter_nodes().size() != existing_func_ref.parameter_nodes().size()) {
+			std::cerr << "error: Out-of-line definition of '" << class_name << "::" << function_name_token.value() 
+					  << "' has " << func_ref.parameter_nodes().size() << " parameters, but declaration has " 
+					  << existing_func_ref.parameter_nodes().size() << " parameters\n";
+			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+		}
+	
+		// Validate parameter types
+		for (size_t i = 0; i < func_ref.parameter_nodes().size(); ++i) {
+			const ASTNode& def_param = func_ref.parameter_nodes()[i];
+			const ASTNode& decl_param = existing_func_ref.parameter_nodes()[i];
+			
+			// Extract type information from both parameters
+			TypeSpecifierNode const* def_type = nullptr;
+			TypeSpecifierNode const* decl_type = nullptr;
+			
+			if (def_param.is<DeclarationNode>()) {
+				def_type = &def_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			} else if (def_param.is<VariableDeclarationNode>()) {
+				def_type = &def_param.as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+			}
+			
+			if (decl_param.is<DeclarationNode>()) {
+				decl_type = &decl_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			} else if (decl_param.is<VariableDeclarationNode>()) {
+				decl_type = &decl_param.as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+			}
+			
+			if (!def_type || !decl_type) {
+				std::cerr << "error: Unable to extract parameter types for validation\n";
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+			
+			// Compare types (ignore top-level cv-qualifiers on parameters - they don't affect signature)
+			if (def_type->type() != decl_type->type() ||
+				def_type->type_index() != decl_type->type_index() ||
+				def_type->pointer_depth() != decl_type->pointer_depth() ||
+				def_type->is_reference() != decl_type->is_reference()) {
+				std::cerr << "error: Parameter " << (i + 1) << " type mismatch in out-of-line definition of '" 
+						  << class_name << "::" << function_name_token.value() << "'\n";
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+		
+			// For pointers/references, compare cv-qualifiers on pointed-to/referenced type
+			if (def_type->pointer_depth() > 0) {
+				// cv-qualifiers on the pointed-to type matter: int* vs const int*
+				if (def_type->cv_qualifier() != decl_type->cv_qualifier()) {
+					std::cerr << "error: Parameter " << (i + 1) << " pointer cv-qualifier mismatch in out-of-line definition of '" 
+							  << class_name << "::" << function_name_token.value() << "'\n";
+					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				}
+				// cv-qualifiers on pointer levels also matter: int* const vs int*
+				const auto& def_levels = def_type->pointer_levels();
+				const auto& decl_levels = decl_type->pointer_levels();
+				for (size_t p = 0, e = def_levels.size(); p < e; ++p) {
+					if (def_levels[p].cv_qualifier != decl_levels[p].cv_qualifier) {
+						std::cerr << "error: Parameter " << (i + 1) << " pointer cv-qualifier mismatch in out-of-line definition of '" 
+								  << class_name << "::" << function_name_token.value() << "'\n";
+						return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+					}
+				}
+			}
+		
+			// For references, compare cv-qualifiers on the base type (since references bind to const/non-const)
+			if (def_type->is_reference()) {
+				if (def_type->cv_qualifier() != decl_type->cv_qualifier()) {
+					std::cerr << "error: Parameter " << (i + 1) << " reference cv-qualifier mismatch in out-of-line definition of '" 
+							  << class_name << "::" << function_name_token.value() << "'\n";
+					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				}
+			}
+		}
+	
+		// Validate return type
+		const DeclarationNode& def_decl = func_ref.decl_node();
+		const DeclarationNode& existing_decl = existing_func_ref.decl_node();
+		const TypeSpecifierNode& def_return_type = def_decl.type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& existing_return_type = existing_decl.type_node().as<TypeSpecifierNode>();
+			
+		if (def_return_type.type() != existing_return_type.type() ||
+			def_return_type.type_index() != existing_return_type.type_index() ||
+			def_return_type.pointer_depth() != existing_return_type.pointer_depth() ||
+			def_return_type.is_reference() != existing_return_type.is_reference()) {
+			std::cerr << "error: Return type mismatch in out-of-line definition of '" 
+						<< class_name << "::" << function_name_token.value() << "'\n";
+			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+		}
+		
+		// Check for declaration only (;) or function definition ({)
+		if (consume_punctuator(";")) {
+			// Declaration only
+			return saved_position.success(func_node);
+		}
+		
+		// Parse function body
+		if (!peek_token().has_value() || peek_token()->value() != "{") {
+			std::cerr << "error: Expected '{' or ';' after function declaration, got: '";
+			if (peek_token().has_value()) {
+				std::cerr << peek_token()->value();
+			} else {
+				std::cerr << "<EOF>";
+			}
+			std::cerr << "'\n";
+			return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
+		}
+		
+		gSymbolTable.enter_scope(ScopeType::Function);
+		
+		// Push member function context so that member variables are resolved correctly
+		member_function_context_stack_.push_back({
+			class_name,
+			type_info->type_index_,
+			nullptr  // struct_node - we don't have access to it here, but struct_type_index should be enough
+		});
+		
+		// Add 'this' pointer to symbol table
+		auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
+			Type::Struct, type_info->type_index_, 
+			static_cast<int>(struct_info->total_size * 8), Token()
+		);
+		this_type_ref.add_pointer_level();  // Make it a pointer
+		
+		Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+		auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
+		gSymbolTable.insert("this", this_decl_node);
+		
+		// Add function parameters to symbol table (use the EXISTING function's parameters)
+		// existing_func_ref is already defined earlier after validation
+		for (const ASTNode& param_node : existing_func_ref.parameter_nodes()) {
+			if (param_node.is<VariableDeclarationNode>()) {
+				const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
+				const DeclarationNode& param_decl = var_decl.declaration();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+			} else if (param_node.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+			}
+		}
+		
+		// Parse function body
+		ParseResult body_result = parse_block();
+		
+		if (body_result.is_error()) {
+			member_function_context_stack_.pop_back();
+			gSymbolTable.exit_scope();
+			return body_result;
+		}
+	
+		// existing_func_ref is already defined earlier after validation
+		if (body_result.node().has_value()) {
+			if (!existing_func_ref.set_definition(*body_result.node())) {
+				std::cerr << "error: Function '" << class_name << "::" << function_name_token.value() 
+						  << "' already has a definition\n";
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+		}
+
+		member_function_context_stack_.pop_back();
+		gSymbolTable.exit_scope();
+	
+		// Return success without a node - the existing declaration already has the definition attached
+		// Don't return the node because it's already in the AST from the struct declaration
+		return saved_position.success();
+	}
+
+	// First, try to parse as a function definition
 	ParseResult function_definition_result = parse_function_declaration(decl_node, attr_info.calling_convention);
 	if (!function_definition_result.is_error()) {
 		// It was successfully parsed as a function definition
@@ -7161,8 +7430,8 @@ ParseResult Parser::parse_primary_expression()
 								result = emplace_node<ExpressionNode>(
 									MemberAccessNode(this_ident, idenfifier_token));
 
-								// Identifier already consumed at line 1621
-								return ParseResult::success(*result);
+								// Don't return - let it fall through to postfix operator parsing
+								goto found_member_variable;
 							}
 						}
 					}
@@ -7189,8 +7458,8 @@ ParseResult Parser::parse_primary_expression()
 									result = emplace_node<ExpressionNode>(
 										MemberAccessNode(this_ident, idenfifier_token));
 
-									// Identifier already consumed at line 1621
-									return ParseResult::success(*result);
+									// Don't return - let it fall through to postfix operator parsing
+									goto found_member_variable;
 								}
 							}
 						}
@@ -7217,8 +7486,8 @@ ParseResult Parser::parse_primary_expression()
 									result = emplace_node<ExpressionNode>(
 										MemberAccessNode(this_ident, idenfifier_token));
 
-									// Identifier already consumed at line 1621
-									return ParseResult::success(*result);
+									// Don't return - let it fall through to postfix operator parsing
+									goto found_member_variable;
 								}
 							}
 							
@@ -7235,8 +7504,8 @@ ParseResult Parser::parse_primary_expression()
 								result = emplace_node<ExpressionNode>(
 									MemberAccessNode(this_ident, idenfifier_token));
 
-								// Identifier already consumed at line 1621
-								return ParseResult::success(*result);
+								// Don't return - let it fall through to postfix operator parsing
+								goto found_member_variable;
 							}
 						}
 					}
@@ -8321,6 +8590,7 @@ ParseResult Parser::parse_primary_expression()
 		return ParseResult::error("Expected primary expression", *current_token_);
 	}
 
+found_member_variable:  // Label for member variable detection - jump here to skip error checking
 	// Check for postfix operators (++, --, and array subscript [])
 	while (result.has_value() && peek_token().has_value()) {
 		if (peek_token()->type() == Token::Type::Operator) {

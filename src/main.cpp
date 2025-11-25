@@ -86,6 +86,8 @@ int main(int argc, char *argv[]) {
     if (context.getOutputFile().empty()) {
         std::filesystem::path outputPath = inputFilePath;
         outputPath.replace_extension(".obj");
+        // Strip directory - output to current directory
+        outputPath = outputPath.filename();
         context.setOutputFile(outputPath.string());
     }
 
