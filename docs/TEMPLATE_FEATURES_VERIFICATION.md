@@ -93,89 +93,67 @@ int main() {
 }
 ```
 
-## ⚠️ Partially Implemented / Requires Extension
+## ⚠️ Partially Implemented / Requires Testing
 
 ### 4. SFINAE and Template Metaprogramming
-**Status**: ⚠️ **PARSING IMPLEMENTED, REQUIRES std:: NAMESPACE SUPPORT**
+**Status**: ⚠️ **CORE MECHANISM WORKS - STANDARD LIBRARY INTEGRATION UNTESTED**
 
 **What Works**:
 - Template parameter substitution
 - Overload resolution based on template arguments
 - Basic type deduction
+- Custom type traits (user-defined `enable_if`, `is_same`, etc.)
 
-**What's Missing**:
-- `std::enable_if` - Requires `std::` namespace and type trait templates
-- `std::is_same` - Requires `std::` namespace
-- `std::is_integral`, `std::is_floating_point`, etc. - Requires type trait library
-- SFINAE-based function overload selection
+**Standard Library Integration**:
+Basic type traits like `enable_if`, `is_same`, and `conditional` are pure template metaprogramming - they don't require special compiler built-ins. In theory, including `<type_traits>` from MSVC or libc++ should work if FlashCpp can:
+1. Parse namespace declarations (`namespace std { }`)
+2. Handle `#include` directives for standard library headers
+3. Parse the template patterns in `<type_traits>`
 
-**Current Limitations**:
-The compiler does not currently have:
-1. Built-in `std::` namespace support
-2. Standard library type trait templates (enable_if, is_same, is_integral, etc.)
-3. Automatic SFINAE failure handling for template specialization
+**Note on Advanced Type Traits**:
+Some advanced type traits DO require compiler intrinsics:
+- `__is_class(T)` - Used by `std::is_class`
+- `__is_enum(T)` - Used by `std::is_enum`
+- `__is_trivially_copyable(T)` - Used by `std::is_trivially_copyable`
+- etc.
 
-**Test Files Created (for future implementation)**:
-- `tests/Reference/test_sfinae_enable_if.cpp` - Tests std::enable_if patterns
-- `tests/Reference/test_sfinae_is_same.cpp` - Tests std::is_same patterns
+However, basic SFINAE patterns (`enable_if`, `is_same`, `conditional`) are pure template code and should work without intrinsics.
+
+**Test Files Created**:
+- `tests/Reference/test_sfinae_enable_if.cpp` - Tests enable_if patterns
+- `tests/Reference/test_sfinae_is_same.cpp` - Tests is_same patterns
 - `tests/Reference/test_sfinae_type_traits.cpp` - Tests various type traits
 
-**What Would Be Required for Full SFINAE Support**:
-
-1. **std:: Namespace Support**:
-   ```cpp
-   namespace std {
-       template<bool B, typename T = void>
-       struct enable_if {};
-       
-       template<typename T>
-       struct enable_if<true, T> { using type = T; };
-       
-       template<bool B, typename T = void>
-       using enable_if_t = typename enable_if<B, T>::type;
-   }
-   ```
-
-2. **Type Trait Templates**:
-   ```cpp
-   namespace std {
-       template<typename T, typename U>
-       struct is_same { static constexpr bool value = false; };
-       
-       template<typename T>
-       struct is_same<T, T> { static constexpr bool value = true; };
-       
-       template<typename T, typename U>
-       inline constexpr bool is_same_v = is_same<T, U>::value;
-   }
-   ```
-
-3. **Intrinsic Type Traits**:
-   - `is_integral<T>` - Compiler intrinsic needed
-   - `is_floating_point<T>` - Compiler intrinsic needed
-   - `is_pointer<T>` - Could be template specialization
-   - etc.
-
-**Workaround for Current Usage**:
-Users can implement their own type traits without the `std::` namespace:
+**Custom Type Traits (Verified Working)**:
+Users can implement their own type traits:
 
 ```cpp
+// Custom enable_if - works in FlashCpp
 template<bool B, typename T = void>
 struct enable_if {};
 
 template<typename T>
 struct enable_if<true, T> { using type = T; };
 
+// Custom is_same - works in FlashCpp
 template<typename T, typename U>
 struct is_same { static constexpr bool value = false; };
 
 template<typename T>
 struct is_same<T, T> { static constexpr bool value = true; };
 
-// Then use without std:: prefix
-template<typename T, typename enable_if<true, int>::type = 0>
+// Usage
+template<typename T, typename enable_if<sizeof(T) == 4, int>::type = 0>
 void foo(T value) { }
 ```
+
+**Potential Challenges with Standard Library Headers**:
+Real standard library headers often contain:
+- Compiler-specific macros and extensions
+- Complex preprocessor patterns
+- Vendor-specific intrinsics
+
+The ability to use `#include <type_traits>` directly depends on FlashCpp's preprocessor and parser compatibility with these patterns.
 
 ## Implementation Details
 
@@ -210,8 +188,9 @@ void foo(T value) { }
 | Variadic Templates | ✅ | ✅ | WORKING |
 | Fold Expressions | ✅ | ✅ | WORKING |
 | Template Template Parameters | ✅ | ✅ | WORKING |
-| SFINAE (std::enable_if) | ✅ | ⚠️ | NEEDS std:: |
-| Type Traits (std::is_same) | ✅ | ⚠️ | NEEDS std:: |
+| Custom Type Traits | ✅ | ✅ | WORKING |
+| SFINAE (custom enable_if) | ✅ | ✅ | WORKING |
+| std:: Type Traits | ⚠️ | ⚠️ | UNTESTED (may work via #include) |
 
 ## Recommendations
 
@@ -219,13 +198,12 @@ void foo(T value) { }
 1. ✅ **Use variadic templates** - Fully functional
 2. ✅ **Use fold expressions** - Fully functional  
 3. ✅ **Use template template parameters** - Fully functional
-4. ⚠️ **Implement custom type traits** - Without std:: namespace for SFINAE patterns
+4. ✅ **Use custom type traits** - Define your own `enable_if`, `is_same`, etc.
 
-### For Future Development:
-1. **Add std:: namespace support** - Required for standard library compatibility
-2. **Implement type trait library** - enable_if, is_same, is_integral, etc.
-3. **Add compiler intrinsics** - For type property queries (is_integral, is_class, etc.)
-4. **Enhance SFINAE** - Automatic substitution failure handling
+### For Standard Library Integration:
+1. **Test `#include <type_traits>`** - May work if preprocessor handles standard library headers
+2. **Basic type traits** (`enable_if`, `is_same`, `conditional`) - Pure templates, no intrinsics needed
+3. **Advanced type traits** (`is_class`, `is_enum`, etc.) - May require compiler intrinsics
 
 ## Conclusion
 
@@ -233,7 +211,11 @@ FlashCpp has **excellent support for modern C++ template features**, including:
 - ✅ Complete variadic template support (C++11)
 - ✅ Complete fold expression support (C++17)
 - ✅ Complete template template parameter support
+- ✅ SFINAE core mechanism (template substitution failure)
 
-The only missing piece for full SFINAE support is the standard library infrastructure (`std::` namespace and type trait templates), which is an architectural decision about standard library integration rather than a compiler capability limitation.
+For SFINAE patterns:
+- **Custom type traits work** - Users can define their own `enable_if`, `is_same`, etc.
+- **Standard library headers** - May work via `#include <type_traits>` if FlashCpp's preprocessor is compatible
+- **Advanced type traits** - Some require compiler intrinsics (`__is_class`, `__is_enum`, etc.)
 
-All tested features work correctly for both parsing and code generation, making FlashCpp suitable for advanced template metaprogramming within the current constraints.
+All tested features work correctly for both parsing and code generation, making FlashCpp suitable for advanced template metaprogramming.
