@@ -612,8 +612,28 @@ struct StructTypeInfo {
 	}
 
 	// Check if the class has a user-defined destructor
+	// Note: In FlashCpp's type system, destructors are only stored in member_functions
+	// if explicitly declared by the user, so hasDestructor() == hasUserDefinedDestructor()
 	bool hasUserDefinedDestructor() const {
 		return hasDestructor();
+	}
+
+	// Check if this is a standard-layout type
+	bool isStandardLayout() const {
+		// Standard layout requires:
+		// 1. No virtual functions or virtual base classes
+		// 2. All non-static data members have the same access control
+		// 3. No non-static data members of reference type
+		if (has_vtable) return false;
+		if (members.empty()) return true;
+		
+		AccessSpecifier first_access = members[0].access;
+		for (const auto& member : members) {
+			if (member.access != first_access) {
+				return false;
+			}
+		}
+		return true;
 	}
 };
 

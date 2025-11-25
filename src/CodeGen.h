@@ -7127,6 +7127,8 @@ private:
 			case TypeTraitKind::IsPointerInterconvertibleBaseOf:
 				// __is_pointer_interconvertible_base_of(Base, Derived)
 				// Check if Base is pointer-interconvertible with Derived
+				// According to C++20: requires both to be standard-layout types and
+				// Base is either the first base class or shares address with Derived
 				if (traitNode.has_second_type()) {
 					const ASTNode& derived_node = traitNode.second_type_node();
 					if (derived_node.is<TypeSpecifierNode>()) {
@@ -7149,13 +7151,18 @@ private:
 								if (type_spec.type_index() == derived_spec.type_index()) {
 									result = true;
 								} else {
-									// Check if Base is the first non-static data member or first base class
-									// and has the same address as Derived
-									for (size_t i = 0; i < derived_struct->base_classes.size(); ++i) {
-										if (derived_struct->base_classes[i].type_index == type_spec.type_index()) {
-											// First base class at offset 0 is pointer interconvertible
-											result = (i == 0 && !base_struct->has_vtable);
-											break;
+									// Both types must be standard-layout for pointer interconvertibility
+									bool base_is_standard_layout = base_struct->isStandardLayout();
+									bool derived_is_standard_layout = derived_struct->isStandardLayout();
+									
+									if (base_is_standard_layout && derived_is_standard_layout) {
+										// Check if Base is the first base class at offset 0
+										for (size_t i = 0; i < derived_struct->base_classes.size(); ++i) {
+											if (derived_struct->base_classes[i].type_index == type_spec.type_index()) {
+												// First base class at offset 0 is pointer interconvertible
+												result = (i == 0);
+												break;
+											}
 										}
 									}
 								}
@@ -7168,9 +7175,15 @@ private:
 			case TypeTraitKind::UnderlyingType:
 				// __underlying_type(T) returns the underlying type of an enum
 				// This is a type query, not a bool result - handle specially
-				// For now, return int as the default underlying type for enums
-				if (type == Type::Enum && !is_reference && pointer_depth == 0) {
-					// Enum's underlying type - default to int
+				if (type == Type::Enum && !is_reference && pointer_depth == 0 &&
+				    type_spec.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+					if (enum_info) {
+						// Return the enum's declared underlying type
+						return { enum_info->underlying_type, enum_info->underlying_size, 0ULL };
+					}
+					// Fallback to int if no enum info
 					return { Type::Int, 32, 0ULL };
 				}
 				// For non-enums, this is an error - return false/0
