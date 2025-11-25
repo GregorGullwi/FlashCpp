@@ -8240,6 +8240,26 @@ ParseResult Parser::parse_primary_expression()
 					}
 				}
 
+				// Check if this identifier is a concept name
+				// Concepts are used in requires clauses: requires Concept<T>
+				if (gConceptRegistry.hasConcept(idenfifier_token.value())) {
+					// Try to parse template arguments: Concept<T>
+					if (peek_token().has_value() && peek_token()->value() == "<") {
+						auto template_args = parse_explicit_template_arguments();
+						if (template_args.has_value()) {
+							// Create a concept check expression
+							// We'll represent this as an identifier with the concept name and args attached
+							// The constraint evaluator will handle the actual check
+							// For now, just wrap it in an identifier node
+							result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+							return ParseResult::success(*result);
+						}
+					}
+					// Concept without template args - just an identifier reference
+					result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+					return ParseResult::success(*result);
+				}
+
 				// Not a function call, template member access, or template parameter reference
 				// But allow pack expansion (identifier...)
 				if (is_pack_expansion) {
@@ -10958,6 +10978,11 @@ ParseResult Parser::parse_template_declaration() {
 		std::cerr << "DEBUG: Next token after template params: '" << peek_token()->value() << "' (type=" << static_cast<int>(peek_token()->type()) << ")" << std::endl;
 	}
 
+	// Set template parameter context for parsing requires clauses and template bodies
+	// This allows template parameters to be recognized in expressions
+	current_template_param_names_ = template_param_names;  // copy the param names
+	parsing_template_body_ = true;
+
 	// Check for requires clause after template parameters
 	// Syntax: template<typename T> requires Concept<T> ...
 	std::optional<ASTNode> requires_clause;
@@ -10968,6 +10993,9 @@ ParseResult Parser::parse_template_declaration() {
 		// Parse the constraint expression
 		auto constraint_result = parse_expression();
 		if (constraint_result.is_error()) {
+			// Clean up template parameter context before returning
+			current_template_param_names_.clear();
+			parsing_template_body_ = false;
 			return constraint_result;
 		}
 		
@@ -11761,13 +11789,98 @@ ParseResult Parser::parse_template_declaration() {
 				is_class
 			);
 			
+			// Create struct type info early so we can add base classes
+			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+			
+			// Create StructTypeInfo for this specialization
+			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			
+			// Parse base class list (if present): : public Base1, private Base2
+			if (peek_token().has_value() && peek_token()->value() == ":") {
+				consume_token();  // consume ':'
+
+				do {
+					// Parse virtual keyword (optional)
+					bool is_virtual_base = false;
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "virtual") {
+						is_virtual_base = true;
+						consume_token();
+					}
+
+					// Parse access specifier (optional, defaults to public for struct, private for class)
+					AccessSpecifier base_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+						std::string_view keyword = peek_token()->value();
+						if (keyword == "public") {
+							base_access = AccessSpecifier::Public;
+							consume_token();
+						} else if (keyword == "protected") {
+							base_access = AccessSpecifier::Protected;
+							consume_token();
+						} else if (keyword == "private") {
+							base_access = AccessSpecifier::Private;
+							consume_token();
+						}
+					}
+
+					// Check for virtual keyword after access specifier
+					if (!is_virtual_base && peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "virtual") {
+						is_virtual_base = true;
+						consume_token();
+					}
+
+					// Parse base class name
+					auto base_name_token = consume_token();
+					if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
+						return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
+					}
+
+					std::string_view base_class_name = base_name_token->value();
+					
+					// Check if this is a template base class (e.g., Base<T>)
+					if (peek_token().has_value() && peek_token()->value() == "<") {
+						// Parse template arguments
+						auto template_args_opt = parse_explicit_template_arguments();
+						if (!template_args_opt.has_value()) {
+							return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
+						}
+						
+						std::vector<TemplateTypeArg> template_args = *template_args_opt;
+						
+						// Check if the base class is a template
+						auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
+						if (template_entry) {
+							// Try to instantiate the base template
+							try_instantiate_class_template(base_class_name, template_args);
+							
+							// Use the instantiated name as the base class
+							// get_instantiated_class_name returns a persistent string_view
+							base_class_name = get_instantiated_class_name(base_class_name, template_args);
+						}
+					}
+
+					// Look up base class type
+					auto base_type_it = gTypesByName.find(base_class_name);
+					if (base_type_it == gTypesByName.end()) {
+						return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+					}
+
+					const TypeInfo* base_type_info = base_type_it->second;
+					if (base_type_info->type_ != Type::Struct) {
+						return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
+					}
+
+					// Add base class to struct node and type info
+					struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+					struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+				} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+			}
+			
 			// Expect opening brace
 			if (!consume_punctuator("{")) {
 				return ParseResult::error("Expected '{' after partial specialization header", *peek_token());
 			}
-			
-			// Create struct type info
-			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 			
 			AccessSpecifier current_access = struct_ref.default_access();
 			
@@ -11840,10 +11953,7 @@ ParseResult Parser::parse_template_declaration() {
 				return ParseResult::error("Expected ';' after class declaration", *peek_token());
 			}
 			
-			// Create StructTypeInfo with member information
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
-			
-			// Add members to struct info
+			// Add members to struct info (struct_info was created earlier before parsing base classes)
 			for (const auto& member_decl : struct_ref.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
@@ -11883,8 +11993,12 @@ ParseResult Parser::parse_template_declaration() {
 				);
 			}
 			
-			// Finalize the struct layout
-			struct_info->finalize();
+			// Finalize the struct layout with base classes
+			if (!struct_ref.base_classes().empty()) {
+				struct_info->finalizeWithBases();
+			} else {
+				struct_info->finalize();
+			}
 			
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
@@ -12343,6 +12457,12 @@ ParseResult Parser::parse_requires_expression() {
 		return ParseResult::error("Expected 'requires' keyword", *current_token_);
 	}
 
+	// Enter a new scope for the requires expression parameters
+	gSymbolTable.enter_scope(ScopeType::Block);
+	
+	// RAII guard to ensure scope is exited on all code paths (success or error)
+	ScopeGuard scope_guard([&]() { gSymbolTable.exit_scope(); });
+	
 	// Check if there are parameters: requires(T a, T b) { ... }
 	// or no parameters: requires { ... }
 	std::vector<ASTNode> parameters;
@@ -12369,6 +12489,9 @@ ParseResult Parser::parse_requires_expression() {
 			// Create a declaration node for the parameter
 			auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
 			parameters.push_back(decl_node);
+			
+			// Add parameter to the scope so it can be used in the requires body
+			gSymbolTable.insert(param_name.value(), decl_node);
 			
 			// Check for comma (more parameters) or end
 			if (peek_token().has_value() && peek_token()->value() == ",") {
@@ -12505,6 +12628,8 @@ ParseResult Parser::parse_requires_expression() {
 	if (!consume_punctuator("}")) {
 		return ParseResult::error("Expected '}' to end requires expression", *current_token_);
 	}
+
+	// Scope will be exited automatically by scope_guard
 
 	// Create RequiresExpressionNode
 	auto requires_expr_node = emplace_node<RequiresExpressionNode>(
@@ -14017,38 +14142,106 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 		auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), pattern_struct.default_access());
 		
+		// Handle base classes from the pattern
+		// Base classes need to be instantiated with concrete template arguments
+		for (const auto& pattern_base : pattern_struct.base_classes()) {
+			std::string base_name_str(pattern_base.name);  // Convert to string to avoid string_view issues
+			
+			// WORKAROUND: If the base class name ends with "_unknown", it was instantiated
+			// during pattern parsing with template parameters. We need to re-instantiate
+			// it with the concrete template arguments.
+			if (base_name_str.ends_with("_unknown")) {
+				// Extract the template name (before "_unknown")
+				size_t pos = base_name_str.find("_unknown");
+				std::string template_name = base_name_str.substr(0, pos);
+				
+				// For partial specialization Derived<T*, T> instantiated with <int*, int>,
+				// both base classes Base1<T> and Base2<T> should be instantiated with T=int
+				// We need to extract the concrete type from template_args
+				
+				// Assume single template parameter for now (T)
+				// The concrete type is the base type without modifiers
+				if (!template_args.empty()) {
+					// Get the base type from the first template argument (removing modifiers)
+					Type concrete_base_type = template_args[0].base_type;
+					
+					// Create template args for base class: just the base type without modifiers
+					std::vector<TemplateTypeArg> base_template_args;
+					TemplateTypeArg base_arg;
+					base_arg.base_type = concrete_base_type;
+					base_arg.is_reference = false;
+					base_arg.is_rvalue_reference = false;
+					base_arg.pointer_depth = 0;
+					base_arg.cv_qualifier = CVQualifier::None;
+					base_template_args.push_back(base_arg);
+					
+					// Instantiate the base template
+					try_instantiate_class_template(template_name, base_template_args);
+					
+					// Get the instantiated name
+					base_name_str = std::string(get_instantiated_class_name(template_name, base_template_args));
+				}
+			}
+			
+			std::string_view base_class_name = base_name_str;
+			
+			// Look up the base class type
+			auto base_type_it = gTypesByName.find(base_class_name);
+			if (base_type_it != gTypesByName.end()) {
+				const TypeInfo* base_type_info = base_type_it->second;
+				struct_info->addBaseClass(base_class_name, base_type_info->type_index_, pattern_base.access, pattern_base.is_virtual);
+			} else {
+				std::cerr << "DEBUG: Base class " << base_class_name << " not found in gTypesByName\n";
+			}
+		}
+		
 		// Copy members from pattern
 		for (const auto& member_decl : pattern_struct.members()) {
 			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 			
-			// For pattern specializations, members should already have concrete types
-			// since the pattern was parsed with concrete types (e.g., T& was parsed as a reference)
-			// We just copy them as-is
+			// For pattern specializations, member types need substitution!
+			// The pattern has T* (Type::UserDefined with ptr_depth=1)
+			// We need to substitute T with the concrete type (e.g., int)
+			
+			Type member_type = type_spec.type();
+			TypeIndex member_type_index = type_spec.type_index();
+			size_t ptr_depth = type_spec.pointer_depth();
+			
+			// Check if this member type needs substitution
+			if (member_type == Type::UserDefined) {
+				// Substitute with concrete type from template_args
+				// For now, assume single template parameter (T)
+				if (!template_args.empty()) {
+					member_type = template_args[0].base_type;
+					member_type_index = template_args[0].type_index;
+					// Note: ptr_depth is already set correctly from the pattern
+				}
+			}
 			
 			// Calculate member size accounting for pointer depth
 			size_t member_size;
-			if (type_spec.pointer_depth() > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				// Pointers and references are always 8 bytes (64-bit)
 				member_size = 8;
 			} else {
-				member_size = get_type_size_bits(type_spec.type()) / 8;
+				member_size = get_type_size_bits(member_type) / 8;
 			}
-			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+			size_t member_alignment = get_type_alignment(member_type, member_size);
 			
 			bool is_ref_member = type_spec.is_reference();
 			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
 			struct_info->addMember(
 				std::string(decl.identifier_token().value()),
-				type_spec.type(),
-				type_spec.type_index(),
+				member_type,
+				member_type_index,
 				member_size,
 				member_alignment,
 				member_decl.access,
 				member_decl.default_initializer,
 				is_ref_member,
 				is_rvalue_ref_member,
-				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0
+				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0
 			);
 		}
 		
@@ -14112,7 +14305,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 		
-		struct_info->finalize();
+		// Finalize the struct layout
+		if (!pattern_struct.base_classes().empty()) {
+			struct_info->finalizeWithBases();
+		} else {
+			struct_info->finalize();
+		}
 		struct_type_info.setStructInfo(std::move(struct_info));
 		
 		// Create an AST node for the instantiated struct so member functions can be code-generated
