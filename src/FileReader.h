@@ -151,28 +151,26 @@ enum class Operator {
 };
 
 static std::unordered_map<Operator, int> precedence_table = {
-	{Operator::And, 1},
-	{Operator::Or, 1},
-	{Operator::Greater, 4},
-	{Operator::Less, 4},
-	{Operator::Equals, 3},
-	{Operator::NotEquals, 3},
-	{Operator::LessEquals, 4},
-	{Operator::GreaterEquals, 4},
-	{Operator::Not, 8},
-	// Arithmetic operators - higher precedence
-	{Operator::Add, 5},
-	{Operator::Subtract, 5},
-	{Operator::Multiply, 6},
-	{Operator::Divide, 6},
-	{Operator::Modulo, 6},
-	// Bitwise operators
-	{Operator::LeftShift, 5},
-	{Operator::RightShift, 5},
-	{Operator::BitwiseAnd, 2},
-	{Operator::BitwiseOr, 1},
-	{Operator::BitwiseXor, 2},
-	{Operator::BitwiseNot, 8},
+	{Operator::Or, 1},             // ||
+	{Operator::And, 2},            // &&
+	{Operator::BitwiseOr, 3},      // |
+	{Operator::BitwiseXor, 4},     // ^
+	{Operator::BitwiseAnd, 5},     // &
+	{Operator::Equals, 6},         // ==
+	{Operator::NotEquals, 6},      // !=
+	{Operator::Less, 7},           // <
+	{Operator::Greater, 7},        // >
+	{Operator::LessEquals, 7},     // <=
+	{Operator::GreaterEquals, 7},  // >=
+	{Operator::LeftShift, 8},      // <<
+	{Operator::RightShift, 8},     // >>
+	{Operator::Add, 9},            // +
+	{Operator::Subtract, 9},       // -
+	{Operator::Multiply, 10},      // *
+	{Operator::Divide, 10},        // /
+	{Operator::Modulo, 10},        // %
+	{Operator::Not, 11},           // !
+	{Operator::BitwiseNot, 11},    // ~
 };
 
 static Operator string_to_operator(std::string_view op) {
@@ -211,10 +209,10 @@ struct CharInfo {
 
 static std::unordered_map<char, CharInfo> char_info_table = {
 	{'(', {Operator::OpenParen, false}},
-	{')', {Operator::OpenParen, false}}, // Placeholder, will be handled in code
+	{')', {Operator::CloseParen, false}},
 	{'!', {Operator::Not, true}},
-	{'&', {Operator::BitwiseAnd, true}},  // Single & is bitwise, && is logical
-	{'|', {Operator::BitwiseOr, true}},   // Single | is bitwise, || is logical
+	{'&', {Operator::BitwiseAnd, true}},  // Single & is bitwise, && is logical (handled by multi-char logic)
+	{'|', {Operator::BitwiseOr, true}},   // Single | is bitwise, || is logical (handled by multi-char logic)
 	{'>', {Operator::Greater, true}},
 	{'<', {Operator::Less, true}},
 	{'=', {Operator::Equals, true}},
