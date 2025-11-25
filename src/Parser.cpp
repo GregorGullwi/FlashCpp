@@ -9702,8 +9702,24 @@ ParseResult Parser::parse_try_statement() {
             return ParseResult::error("Expected ')' after catch declaration", *current_token_);
         }
 
+        // Enter a new scope for the catch block and add the exception parameter to the symbol table
+        gSymbolTable.enter_scope(ScopeType::Block);
+        
+        // Add exception parameter to symbol table (if it's not catch(...))
+        if (!is_catch_all && exception_declaration.has_value()) {
+            const auto& decl = exception_declaration->as<DeclarationNode>();
+            std::string param_name(decl.identifier_token().value());
+            if (!param_name.empty()) {
+                gSymbolTable.insert(param_name, *exception_declaration);
+            }
+        }
+
         // Parse the catch block
         auto catch_block_result = parse_block();
+        
+        // Exit the catch block scope
+        gSymbolTable.exit_scope();
+        
         if (catch_block_result.is_error()) {
             return catch_block_result;
         }

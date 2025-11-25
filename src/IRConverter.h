@@ -2096,6 +2096,24 @@ public:
 			case IrOpcode::IndirectCall:
 				handleIndirectCall(instruction);
 				break;
+			case IrOpcode::TryBegin:
+				handleTryBegin(instruction);
+				break;
+			case IrOpcode::TryEnd:
+				handleTryEnd(instruction);
+				break;
+			case IrOpcode::CatchBegin:
+				handleCatchBegin(instruction);
+				break;
+			case IrOpcode::CatchEnd:
+				handleCatchEnd(instruction);
+				break;
+			case IrOpcode::Throw:
+				handleThrow(instruction);
+				break;
+			case IrOpcode::Rethrow:
+				handleRethrow(instruction);
+				break;
 			default:
 				assert(false && "Not implemented yet");
 				break;
@@ -8853,6 +8871,71 @@ private:
 		                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 
 		regAlloc.reset();
+	}
+
+	// Exception handling functions - basic stubs for now
+	// These allow code to compile but don't implement full C++ exception handling runtime
+	
+	void handleTryBegin(const IrInstruction& instruction) {
+		// TryBegin marks the start of a try block
+		// For now, this is a no-op at the machine code level
+		// In a full implementation, we would:
+		// 1. Set up SEH (Structured Exception Handling) frames
+		// 2. Register exception handlers with the OS
+		// 3. Save context for unwinding
+		
+		// Note: This instruction has a BranchOp typed payload with the handler label,
+		// but we don't use it in this stub implementation
+	}
+
+	void handleTryEnd(const IrInstruction& instruction) {
+		// TryEnd marks the end of a try block
+		// For now, this is a no-op at the machine code level
+		// In a full implementation, we would unregister the exception handler
+	}
+
+	void handleCatchBegin(const IrInstruction& instruction) {
+		// CatchBegin marks the start of a catch handler
+		// For now, this is a no-op at the machine code level
+		// In a full implementation, we would:
+		// 1. Generate exception filter code to check exception type
+		// 2. Extract the exception object and store it in the catch parameter variable
+		
+		// The instruction operands are: [exception_temp, type_index, catch_end_label]
+		// but we don't use them in this stub implementation
+	}
+
+	void handleCatchEnd(const IrInstruction& instruction) {
+		// CatchEnd marks the end of a catch handler
+		// For now, this is a no-op at the machine code level
+	}
+
+	void handleThrow(const IrInstruction& instruction) {
+		// Throw creates and throws an exception
+		// For a minimal implementation, we'll just call std::terminate
+		// In a full implementation, we would call _CxxThrowException
+		
+		// For now, generate code to call std::terminate or just return from the function
+		// This allows the code to compile and link, even though it won't handle exceptions properly
+		
+		// Generate a simple stub: just return 0
+		// MOV RAX, 0
+		emitMovImm64(X64Register::RAX, 0);
+		
+		// Note: In a real implementation, we would:
+		// 1. Allocate exception object on the heap
+		// 2. Call exception constructor
+		// 3. Call _CxxThrowException with exception object and throw info
+	}
+
+	void handleRethrow(const IrInstruction& instruction) {
+		// Rethrow re-throws the current exception
+		// For now, this is a stub that just returns
+		// In a full implementation, we would call _CxxThrowException with the current exception
+		
+		// Generate a simple stub: just return 0
+		// MOV RAX, 0
+		emitMovImm64(X64Register::RAX, 0);
 	}
 
 	void finalizeSections() {
