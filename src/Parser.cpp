@@ -6970,14 +6970,12 @@ ParseResult Parser::parse_primary_expression()
 			kind = TypeTraitKind::IsClass;
 		} else if (trait_name == "__is_function") {
 			kind = TypeTraitKind::IsFunction;
-		}
-		// Type relationships (binary traits)
-		else if (trait_name == "__is_base_of") {
+		} else if (trait_name == "__is_base_of") {
+			// Type relationship: binary trait taking two types
 			kind = TypeTraitKind::IsBaseOf;
 			is_binary_trait = true;
-		}
-		// Type properties
-		else if (trait_name == "__is_polymorphic") {
+		} else if (trait_name == "__is_polymorphic") {
+			// Type properties
 			kind = TypeTraitKind::IsPolymorphic;
 		} else if (trait_name == "__is_final") {
 			kind = TypeTraitKind::IsFinal;

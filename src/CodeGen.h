@@ -6567,6 +6567,20 @@ private:
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member->offset) };
 	}
 
+	// Helper function to check if a type is a scalar type (arithmetic, enum, pointer, member pointer, nullptr_t)
+	bool isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
+		if (is_reference) return false;
+		if (pointer_depth > 0) return true;  // Pointers are scalar
+		return (type == Type::Bool || type == Type::Char || type == Type::Short ||
+		        type == Type::Int || type == Type::Long || type == Type::LongLong ||
+		        type == Type::UnsignedChar || type == Type::UnsignedShort ||
+		        type == Type::UnsignedInt || type == Type::UnsignedLong ||
+		        type == Type::UnsignedLongLong || type == Type::Float ||
+		        type == Type::Double || type == Type::LongDouble || type == Type::Enum ||
+		        type == Type::Nullptr || type == Type::MemberObjectPointer ||
+		        type == Type::MemberFunctionPointer);
+	}
+
 	std::vector<IrOperand> generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// Type traits evaluate to a compile-time boolean constant
 		const ASTNode& type_node = traitNode.type_node();
@@ -6785,13 +6799,7 @@ private:
 					}
 				}
 				// Scalar types are standard layout
-				else if ((type == Type::Bool || type == Type::Char || type == Type::Short ||
-				          type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				          type == Type::UnsignedChar || type == Type::UnsignedShort ||
-				          type == Type::UnsignedInt || type == Type::UnsignedLong ||
-				          type == Type::UnsignedLongLong || type == Type::Float ||
-				          type == Type::Double || type == Type::LongDouble || type == Type::Enum)
-				         && !is_reference && pointer_depth == 0) {
+				else if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
 				break;
@@ -6813,17 +6821,9 @@ private:
 				// A trivially copyable type can be copied with memcpy
 				// - Scalar types (arithmetic, pointers, enums)
 				// - Classes with trivial copy/move constructors and destructors, no virtual
-				if ((type == Type::Bool || type == Type::Char || type == Type::Short ||
-				     type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				     type == Type::UnsignedChar || type == Type::UnsignedShort ||
-				     type == Type::UnsignedInt || type == Type::UnsignedLong ||
-				     type == Type::UnsignedLongLong || type == Type::Float ||
-				     type == Type::Double || type == Type::LongDouble || type == Type::Enum)
-				    && !is_reference && pointer_depth == 0) {
-					result = true;
-				}
-				// Pointers are trivially copyable
-				else if (pointer_depth > 0 && !is_reference) {
+				// TODO: Implement proper checking of copy/move constructors and assignment operators
+				//       for full C++ standard compliance
+				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Classes: need to check for trivial special members and no virtual
@@ -6833,7 +6833,7 @@ private:
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						// Simple heuristic: no virtual functions means likely trivially copyable
-						// (A more complete check would verify copy/move ctors are trivial)
+						// TODO: A more complete check would verify copy/move ctors are trivial
 						result = !struct_info->has_vtable;
 					}
 				}
@@ -6841,17 +6841,14 @@ private:
 
 			case TypeTraitKind::IsTrivial:
 				// A trivial type is trivially copyable and has a trivial default constructor
-				// Same as trivially copyable, plus trivial default constructor
-				if ((type == Type::Bool || type == Type::Char || type == Type::Short ||
-				     type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				     type == Type::UnsignedChar || type == Type::UnsignedShort ||
-				     type == Type::UnsignedInt || type == Type::UnsignedLong ||
-				     type == Type::UnsignedLongLong || type == Type::Float ||
-				     type == Type::Double || type == Type::LongDouble || type == Type::Enum)
-				    && !is_reference && pointer_depth == 0) {
-					result = true;
-				}
-				else if (pointer_depth > 0 && !is_reference) {
+				// TODO: Full compliance requires checking that:
+				//       - Has trivial default constructor
+				//       - Has trivial copy constructor
+				//       - Has trivial move constructor
+				//       - Has trivial copy assignment operator
+				//       - Has trivial move assignment operator
+				//       - Has trivial destructor
+				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
 				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
@@ -6868,16 +6865,7 @@ private:
 			case TypeTraitKind::IsPod:
 				// POD (Plain Old Data) = trivial + standard layout (C++03 compatible)
 				// In C++11+, this is deprecated but still useful
-				if ((type == Type::Bool || type == Type::Char || type == Type::Short ||
-				     type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				     type == Type::UnsignedChar || type == Type::UnsignedShort ||
-				     type == Type::UnsignedInt || type == Type::UnsignedLong ||
-				     type == Type::UnsignedLongLong || type == Type::Float ||
-				     type == Type::Double || type == Type::LongDouble || type == Type::Enum)
-				    && !is_reference && pointer_depth == 0) {
-					result = true;
-				}
-				else if (pointer_depth > 0 && !is_reference) {
+				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
 				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
