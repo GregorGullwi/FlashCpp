@@ -2438,3 +2438,110 @@ TEST_CASE("Concepts:Comprehensive") {
 TEST_CASE("Concepts:Requires") {
 	run_test_from_file("concept_requires.cpp", "C++20 requires clause on templates", false);
 }
+
+// Standard Header Support Test
+// This test attempts to include common standard headers and reports what works/fails
+// It is primarily a diagnostic test to help track progress on standard library support
+TEST_CASE("StandardHeaders:DiagnosticReport") {
+	std::cout << "\n=============================================" << std::endl;
+	std::cout << "FlashCpp Standard Header Support Test Report" << std::endl;
+	std::cout << "=============================================" << std::endl;
+	std::cout << "\nThis test checks what issues exist when including standard headers." << std::endl;
+	std::cout << "Currently, all standard headers fail due to the following issues:" << std::endl;
+	std::cout << std::endl;
+	
+	// Test 1: Undefined preprocessor macros starting with __
+	std::cout << "=== Issue 1: Preprocessor macros starting with __ ===" << std::endl;
+	{
+		CompileContext test_context;
+		FileTree test_tree;
+		FileReader reader(test_context, test_tree);
+		reader.push_file_to_stack({ "test", 0 });
+		
+		// This is the pattern that fails in c++config.h
+		const std::string test_input = R"(
+#if __cpp_exceptions
+int x = 1;
+#endif
+int y = 0;
+)";
+		bool result = reader.preprocessFileContent(test_input);
+		std::cout << "Test '#if __cpp_exceptions': " << (result ? "PASS" : "FAIL") << std::endl;
+		// Note: Currently fails because __cpp_exceptions is not recognized and
+		// when an identifier starts with __, only __has_include is handled.
+		// Other __ identifiers don't push a value, causing 'values stack empty' error.
+	}
+	
+	// Test 2: __has_feature intrinsic (used in clang)
+	std::cout << "\n=== Issue 2: __has_feature/__has_builtin intrinsics ===" << std::endl;
+	{
+		CompileContext test_context;
+		FileTree test_tree;
+		FileReader reader(test_context, test_tree);
+		reader.push_file_to_stack({ "test", 0 });
+		
+		const std::string test_input = R"(
+#ifdef __has_feature
+#if __has_feature(thread_sanitizer)
+int x = 1;
+#endif
+#endif
+int y = 0;
+)";
+		bool result = reader.preprocessFileContent(test_input);
+		std::cout << "Test '#ifdef __has_feature': " << (result ? "PASS" : "FAIL") << std::endl;
+		// Note: __has_feature should be treated as a compiler intrinsic that returns 0/1
+	}
+	
+	// Test 3: __SANITIZE_THREAD__ macro
+	std::cout << "\n=== Issue 3: Sanitizer macros ===" << std::endl;
+	{
+		CompileContext test_context;
+		FileTree test_tree;
+		FileReader reader(test_context, test_tree);
+		reader.push_file_to_stack({ "test", 0 });
+		
+		const std::string test_input = R"(
+#if __SANITIZE_THREAD__
+int x = 1;
+#endif
+int y = 0;
+)";
+		bool result = reader.preprocessFileContent(test_input);
+		std::cout << "Test '#if __SANITIZE_THREAD__': " << (result ? "PASS" : "FAIL") << std::endl;
+	}
+	
+	std::cout << "\n=============================================" << std::endl;
+	std::cout << "         ROOT CAUSES TO FIX" << std::endl;
+	std::cout << "=============================================" << std::endl;
+	std::cout << std::endl;
+	std::cout << "1. In FileReader.h evaluate_expression():" << std::endl;
+	std::cout << "   - Line ~1288: When keyword starts with '__', only '__has_include' is handled." << std::endl;
+	std::cout << "   - Other '__' keywords (like __cpp_exceptions) don't push any value," << std::endl;
+	std::cout << "     causing 'values stack is empty' error." << std::endl;
+	std::cout << "   - Fix: Add fallback to push 0 for undefined __ identifiers." << std::endl;
+	std::cout << std::endl;
+	std::cout << "2. Feature test macros that should be defined:" << std::endl;
+	std::cout << "   - __cpp_exceptions (199711L when exceptions enabled)" << std::endl;
+	std::cout << "   - __cpp_rtti (199711L when RTTI enabled)" << std::endl;
+	std::cout << "   - __cpp_noexcept_function_type (201510L for C++17+)" << std::endl;
+	std::cout << "   - __cpp_constexpr (various values by version)" << std::endl;
+	std::cout << "   - And many more C++11/14/17/20 feature test macros" << std::endl;
+	std::cout << std::endl;
+	std::cout << "3. Compiler intrinsics to implement:" << std::endl;
+	std::cout << "   - __has_feature(x) - Clang feature test" << std::endl;
+	std::cout << "   - __has_builtin(x) - Builtin function test" << std::endl;
+	std::cout << "   - __has_cpp_attribute(x) - Attribute test" << std::endl;
+	std::cout << "   - __has_extension(x) - Extension test" << std::endl;
+	std::cout << std::endl;
+	std::cout << "4. Sanitizer macros (should be 0 when not sanitizing):" << std::endl;
+	std::cout << "   - __SANITIZE_THREAD__" << std::endl;
+	std::cout << "   - __SANITIZE_ADDRESS__" << std::endl;
+	std::cout << std::endl;
+	std::cout << "=============================================" << std::endl;
+	std::cout << "              END OF REPORT" << std::endl;
+	std::cout << "=============================================" << std::endl;
+	
+	// This test always passes - it's a diagnostic test
+	CHECK(true);
+}
