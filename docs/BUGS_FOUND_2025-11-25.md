@@ -6,7 +6,8 @@ This document tracks bugs discovered during feature verification on November 25,
 
 This document tracks **open bugs** that need to be fixed:
 
-- **2 Template Codegen Bugs**: Out-of-line definitions and if constexpr
+- **Bug #2**: Out-of-Line Template Member Function Definitions Don't Link
+- **Bug #3**: If Constexpr in Templates Doesn't Link
 
 ---
 
