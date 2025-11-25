@@ -6609,12 +6609,12 @@ private:
 							assert(false && "Cannot instantiate abstract class");
 						}
 
-						if (type_info.struct_info_->hasConstructor()) {
+						if (type_info.struct_info_->hasAnyConstructor()) {
 							// Generate constructor call on the placement address
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name_;
 							ctor_op.object = result_var;
-
+							
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
 							for (size_t i = 0; i < ctor_args.size(); ++i) {
@@ -6676,7 +6676,7 @@ private:
 							assert(false && "Cannot instantiate abstract class");
 						}
 
-						if (type_info.struct_info_->hasConstructor()) {
+						if (type_info.struct_info_->hasAnyConstructor()) {
 							// Generate constructor call on the newly allocated object
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name_;
@@ -6692,13 +6692,14 @@ private:
 									ctor_op.arguments.push_back(std::move(tv));
 								}
 							}
+						
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 						}
 					}
 				}
 			}
 		}
-
+		
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
 		return { type, size_in_bits, result_var };
