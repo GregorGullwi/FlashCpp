@@ -4334,6 +4334,56 @@ ParseResult Parser::parse_namespace() {
 		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "enum") {
 			decl_result = parse_enum_declaration();
 		}
+		// Check if it's a typedef declaration
+		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "typedef") {
+			decl_result = parse_typedef_declaration();
+		}
+		// Check if it's an extern declaration (extern "C" or extern "C++")
+		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "extern") {
+			// Save position in case this is just a regular extern declaration
+			TokenPosition extern_saved_pos = save_token_position();
+			consume_token(); // consume 'extern'
+
+			// Check if this is extern "C" or extern "C++"
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::StringLiteral) {
+				std::string_view linkage_str = peek_token()->value();
+
+				// Remove quotes from string literal
+				if (linkage_str.size() >= 2 && linkage_str.front() == '"' && linkage_str.back() == '"') {
+					linkage_str = linkage_str.substr(1, linkage_str.size() - 2);
+				}
+
+				Linkage linkage = Linkage::None;
+				if (linkage_str == "C") {
+					linkage = Linkage::C;
+				} else if (linkage_str == "C++") {
+					linkage = Linkage::CPlusPlus;
+				} else {
+					if (!is_anonymous) {
+						gSymbolTable.exit_scope();
+					}
+					return ParseResult::error("Unknown linkage specification: " + std::string(linkage_str), *current_token_);
+				}
+
+				consume_token(); // consume linkage string
+				discard_saved_token(extern_saved_pos);
+
+				// Check for block form: extern "C" { ... }
+				if (peek_token().has_value() && peek_token()->value() == "{") {
+					decl_result = parse_extern_block(linkage);
+				} else {
+					// Single declaration form: extern "C++" int func();
+					Linkage saved_linkage = current_linkage_;
+					current_linkage_ = linkage;
+					decl_result = parse_declaration_or_function_definition();
+					current_linkage_ = saved_linkage;
+				}
+			} else {
+				// Regular extern declaration (not extern "C")
+				restore_token_position(extern_saved_pos);
+				decl_result = parse_declaration_or_function_definition();
+			}
+		}
 		// Otherwise, parse as function or variable declaration
 		else {
 			decl_result = parse_declaration_or_function_definition();
