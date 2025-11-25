@@ -5258,6 +5258,32 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		}
 	}
 
+	// Check for noexcept specifier after parameters
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+	    peek_token()->value() == "noexcept") {
+		consume_token(); // consume 'noexcept'
+		func_ref.set_noexcept(true);
+		
+		// Check for noexcept(expr) form
+		if (peek_token().has_value() && peek_token()->value() == "(") {
+			consume_token(); // consume '('
+			
+			// Parse the constant expression
+			auto expr_result = parse_expression();
+			if (expr_result.is_error()) {
+				return expr_result;
+			}
+			
+			if (expr_result.node().has_value()) {
+				func_ref.set_noexcept_expression(*expr_result.node());
+			}
+			
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after noexcept expression", *current_token_);
+			}
+		}
+	}
+
 	return func_node;
 }
 

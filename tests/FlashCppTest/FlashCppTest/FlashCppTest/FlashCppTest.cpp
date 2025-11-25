@@ -2438,3 +2438,15 @@ TEST_CASE("Concepts:Comprehensive") {
 TEST_CASE("Concepts:Requires") {
 	run_test_from_file("concept_requires.cpp", "C++20 requires clause on templates", false);
 }
+
+TEST_CASE("Exceptions:Basic") {
+	run_test_from_file("test_exceptions_basic.cpp", "Basic exception handling - try/catch/throw", false);
+}
+
+TEST_CASE("Exceptions:Nested") {
+	run_test_from_file("test_exceptions_nested.cpp", "Nested exception handling", false);
+}
+
+TEST_CASE("Exceptions:Noexcept") {
+	run_test_from_file("test_noexcept.cpp", "Noexcept specifier on functions", false);
+}
