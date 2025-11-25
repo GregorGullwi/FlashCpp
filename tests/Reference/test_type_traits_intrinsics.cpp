@@ -316,6 +316,39 @@ int test_is_assignable() {
     return result;  // Expected: 7
 }
 
+// Test __is_destructible(T)
+int test_is_destructible() {
+    int result = 0;
+    // Scalars are destructible
+    if (__is_destructible(int)) result += 1;
+    if (__is_destructible(double)) result += 2;
+    // Trivially destructible scalars
+    if (__is_trivially_destructible(int)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_constant_evaluated()
+int test_is_constant_evaluated() {
+    int result = 0;
+    // At runtime, __is_constant_evaluated() returns false
+    if (!__is_constant_evaluated()) result += 1;
+    // But we can still test the intrinsic parses
+    result += 2;  // Always add this to show the test ran
+    
+    return result;  // Expected: 3
+}
+
+// Test __is_layout_compatible(T, U)
+int test_is_layout_compatible() {
+    int result = 0;
+    // Same types are layout compatible
+    if (__is_layout_compatible(int, int)) result += 1;
+    if (__is_layout_compatible(double, double)) result += 2;
+    
+    return result;  // Expected: 3
+}
+
 int main() {
     int total = 0;
     
@@ -344,6 +377,9 @@ int main() {
     total += test_has_unique_object_representations(); // +7
     total += test_is_constructible();          // +7
     total += test_is_assignable();             // +7
+    total += test_is_destructible();           // +7
+    total += test_is_constant_evaluated();     // +3
+    total += test_is_layout_compatible();      // +3
     
-    return total;  // Expected: 361
+    return total;  // Expected: 381
 }

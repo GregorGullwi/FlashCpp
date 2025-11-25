@@ -610,6 +610,11 @@ struct StructTypeInfo {
 		}
 		return false;
 	}
+
+	// Check if the class has a user-defined destructor
+	bool hasUserDefinedDestructor() const {
+		return hasDestructor();
+	}
 };
 
 // Enumerator information
@@ -1955,6 +1960,8 @@ enum class TypeTraitKind {
 	IsAssignable,
 	IsTriviallyAssignable,
 	IsNothrowAssignable,
+	IsLayoutCompatible,
+	IsPointerInterconvertibleBaseOf,
 	// Type properties
 	IsPolymorphic,
 	IsFinal,
@@ -1968,7 +1975,14 @@ enum class TypeTraitKind {
 	// Constructibility traits (variadic - takes T + Args...)
 	IsConstructible,
 	IsTriviallyConstructible,
-	IsNothrowConstructible
+	IsNothrowConstructible,
+	// Destructibility traits (unary)
+	IsDestructible,
+	IsTriviallyDestructible,
+	IsNothrowDestructible,
+	// Special traits
+	UnderlyingType,      // __underlying_type(T) - returns the underlying type of an enum
+	IsConstantEvaluated  // __is_constant_evaluated() - no arguments, returns bool
 };
 
 class TypeTraitExprNode {
@@ -1985,8 +1999,13 @@ public:
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, std::vector<ASTNode> additional_types, Token trait_token)
 		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(std::move(additional_types)), trait_token_(trait_token) {}
 
+	// Constructor for no-argument traits (like __is_constant_evaluated)
+	explicit TypeTraitExprNode(TypeTraitKind kind, Token trait_token)
+		: kind_(kind), type_node_(), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
+
 	TypeTraitKind kind() const { return kind_; }
 	ASTNode type_node() const { return type_node_; }
+	bool has_type() const { return type_node_.is<TypeSpecifierNode>(); }
 	bool has_second_type() const { return second_type_node_.has_value(); }
 	ASTNode second_type_node() const { return second_type_node_.value_or(ASTNode()); }
 	const std::vector<ASTNode>& additional_type_nodes() const { return additional_type_nodes_; }
@@ -1997,7 +2016,9 @@ public:
 		return kind_ == TypeTraitKind::IsBaseOf ||
 		       kind_ == TypeTraitKind::IsAssignable ||
 		       kind_ == TypeTraitKind::IsTriviallyAssignable ||
-		       kind_ == TypeTraitKind::IsNothrowAssignable;
+		       kind_ == TypeTraitKind::IsNothrowAssignable ||
+		       kind_ == TypeTraitKind::IsLayoutCompatible ||
+		       kind_ == TypeTraitKind::IsPointerInterconvertibleBaseOf;
 	}
 
 	// Check if this is a variadic trait (takes T + Args...)
@@ -2005,6 +2026,11 @@ public:
 		return kind_ == TypeTraitKind::IsConstructible ||
 		       kind_ == TypeTraitKind::IsTriviallyConstructible ||
 		       kind_ == TypeTraitKind::IsNothrowConstructible;
+	}
+
+	// Check if this is a no-argument trait
+	bool is_no_arg_trait() const {
+		return kind_ == TypeTraitKind::IsConstantEvaluated;
 	}
 
 	// Get the string name of the trait for error messages
@@ -2040,6 +2066,13 @@ public:
 			case TypeTraitKind::IsAssignable: return "__is_assignable";
 			case TypeTraitKind::IsTriviallyAssignable: return "__is_trivially_assignable";
 			case TypeTraitKind::IsNothrowAssignable: return "__is_nothrow_assignable";
+			case TypeTraitKind::IsDestructible: return "__is_destructible";
+			case TypeTraitKind::IsTriviallyDestructible: return "__is_trivially_destructible";
+			case TypeTraitKind::IsNothrowDestructible: return "__is_nothrow_destructible";
+			case TypeTraitKind::UnderlyingType: return "__underlying_type";
+			case TypeTraitKind::IsConstantEvaluated: return "__is_constant_evaluated";
+			case TypeTraitKind::IsLayoutCompatible: return "__is_layout_compatible";
+			case TypeTraitKind::IsPointerInterconvertibleBaseOf: return "__is_pointer_interconvertible_base_of";
 			default: return "__unknown_trait";
 		}
 	}

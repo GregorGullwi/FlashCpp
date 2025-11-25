@@ -7040,6 +7040,151 @@ private:
 				}
 				break;
 
+			case TypeTraitKind::IsDestructible:
+				// __is_destructible(T) - Check if T can be destroyed
+				// All scalar types are destructible
+				if (isScalarType(type, is_reference, pointer_depth)) {
+					result = true;
+				}
+				// Class types: check for accessible destructor
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						// Assume destructible unless we can prove otherwise
+						// (no deleted destructor check available yet)
+						result = true;
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsTriviallyDestructible:
+				// __is_trivially_destructible(T) - Check if T can be trivially destroyed
+				// Scalar types are trivially destructible
+				if (isScalarType(type, is_reference, pointer_depth)) {
+					result = true;
+				}
+				// Class types: no virtual, no user-defined destructor
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						// Trivially destructible if no vtable and no user-defined destructor
+						result = !struct_info->has_vtable && !struct_info->hasUserDefinedDestructor();
+					} else if (struct_info && struct_info->is_union) {
+						// Unions are trivially destructible if all members are
+						result = true;
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsNothrowDestructible:
+				// __is_nothrow_destructible(T) - Check if T can be destroyed without throwing
+				// Scalar types don't throw on destruction
+				if (isScalarType(type, is_reference, pointer_depth)) {
+					result = true;
+				}
+				// Class types: assume noexcept destructor (most are in practice)
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						// Most destructors are noexcept by default since C++11
+						result = true;
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsLayoutCompatible:
+				// __is_layout_compatible(T, U) - Check if T and U have the same layout
+				if (traitNode.has_second_type()) {
+					const ASTNode& second_node = traitNode.second_type_node();
+					if (second_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& second_spec = second_node.as<TypeSpecifierNode>();
+						
+						// Same type is always layout compatible with itself
+						if (type == second_spec.type() && 
+						    pointer_depth == second_spec.pointer_depth() &&
+						    is_reference == second_spec.is_reference()) {
+							if (type == Type::Struct) {
+								result = (type_spec.type_index() == second_spec.type_index());
+							} else {
+								result = true;
+							}
+						}
+						// Different standard layout types with same size
+						else if (isScalarType(type, is_reference, pointer_depth) &&
+						         isScalarType(second_spec.type(), second_spec.is_reference(), second_spec.pointer_depth())) {
+							result = (type_spec.size_in_bits() == second_spec.size_in_bits());
+						}
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsPointerInterconvertibleBaseOf:
+				// __is_pointer_interconvertible_base_of(Base, Derived)
+				// Check if Base is pointer-interconvertible with Derived
+				if (traitNode.has_second_type()) {
+					const ASTNode& derived_node = traitNode.second_type_node();
+					if (derived_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& derived_spec = derived_node.as<TypeSpecifierNode>();
+						
+						// Both must be class types (not references, not pointers)
+						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
+						    !is_reference && pointer_depth == 0 &&
+						    !derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
+						    type_spec.type_index() < gTypeInfo.size() &&
+						    derived_spec.type_index() < gTypeInfo.size()) {
+							
+							const TypeInfo& base_info = gTypeInfo[type_spec.type_index()];
+							const TypeInfo& derived_info = gTypeInfo[derived_spec.type_index()];
+							const StructTypeInfo* base_struct = base_info.getStructInfo();
+							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
+							
+							if (base_struct && derived_struct) {
+								// Same type is pointer interconvertible with itself
+								if (type_spec.type_index() == derived_spec.type_index()) {
+									result = true;
+								} else {
+									// Check if Base is the first non-static data member or first base class
+									// and has the same address as Derived
+									for (size_t i = 0; i < derived_struct->base_classes.size(); ++i) {
+										if (derived_struct->base_classes[i].type_index == type_spec.type_index()) {
+											// First base class at offset 0 is pointer interconvertible
+											result = (i == 0 && !base_struct->has_vtable);
+											break;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				break;
+
+			case TypeTraitKind::UnderlyingType:
+				// __underlying_type(T) returns the underlying type of an enum
+				// This is a type query, not a bool result - handle specially
+				// For now, return int as the default underlying type for enums
+				if (type == Type::Enum && !is_reference && pointer_depth == 0) {
+					// Enum's underlying type - default to int
+					return { Type::Int, 32, 0ULL };
+				}
+				// For non-enums, this is an error - return false/0
+				result = false;
+				break;
+
+			case TypeTraitKind::IsConstantEvaluated:
+				// __is_constant_evaluated() - returns true if being evaluated at compile time
+				// In runtime code, this always returns false
+				// In constexpr context, this would return true
+				// For now, return false (runtime context)
+				result = false;
+				break;
+
 			default:
 				result = false;
 				break;

@@ -6944,6 +6944,7 @@ ParseResult Parser::parse_primary_expression()
 		TypeTraitKind kind;
 		bool is_binary_trait = false;
 		bool is_variadic_trait = false;
+		bool is_no_arg_trait = false;
 		
 		// Primary type categories
 		if (trait_name == "__is_void") {
@@ -7019,6 +7020,29 @@ ParseResult Parser::parse_primary_expression()
 		} else if (trait_name == "__is_nothrow_assignable") {
 			kind = TypeTraitKind::IsNothrowAssignable;
 			is_binary_trait = true;
+		}
+		// Destructibility traits (unary)
+		else if (trait_name == "__is_destructible") {
+			kind = TypeTraitKind::IsDestructible;
+		} else if (trait_name == "__is_trivially_destructible") {
+			kind = TypeTraitKind::IsTriviallyDestructible;
+		} else if (trait_name == "__is_nothrow_destructible") {
+			kind = TypeTraitKind::IsNothrowDestructible;
+		}
+		// C++20 layout compatibility traits (binary)
+		else if (trait_name == "__is_layout_compatible") {
+			kind = TypeTraitKind::IsLayoutCompatible;
+			is_binary_trait = true;
+		} else if (trait_name == "__is_pointer_interconvertible_base_of") {
+			kind = TypeTraitKind::IsPointerInterconvertibleBaseOf;
+			is_binary_trait = true;
+		}
+		// Special traits
+		else if (trait_name == "__underlying_type") {
+			kind = TypeTraitKind::UnderlyingType;
+		} else if (trait_name == "__is_constant_evaluated") {
+			kind = TypeTraitKind::IsConstantEvaluated;
+			is_no_arg_trait = true;
 		} else {
 			return ParseResult::error("Unknown type trait intrinsic", trait_token);
 		}
@@ -7027,55 +7051,65 @@ ParseResult Parser::parse_primary_expression()
 			return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
 		}
 
-		// Parse the first type argument
-		ParseResult type_result = parse_type_specifier();
-		if (type_result.is_error() || !type_result.node().has_value()) {
-			return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
-		}
-
-		if (is_variadic_trait) {
-			// Variadic trait: parse comma-separated additional types
-			std::vector<ASTNode> additional_types;
-			while (peek_token().has_value() && peek_token()->value() == ",") {
-				consume_punctuator(",");
-				ParseResult arg_type_result = parse_type_specifier();
-				if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
-					return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
-				}
-				additional_types.push_back(*arg_type_result.node());
-			}
-
+		if (is_no_arg_trait) {
+			// No-argument trait like __is_constant_evaluated()
 			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+				return ParseResult::error("Expected ')' for no-argument type trait", *current_token_);
 			}
 
 			result = emplace_node<ExpressionNode>(
-				TypeTraitExprNode(kind, *type_result.node(), std::move(additional_types), trait_token));
-		} else if (is_binary_trait) {
-			// Binary trait: parse comma and second type
-			if (!consume_punctuator(",")) {
-				return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
-			}
-
-			ParseResult second_type_result = parse_type_specifier();
-			if (second_type_result.is_error() || !second_type_result.node().has_value()) {
-				return ParseResult::error("Expected second type in binary type trait", *current_token_);
-			}
-
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
-			}
-
-			result = emplace_node<ExpressionNode>(
-				TypeTraitExprNode(kind, *type_result.node(), *second_type_result.node(), trait_token));
+				TypeTraitExprNode(kind, trait_token));
 		} else {
-			// Unary trait: just close paren
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after type trait argument", *current_token_);
+			// Parse the first type argument
+			ParseResult type_result = parse_type_specifier();
+			if (type_result.is_error() || !type_result.node().has_value()) {
+				return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
 			}
 
-			result = emplace_node<ExpressionNode>(
-				TypeTraitExprNode(kind, *type_result.node(), trait_token));
+			if (is_variadic_trait) {
+				// Variadic trait: parse comma-separated additional types
+				std::vector<ASTNode> additional_types;
+				while (peek_token().has_value() && peek_token()->value() == ",") {
+					consume_punctuator(",");
+					ParseResult arg_type_result = parse_type_specifier();
+					if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
+						return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
+					}
+					additional_types.push_back(*arg_type_result.node());
+				}
+
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+				}
+
+				result = emplace_node<ExpressionNode>(
+					TypeTraitExprNode(kind, *type_result.node(), std::move(additional_types), trait_token));
+			} else if (is_binary_trait) {
+				// Binary trait: parse comma and second type
+				if (!consume_punctuator(",")) {
+					return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
+				}
+
+				ParseResult second_type_result = parse_type_specifier();
+				if (second_type_result.is_error() || !second_type_result.node().has_value()) {
+					return ParseResult::error("Expected second type in binary type trait", *current_token_);
+				}
+
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+				}
+
+				result = emplace_node<ExpressionNode>(
+					TypeTraitExprNode(kind, *type_result.node(), *second_type_result.node(), trait_token));
+			} else {
+				// Unary trait: just close paren
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after type trait argument", *current_token_);
+				}
+
+				result = emplace_node<ExpressionNode>(
+					TypeTraitExprNode(kind, *type_result.node(), trait_token));
+			}
 		}
 	}
 	// Check for global namespace scope operator :: at the beginning
