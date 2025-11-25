@@ -8912,17 +8912,14 @@ private:
 
 	void handleThrow(const IrInstruction& instruction) {
 		// Throw creates and throws an exception
-		// For a minimal implementation, we'll just call std::terminate
+		// NOTE: This is a STUB implementation that does not actually throw exceptions
+		// For a minimal implementation, we just return 0 to allow code to compile
 		// In a full implementation, we would call _CxxThrowException
 		
-		// For now, generate code to call std::terminate or just return from the function
-		// This allows the code to compile and link, even though it won't handle exceptions properly
-		
-		// Generate a simple stub: just return 0
-		// MOV RAX, 0
+		// Generate stub code: MOV RAX, 0 (return 0 instead of throwing)
 		emitMovImm64(X64Register::RAX, 0);
 		
-		// Note: In a real implementation, we would:
+		// TODO: Full implementation would:
 		// 1. Allocate exception object on the heap
 		// 2. Call exception constructor
 		// 3. Call _CxxThrowException with exception object and throw info
@@ -8930,12 +8927,14 @@ private:
 
 	void handleRethrow(const IrInstruction& instruction) {
 		// Rethrow re-throws the current exception
-		// For now, this is a stub that just returns
+		// NOTE: This is a STUB implementation that does not actually rethrow exceptions
+		// For a minimal implementation, we just return 0 to allow code to compile
 		// In a full implementation, we would call _CxxThrowException with the current exception
 		
-		// Generate a simple stub: just return 0
-		// MOV RAX, 0
+		// Generate stub code: MOV RAX, 0 (return 0 instead of rethrowing)
 		emitMovImm64(X64Register::RAX, 0);
+		
+		// TODO: Full implementation would call _CxxThrowException with current exception
 	}
 
 	void finalizeSections() {
