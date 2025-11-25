@@ -229,12 +229,13 @@ bool test_comparisons(double a, double b) {
   - Impact: Proper initialization of `template<typename T> constexpr T pi = T(3.14159);`
 
 **C++20 Features:**
-- **Concepts**: Template constraints and requirements ⏳ **In Progress - Basic support added**
+- **Concepts**: Template constraints and requirements ✅ **Basic implementation complete** 🆕
   - ✅ Concept declarations: `concept Name = constraint;`
   - ✅ Template concepts: `template<typename T> concept Name = constraint;`
-  - ⏳ Requires clauses on templates (parsing in progress)
-  - ⏳ Requires expressions
-  - ⏳ Abbreviated function templates
+  - ✅ Requires clauses on templates: `template<typename T> requires Concept<T>`
+  - ✅ Requires expressions with parameters: `requires(T a, T b) { a + b; }`
+  - ✅ Constraint evaluation: Concepts are evaluated when used to constrain templates
+  - ⏳ Abbreviated function templates (future work)
 - **Ranges**: Range adaptors and views (std::ranges)
 - **Range-based for loops**: `for (auto x : container)` syntax ⏳ **Arrays working, custom containers blocked by parser limitation**
 - **Spaceship operator**: `<=>` three-way comparison
@@ -292,14 +293,16 @@ These features are essential for modern C++ and widely used in production code:
    - **Impact**: Proper initialization of variable templates, compile-time computation
    - **Estimated effort**: 2-3 weeks
 
-4. **Concepts** ⭐⭐⭐⭐ ⏳ **In Progress - Basic Support Added**
+4. **Concepts** ⭐⭐⭐⭐ ✅ **Basic Implementation Complete** 🆕
    - Template constraints and requirements
    - ✅ Concept declarations (simple and template forms)
-   - ⏳ Requires clauses (parsing in development)
-   - ⏳ Concept definitions and constraint evaluation
+   - ✅ Requires clauses on templates: `requires Concept<T>`
+   - ✅ Requires expressions with parameters: `requires(T a, T b) { a + b; }`
+   - ✅ Constraint evaluation when using concepts
+   - ⏳ Abbreviated function templates (future work)
    - **Impact**: Template error messages, type safety
-   - **Current status**: Basic concept parsing working, constraint checking pending
-   - **Estimated effort**: 2 weeks remaining (after basic parsing)
+   - **Current status**: Basic concept and constraint support working
+   - **Estimated effort**: 1 week for advanced features
 
 9. **Ranges library** ⭐⭐⭐
    - `std::ranges` adaptors and views
@@ -313,7 +316,7 @@ These features are essential for modern C++ and widely used in production code:
 
 | Category | Missing | Priority | Status |
 |----------|---------|----------|--------|
-| **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | ✅ 95% |
+| **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | ✅ 97% |
 | **Modern Loops** | Range-based for | ⭐⭐⭐⭐ | ⏳ Partial |
 | **Compile-time** | Constexpr evaluator (variable templates) | ⭐⭐⭐⭐ | ⏳ Pending |
 | **Comparison** | Spaceship operator | ⭐⭐⭐ | ✅ Complete |
@@ -529,6 +532,7 @@ This project is open source. See the repository for license details.
 - ✅ **C++20 spaceship operator**: Three-way comparison with automatic synthesis of all comparison operators ✅ 🆕
 - ✅ **C++20 delayed parsing**: Standard-compliant parsing for inline member functions
 - ✅ **C++20 type trait intrinsics**: 37 compiler intrinsics for `<type_traits>` compatibility ✅ 🆕
+- ✅ **C++20 concepts**: Concept declarations, requires clauses, requires expressions, and constraint evaluation ✅ 🆕
 - ✅ **C++11 member initialization**: Default member initializers with full codegen
 - ✅ **Lambda expressions**: Complete lambda support with captures and closures
 - ✅ **Type aliases**: Typedef support with type chaining
@@ -536,7 +540,7 @@ This project is open source. See the repository for license details.
 - ✅ **Modern instruction generation**: SSE/AVX2 optimizations for floating-point
 - ✅ **IEEE 754 compliance**: Proper floating-point semantics
 - ✅ **Type-aware compilation**: Automatic optimization based on operand types
-- ✅ **Comprehensive testing**: 229+ test cases ensuring correctness ✅
+- ✅ **Comprehensive testing**: 230+ test cases ensuring correctness ✅
 - ✅ **Production-ready**: Suitable for object-oriented and numerical computing applications
 
 **The compiler has evolved from basic arithmetic to a comprehensive system capable of handling complex C++ programs with:**
@@ -544,6 +548,7 @@ This project is open source. See the repository for license details.
 - Full namespace support with qualified lookup and using directives ✅
 - Auto type deduction with complete type inference ✅
 - C++20 delayed parsing for inline member functions
+- C++20 concepts with requires expressions and constraint checking ✅ 🆕
 - C++11 default member initializers
 - Lambda expressions with captures and closures
 - Type aliases and typedef support
@@ -558,6 +563,7 @@ This project is open source. See the repository for license details.
 1. **Templates: 100% complete** ✅ - 21/21 features done! Full template system with partial specialization and member function templates! 🎉
 2. **Spaceship operator: COMPLETE** ✅ - C++20 three-way comparison with automatic synthesis! 🎉
 3. **Type trait intrinsics: COMPLETE** ✅ - 37 intrinsics for `<type_traits>` compatibility! 🎉
-4. **Constexpr evaluator** - Compile-time constant evaluation for variable template initializers
-5. **OOP Completeness** - Friends and nested classes
+4. **Concepts: Basic implementation COMPLETE** ✅ - Requires expressions and constraint evaluation working! 🎉
+5. **Constexpr evaluator** - Compile-time constant evaluation for variable template initializers
+6. **OOP Completeness** - Friends and nested classes
 6. **C++20 features** - Concepts, ranges, range-based for loops

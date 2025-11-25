@@ -2438,3 +2438,7 @@ TEST_CASE("Concepts:Comprehensive") {
 TEST_CASE("Concepts:Requires") {
 	run_test_from_file("concept_requires.cpp", "C++20 requires clause on templates", false);
 }
+
+TEST_CASE("Concepts:RequiresExpression") {
+	run_test_from_file("concept_with_requires_expr.cpp", "C++20 concept with requires expression", false);
+}

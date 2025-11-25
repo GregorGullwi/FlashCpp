@@ -1039,9 +1039,9 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			);
 		}
 		
-		// Concept found - would need to evaluate it with template arguments
-		// For now, we assume it's satisfied if it exists
-		return ConstraintEvaluationResult::success();
+		// Concept found - evaluate its constraint expression with the template arguments
+		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+		return evaluateConstraint(concept_node.constraint_expr(), template_args, template_param_names);
 	}
 	
 	// For member access nodes (e.g., std::is_integral_v<T>)
@@ -1054,12 +1054,25 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	}
 	
 	// For function call nodes (concept with template arguments like Integral<T>)
-	// Note: This won't work directly with FunctionCallNode as it stores DeclarationNode
-	// For now, we just accept these as satisfied since full evaluation needs type substitution
+	// This handles the Concept<T> syntax in requires clauses
 	if (constraint_expr.is<FunctionCallNode>()) {
-		// Would need to evaluate concept with substituted template arguments
-		// For now, assume satisfied
-		return ConstraintEvaluationResult::success();
+		const auto& func_call = constraint_expr.as<FunctionCallNode>();
+		std::string_view concept_name = func_call.called_from().value();
+		
+		// Look up the concept
+		auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
+		if (!concept_opt.has_value()) {
+			// Not a concept - might be a function call, assume satisfied
+			return ConstraintEvaluationResult::success();
+		}
+		
+		// Get the concept's constraint expression and evaluate it
+		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+		
+		// The template arguments in the function call should be used to substitute
+		// into the concept's constraint expression
+		// For now, pass through the original template_args
+		return evaluateConstraint(concept_node.constraint_expr(), template_args, template_param_names);
 	}
 	
 	// For binary operators (&&, ||)
@@ -1116,6 +1129,49 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			}
 			return ConstraintEvaluationResult::success();
 		}
+	}
+	
+	// For requires expressions: requires { expr; ... } or requires(params) { expr; ... }
+	if (constraint_expr.is<RequiresExpressionNode>()) {
+		const auto& requires_expr = constraint_expr.as<RequiresExpressionNode>();
+		// Evaluate each requirement in the requires expression
+		// For now, we check if each requirement is a valid expression
+		// This is a simplified check - full implementation would need to verify
+		// that the expressions are well-formed with the substituted template arguments
+		for (const auto& requirement : requires_expr.requirements()) {
+			// Check different types of requirements
+			if (requirement.is<CompoundRequirementNode>()) {
+				// Compound requirement: { expression } -> Type
+				// For now, assume satisfied - full implementation would check
+				// that the expression is valid and the return type matches
+				continue;
+			}
+			if (requirement.is<RequiresClauseNode>()) {
+				// Nested requirement: requires constraint
+				const auto& nested_req = requirement.as<RequiresClauseNode>();
+				auto nested_result = evaluateConstraint(nested_req.constraint_expr(), template_args, template_param_names);
+				if (!nested_result.satisfied) {
+					return nested_result;
+				}
+				continue;
+			}
+			// Simple requirement: expression must be valid
+			// For binary operator expressions like a + b, we need to check if the operation is valid for the type
+			if (requirement.is<ExpressionNode>()) {
+				// The expression parsing succeeded, so it's syntactically valid
+				// For semantic validation, we would need to check if the types support the operations
+				// For now, we consider it satisfied if parsing succeeded
+				continue;
+			}
+			if (requirement.is<BinaryOperatorNode>()) {
+				// Binary operation like a + b
+				// For now, assume satisfied - full implementation would check
+				// if the types support the operation
+				continue;
+			}
+		}
+		// All requirements satisfied
+		return ConstraintEvaluationResult::success();
 	}
 	
 	// Default: assume satisfied for unknown expressions

@@ -7991,6 +7991,26 @@ ParseResult Parser::parse_primary_expression()
 					}
 				}
 
+				// Check if this identifier is a concept name
+				// Concepts are used in requires clauses: requires Concept<T>
+				if (gConceptRegistry.hasConcept(idenfifier_token.value())) {
+					// Try to parse template arguments: Concept<T>
+					if (peek_token().has_value() && peek_token()->value() == "<") {
+						auto template_args = parse_explicit_template_arguments();
+						if (template_args.has_value()) {
+							// Create a concept check expression
+							// We'll represent this as an identifier with the concept name and args attached
+							// The constraint evaluator will handle the actual check
+							// For now, just wrap it in an identifier node
+							result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+							return ParseResult::success(*result);
+						}
+					}
+					// Concept without template args - just an identifier reference
+					result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+					return ParseResult::success(*result);
+				}
+
 				// Not a function call, template member access, or template parameter reference
 				// But allow pack expansion (identifier...)
 				if (is_pack_expansion) {
@@ -10605,6 +10625,11 @@ ParseResult Parser::parse_template_declaration() {
 		std::cerr << "DEBUG: Next token after template params: '" << peek_token()->value() << "' (type=" << static_cast<int>(peek_token()->type()) << ")" << std::endl;
 	}
 
+	// Set template parameter context for parsing requires clauses and template bodies
+	// This allows template parameters to be recognized in expressions
+	current_template_param_names_ = template_param_names;  // copy the param names
+	parsing_template_body_ = true;
+
 	// Check for requires clause after template parameters
 	// Syntax: template<typename T> requires Concept<T> ...
 	std::optional<ASTNode> requires_clause;
@@ -10615,6 +10640,9 @@ ParseResult Parser::parse_template_declaration() {
 		// Parse the constraint expression
 		auto constraint_result = parse_expression();
 		if (constraint_result.is_error()) {
+			// Clean up template parameter context before returning
+			current_template_param_names_.clear();
+			parsing_template_body_ = false;
 			return constraint_result;
 		}
 		
@@ -11990,6 +12018,9 @@ ParseResult Parser::parse_requires_expression() {
 		return ParseResult::error("Expected 'requires' keyword", *current_token_);
 	}
 
+	// Enter a new scope for the requires expression parameters
+	gSymbolTable.enter_scope(ScopeType::Block);
+	
 	// Check if there are parameters: requires(T a, T b) { ... }
 	// or no parameters: requires { ... }
 	std::vector<ASTNode> parameters;
@@ -12003,11 +12034,13 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse type
 			auto type_result = parse_type_specifier();
 			if (type_result.is_error()) {
+				gSymbolTable.exit_scope();
 				return type_result;
 			}
 			
 			// Parse parameter name
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected parameter name in requires expression", *current_token_);
 			}
 			Token param_name = *peek_token();
@@ -12017,6 +12050,9 @@ ParseResult Parser::parse_requires_expression() {
 			auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
 			parameters.push_back(decl_node);
 			
+			// Add parameter to the scope so it can be used in the requires body
+			gSymbolTable.insert(param_name.value(), decl_node);
+			
 			// Check for comma (more parameters) or end
 			if (peek_token().has_value() && peek_token()->value() == ",") {
 				consume_token(); // consume ','
@@ -12024,12 +12060,14 @@ ParseResult Parser::parse_requires_expression() {
 		}
 		
 		if (!consume_punctuator(")")) {
+			gSymbolTable.exit_scope();
 			return ParseResult::error("Expected ')' after requires expression parameters", *current_token_);
 		}
 	}
 
 	// Expect '{'
 	if (!consume_punctuator("{")) {
+		gSymbolTable.exit_scope();
 		return ParseResult::error("Expected '{' to begin requires expression body", *current_token_);
 	}
 
@@ -12048,6 +12086,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Parse the type name (simplified - just parse an identifier for now)
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected type name after 'typename' in requires expression", *current_token_);
 			}
 			Token type_name = *peek_token();
@@ -12060,6 +12099,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after type requirement
 			if (!consume_punctuator(";")) {
+				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected ';' after type requirement in requires expression", *current_token_);
 			}
 			continue;
@@ -12073,11 +12113,13 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse the expression
 			auto expr_result = parse_expression();
 			if (expr_result.is_error()) {
+				gSymbolTable.exit_scope();
 				return expr_result;
 			}
 			
 			// Expect '}'
 			if (!consume_punctuator("}")) {
+				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected '}' after compound requirement expression", *current_token_);
 			}
 			
@@ -12090,6 +12132,7 @@ ParseResult Parser::parse_requires_expression() {
 				// This can be a concept name (identifier) or a type specifier
 				auto type_result = parse_type_specifier();
 				if (type_result.is_error()) {
+					gSymbolTable.exit_scope();
 					return type_result;
 				}
 				return_type_constraint = *type_result.node();
@@ -12105,6 +12148,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after compound requirement
 			if (!consume_punctuator(";")) {
+				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected ';' after compound requirement in requires expression", *current_token_);
 			}
 			continue;
@@ -12118,6 +12162,7 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse the nested constraint expression
 			auto constraint_result = parse_expression();
 			if (constraint_result.is_error()) {
+				gSymbolTable.exit_scope();
 				return constraint_result;
 			}
 			
@@ -12130,6 +12175,7 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after nested requirement
 			if (!consume_punctuator(";")) {
+				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected ';' after nested requirement in requires expression", *current_token_);
 			}
 			continue;
@@ -12138,20 +12184,26 @@ ParseResult Parser::parse_requires_expression() {
 		// Simple requirement: just an expression
 		auto req_result = parse_expression();
 		if (req_result.is_error()) {
+			gSymbolTable.exit_scope();
 			return req_result;
 		}
 		requirements.push_back(*req_result.node());
 		
 		// Expect ';' after each requirement
 		if (!consume_punctuator(";")) {
+			gSymbolTable.exit_scope();
 			return ParseResult::error("Expected ';' after requirement in requires expression", *current_token_);
 		}
 	}
 
 	// Expect '}'
 	if (!consume_punctuator("}")) {
+		gSymbolTable.exit_scope();
 		return ParseResult::error("Expected '}' to end requires expression", *current_token_);
 	}
+
+	// Exit the scope for the requires expression parameters
+	gSymbolTable.exit_scope();
 
 	// Create RequiresExpressionNode
 	auto requires_expr_node = emplace_node<RequiresExpressionNode>(
