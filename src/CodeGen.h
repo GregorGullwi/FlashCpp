@@ -2560,11 +2560,12 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = handlers_label}, node.try_token()));
 
 		// Visit catch clauses
-		for (const auto& catch_clause_node : node.catch_clauses()) {
+		for (size_t catch_index = 0; catch_index < node.catch_clauses().size(); ++catch_index) {
+			const auto& catch_clause_node = node.catch_clauses()[catch_index];
 			const auto& catch_clause = catch_clause_node.as<CatchClauseNode>();
 			
 			// Generate unique label for this catch handler end
-			std::string catch_end_label = "__catch_end_" + try_id + "_" + std::to_string(&catch_clause_node - &node.catch_clauses()[0]);
+			std::string catch_end_label = "__catch_end_" + try_id + "_" + std::to_string(catch_index);
 
 			// If this is a typed catch (not catch(...))
 			if (!catch_clause.is_catch_all()) {
@@ -2614,6 +2615,7 @@ private:
 				}
 			} else {
 				// catch(...) - catches all exceptions
+				// Operand format: [exception_temp (0 for catch-all), type_index (0 for catch-all), catch_end_label]
 				std::vector<IrOperand> catch_operands = {0, 0, catch_end_label};
 				ir_.addInstruction(IrOpcode::CatchBegin, catch_operands, catch_clause.catch_token());
 				symbol_table.enter_scope(ScopeType::Block);
