@@ -6889,6 +6889,157 @@ private:
 				}
 				break;
 
+			case TypeTraitKind::IsConstructible:
+				// __is_constructible(T, Args...) - Check if T can be constructed with Args...
+				// For scalar types, default constructible (no args) or copy constructible (same type arg)
+				if (isScalarType(type, is_reference, pointer_depth)) {
+					const auto& arg_types = traitNode.additional_type_nodes();
+					if (arg_types.empty()) {
+						// Default constructible - all scalars are default constructible
+						result = true;
+					} else if (arg_types.size() == 1 && arg_types[0].is<TypeSpecifierNode>()) {
+						// Copy/conversion construction - check if types are compatible
+						const TypeSpecifierNode& arg_spec = arg_types[0].as<TypeSpecifierNode>();
+						// Same type or convertible arithmetic types
+						result = (arg_spec.type() == type) || 
+						         (isScalarType(arg_spec.type(), arg_spec.is_reference(), arg_spec.pointer_depth()) &&
+						          !arg_spec.is_reference() && arg_spec.pointer_depth() == 0);
+					}
+				}
+				// Class types: check for appropriate constructor
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						const auto& arg_types = traitNode.additional_type_nodes();
+						if (arg_types.empty()) {
+							// Default constructible - has default constructor or no user-defined ctors
+							result = !struct_info->hasUserDefinedConstructor() || struct_info->hasConstructor();
+						} else {
+							// Check for matching constructor
+							// Simple heuristic: if it has any user-defined constructor, assume constructible
+							result = struct_info->hasUserDefinedConstructor();
+						}
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsTriviallyConstructible:
+				// __is_trivially_constructible(T, Args...) - Check if T can be trivially constructed
+				// Scalar types are trivially constructible
+				if (isScalarType(type, is_reference, pointer_depth)) {
+					result = true;
+				}
+				// Class types: no virtual, no user-defined ctors
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsNothrowConstructible:
+				// __is_nothrow_constructible(T, Args...) - Check if T can be constructed without throwing
+				// Scalar types don't throw
+				if (isScalarType(type, is_reference, pointer_depth)) {
+					result = true;
+				}
+				// Class types: similar to trivially constructible for now
+				// TODO: Check for noexcept constructors
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsAssignable:
+				// __is_assignable(To, From) - Check if From can be assigned to To
+				if (traitNode.has_second_type()) {
+					const ASTNode& from_node = traitNode.second_type_node();
+					if (from_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
+						
+						// For scalar types, check type compatibility
+						if (isScalarType(type, is_reference, pointer_depth)) {
+							// Scalars are assignable from compatible types
+							result = isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth());
+						}
+						// Class types: check for assignment operator
+						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info && !struct_info->is_union) {
+								// If has copy/move assignment or no user-defined, assume assignable
+								result = struct_info->hasCopyAssignmentOperator() || 
+								         struct_info->hasMoveAssignmentOperator() ||
+								         !struct_info->hasUserDefinedConstructor();
+							}
+						}
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsTriviallyAssignable:
+				// __is_trivially_assignable(To, From) - Check if From can be trivially assigned to To
+				if (traitNode.has_second_type()) {
+					const ASTNode& from_node = traitNode.second_type_node();
+					if (from_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
+						
+						// Scalar types are trivially assignable
+						if (isScalarType(type, is_reference, pointer_depth) &&
+						    isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
+							result = true;
+						}
+						// Class types: no virtual, no user-defined assignment
+						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+						         !is_reference && pointer_depth == 0) {
+							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info && !struct_info->is_union) {
+								result = !struct_info->has_vtable && 
+								         !struct_info->hasCopyAssignmentOperator() && 
+								         !struct_info->hasMoveAssignmentOperator();
+							}
+						}
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsNothrowAssignable:
+				// __is_nothrow_assignable(To, From) - Check if From can be assigned without throwing
+				if (traitNode.has_second_type()) {
+					const ASTNode& from_node = traitNode.second_type_node();
+					if (from_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
+						
+						// Scalar types don't throw on assignment
+						if (isScalarType(type, is_reference, pointer_depth) &&
+						    isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
+							result = true;
+						}
+						// Class types: similar to trivially assignable for now
+						// TODO: Check for noexcept assignment operators
+						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+						         !is_reference && pointer_depth == 0) {
+							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info && !struct_info->is_union) {
+								result = !struct_info->has_vtable;
+							}
+						}
+					}
+				}
+				break;
+
 			default:
 				result = false;
 				break;

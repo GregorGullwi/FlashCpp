@@ -293,6 +293,29 @@ int test_has_unique_object_representations() {
     return result;  // Expected: 7
 }
 
+// Test __is_constructible(T, Args...)
+int test_is_constructible() {
+    int result = 0;
+    // Scalars are default constructible
+    if (__is_constructible(int)) result += 1;
+    if (__is_constructible(double)) result += 2;
+    // Scalars are copy constructible
+    if (__is_constructible(int, int)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
+// Test __is_assignable(To, From)
+int test_is_assignable() {
+    int result = 0;
+    // Scalars are assignable
+    if (__is_assignable(int, int)) result += 1;
+    if (__is_assignable(double, double)) result += 2;
+    if (__is_assignable(int, double)) result += 4;
+    
+    return result;  // Expected: 7
+}
+
 int main() {
     int total = 0;
     
@@ -319,6 +342,8 @@ int main() {
     total += test_is_trivial();                // +7
     total += test_is_pod();                    // +7
     total += test_has_unique_object_representations(); // +7
+    total += test_is_constructible();          // +7
+    total += test_is_assignable();             // +7
     
-    return total;  // Expected: 347
+    return total;  // Expected: 361
 }

@@ -1952,6 +1952,9 @@ enum class TypeTraitKind {
 	IsFunction,
 	// Type relationships (binary trait - takes 2 types)
 	IsBaseOf,
+	IsAssignable,
+	IsTriviallyAssignable,
+	IsNothrowAssignable,
 	// Type properties
 	IsPolymorphic,
 	IsFinal,
@@ -1961,28 +1964,47 @@ enum class TypeTraitKind {
 	HasUniqueObjectRepresentations,
 	IsTriviallyCopyable,
 	IsTrivial,
-	IsPod
+	IsPod,
+	// Constructibility traits (variadic - takes T + Args...)
+	IsConstructible,
+	IsTriviallyConstructible,
+	IsNothrowConstructible
 };
 
 class TypeTraitExprNode {
 public:
 	// Constructor for unary type traits (single type argument)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, Token trait_token)
-		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), trait_token_(trait_token) {}
+		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
 
-	// Constructor for binary type traits (two type arguments, like __is_base_of)
+	// Constructor for binary type traits (two type arguments, like __is_base_of, __is_assignable)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, ASTNode second_type_node, Token trait_token)
-		: kind_(kind), type_node_(type_node), second_type_node_(second_type_node), trait_token_(trait_token) {}
+		: kind_(kind), type_node_(type_node), second_type_node_(second_type_node), additional_type_nodes_(), trait_token_(trait_token) {}
+
+	// Constructor for variadic type traits (T + Args..., like __is_constructible)
+	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, std::vector<ASTNode> additional_types, Token trait_token)
+		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(std::move(additional_types)), trait_token_(trait_token) {}
 
 	TypeTraitKind kind() const { return kind_; }
 	ASTNode type_node() const { return type_node_; }
 	bool has_second_type() const { return second_type_node_.has_value(); }
 	ASTNode second_type_node() const { return second_type_node_.value_or(ASTNode()); }
+	const std::vector<ASTNode>& additional_type_nodes() const { return additional_type_nodes_; }
 	const Token& trait_token() const { return trait_token_; }
 
-	// Check if this is a binary trait (takes 2 types)
+	// Check if this is a binary trait (takes exactly 2 types)
 	bool is_binary_trait() const {
-		return kind_ == TypeTraitKind::IsBaseOf;
+		return kind_ == TypeTraitKind::IsBaseOf ||
+		       kind_ == TypeTraitKind::IsAssignable ||
+		       kind_ == TypeTraitKind::IsTriviallyAssignable ||
+		       kind_ == TypeTraitKind::IsNothrowAssignable;
+	}
+
+	// Check if this is a variadic trait (takes T + Args...)
+	bool is_variadic_trait() const {
+		return kind_ == TypeTraitKind::IsConstructible ||
+		       kind_ == TypeTraitKind::IsTriviallyConstructible ||
+		       kind_ == TypeTraitKind::IsNothrowConstructible;
 	}
 
 	// Get the string name of the trait for error messages
@@ -2012,6 +2034,12 @@ public:
 			case TypeTraitKind::IsTriviallyCopyable: return "__is_trivially_copyable";
 			case TypeTraitKind::IsTrivial: return "__is_trivial";
 			case TypeTraitKind::IsPod: return "__is_pod";
+			case TypeTraitKind::IsConstructible: return "__is_constructible";
+			case TypeTraitKind::IsTriviallyConstructible: return "__is_trivially_constructible";
+			case TypeTraitKind::IsNothrowConstructible: return "__is_nothrow_constructible";
+			case TypeTraitKind::IsAssignable: return "__is_assignable";
+			case TypeTraitKind::IsTriviallyAssignable: return "__is_trivially_assignable";
+			case TypeTraitKind::IsNothrowAssignable: return "__is_nothrow_assignable";
 			default: return "__unknown_trait";
 		}
 	}
@@ -2020,6 +2048,7 @@ private:
 	TypeTraitKind kind_;
 	ASTNode type_node_;      // TypeSpecifierNode for the first type argument
 	std::optional<ASTNode> second_type_node_;  // TypeSpecifierNode for the second type argument (for binary traits)
+	std::vector<ASTNode> additional_type_nodes_;  // Additional type arguments (for variadic traits like __is_constructible)
 	Token trait_token_;      // Token for the trait (for error reporting)
 };
 

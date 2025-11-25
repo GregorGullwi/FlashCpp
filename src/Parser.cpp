@@ -6940,9 +6940,10 @@ ParseResult Parser::parse_primary_expression()
 		Token trait_token = *current_token_;
 		consume_token(); // consume the trait name
 
-		// Determine the trait kind and if it's a binary trait
+		// Determine the trait kind and if it's a binary or variadic trait
 		TypeTraitKind kind;
 		bool is_binary_trait = false;
+		bool is_variadic_trait = false;
 		
 		// Primary type categories
 		if (trait_name == "__is_void") {
@@ -6996,6 +6997,28 @@ ParseResult Parser::parse_primary_expression()
 			kind = TypeTraitKind::IsTrivial;
 		} else if (trait_name == "__is_pod") {
 			kind = TypeTraitKind::IsPod;
+		}
+		// Constructibility traits (variadic)
+		else if (trait_name == "__is_constructible") {
+			kind = TypeTraitKind::IsConstructible;
+			is_variadic_trait = true;
+		} else if (trait_name == "__is_trivially_constructible") {
+			kind = TypeTraitKind::IsTriviallyConstructible;
+			is_variadic_trait = true;
+		} else if (trait_name == "__is_nothrow_constructible") {
+			kind = TypeTraitKind::IsNothrowConstructible;
+			is_variadic_trait = true;
+		}
+		// Assignability traits (binary)
+		else if (trait_name == "__is_assignable") {
+			kind = TypeTraitKind::IsAssignable;
+			is_binary_trait = true;
+		} else if (trait_name == "__is_trivially_assignable") {
+			kind = TypeTraitKind::IsTriviallyAssignable;
+			is_binary_trait = true;
+		} else if (trait_name == "__is_nothrow_assignable") {
+			kind = TypeTraitKind::IsNothrowAssignable;
+			is_binary_trait = true;
 		} else {
 			return ParseResult::error("Unknown type trait intrinsic", trait_token);
 		}
@@ -7010,7 +7033,25 @@ ParseResult Parser::parse_primary_expression()
 			return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
 		}
 
-		if (is_binary_trait) {
+		if (is_variadic_trait) {
+			// Variadic trait: parse comma-separated additional types
+			std::vector<ASTNode> additional_types;
+			while (peek_token().has_value() && peek_token()->value() == ",") {
+				consume_punctuator(",");
+				ParseResult arg_type_result = parse_type_specifier();
+				if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
+					return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
+				}
+				additional_types.push_back(*arg_type_result.node());
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+			}
+
+			result = emplace_node<ExpressionNode>(
+				TypeTraitExprNode(kind, *type_result.node(), std::move(additional_types), trait_token));
+		} else if (is_binary_trait) {
 			// Binary trait: parse comma and second type
 			if (!consume_punctuator(",")) {
 				return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
