@@ -79,7 +79,7 @@
 - **Type casts**: C-style casts `(Type)expr` and C++ casts `static_cast<Type>(expr)` 🆕
 - **Constexpr**: Compile-time constant expression evaluation with `constexpr` variables and functions, including recursion and `static_assert` ✅ 🆕
 - **Preprocessor**: Macro expansion, conditional compilation, file inclusion, `#pragma pack`, function-like macros, variadic macros, token pasting, string concatenation, conditional expressions in macros
-- **Templates**: 100% complete (21/21 features) - class templates, function templates, variadic templates, partial/full specialization, CTAD, deduction guides, variable templates, template template parameters, static members, non-type parameters, if constexpr, fold expressions, **out-of-line member definitions**, **template parameter type substitution**, **member function templates** ✅ 🎉
+- **Templates**: ~85% complete (18/21 features fully working) - class templates, function templates, variadic templates, partial/full specialization with inheritance, CTAD, deduction guides, variable templates, template template parameters, static members, non-type parameters, fold expressions, **template parameter type substitution**, **member function templates** ✅ (Note: out-of-line definitions and if constexpr have linking issues)
 - **Spaceship operator**: `<=>` three-way comparison with automatic synthesis of comparison operators (==, !=, <, >, <=, >=) ✅ 🆕
 
 ---
@@ -187,22 +187,24 @@ bool test_comparisons(double a, double b) {
 - ✅ **Designated initializers**: `Type{.member = value}` aggregate initialization syntax ✅
 - ✅ **Unions**: Full union support with proper memory layout (all members at offset 0) ✅ 🆕
 - ✅ **Comma-separated declarations**: Multiple variable declarations `int a, b, c;` with initializers ✅ 🆕
+- ✅ **Inherited member assignment**: Fixed Nov 25, 2025 - assignments to inherited members now work correctly 🆕
 
-### **✅ Templates** - 100% Complete (21/21 Features) 🆕 Updated Nov 25, 2025
+### **⏳ Templates** - ~85% Complete (18/21 Features Fully Working) 🆕 Updated Nov 25, 2025
 - ✅ **Basic templates**: Template instantiation, defaults, nested types, nullptr, type aliases
 - ✅ **Partial specialization**: Full pattern matching (T&, T&&, T*, const T) with specificity scoring **FULLY WORKING** 🎉
+- ✅ **Partial specialization with inheritance**: Pattern matching + base class re-instantiation **FULLY WORKING** 🎉 🆕
 - ✅ **Member function templates**: Template member functions with argument deduction
 - ✅ **Template template parameters**: Templates accepting other templates as arguments
 - ✅ **Full specialization**: Exact type match with `template<>` syntax - **FULLY WORKING** 🎉
-- ✅ **Out-of-line member definitions**: `template<typename T> T Container<T>::add(T a, T b)` syntax 🆕
+- ⏳ **Out-of-line member definitions**: `template<typename T> T Container<T>::add(T a, T b)` - Parses but doesn't link
 - ✅ **Template parameter type substitution**: Member function parameters and return types properly substituted 🆕
 - ✅ **Non-type parameters**: Array size substitution and multiple non-type parameters
 - ✅ **Static members**: Per-instantiation storage for static members in templates
 - ✅ **Variadic templates**: Parameter packs, function templates, perfect forwarding, sizeof... operator
 - ✅ **Class template argument deduction (CTAD)**: Deduction guides with reference semantics support
-- ✅ **Variable templates**: Template variables with instantiation and global variable generation
-- ✅ **Fold expressions**: C++17 fold expressions with all 4 patterns (unary/binary × left/right)
-- ✅ **If constexpr**: Compile-time conditional compilation in templates
+- ✅ **Variable templates**: Template variables (basic - initializers are zero-initialized, need constexpr eval)
+- ✅ **Fold expressions**: C++17 fold expressions with all 4 patterns **VERIFIED WORKING** 🆕
+- ⏳ **If constexpr**: Compile-time conditionals - Parses but doesn't link (template instantiation issue)
 
 ### **⏳ Remaining Features**
 
@@ -249,28 +251,31 @@ bool test_comparisons(double a, double b) {
 ### **Critical/Commonly Used** (High Priority)
 These features are essential for modern C++ and widely used in production code:
 
-1. **Templates** ⭐⭐⭐⭐⭐ ✅ **100% COMPLETE** 🎉 Updated Nov 25, 2025
+1. **Templates** ⭐⭐⭐⭐⭐ ⏳ **~85% COMPLETE** Updated Nov 25, 2025
    - ✅ Function templates with type deduction
    - ✅ Class templates with full/partial specialization (**FULLY WORKING** 🎉)
    - ✅ **Partial specialization pattern matching** (T*, T&, const T) 🆕 **WORKING!**
-   - ✅ Out-of-line member function definitions
+   - ✅ **Partial specialization with inheritance** - Fully working with member assignment fix! 🆕
+   - ⏳ Out-of-line member function definitions - Parse but don't link (unresolved symbols)
    - ✅ Template parameter type substitution in member functions
    - ✅ Variadic templates and parameter packs
    - ✅ Perfect forwarding with rvalue references
    - ✅ Template template parameters
    - ✅ Class template argument deduction (CTAD)
-   - ✅ Variable templates
-   - ✅ Fold expressions (C++17)
-   - ✅ If constexpr (C++17)
+   - ✅ Variable templates (basic - initializers zero-initialized)
+   - ✅ Fold expressions (C++17) - **VERIFIED WORKING**
+   - ⏳ If constexpr (C++17) - Parse but don't link (unresolved symbols)
    - ✅ Member function templates
-   - **Status**: 21/21 features complete, 100% STL compatibility foundation
-   - **Recent Achievement**: All template features complete! 🎉
-   - **Remaining effort**: 0 hours - COMPLETE!
+   - **Status**: ~18/21 features fully working, 3 features partially working
+   - **Known Issues**: Out-of-line definitions and if constexpr generate code but don't link
+   - **Recent Achievement**: Partial specialization with inheritance + inherited member assignment! 🎉
+   - **Remaining effort**: 1-2 weeks to fix codegen for partial features
 
 2. **Range-based for loops** ⭐⭐⭐⭐ ❌ **Not Implemented**
    - `for (auto x : container)` syntax
    - Iterator protocol support
-   - **Current status**: Parser doesn't support syntax yet
+   - **Current status**: Parser doesn't support syntax at all (verified Nov 25, 2025)
+   - **Previous claim**: "Arrays working" - **INCORRECT**, no syntax support exists
    - **Impact**: Modern loop syntax, container iteration
    - **Estimated effort**: 2-3 days for full implementation
 
@@ -551,11 +556,12 @@ This project is open source. See the repository for license details.
 
 **It's now ready for real-world C++ development!** 🚀
 
-**Foundation complete!** The compiler now has all essential language features. Next milestones:
-1. **Templates: 100% complete** ✅ - 21/21 features done! Full template system complete! 🎉
+**Foundation nearly complete!** The compiler now has most essential language features. Next milestones:
+1. **Fix template codegen issues** - Out-of-line member definitions and if constexpr link errors
 2. **Spaceship operator: COMPLETE** ✅ - C++20 three-way comparison with automatic synthesis! 🎉
 3. **Unions & multi-var declarations: COMPLETE** ✅ - Full union support and comma-separated declarations! 🆕
-4. **Range-based for loops** - Modern iteration syntax (`for (auto x : container)`)
-5. **Variable template constexpr** - Compile-time initialization for variable templates
-6. **Concepts** - Template constraints and requirements
-7. **Ranges library** - std::ranges adaptors and views
+4. **Inherited member assignment: FIXED** ✅ - Nov 25, 2025 - Changed findMember to findMemberRecursive 🆕
+5. **Range-based for loops** - Modern iteration syntax (`for (auto x : container)`) - Parser doesn't support syntax yet
+6. **Variable template constexpr** - Compile-time initialization for variable templates
+7. **Concepts: BASIC SUPPORT** ✅ - Concept declarations, requires clauses, requires expressions working
+8. **Ranges library** - std::ranges adaptors and views
