@@ -466,6 +466,9 @@ public:  // Public methods for template instantiation
 
         // Attribute handling
         void skip_cpp_attributes();                   // Skip C++ standard [[...]] attributes
+        void skip_gcc_attributes();                   // Skip GCC __attribute__((...)) specifications
+        void skip_noexcept_specifier();               // Skip noexcept or noexcept(expr) specifier
+        void skip_function_trailing_specifiers();     // Skip all trailing specifiers after function parameters
         Linkage parse_declspec_attributes();          // Parse Microsoft __declspec(...) and return linkage
         AttributeInfo parse_attributes();             // Parse all types of attributes and return linkage + calling convention
         CallingConvention parse_calling_convention(); // Parse calling convention keywords

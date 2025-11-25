@@ -1173,10 +1173,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		std::cerr << "<EOF>\n";
 	}
 
-	// Check for constexpr/constinit/consteval keywords
+	// Check for storage class and function specifier keywords
 	bool is_constexpr = false;
 	bool is_constinit = false;
 	bool is_consteval = false;
+	bool is_inline = false;
+	bool is_static = false;
 
 	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 		std::string_view kw = peek_token()->value();
@@ -1189,10 +1191,19 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		} else if (kw == "consteval") {
 			is_consteval = true;
 			consume_token();
+		} else if (kw == "inline") {
+			is_inline = true;
+			consume_token();
+		} else if (kw == "static") {
+			is_static = true;
+			consume_token();
 		} else {
 			break;
 		}
 	}
+	
+	// Also skip any GCC attributes that might appear after storage class specifiers
+	skip_gcc_attributes();
 	
 	if (attr_info.calling_convention == CallingConvention::Default && 
 	    last_calling_convention_ != CallingConvention::Default) {
@@ -1542,6 +1553,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					gSymbolTable.insert(param_token.value(), param);
 				}
 			}
+
+			// Skip noexcept specifier if present (e.g., void func() noexcept { ... })
+			skip_noexcept_specifier();
 
 			// Parse function body
 			auto block_result = parse_block();
@@ -4255,6 +4269,9 @@ ParseResult Parser::parse_namespace() {
 		}
 		namespace_name = name_token->value();
 
+		// Skip any attributes after the namespace name (e.g., __attribute__((__abi_tag__ ("cxx11"))))
+		skip_gcc_attributes();
+
 		// Check if this is a namespace alias: namespace alias = target;
 		if (peek_token().has_value() && peek_token()->value() == "=") {
 			// This is a namespace alias, not a namespace declaration
@@ -4321,9 +4338,20 @@ ParseResult Parser::parse_namespace() {
 		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "using") {
 			decl_result = parse_using_directive_or_declaration();
 		}
-		// Check if it's a nested namespace
+		// Check if it's a nested namespace (or inline namespace)
 		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "namespace") {
 			decl_result = parse_namespace();
+		}
+		// Check if it's an inline namespace (inline namespace __cxx11 { ... })
+		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "inline") {
+			auto next = peek_token(1);
+			if (next.has_value() && next->type() == Token::Type::Keyword && next->value() == "namespace") {
+				consume_token(); // consume 'inline'
+				decl_result = parse_namespace(); // parse_namespace handles the rest
+			} else {
+				// Just a regular inline declaration
+				decl_result = parse_declaration_or_function_definition();
+			}
 		}
 		// Check if it's a struct/class declaration
 		else if (peek_token()->type() == Token::Type::Keyword &&
@@ -4337,6 +4365,10 @@ ParseResult Parser::parse_namespace() {
 		// Check if it's a typedef declaration
 		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "typedef") {
 			decl_result = parse_typedef_declaration();
+		}
+		// Check if it's a template declaration
+		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
+			decl_result = parse_template_declaration();
 		}
 		// Check if it's an extern declaration (extern "C" or extern "C++")
 		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "extern") {
@@ -5308,6 +5340,11 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		}
 	}
 
+	// Skip trailing specifiers and attributes that can appear after function parameters
+	// These include: noexcept, noexcept(...), const, volatile, &, &&, override, final, = 0, = default, = delete
+	// and __attribute__((...))
+	skip_function_trailing_specifiers();
+
 	return func_node;
 }
 
@@ -5636,6 +5673,10 @@ ParseResult Parser::parse_variable_declaration()
 		if (!consume_punctuator(")")) {
 			return ParseResult::error("Expected ')' after direct initialization arguments", *current_token_);
 		}
+
+		// After closing ), skip any trailing specifiers (this might be a function forward declaration)
+		// e.g., void func() noexcept; or void func() const;
+		skip_function_trailing_specifiers();
 
 		first_init_expr = init_list_node;
 	}
@@ -6774,6 +6815,135 @@ void Parser::skip_cpp_attributes()
 	}
 }
 
+// Skip GCC-style __attribute__((...)) specifications
+void Parser::skip_gcc_attributes()
+{
+	while (peek_token().has_value() && peek_token()->value() == "__attribute__") {
+		consume_token(); // consume "__attribute__"
+		
+		// Expect ((
+		if (!peek_token().has_value() || peek_token()->value() != "(") {
+			return; // Invalid __attribute__, return
+		}
+		consume_token(); // consume first (
+		
+		if (!peek_token().has_value() || peek_token()->value() != "(") {
+			return; // Invalid __attribute__, return
+		}
+		consume_token(); // consume second (
+		
+		// Skip everything until ))
+		int paren_depth = 2;
+		while (peek_token().has_value() && paren_depth > 0) {
+			if (peek_token()->value() == "(") {
+				paren_depth++;
+			} else if (peek_token()->value() == ")") {
+				paren_depth--;
+			}
+			consume_token();
+		}
+	}
+}
+
+// Skip noexcept specifier: noexcept or noexcept(expression)
+void Parser::skip_noexcept_specifier()
+{
+	if (!peek_token().has_value()) return;
+	
+	// Check for noexcept keyword
+	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "noexcept") {
+		consume_token(); // consume 'noexcept'
+		
+		// Check for optional noexcept(expression)
+		if (peek_token().has_value() && peek_token()->value() == "(") {
+			consume_token(); // consume '('
+			
+			// Skip everything until matching ')'
+			int paren_depth = 1;
+			while (peek_token().has_value() && paren_depth > 0) {
+				if (peek_token()->value() == "(") {
+					paren_depth++;
+				} else if (peek_token()->value() == ")") {
+					paren_depth--;
+				}
+				consume_token();
+			}
+		}
+	}
+}
+
+// Skip function trailing specifiers and attributes after parameters
+// Handles: const, volatile, &, &&, noexcept, noexcept(...), override, final, = 0, = default, = delete
+// and __attribute__((...))
+void Parser::skip_function_trailing_specifiers()
+{
+	while (peek_token().has_value()) {
+		auto token = peek_token();
+		
+		// Handle cv-qualifiers
+		if (token->type() == Token::Type::Keyword && 
+			(token->value() == "const" || token->value() == "volatile")) {
+			consume_token();
+			continue;
+		}
+		
+		// Handle ref-qualifiers (& and &&)
+		if (token->type() == Token::Type::Punctuator &&
+			(token->value() == "&" || token->value() == "&&")) {
+			consume_token();
+			continue;
+		}
+		
+		// Handle noexcept
+		if (token->type() == Token::Type::Keyword && token->value() == "noexcept") {
+			skip_noexcept_specifier();
+			continue;
+		}
+		
+		// Handle throw() (old-style exception specification)
+		if (token->type() == Token::Type::Keyword && token->value() == "throw") {
+			consume_token(); // consume 'throw'
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token(); // consume '('
+				int paren_depth = 1;
+				while (peek_token().has_value() && paren_depth > 0) {
+					if (peek_token()->value() == "(") paren_depth++;
+					else if (peek_token()->value() == ")") paren_depth--;
+					consume_token();
+				}
+			}
+			continue;
+		}
+		
+		// Handle override and final (only valid for member functions, but skip anyway)
+		if (token->type() == Token::Type::Keyword &&
+			(token->value() == "override" || token->value() == "final")) {
+			consume_token();
+			continue;
+		}
+		
+		// Handle __attribute__((...))
+		if (token->value() == "__attribute__") {
+			skip_gcc_attributes();
+			continue;
+		}
+		
+		// Handle pure virtual (= 0), default (= default), delete (= delete)
+		if (token->type() == Token::Type::Punctuator && token->value() == "=") {
+			auto next = peek_token(1);
+			if (next.has_value() && 
+				(next->value() == "0" || next->value() == "default" || next->value() == "delete")) {
+				consume_token(); // consume '='
+				consume_token(); // consume 0/default/delete
+				continue;
+			}
+		}
+		
+		// Not a trailing specifier, stop
+		break;
+	}
+}
+
 // Parse Microsoft __declspec(...) attributes and return linkage
 Linkage Parser::parse_declspec_attributes()
 {
@@ -6849,11 +7019,12 @@ Parser::AttributeInfo Parser::parse_attributes()
 	AttributeInfo info;
 	
 	skip_cpp_attributes();  // C++ attributes don't affect linkage
+	skip_gcc_attributes();  // GCC __attribute__((...)) specifications
 	info.linkage = parse_declspec_attributes();
 	info.calling_convention = parse_calling_convention();
 	
 	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
-	if (peek_token().has_value() && peek_token()->value() == "[") {
+	if (peek_token().has_value() && (peek_token()->value() == "[" || peek_token()->value() == "__attribute__")) {
 		// Recurse to handle more attributes (prefer more specific linkage)
 		AttributeInfo more_info = parse_attributes();
 		if (more_info.linkage != Linkage::None) {
