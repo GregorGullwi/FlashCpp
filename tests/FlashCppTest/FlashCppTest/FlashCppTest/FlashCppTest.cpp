@@ -1901,6 +1901,10 @@ TEST_CASE("Abstract classes") {
 	run_test_from_file("test_abstract_class.cpp", "Abstract classes", false);
 }
 
+TEST_CASE("Virtual, override, and final") {
+	run_test_from_file("test_virtual_override_final.cpp", "Virtual, override, and final", false);
+}
+
 TEST_CASE("Final specifier") {
 	run_test_from_file("test_final_specifier.cpp", "Final specifier", false);
 }
