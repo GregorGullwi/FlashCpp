@@ -317,7 +317,7 @@ struct StructTypeInfo {
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
 	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
-	bool is_union = false;      // True if this is a union, not a struct/class
+	bool is_union = false;      // True if this is a union (all members at offset 0)
 
 	// Virtual function support (Phase 2)
 	bool has_vtable = false;    // True if this struct has virtual functions
@@ -357,7 +357,8 @@ struct StructTypeInfo {
 		}
 
 		// Calculate offset with effective alignment
-		size_t offset = (total_size + effective_alignment - 1) & ~(effective_alignment - 1);
+		// For unions, all members are at offset 0
+		size_t offset = is_union ? 0 : ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
 
 		if (!referenced_size_bits) {
 			referenced_size_bits = member_size * 8;

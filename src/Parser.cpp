@@ -621,7 +621,7 @@ ParseResult Parser::parse_top_level_node()
 	// Note: alignas can appear before struct, but we handle that in parse_struct_declaration
 	// If alignas appears before a variable declaration, it will be handled by parse_declaration_or_function_definition
 	if (peek_token()->type() == Token::Type::Keyword &&
-		(peek_token()->value() == "class" || peek_token()->value() == "struct")) {
+		(peek_token()->value() == "class" || peek_token()->value() == "struct" || peek_token()->value() == "union")) {
 		auto result = parse_struct_declaration();
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
@@ -1659,15 +1659,16 @@ ParseResult Parser::parse_struct_declaration()
 	// Check for alignas specifier before struct/class keyword
 	std::optional<size_t> custom_alignment = parse_alignas_specifier();
 
-	// Consume 'struct' or 'class' keyword
+	// Consume 'struct', 'class', or 'union' keyword
 	auto struct_keyword = consume_token();
 	if (!struct_keyword.has_value() ||
-	    (struct_keyword->value() != "struct" && struct_keyword->value() != "class")) {
-		return ParseResult::error("Expected 'struct' or 'class' keyword",
+	    (struct_keyword->value() != "struct" && struct_keyword->value() != "class" && struct_keyword->value() != "union")) {
+		return ParseResult::error("Expected 'struct', 'class', or 'union' keyword",
 		                          struct_keyword.value_or(Token()));
 	}
 
 	bool is_class = (struct_keyword->value() == "class");
+	bool is_union = (struct_keyword->value() == "union");
 
 	// Check for alignas specifier after struct/class keyword (if not already specified)
 	if (!custom_alignment.has_value()) {
@@ -1735,6 +1736,7 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Create StructTypeInfo early so we can add base classes to it
 	auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), struct_ref.default_access());
+	struct_info->is_union = is_union;
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
 	size_t pack_alignment = context_.getCurrentPackAlignment();
@@ -5324,6 +5326,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"template", &Parser::parse_template_declaration},
 			{"struct", &Parser::parse_struct_declaration},
 			{"class", &Parser::parse_struct_declaration},
+			{"union", &Parser::parse_struct_declaration},
 			{"static", &Parser::parse_variable_declaration},
 			{"extern", &Parser::parse_variable_declaration},
 			{"register", &Parser::parse_variable_declaration},
