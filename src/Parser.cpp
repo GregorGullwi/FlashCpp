@@ -5320,6 +5320,8 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"break", &Parser::parse_break_statement},
 			{"continue", &Parser::parse_continue_statement},
 			{"goto", &Parser::parse_goto_statement},
+			{"try", &Parser::parse_try_statement},
+			{"throw", &Parser::parse_throw_statement},
 			{"using", &Parser::parse_using_directive_or_declaration},
 			{"namespace", &Parser::parse_namespace},
 			{"typedef", &Parser::parse_typedef_declaration},
@@ -9367,6 +9369,110 @@ ParseResult Parser::parse_label_statement() {
     }
 
     return ParseResult::success(emplace_node<LabelStatementNode>(label_token));
+}
+
+ParseResult Parser::parse_try_statement() {
+    // Parse: try { block } catch (type identifier) { block } [catch (...) { block }]
+    auto try_token_opt = peek_token();
+    if (!try_token_opt.has_value() || try_token_opt->value() != "try"sv) {
+        return ParseResult::error("Expected 'try' keyword", *current_token_);
+    }
+
+    Token try_token = try_token_opt.value();
+    consume_token(); // Consume the 'try' keyword
+
+    // Parse the try block
+    auto try_block_result = parse_block();
+    if (try_block_result.is_error()) {
+        return try_block_result;
+    }
+
+    ASTNode try_block = *try_block_result.node();
+
+    // Parse catch clauses (at least one required)
+    std::vector<ASTNode> catch_clauses;
+
+    while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+           peek_token()->value() == "catch"sv) {
+        Token catch_token = *peek_token();
+        consume_token(); // Consume the 'catch' keyword
+
+        if (!consume_punctuator("("sv)) {
+            return ParseResult::error("Expected '(' after 'catch'", *current_token_);
+        }
+
+        std::optional<ASTNode> exception_declaration;
+        bool is_catch_all = false;
+
+        // Check for catch(...)
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+            peek_token()->value() == "...") {
+            consume_token(); // Consume '...'
+            is_catch_all = true;
+        } else {
+            // Parse exception type and optional identifier
+            auto type_result = parse_type_and_name();
+            if (type_result.is_error()) {
+                return type_result;
+            }
+            exception_declaration = type_result.node();
+        }
+
+        if (!consume_punctuator(")"sv)) {
+            return ParseResult::error("Expected ')' after catch declaration", *current_token_);
+        }
+
+        // Parse the catch block
+        auto catch_block_result = parse_block();
+        if (catch_block_result.is_error()) {
+            return catch_block_result;
+        }
+
+        ASTNode catch_block = *catch_block_result.node();
+
+        // Create the catch clause node
+        if (is_catch_all) {
+            catch_clauses.push_back(emplace_node<CatchClauseNode>(catch_block, catch_token, true));
+        } else {
+            catch_clauses.push_back(emplace_node<CatchClauseNode>(exception_declaration, catch_block, catch_token));
+        }
+    }
+
+    if (catch_clauses.empty()) {
+        return ParseResult::error("Expected at least one 'catch' clause after 'try' block", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<TryStatementNode>(try_block, std::move(catch_clauses), try_token));
+}
+
+ParseResult Parser::parse_throw_statement() {
+    // Parse: throw; or throw expression;
+    auto throw_token_opt = peek_token();
+    if (!throw_token_opt.has_value() || throw_token_opt->value() != "throw"sv) {
+        return ParseResult::error("Expected 'throw' keyword", *current_token_);
+    }
+
+    Token throw_token = throw_token_opt.value();
+    consume_token(); // Consume the 'throw' keyword
+
+    // Check for rethrow (throw;)
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+        peek_token()->value() == ";") {
+        consume_token(); // Consume ';'
+        return ParseResult::success(emplace_node<ThrowStatementNode>(throw_token));
+    }
+
+    // Parse the expression to throw
+    auto expr_result = parse_expression();
+    if (expr_result.is_error()) {
+        return expr_result;
+    }
+
+    if (!consume_punctuator(";"sv)) {
+        return ParseResult::error("Expected ';' after throw expression", *current_token_);
+    }
+
+    return ParseResult::success(emplace_node<ThrowStatementNode>(*expr_result.node(), throw_token));
 }
 
 ParseResult Parser::parse_lambda_expression() {
