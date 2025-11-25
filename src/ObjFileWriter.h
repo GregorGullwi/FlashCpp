@@ -815,6 +815,33 @@ public:
 		std::cerr << "Added 3 PDATA relocations for function " << mangled_name << std::endl;
 	}
 
+	void add_xdata_relocation(uint32_t xdata_offset, const std::string& handler_name) {
+		std::cerr << "Adding XDATA relocation at offset " << xdata_offset << " for handler: " << handler_name << std::endl;
+
+		// Get or create the exception handler symbol
+		auto* handler_symbol = coffi_.get_symbol(handler_name);
+		if (!handler_symbol) {
+			// Add external symbol for the C++ exception handler
+			handler_symbol = coffi_.add_symbol(handler_name);
+			handler_symbol->set_value(0);
+			handler_symbol->set_section_number(0);  // 0 = undefined/external symbol
+			handler_symbol->set_type(0x20);  // 0x20 = function type
+			handler_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			std::cerr << "Created external symbol for exception handler: " << handler_name << std::endl;
+		}
+
+		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+
+		// Add relocation for the exception handler RVA in XDATA
+		COFFI::rel_entry_generic reloc;
+		reloc.virtual_address = xdata_offset;
+		reloc.symbol_table_index = handler_symbol->get_index();
+		reloc.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
+		xdata_section->add_relocation_entry(&reloc);
+
+		std::cerr << "Added XDATA relocation for handler " << handler_name << " at offset " << xdata_offset << std::endl;
+	}
+
 	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
 		std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name
 		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
@@ -894,18 +921,42 @@ public:
 		uint32_t xdata_offset = static_cast<uint32_t>(xdata_section->get_data_size());
 
 		// Add XDATA (exception handling unwind information) for this specific function
-		// Simple unwind info for functions that use standard prologue/epilogue
+		// For C++ exception handling, we need to include an exception handler
+		// Windows x64 UNWIND_INFO structure:
+		// - BYTE Version:3, Flags:5
+		// - BYTE SizeOfProlog
+		// - BYTE CountOfCodes
+		// - BYTE FrameRegister:4, FrameOffset:4
+		// - UNWIND_CODE UnwindCode[CountOfCodes] (aligned to DWORD)
+		// - Optional: ExceptionHandler RVA (if UNW_FLAG_EHANDLER is set)
+		// - Optional: Exception-specific data
+		
 		std::vector<char> xdata = {
-			0x01,  // Version and flags (version 1, no chained info)
+			0x09,  // Version 1, Flags 0x08 (UNW_FLAG_EHANDLER - exception handler present)
 			0x04,  // Size of prolog (4 bytes: push rbp + mov rbp, rsp)
 			0x02,  // Count of unwind codes
 			0x00,  // Frame register (none)
-			0x42,  // Unwind code: UWOP_ALLOC_SMALL (4 bytes for shadow space)
-			0x00,  // Unwind code: UWOP_PUSH_NONVOL (push rbp)
+			0x42,  // Unwind code: UWOP_ALLOC_SMALL at offset 4
+			0x00,  // Unwind code: UWOP_PUSH_NONVOL (push rbp) at offset 0
 			0x00,  // Padding
 			0x00   // Padding
 		};
+		
+		// Add placeholder for exception handler RVA (4 bytes)
+		// This will point to __CxxFrameHandler3 or __CxxFrameHandler4
+		// We'll add a relocation for this
+		uint32_t handler_rva_offset = static_cast<uint32_t>(xdata.size());
+		xdata.push_back(0x00);
+		xdata.push_back(0x00);
+		xdata.push_back(0x00);
+		xdata.push_back(0x00);
+		
+		// Add the XDATA to the section
 		add_data(xdata, SectionType::XDATA);
+		
+		// Add relocation for the exception handler RVA
+		// Point to __CxxFrameHandler3 (MSVC's C++ exception handler)
+		add_xdata_relocation(xdata_offset + handler_rva_offset, "__CxxFrameHandler3");
 
 		// Get current PDATA section size to calculate relocation offsets
 		auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
