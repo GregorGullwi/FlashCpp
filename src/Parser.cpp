@@ -5279,7 +5279,7 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 			}
 			
 			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after noexcept expression", *current_token_);
+				return ParseResult::error("Expected ')' to close noexcept expression", *current_token_);
 			}
 		}
 	}
