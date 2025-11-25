@@ -11486,7 +11486,6 @@ ParseResult Parser::parse_template_declaration() {
 					std::string_view base_class_name = base_name_token->value();
 					
 					// Check if this is a template base class (e.g., Base<T>)
-					std::string instantiated_base_name;
 					if (peek_token().has_value() && peek_token()->value() == "<") {
 						// Parse template arguments
 						auto template_args_opt = parse_explicit_template_arguments();
@@ -11503,8 +11502,8 @@ ParseResult Parser::parse_template_declaration() {
 							try_instantiate_class_template(base_class_name, template_args);
 							
 							// Use the instantiated name as the base class
-							instantiated_base_name = get_instantiated_class_name(base_class_name, template_args);
-							base_class_name = instantiated_base_name;
+							// get_instantiated_class_name returns a persistent string_view
+							base_class_name = get_instantiated_class_name(base_class_name, template_args);
 						}
 					}
 
@@ -13790,38 +13789,106 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 		auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), pattern_struct.default_access());
 		
+		// Handle base classes from the pattern
+		// Base classes need to be instantiated with concrete template arguments
+		for (const auto& pattern_base : pattern_struct.base_classes()) {
+			std::string base_name_str(pattern_base.name);  // Convert to string to avoid string_view issues
+			
+			// WORKAROUND: If the base class name ends with "_unknown", it was instantiated
+			// during pattern parsing with template parameters. We need to re-instantiate
+			// it with the concrete template arguments.
+			if (base_name_str.ends_with("_unknown")) {
+				// Extract the template name (before "_unknown")
+				size_t pos = base_name_str.find("_unknown");
+				std::string template_name = base_name_str.substr(0, pos);
+				
+				// For partial specialization Derived<T*, T> instantiated with <int*, int>,
+				// both base classes Base1<T> and Base2<T> should be instantiated with T=int
+				// We need to extract the concrete type from template_args
+				
+				// Assume single template parameter for now (T)
+				// The concrete type is the base type without modifiers
+				if (!template_args.empty()) {
+					// Get the base type from the first template argument (removing modifiers)
+					Type concrete_base_type = template_args[0].base_type;
+					
+					// Create template args for base class: just the base type without modifiers
+					std::vector<TemplateTypeArg> base_template_args;
+					TemplateTypeArg base_arg;
+					base_arg.base_type = concrete_base_type;
+					base_arg.is_reference = false;
+					base_arg.is_rvalue_reference = false;
+					base_arg.pointer_depth = 0;
+					base_arg.cv_qualifier = CVQualifier::None;
+					base_template_args.push_back(base_arg);
+					
+					// Instantiate the base template
+					try_instantiate_class_template(template_name, base_template_args);
+					
+					// Get the instantiated name
+					base_name_str = std::string(get_instantiated_class_name(template_name, base_template_args));
+				}
+			}
+			
+			std::string_view base_class_name = base_name_str;
+			
+			// Look up the base class type
+			auto base_type_it = gTypesByName.find(base_class_name);
+			if (base_type_it != gTypesByName.end()) {
+				const TypeInfo* base_type_info = base_type_it->second;
+				struct_info->addBaseClass(base_class_name, base_type_info->type_index_, pattern_base.access, pattern_base.is_virtual);
+			} else {
+				std::cerr << "DEBUG: Base class " << base_class_name << " not found in gTypesByName\n";
+			}
+		}
+		
 		// Copy members from pattern
 		for (const auto& member_decl : pattern_struct.members()) {
 			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 			
-			// For pattern specializations, members should already have concrete types
-			// since the pattern was parsed with concrete types (e.g., T& was parsed as a reference)
-			// We just copy them as-is
+			// For pattern specializations, member types need substitution!
+			// The pattern has T* (Type::UserDefined with ptr_depth=1)
+			// We need to substitute T with the concrete type (e.g., int)
+			
+			Type member_type = type_spec.type();
+			TypeIndex member_type_index = type_spec.type_index();
+			size_t ptr_depth = type_spec.pointer_depth();
+			
+			// Check if this member type needs substitution
+			if (member_type == Type::UserDefined) {
+				// Substitute with concrete type from template_args
+				// For now, assume single template parameter (T)
+				if (!template_args.empty()) {
+					member_type = template_args[0].base_type;
+					member_type_index = template_args[0].type_index;
+					// Note: ptr_depth is already set correctly from the pattern
+				}
+			}
 			
 			// Calculate member size accounting for pointer depth
 			size_t member_size;
-			if (type_spec.pointer_depth() > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				// Pointers and references are always 8 bytes (64-bit)
 				member_size = 8;
 			} else {
-				member_size = get_type_size_bits(type_spec.type()) / 8;
+				member_size = get_type_size_bits(member_type) / 8;
 			}
-			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+			size_t member_alignment = get_type_alignment(member_type, member_size);
 			
 			bool is_ref_member = type_spec.is_reference();
 			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
 			struct_info->addMember(
 				std::string(decl.identifier_token().value()),
-				type_spec.type(),
-				type_spec.type_index(),
+				member_type,
+				member_type_index,
 				member_size,
 				member_alignment,
 				member_decl.access,
 				member_decl.default_initializer,
 				is_ref_member,
 				is_rvalue_ref_member,
-				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(type_spec.type()) : 0
+				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0
 			);
 		}
 		
@@ -13885,7 +13952,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 		
-		struct_info->finalize();
+		// Finalize the struct layout
+		if (!pattern_struct.base_classes().empty()) {
+			struct_info->finalizeWithBases();
+		} else {
+			struct_info->finalize();
+		}
 		struct_type_info.setStructInfo(std::move(struct_info));
 		
 		// Create an AST node for the instantiated struct so member functions can be code-generated

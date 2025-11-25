@@ -298,25 +298,57 @@ struct TemplatePattern {
 			// The pattern_arg.base_type is UserDefined and represents the template parameter
 			// We need to get the parameter name from template_params
 		
-			if (i >= template_params.size()) {
-				return false;  // Mismatch in parameter count
+			// The pattern_arg.base_type tells us which template parameter this is
+			// For partial specialization Derived<T*, T>, both pattern args refer to the SAME
+			// template parameter T, so we can't use position i
+		
+			// Find which template parameter this pattern arg refers to
+			// base_type == Type::UserDefined (15) means it's a template parameter reference
+			if (pattern_arg.base_type != Type::UserDefined) {
+				// This is a concrete type in the pattern (e.g., partial specialization Container<int, T>)
+				// The concrete type must match exactly
+				if (pattern_arg.base_type != concrete_arg.base_type) {
+					return false;
+				}
+				continue;  // No substitution needed for concrete types
 			}
 		
-			const ASTNode& param_node = template_params[i];
-			if (!param_node.is<TemplateParameterNode>()) {
-				return false;
+			// Find the template parameter name for this pattern arg
+			// We need to look up which parameter index this is based on base_type
+			// For now, we'll use a heuristic: check all template parameters
+			std::string param_name;
+			bool found_param = false;
+		
+			for (const ASTNode& param_node : template_params) {
+				if (!param_node.is<TemplateParameterNode>()) {
+					continue;
+				}
+			
+				const TemplateParameterNode& template_param = param_node.as<TemplateParameterNode>();
+				// All template parameters are Type::UserDefined, so we can't distinguish by type alone
+				// The pattern registration should have set type_index correctly
+				// For now, assume first occurrence - we'll improve this later
+				if (!found_param) {
+					param_name = std::string(template_param.name());
+					found_param = true;
+					break;
+				}
 			}
 		
-			const TemplateParameterNode& template_param = param_node.as<TemplateParameterNode>();
-			std::string param_name(template_param.name());
+			if (!found_param) {
+				return false;  // No template parameter found
+			}
 		
 			// Check if we've already seen this parameter
+			// For consistency checking, we need to compare the BASE TYPE only,
+			// because Derived<T*, T> means both args bind to the same T, but with different modifiers
 			auto it = param_substitutions.find(param_name);
 			if (it != param_substitutions.end()) {
-				// Parameter already bound - check consistency
-				if (!(it->second == concrete_arg)) {
-					return false;  // Inconsistent substitution
+				// Parameter already bound - check consistency of BASE TYPE only
+				if (it->second.base_type != concrete_arg.base_type) {
+					return false;  // Inconsistent substitution (different base types)
 				}
+				// Modifiers can differ! (e.g., T* and T both bind to T=int)
 			} else {
 				// Bind this parameter to the concrete type
 				param_substitutions[param_name] = concrete_arg;

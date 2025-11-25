@@ -4067,7 +4067,7 @@ private:
 										const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 										
 										if (struct_info) {
-											const StructMember* member = struct_info->findMember(std::string(member_name));
+											const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
 											if (member) {
 												// Get index information
 												auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
@@ -4251,7 +4251,7 @@ private:
 							return { Type::Int, 32, TempVar{0} };
 						}
 
-						const StructMember* member = struct_info->findMember(std::string(member_name));
+						const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
 						if (!member) {
 							// Error: member not found
 							return { Type::Int, 32, TempVar{0} };
@@ -6045,7 +6045,7 @@ private:
 								const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 								
 								if (struct_info) {
-									const StructMember* member = struct_info->findMember(std::string(member_name));
+									const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
 									if (member) {
 										// Get index expression
 										auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
@@ -6556,7 +6556,7 @@ private:
 
 		// Find the member
 		std::string_view member_name = offsetofNode.member_name();
-		const StructMember* member = struct_info->findMember(std::string(member_name));
+		const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
 		if (!member) {
 			assert(false && "Member not found in struct");
 			return {};
