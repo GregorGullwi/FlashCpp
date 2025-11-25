@@ -8971,7 +8971,13 @@ private:
 		// - Pass NULL as second argument (RDX) for throw info
 		// - Call _CxxThrowException
 		
-		// Allocate shadow space + space for exception object (32 + 16 = 48 bytes, aligned to 16)
+		// Allocate shadow space + space for exception object
+		// Windows x64 calling convention:
+		// - Requires 32 bytes shadow space for the first 4 parameters
+		// - Stack must be 16-byte aligned at CALL instruction
+		// - We need 8 bytes to store the exception value
+		// Total: 32 (shadow) + 8 (exception) = 40 bytes
+		// Round up to 48 for 16-byte alignment (since we're subtracting from an aligned RSP)
 		emitSubRSP(48);
 		
 		// Get the exception value from operands and store it on the stack
@@ -9035,8 +9041,11 @@ private:
 		// Rethrow re-throws the current exception using _CxxThrowException
 		// When called with NULL arguments, _CxxThrowException will rethrow the current exception
 		
-		// Allocate shadow space (32 bytes for Windows x64)
-		emitSubRSP(40);  // 32 bytes shadow + 8 for alignment
+		// Allocate shadow space for Windows x64 calling convention
+		// - Requires 32 bytes shadow space
+		// - Stack must be 16-byte aligned at CALL instruction
+		// Round up to 48 bytes to maintain 16-byte alignment
+		emitSubRSP(48);
 		
 		// Set up arguments for _CxxThrowException to rethrow current exception
 		// RCX (first argument) = NULL (rethrow current exception object)
