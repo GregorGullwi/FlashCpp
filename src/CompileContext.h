@@ -72,16 +72,27 @@ public:
 		disableAccessControl_ = disable;
 	}
 
-	// GCC compatibility mode - enables GCC-specific extensions:
-	// - __attribute__((...)) syntax
-	// - GCC-specific preprocessor macros (__SIZE_TYPE__, etc.)
-	// - #pragma GCC directives (ignored)
-	bool isGccCompatMode() const {
-		return gccCompatMode_;
+	// Compiler compatibility mode - controls which compiler's builtin macros to use
+	// Default is MSVC for Windows builds
+	enum class CompilerMode {
+		MSVC,    // Microsoft Visual C++ (default)
+		GCC      // GCC/Clang (Linux/macOS)
+	};
+
+	CompilerMode getCompilerMode() const {
+		return compilerMode_;
 	}
 
-	void setGccCompatMode(bool enable) {
-		gccCompatMode_ = enable;
+	void setCompilerMode(CompilerMode mode) {
+		compilerMode_ = mode;
+	}
+
+	bool isMsvcMode() const {
+		return compilerMode_ == CompilerMode::MSVC;
+	}
+
+	bool isGccMode() const {
+		return compilerMode_ == CompilerMode::GCC;
 	}
 
 	// #pragma pack state management
@@ -181,7 +192,7 @@ private:
 	bool verboseMode_ = false;
 	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
 	bool disableAccessControl_ = false; // Disable access control checking (for debugging)
-	bool gccCompatMode_ = true;  // GCC compatibility mode (enabled by default for Linux builds)
+	CompilerMode compilerMode_ = CompilerMode::MSVC;  // Default to MSVC mode
 	std::vector<std::string> dependencies_;
 
 	// #pragma pack state

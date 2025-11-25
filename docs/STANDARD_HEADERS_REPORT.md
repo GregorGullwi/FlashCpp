@@ -8,11 +8,23 @@ This document reports on the current state of standard C++ header support in Fla
 
 Standard headers now pass the preprocessor stage and most parsing. The current blocker is **template partial specialization with inheritance** syntax.
 
-### GCC Compatibility Mode
+### Compiler Mode
 
-GCC-specific features are enabled by default. Use `-fno-gcc-compat` to disable:
-- `__SIZE_TYPE__` and related builtin type macros
+FlashCpp defaults to **MSVC mode** for Windows compatibility. Use `-fgcc-compat` or `-fclang-compat` to enable GCC/Clang mode:
+
+**MSVC Mode (default)**:
+- `__SIZE_TYPE__` = `unsigned __int64` (and related MSVC x64 types)
+- `__WCHAR_TYPE__` = `unsigned short`
+- Compatible with Windows standard library headers
+
+**GCC/Clang Mode** (enabled with `-fgcc-compat` or `-fclang-compat`):
+- `__SIZE_TYPE__` = `long unsigned int` (and related GCC/Clang x64 types)
+- `__WCHAR_TYPE__` = `int`
+- Compatible with Linux/macOS standard library headers
+
+Both modes support:
 - `__attribute__((...))` syntax (parser skips these)
+- `noexcept` specifier
 - `#pragma GCC` directives (preprocessor ignores these)
 
 ### Fixed Issues

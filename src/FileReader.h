@@ -1798,10 +1798,47 @@ private:
 		defines_["_M_X64"] = DefineDirective{ "100", {} };  // MSVC-style
 		defines_["_M_AMD64"] = DefineDirective{ "100", {} };
 
-		// GCC/Clang compiler builtin type macros (only when GCC compatibility mode is enabled)
-		// These define the underlying types for size_t, ptrdiff_t, wchar_t, etc.
-		// Values match GCC/Clang on x86_64 Linux
-		if (settings_.isGccCompatMode()) {
+		// Compiler builtin type macros - values depend on compiler mode
+		// MSVC (default): Windows x64 types
+		// GCC/Clang: Linux x64 types
+		if (settings_.isMsvcMode()) {
+			// MSVC x64 builtin types
+			defines_["__SIZE_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
+			defines_["__PTRDIFF_TYPE__"] = DefineDirective{ "__int64", {} };
+			defines_["__WCHAR_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__INTMAX_TYPE__"] = DefineDirective{ "__int64", {} };
+			defines_["__UINTMAX_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
+			defines_["__INTPTR_TYPE__"] = DefineDirective{ "__int64", {} };
+			defines_["__UINTPTR_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
+			defines_["__INT8_TYPE__"] = DefineDirective{ "signed char", {} };
+			defines_["__INT16_TYPE__"] = DefineDirective{ "short", {} };
+			defines_["__INT32_TYPE__"] = DefineDirective{ "int", {} };
+			defines_["__INT64_TYPE__"] = DefineDirective{ "__int64", {} };
+			defines_["__UINT8_TYPE__"] = DefineDirective{ "unsigned char", {} };
+			defines_["__UINT16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__UINT32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+			defines_["__UINT64_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
+			defines_["__INT_LEAST8_TYPE__"] = DefineDirective{ "signed char", {} };
+			defines_["__INT_LEAST16_TYPE__"] = DefineDirective{ "short", {} };
+			defines_["__INT_LEAST32_TYPE__"] = DefineDirective{ "int", {} };
+			defines_["__INT_LEAST64_TYPE__"] = DefineDirective{ "__int64", {} };
+			defines_["__UINT_LEAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
+			defines_["__UINT_LEAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__UINT_LEAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+			defines_["__UINT_LEAST64_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
+			defines_["__INT_FAST8_TYPE__"] = DefineDirective{ "signed char", {} };
+			defines_["__INT_FAST16_TYPE__"] = DefineDirective{ "short", {} };
+			defines_["__INT_FAST32_TYPE__"] = DefineDirective{ "int", {} };
+			defines_["__INT_FAST64_TYPE__"] = DefineDirective{ "__int64", {} };
+			defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
+			defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__UINT_FAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+			defines_["__UINT_FAST64_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
+			defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{ "int", {} };
+			defines_["__CHAR16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__CHAR32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+		} else if (settings_.isGccMode()) {
+			// GCC/Clang x64 builtin types (Linux/macOS)
 			defines_["__SIZE_TYPE__"] = DefineDirective{ "long unsigned int", {} };
 			defines_["__PTRDIFF_TYPE__"] = DefineDirective{ "long int", {} };
 			defines_["__WCHAR_TYPE__"] = DefineDirective{ "int", {} };

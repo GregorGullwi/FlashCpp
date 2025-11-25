@@ -65,10 +65,10 @@ int main(int argc, char *argv[]) {
     context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
     context.setDisableAccessControl(argsparser.hasFlag("fno-access-control") || argsparser.hasFlag("no-access-control"));
     
-    // GCC compatibility mode - enabled by default, can be disabled with -fno-gcc-compat
-    // Enables: __attribute__((...)), __SIZE_TYPE__ macros, #pragma GCC (ignored)
-    if (argsparser.hasFlag("fno-gcc-compat")) {
-        context.setGccCompatMode(false);
+    // Compiler mode - default is MSVC, use -fgcc-compat or -fclang-compat for GCC/Clang mode
+    // Enables compiler-specific builtin macros like __SIZE_TYPE__, __PTRDIFF_TYPE__, etc.
+    if (argsparser.hasFlag("fgcc-compat") || argsparser.hasFlag("fclang-compat")) {
+        context.setCompilerMode(CompileContext::CompilerMode::GCC);
     }
 
     bool show_debug = argsparser.hasFlag("d") || argsparser.hasFlag("debug");
