@@ -225,7 +225,7 @@ bool test_comparisons(double a, double b) {
   - ⏳ Requires expressions
   - ⏳ Abbreviated function templates
 - **Ranges**: Range adaptors and views (std::ranges)
-- **Range-based for loops**: `for (auto x : container)` syntax
+- **Range-based for loops**: `for (auto x : container)` syntax ⏳ **Partially working - compiles but has runtime bugs**
 - **Spaceship operator**: `<=>` three-way comparison
 
 **Quality & Error Handling:**
@@ -259,11 +259,12 @@ These features are essential for modern C++ and widely used in production code:
    - **Recent Fixes**: Parent struct name correction, pattern matching algorithm, member function instantiation from patterns
    - **Remaining effort**: 3-5 hours
 
-2. **Range-based for loops** ⭐⭐⭐⭐
+2. **Range-based for loops** ⭐⭐⭐⭐ ⏳ **Partially Working**
    - `for (auto x : container)` syntax
    - Iterator protocol support
+   - **Current status**: Compiles successfully, generates IR and assembly, but has runtime bugs with pointer increment
    - **Impact**: Modern loop syntax, container iteration
-   - **Estimated effort**: 2 weeks
+   - **Estimated effort**: 1-2 days to fix remaining bugs
 
 3. **Constexpr evaluator** ⭐⭐⭐⭐
    - Compile-time constant expression evaluation
@@ -294,7 +295,7 @@ These features are essential for modern C++ and widely used in production code:
 | Category | Missing | Priority | Status |
 |----------|---------|----------|--------|
 | **Generic Programming** | Templates, Concepts | ⭐⭐⭐⭐⭐ | ✅ 95% |
-| **Modern Loops** | Range-based for | ⭐⭐⭐⭐ | ⏳ Pending |
+| **Modern Loops** | Range-based for | ⭐⭐⭐⭐ | ⏳ Partial |
 | **Compile-time** | Constexpr evaluator (variable templates) | ⭐⭐⭐⭐ | ⏳ Pending |
 | **Comparison** | Spaceship operator | ⭐⭐⭐ | ✅ Complete |
 | **Advanced Features** | Ranges library | ⭐⭐⭐ | ⏳ Pending |

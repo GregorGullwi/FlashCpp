@@ -539,6 +539,21 @@ private:
 		}
 	}
 
+	// Helper to get the size of a type in bytes
+	// Reuses the same logic as sizeof() operator
+	// Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
+	size_t getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const {
+		if (type == Type::Struct) {
+			assert(type_index < gTypeInfo.size() && "Invalid type_index for struct");
+			const TypeInfo& type_info = gTypeInfo[type_index];
+			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			assert(struct_info && "Struct type info not found");
+			return struct_info->total_size;
+		}
+		// For primitive types, convert bits to bytes
+		return size_in_bits / 8;
+	}
+
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		if (!node.get_definition().has_value()) {
 			std::cerr << "DEBUG: Function has no definition, skipping\n";
@@ -2084,16 +2099,26 @@ private:
 
 		// Generate unique labels and counter for this ranged for loop
 		static size_t ranged_for_counter = 0;
-		StringBuilder start_sb, body_sb, increment_sb, end_sb;
+		
+		StringBuilder start_sb;
 		start_sb.append("ranged_for_start_").append(static_cast<int>(ranged_for_counter));
-		body_sb.append("ranged_for_body_").append(static_cast<int>(ranged_for_counter));
-		increment_sb.append("ranged_for_increment_").append(static_cast<int>(ranged_for_counter));
-		end_sb.append("ranged_for_end_").append(static_cast<int>(ranged_for_counter));
 		std::string_view loop_start_label = start_sb.commit();
+		
+		StringBuilder body_sb;
+		body_sb.append("ranged_for_body_").append(static_cast<int>(ranged_for_counter));
 		std::string_view loop_body_label = body_sb.commit();
+		
+		StringBuilder increment_sb;
+		increment_sb.append("ranged_for_increment_").append(static_cast<int>(ranged_for_counter));
 		std::string_view loop_increment_label = increment_sb.commit();
+		
+		StringBuilder end_sb;
+		end_sb.append("ranged_for_end_").append(static_cast<int>(ranged_for_counter));
 		std::string_view loop_end_label = end_sb.commit();
-		ranged_for_counter++;		// Get the loop variable declaration and range expression
+		
+		ranged_for_counter++;
+		
+		// Get the loop variable declaration and range expression
 		auto loop_var_decl = node.get_loop_variable_decl();
 		auto range_expr = node.get_range_expression();
 
@@ -3637,33 +3662,206 @@ private:
 			return operandIrOperands;
 		}
 		else if (unaryOperatorNode.op() == "++") {
-			// Increment operator (prefix or postfix) - use UnaryOp struct
+			// Increment operator (prefix or postfix)
+			
+			// Check if this is a pointer increment (requires pointer arithmetic)
+			bool is_pointer = false;
+			int element_size = 1;
+			if (operandHandledAsIdentifier && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+				const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+					const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+					auto symbol = symbol_table.lookup(identifier.name());
+					if (symbol.has_value()) {
+						const TypeSpecifierNode* type_node = nullptr;
+						if (symbol->is<DeclarationNode>()) {
+							type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						} else if (symbol->is<VariableDeclarationNode>()) {
+							type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+						} else {
+							std::cerr << "Could not type for identifier " << identifier.name();
+							assert(false && "Invalid type node");
+						}
+						
+						if (type_node->pointer_depth() > 0) {
+							is_pointer = true;
+							// Calculate element size for pointer arithmetic
+							if (type_node->pointer_depth() > 1) {
+								element_size = 8;  // Multi-level pointer: element is a pointer
+							} else {
+								// Single-level pointer: element size is sizeof(base_type)
+								element_size = getSizeInBytes(type_node->type(), type_node->type_index(), type_node->size_in_bits());
+							}
+						}
+					}
+				}
+			}
+			
+			// Use pointer-aware increment/decrement opcode
 			UnaryOp unary_op{
 				.value = toTypedValue(operandIrOperands),
 				.result = result_var
 			};
-
+			
+			// Store element size for pointer arithmetic in the IR
+			if (is_pointer) {
+				// For pointers, we use a BinaryOp to add element_size instead
 			if (unaryOperatorNode.is_prefix()) {
-				// Prefix increment: ++x
-				ir_.addInstruction(IrInstruction(IrOpcode::PreIncrement, unary_op, Token()));
+				// ++ptr becomes: ptr = ptr + element_size
+				BinaryOp add_op{
+					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<std::string_view>(operandIrOperands[2]) : IrValue{} },
+					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));					// Store back to the pointer variable
+					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
+						AssignmentOp assign_op;
+						assign_op.result = std::get<std::string_view>(operandIrOperands[2]);
+						assign_op.lhs = { operandType, 64, std::get<std::string_view>(operandIrOperands[2]) };
+						assign_op.rhs = { operandType, 64, result_var };
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+					}
+					// Return pointer value (64-bit)
+					return { operandType, 64, result_var };
+				} else {
+					// ptr++ (postfix): save old value, increment, return old value
+					TempVar old_value = var_counter.next();
+					
+					// Save old value
+					AssignmentOp save_op;
+					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
+						save_op.result = old_value;
+						save_op.lhs = { operandType, 64, old_value };
+						save_op.rhs = toTypedValue(operandIrOperands);
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
+					}
+					
+				// ptr = ptr + element_size
+				BinaryOp add_op{
+					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<std::string_view>(operandIrOperands[2]) : IrValue{} },
+					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));					// Store back to the pointer variable
+					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
+						AssignmentOp assign_op;
+						assign_op.result = std::get<std::string_view>(operandIrOperands[2]);
+						assign_op.lhs = { operandType, 64, std::get<std::string_view>(operandIrOperands[2]) };
+						assign_op.rhs = { operandType, 64, result_var };
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+					}
+					// Return old pointer value
+					return { operandType, 64, old_value };
+				}
 			} else {
-				// Postfix increment: x++
-				ir_.addInstruction(IrInstruction(IrOpcode::PostIncrement, unary_op, Token()));
+				// Regular integer increment
+				if (unaryOperatorNode.is_prefix()) {
+					// Prefix increment: ++x
+					ir_.addInstruction(IrInstruction(IrOpcode::PreIncrement, unary_op, Token()));
+				} else {
+					// Postfix increment: x++
+					ir_.addInstruction(IrInstruction(IrOpcode::PostIncrement, unary_op, Token()));
+				}
 			}
 		}
 		else if (unaryOperatorNode.op() == "--") {
-			// Decrement operator (prefix or postfix) - use UnaryOp struct
+			// Decrement operator (prefix or postfix)
+			
+			// Check if this is a pointer decrement (requires pointer arithmetic)
+			bool is_pointer = false;
+			int element_size = 1;
+			if (operandHandledAsIdentifier && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+				const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+					const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+					auto symbol = symbol_table.lookup(identifier.name());
+					if (symbol.has_value()) {
+						const TypeSpecifierNode* type_node = nullptr;
+						if (symbol->is<DeclarationNode>()) {
+							type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						} else if (symbol->is<VariableDeclarationNode>()) {
+							type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+						}
+						
+						if (type_node && type_node->pointer_depth() > 0) {
+							is_pointer = true;
+							// Calculate element size for pointer arithmetic
+							if (type_node->pointer_depth() > 1) {
+								element_size = 8;  // Multi-level pointer: element is a pointer
+							} else {
+								// Single-level pointer: element size is sizeof(base_type)
+								element_size = getSizeInBytes(type_node->type(), type_node->type_index(), type_node->size_in_bits());
+							}
+						}
+					}
+				}
+			}
+			
+			// Use pointer-aware decrement opcode
 			UnaryOp unary_op{
 				.value = toTypedValue(operandIrOperands),
 				.result = result_var
 			};
-
+			
+			// Store element size for pointer arithmetic in the IR
+			if (is_pointer) {
+				// For pointers, we use a BinaryOp to subtract element_size instead
 			if (unaryOperatorNode.is_prefix()) {
-				// Prefix decrement: --x
-				ir_.addInstruction(IrInstruction(IrOpcode::PreDecrement, unary_op, Token()));
+				// --ptr becomes: ptr = ptr - element_size
+				BinaryOp sub_op{
+					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<std::string_view>(operandIrOperands[2]) : IrValue{} },
+					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), Token()));					// Store back to the pointer variable
+					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
+						AssignmentOp assign_op;
+						assign_op.result = std::get<std::string_view>(operandIrOperands[2]);
+						assign_op.lhs = { operandType, 64, std::get<std::string_view>(operandIrOperands[2]) };
+						assign_op.rhs = { operandType, 64, result_var };
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+					}
+					// Return pointer value (64-bit)
+					return { operandType, 64, result_var };
+				} else {
+					// ptr-- (postfix): save old value, decrement, return old value
+					TempVar old_value = var_counter.next();
+					
+					// Save old value
+					AssignmentOp save_op;
+					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
+						save_op.result = old_value;
+						save_op.lhs = { operandType, 64, old_value };
+						save_op.rhs = toTypedValue(operandIrOperands);
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
+					}
+					
+				// ptr = ptr - element_size
+				BinaryOp sub_op{
+					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<std::string_view>(operandIrOperands[2]) : IrValue{} },
+					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), Token()));					// Store back to the pointer variable
+					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
+						AssignmentOp assign_op;
+						assign_op.result = std::get<std::string_view>(operandIrOperands[2]);
+						assign_op.lhs = { operandType, 64, std::get<std::string_view>(operandIrOperands[2]) };
+						assign_op.rhs = { operandType, 64, result_var };
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+					}
+					// Return old pointer value
+					return { operandType, 64, old_value };
+				}
 			} else {
-				// Postfix decrement: x--
-				ir_.addInstruction(IrInstruction(IrOpcode::PostDecrement, unary_op, Token()));
+				// Regular integer decrement
+				if (unaryOperatorNode.is_prefix()) {
+					// Prefix decrement: --x
+					ir_.addInstruction(IrInstruction(IrOpcode::PreDecrement, unary_op, Token()));
+				} else {
+					// Postfix decrement: x--
+					ir_.addInstruction(IrInstruction(IrOpcode::PostDecrement, unary_op, Token()));
+				}
 			}
 		}
 		else if (unaryOperatorNode.op() == "&") {
