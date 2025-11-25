@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <string_view>
 #include <source_location>
+#include <functional>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
@@ -25,6 +26,35 @@
 #endif // WITH_DEBUG_INFO
 
 using namespace std::literals::string_view_literals;
+
+// RAII helper to execute a cleanup function on scope exit
+// Usage: ScopeGuard guard([&]() { cleanup(); });
+template<typename Func>
+class ScopeGuard {
+public:
+	explicit ScopeGuard(Func&& cleanup) : cleanup_(std::forward<Func>(cleanup)), active_(true) {}
+	~ScopeGuard() { if (active_) cleanup_(); }
+	
+	// Prevent copying
+	ScopeGuard(const ScopeGuard&) = delete;
+	ScopeGuard& operator=(const ScopeGuard&) = delete;
+	
+	// Allow moving
+	ScopeGuard(ScopeGuard&& other) noexcept : cleanup_(std::move(other.cleanup_)), active_(other.active_) {
+		other.active_ = false;
+	}
+	
+	// Dismiss the guard (don't run cleanup)
+	void dismiss() { active_ = false; }
+	
+private:
+	Func cleanup_;
+	bool active_;
+};
+
+// Deduction guide for ScopeGuard
+template<typename Func>
+ScopeGuard(Func) -> ScopeGuard<Func>;
 
 enum class ParserError {
         None,

@@ -12021,6 +12021,9 @@ ParseResult Parser::parse_requires_expression() {
 	// Enter a new scope for the requires expression parameters
 	gSymbolTable.enter_scope(ScopeType::Block);
 	
+	// RAII guard to ensure scope is exited on all code paths (success or error)
+	ScopeGuard scope_guard([&]() { gSymbolTable.exit_scope(); });
+	
 	// Check if there are parameters: requires(T a, T b) { ... }
 	// or no parameters: requires { ... }
 	std::vector<ASTNode> parameters;
@@ -12034,13 +12037,11 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse type
 			auto type_result = parse_type_specifier();
 			if (type_result.is_error()) {
-				gSymbolTable.exit_scope();
 				return type_result;
 			}
 			
 			// Parse parameter name
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected parameter name in requires expression", *current_token_);
 			}
 			Token param_name = *peek_token();
@@ -12060,14 +12061,12 @@ ParseResult Parser::parse_requires_expression() {
 		}
 		
 		if (!consume_punctuator(")")) {
-			gSymbolTable.exit_scope();
 			return ParseResult::error("Expected ')' after requires expression parameters", *current_token_);
 		}
 	}
 
 	// Expect '{'
 	if (!consume_punctuator("{")) {
-		gSymbolTable.exit_scope();
 		return ParseResult::error("Expected '{' to begin requires expression body", *current_token_);
 	}
 
@@ -12086,7 +12085,6 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Parse the type name (simplified - just parse an identifier for now)
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected type name after 'typename' in requires expression", *current_token_);
 			}
 			Token type_name = *peek_token();
@@ -12099,7 +12097,6 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after type requirement
 			if (!consume_punctuator(";")) {
-				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected ';' after type requirement in requires expression", *current_token_);
 			}
 			continue;
@@ -12113,13 +12110,11 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse the expression
 			auto expr_result = parse_expression();
 			if (expr_result.is_error()) {
-				gSymbolTable.exit_scope();
 				return expr_result;
 			}
 			
 			// Expect '}'
 			if (!consume_punctuator("}")) {
-				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected '}' after compound requirement expression", *current_token_);
 			}
 			
@@ -12132,7 +12127,6 @@ ParseResult Parser::parse_requires_expression() {
 				// This can be a concept name (identifier) or a type specifier
 				auto type_result = parse_type_specifier();
 				if (type_result.is_error()) {
-					gSymbolTable.exit_scope();
 					return type_result;
 				}
 				return_type_constraint = *type_result.node();
@@ -12148,7 +12142,6 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after compound requirement
 			if (!consume_punctuator(";")) {
-				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected ';' after compound requirement in requires expression", *current_token_);
 			}
 			continue;
@@ -12162,7 +12155,6 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse the nested constraint expression
 			auto constraint_result = parse_expression();
 			if (constraint_result.is_error()) {
-				gSymbolTable.exit_scope();
 				return constraint_result;
 			}
 			
@@ -12175,7 +12167,6 @@ ParseResult Parser::parse_requires_expression() {
 			
 			// Expect ';' after nested requirement
 			if (!consume_punctuator(";")) {
-				gSymbolTable.exit_scope();
 				return ParseResult::error("Expected ';' after nested requirement in requires expression", *current_token_);
 			}
 			continue;
@@ -12184,26 +12175,22 @@ ParseResult Parser::parse_requires_expression() {
 		// Simple requirement: just an expression
 		auto req_result = parse_expression();
 		if (req_result.is_error()) {
-			gSymbolTable.exit_scope();
 			return req_result;
 		}
 		requirements.push_back(*req_result.node());
 		
 		// Expect ';' after each requirement
 		if (!consume_punctuator(";")) {
-			gSymbolTable.exit_scope();
 			return ParseResult::error("Expected ';' after requirement in requires expression", *current_token_);
 		}
 	}
 
 	// Expect '}'
 	if (!consume_punctuator("}")) {
-		gSymbolTable.exit_scope();
 		return ParseResult::error("Expected '}' to end requires expression", *current_token_);
 	}
 
-	// Exit the scope for the requires expression parameters
-	gSymbolTable.exit_scope();
+	// Scope will be exited automatically by scope_guard
 
 	// Create RequiresExpressionNode
 	auto requires_expr_node = emplace_node<RequiresExpressionNode>(
