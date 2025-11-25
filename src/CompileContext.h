@@ -72,6 +72,18 @@ public:
 		disableAccessControl_ = disable;
 	}
 
+	// GCC compatibility mode - enables GCC-specific extensions:
+	// - __attribute__((...)) syntax
+	// - GCC-specific preprocessor macros (__SIZE_TYPE__, etc.)
+	// - #pragma GCC directives (ignored)
+	bool isGccCompatMode() const {
+		return gccCompatMode_;
+	}
+
+	void setGccCompatMode(bool enable) {
+		gccCompatMode_ = enable;
+	}
+
 	// #pragma pack state management
 	// Returns the current pack alignment value (0 = no packing, use natural alignment)
 	size_t getCurrentPackAlignment() const {
@@ -169,6 +181,7 @@ private:
 	bool verboseMode_ = false;
 	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
 	bool disableAccessControl_ = false; // Disable access control checking (for debugging)
+	bool gccCompatMode_ = true;  // GCC compatibility mode (enabled by default for Linux builds)
 	std::vector<std::string> dependencies_;
 
 	// #pragma pack state

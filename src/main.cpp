@@ -64,6 +64,12 @@ int main(int argc, char *argv[]) {
     context.setVerboseMode(argsparser.hasFlag("v") || argsparser.hasFlag("verbose"));
     context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
     context.setDisableAccessControl(argsparser.hasFlag("fno-access-control") || argsparser.hasFlag("no-access-control"));
+    
+    // GCC compatibility mode - enabled by default, can be disabled with -fno-gcc-compat
+    // Enables: __attribute__((...)), __SIZE_TYPE__ macros, #pragma GCC (ignored)
+    if (argsparser.hasFlag("fno-gcc-compat")) {
+        context.setGccCompatMode(false);
+    }
 
     bool show_debug = argsparser.hasFlag("d") || argsparser.hasFlag("debug");
     bool show_perf_stats = argsparser.hasFlag("perf-stats") || argsparser.hasFlag("stats");

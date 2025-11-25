@@ -6,7 +6,14 @@ This document reports on the current state of standard C++ header support in Fla
 
 ## Test Results Summary
 
-Standard headers now pass the preprocessor stage (Issue 1 and Issue 1b below have been fixed). The headers fail during parsing due to missing compiler builtin types like `__SIZE_TYPE__`.
+Standard headers now pass the preprocessor stage and most parsing. The current blocker is **template partial specialization with inheritance** syntax.
+
+### GCC Compatibility Mode
+
+GCC-specific features are enabled by default. Use `-fno-gcc-compat` to disable:
+- `__SIZE_TYPE__` and related builtin type macros
+- `__attribute__((...))` syntax (parser skips these)
+- `#pragma GCC` directives (preprocessor ignores these)
 
 ### Fixed Issues
 
@@ -35,6 +42,31 @@ if (keyword.find("__") == 0) {  // __ is reserved for the compiler
 **Problem**: The preprocessor expression evaluator didn't support arithmetic operators (`+`, `-`, `*`, `/`, `%`) or bitwise operators (`<<`, `>>`, `&`, `|`, `^`, `~`). These are used in standard library headers for version checks like `((2) << 16) + (15)`.
 
 **Fix Applied**: Added support for all arithmetic and bitwise operators in `evaluate_expression()` and `apply_operator()`.
+
+#### Issue 1c: GCC Builtin Type Macros (FIXED)
+
+**Problem**: Standard headers use compiler builtin type macros like `__SIZE_TYPE__`, `__PTRDIFF_TYPE__`, etc.
+
+**Fix Applied**: Added 35+ GCC/Clang builtin type macros when GCC compatibility mode is enabled.
+
+#### Issue 1d: GCC Attributes and Noexcept (FIXED)
+
+**Problem**: Standard headers use `__attribute__((...))` and `noexcept` specifiers.
+
+**Fix Applied**: Added `skip_gcc_attributes()` and `skip_function_trailing_specifiers()` in Parser.cpp.
+
+### Current Blocker
+
+#### Template Partial Specialization with Inheritance
+
+**Problem**: The parser doesn't handle partial template specialization with inheritance:
+```cpp
+template<typename T> struct MyType<const T> : MyType<T> { };
+```
+
+The parser expects `{` after the specialization header but gets `:` for inheritance.
+
+**Location**: `src/Parser.cpp`, `parse_template_declaration()` function
 
 ### Remaining Issues
 

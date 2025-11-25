@@ -1798,43 +1798,45 @@ private:
 		defines_["_M_X64"] = DefineDirective{ "100", {} };  // MSVC-style
 		defines_["_M_AMD64"] = DefineDirective{ "100", {} };
 
-		// Compiler builtin type macros (required for standard library headers)
+		// GCC/Clang compiler builtin type macros (only when GCC compatibility mode is enabled)
 		// These define the underlying types for size_t, ptrdiff_t, wchar_t, etc.
 		// Values match GCC/Clang on x86_64 Linux
-		defines_["__SIZE_TYPE__"] = DefineDirective{ "long unsigned int", {} };
-		defines_["__PTRDIFF_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__WCHAR_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INTMAX_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINTMAX_TYPE__"] = DefineDirective{ "long unsigned int", {} };
-		defines_["__INTPTR_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINTPTR_TYPE__"] = DefineDirective{ "long unsigned int", {} };
-		defines_["__INT8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT16_TYPE__"] = DefineDirective{ "short", {} };
-		defines_["__INT32_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INT64_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINT8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT32_TYPE__"] = DefineDirective{ "unsigned int", {} };
-		defines_["__UINT64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
-		defines_["__INT_LEAST8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT_LEAST16_TYPE__"] = DefineDirective{ "short", {} };
-		defines_["__INT_LEAST32_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INT_LEAST64_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINT_LEAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT_LEAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT_LEAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
-		defines_["__UINT_LEAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
-		defines_["__INT_FAST8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT_FAST16_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__INT_FAST32_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__INT_FAST64_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT_FAST32_TYPE__"] = DefineDirective{ "unsigned long int", {} };
-		defines_["__UINT_FAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
-		defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__CHAR16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__CHAR32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+		if (settings_.isGccCompatMode()) {
+			defines_["__SIZE_TYPE__"] = DefineDirective{ "long unsigned int", {} };
+			defines_["__PTRDIFF_TYPE__"] = DefineDirective{ "long int", {} };
+			defines_["__WCHAR_TYPE__"] = DefineDirective{ "int", {} };
+			defines_["__INTMAX_TYPE__"] = DefineDirective{ "long int", {} };
+			defines_["__UINTMAX_TYPE__"] = DefineDirective{ "long unsigned int", {} };
+			defines_["__INTPTR_TYPE__"] = DefineDirective{ "long int", {} };
+			defines_["__UINTPTR_TYPE__"] = DefineDirective{ "long unsigned int", {} };
+			defines_["__INT8_TYPE__"] = DefineDirective{ "signed char", {} };
+			defines_["__INT16_TYPE__"] = DefineDirective{ "short", {} };
+			defines_["__INT32_TYPE__"] = DefineDirective{ "int", {} };
+			defines_["__INT64_TYPE__"] = DefineDirective{ "long int", {} };
+			defines_["__UINT8_TYPE__"] = DefineDirective{ "unsigned char", {} };
+			defines_["__UINT16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__UINT32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+			defines_["__UINT64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
+			defines_["__INT_LEAST8_TYPE__"] = DefineDirective{ "signed char", {} };
+			defines_["__INT_LEAST16_TYPE__"] = DefineDirective{ "short", {} };
+			defines_["__INT_LEAST32_TYPE__"] = DefineDirective{ "int", {} };
+			defines_["__INT_LEAST64_TYPE__"] = DefineDirective{ "long int", {} };
+			defines_["__UINT_LEAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
+			defines_["__UINT_LEAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__UINT_LEAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+			defines_["__UINT_LEAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
+			defines_["__INT_FAST8_TYPE__"] = DefineDirective{ "signed char", {} };
+			defines_["__INT_FAST16_TYPE__"] = DefineDirective{ "long int", {} };
+			defines_["__INT_FAST32_TYPE__"] = DefineDirective{ "long int", {} };
+			defines_["__INT_FAST64_TYPE__"] = DefineDirective{ "long int", {} };
+			defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
+			defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__UINT_FAST32_TYPE__"] = DefineDirective{ "unsigned long int", {} };
+			defines_["__UINT_FAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
+			defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{ "int", {} };
+			defines_["__CHAR16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__CHAR32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+		}
 
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string {
 			// Use std::filesystem to normalize path separators for cross-platform compatibility
