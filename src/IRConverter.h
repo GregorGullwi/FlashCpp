@@ -8873,8 +8873,32 @@ private:
 		regAlloc.reset();
 	}
 
-	// Exception handling functions - basic stubs for now
-	// These allow code to compile but don't implement full C++ exception handling runtime
+	// ============================================================================
+	// Exception Handling Implementation
+	// ============================================================================
+	// Current implementation status:
+	// ✅ Exceptions are thrown via _CxxThrowException (proper MSVC C++ runtime call)
+	// ✅ SEH frames exist via PDATA/XDATA sections with __CxxFrameHandler3 reference
+	// ✅ Stack unwinding works via unwind codes in XDATA
+	// ⚠️  Catch blocks don't execute yet (requires FuncInfo structures)
+	//
+	// What works:
+	// - throw statement properly calls _CxxThrowException with exception object
+	// - throw; (rethrow) properly calls _CxxThrowException with NULL
+	// - Stack unwinding occurs correctly during exception propagation
+	// - Programs terminate properly for uncaught exceptions
+	//
+	// What doesn't work yet:
+	// - Catch blocks don't catch exceptions (need FuncInfo/try-block maps)
+	// - Exception type matching doesn't occur (need type descriptors)
+	// - Multiple catch clauses not distinguished (need catch handlers)
+	//
+	// For full support, we would need to implement MSVC's exception metadata:
+	// - FuncInfo structure with try-block to handler mapping
+	// - Type descriptors for each catch clause's exception type
+	// - IP-to-state map for determining active try blocks
+	// - Unwind map for calling destructors during stack unwinding
+	// ============================================================================
 	
 	void handleTryBegin(const IrInstruction& instruction) {
 		// TryBegin marks the start of a try block

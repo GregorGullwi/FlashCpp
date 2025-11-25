@@ -951,6 +951,23 @@ public:
 		xdata.push_back(0x00);
 		xdata.push_back(0x00);
 		
+		// NOTE: For full C++ exception handling, we would need to add a FuncInfo structure here
+		// containing try-block maps, catch-block descriptors, and type descriptors.
+		// However, this is complex and requires:
+		// - IP-to-state mapping for all try blocks
+		// - Type descriptor pointers for each catch clause
+		// - Catch block handler addresses
+		// - Unwind map for destructor calls during stack unwinding
+		//
+		// Current implementation:
+		// - Exceptions are thrown via _CxxThrowException (proper behavior)
+		// - Stack unwinding will work via PDATA/XDATA unwind codes
+		// - __CxxFrameHandler3 is referenced but without FuncInfo, catch blocks won't execute
+		// - Programs with uncaught exceptions will terminate properly instead of returning 0
+		//
+		// For now, this is sufficient to fix the immediate issue (throw actually throws).
+		// Full catch block support would require implementing the FuncInfo data structures.
+		
 		// Add the XDATA to the section
 		add_data(xdata, SectionType::XDATA);
 		
