@@ -1160,6 +1160,13 @@ public:
 	void set_is_consteval(bool is_consteval) { is_consteval_ = is_consteval; }
 	bool is_consteval() const { return is_consteval_; }
 
+	// noexcept support
+	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
+	bool is_noexcept() const { return is_noexcept_; }
+	void set_noexcept_expression(ASTNode expr) { noexcept_expression_ = expr; }
+	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
+	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
+
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
@@ -1175,6 +1182,8 @@ private:
 	bool is_constexpr_;
 	bool is_constinit_;
 	bool is_consteval_;
+	bool is_noexcept_ = false;  // True if function is declared noexcept
+	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
 };
 
 class FunctionCallNode {
@@ -2603,6 +2612,87 @@ public:
 private:
 	ASTNode type_node_;  // The underlying type (TypeSpecifierNode)
 	Token alias_name_;   // The new type alias name
+};
+
+// ============================================================================
+// Exception Handling Support
+// ============================================================================
+
+// Throw statement node: throw expression; or throw;
+class ThrowStatementNode {
+public:
+	// throw expression;
+	explicit ThrowStatementNode(ASTNode expression, Token throw_token)
+		: expression_(expression), throw_token_(throw_token), is_rethrow_(false) {}
+
+	// throw; (rethrow)
+	explicit ThrowStatementNode(Token throw_token)
+		: expression_(), throw_token_(throw_token), is_rethrow_(true) {}
+
+	const std::optional<ASTNode>& expression() const { return expression_; }
+	bool is_rethrow() const { return is_rethrow_; }
+	const Token& throw_token() const { return throw_token_; }
+
+private:
+	std::optional<ASTNode> expression_;  // The expression to throw (nullopt for rethrow)
+	Token throw_token_;                   // For error reporting
+	bool is_rethrow_;                     // True if this is a rethrow (throw;)
+};
+
+// Catch clause node: catch (type identifier) { block }
+class CatchClauseNode {
+public:
+	// catch (type identifier) { block } or catch (type) { block }
+	explicit CatchClauseNode(
+		std::optional<ASTNode> exception_declaration,  // nullopt for catch(...)
+		ASTNode body,
+		Token catch_token = Token())
+		: exception_declaration_(exception_declaration),
+		  body_(body),
+		  catch_token_(catch_token),
+		  is_catch_all_(false) {}
+
+	// catch(...) { block }
+	explicit CatchClauseNode(
+		ASTNode body,
+		Token catch_token,
+		bool catch_all)
+		: exception_declaration_(std::nullopt),
+		  body_(body),
+		  catch_token_(catch_token),
+		  is_catch_all_(catch_all) {}
+
+	const std::optional<ASTNode>& exception_declaration() const { return exception_declaration_; }
+	const ASTNode& body() const { return body_; }
+	const Token& catch_token() const { return catch_token_; }
+	bool is_catch_all() const { return is_catch_all_; }
+
+private:
+	std::optional<ASTNode> exception_declaration_;  // DeclarationNode for the caught exception, nullopt for catch(...)
+	ASTNode body_;                                  // BlockNode for the catch block body
+	Token catch_token_;                             // For error reporting
+	bool is_catch_all_;                             // True for catch(...)
+};
+
+// Try statement node: try { block } catch (...) { block }
+class TryStatementNode {
+public:
+	explicit TryStatementNode(
+		ASTNode try_block,
+		std::vector<ASTNode> catch_clauses,
+		Token try_token = Token())
+		: try_block_(try_block),
+		  catch_clauses_(std::move(catch_clauses)),
+		  try_token_(try_token) {}
+
+	const ASTNode& try_block() const { return try_block_; }
+	const std::vector<ASTNode>& catch_clauses() const { return catch_clauses_; }
+	const Token& try_token() const { return try_token_; }
+
+private:
+	ASTNode try_block_;                   // BlockNode for the try block
+	std::vector<ASTNode> catch_clauses_;  // Vector of CatchClauseNode
+	Token try_token_;                     // For error reporting
 };
 
 // ============================================================================
