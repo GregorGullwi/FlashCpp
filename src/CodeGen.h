@@ -146,6 +146,12 @@ public:
 		else if (node.is<LabelStatementNode>()) {
 			visitLabelStatementNode(node.as<LabelStatementNode>());
 		}
+		else if (node.is<TryStatementNode>()) {
+			visitTryStatementNode(node.as<TryStatementNode>());
+		}
+		else if (node.is<ThrowStatementNode>()) {
+			visitThrowStatementNode(node.as<ThrowStatementNode>());
+		}
 		else if (node.is<BlockNode>()) {
 			visitBlockNode(node.as<BlockNode>());
 		}
@@ -2525,6 +2531,139 @@ private:
 		// Generate Label IR instruction with the label name
 		std::string label_name(node.label_name());
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label_name}, node.label_token()));
+	}
+
+	void visitTryStatementNode(const TryStatementNode& node) {
+		// Generate try-catch-finally structure
+		// For now, we'll generate a simplified version that doesn't actually implement exception handling
+		// but allows the code to compile and run
+
+		// Generate unique labels for exception handling
+		static size_t try_counter = 0;
+		std::string try_id = std::to_string(try_counter++);
+		std::string handlers_label = "__try_handlers_" + try_id;
+		std::string end_label = "__try_end_" + try_id;
+
+		// Emit TryBegin marker
+		ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = handlers_label}, node.try_token()));
+
+		// Visit try block
+		visit(node.try_block());
+
+		// Emit TryEnd marker
+		ir_.addInstruction(IrOpcode::TryEnd, {}, node.try_token());
+
+		// Jump to end after successful try block execution
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, node.try_token()));
+
+		// Emit label for exception handlers
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = handlers_label}, node.try_token()));
+
+		// Visit catch clauses
+		for (const auto& catch_clause_node : node.catch_clauses()) {
+			const auto& catch_clause = catch_clause_node.as<CatchClauseNode>();
+			
+			// Generate unique label for this catch handler end
+			std::string catch_end_label = "__catch_end_" + try_id + "_" + std::to_string(&catch_clause_node - &node.catch_clauses()[0]);
+
+			// If this is a typed catch (not catch(...))
+			if (!catch_clause.is_catch_all()) {
+				const auto& exception_decl = *catch_clause.exception_declaration();
+				const auto& decl = exception_decl.as<DeclarationNode>();
+				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+
+				// Get type information
+				TypeIndex type_index = type_node.type_index();
+				
+				// Allocate a temporary for the caught exception
+				TempVar exception_temp = var_counter.next();
+				
+				// Emit CatchBegin marker with exception type
+				std::vector<IrOperand> catch_operands = {exception_temp, static_cast<int>(type_index), catch_end_label};
+				ir_.addInstruction(IrOpcode::CatchBegin, catch_operands, catch_clause.catch_token());
+
+				// Add the exception variable to the symbol table for the catch block scope
+				symbol_table.enter_scope(ScopeType::Block);
+				
+				// Register the exception parameter in the symbol table
+				std::string exception_var_name(decl.identifier_token().value());
+				if (!exception_var_name.empty()) {
+					// Create a variable declaration for the exception parameter
+					VariableDeclOp decl_op;
+					decl_op.type = type_node.type();
+					decl_op.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					decl_op.var_name = exception_var_name;
+					
+					// Create a TypedValue for the initializer
+					TypedValue init_value;
+					init_value.type = type_node.type();
+					init_value.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					init_value.value = exception_temp;
+					init_value.is_reference = type_node.is_reference();
+					decl_op.initializer = init_value;
+					
+					decl_op.is_reference = type_node.is_reference();
+					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+					decl_op.is_array = false;
+					decl_op.custom_alignment = 0;
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), decl.identifier_token()));
+					
+					// Add to symbol table
+					symbol_table.insert(exception_var_name, exception_decl);
+				}
+			} else {
+				// catch(...) - catches all exceptions
+				std::vector<IrOperand> catch_operands = {0, 0, catch_end_label};
+				ir_.addInstruction(IrOpcode::CatchBegin, catch_operands, catch_clause.catch_token());
+				symbol_table.enter_scope(ScopeType::Block);
+			}
+
+			// Visit catch block body
+			visit(catch_clause.body());
+
+			// Emit CatchEnd marker
+			ir_.addInstruction(IrOpcode::CatchEnd, {}, catch_clause.catch_token());
+
+			// Exit catch block scope
+			symbol_table.exit_scope();
+
+			// Jump to end after catch block
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, catch_clause.catch_token()));
+
+			// Emit catch end label
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = catch_end_label}, catch_clause.catch_token()));
+		}
+
+		// Emit end label
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, node.try_token()));
+	}
+
+	void visitThrowStatementNode(const ThrowStatementNode& node) {
+		if (node.is_rethrow()) {
+			// throw; (rethrow current exception)
+			ir_.addInstruction(IrOpcode::Rethrow, {}, node.throw_token());
+		} else {
+			// throw expression;
+			const auto& expr = *node.expression();
+			
+			// Generate code for the expression to throw
+			// The operands include [type, size, value_or_temp]
+			auto expr_operands = visitExpressionNode(expr.as<ExpressionNode>());
+			
+			// Extract type information from the operands
+			// operands format: [type, size, value_or_temp_var]
+			Type expr_type = Type::Int;  // Default
+			int type_size = 32;
+			if (expr_operands.size() >= 2) {
+				expr_type = std::get<Type>(expr_operands[0]);
+				type_size = std::get<int>(expr_operands[1]);
+			}
+			
+			// Emit Throw instruction with the expression operands
+			// For now, we'll pass the full expression operands
+			ir_.addInstruction(IrOpcode::Throw, expr_operands, node.throw_token());
+		}
 	}
 
 	void visitVariableDeclarationNode(const ASTNode& ast_node) {

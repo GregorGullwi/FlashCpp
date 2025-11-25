@@ -130,6 +130,13 @@ enum class IrOpcode : int_fast16_t {
 	// Lambda support
 	FunctionAddress,     // Get address of a function: [result_temp, function_name]
 	IndirectCall,        // Call through function pointer: [result_temp, func_ptr, arg1, arg2, ...]
+	// Exception handling
+	TryBegin,            // Begin try block: [label_for_handlers]
+	TryEnd,              // End try block
+	CatchBegin,          // Begin catch handler: [exception_var_temp, type_index, catch_end_label]
+	CatchEnd,            // End catch handler
+	Throw,               // Throw exception: [exception_temp, type_index]
+	Rethrow,             // Rethrow current exception (throw; with no argument)
 };
 
 // ============================================================================
