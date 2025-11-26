@@ -75,8 +75,8 @@ int main(int argc, char *argv[]) {
     bool show_perf_stats = argsparser.hasFlag("perf-stats") || argsparser.hasFlag("stats");
     bool show_timing = argsparser.hasFlag("time") || argsparser.hasFlag("timing") || show_perf_stats;
 
-    // Set global debug flag
-    g_enable_debug_output = show_debug;
+    // Set global debug flag (also enabled by verbose mode)
+    g_enable_debug_output = show_debug || context.isVerboseMode();
 
     // Process input file arguments here...
     const auto& inputFileArgs = argsparser.inputFileArgs();

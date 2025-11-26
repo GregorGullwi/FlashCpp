@@ -2776,7 +2776,6 @@ private:
 		function_instructions.clear();
 		std::string current_func_name;
 
-		std::cerr << "DEBUG [groupInstructionsByFunction]: Processing " << ir.getInstructions().size() << " instructions\n";
 		int func_decl_count = 0;
 		for (const auto& instruction : ir.getInstructions()) {
 			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
@@ -2793,7 +2792,6 @@ private:
 						current_func_name = std::string(instruction.getOperandAs<std::string_view>(3));
 					}
 				}
-				std::cerr << "DEBUG [groupInstructionsByFunction]: Found FunctionDecl for '" << current_func_name << "'\n";
 				// Only create a new vector if this function name doesn't exist yet
 				if (function_instructions.find(current_func_name) == function_instructions.end()) {
 					function_instructions[current_func_name] = std::vector<IrInstruction>();
@@ -2802,11 +2800,6 @@ private:
 			} else if (!current_func_name.empty()) {
 				function_instructions[current_func_name].push_back(instruction);
 			}
-		}
-		std::cerr << "DEBUG [groupInstructionsByFunction]: Processed " << func_decl_count << " functions\n";
-		std::cerr << "DEBUG [groupInstructionsByFunction]: function_instructions map has " << function_instructions.size() << " entries\n";
-		for (const auto& [fname, instrs] : function_instructions) {
-			std::cerr << "  - '" << fname << "': " << instrs.size() << " instructions\n";
 		}
 	}
 
@@ -3972,13 +3965,9 @@ private:
 		std::string mangled_name;
 		if (!function_name.empty() && function_name[0] == '?') {
 			mangled_name = function_name;  // Already mangled
-			std::cerr << "DEBUG handleFunctionCall: function_name already mangled: " << mangled_name << "\n";
 		} else {
-			std::cerr << "DEBUG handleFunctionCall: function_name needs mangling: " << function_name << "\n";
 			mangled_name = writer.getMangledName(function_name);  // Need to mangle
-			std::cerr << "DEBUG handleFunctionCall: after getMangledName: " << mangled_name << "\n";
 		}
-		std::cerr << "DEBUG handleFunctionCall: about to add_relocation with: " << mangled_name << "\n";
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
 		// Invalidate caller-saved registers (function calls clobber them)
@@ -4189,8 +4178,6 @@ private:
 
 		// Generate the correct mangled name for this specific constructor overload
 		std::string mangled_name = writer.generateMangledName(function_name, sig);
-		std::cerr << "DEBUG handleConstructorCall: function_name = " << function_name << ", num_params = " << num_params << "\n";
-		std::cerr << "DEBUG handleConstructorCall: mangled_name = " << mangled_name << "\n";
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 		
 		// Invalidate caller-saved registers (function calls clobber them)
@@ -5090,7 +5077,6 @@ private:
 		// Common processing
 		std::string_view func_name = func_name_str;
 		std::string_view struct_name = struct_name_str;
-		std::cerr << "DEBUG [handleFunctionDecl]: func_name='" << func_name << "' struct_name='" << struct_name << "' empty=" << struct_name.empty() << std::endl;
 
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
@@ -5613,7 +5599,6 @@ private:
 					} else {
 						// Value not in identifier_offset - use fallback offset calculation
 						int var_offset = getStackOffsetFromTempVar(return_var);
-						std::cerr << "DEBUG handleReturn TempVar (fallback): var_offset=" << var_offset << " ret_op.return_size=" << ret_op.return_size << "\n";
 						emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
 						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 					}
@@ -8237,11 +8222,9 @@ private:
 		auto it = current_scope.identifier_offset.find(result_var.name());
 		if (it != current_scope.identifier_offset.end()) {
 			result_offset = it->second;
-			std::cerr << "DEBUG handleMemberAccess: result_var " << result_var.name() << " found at offset=" << result_offset << "\n";
 		} else {
 			// Allocate stack space for the result TempVar
 			result_offset = allocateStackSlotForTempVar(result_var.var_number);
-			std::cerr << "DEBUG handleMemberAccess: allocated result_var " << result_var.name() << " at offset=" << result_offset << "\n";
 		}
 
 		// Calculate member size in bytes

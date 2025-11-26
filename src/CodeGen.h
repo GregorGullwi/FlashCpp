@@ -562,7 +562,6 @@ private:
 
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		if (!node.get_definition().has_value()) {
-			std::cerr << "DEBUG: Function has no definition, skipping\n";
 			return;
 		}
 
@@ -959,9 +958,6 @@ private:
 	}
 
 	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
-		std::cerr << "DEBUG visitConstructorDeclarationNode: struct=" << node.struct_name()
-		          << " name=" << node.name()
-		          << " has_definition=" << node.get_definition().has_value() << "\n";
 		if (!node.get_definition().has_value())
 			return;
 
@@ -1001,7 +997,6 @@ private:
 		// Generate mangled name for constructor
 		std::vector<TypeSpecifierNode> param_types_for_mangling;
 		for (const auto& param : node.parameter_nodes()) {
-			std::cerr << "DEBUG ctor param node type (mangle): " << param.type_name() << " has_value=" << param.has_value() << "\n";
 			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor mangle params");
 			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
 		}
@@ -1024,7 +1019,6 @@ private:
 
 		// Add parameter types to constructor declaration
 		for (const auto& param : node.parameter_nodes()) {
-			std::cerr << "DEBUG ctor param node type (decl): " << param.type_name() << " has_value=" << param.has_value() << "\n";
 			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
@@ -1064,17 +1058,14 @@ private:
 
 		// Add parameters to symbol table
 		for (const auto& param : node.parameter_nodes()) {
-			std::cerr << "DEBUG ctor param node type (symbol): " << param.type_name() << " has_value=" << param.has_value() << "\n";
 			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor symbol table");
 			symbol_table.insert(param_decl.identifier_token().value(), param);
 		}
-		std::cerr << "DEBUG ctor stage: symbol table populated for " << node.parameter_nodes().size() << " params\n";
 
 		// C++11 Delegating constructor: if present, ONLY call the target constructor
 		// No base class or member initialization should happen
 		if (node.delegating_initializer().has_value()) {
 			const auto& delegating_init = node.delegating_initializer().value();
-			std::cerr << "DEBUG ctor stage: delegating initializer detected\n";
 			
 			// Build constructor call: StructName::StructName(this, args...)
 			ConstructorCallOp ctor_op;
@@ -1106,7 +1097,6 @@ private:
 		// 3. Constructor body
 
 		// Look up the struct type to get base class and member information
-		std::cerr << "DEBUG ctor stage: entering base/member initialization\n";
 		auto struct_type_it = gTypesByName.find(node.struct_name());
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
@@ -1434,15 +1424,11 @@ private:
 		}
 
 		// Visit the constructor body
-		std::cerr << "DEBUG ctor stage: visiting body\n";
 		const BlockNode& block = node.get_definition().value().as<BlockNode>();
 		size_t ctor_stmt_index = 0;
 		block.get_statements().visit([&](const ASTNode& statement) {
-			std::cerr << "DEBUG ctor body stmt " << ctor_stmt_index++
-			          << " type=" << statement.type_name() << "\n";
 			visit(statement);
 		});
-		std::cerr << "DEBUG ctor stage: body visit complete\n";
 
 		// Add implicit return for constructor (constructors don't have explicit return statements)
 		ReturnOp ret_op;  // No return value for void
@@ -1453,9 +1439,6 @@ private:
 	}
 
 	void visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
-		std::cerr << "DEBUG visitDestructorDeclarationNode: struct=" << node.struct_name()
-		          << " name=" << node.name()
-		          << " has_definition=" << node.get_definition().has_value() << "\n";
 		if (!node.get_definition().has_value())
 			return;
 
@@ -1607,15 +1590,10 @@ private:
 				Type return_type = current_function_return_type_;
 				int return_size = current_function_return_size_;
 		
-				std::cerr << "DEBUG visitReturnStatementNode: expr_type=" << static_cast<int>(expr_type) << " expr_size=" << expr_size 
-						  << " return_type=" << static_cast<int>(return_type) << " return_size=" << return_size << "\n";
-		
 				// Convert if types don't match
 				if (expr_type != return_type || expr_size != return_size) {
-					std::cerr << "DEBUG visitReturnStatementNode: calling generateTypeConversion\n";
 					// Update operands with the converted value
 					operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
-					std::cerr << "DEBUG visitReturnStatementNode: after conversion, operands[1]=" << std::get<int>(operands[1]) << "\n";
 				}
 			}
 			
@@ -2755,7 +2733,6 @@ private:
 							init_value = static_cast<unsigned long long>(eval_result.as_int());
 						} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
 							init_value = std::get<unsigned long long>(eval_result.value);
-							std::cerr << "DEBUG:   Unsigned integer initializer value: " << init_value << "\n";
 						} else if (std::holds_alternative<long long>(eval_result.value)) {
 							init_value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
 						} else if (std::holds_alternative<bool>(eval_result.value)) {
@@ -3049,12 +3026,8 @@ private:
 		// If this is a struct type with a constructor, generate a constructor call
 		if (type_node.type() == Type::Struct) {
 			TypeIndex type_index = type_node.type_index();
-			std::cerr << "DEBUG visitVariableDeclarationNode: struct var " << decl.identifier_token().value() 
-			          << " type_index=" << type_index << " gTypeInfo.size()=" << gTypeInfo.size() << "\n";
 			if (type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index];
-				std::cerr << "DEBUG: Found type_info for " << type_info.name_ 
-				          << " has_struct_info=" << (type_info.struct_info_ != nullptr) << "\n";
 				if (type_info.struct_info_) {
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
@@ -3062,7 +3035,6 @@ private:
 						assert(false && "Cannot instantiate abstract class");
 					}
 
-					std::cerr << "DEBUG: hasConstructor=" << type_info.struct_info_->hasConstructor() << "\n";
 					if (type_info.struct_info_->hasConstructor()) {
 						// Check if the default constructor is implicit (auto-generated)
 						const StructMemberFunction* default_ctor = type_info.struct_info_->findDefaultConstructor();
@@ -3084,7 +3056,6 @@ private:
 									// We need to generate a copy constructor call instead of default constructor.
 									// The initializer operands are in format: [type, size, value]
 									has_copy_init = true;
-									std::cerr << "DEBUG: Copy init detected for " << decl.identifier_token().value() << "\n";
 								}
 							}
 
@@ -3096,9 +3067,7 @@ private:
 							if (has_copy_init && node.initializer()) {
 								// Add initializer as copy constructor parameter
 								const ASTNode& init_node = *node.initializer();
-								std::cerr << "DEBUG: About to visit initializer expression for copy constructor\n";
 								auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-								std::cerr << "DEBUG: After visiting initializer, got " << init_operands.size() << " operands\n";
 								// init_operands = [type, size, value]
 								if (init_operands.size() >= 3) {
 									TypedValue init_arg = toTypedValue(init_operands);
@@ -8404,20 +8373,17 @@ private:
 		);
 
 		if (body_node_opt.has_value()) {
-			std::cerr << "DEBUG: Template body has value, is BlockNode=" << body_node_opt->is<BlockNode>() << "\n";
 			if (body_node_opt->is<BlockNode>()) {
 				const BlockNode& block = body_node_opt->as<BlockNode>();
 				const auto& stmts = block.get_statements();
-				std::cerr << "DEBUG: Template body has " << stmts.size() << " statements\n";
 				
 				// Visit each statement in the block to generate IR
 				for (size_t i = 0; i < stmts.size(); ++i) {
-					std::cerr << "DEBUG: Visiting template body statement " << i << "\n";
 					visit(stmts[i]);
 				}
 			}
 		} else {
-			std::cerr << "DEBUG: Template body does NOT have value!\n";
+			std::cerr << "Warning: Template body does NOT have value!\n";
 		}
 
 		// Add implicit return for void functions
@@ -8462,7 +8428,6 @@ private:
 				// Otherwise, use the token value (the identifier name)
 				constructor_name = std::string(type_spec.token().value());
 			}
-			std::cerr << "DEBUG generateConstructorCallIr: struct type_index=" << type_spec.type_index() << " name=" << constructor_name << "\n";
 		} else {
 			// For basic types, constructors might not exist, but we can handle them as value construction
 			constructor_name = gTypeInfo[type_spec.type_index()].name_;
