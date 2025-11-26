@@ -7,6 +7,8 @@
 #include <iostream>
 #include <filesystem>
 
+extern bool g_enable_debug_output;
+
 // Simple SHA-256 implementation for file checksums
 #include <array>
 
@@ -173,7 +175,7 @@ void DebugInfoBuilder::addFunction(const std::string& name, const std::string& m
 void DebugInfoBuilder::setCurrentFunction(const std::string& name, uint32_t file_id) {
     // Finalize previous function if any (but only if it hasn't been finalized already)
     if (!current_function_name_.empty()) {
-        std::cerr << "DEBUG: Finalizing previous function: " << current_function_name_
+        if (g_enable_debug_output) std::cerr << "DEBUG: Finalizing previous function: " << current_function_name_
                   << " with file_id=" << current_function_file_id_
                   << " and " << current_function_lines_.size() << " lines" << std::endl;
 
@@ -185,9 +187,9 @@ void DebugInfoBuilder::setCurrentFunction(const std::string& name, uint32_t file
                     func.line_offsets = std::move(current_function_lines_);
                     func.file_id = current_function_file_id_;
                     func.is_finalized = true;
-                    std::cerr << "DEBUG: Updated function " << func.name << " with file_id=" << func.file_id << std::endl;
+                    if (g_enable_debug_output) std::cerr << "DEBUG: Updated function " << func.name << " with file_id=" << func.file_id << std::endl;
                 } else {
-                    std::cerr << "DEBUG: Function " << func.name << " already finalized, skipping" << std::endl;
+                    if (g_enable_debug_output) std::cerr << "DEBUG: Function " << func.name << " already finalized, skipping" << std::endl;
                 }
                 break;
             }
@@ -195,7 +197,7 @@ void DebugInfoBuilder::setCurrentFunction(const std::string& name, uint32_t file
     }
 
     // Set up new current function
-    std::cerr << "DEBUG: Setting current function: " << name << " with file_id=" << file_id << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Setting current function: " << name << " with file_id=" << file_id << std::endl;
     current_function_name_ = name;
     current_function_file_id_ = file_id;
     current_function_lines_.clear();
@@ -262,7 +264,7 @@ void DebugInfoBuilder::setFunctionDebugRange(const std::string& name, uint32_t p
             func.debug_start_offset = prologue_size;  // Debug starts after prologue
             func.debug_end_offset = func.code_length - epilogue_size;  // Debug ends before epilogue
 
-            std::cerr << "DEBUG: Set debug range for function " << name
+            if (g_enable_debug_output) std::cerr << "DEBUG: Set debug range for function " << name
                       << " - prologue_size=" << prologue_size
                       << ", epilogue_size=" << epilogue_size
                       << ", debug_start=" << func.debug_start_offset
@@ -278,7 +280,7 @@ void DebugInfoBuilder::setTextSectionNumber(uint16_t section_number) {
 
 void DebugInfoBuilder::finalizeCurrentFunction() {
     if (!current_function_name_.empty()) {
-        std::cerr << "DEBUG: finalizeCurrentFunction: " << current_function_name_
+        if (g_enable_debug_output) std::cerr << "DEBUG: finalizeCurrentFunction: " << current_function_name_
                   << " with file_id=" << current_function_file_id_
                   << " and " << current_function_lines_.size() << " lines" << std::endl;
         // Find the function and update its line information
@@ -289,9 +291,9 @@ void DebugInfoBuilder::finalizeCurrentFunction() {
                     func.line_offsets = std::move(current_function_lines_);
                     func.file_id = current_function_file_id_;
                     func.is_finalized = true;
-                    std::cerr << "DEBUG: finalizeCurrentFunction updated function " << func.name << " with file_id=" << func.file_id << std::endl;
+                    if (g_enable_debug_output) std::cerr << "DEBUG: finalizeCurrentFunction updated function " << func.name << " with file_id=" << func.file_id << std::endl;
                 } else {
-                    std::cerr << "DEBUG: finalizeCurrentFunction: function " << func.name << " already finalized, skipping" << std::endl;
+                    if (g_enable_debug_output) std::cerr << "DEBUG: finalizeCurrentFunction: function " << func.name << " already finalized, skipping" << std::endl;
                 }
                 break;
             }
@@ -307,14 +309,14 @@ void DebugInfoBuilder::finalizeCurrentFunction() {
 uint32_t DebugInfoBuilder::addString(const std::string& str) {
     auto it = string_offsets_.find(str);
     if (it != string_offsets_.end()) {
-        std::cerr << "DEBUG: String '" << str << "' already exists at offset " << it->second << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: String '" << str << "' already exists at offset " << it->second << std::endl;
         return it->second;
     }
 
     uint32_t offset = static_cast<uint32_t>(string_table_.size());
     string_offsets_[str] = offset;
 
-    std::cerr << "DEBUG: Adding string '" << str << "' at offset " << offset << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Adding string '" << str << "' at offset " << offset << std::endl;
 
     // Add string with null terminator
     for (char c : str) {
@@ -339,9 +341,9 @@ void DebugInfoBuilder::initializeFunctionIdMap() {
         function_id_map_[functions_[i].name] = func_id_index;
     }
 
-    std::cerr << "DEBUG: Dynamically initialized function ID map for " << functions_.size() << " functions:" << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Dynamically initialized function ID map for " << functions_.size() << " functions:" << std::endl;
     for (const auto& pair : function_id_map_) {
-        std::cerr << "  " << pair.first << " -> 0x" << std::hex << pair.second << std::dec << std::endl;
+        if (g_enable_debug_output) std::cerr << "  " << pair.first << " -> 0x" << std::hex << pair.second << std::dec << std::endl;
     }
 }
 
@@ -352,7 +354,7 @@ void DebugInfoBuilder::addDebugRelocation(uint32_t offset, const std::string& sy
     reloc.relocation_type = relocation_type;
     debug_relocations_.push_back(reloc);
 
-    std::cerr << "DEBUG: Added debug relocation at offset " << offset
+    if (g_enable_debug_output) std::cerr << "DEBUG: Added debug relocation at offset " << offset
               << " for symbol " << symbol_name << std::endl;
 }
 
@@ -383,18 +385,18 @@ void DebugInfoBuilder::writeSubsection(std::vector<uint8_t>& data, DebugSubsecti
     header.kind = kind;
     header.length = static_cast<uint32_t>(unpadded_size);  // NO padding in length for object files!
 
-    std::cerr << "DEBUG: Writing subsection kind=" << static_cast<uint32_t>(kind)
+    if (g_enable_debug_output) std::cerr << "DEBUG: Writing subsection kind=" << static_cast<uint32_t>(kind)
               << ", unpadded_size=" << unpadded_size
               << ", header_length=" << header.length
               << ", header_size=" << sizeof(header) << std::endl;
 
     // Debug: Show header bytes
-    std::cerr << "DEBUG: Header bytes: ";
+    if (g_enable_debug_output) std::cerr << "DEBUG: Header bytes: ";
     const uint8_t* header_bytes = reinterpret_cast<const uint8_t*>(&header);
     for (size_t i = 0; i < sizeof(header); ++i) {
-        std::cerr << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(header_bytes[i]) << " ";
+        if (g_enable_debug_output) std::cerr << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(header_bytes[i]) << " ";
     }
-    std::cerr << std::dec << std::endl;
+    if (g_enable_debug_output) std::cerr << std::dec << std::endl;
 
     // Write header
     data.insert(data.end(), reinterpret_cast<const uint8_t*>(&header),
@@ -529,7 +531,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
     main_header.flags = 0;  // No special flags
     main_header.cbCon = max_offset - min_offset;
 
-    std::cerr << "DEBUG: Main line header - offCon=" << main_header.offCon
+    if (g_enable_debug_output) std::cerr << "DEBUG: Main line header - offCon=" << main_header.offCon
               << ", segCon=" << main_header.segCon
               << ", cbCon=" << main_header.cbCon << std::endl;
 
@@ -544,7 +546,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
             continue; // Skip functions without line information
         }
 
-        std::cerr << "DEBUG: Line info for function " << func.name
+        if (g_enable_debug_output) std::cerr << "DEBUG: Line info for function " << func.name
                   << " - file_id=" << func.file_id
                   << ", num_lines=" << func.line_offsets.size() << std::endl;
 
@@ -558,12 +560,12 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
         file_header.block_size = sizeof(FileBlockHeader) + line_entries_size;
 
         // DEBUG: Dump the file header bytes
-        std::cerr << "DEBUG: FileBlockHeader bytes: ";
+        if (g_enable_debug_output) std::cerr << "DEBUG: FileBlockHeader bytes: ";
         const uint8_t* file_header_bytes = reinterpret_cast<const uint8_t*>(&file_header);
         for (size_t i = 0; i < sizeof(file_header); ++i) {
-            std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)file_header_bytes[i] << " ";
+            if (g_enable_debug_output) std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)file_header_bytes[i] << " ";
         }
-        std::cerr << std::dec << std::endl;
+        if (g_enable_debug_output) std::cerr << std::dec << std::endl;
 
         // Write file block header
         line_data.insert(line_data.end(),
@@ -579,13 +581,13 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
             line_entry.is_statement = 1;   // This is a statement
 
             // DEBUG: Dump line entry bytes
-            std::cerr << "DEBUG: LineNumberEntry for offset=" << line_entry.offset
+            if (g_enable_debug_output) std::cerr << "DEBUG: LineNumberEntry for offset=" << line_entry.offset
                       << ", line=" << line_entry.line_start << " bytes: ";
             const uint8_t* entry_bytes = reinterpret_cast<const uint8_t*>(&line_entry);
             for (size_t i = 0; i < sizeof(line_entry); ++i) {
-                std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)entry_bytes[i] << " ";
+                if (g_enable_debug_output) std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)entry_bytes[i] << " ";
             }
-            std::cerr << std::dec << std::endl;
+            if (g_enable_debug_output) std::cerr << std::dec << std::endl;
 
             line_data.insert(line_data.end(),
                              reinterpret_cast<const uint8_t*>(&line_entry),
@@ -617,7 +619,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     line_header.flags = 0;   // No special flags
     line_header.code_length = func.code_length;
 
-    std::cerr << "DEBUG: Function line header - offCon=" << line_header.code_offset
+    if (g_enable_debug_output) std::cerr << "DEBUG: Function line header - offCon=" << line_header.code_offset
               << ", segCon=" << line_header.segment
               << ", cbCon=" << line_header.code_length << std::endl;
 
@@ -644,24 +646,24 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     file_block.num_lines = static_cast<uint32_t>(func.line_offsets.size());
     file_block.block_size = sizeof(FileBlockHeader) + (func.line_offsets.size() * sizeof(LineNumberEntry));
 
-    std::cerr << "DEBUG: Function line info for function " << func.name
+    if (g_enable_debug_output) std::cerr << "DEBUG: Function line info for function " << func.name
               << " - file_id=" << file_block.file_id
               << ", num_lines=" << file_block.num_lines << std::endl;
 
     // DEBUG: Print all line mappings for this function
-    std::cerr << "DEBUG: All line mappings for function " << func.name << ":" << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: All line mappings for function " << func.name << ":" << std::endl;
     for (size_t i = 0; i < func.line_offsets.size(); ++i) {
-        std::cerr << "  [" << i << "] offset=" << func.line_offsets[i].first
+        if (g_enable_debug_output) std::cerr << "  [" << i << "] offset=" << func.line_offsets[i].first
                   << ", line=" << func.line_offsets[i].second << std::endl;
     }
 
     // DEBUG: Dump file block header bytes
-    std::cerr << "DEBUG: FileBlockHeader bytes: ";
+    if (g_enable_debug_output) std::cerr << "DEBUG: FileBlockHeader bytes: ";
     const uint8_t* header_bytes = reinterpret_cast<const uint8_t*>(&file_block);
     for (size_t i = 0; i < sizeof(file_block); ++i) {
-        std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)header_bytes[i] << " ";
+        if (g_enable_debug_output) std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)header_bytes[i] << " ";
     }
-    std::cerr << std::dec << std::endl;
+    if (g_enable_debug_output) std::cerr << std::dec << std::endl;
 
     line_data.insert(line_data.end(),
                      reinterpret_cast<const uint8_t*>(&file_block),
@@ -676,13 +678,13 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
         line_entry.is_statement = 1;   // This is a statement
 
         // DEBUG: Dump line entry bytes
-        std::cerr << "DEBUG: LineNumberEntry for offset=" << line_entry.offset
+        if (g_enable_debug_output) std::cerr << "DEBUG: LineNumberEntry for offset=" << line_entry.offset
                   << ", line=" << line_entry.line_start << " bytes: ";
         const uint8_t* entry_bytes = reinterpret_cast<const uint8_t*>(&line_entry);
         for (size_t i = 0; i < sizeof(line_entry); ++i) {
-            std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)entry_bytes[i] << " ";
+            if (g_enable_debug_output) std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)entry_bytes[i] << " ";
         }
-        std::cerr << std::dec << std::endl;
+        if (g_enable_debug_output) std::cerr << std::dec << std::endl;
 
         line_data.insert(line_data.end(),
                          reinterpret_cast<const uint8_t*>(&line_entry),
@@ -693,7 +695,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
 }
 
 std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
-    std::cerr << "DEBUG: generateDebugS() called" << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: generateDebugS() called" << std::endl;
 
     // Initialize function ID mapping before generating symbols
     initializeFunctionIdMap();
@@ -710,7 +712,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
 
     // Add OBJNAME symbol (only once per object file)
     {
-        std::cerr << "DEBUG: Writing S_OBJNAME symbol" << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Writing S_OBJNAME symbol" << std::endl;
         std::vector<uint8_t> objname_data;
         uint32_t signature_val = 0; // Signature
         objname_data.insert(objname_data.end(), reinterpret_cast<const uint8_t*>(&signature_val),
@@ -728,14 +730,14 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
             obj_name = "FlashCpp.obj"; // Fallback
         }
 
-        std::cerr << "DEBUG: Using object name: " << obj_name << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Using object name: " << obj_name << std::endl;
         for (char c : obj_name) {
             objname_data.push_back(static_cast<uint8_t>(c));
         }
         objname_data.push_back(0); // Null terminator
 
         writeSymbolRecord(symbols_data, SymbolKind::S_OBJNAME, objname_data);
-        std::cerr << "DEBUG: S_OBJNAME symbol written, symbols_data size: " << symbols_data.size() << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: S_OBJNAME symbol written, symbols_data size: " << symbols_data.size() << std::endl;
     }
 
     // Add S_COMPILE3 symbol
@@ -761,12 +763,12 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         compile3.backend_qfe = 0;
 
         // Debug: Print the structure values
-        std::cerr << "DEBUG: S_COMPILE3 structure:" << std::endl;
-        std::cerr << "  language: 0x" << std::hex << (int)compile3.language << std::dec << std::endl;
-        std::cerr << "  machine: 0x" << std::hex << compile3.machine << std::dec << std::endl;
-        std::cerr << "  frontend version: " << compile3.frontend_major << "." << compile3.frontend_minor
+        if (g_enable_debug_output) std::cerr << "DEBUG: S_COMPILE3 structure:" << std::endl;
+        if (g_enable_debug_output) std::cerr << "  language: 0x" << std::hex << (int)compile3.language << std::dec << std::endl;
+        if (g_enable_debug_output) std::cerr << "  machine: 0x" << std::hex << compile3.machine << std::dec << std::endl;
+        if (g_enable_debug_output) std::cerr << "  frontend version: " << compile3.frontend_major << "." << compile3.frontend_minor
                   << "." << compile3.frontend_build << "." << compile3.frontend_qfe << std::endl;
-        std::cerr << "  structure size: " << sizeof(compile3) << " bytes" << std::endl;
+        if (g_enable_debug_output) std::cerr << "  structure size: " << sizeof(compile3) << " bytes" << std::endl;
 
         // Add structure to data
         compile3_data.insert(compile3_data.end(),
@@ -781,23 +783,23 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         compile3_data.push_back(0); // Null terminator
 
         writeSymbolRecord(symbols_data, SymbolKind::S_COMPILE3, compile3_data);
-        std::cerr << "DEBUG: S_COMPILE3 symbol written, symbols_data size: " << symbols_data.size() << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: S_COMPILE3 symbol written, symbols_data size: " << symbols_data.size() << std::endl;
     }
 
     // CLANG COMPATIBILITY: Skip S_BUILDINFO symbol to match Clang exactly
     // Clang doesn't generate S_BUILDINFO symbols in simple cases
-    std::cerr << "DEBUG: Skipping S_BUILDINFO symbol for Clang compatibility" << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Skipping S_BUILDINFO symbol for Clang compatibility" << std::endl;
 
     // Write symbols subsection
-    std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
     writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
     symbols_data.clear();
 
     // Add function symbols
-    std::cerr << "DEBUG: Number of functions: " << functions_.size() << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Number of functions: " << functions_.size() << std::endl;
     for (size_t func_index = 0; func_index < functions_.size(); ++func_index) {
         const auto& func = functions_[func_index];
-        std::cerr << "DEBUG: Processing function: " << func.name << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Processing function: " << func.name << std::endl;
         std::vector<uint8_t> proc_data;
 
         // Parent, end, next pointers (set to 0 for now)
@@ -825,9 +827,9 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
             debug_end = func.code_length - std::min(4u, func.code_length / 8);  // End before estimated epilogue
         }
 
-        std::cerr << "DEBUG: Function " << func.name << " debug range: start=" << debug_start
+        if (g_enable_debug_output) std::cerr << "DEBUG: Function " << func.name << " debug range: start=" << debug_start
                   << ", end=" << debug_end << " (code_length=" << func.code_length << ")" << std::endl;
-        std::cerr << "DEBUG: Writing debug_start=0x" << std::hex << debug_start
+        if (g_enable_debug_output) std::cerr << "DEBUG: Writing debug_start=0x" << std::hex << debug_start
                   << ", debug_end=0x" << debug_end << std::dec << " to binary" << std::endl;
 
         proc_data.insert(proc_data.end(), reinterpret_cast<const uint8_t*>(&debug_start),
@@ -871,18 +873,18 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         uint8_t proc_flags = 0x40 | 0x80;
         proc_data.push_back(proc_flags);
 
-        std::cerr << "DEBUG: Function ID written: 0x" << std::hex << function_id << std::dec << " (4 bytes)" << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Function ID written: 0x" << std::hex << function_id << std::dec << " (4 bytes)" << std::endl;
 
         // Function name (null-terminated string for S_GPROC32_ID)
-        std::cerr << "DEBUG: Writing function name: '" << func.name << "' (length: " << func.name.length() << ")" << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Writing function name: '" << func.name << "' (length: " << func.name.length() << ")" << std::endl;
         // Remove length prefix - use only null-terminated string
         for (char c : func.name) {
             proc_data.push_back(static_cast<uint8_t>(c));
         }
         proc_data.push_back(0); // null terminator
 
-        std::cerr << "DEBUG: Function proc_data size: " << proc_data.size() << " bytes" << std::endl;
-        std::cerr << "DEBUG: Function offset: " << func.code_offset << ", length: " << func.code_length << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Function proc_data size: " << proc_data.size() << " bytes" << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Function offset: " << func.code_offset << ", length: " << func.code_length << std::endl;
 
         writeSymbolRecord(symbols_data, SymbolKind::S_GPROC32_ID, proc_data);
 
@@ -988,11 +990,11 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
         std::vector<uint8_t> end_data; // Empty for S_PROC_ID_END
         writeSymbolRecord(symbols_data, SymbolKind::S_PROC_ID_END, end_data);
 
-        std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Final symbols_data size before writeSubsection: " << symbols_data.size() << std::endl;
         writeSubsection(debug_s_data, DebugSubsectionKind::Symbols, symbols_data);
 
         // Generate separate line information subsections for each function
-        std::cerr << "DEBUG: Generating separate line information subsections for function..." << std::endl;
+        if (g_enable_debug_output) std::cerr << "DEBUG: Generating separate line information subsections for function..." << std::endl;
         if (!func.line_offsets.empty()) {
             auto line_data = generateLineInfoForFunction(func);
             if (!line_data.empty()) {
@@ -1005,11 +1007,11 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
                 addDebugRelocation(line_subsection_position + 4, ".text", IMAGE_REL_AMD64_SECTION);
 
                 writeSubsection(debug_s_data, DebugSubsectionKind::Lines, line_data);
-                std::cerr << "DEBUG: Added " << line_data.size() << " bytes of line information for function " << func.name << std::endl;
+                if (g_enable_debug_output) std::cerr << "DEBUG: Added " << line_data.size() << " bytes of line information for function " << func.name << std::endl;
             }
         }
         else {
-            std::cerr << "DEBUG: No line information for function " << func.name << std::endl;
+            if (g_enable_debug_output) std::cerr << "DEBUG: No line information for function " << func.name << std::endl;
         }
 
         symbols_data.clear();
@@ -1022,19 +1024,19 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
     }
 
     // Generate string table subsection
-    std::cerr << "DEBUG: String table size: " << string_table_.size() << " bytes" << std::endl;
-    std::cerr << "DEBUG: String table contents: ";
+    if (g_enable_debug_output) std::cerr << "DEBUG: String table size: " << string_table_.size() << " bytes" << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: String table contents: ";
     for (size_t i = 0; i < std::min(string_table_.size(), size_t(50)); ++i) {
         if (string_table_[i] == 0) {
-            std::cerr << "\\0";
+            if (g_enable_debug_output) std::cerr << "\\0";
         } else if (string_table_[i] >= 32 && string_table_[i] <= 126) {
-            std::cerr << (char)string_table_[i];
+            if (g_enable_debug_output) std::cerr << (char)string_table_[i];
         } else {
-            std::cerr << "\\x" << std::hex << (int)string_table_[i] << std::dec;
+            if (g_enable_debug_output) std::cerr << "\\x" << std::hex << (int)string_table_[i] << std::dec;
         }
     }
     if (string_table_.size() > 50) std::cerr << "...";
-    std::cerr << std::endl;
+    if (g_enable_debug_output) std::cerr << std::endl;
     writeSubsection(debug_s_data, DebugSubsectionKind::StringTable, string_table_);
 
     return debug_s_data;
@@ -1048,18 +1050,18 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
     debug_t_data.insert(debug_t_data.end(), reinterpret_cast<const uint8_t*>(&signature),
                         reinterpret_cast<const uint8_t*>(&signature) + sizeof(signature));
 
-    std::cerr << "DEBUG: Generating comprehensive type information like Clang..." << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Generating comprehensive type information like Clang..." << std::endl;
 
     // CLANG COMPATIBILITY: Generate basic types first, then functions
     // This matches Clang's approach of including comprehensive type information
     uint32_t current_type_index = 0x1000;
 
     // CLANG COMPATIBILITY: Skip basic pointer types, add LF_STRING_ID records like Clang
-    std::cerr << "DEBUG: Skipping basic pointer types, adding LF_STRING_ID records to match Clang..." << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Skipping basic pointer types, adding LF_STRING_ID records to match Clang..." << std::endl;
 
     // DEBUG: List all functions in the vector
     for (size_t i = 0; i < functions_.size(); ++i) {
-        std::cerr << "DEBUG: Function " << i << ": '" << functions_[i].name
+        if (g_enable_debug_output) std::cerr << "DEBUG: Function " << i << ": '" << functions_[i].name
                   << "' at offset " << functions_[i].code_offset
                   << " length " << functions_[i].code_length << std::endl;
     }
@@ -1079,7 +1081,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         uint32_t procedure_index = current_type_index + 1;
         uint32_t func_id_index = current_type_index + 2;
 
-        std::cerr << "DEBUG: Generating types for function '" << func.name
+        if (g_enable_debug_output) std::cerr << "DEBUG: Generating types for function '" << func.name
                   << "' - arglist=0x" << std::hex << arglist_index
                   << ", procedure=0x" << procedure_index
                   << ", func_id=0x" << func_id_index << std::dec
@@ -1117,7 +1119,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), arglist_data.begin(), arglist_data.end());
             alignTo4Bytes(debug_t_data);
 
-            std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << arglist_index << std::dec
+            if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_ARGLIST 0x" << std::hex << arglist_index << std::dec
                       << " (" << arg_count << " args for " << func.name << ")" << std::endl;
         }
 
@@ -1143,7 +1145,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
 
             // Argument list type index
             uint32_t arglist_type = arglist_index;
-            std::cerr << "DEBUG: Writing LF_PROCEDURE arglist_type=0x" << std::hex << arglist_type << std::dec
+            if (g_enable_debug_output) std::cerr << "DEBUG: Writing LF_PROCEDURE arglist_type=0x" << std::hex << arglist_type << std::dec
                       << " (should reference arglist 0x" << std::hex << arglist_index << std::dec << ")" << std::endl;
             writeLittleEndian32(proc_data, arglist_type);
 
@@ -1163,7 +1165,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), proc_data.begin(), proc_data.end());
             alignTo4Bytes(debug_t_data);
 
-            std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << procedure_index << std::dec
+            if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_PROCEDURE 0x" << std::hex << procedure_index << std::dec
                       << " (" << func.name << " function)" << std::endl;
         }
 
@@ -1177,7 +1179,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
 
             // Type index (reference to the LF_PROCEDURE type)
             uint32_t type_index = procedure_index; // Reference to LF_PROCEDURE
-            std::cerr << "DEBUG: Writing LF_FUNC_ID type_index=0x" << std::hex << type_index << std::dec
+            if (g_enable_debug_output) std::cerr << "DEBUG: Writing LF_FUNC_ID type_index=0x" << std::hex << type_index << std::dec
                       << " (should reference procedure 0x" << std::hex << procedure_index << std::dec << ")" << std::endl;
             writeLittleEndian32(func_id_data, type_index);
 
@@ -1207,7 +1209,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             alignTo4Bytes(debug_t_data);
             size_t after_align_size = debug_t_data.size();
 
-            std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << func_id_index << std::dec
+            if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_FUNC_ID 0x" << std::hex << func_id_index << std::dec
                       << " (" << func.name << ") referencing procedure 0x" << std::hex << procedure_index << std::dec
                       << " - length=" << header.length
                       << ", data_size=" << (after_data_size - before_size)
@@ -1220,7 +1222,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
     } // End of function loop
 
     // CLANG COMPATIBILITY: Add all LF_STRING_ID and LF_BUILDINFO records like Clang
-    std::cerr << "DEBUG: Adding LF_STRING_ID and LF_BUILDINFO records to match Clang..." << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Adding LF_STRING_ID and LF_BUILDINFO records to match Clang..." << std::endl;
 
     // Add LF_STRING_ID records for each source file
     for (const auto& source_path : source_files_) {
@@ -1252,7 +1254,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
             alignTo4Bytes(debug_t_data);
 
-            std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+            if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                       << " (directory: " << dir_path << ", length: " << header.length << ")" << std::endl;
             current_type_index++;
         }
@@ -1280,7 +1282,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
             alignTo4Bytes(debug_t_data);
 
-            std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+            if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                       << " (source: " << file_name << ", length: " << header.length << ")" << std::endl;
             current_type_index++;
         }
@@ -1309,7 +1311,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
         alignTo4Bytes(debug_t_data);
 
-        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+        if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                   << " (empty string, length: " << header.length << ")" << std::endl;
         current_type_index++;
     }
@@ -1339,7 +1341,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
         alignTo4Bytes(debug_t_data);
 
-        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+        if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                   << " (compiler path, length: " << header.length << ")" << std::endl;
         current_type_index++;
     }
@@ -1369,7 +1371,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         debug_t_data.insert(debug_t_data.end(), string_data.begin(), string_data.end());
         alignTo4Bytes(debug_t_data);
 
-        std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
+        if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_STRING_ID 0x" << std::hex << current_type_index << std::dec
                   << " (command line: " << cmdline.length() << " chars, length: " << header.length << ")" << std::endl;
         current_type_index++;
     }
@@ -1411,7 +1413,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         debug_t_data.insert(debug_t_data.end(), buildinfo_data.begin(), buildinfo_data.end());
         alignTo4Bytes(debug_t_data);
 
-        std::cerr << "DEBUG: Added LF_BUILDINFO 0x" << std::hex << current_type_index << std::dec
+        if (g_enable_debug_output) std::cerr << "DEBUG: Added LF_BUILDINFO 0x" << std::hex << current_type_index << std::dec
                   << " (length: " << header.length << ", references: 0x" << std::hex << dir_id << ", 0x" << compiler_id
                   << ", 0x" << source_id << ", 0x" << empty_id << ", 0x" << cmdline_id
                   << std::dec << ")" << std::endl;
@@ -1424,15 +1426,15 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
 
     // Individual records are already aligned, no final alignment needed
 
-    std::cerr << "DEBUG: Final .debug$T section size: " << debug_t_data.size() << " bytes" << std::endl;
+    if (g_enable_debug_output) std::cerr << "DEBUG: Final .debug$T section size: " << debug_t_data.size() << " bytes" << std::endl;
 
     // DEBUG: Dump the last 32 bytes to check for padding issues
-    std::cerr << "DEBUG: Last 32 bytes of .debug$T: ";
+    if (g_enable_debug_output) std::cerr << "DEBUG: Last 32 bytes of .debug$T: ";
     size_t start_pos = debug_t_data.size() >= 32 ? debug_t_data.size() - 32 : 0;
     for (size_t i = start_pos; i < debug_t_data.size(); ++i) {
-        std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)debug_t_data[i] << " ";
+        if (g_enable_debug_output) std::cerr << std::hex << std::setfill('0') << std::setw(2) << (int)debug_t_data[i] << " ";
     }
-    std::cerr << std::dec << std::endl;
+    if (g_enable_debug_output) std::cerr << std::dec << std::endl;
 
     return debug_t_data;
 }

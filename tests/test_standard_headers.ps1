@@ -12,75 +12,59 @@ if (-not (Test-Path "x64\Debug\FlashCpp.exe")) {
     & .\build_flashcpp.bat
 }
 
-# Auto-detect include paths by querying the compiler
-# This makes the script portable across different systems
-function Get-IncludePaths {
-    $paths = @()
-    
-    # Try to detect MSVC include paths
-    if (Get-Command "cl.exe" -ErrorAction SilentlyContinue) {
-        try {
-            # Get MSVC environment
-            $output = & cmd /c "echo | cl /Bv /E 2>&1"
-            $inIncludeSection = $false
+# Detect Visual Studio installation using vswhere
+$vswherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$IncludePaths = @()
+
+if (Test-Path $vswherePath) {
+    try {
+        $vsPath = & $vswherePath -latest -property installationPath
+        if ($vsPath) {
+            Write-Host "Found Visual Studio at: $vsPath"
             
-            foreach ($line in $output -split "`n") {
-                if ($line -match "INCLUDE=") {
-                    $includeDirs = $line -replace "INCLUDE=", "" -split ";"
-                    foreach ($dir in $includeDirs) {
-                        $dir = $dir.Trim()
-                        if ($dir -and (Test-Path $dir)) {
-                            $paths += "-I`"$dir`""
-                        }
-                    }
-                    break
+            # Find MSVC version
+            $msvcBasePath = Join-Path $vsPath "VC\Tools\MSVC"
+            if (Test-Path $msvcBasePath) {
+                $msvcVersion = (Get-ChildItem $msvcBasePath | Sort-Object Name -Descending | Select-Object -First 1).Name
+                Write-Host "  MSVC version: $msvcVersion"
+                
+                $msvcInclude = Join-Path $msvcBasePath "$msvcVersion\include"
+                if (Test-Path $msvcInclude) {
+                    $IncludePaths += "-I$msvcInclude"
+                }
+            }
+            
+            # Find Windows SDK version
+            $sdkBasePath = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
+            if (Test-Path $sdkBasePath) {
+                $sdkVersion = (Get-ChildItem $sdkBasePath | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending | Select-Object -First 1).Name
+                if ($sdkVersion) {
+                    Write-Host "  Windows SDK: $sdkVersion"
+                    $ucrtPath = Join-Path $sdkBasePath "$sdkVersion\ucrt"
+                    $sharedPath = Join-Path $sdkBasePath "$sdkVersion\shared"
+                    $umPath = Join-Path $sdkBasePath "$sdkVersion\um"
+                    
+                    if (Test-Path $ucrtPath) { $IncludePaths += "-I$ucrtPath" }
+                    if (Test-Path $sharedPath) { $IncludePaths += "-I$sharedPath" }
+                    if (Test-Path $umPath) { $IncludePaths += "-I$umPath" }
                 }
             }
         }
-        catch {
-            Write-Host "Warning: Could not auto-detect MSVC include paths"
-        }
     }
-    
-    # Try to detect Clang include paths (if available on Windows)
-    if ($paths.Count -eq 0 -and (Get-Command "clang++" -ErrorAction SilentlyContinue)) {
-        try {
-            $output = & cmd /c "echo | clang++ -E -x c++ - -v 2>&1"
-            $inSearchSection = $false
-            
-            foreach ($line in $output -split "`n") {
-                if ($line -match "#include <...> search starts here:") {
-                    $inSearchSection = $true
-                    continue
-                }
-                if ($line -match "End of search list") {
-                    break
-                }
-                if ($inSearchSection -and $line.Trim()) {
-                    $path = $line.Trim()
-                    if (Test-Path $path) {
-                        $paths += "-I`"$path`""
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Host "Warning: Could not auto-detect Clang include paths"
-        }
+    catch {
+        Write-Host "Warning: Error detecting Visual Studio paths: $_"
     }
-    
-    return $paths -join " "
 }
 
-# Try to auto-detect, fall back to common paths if detection fails
-$IncludePaths = Get-IncludePaths
-if (-not $IncludePaths) {
-    Write-Host "Warning: Could not auto-detect include paths, using fallback paths"
-    # Fallback to common Windows MSVC paths - adjust these for your system
-    $IncludePaths = "-I`"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include`" " +
-                    "-I`"C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt`" " +
-                    "-I`"C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared`" " +
-                    "-I`"C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um`""
+# Fallback if detection failed
+if ($IncludePaths.Count -eq 0) {
+    Write-Host "Warning: Could not auto-detect include paths, using fallback"
+    $IncludePaths = @(
+        "-IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include",
+        "-IC:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt",
+        "-IC:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared",
+        "-IC:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um"
+    )
 }
 
 # Test headers
@@ -213,6 +197,12 @@ $failedHeaders = @{}
 $errorMessages = @{}
 
 foreach ($header in $Headers) {
+    # Break after 3 errors (temporary)
+    if ($failedHeaders.Count -ge 3) {
+        Write-Host "`nStopping after 3 errors (temporary limit)..." -ForegroundColor Yellow
+        break
+    }
+    
     # Create test file
     @"
 #include <$header>
@@ -220,19 +210,42 @@ int main() { return 0; }
 "@ | Out-File -FilePath "test_header_temp.cpp" -Encoding ASCII
     
     # Run FlashCpp and capture output
-    $output = & .\x64\Debug\FlashCpp.exe test_header_temp.cpp $IncludePaths.Split() 2>&1 | Out-String
+    # Build argument list properly to preserve paths with spaces
+    $args = @('test_header_temp.cpp') + $IncludePaths
+    
+    $exitCode = 0
+    # Suppress verbose debug output, only capture errors
+    $output = & .\x64\Debug\FlashCpp.exe @args 2>&1 | Where-Object { 
+        $_ -notmatch "^DEBUG:" -and 
+        $_ -notmatch "^===" -and
+        $_ -notmatch "^Adding \d+ bytes" -and
+        $_ -notmatch "^Section \d+" -and
+        $_ -notmatch "^Symbol \d+" -and
+        $_ -notmatch "Machine code bytes"
+    }
+    $exitCode = $LASTEXITCODE
+    $outputStr = $output | Out-String
     
     # Check for success - look for "Object file written successfully"
-    if ($output -match "Object file written successfully") {
+    if ($exitCode -eq 0 -and $outputStr -match "Object file written successfully") {
         $successHeaders[$header] = $true
         Write-Host "[PASS] <$header>" -ForegroundColor Green
     }
     else {
         $failedHeaders[$header] = $true
-        # Extract first error message
-        $firstError = ($output -split "`n" | Where-Object { $_ -match "(Error|error|Internal compiler error|Invalid|terminate)" } | Select-Object -First 1)
+        # Extract first meaningful error message
+        $errorLines = $output | Where-Object { $_ -and $_ -match "(Error|error|Failed|Internal compiler|Invalid|terminate|Exception)" }
+        if ($errorLines) {
+            $firstError = ($errorLines | Select-Object -First 1) -replace '^\s+', ''
+        }
+        else {
+            $firstError = "Unknown error (exit code: $exitCode)"
+        }
         $errorMessages[$header] = $firstError
-        Write-Host "[FAIL] <$header>: $firstError" -ForegroundColor Red
+        Write-Host "[FAIL] <$header>" -ForegroundColor Red
+        if ($firstError.Length -lt 120) {
+            Write-Host "       $firstError" -ForegroundColor DarkRed
+        }
     }
 }
 
@@ -272,31 +285,3 @@ if ($failCount -gt 0) {
     }
     Write-Host ""
 }
-
-Write-Host "=============================================="
-Write-Host "         ISSUES TO FIX FOR STD HEADERS"
-Write-Host "=============================================="
-Write-Host ""
-Write-Host "Based on the test results, the following issues need to be addressed:"
-Write-Host ""
-
-# Analyze common error patterns
-Write-Host "1. PREPROCESSOR ISSUES:"
-Write-Host "   - Feature test macros (__cpp_*) need to be defined"
-Write-Host "   - __has_feature/__has_builtin/__has_cpp_attribute intrinsics not handled"
-Write-Host "   - __SANITIZE_THREAD__ and similar sanitizer macros"
-Write-Host ""
-
-Write-Host "2. PARSER/LEXER ISSUES:"
-Write-Host "   - Complex preprocessor expressions with << operator in conditions"
-Write-Host "   - Some C++20 syntax may not be fully supported"
-Write-Host ""
-
-Write-Host "3. BUILTIN FUNCTIONS:"
-Write-Host "   - __builtin_* functions need to be recognized"
-Write-Host "   - Compiler intrinsics used by standard library"
-Write-Host ""
-
-Write-Host "=============================================="
-Write-Host "              END OF REPORT"
-Write-Host "=============================================="

@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <vector>
 
+extern bool g_enable_debug_output;
+
 // Additional COFF relocation types not defined in COFFI
 #ifndef IMAGE_REL_AMD64_SECREL
 #define IMAGE_REL_AMD64_SECREL          0x000B  // 32 bit offset from base of section containing target
@@ -107,7 +109,7 @@ public:
 	};
 
 	ObjectFileWriter() {
-		std::cerr << "Creating simplified ObjectFileWriter for debugging..." << std::endl;
+		if (g_enable_debug_output) std::cerr << "Creating simplified ObjectFileWriter for debugging..." << std::endl;
 
 		coffi_.create(COFFI::COFFI_ARCHITECTURE_PE);
 		coffi_.get_header()->set_machine(IMAGE_FILE_MACHINE_AMD64);
@@ -344,7 +346,7 @@ public:
 		std::memcpy(aux_record_llvm_addrsig.value, &aux_llvm_addrsig, sizeof(aux_llvm_addrsig));
 		symbol_llvm_addrsig->get_auxiliary_symbols().push_back(aux_record_llvm_addrsig);
 
-		std::cerr << "Simplified ObjectFileWriter created successfully" << std::endl;
+		if (g_enable_debug_output) std::cerr << "Simplified ObjectFileWriter created successfully" << std::endl;
 	}
 
 	COFFI::section* add_section(const std::string& section_name, int32_t flags, std::optional<SectionType> section_type) {
@@ -360,9 +362,9 @@ public:
 	void write(const std::string& filename) {
 		try {
 			// Skip debug info for now
-			std::cerr << "Starting coffi_.save..." << std::endl;
-			std::cerr << "Number of sections: " << coffi_.get_sections().get_count() << std::endl;
-			std::cerr << "Number of symbols: " << coffi_.get_symbols()->size() << std::endl;
+			if (g_enable_debug_output) std::cerr << "Starting coffi_.save..." << std::endl;
+			if (g_enable_debug_output) std::cerr << "Number of sections: " << coffi_.get_sections().get_count() << std::endl;
+			if (g_enable_debug_output) std::cerr << "Number of symbols: " << coffi_.get_symbols()->size() << std::endl;
 
 			// Print section info
 			for (size_t i = 0; i < coffi_.get_sections().get_count(); ++i) {
@@ -376,7 +378,7 @@ public:
 					}
 				}
 				auto data_size = section->get_data_size();
-				std::cerr << "Section " << i << ": '" << section_name << "'"
+				if (g_enable_debug_output) std::cerr << "Section " << i << ": '" << section_name << "'"
 				         << " size=" << data_size
 				         << " flags=0x" << std::hex << section->get_flags() << std::dec
 				         << " reloc_count=" << section->get_reloc_count()
@@ -384,43 +386,43 @@ public:
 				
 				// For .data section (index 2), check data
 				if (section_name == ".data") {
-					std::cerr << " <<< DATA SECTION";
+					if (g_enable_debug_output) std::cerr << " <<< DATA SECTION";
 				}
 				// For .pdata section, check relocations  
 				if (section_name == ".pdata") {
-					std::cerr << " <<< PDATA SECTION";
+					if (g_enable_debug_output) std::cerr << " <<< PDATA SECTION";
 				}
-				std::cerr << std::endl;
+				if (g_enable_debug_output) std::cerr << std::endl;
 			}
 
 			// Print symbol info
 			auto symbols = coffi_.get_symbols();
 			for (size_t i = 0; i < symbols->size(); ++i) {
 				auto symbol = (*symbols)[i];
-				std::cerr << "Symbol " << i << ": " << symbol.get_name()
+				if (g_enable_debug_output) std::cerr << "Symbol " << i << ": " << symbol.get_name()
 				         << " section=" << symbol.get_section_number()
 				         << " value=0x" << std::hex << symbol.get_value() << std::dec << std::endl;
 			}
 
 			bool success = coffi_.save(filename);
-			std::cerr << "COFFI save returned: " << (success ? "true" : "FALSE") << std::endl;
+			if (g_enable_debug_output) std::cerr << "COFFI save returned: " << (success ? "true" : "FALSE") << std::endl;
 			
 			// Verify the file was written correctly by checking size
 			std::ifstream check_file(filename, std::ios::binary | std::ios::ate);
 			if (check_file.is_open()) {
 				auto file_size = check_file.tellg();
-				std::cerr << "Written file size: " << file_size << " bytes\n";
+				if (g_enable_debug_output) std::cerr << "Written file size: " << file_size << " bytes\n";
 				check_file.close();
 			}
 			
 			if (success) {
-				std::cerr << "Object file written successfully!" << std::endl;
+				if (g_enable_debug_output) std::cerr << "Object file written successfully!" << std::endl;
 			} else {
-				std::cerr << "COFFI save failed!" << std::endl;
+				if (g_enable_debug_output) std::cerr << "COFFI save failed!" << std::endl;
 				throw std::runtime_error("Failed to save object file with both COFFI and manual fallback");
 			}
 		} catch (const std::exception& e) {
-			std::cerr << "Error writing object file: " << e.what() << std::endl;
+			if (g_enable_debug_output) std::cerr << "Error writing object file: " << e.what() << std::endl;
 			throw;
 		}
 	}
@@ -479,7 +481,7 @@ public:
 				    mangled[1 + func_name.size()] == '@' &&
 				    mangled.substr(expected_class_start, mangled_class.size()) == mangled_class &&
 				    mangled.substr(expected_separator, 2) == "@@") {  // Ensure class name ends with @@
-					std::cerr << "DEBUG: getMangledName found match (pattern 1) for " << name << " -> " << mangled << "\n";
+					if (g_enable_debug_output) std::cerr << "DEBUG: getMangledName found match (pattern 1) for " << name << " -> " << mangled << "\n";
 					return mangled;
 				}
 				
@@ -492,16 +494,16 @@ public:
 				    mangled[1 + full_func_name.size()] == '@' &&
 				    mangled.substr(expected_class_start, mangled_class.size()) == mangled_class &&
 				    mangled.substr(expected_separator, 2) == "@@") {  // Ensure class name ends with @@
-					std::cerr << "DEBUG: getMangledName found match (pattern 2) for " << name << " -> " << mangled << "\n";
+					if (g_enable_debug_output) std::cerr << "DEBUG: getMangledName found match (pattern 2) for " << name << " -> " << mangled << "\n";
 					return mangled;
 				}
 			}
 
 			// If not found in function_signatures_, generate a basic mangled name
-			std::cerr << "DEBUG: getMangledName fallback for " << name << " (func=" << func_name << " class=" << class_name << ")\n";
-			std::cerr << "DEBUG: function_signatures_ has " << function_signatures_.size() << " entries:\n";
+			if (g_enable_debug_output) std::cerr << "DEBUG: getMangledName fallback for " << name << " (func=" << func_name << " class=" << class_name << ")\n";
+			if (g_enable_debug_output) std::cerr << "DEBUG: function_signatures_ has " << function_signatures_.size() << " entries:\n";
 			for (const auto& [mangled, sig] : function_signatures_) {
-				std::cerr << "  " << mangled << "\n";
+				if (g_enable_debug_output) std::cerr << "  " << mangled << "\n";
 			}
 
 			// If not found in function_signatures_, generate a basic mangled name
@@ -639,7 +641,7 @@ public:
 			mangled += "@Z";  // End of parameter list (no ellipsis)
 		}
 
-		std::cerr << "DEBUG generateMangledName: " << name << " -> " << mangled << "\n";
+		if (g_enable_debug_output) std::cerr << "DEBUG generateMangledName: " << name << " -> " << mangled << "\n";
 		return mangled;
 	}
 
@@ -686,7 +688,7 @@ public:
 	}
 
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None) {
-		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
+		if (g_enable_debug_output) std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 		auto symbol_func = coffi_.add_symbol(mangled_name);
 		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
@@ -698,7 +700,7 @@ public:
 		if (linkage == Linkage::DllExport) {
 			auto section_drectve = coffi_.get_sections()[sectiontype_to_index[SectionType::DRECTVE]];
 			std::string export_directive = std::string(" /EXPORT:") + std::string(mangled_name);
-			std::cerr << "Adding export directive: " << export_directive << std::endl;
+			if (g_enable_debug_output) std::cerr << "Adding export directive: " << export_directive << std::endl;
 			section_drectve->append_data(export_directive.c_str(), export_directive.size());
 		}
 
@@ -713,35 +715,35 @@ public:
 		}
 
 		// Add function to debug info with length 0 - length will be calculated later
-		std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " (mangled: " << mangled_name << ") at offset " << section_offset << "\n";
+		if (g_enable_debug_output) std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " (mangled: " << mangled_name << ") at offset " << section_offset << "\n";
 		debug_builder_.addFunction(unmangled_name, std::string(mangled_name), section_offset, 0, stack_space);
-		std::cerr << "DEBUG: Function added to debug builder \n";
+		if (g_enable_debug_output) std::cerr << "DEBUG: Function added to debug builder \n";
 
 		// Exception info is now handled directly in IRConverter finalization logic
 
-		std::cerr << "Function symbol added successfully" << std::endl;
+		if (g_enable_debug_output) std::cerr << "Function symbol added successfully" << std::endl;
 	}
 
 	void add_data(const std::vector<char>& data, SectionType section_type) {
 		int section_index = sectiontype_to_index[section_type];
-		std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type) << " (index=" << section_index << ")";
+		if (g_enable_debug_output) std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type) << " (index=" << section_index << ")";
 		auto section = coffi_.get_sections()[section_index];
 		uint32_t size_before = section->get_data_size();
-		std::cerr << " (current size: " << size_before << ")" << std::endl;
+		if (g_enable_debug_output) std::cerr << " (current size: " << size_before << ")" << std::endl;
 		if (section_type == SectionType::TEXT) {
-			std::cerr << "Machine code bytes (" << data.size() << " total): ";
+			if (g_enable_debug_output) std::cerr << "Machine code bytes (" << data.size() << " total): ";
 			for (size_t i = 0; i < data.size(); ++i) {
-				std::cerr << std::hex << std::setfill('0') << std::setw(2) << (static_cast<unsigned char>(data[i]) & 0xFF) << " ";
+				if (g_enable_debug_output) std::cerr << std::hex << std::setfill('0') << std::setw(2) << (static_cast<unsigned char>(data[i]) & 0xFF) << " ";
 			}
-			std::cerr << std::dec << std::endl;
+			if (g_enable_debug_output) std::cerr << std::dec << std::endl;
 		}
 		section->append_data(data.data(), data.size());
 		uint32_t size_after = section->get_data_size();
 		uint32_t size_increase = size_after - size_before;
-		std::cerr << "DEBUG: Section " << section_index << " size after append: " << size_after 
+		if (g_enable_debug_output) std::cerr << "DEBUG: Section " << section_index << " size after append: " << size_after 
 		          << " (increased by " << size_increase << ", expected " << data.size() << ")" << std::endl;
 		if (size_increase != data.size()) {
-			std::cerr << "WARNING: Size increase mismatch! Expected " << data.size() << " but got " << size_increase << std::endl;
+			if (g_enable_debug_output) std::cerr << "WARNING: Size increase mismatch! Expected " << data.size() << " but got " << size_increase << std::endl;
 		}
 	}
 
@@ -786,7 +788,7 @@ public:
 			std::string mangled_name = getMangledName(symbol_name);
 			symbol = coffi_.get_symbol(mangled_name);
 			if (!symbol) {
-				std::cerr << "Warning: Symbol not found for relocation: " << symbol_name << std::endl;
+				if (g_enable_debug_output) std::cerr << "Warning: Symbol not found for relocation: " << symbol_name << std::endl;
 				return;
 			}
 		}
@@ -798,12 +800,12 @@ public:
 		relocation.type = relocation_type;
 		section_text->add_relocation_entry(&relocation);
 
-		std::cerr << "Added text relocation at offset " << offset << " for symbol " << symbol_name
+		if (g_enable_debug_output) std::cerr << "Added text relocation at offset " << offset << " for symbol " << symbol_name
 		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 	}
 
 	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset) {
-		std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
+		if (g_enable_debug_output) std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
 		// Get the function symbol using mangled name
 		auto* function_symbol = coffi_.get_symbol(mangled_name);
@@ -840,11 +842,11 @@ public:
 		reloc3.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
 		pdata_section->add_relocation_entry(&reloc3);
 
-		std::cerr << "Added 3 PDATA relocations for function " << mangled_name << std::endl;
+		if (g_enable_debug_output) std::cerr << "Added 3 PDATA relocations for function " << mangled_name << std::endl;
 	}
 
 	void add_xdata_relocation(uint32_t xdata_offset, std::string_view handler_name) {
-		std::cerr << "Adding XDATA relocation at offset " << xdata_offset << " for handler: " << handler_name << std::endl;
+		if (g_enable_debug_output) std::cerr << "Adding XDATA relocation at offset " << xdata_offset << " for handler: " << handler_name << std::endl;
 
 		// Get or create the exception handler symbol
 		auto* handler_symbol = coffi_.get_symbol(handler_name);
@@ -855,7 +857,7 @@ public:
 			handler_symbol->set_section_number(0);  // 0 = undefined/external symbol
 			handler_symbol->set_type(0x20);  // 0x20 = function type
 			handler_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-			std::cerr << "Created external symbol for exception handler: " << handler_name << std::endl;
+			if (g_enable_debug_output) std::cerr << "Created external symbol for exception handler: " << handler_name << std::endl;
 		}
 
 		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
@@ -867,7 +869,7 @@ public:
 		reloc.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
 		xdata_section->add_relocation_entry(&reloc);
 
-		std::cerr << "Added XDATA relocation for handler " << handler_name << " at offset " << xdata_offset << std::endl;
+		if (g_enable_debug_output) std::cerr << "Added XDATA relocation for handler " << handler_name << " at offset " << xdata_offset << std::endl;
 	}
 
 	// Simple type name mangling for exception type descriptors
@@ -898,7 +900,7 @@ public:
 	}
 
 	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
-		std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name
+		if (g_enable_debug_output) std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name
 		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 
 		// Get the symbol (could be function symbol or section symbol)
@@ -921,7 +923,7 @@ public:
 		reloc.type = relocation_type;  // Use the specified relocation type
 		debug_s_section->add_relocation_entry(&reloc);
 
-		std::cerr << "Added debug relocation for symbol " << symbol_name << " at offset " << offset
+		if (g_enable_debug_output) std::cerr << "Added debug relocation for symbol " << symbol_name << " at offset " << offset
 		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 	}
 
@@ -963,12 +965,12 @@ public:
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
 			if (existing == mangled_name) {
-				std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
+				if (g_enable_debug_output) std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
 				return;
 			}
 		}
 
-		std::cerr << "Adding exception info for function: " << mangled_name << " at offset " << function_start << " size " << function_size << std::endl;
+		if (g_enable_debug_output) std::cerr << "Adding exception info for function: " << mangled_name << " at offset " << function_start << " size " << function_size << std::endl;
 		added_exception_functions_.push_back(std::string(mangled_name));
 
 		// Get current XDATA section size to calculate the offset for this function's unwind info
@@ -1186,7 +1188,7 @@ public:
 							// Validate that RDATA section exists
 							auto rdata_section_it = sectiontype_to_index.find(SectionType::RDATA);
 							if (rdata_section_it == sectiontype_to_index.end()) {
-								std::cerr << "ERROR: RDATA section not found for type descriptor generation" << std::endl;
+								if (g_enable_debug_output) std::cerr << "ERROR: RDATA section not found for type descriptor generation" << std::endl;
 								continue;
 							}
 							
@@ -1222,7 +1224,7 @@ public:
 							type_desc_sym->set_section_number(rdata_section->get_index() + 1);
 							type_desc_sym->set_value(type_desc_offset);
 							
-							std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '" 
+							if (g_enable_debug_output) std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '" 
 							          << handler.type_name << "' at offset " << type_desc_offset << std::endl;
 							
 							type_descriptor_offsets[handler.type_name] = type_desc_offset;
@@ -1269,7 +1271,7 @@ public:
 						std::string type_desc_symbol = "??_R0" + mangled_type_name;
 						add_xdata_relocation(xdata_offset + ptype_offset, type_desc_symbol);
 						
-						std::cerr << "  Added pType relocation for handler " << handler_index 
+						if (g_enable_debug_output) std::cerr << "  Added pType relocation for handler " << handler_index 
 						          << " to type descriptor '" << type_desc_symbol << "'" << std::endl;
 					}
 					// For catch(...), pType remains 0 (no relocation needed)
@@ -1319,7 +1321,7 @@ public:
 	}
 
 	void finalize_debug_info() {
-		std::cerr << "finalize_debug_info: Generating debug information..." << std::endl;
+		if (g_enable_debug_output) std::cerr << "finalize_debug_info: Generating debug information..." << std::endl;
 		// Exception info is now handled directly in IRConverter finalization logic
 
 		// Finalize the current function before generating debug sections
@@ -1328,7 +1330,7 @@ public:
 		// Set the correct text section number for symbol references
 		uint16_t text_section_number = static_cast<uint16_t>(sectiontype_to_index[SectionType::TEXT] + 1);
 		debug_builder_.setTextSectionNumber(text_section_number);
-		std::cerr << "DEBUG: Set text section number to " << text_section_number << "\n";
+		if (g_enable_debug_output) std::cerr << "DEBUG: Set text section number to " << text_section_number << "\n";
 
 		// Generate debug sections
 		auto debug_s_data = debug_builder_.generateDebugS();
@@ -1339,16 +1341,16 @@ public:
 		for (const auto& reloc : debug_relocations) {
 			add_debug_relocation(reloc.offset, reloc.symbol_name, reloc.relocation_type);
 		}
-		std::cerr << "DEBUG: Added " << debug_relocations.size() << " debug relocations\n";
+		if (g_enable_debug_output) std::cerr << "DEBUG: Added " << debug_relocations.size() << " debug relocations\n";
 
 		// Add debug data to sections
 		if (!debug_s_data.empty()) {
 			add_data(std::vector<char>(debug_s_data.begin(), debug_s_data.end()), SectionType::DEBUG_S);
-			std::cerr << "Added " << debug_s_data.size() << " bytes of .debug$S data" << std::endl;
+			if (g_enable_debug_output) std::cerr << "Added " << debug_s_data.size() << " bytes of .debug$S data" << std::endl;
 		}
 		if (!debug_t_data.empty()) {
 			add_data(std::vector<char>(debug_t_data.begin(), debug_t_data.end()), SectionType::DEBUG_T);
-			std::cerr << "Added " << debug_t_data.size() << " bytes of .debug$T data" << std::endl;
+			if (g_enable_debug_output) std::cerr << "Added " << debug_t_data.size() << " bytes of .debug$T data" << std::endl;
 		}
 	}
 
@@ -1401,7 +1403,7 @@ public:
 		symbol->set_section_number(rdata_section->get_index() + 1);
 		symbol->set_value(offset);
 
-		std::cerr << "Added string literal '" << processed_str.substr(0, processed_str.size() - 1)
+		if (g_enable_debug_output) std::cerr << "Added string literal '" << processed_str.substr(0, processed_str.size() - 1)
 		          << "' at offset " << offset << " with symbol " << symbol_name << std::endl;
 
 		return symbol_name;
@@ -1413,9 +1415,9 @@ public:
 		auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
 		uint32_t offset = static_cast<uint32_t>(section->get_data_size());
 
-		std::cerr << "DEBUG: add_global_variable - var_name=" << var_name << " is_initialized=" << is_initialized << " init_value=" << init_value << "\n";
-		std::cerr << "DEBUG: add_global_variable - section_type=" << (section_type == SectionType::DATA ? "DATA" : "BSS") << "\n";
-		std::cerr << "DEBUG: add_global_variable - section index=" << sectiontype_to_index[section_type] << " offset=" << offset << "\n";
+		if (g_enable_debug_output) std::cerr << "DEBUG: add_global_variable - var_name=" << var_name << " is_initialized=" << is_initialized << " init_value=" << init_value << "\n";
+		if (g_enable_debug_output) std::cerr << "DEBUG: add_global_variable - section_type=" << (section_type == SectionType::DATA ? "DATA" : "BSS") << "\n";
+		if (g_enable_debug_output) std::cerr << "DEBUG: add_global_variable - section index=" << sectiontype_to_index[section_type] << " offset=" << offset << "\n";
 
 		if (is_initialized) {
 			// Add initialized data to .data section
@@ -1439,7 +1441,7 @@ public:
 		symbol->set_section_number(section->get_index() + 1);
 		symbol->set_value(offset);
 
-		std::cerr << "Added global variable '" << var_name << "' at offset " << offset
+		if (g_enable_debug_output) std::cerr << "Added global variable '" << var_name << "' at offset " << offset
 		          << " in " << (is_initialized ? ".data" : ".bss") << " section (size: " << size_in_bytes << " bytes)" << std::endl;
 	}
 
@@ -1462,7 +1464,7 @@ public:
 	                const std::vector<BaseClassDescriptorInfo>& base_class_info) {
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 		
-		std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
+		if (g_enable_debug_output) std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
 		          << " class=" << class_name
 		          << " with " << function_symbols.size() << " entries"
 		          << " and " << base_class_names.size() << " base classes" << std::endl;
@@ -1501,7 +1503,7 @@ public:
 		type_desc_sym->set_value(type_desc_offset);
 		uint32_t type_desc_symbol_index = type_desc_sym->get_index();
 		
-		std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset " 
+		if (g_enable_debug_output) std::cerr << "  Added ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset " 
 		          << type_desc_offset << std::endl;
 		
 		// ??_R1 - Base Class Descriptors (one for self + one per base)
@@ -1544,7 +1546,7 @@ public:
 		bcd_offsets.push_back(self_bcd_offset);
 		bcd_symbol_indices.push_back(self_bcd_sym->get_index());
 		
-		std::cerr << "  Added ??_R1 self BCD '" << self_bcd_symbol << "' at offset " 
+		if (g_enable_debug_output) std::cerr << "  Added ??_R1 self BCD '" << self_bcd_symbol << "' at offset " 
 		          << self_bcd_offset << std::endl;
 		
 		// Base class descriptors
@@ -1600,7 +1602,7 @@ public:
 			bcd_offsets.push_back(base_bcd_offset);
 			bcd_symbol_indices.push_back(base_bcd_sym->get_index());
 			
-			std::cerr << "  Added ??_R1 base BCD for " << bci.name << std::endl;
+			if (g_enable_debug_output) std::cerr << "  Added ??_R1 base BCD for " << bci.name << std::endl;
 		}
 		
 		// ??_R2 - Base Class Array (pointers to all BCDs)
@@ -1630,7 +1632,7 @@ public:
 			rdata_section->add_relocation_entry(&bca_reloc);
 		}
 		
-		std::cerr << "  Added ??_R2 Base Class Array '" << bca_symbol << "' at offset " 
+		if (g_enable_debug_output) std::cerr << "  Added ??_R2 Base Class Array '" << bca_symbol << "' at offset " 
 		          << bca_offset << std::endl;
 		
 		// ??_R3 - Class Hierarchy Descriptor
@@ -1663,7 +1665,7 @@ public:
 		chd_reloc.type = IMAGE_REL_AMD64_ADDR64;
 		rdata_section->add_relocation_entry(&chd_reloc);
 		
-		std::cerr << "  Added ??_R3 Class Hierarchy Descriptor '" << chd_symbol << "' at offset " 
+		if (g_enable_debug_output) std::cerr << "  Added ??_R3 Class Hierarchy Descriptor '" << chd_symbol << "' at offset " 
 		          << chd_offset << std::endl;
 		
 		// ??_R4 - Complete Object Locator
@@ -1704,7 +1706,7 @@ public:
 		col_hier_reloc.type = IMAGE_REL_AMD64_ADDR64;
 		rdata_section->add_relocation_entry(&col_hier_reloc);
 		
-		std::cerr << "  Added ??_R4 Complete Object Locator '" << col_symbol << "' at offset " 
+		if (g_enable_debug_output) std::cerr << "  Added ??_R4 Complete Object Locator '" << col_symbol << "' at offset " 
 		          << col_offset << std::endl;
 		
 		// Step 2: Emit vtable structure
@@ -1722,7 +1724,7 @@ public:
 		{
 			uint32_t col_reloc_offset = vtable_offset;
 			
-			std::cerr << "  DEBUG: Creating COL relocation at offset " << col_reloc_offset 
+			if (g_enable_debug_output) std::cerr << "  DEBUG: Creating COL relocation at offset " << col_reloc_offset 
 			          << " pointing to symbol '" << col_symbol << "' (file index " << col_symbol_index << ")" << std::endl;
 			
 			COFFI::rel_entry_generic relocation;
@@ -1732,7 +1734,7 @@ public:
 			
 			rdata_section->add_relocation_entry(&relocation);
 			
-			std::cerr << "  Added COL pointer relocation at vtable[-1]" << std::endl;
+			if (g_enable_debug_output) std::cerr << "  Added COL pointer relocation at vtable[-1]" << std::endl;
 		}
 		
 		// Step 3: Add a symbol for vtable (points to first virtual function, AFTER RTTI pointer)
@@ -1762,11 +1764,11 @@ public:
 			
 			rdata_section->add_relocation_entry(&relocation);
 			
-			std::cerr << "  Added relocation for vtable[" << i << "] -> " << function_symbols[i] 
+			if (g_enable_debug_output) std::cerr << "  Added relocation for vtable[" << i << "] -> " << function_symbols[i] 
 			          << " at offset " << reloc_offset << " (file index " << func_symbol_index << ")" << std::endl;
 		}
 
-		std::cerr << "Added vtable '" << vtable_symbol << "' at offset " << vtable_symbol_offset
+		if (g_enable_debug_output) std::cerr << "Added vtable '" << vtable_symbol << "' at offset " << vtable_symbol_offset
 		          << " in .rdata section (total size with RTTI: " << vtable_size << " bytes)" << std::endl;
 	}
 
@@ -1776,14 +1778,14 @@ public:
 		auto symbols = coffi_.get_symbols();
 		for (size_t i = 0; i < symbols->size(); ++i) {
 			if ((*symbols)[i].get_name() == symbol_name) {
-				std::cerr << "    DEBUG get_or_create_symbol_index: Found existing symbol '" << symbol_name 
+				if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Found existing symbol '" << symbol_name 
 				          << "' at array index " << i << ", file index " << (*symbols)[i].get_index() << std::endl;
 				return (*symbols)[i].get_index();
 			}
 		}
 		
 		// Symbol doesn't exist, create it as an external reference
-		std::cerr << "    DEBUG get_or_create_symbol_index: Creating new symbol '" << symbol_name << "'" << std::endl;
+		if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Creating new symbol '" << symbol_name << "'" << std::endl;
 		auto symbol = coffi_.add_symbol(symbol_name);
 		symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
@@ -1792,7 +1794,7 @@ public:
 		
 		// Return the index from COFFI (which includes aux entries)
 		uint32_t file_index = symbol->get_index();
-		std::cerr << "    DEBUG get_or_create_symbol_index: Created new symbol at file index " << file_index 
+		if (g_enable_debug_output) std::cerr << "    DEBUG get_or_create_symbol_index: Created new symbol at file index " << file_index 
 		          << " for '" << symbol_name << "'" << std::endl;
 		return file_index;
 	}

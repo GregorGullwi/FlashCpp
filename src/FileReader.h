@@ -1510,9 +1510,9 @@ private:
 			std::cerr << "Looking for include file: " << filename << std::endl;
 		}
 		for (const auto& include_dir : settings_.getIncludeDirs()) {
-			std::string include_file(include_dir);
-			include_file.append("/");
-			include_file.append(filename);
+			std::filesystem::path include_path(include_dir);
+			include_path /= filename;  // Use /= operator which handles path separators correctly
+			std::string include_file = include_path.string();
 			if (settings_.isVerboseMode()) {
 				std::cerr << "  Checking path: " << include_file << " - exists: " << std::filesystem::exists(include_file) << std::endl;
 			}
