@@ -55,6 +55,9 @@ enum class SectionType : unsigned char
 
 class ObjectFileWriter {
 public:
+	// Constants for RTTI and exception handling
+	static constexpr size_t POINTER_SIZE = 8;  // 64-bit pointers on x64
+	
 	enum EFunctionCallingConv : unsigned char
 	{
 		cc_cdecl,
@@ -83,7 +86,7 @@ public:
 		uint32_t type_index;      // Type to catch (0 for catch-all)
 		uint32_t handler_offset;  // Code offset of catch handler relative to function start
 		bool is_catch_all;        // True for catch(...)
-		std::string type_name;    // Name of the caught type (empty for catch-all)
+		std::string type_name;    // Name of the caught type (empty for catch-all or when type_index is 0)
 	};
 
 	// Exception handling information for a try block
@@ -1121,8 +1124,15 @@ public:
 					if (!handler.is_catch_all && !handler.type_name.empty()) {
 						// Check if we've already created a descriptor for this type
 						if (type_descriptor_offsets.find(handler.type_name) == type_descriptor_offsets.end()) {
+							// Validate that RDATA section exists
+							auto rdata_section_it = sectiontype_to_index.find(SectionType::RDATA);
+							if (rdata_section_it == sectiontype_to_index.end()) {
+								std::cerr << "ERROR: RDATA section not found for type descriptor generation" << std::endl;
+								continue;
+							}
+							
 							// Generate type descriptor in .rdata section
-							auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+							auto rdata_section = coffi_.get_sections()[rdata_section_it->second];
 							uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 							
 							// Mangle the type name for the type descriptor symbol
@@ -1133,11 +1143,11 @@ public:
 							// Format: vtable_ptr (8 bytes) + spare (8 bytes) + mangled_name (null-terminated)
 							std::vector<char> type_desc_data;
 							
-							// vtable pointer (8 bytes) - null for exception types
-							for (int i = 0; i < 8; ++i) type_desc_data.push_back(0);
+							// vtable pointer (POINTER_SIZE bytes) - null for exception types
+							for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
 							
-							// spare pointer (8 bytes) - null
-							for (int i = 0; i < 8; ++i) type_desc_data.push_back(0);
+							// spare pointer (POINTER_SIZE bytes) - null
+							for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
 							
 							// mangled name (null-terminated)
 							for (char c : mangled_type_name) type_desc_data.push_back(c);
