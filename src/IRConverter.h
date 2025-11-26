@@ -9012,68 +9012,13 @@ private:
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			
 			// Extract data from typed payload
-			if (instruction.hasTypedPayload()) {
-				const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
-				handler.exception_temp = catch_op.exception_temp;
-				handler.type_index = catch_op.type_index;
-				handler.is_const = catch_op.is_const;
-				handler.is_reference = catch_op.is_reference;
-				handler.is_rvalue_reference = catch_op.is_rvalue_reference;
-				handler.is_catch_all = (catch_op.type_index == 0);
-			} else {
-				// Fallback to operand-based extraction for backward compatibility
-				handler.is_const = false;
-				handler.is_reference = false;
-				handler.is_rvalue_reference = false;
-				
-				if (instruction.getOperandCount() >= 2) {
-					// Get exception temp (operand 0)
-					if (instruction.isOperandType<TempVar>(0)) {
-						handler.exception_temp = instruction.getOperandAs<TempVar>(0);
-					} else {
-						handler.exception_temp = TempVar(0);  // Placeholder for catch-all
-					}
-					
-					// Get type index (operand 1)
-					if (instruction.isOperandType<int>(1)) {
-						int type_idx = instruction.getOperandAs<int>(1);
-						if (type_idx == 0) {
-							// catch(...) - catches all
-							handler.is_catch_all = true;
-							handler.type_index = TypeIndex(0);
-						} else if (type_idx > 0) {
-							handler.is_catch_all = false;
-							handler.type_index = static_cast<TypeIndex>(type_idx);
-						} else {
-							// Negative type_idx is invalid, treat as catch-all
-							handler.is_catch_all = true;
-							handler.type_index = TypeIndex(0);
-						}
-					} else {
-						// Default to catch-all if type not specified
-						handler.is_catch_all = true;
-						handler.type_index = TypeIndex(0);
-					}
-					
-					// Get const/reference qualifiers (operands 3, 4, 5 if present)
-					if (instruction.getOperandCount() >= 6) {
-						if (instruction.isOperandType<int>(3)) {
-							handler.is_const = (instruction.getOperandAs<int>(3) != 0);
-						}
-						if (instruction.isOperandType<int>(4)) {
-							handler.is_reference = (instruction.getOperandAs<int>(4) != 0);
-						}
-						if (instruction.isOperandType<int>(5)) {
-							handler.is_rvalue_reference = (instruction.getOperandAs<int>(5) != 0);
-						}
-					}
-				} else {
-					// No operands - treat as catch-all
-					handler.is_catch_all = true;
-					handler.type_index = TypeIndex(0);
-					handler.exception_temp = TempVar(0);
-				}
-			}
+			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+			handler.exception_temp = catch_op.exception_temp;
+			handler.type_index = catch_op.type_index;
+			handler.is_const = catch_op.is_const;
+			handler.is_reference = catch_op.is_reference;
+			handler.is_rvalue_reference = catch_op.is_rvalue_reference;
+			handler.is_catch_all = (catch_op.type_index == 0);
 			
 			try_block.catch_handlers.push_back(handler);
 		}
@@ -9087,9 +9032,10 @@ private:
 
 	void handleThrow(const IrInstruction& instruction) {
 		// Throw creates and throws an exception by calling _CxxThrowException
-		// The instruction contains operands: [type, size, value_or_temp]
+		// Extract data from typed payload
+		const auto& throw_op = instruction.getTypedPayload<ThrowOp>();
 		
-		// For a basic implementation of C++ exception throwing:
+		// For C++ exception throwing:
 		// We need to call _CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo)
 		// where:
 		// - pExceptionObject is a pointer to the exception object
@@ -9097,51 +9043,71 @@ private:
 		
 		// Windows x64 calling convention: RCX = first arg, RDX = second arg
 		
-		// For now, we'll implement a simplified version:
+		// Implementation:
 		// - Allocate space on stack for the exception object
 		// - Copy the exception value to that space
 		// - Pass pointer to it as first argument (RCX)
 		// - Pass NULL as second argument (RDX) for throw info
 		// - Call _CxxThrowException
 		
-		// Allocate shadow space + space for exception object
-		// Windows x64 calling convention:
-		// - Requires 32 bytes shadow space for the first 4 parameters
-		// - Stack must be 16-byte aligned at CALL instruction
-		// - We need 8 bytes to store the exception value
-		// Total: 32 (shadow) + 8 (exception) = 40 bytes
-		// Round up to 48 for 16-byte alignment (since we're subtracting from an aligned RSP)
-		emitSubRSP(48);
+		// Calculate stack space needed:
+		// - 32 bytes shadow space (Windows x64 calling convention)
+		// - N bytes for exception object (rounded up to 8-byte alignment)
+		// - Total rounded up to 16-byte alignment
 		
-		// Get the exception value from operands and store it on the stack
-		// The exception value is typically in operand[2] after type and size
+		size_t exception_size = throw_op.size_in_bytes;
+		if (exception_size == 0) exception_size = 8; // Minimum size
 		
-		if (instruction.getOperandCount() >= 3) {
-			// Try to get the value from the third operand
-			const auto& value_operand = instruction.getOperand(2);
-			
-			if (std::holds_alternative<TempVar>(value_operand)) {
-				// Load the temp var value into RAX
-				TempVar temp = std::get<TempVar>(value_operand);
+		// Round exception size up to 8-byte alignment
+		size_t aligned_exception_size = (exception_size + 7) & ~7;
+		
+		// Total stack allocation: 32 (shadow) + aligned_exception_size
+		// Round up to 16-byte alignment
+		size_t total_stack = ((32 + aligned_exception_size) + 15) & ~15;
+		
+		emitSubRSP(static_cast<int32_t>(total_stack));
+		
+		// Copy exception object to stack at [RSP+32]
+		// For small objects (<=8 bytes), use register-based copy
+		// For larger objects, use memory-to-memory copy
+		
+		if (exception_size <= 8) {
+			// Small object: load into RAX and store
+			TempVar temp = throw_op.value;
+			if (temp.var_number != 0) {
 				int32_t stack_offset = getStackOffsetFromTempVar(temp);
-				
 				// Load value from its stack location into RAX
-				emitMovFromFrame(X64Register::RAX, stack_offset);
-			} else if (std::holds_alternative<int>(value_operand)) {
-				// Immediate value - load into RAX
-				int value = std::get<int>(value_operand);
-				emitMovImm64(X64Register::RAX, value);
+				emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
 			} else {
-				// Unknown type, use 0
+				// No value, use 0
 				emitMovImm64(X64Register::RAX, 0);
 			}
+			
+			// Store exception value on stack at [RSP+32]
+			emitMovToRSPDisp8(X64Register::RAX, 32);
 		} else {
-			// No exception value provided, use 0
-			emitMovImm64(X64Register::RAX, 0);
+			// Large object: use memory-to-memory copy
+			// Load source address into RSI
+			TempVar temp = throw_op.value;
+			if (temp.var_number != 0) {
+				int32_t stack_offset = getStackOffsetFromTempVar(temp);
+				emitLeaFromFrame(X64Register::RSI, stack_offset);
+			} else {
+				// No value - this shouldn't happen for large objects
+				emitXorRegReg(X64Register::RSI);
+			}
+			
+			// Load destination address into RDI (RSP+32)
+			emitLeaFromRSPDisp8(X64Register::RDI, 32);
+			
+			// Set up count in RCX for rep movsb
+			emitMovImm64(X64Register::RCX, exception_size);
+			
+			// Perform memory copy: rep movsb
+			// This copies RCX bytes from [RSI] to [RDI]
+			textSectionData.push_back(0xF3); // REP prefix
+			textSectionData.push_back(0xA4); // MOVSB
 		}
-		
-		// Store exception value on stack at [RSP+32] (after shadow space)
-		emitMovToRSPDisp8(X64Register::RAX, 32);
 		
 		// Set up arguments for _CxxThrowException
 		// RCX (first argument) = pointer to exception object = RSP+32

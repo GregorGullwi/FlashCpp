@@ -865,6 +865,14 @@ struct CatchBeginOp {
 	bool is_rvalue_reference;     // True if caught by rvalue reference
 };
 
+// Throw exception operation
+struct ThrowOp {
+	TypeIndex type_index;         // Type of exception being thrown
+	size_t size_in_bytes;         // Size of exception object in bytes
+	TempVar value;                // Temporary or value to throw
+	bool is_rvalue;               // True if throwing an rvalue (can be moved)
+};
+
 // Helper function to format conversion operations for IR output
 inline std::string formatConversionOp(const char* op_name, const ConversionOp& op) {
 	std::ostringstream oss;
