@@ -1889,6 +1889,18 @@ ParseResult Parser::parse_struct_declaration()
 				continue;
 			}
 
+			// Check for 'enum' keyword - nested enum declaration
+			if (keyword == "enum") {
+				auto enum_result = parse_enum_declaration();
+				if (enum_result.is_error()) {
+					return enum_result;
+				}
+				// Enums inside structs don't need to be added to the struct explicitly
+				// They're registered in the global type system by parse_enum_declaration
+				// The semicolon is already consumed by parse_enum_declaration
+				continue;
+			}
+
 			// Check for 'enum' keyword - nested enum
 			if (keyword == "enum") {
 				auto enum_result = parse_enum_declaration();
@@ -4987,6 +4999,10 @@ ParseResult Parser::parse_type_specifier()
 	// If we only have CV-qualifiers (const/volatile) without unsigned/signed/long,
 	// continue parsing - could be "const Widget&", "const int*", etc.
 	// The following checks handle struct/class keywords and identifiers
+	// Note: We don't handle 'enum' keyword here for type specifiers because:
+	// - "enum TypeName" is handled in the identifier section below
+	// - "enum : type { }" and "enum TypeName { }" are declarations, not type specifiers
+	//   and should be caught by higher-level parsing (e.g., in struct member loop)
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Keyword &&
 	         (current_token_opt->value() == "struct" || current_token_opt->value() == "class")) {
 		// Handle "struct TypeName" or "class TypeName"
@@ -11503,6 +11519,16 @@ ParseResult Parser::parse_template_declaration() {
 							return static_assert_result;
 						}
 						continue;
+					} else if (peek_token()->value() == "enum") {
+						// Handle enum declaration inside class body
+						auto enum_result = parse_enum_declaration();
+						if (enum_result.is_error()) {
+							return enum_result;
+						}
+						// Enums inside structs don't need to be added to the struct explicitly
+						// They're registered in the global type system by parse_enum_declaration
+						// The semicolon is already consumed by parse_enum_declaration
+						continue;
 					} else if (peek_token()->value() == "using") {
 						// Handle type alias inside class body: using value_type = T;
 						auto using_result = parse_using_directive_or_declaration();
@@ -12052,6 +12078,16 @@ ParseResult Parser::parse_template_declaration() {
 							return ParseResult::error("Expected ':' after 'protected'", *peek_token());
 						}
 						current_access = AccessSpecifier::Protected;
+						continue;
+					} else if (peek_token()->value() == "enum") {
+						// Handle enum declaration inside partial specialization
+						auto enum_result = parse_enum_declaration();
+						if (enum_result.is_error()) {
+							return enum_result;
+						}
+						// Enums inside structs don't need to be added to the struct explicitly
+						// They're registered in the global type system by parse_enum_declaration
+						// The semicolon is already consumed by parse_enum_declaration
 						continue;
 					}
 				}
