@@ -8964,15 +8964,16 @@ private:
 	//   - 0x01 = const
 	//   - 0x08 = lvalue reference (&)
 	//   - 0x10 = rvalue reference (&&)
+	// - State-based exception handling through tryLow/tryHigh/catchHigh state numbers
+	//   - __CxxFrameHandler3 uses states to determine active try blocks
 	//
 	// Limitations:
-	// - No destructor unwinding for local objects yet
-	// - Template type mangling is simplified
+	// - No destructor unwinding for local objects yet (would require unwindMap)
+	// - Template type mangling is simplified (not full MSVC encoding)
 	//
 	// For full C++ exception semantics, the following enhancements could be added:
-	// - IP-to-state mapping for determining active try blocks based on instruction pointer
 	// - Unwind map for calling destructors during stack unwinding
-	// - Full MSVC template type mangling
+	// - Full MSVC template type mangling with argument encoding
 	// ============================================================================
 	
 	void handleTryBegin(const IrInstruction& instruction) {
