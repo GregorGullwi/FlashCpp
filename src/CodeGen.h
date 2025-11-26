@@ -2661,21 +2661,32 @@ private:
 			const auto& expr = *node.expression();
 			
 			// Generate code for the expression to throw
-			// The operands include [type, size, value_or_temp]
 			auto expr_operands = visitExpressionNode(expr.as<ExpressionNode>());
 			
 			// Extract type information from the operands
 			// operands format: [type, size, value_or_temp_var]
 			Type expr_type = Type::Int;  // Default
-			int type_size = 32;
+			size_t type_size = 32;
+			TempVar value_temp = TempVar(0);
+			
 			if (expr_operands.size() >= 2) {
 				expr_type = std::get<Type>(expr_operands[0]);
 				type_size = std::get<int>(expr_operands[1]);
 			}
+			if (expr_operands.size() >= 3) {
+				if (std::holds_alternative<TempVar>(expr_operands[2])) {
+					value_temp = std::get<TempVar>(expr_operands[2]);
+				}
+			}
 			
-			// Emit Throw instruction with the expression operands
-			// For now, we'll pass the full expression operands
-			ir_.addInstruction(IrOpcode::Throw, expr_operands, node.throw_token());
+			// Create ThrowOp with typed data
+			ThrowOp throw_op;
+			throw_op.type_index = TypeIndex(0);  // TODO: Extract from expression for struct types
+			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
+			throw_op.value = value_temp;
+			throw_op.is_rvalue = true;  // Default to rvalue for now
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::Throw, std::move(throw_op), node.throw_token()));
 		}
 	}
 
