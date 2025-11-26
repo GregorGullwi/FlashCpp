@@ -8949,9 +8949,9 @@ private:
 
 	void handleCatchBegin(const IrInstruction& instruction) {
 		// CatchBegin marks the start of a catch handler
-		// Record this catch handler in the current try block
+		// Record this catch handler in the most recent try block
 		
-		if (current_try_block_ && current_function_try_blocks_.size() > 0) {
+		if (!current_function_try_blocks_.empty()) {
 			// Get the last try block (the one we just finished with TryEnd)
 			TryBlock& try_block = current_function_try_blocks_.back();
 			
@@ -8974,9 +8974,13 @@ private:
 						// catch(...) - catches all
 						handler.is_catch_all = true;
 						handler.type_index = TypeIndex(0);
-					} else {
+					} else if (type_idx > 0) {
 						handler.is_catch_all = false;
 						handler.type_index = static_cast<TypeIndex>(type_idx);
+					} else {
+						// Negative type_idx is invalid, treat as catch-all
+						handler.is_catch_all = true;
+						handler.type_index = TypeIndex(0);
 					}
 				} else {
 					// Default to catch-all if type not specified
