@@ -988,8 +988,8 @@ public:
 			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 24) & 0xFF));
 			
-			// maxState - maximum state number (for now, number of try blocks)
-			uint32_t max_state = static_cast<uint32_t>(try_blocks.size());
+			// maxState - maximum state number (accounts for tryLow, tryHigh, catchHigh per try block)
+			uint32_t max_state = static_cast<uint32_t>(try_blocks.size() * 2);
 			xdata.push_back(static_cast<char>(max_state & 0xFF));
 			xdata.push_back(static_cast<char>((max_state >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((max_state >> 16) & 0xFF));
@@ -1047,15 +1047,15 @@ public:
 				xdata.push_back(static_cast<char>((try_low >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((try_low >> 24) & 0xFF));
 				
-				// tryHigh (state when exiting try block)
-				uint32_t try_high = static_cast<uint32_t>(i);
+				// tryHigh (state when exiting try block - should be different from tryLow)
+				uint32_t try_high = static_cast<uint32_t>(i) + 1;
 				xdata.push_back(static_cast<char>(try_high & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((try_high >> 24) & 0xFF));
 				
 				// catchHigh (state after handling exception)
-				uint32_t catch_high = static_cast<uint32_t>(i) + 1;
+				uint32_t catch_high = static_cast<uint32_t>(i) + 2;
 				xdata.push_back(static_cast<char>(catch_high & 0xFF));
 				xdata.push_back(static_cast<char>((catch_high >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((catch_high >> 16) & 0xFF));
