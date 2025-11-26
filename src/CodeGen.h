@@ -2680,21 +2680,10 @@ private:
 			
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
-			// Extract TypeIndex for struct types by looking up the temp var's type
-			// For primitive types, TypeIndex(0) is used as a placeholder
-			if (expr_type == Type::Struct && value_temp.id > 0) {
-				// Try to find the TypeIndex from the temporary variable's declaration
-				// This is a best-effort approach since expression operands don't carry TypeIndex directly
-				// For a more complete solution, expression operands would need to include TypeIndex
-				auto it = var_type_info_.find(value_temp.id);
-				if (it != var_type_info_.end()) {
-					throw_op.type_index = it->second.type_index;
-				} else {
-					throw_op.type_index = TypeIndex(0);  // Fallback for unknown struct types
-				}
-			} else {
-				throw_op.type_index = TypeIndex(0);  // Primitive types don't need TypeIndex
-			}
+			// TODO: Extract TypeIndex for struct types from expression context
+			// Currently using TypeIndex(0) as placeholder - IRConverter will handle type matching
+			// through the exception handling runtime metadata (type descriptors in XDATA)
+			throw_op.type_index = TypeIndex(0);
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
 			throw_op.value = value_temp;
 			throw_op.is_rvalue = true;  // Default to rvalue for now
