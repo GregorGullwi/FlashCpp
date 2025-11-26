@@ -180,10 +180,20 @@ foreach ($file in $referenceFiles) {
     else {
         Write-Host "  [COMPILE FAILED]" -ForegroundColor Red
         $compileFailed += $file.Name
-        # Extract first error from compile output
-        $firstError = ($compileOutput -split "`n" | Where-Object { $_ -match "(error|Error)" } | Select-Object -First 1)
-        if ($firstError) {
-            Write-Host "    Error: $firstError" -ForegroundColor Yellow
+        # Show compile output to help diagnose the issue
+        # Filter out the version banner and empty lines, show first few relevant lines
+        $outputLines = $compileOutput -split "`n" | Where-Object { 
+            $_.Trim() -ne "" -and 
+            $_ -notmatch "===== FLASHCPP VERSION" -and
+            $_ -notmatch "^Compiling:" -and
+            $_ -notmatch "^Processing:"
+        } | Select-Object -First 5
+        if ($outputLines) {
+            foreach ($line in $outputLines) {
+                Write-Host "    $($line.Trim())" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "    (No error details available - obj file not created)" -ForegroundColor Yellow
         }
     }
     
