@@ -303,8 +303,7 @@ public:
 			
 			for (const auto& static_member : struct_info->static_members) {
 				// Build the qualified name for deduplication
-				std::string_view qualified_name_sv = StringBuilder().append(type_name).append("::").append(static_member.name).commit();
-				std::string qualified_name(qualified_name_sv);
+				std::string qualified_name = std::string(type_name) + "::" + static_member.name;
 				
 				// Skip if already emitted
 				if (emitted_static_members_.count(qualified_name) > 0) {
