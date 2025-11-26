@@ -2664,24 +2664,37 @@ private:
 			auto expr_operands = visitExpressionNode(expr.as<ExpressionNode>());
 			
 			// Extract type information from the operands
-			// operands format: [type, size, value_or_temp_var]
-			Type expr_type = Type::Int;  // Default
-			size_t type_size = 32;
+			// operands format: [type, size, value_or_temp_var] - always 3 elements
+			if (expr_operands.size() < 3) {
+				std::cerr << "error: Invalid expression operands for throw statement\n";
+				return;
+			}
+			
+			Type expr_type = std::get<Type>(expr_operands[0]);
+			size_t type_size = std::get<int>(expr_operands[1]);
 			TempVar value_temp = TempVar(0);
 			
-			if (expr_operands.size() >= 2) {
-				expr_type = std::get<Type>(expr_operands[0]);
-				type_size = std::get<int>(expr_operands[1]);
-			}
-			if (expr_operands.size() >= 3) {
-				if (std::holds_alternative<TempVar>(expr_operands[2])) {
-					value_temp = std::get<TempVar>(expr_operands[2]);
-				}
+			if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				value_temp = std::get<TempVar>(expr_operands[2]);
 			}
 			
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
-			throw_op.type_index = TypeIndex(0);  // TODO: Extract from expression for struct types
+			// Extract TypeIndex for struct types by looking up the temp var's type
+			// For primitive types, TypeIndex(0) is used as a placeholder
+			if (expr_type == Type::Struct && value_temp.id > 0) {
+				// Try to find the TypeIndex from the temporary variable's declaration
+				// This is a best-effort approach since expression operands don't carry TypeIndex directly
+				// For a more complete solution, expression operands would need to include TypeIndex
+				auto it = var_type_info_.find(value_temp.id);
+				if (it != var_type_info_.end()) {
+					throw_op.type_index = it->second.type_index;
+				} else {
+					throw_op.type_index = TypeIndex(0);  // Fallback for unknown struct types
+				}
+			} else {
+				throw_op.type_index = TypeIndex(0);  // Primitive types don't need TypeIndex
+			}
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
 			throw_op.value = value_temp;
 			throw_op.is_rvalue = true;  // Default to rvalue for now
