@@ -153,7 +153,8 @@ foreach ($file in $referenceFiles) {
                 "kernel32.lib",
                 "libcmt.lib",
                 "libvcruntime.lib",
-                "libucrt.lib"
+                "libucrt.lib",
+                "legacy_stdio_definitions.lib"
             )
             
             if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
