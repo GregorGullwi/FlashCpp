@@ -302,10 +302,20 @@ public:
 			}
 			
 			for (const auto& static_member : struct_info->static_members) {
+				// Build the qualified name for deduplication
+				std::string_view qualified_name_sv = StringBuilder().append(type_name).append("::").append(static_member.name).commit();
+				std::string qualified_name(qualified_name_sv);
+				
+				// Skip if already emitted
+				if (emitted_static_members_.count(qualified_name) > 0) {
+					continue;
+				}
+				emitted_static_members_.insert(qualified_name);
+
 				GlobalVariableDeclOp op;
 				op.type = static_member.type;
 				op.size_in_bits = static_cast<int>(static_member.size * 8);
-				op.var_name = StringBuilder().append(type_name).append("::").append(static_member.name).commit();
+				op.var_name = qualified_name;
 
 				// Check if static member has an initializer
 				op.is_initialized = static_member.initializer.has_value();
@@ -910,10 +920,19 @@ private:
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info) {
 					for (const auto& static_member : struct_info->static_members) {
+						// Build the qualified name for deduplication
+						std::string qualified_name = std::string(node.name()) + "::" + static_member.name;
+						
+						// Skip if already emitted
+						if (emitted_static_members_.count(qualified_name) > 0) {
+							continue;
+						}
+						emitted_static_members_.insert(qualified_name);
+
 						GlobalVariableDeclOp op;
 						op.type = static_member.type;
 						op.size_in_bits = static_cast<int>(static_member.size * 8);
-						op.var_name = std::string(node.name()) + "::" + static_member.name;
+						op.var_name = qualified_name;
 
 						// Check if static member has an initializer
 						op.is_initialized = static_member.initializer.has_value();
@@ -8194,6 +8213,9 @@ private:
 	
 	// Collected template instantiations for deferred generation
 	std::vector<TemplateInstantiationInfo> collected_template_instantiations_;
+
+	// Track emitted static members to avoid duplicates
+	std::unordered_set<std::string> emitted_static_members_;
 
 	// Current lambda context (for tracking captured variables)
 	// When generating lambda body, this contains the closure type name
