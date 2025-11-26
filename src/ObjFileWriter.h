@@ -92,6 +92,12 @@ public:
 		bool is_rvalue_reference; // True if caught by rvalue reference
 	};
 
+	// Unwind map entry for destructor calls during exception unwinding
+	struct UnwindMapEntryInfo {
+		int to_state;             // State to transition to after unwinding (-1 = no more unwinding)
+		std::string action;       // Name of destructor/cleanup function to call (empty = no action)
+	};
+
 	// Exception handling information for a try block
 	struct TryBlockInfo {
 		uint32_t try_start_offset;  // Code offset where try block starts
@@ -952,7 +958,7 @@ public:
 		debug_builder_.finalizeCurrentFunction();
 	}
 
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}) {
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}) {
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
 			if (existing == mangled_name) {
@@ -1022,18 +1028,33 @@ public:
 			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((magic >> 24) & 0xFF));
 			
-			// maxState - maximum state number (accounts for tryLow, tryHigh, catchHigh per try block)
+			// maxState - maximum state number (accounts for tryLow, tryHigh, catchHigh per try block + unwind states)
+			// If we have an unwind map, max_state should be at least the size of the unwind map
 			uint32_t max_state = static_cast<uint32_t>(try_blocks.size() * 2);
+			if (!unwind_map.empty() && unwind_map.size() > max_state) {
+				max_state = static_cast<uint32_t>(unwind_map.size());
+			}
 			xdata.push_back(static_cast<char>(max_state & 0xFF));
 			xdata.push_back(static_cast<char>((max_state >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((max_state >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((max_state >> 24) & 0xFF));
 			
-			// pUnwindMap - RVA to unwind map (0 for now - no destructors to unwind)
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
-			xdata.push_back(0x00);
+			// Calculate sizes and offsets for all structures
+			// FuncInfo is 32 bytes (8 DWORD fields)
+			// UnwindMapEntry is 8 bytes (2 DWORD fields)
+			// TryBlockMapEntry is 20 bytes (5 DWORD fields)
+			uint32_t unwind_map_size = static_cast<uint32_t>(unwind_map.size()) * 8;  // 8 bytes per entry
+			uint32_t tryblock_map_size = static_cast<uint32_t>(try_blocks.size()) * 20;  // 20 bytes per entry
+			
+			// pUnwindMap - RVA to unwind map (will be right after FuncInfo if present)
+			uint32_t unwind_map_offset = 0;
+			if (!unwind_map.empty()) {
+				unwind_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size()) + 8; // +8 for remaining FuncInfo fields (nIPMapEntries + pIPToStateMap)
+			}
+			xdata.push_back(static_cast<char>(unwind_map_offset & 0xFF));
+			xdata.push_back(static_cast<char>((unwind_map_offset >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((unwind_map_offset >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((unwind_map_offset >> 24) & 0xFF));
 			
 			// nTryBlocks - number of try blocks
 			uint32_t num_try_blocks = static_cast<uint32_t>(try_blocks.size());
@@ -1042,8 +1063,13 @@ public:
 			xdata.push_back(static_cast<char>((num_try_blocks >> 16) & 0xFF));
 			xdata.push_back(static_cast<char>((num_try_blocks >> 24) & 0xFF));
 			
-			// pTryBlockMap - RVA to try block map (will be right after FuncInfo)
-			uint32_t tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size()) + 8; // +8 for remaining FuncInfo fields
+			// pTryBlockMap - RVA to try block map (will be after UnwindMap if present, otherwise after FuncInfo)
+			uint32_t tryblock_map_offset;
+			if (!unwind_map.empty()) {
+				tryblock_map_offset = unwind_map_offset + unwind_map_size;
+			} else {
+				tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size()) + 8; // +8 for remaining FuncInfo fields
+			}
 			xdata.push_back(static_cast<char>(tryblock_map_offset & 0xFF));
 			xdata.push_back(static_cast<char>((tryblock_map_offset >> 8) & 0xFF));
 			xdata.push_back(static_cast<char>((tryblock_map_offset >> 16) & 0xFF));
@@ -1060,6 +1086,35 @@ public:
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
 			xdata.push_back(0x00);
+			
+			// Now add UnwindMap entries (if present)
+			// Each UnwindMapEntry:
+			//   int toState (state to transition to, -1 = end of unwind chain)
+			//   DWORD action (RVA to cleanup/destructor function, or 0 for no action)
+			if (!unwind_map.empty()) {
+				for (const auto& unwind_entry : unwind_map) {
+					// toState
+					int32_t to_state = unwind_entry.to_state;
+					xdata.push_back(static_cast<char>(to_state & 0xFF));
+					xdata.push_back(static_cast<char>((to_state >> 8) & 0xFF));
+					xdata.push_back(static_cast<char>((to_state >> 16) & 0xFF));
+					xdata.push_back(static_cast<char>((to_state >> 24) & 0xFF));
+					
+					// action - RVA to destructor/cleanup function
+					// For now, we'll use 0 (no action) since we don't have destructor function addresses yet
+					// TODO: Add relocation for destructor function when we have the mangled name
+					uint32_t action_rva = 0;
+					if (!unwind_entry.action.empty()) {
+						// We would need to add a relocation here for the destructor function
+						// For now, just set to 0 and add TODO comment
+						// action_rva will be patched via relocation
+					}
+					xdata.push_back(static_cast<char>(action_rva & 0xFF));
+					xdata.push_back(static_cast<char>((action_rva >> 8) & 0xFF));
+					xdata.push_back(static_cast<char>((action_rva >> 16) & 0xFF));
+					xdata.push_back(static_cast<char>((action_rva >> 24) & 0xFF));
+				}
+			}
 			
 			// Now add TryBlockMap entries
 			// Each TryBlockMapEntry:

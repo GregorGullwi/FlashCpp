@@ -5154,7 +5154,17 @@ private:
 				}
 				try_blocks.push_back(block_info);
 			}
-			writer.add_function_exception_info(current_function_mangled_name_, current_function_offset_, function_length, try_blocks);
+			
+			// Convert unwind map to ObjectFileWriter format
+			std::vector<ObjectFileWriter::UnwindMapEntryInfo> unwind_map;
+			for (const auto& unwind_entry : current_function_unwind_map_) {
+				ObjectFileWriter::UnwindMapEntryInfo entry_info;
+				entry_info.to_state = unwind_entry.to_state;
+				entry_info.action = unwind_entry.action;
+				unwind_map.push_back(entry_info);
+			}
+			
+			writer.add_function_exception_info(current_function_mangled_name_, current_function_offset_, function_length, try_blocks, unwind_map);
 		
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
@@ -5166,6 +5176,9 @@ private:
 			max_temp_var_index_ = 0;
 			current_function_try_blocks_.clear();  // Clear exception tracking for next function
 			current_try_block_ = nullptr;
+			current_function_local_objects_.clear();  // Clear local object tracking
+			current_function_unwind_map_.clear();  // Clear unwind map
+			current_exception_state_ = -1;  // Reset state counter
 		}
 
 		// align the function to 16 bytes
@@ -8954,6 +8967,7 @@ private:
 	// - catch by const (catch(const int&)) supported via adjectives field
 	// - catch by lvalue reference (catch(int&)) supported
 	// - catch by rvalue reference (catch(int&&)) supported
+	// - Destructor unwinding infrastructure: UnwindMap entries can track local objects with destructors
 	//
 	// Current implementation:
 	// - Type descriptors created in .rdata for each unique exception type
@@ -8966,13 +8980,17 @@ private:
 	//   - 0x10 = rvalue reference (&&)
 	// - State-based exception handling through tryLow/tryHigh/catchHigh state numbers
 	//   - __CxxFrameHandler3 uses states to determine active try blocks
+	// - UnwindMap data structure generation in XDATA
+	//   - Infrastructure in place for tracking local objects with destructors
+	//   - UnwindMapEntry: toState (next state) + action (destructor RVA)
 	//
 	// Limitations:
-	// - No destructor unwinding for local objects yet (would require unwindMap)
+	// - Automatic destructor calls not yet connected (need parser/codegen to track object lifetimes)
 	// - Template type mangling is simplified (not full MSVC encoding)
 	//
 	// For full C++ exception semantics, the following enhancements could be added:
-	// - Unwind map for calling destructors during stack unwinding
+	// - Automatic tracking of object construction/destruction in parser/codegen
+	// - Connection of destructor calls to unwind map entries
 	// - Full MSVC template type mangling with argument encoding
 	// ============================================================================
 	
@@ -9559,8 +9577,24 @@ private:
 		std::vector<CatchHandler> catch_handlers;  // Associated catch clauses
 	};
 
+	// Destructor unwinding support
+	struct LocalObject {
+		TempVar temp_var;  // Stack location of the object
+		TypeIndex type_index;  // Type of the object (for finding destructor)
+		int state_when_constructed;  // State number when object was constructed
+		std::string destructor_name;  // Mangled name of the destructor (if known)
+	};
+
+	struct UnwindMapEntry {
+		int to_state;  // State to transition to after unwinding
+		std::string action;  // Name of destructor to call (or empty for no action)
+	};
+
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
+	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
+	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
+	int current_exception_state_ = -1;  // Current exception handling state number
 };
 
 
