@@ -116,8 +116,9 @@ $currentFile = 0
 foreach ($file in $referenceFiles) {
     $currentFile++
     $baseName = $file.BaseName
-    $objFile = "tests\Reference\$baseName.obj"
-    $exeFile = "tests\Reference\$baseName.exe"
+    # FlashCpp writes .obj to current directory (repo root), not source directory
+    $objFile = "$baseName.obj"
+    $exeFile = "$baseName.exe"
     
     Write-Host "[$currentFile/$totalFiles] Testing: $($file.Name)"
     
