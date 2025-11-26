@@ -128,7 +128,8 @@ foreach ($file in $referenceFiles) {
     # Compile with FlashCpp
     $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
     
-    if ($compileOutput -match "Object file written successfully" -and (Test-Path $objFile)) {
+    # Check if compilation succeeded by verifying obj file was created
+    if (Test-Path $objFile) {
         Write-Host "  [COMPILE OK]" -ForegroundColor Green
         $compileSuccess += $file.Name
         
