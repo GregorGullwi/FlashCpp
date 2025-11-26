@@ -1611,6 +1611,7 @@ public:
 	std::string_view name() const { return name_; }
 	const std::vector<StructMemberDecl>& members() const { return members_; }
 	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
+	std::vector<StructMemberFunctionDecl>& member_functions() { return member_functions_; }
 	const std::vector<BaseClassSpecifier>& base_classes() const { return base_classes_; }
 	bool is_class() const { return is_class_; }
 	bool is_final() const { return is_final_; }

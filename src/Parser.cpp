@@ -14942,11 +14942,94 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Add the substituted function to the instantiated struct
 				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
 			} else {
-				// No definition to substitute, copy directly
-				instantiated_struct_ref.add_member_function(
-					mem_func.function_declaration,
-					mem_func.access
+				// No definition, but still need to substitute parameter types and return type
+				std::cerr << "DEBUG: Substituting types for function without definition: " << decl.identifier_token().value() << "\n";
+				
+				// Substitute return type
+				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				auto [return_type, return_type_index] = substitute_template_parameter(
+					return_type_spec, template_params, template_args_to_use
 				);
+
+				// Create substituted return type node
+				TypeSpecifierNode substituted_return_type(
+					return_type,
+					return_type_spec.qualifier(),
+					get_type_size_bits(return_type),
+					decl.identifier_token()
+				);
+				substituted_return_type.set_type_index(return_type_index);
+
+				// Copy pointer levels and reference qualifiers from original
+				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				if (return_type_spec.is_rvalue_reference()) {
+					substituted_return_type.set_reference(true);
+				} else if (return_type_spec.is_reference()) {
+					substituted_return_type.set_reference(false);
+				}
+
+				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+
+				// Create a new function declaration with substituted return type
+				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
+					substituted_return_node, decl.identifier_token()
+				);
+				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+					new_func_decl_ref, instantiated_name
+				);
+
+				// Substitute and copy parameters
+				for (const auto& param : func_decl.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param.as<DeclarationNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+						// Substitute parameter type
+						auto [param_type, param_type_index] = substitute_template_parameter(
+							param_type_spec, template_params, template_args_to_use
+						);
+
+						// Create substituted parameter type
+						TypeSpecifierNode substituted_param_type(
+							param_type,
+							param_type_spec.qualifier(),
+							get_type_size_bits(param_type),
+							param_decl.identifier_token()
+						);
+						substituted_param_type.set_type_index(param_type_index);
+
+						// Copy pointer levels and reference qualifiers
+						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+						}
+						if (param_type_spec.is_rvalue_reference()) {
+							substituted_param_type.set_reference(true);
+						} else if (param_type_spec.is_reference()) {
+							substituted_param_type.set_reference(false);
+						}
+
+						auto substituted_param_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+						auto [param_decl_node, param_decl_ref] = emplace_node_ref<DeclarationNode>(
+							substituted_param_node, param_decl.identifier_token()
+						);
+
+						new_func_ref.add_parameter_node(param_decl_node);
+					}
+				}
+
+				// Copy other function properties
+				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
+				new_func_ref.set_is_consteval(func_decl.is_consteval());
+				new_func_ref.set_is_constinit(func_decl.is_constinit());
+				new_func_ref.set_noexcept(func_decl.is_noexcept());
+				new_func_ref.set_is_variadic(func_decl.is_variadic());
+				new_func_ref.set_linkage(func_decl.linkage());
+				new_func_ref.set_calling_convention(func_decl.calling_convention());
+
+				// Add the substituted function to the instantiated struct
+				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
@@ -15082,6 +15165,112 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				mem_func.function_declaration,
 				mem_func.access
 			);
+		}
+	}
+
+	// Process out-of-line member function definitions for the template
+	std::cerr << "DEBUG: Checking for out-of-line member functions for template: " << template_name << "\n";
+	auto out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(template_name);
+	std::cerr << "DEBUG: Found " << out_of_line_members.size() << " out-of-line member functions\n";
+	
+	for (const auto& out_of_line_member : out_of_line_members) {
+		std::cerr << "DEBUG: Processing out-of-line member function\n";
+		
+		// The function_node should be a FunctionDeclarationNode
+		if (!out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
+			std::cerr << "ERROR: Out-of-line member function_node is not a FunctionDeclarationNode\n";
+			continue;
+		}
+		
+		const FunctionDeclarationNode& func_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>();
+		const DeclarationNode& decl = func_decl.decl_node();
+		std::cerr << "DEBUG: Out-of-line member function: " << decl.identifier_token().value() << "\n";
+		
+		// Check if this function is in the instantiated struct's member functions
+		// We need to find the matching declaration in the instantiated struct and add the definition
+		bool found_match = false;
+		for (auto& mem_func : instantiated_struct_ref.member_functions()) {
+			if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
+				FunctionDeclarationNode& inst_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+				const DeclarationNode& inst_decl = inst_func.decl_node();
+				
+				// Check if function names match
+				if (inst_decl.identifier_token().value() == decl.identifier_token().value()) {
+					std::cerr << "DEBUG: Found matching member function, adding definition\n";
+					
+					// Save current position
+					TokenPosition saved_pos = save_token_position();
+					
+					// Add function parameters to scope so they're available during body parsing
+					gSymbolTable.enter_scope(ScopeType::Block);
+					for (const auto& param_node : inst_func.parameter_nodes()) {
+						if (param_node.is<DeclarationNode>()) {
+							const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+							gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+							std::cerr << "DEBUG: Added parameter to scope: " << param_decl.identifier_token().value() << "\n";
+						}
+					}
+					
+					// Restore to the out-of-line function body position
+					restore_lexer_position_only(out_of_line_member.body_start);
+					
+					// The current token should be '{'
+					if (!peek_token().has_value() || peek_token()->value() != "{") {
+						std::cerr << "ERROR: Expected '{' at body_start position, got: " 
+						          << (peek_token().has_value() ? peek_token()->value() : "EOF") << "\n";
+						gSymbolTable.exit_scope();
+						restore_lexer_position_only(saved_pos);
+						continue;
+					}
+					
+					// Parse the function body
+					auto body_result = parse_block();
+					
+					// Pop parameter scope
+					gSymbolTable.exit_scope();
+					
+					// Restore position
+					restore_lexer_position_only(saved_pos);
+					
+					if (body_result.is_error() || !body_result.node().has_value()) {
+						std::cerr << "ERROR: Failed to parse out-of-line function body for " 
+						          << decl.identifier_token().value() << "\n";
+						continue;
+					}
+					
+					// Now substitute template parameters in the parsed body
+					std::vector<TemplateArgument> converted_template_args;
+					converted_template_args.reserve(template_args_to_use.size());
+					for (const auto& ttype_arg : template_args_to_use) {
+						if (ttype_arg.is_value) {
+							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value));
+						} else {
+							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+						}
+					}
+					
+					try {
+						std::cerr << "DEBUG: Substituting template parameters in out-of-line function body\n";
+						ASTNode substituted_body = substituteTemplateParameters(
+							*body_result.node(),
+							out_of_line_member.template_params,
+							converted_template_args
+						);
+						std::cerr << "DEBUG: Successfully processed out-of-line function body\n";
+						inst_func.set_definition(substituted_body);
+						found_match = true;
+						break;
+					} catch (const std::exception& e) {
+						std::cerr << "ERROR: Exception during template parameter substitution for out-of-line function " 
+						          << decl.identifier_token().value() << ": " << e.what() << "\n";
+					}
+				}
+			}
+		}
+		
+		if (!found_match) {
+			std::cerr << "WARNING: Out-of-line member function " << decl.identifier_token().value() 
+			          << " not found in instantiated struct\n";
 		}
 	}
 
