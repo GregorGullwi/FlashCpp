@@ -8900,12 +8900,12 @@ private:
 	// Exception Handling Implementation
 	// ============================================================================
 	// Implementation status:
-	// ✅ Exceptions are thrown via _CxxThrowException (proper MSVC C++ runtime call)
-	// ✅ SEH frames exist via PDATA/XDATA sections with __CxxFrameHandler3 reference
-	// ✅ Stack unwinding works via unwind codes in XDATA
-	// ✅ FuncInfo structures generated with try-block maps and catch handlers
-	// ✅ Catch blocks execute for thrown exceptions
-	// ✅ Type-specific exception matching with type descriptors
+	// [X] Exceptions are thrown via _CxxThrowException (proper MSVC C++ runtime call)
+	// [X] SEH frames exist via PDATA/XDATA sections with __CxxFrameHandler3 reference
+	// [X] Stack unwinding works via unwind codes in XDATA
+	// [X] FuncInfo structures generated with try-block maps and catch handlers
+	// [X] Catch blocks execute for thrown exceptions
+	// [X] Type-specific exception matching with type descriptors
 	//
 	// What works:
 	// - throw statement properly calls _CxxThrowException with exception object
