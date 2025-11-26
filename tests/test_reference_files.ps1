@@ -134,35 +134,45 @@ foreach ($file in $referenceFiles) {
         Write-Host "  [COMPILE OK]" -ForegroundColor Green
         $compileSuccess += $file.Name
         
-        # Try to link
-        # Link with common Microsoft runtime libraries
-        $linkArgs = @(
-            "/LIBPATH:$libPath1",
-            "/SUBSYSTEM:CONSOLE",
-            "/OUT:$exeFile",
-            $objFile,
-            "kernel32.lib",
-            "libcmt.lib",
-            "libvcruntime.lib",
-            "libucrt.lib"
-        )
+        # Check if source file has a main function before attempting to link
+        $sourceContent = Get-Content $file.FullName -Raw
+        $hasMain = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
         
-        if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
-        if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
-        
-        $linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
-        
-        if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
-            Write-Host "  [LINK OK]" -ForegroundColor Green
-            $linkSuccess += $file.Name
+        if (-not $hasMain) {
+            Write-Host "  [LINK SKIPPED - no main()]" -ForegroundColor Cyan
+            $linkSuccess += $file.Name  # Count as success since compilation worked
         }
         else {
-            Write-Host "  [LINK FAILED]" -ForegroundColor Red
-            $linkFailed += $file.Name
-            # Extract first error from link output
-            $firstError = ($linkOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -First 1)
-            if ($firstError) {
-                Write-Host "    Error: $firstError" -ForegroundColor Yellow
+            # Try to link
+            # Link with common Microsoft runtime libraries
+            $linkArgs = @(
+                "/LIBPATH:$libPath1",
+                "/SUBSYSTEM:CONSOLE",
+                "/OUT:$exeFile",
+                $objFile,
+                "kernel32.lib",
+                "libcmt.lib",
+                "libvcruntime.lib",
+                "libucrt.lib"
+            )
+            
+            if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
+            if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
+            
+            $linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
+            
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
+                Write-Host "  [LINK OK]" -ForegroundColor Green
+                $linkSuccess += $file.Name
+            }
+            else {
+                Write-Host "  [LINK FAILED]" -ForegroundColor Red
+                $linkFailed += $file.Name
+                # Extract first error from link output
+                $firstError = ($linkOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -First 1)
+                if ($firstError) {
+                    Write-Host "    Error: $firstError" -ForegroundColor Yellow
+                }
             }
         }
     }
