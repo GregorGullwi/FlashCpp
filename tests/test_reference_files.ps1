@@ -109,7 +109,7 @@ Write-Host ""
 # Expected failures - files that are known to have issues
 # These are typically due to features not yet implemented in FlashCpp
 $expectedLinkFailures = @(
-    "test_puts_stack.cpp"    # Uses printf without extern "C" - C++ name mangling issue
+    # Currently empty - all tests should pass
 )
 
 # Results tracking
