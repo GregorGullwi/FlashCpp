@@ -842,7 +842,7 @@ public:
 		std::cerr << "Added 3 PDATA relocations for function " << mangled_name << std::endl;
 	}
 
-	void add_xdata_relocation(uint32_t xdata_offset, const std::string& handler_name) {
+	void add_xdata_relocation(uint32_t xdata_offset, std::string_view handler_name) {
 		std::cerr << "Adding XDATA relocation at offset " << xdata_offset << " for handler: " << handler_name << std::endl;
 
 		// Get or create the exception handler symbol
@@ -1256,20 +1256,14 @@ public:
 					
 					// pType - RVA to type descriptor (0 for catch-all)
 					uint32_t ptype_offset = static_cast<uint32_t>(xdata.size());
-					if (handler.is_catch_all || handler.type_name.empty()) {
-						// catch(...) - no type descriptor
-						xdata.push_back(0x00);
-						xdata.push_back(0x00);
-						xdata.push_back(0x00);
-						xdata.push_back(0x00);
-					} else {
-						// Type-specific catch - add placeholder and relocation
-						xdata.push_back(0x00);
-						xdata.push_back(0x00);
-						xdata.push_back(0x00);
-						xdata.push_back(0x00);
-						
-						// Add relocation for pType to point to the type descriptor
+					// Add placeholder for pType (4 bytes)
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					
+					if (!handler.is_catch_all && !handler.type_name.empty()) {
+						// Type-specific catch - add relocation for pType to point to the type descriptor
 						std::string mangled_type_name = mangleTypeName(handler.type_name);
 						std::string type_desc_symbol = "??_R0" + mangled_type_name;
 						add_xdata_relocation(xdata_offset + ptype_offset, type_desc_symbol);
@@ -1277,8 +1271,11 @@ public:
 						std::cerr << "  Added pType relocation for handler " << handler_index 
 						          << " to type descriptor '" << type_desc_symbol << "'" << std::endl;
 					}
+					// For catch(...), pType remains 0 (no relocation needed)
 					
-					// catchObjOffset (0 = not used for now)
+					// catchObjOffset - frame offset for caught exception object
+					// TODO: Track and populate exception object frame offset from catch clause
+					// For now, set to 0 (exception object not accessible in catch block)
 					xdata.push_back(0x00);
 					xdata.push_back(0x00);
 					xdata.push_back(0x00);
