@@ -5109,6 +5109,12 @@ private:
 					handler_info.type_index = static_cast<uint32_t>(handler.type_index);
 					handler_info.handler_offset = handler.handler_offset;
 					handler_info.is_catch_all = handler.is_catch_all;
+					
+					// Get type name from gTypeInfo for type descriptor generation
+					if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
+						handler_info.type_name = gTypeInfo[handler.type_index].name_;
+					}
+					
 					block_info.catch_handlers.push_back(handler_info);
 				}
 				try_blocks.push_back(block_info);
@@ -8899,6 +8905,7 @@ private:
 	// ✅ Stack unwinding works via unwind codes in XDATA
 	// ✅ FuncInfo structures generated with try-block maps and catch handlers
 	// ✅ Catch blocks execute for thrown exceptions
+	// ✅ Type-specific exception matching with type descriptors
 	//
 	// What works:
 	// - throw statement properly calls _CxxThrowException with exception object
@@ -8907,19 +8914,25 @@ private:
 	// - Programs terminate properly for uncaught exceptions
 	// - Try/catch blocks with catch handlers execute when exceptions are thrown
 	// - catch(...) catches all exception types
+	// - Type descriptors (??_R0) generated for caught exception types
+	// - Type-specific catch blocks match based on exception type
 	//
-	// Current limitations:
-	// - Type matching uses catch-all behavior (pType = 0) for all catch blocks
-	//   This means any catch clause will catch any exception (like catch(...))
-	// - No type_info descriptors for specific exception types yet
-	// - No support for catching by reference or const
-	// - No destructor unwinding for local objects
+	// Current implementation:
+	// - Type descriptors created in .rdata for each unique exception type
+	// - HandlerType pType field points to appropriate type descriptor
+	// - MSVC name mangling used for built-in types (int, char, double, etc.)
+	// - Simple mangling for class/struct types (V<name>@@)
 	//
-	// For full type-safe exception handling, the following enhancements would be needed:
-	// - Type descriptors with RTTI information for each catch clause type
-	// - Proper type matching in HandlerType entries (pType field)
+	// Limitations:
+	// - No support for catching by reference or const yet (adjectives field is 0)
+	// - No destructor unwinding for local objects yet
+	// - Template type mangling is simplified
+	//
+	// For full C++ exception semantics, the following enhancements could be added:
+	// - Adjectives field for const/reference catch clauses
 	// - IP-to-state mapping for determining active try blocks based on instruction pointer
 	// - Unwind map for calling destructors during stack unwinding
+	// - Full MSVC template type mangling
 	// ============================================================================
 	
 	void handleTryBegin(const IrInstruction& instruction) {

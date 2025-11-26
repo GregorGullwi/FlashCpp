@@ -83,6 +83,7 @@ public:
 		uint32_t type_index;      // Type to catch (0 for catch-all)
 		uint32_t handler_offset;  // Code offset of catch handler relative to function start
 		bool is_catch_all;        // True for catch(...)
+		std::string type_name;    // Name of the caught type (empty for catch-all)
 	};
 
 	// Exception handling information for a try block
@@ -856,6 +857,33 @@ public:
 		std::cerr << "Added XDATA relocation for handler " << handler_name << " at offset " << xdata_offset << std::endl;
 	}
 
+	// Simple type name mangling for exception type descriptors
+	// Converts C++ type names to MSVC-style mangled names
+	std::string mangleTypeName(const std::string& type_name) const {
+		// Simple mapping for built-in types
+		// MSVC type codes: H=int, I=unsigned int, D=char, E=unsigned char, etc.
+		if (type_name == "int") return "H@";
+		if (type_name == "unsigned int") return "I@";
+		if (type_name == "char") return "D@";
+		if (type_name == "unsigned char") return "E@";
+		if (type_name == "short") return "F@";
+		if (type_name == "unsigned short") return "G@";
+		if (type_name == "long") return "J@";
+		if (type_name == "unsigned long") return "K@";
+		if (type_name == "long long") return "_J@";
+		if (type_name == "unsigned long long") return "_K@";
+		if (type_name == "float") return "M@";
+		if (type_name == "double") return "N@";
+		if (type_name == "long double") return "O@";
+		if (type_name == "bool") return "_N@";
+		if (type_name == "void") return "X@";
+		
+		// For class/struct types, use the name directly with @ suffix
+		// This is a simplified approach - full MSVC would encode nested namespaces, templates, etc.
+		// Format: V<name>@@ for struct/class
+		return "V" + type_name + "@@";
+	}
+
 	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
 		std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name
 		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
@@ -1085,6 +1113,57 @@ public:
 			//   int catchObjOffset (frame offset of catch parameter, negative)
 			//   DWORD addressOfHandler (RVA of catch handler code)
 			
+			// First, generate type descriptors for all unique exception types
+			std::unordered_map<std::string, uint32_t> type_descriptor_offsets;
+			
+			for (const auto& try_block : try_blocks) {
+				for (const auto& handler : try_block.catch_handlers) {
+					if (!handler.is_catch_all && !handler.type_name.empty()) {
+						// Check if we've already created a descriptor for this type
+						if (type_descriptor_offsets.find(handler.type_name) == type_descriptor_offsets.end()) {
+							// Generate type descriptor in .rdata section
+							auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+							uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+							
+							// Mangle the type name for the type descriptor symbol
+							std::string mangled_type_name = mangleTypeName(handler.type_name);
+							std::string type_desc_symbol = "??_R0" + mangled_type_name;
+							
+							// Create type descriptor data
+							// Format: vtable_ptr (8 bytes) + spare (8 bytes) + mangled_name (null-terminated)
+							std::vector<char> type_desc_data;
+							
+							// vtable pointer (8 bytes) - null for exception types
+							for (int i = 0; i < 8; ++i) type_desc_data.push_back(0);
+							
+							// spare pointer (8 bytes) - null
+							for (int i = 0; i < 8; ++i) type_desc_data.push_back(0);
+							
+							// mangled name (null-terminated)
+							for (char c : mangled_type_name) type_desc_data.push_back(c);
+							type_desc_data.push_back(0);
+							
+							// Add to .rdata section
+							add_data(type_desc_data, SectionType::RDATA);
+							
+							// Create symbol for the type descriptor
+							auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+							type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+							type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+							type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+							type_desc_sym->set_value(type_desc_offset);
+							
+							std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '" 
+							          << handler.type_name << "' at offset " << type_desc_offset << std::endl;
+							
+							type_descriptor_offsets[handler.type_name] = type_desc_offset;
+						}
+					}
+				}
+			}
+			
+			// Now generate HandlerType entries with proper pType references
+			size_t handler_index = 0;
 			for (const auto& try_block : try_blocks) {
 				for (const auto& handler : try_block.catch_handlers) {
 					// adjectives (0 for simple by-value catch)
@@ -1093,14 +1172,31 @@ public:
 					xdata.push_back(0x00);
 					xdata.push_back(0x00);
 					
-					// pType (0 for catch-all, or would be RVA to type_info)
-					// For now, using 0 for all types to make catch(...) behavior
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
+					// pType - RVA to type descriptor (0 for catch-all)
+					uint32_t ptype_offset = static_cast<uint32_t>(xdata.size());
+					if (handler.is_catch_all || handler.type_name.empty()) {
+						// catch(...) - no type descriptor
+						xdata.push_back(0x00);
+						xdata.push_back(0x00);
+						xdata.push_back(0x00);
+						xdata.push_back(0x00);
+					} else {
+						// Type-specific catch - add placeholder and relocation
+						xdata.push_back(0x00);
+						xdata.push_back(0x00);
+						xdata.push_back(0x00);
+						xdata.push_back(0x00);
+						
+						// Add relocation for pType to point to the type descriptor
+						std::string mangled_type_name = mangleTypeName(handler.type_name);
+						std::string type_desc_symbol = "??_R0" + mangled_type_name;
+						add_xdata_relocation(xdata_offset + ptype_offset, type_desc_symbol);
+						
+						std::cerr << "  Added pType relocation for handler " << handler_index 
+						          << " to type descriptor '" << type_desc_symbol << "'" << std::endl;
+					}
 					
-					// catchObjOffset (0 = not used, since we're doing catch-all behavior)
+					// catchObjOffset (0 = not used for now)
 					xdata.push_back(0x00);
 					xdata.push_back(0x00);
 					xdata.push_back(0x00);
@@ -1112,6 +1208,8 @@ public:
 					xdata.push_back(static_cast<char>((handler_rva >> 8) & 0xFF));
 					xdata.push_back(static_cast<char>((handler_rva >> 16) & 0xFF));
 					xdata.push_back(static_cast<char>((handler_rva >> 24) & 0xFF));
+					
+					handler_index++;
 				}
 			}
 		}
