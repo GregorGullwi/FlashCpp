@@ -87,6 +87,9 @@ public:
 		uint32_t handler_offset;  // Code offset of catch handler relative to function start
 		bool is_catch_all;        // True for catch(...)
 		std::string type_name;    // Name of the caught type (empty for catch-all or when type_index is 0)
+		bool is_const;            // True if caught by const
+		bool is_reference;        // True if caught by lvalue reference
+		bool is_rvalue_reference; // True if caught by rvalue reference
 	};
 
 	// Exception handling information for a try block
@@ -1176,11 +1179,25 @@ public:
 			size_t handler_index = 0;
 			for (const auto& try_block : try_blocks) {
 				for (const auto& handler : try_block.catch_handlers) {
-					// adjectives (0 for simple by-value catch)
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
+					// adjectives - MSVC exception handler flags
+					// 0x01 = const
+					// 0x08 = reference (lvalue reference &)
+					// 0x10 = rvalue reference (&&)
+					uint32_t adjectives = 0;
+					if (handler.is_const) {
+						adjectives |= 0x01;
+					}
+					if (handler.is_reference) {
+						adjectives |= 0x08;
+					}
+					if (handler.is_rvalue_reference) {
+						adjectives |= 0x10;
+					}
+					
+					xdata.push_back(static_cast<char>(adjectives & 0xFF));
+					xdata.push_back(static_cast<char>((adjectives >> 8) & 0xFF));
+					xdata.push_back(static_cast<char>((adjectives >> 16) & 0xFF));
+					xdata.push_back(static_cast<char>((adjectives >> 24) & 0xFF));
 					
 					// pType - RVA to type descriptor (0 for catch-all)
 					uint32_t ptype_offset = static_cast<uint32_t>(xdata.size());
