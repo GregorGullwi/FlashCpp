@@ -2580,16 +2580,14 @@ private:
 				TempVar exception_temp = var_counter.next();
 				
 				// Emit CatchBegin marker with exception type and qualifiers
-				// Operands: [exception_temp, type_index, catch_end_label, is_const, is_reference, is_rvalue_reference]
-				std::vector<IrOperand> catch_operands = {
-					exception_temp, 
-					static_cast<int>(type_index), 
-					catch_end_label,
-					static_cast<int>(type_node.is_const()),
-					static_cast<int>(type_node.is_lvalue_reference()),
-					static_cast<int>(type_node.is_rvalue_reference())
-				};
-				ir_.addInstruction(IrOpcode::CatchBegin, catch_operands, catch_clause.catch_token());
+				CatchBeginOp catch_op;
+				catch_op.exception_temp = exception_temp;
+				catch_op.type_index = type_index;
+				catch_op.catch_end_label = catch_end_label;
+				catch_op.is_const = type_node.is_const();
+				catch_op.is_reference = type_node.is_lvalue_reference();
+				catch_op.is_rvalue_reference = type_node.is_rvalue_reference();
+				ir_.addInstruction(IrInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token()));
 
 				// Add the exception variable to the symbol table for the catch block scope
 				symbol_table.enter_scope(ScopeType::Block);
@@ -2623,9 +2621,14 @@ private:
 				}
 			} else {
 				// catch(...) - catches all exceptions
-				// Operand format: [exception_temp (0 for catch-all), type_index (0 for catch-all), catch_end_label, is_const (0), is_reference (0), is_rvalue_reference (0)]
-				std::vector<IrOperand> catch_operands = {0, 0, catch_end_label, 0, 0, 0};
-				ir_.addInstruction(IrOpcode::CatchBegin, catch_operands, catch_clause.catch_token());
+				CatchBeginOp catch_op;
+				catch_op.exception_temp = TempVar(0);
+				catch_op.type_index = TypeIndex(0);
+				catch_op.catch_end_label = catch_end_label;
+				catch_op.is_const = false;
+				catch_op.is_reference = false;
+				catch_op.is_rvalue_reference = false;
+				ir_.addInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token());
 				symbol_table.enter_scope(ScopeType::Block);
 			}
 

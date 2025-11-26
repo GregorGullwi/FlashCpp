@@ -9007,57 +9007,69 @@ private:
 			
 			CatchHandler handler;
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-			handler.is_const = false;
-			handler.is_reference = false;
-			handler.is_rvalue_reference = false;
 			
-			// The instruction operands are: [exception_temp, type_index, catch_end_label, is_const, is_reference, is_rvalue_reference]
-			if (instruction.getOperandCount() >= 2) {
-				// Get exception temp (operand 0)
-				if (instruction.isOperandType<TempVar>(0)) {
-					handler.exception_temp = instruction.getOperandAs<TempVar>(0);
-				} else {
-					handler.exception_temp = TempVar(0);  // Placeholder for catch-all
-				}
+			// Extract data from typed payload
+			if (instruction.hasTypedPayload()) {
+				const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+				handler.exception_temp = catch_op.exception_temp;
+				handler.type_index = catch_op.type_index;
+				handler.is_const = catch_op.is_const;
+				handler.is_reference = catch_op.is_reference;
+				handler.is_rvalue_reference = catch_op.is_rvalue_reference;
+				handler.is_catch_all = (catch_op.type_index == 0);
+			} else {
+				// Fallback to operand-based extraction for backward compatibility
+				handler.is_const = false;
+				handler.is_reference = false;
+				handler.is_rvalue_reference = false;
 				
-				// Get type index (operand 1)
-				if (instruction.isOperandType<int>(1)) {
-					int type_idx = instruction.getOperandAs<int>(1);
-					if (type_idx == 0) {
-						// catch(...) - catches all
-						handler.is_catch_all = true;
-						handler.type_index = TypeIndex(0);
-					} else if (type_idx > 0) {
-						handler.is_catch_all = false;
-						handler.type_index = static_cast<TypeIndex>(type_idx);
+				if (instruction.getOperandCount() >= 2) {
+					// Get exception temp (operand 0)
+					if (instruction.isOperandType<TempVar>(0)) {
+						handler.exception_temp = instruction.getOperandAs<TempVar>(0);
 					} else {
-						// Negative type_idx is invalid, treat as catch-all
+						handler.exception_temp = TempVar(0);  // Placeholder for catch-all
+					}
+					
+					// Get type index (operand 1)
+					if (instruction.isOperandType<int>(1)) {
+						int type_idx = instruction.getOperandAs<int>(1);
+						if (type_idx == 0) {
+							// catch(...) - catches all
+							handler.is_catch_all = true;
+							handler.type_index = TypeIndex(0);
+						} else if (type_idx > 0) {
+							handler.is_catch_all = false;
+							handler.type_index = static_cast<TypeIndex>(type_idx);
+						} else {
+							// Negative type_idx is invalid, treat as catch-all
+							handler.is_catch_all = true;
+							handler.type_index = TypeIndex(0);
+						}
+					} else {
+						// Default to catch-all if type not specified
 						handler.is_catch_all = true;
 						handler.type_index = TypeIndex(0);
 					}
+					
+					// Get const/reference qualifiers (operands 3, 4, 5 if present)
+					if (instruction.getOperandCount() >= 6) {
+						if (instruction.isOperandType<int>(3)) {
+							handler.is_const = (instruction.getOperandAs<int>(3) != 0);
+						}
+						if (instruction.isOperandType<int>(4)) {
+							handler.is_reference = (instruction.getOperandAs<int>(4) != 0);
+						}
+						if (instruction.isOperandType<int>(5)) {
+							handler.is_rvalue_reference = (instruction.getOperandAs<int>(5) != 0);
+						}
+					}
 				} else {
-					// Default to catch-all if type not specified
+					// No operands - treat as catch-all
 					handler.is_catch_all = true;
 					handler.type_index = TypeIndex(0);
+					handler.exception_temp = TempVar(0);
 				}
-				
-				// Get const/reference qualifiers (operands 3, 4, 5 if present)
-				if (instruction.getOperandCount() >= 6) {
-					if (instruction.isOperandType<int>(3)) {
-						handler.is_const = (instruction.getOperandAs<int>(3) != 0);
-					}
-					if (instruction.isOperandType<int>(4)) {
-						handler.is_reference = (instruction.getOperandAs<int>(4) != 0);
-					}
-					if (instruction.isOperandType<int>(5)) {
-						handler.is_rvalue_reference = (instruction.getOperandAs<int>(5) != 0);
-					}
-				}
-			} else {
-				// No operands - treat as catch-all
-				handler.is_catch_all = true;
-				handler.type_index = TypeIndex(0);
-				handler.exception_temp = TempVar(0);
 			}
 			
 			try_block.catch_handlers.push_back(handler);
