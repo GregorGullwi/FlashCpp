@@ -12343,10 +12343,12 @@ ParseResult Parser::parse_template_declaration() {
 		// Check if there's a function body or just a semicolon
 		if (peek_token().has_value() && peek_token()->value() == ";") {
 			// Just a declaration, consume the semicolon
+			std::cerr << "DEBUG: Found semicolon, consuming it\n";
 			consume_token();
 		} else if (peek_token().has_value() && peek_token()->value() == "{") {
 			// Has a body - save position at the '{' 
 			// This way when we restore, current_token_ will be '{' and we can parse normally
+			std::cerr << "DEBUG: Found opening brace, saving body position\n";
 			TokenPosition body_start = save_token_position();
 			
 			// Store the body position in the function declaration so we can re-parse it later
@@ -12354,6 +12356,9 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Skip over the body (skip_balanced_braces will consume the '{' and everything up to the matching '}')
 			skip_balanced_braces();
+			std::cerr << "DEBUG: Skipped function body\n";
+		} else {
+			std::cerr << "DEBUG: No body or semicolon found, token=" << (peek_token().has_value() ? peek_token()->value() : "EOF") << "\n";
 		}
 
 		decl_result = ParseResult::success(*func_result.node());
@@ -13373,6 +13378,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
 	std::cerr << "DEBUG [depth=" << recursion_depth << "]: Template has " << template_params.size() << " parameters" << std::endl;
+	std::cerr << "DEBUG [depth=" << recursion_depth << "]: func_decl.has_template_body_position()=" << func_decl.has_template_body_position() << std::endl;
 
 	// Step 1: Deduce template arguments from function call arguments
 	// For now, we support simple type parameter deduction
