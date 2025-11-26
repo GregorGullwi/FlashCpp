@@ -4077,17 +4077,19 @@ private:
 			// Build TypeSpecifierNode for this parameter
 			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(paramSize), Token{});
 			
-			// For copy/move constructors: if parameter is the same struct type, it should be a const reference
-			// Copy constructor: Type(const Type& other) -> paramType == Type::Struct and same as struct_name
+			// For copy/move constructors: if parameter is the same struct type, it should be a reference
+			// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
 			// We detect this by checking if paramType is Struct and num_params == 1
+			// NOTE: We don't hardcode const because copy constructors can take non-const references
 			if (num_params == 1 && paramType == Type::Struct) {
-				// This is likely a copy constructor - recreate as const reference
+				// This is likely a copy constructor - recreate as reference (non-const by default)
+				// The actual CV qualifier comes from the function signature, not hardcoded
 				// Look up struct type index to create proper TypeSpecifierNode
 				auto type_it = gTypesByName.find(struct_name);
 				if (type_it != gTypesByName.end()) {
 					TypeIndex struct_type_index = type_it->second->type_index_;
-					param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(paramSize), Token{}, CVQualifier::Const);
-					param_type.set_reference(false);  // lvalue reference (const Type&)
+					param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(paramSize), Token{}, CVQualifier::None);
+					param_type.set_reference(false);  // lvalue reference (Type&)
 				}
 			}
 			
