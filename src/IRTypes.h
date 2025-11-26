@@ -855,6 +855,16 @@ struct IndirectCallOp {
 	std::vector<TypedValue> arguments;   // Arguments with type information
 };
 
+// Catch block begin marker
+struct CatchBeginOp {
+	TempVar exception_temp;       // Temporary holding the exception object
+	TypeIndex type_index;         // Type to catch (0 for catch-all)
+	std::string_view catch_end_label;  // Label to jump to if not matched
+	bool is_const;                // True if caught by const
+	bool is_reference;            // True if caught by lvalue reference  
+	bool is_rvalue_reference;     // True if caught by rvalue reference
+};
+
 // Helper function to format conversion operations for IR output
 inline std::string formatConversionOp(const char* op_name, const ConversionOp& op) {
 	std::ostringstream oss;
