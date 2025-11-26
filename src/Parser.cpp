@@ -13325,10 +13325,106 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 	}
 
-	// Copy the function body if it exists
-	auto orig_body = func_decl.get_definition();
-	if (orig_body.has_value()) {
-		new_func_ref.set_definition(orig_body.value());
+	// Handle the function body
+	// Check if the template has a body position stored for re-parsing
+	if (func_decl.has_template_body_position()) {
+		std::cerr << "DEBUG: Template has body position, re-parsing function body" << std::endl;
+		// Re-parse the function body with template parameters substituted
+		
+		// Temporarily add the concrete types to the type system with template parameter names
+		std::vector<TypeInfo*> temp_type_infos;
+		temp_type_infos.reserve(template_params.size());
+		std::vector<std::string_view> param_names;
+		param_names.reserve(template_params.size());
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			}
+		}
+		
+		for (size_t i = 0; i < param_names.size() && i < template_args.size(); ++i) {
+			std::string_view param_name = param_names[i];
+			Type concrete_type = template_args[i].type_value;
+
+			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			gTypesByName.emplace(type_info.name_, &type_info);
+			temp_type_infos.push_back(&type_info);
+			std::cerr << "DEBUG: Added temp type info for '" << param_name << "' -> type " << static_cast<int>(concrete_type) << std::endl;
+		}
+
+		// Save current position
+		TokenPosition current_pos = save_token_position();
+		std::cerr << "DEBUG: Saved current position, cursor=" << current_pos.cursor_ << std::endl;
+		
+		// Save current parsing context (will be overwritten during template body parsing)
+		const FunctionDeclarationNode* saved_current_function = current_function_;
+
+		// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
+		restore_lexer_position_only(func_decl.template_body_position());
+		std::cerr << "DEBUG: Restored to body position" << std::endl;
+
+		// Set up parsing context for the function
+		gSymbolTable.enter_scope(ScopeType::Function);
+		current_function_ = &new_func_ref;
+
+		// Add parameters to symbol table
+		for (const auto& param : new_func_ref.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& param_decl = param.as<DeclarationNode>();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param);
+				std::cerr << "DEBUG: Added parameter '" << param_decl.identifier_token().value() << "' to symbol table" << std::endl;
+			}
+		}
+
+		std::cerr << "DEBUG: About to call parse_block()" << std::endl;
+		// Parse the function body
+		auto block_result = parse_block();
+		std::cerr << "DEBUG: parse_block() returned, error=" << block_result.is_error() << ", has_value=" << block_result.node().has_value() << std::endl;
+		if (!block_result.is_error() && block_result.node().has_value()) {
+			// After parsing, we need to substitute template parameters in the body
+			// This is essential for features like fold expressions that need AST transformation
+			// Convert template_args to TemplateArgument format for substitution
+			std::vector<TemplateArgument> converted_template_args;
+			converted_template_args.reserve(template_args.size());
+			for (const auto& arg : template_args) {
+				if (arg.kind == TemplateArgument::Kind::Type) {
+					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
+				} else if (arg.kind == TemplateArgument::Kind::Value) {
+					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value));
+				}
+			}
+		
+			ASTNode substituted_body = substituteTemplateParameters(
+				*block_result.node(),
+				template_params,
+				converted_template_args
+			);
+		
+			new_func_ref.set_definition(substituted_body);
+			std::cerr << "DEBUG: Set function definition with substituted body" << std::endl;
+		}
+		
+		// Clean up context
+		current_function_ = nullptr;
+		gSymbolTable.exit_scope();
+
+		// Restore original position (lexer only - keep AST nodes we created)
+		restore_lexer_position_only(current_pos);
+		std::cerr << "DEBUG: Restored original position" << std::endl;
+		
+		// Restore parsing context
+		current_function_ = saved_current_function;
+
+		// Remove temporary type infos
+		for (const auto* type_info : temp_type_infos) {
+			gTypesByName.erase(type_info->name_);
+		}
+	} else {
+		// Copy the function body if it exists (for non-template or already-parsed bodies)
+		auto orig_body = func_decl.get_definition();
+		if (orig_body.has_value()) {
+			new_func_ref.set_definition(orig_body.value());
+		}
 	}
 
 	// Register the instantiation
