@@ -5109,6 +5109,9 @@ private:
 					handler_info.type_index = static_cast<uint32_t>(handler.type_index);
 					handler_info.handler_offset = handler.handler_offset;
 					handler_info.is_catch_all = handler.is_catch_all;
+					handler_info.is_const = handler.is_const;
+					handler_info.is_reference = handler.is_reference;
+					handler_info.is_rvalue_reference = handler.is_rvalue_reference;
 					
 					// Get type name from gTypeInfo for type descriptor generation
 					if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
@@ -8916,20 +8919,25 @@ private:
 	// - catch(...) catches all exception types
 	// - Type descriptors (??_R0) generated for caught exception types
 	// - Type-specific catch blocks match based on exception type
+	// - catch by const (catch(const int&)) supported via adjectives field
+	// - catch by lvalue reference (catch(int&)) supported
+	// - catch by rvalue reference (catch(int&&)) supported
 	//
 	// Current implementation:
 	// - Type descriptors created in .rdata for each unique exception type
 	// - HandlerType pType field points to appropriate type descriptor
 	// - MSVC name mangling used for built-in types (int, char, double, etc.)
 	// - Simple mangling for class/struct types (V<name>@@)
+	// - Adjectives field set for const/reference catch clauses
+	//   - 0x01 = const
+	//   - 0x08 = lvalue reference (&)
+	//   - 0x10 = rvalue reference (&&)
 	//
 	// Limitations:
-	// - No support for catching by reference or const yet (adjectives field is 0)
 	// - No destructor unwinding for local objects yet
 	// - Template type mangling is simplified
 	//
 	// For full C++ exception semantics, the following enhancements could be added:
-	// - Adjectives field for const/reference catch clauses
 	// - IP-to-state mapping for determining active try blocks based on instruction pointer
 	// - Unwind map for calling destructors during stack unwinding
 	// - Full MSVC template type mangling
@@ -8970,8 +8978,11 @@ private:
 			
 			CatchHandler handler;
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			handler.is_const = false;
+			handler.is_reference = false;
+			handler.is_rvalue_reference = false;
 			
-			// The instruction operands are: [exception_temp, type_index, catch_end_label]
+			// The instruction operands are: [exception_temp, type_index, catch_end_label, is_const, is_reference, is_rvalue_reference]
 			if (instruction.getOperandCount() >= 2) {
 				// Get exception temp (operand 0)
 				if (instruction.isOperandType<TempVar>(0)) {
@@ -8999,6 +9010,19 @@ private:
 					// Default to catch-all if type not specified
 					handler.is_catch_all = true;
 					handler.type_index = TypeIndex(0);
+				}
+				
+				// Get const/reference qualifiers (operands 3, 4, 5 if present)
+				if (instruction.getOperandCount() >= 6) {
+					if (instruction.isOperandType<int>(3)) {
+						handler.is_const = (instruction.getOperandAs<int>(3) != 0);
+					}
+					if (instruction.isOperandType<int>(4)) {
+						handler.is_reference = (instruction.getOperandAs<int>(4) != 0);
+					}
+					if (instruction.isOperandType<int>(5)) {
+						handler.is_rvalue_reference = (instruction.getOperandAs<int>(5) != 0);
+					}
 				}
 			} else {
 				// No operands - treat as catch-all
@@ -9529,6 +9553,9 @@ private:
 		uint32_t handler_offset;  // Code offset of catch handler
 		TempVar exception_temp;  // Temporary holding the exception object
 		bool is_catch_all;  // True for catch(...)
+		bool is_const;  // True if caught by const
+		bool is_reference;  // True if caught by lvalue reference
+		bool is_rvalue_reference;  // True if caught by rvalue reference
 	};
 
 	struct TryBlock {

@@ -2579,8 +2579,16 @@ private:
 				// Allocate a temporary for the caught exception
 				TempVar exception_temp = var_counter.next();
 				
-				// Emit CatchBegin marker with exception type
-				std::vector<IrOperand> catch_operands = {exception_temp, static_cast<int>(type_index), catch_end_label};
+				// Emit CatchBegin marker with exception type and qualifiers
+				// Operands: [exception_temp, type_index, catch_end_label, is_const, is_reference, is_rvalue_reference]
+				std::vector<IrOperand> catch_operands = {
+					exception_temp, 
+					static_cast<int>(type_index), 
+					catch_end_label,
+					static_cast<int>(type_node.is_const()),
+					static_cast<int>(type_node.is_lvalue_reference()),
+					static_cast<int>(type_node.is_rvalue_reference())
+				};
 				ir_.addInstruction(IrOpcode::CatchBegin, catch_operands, catch_clause.catch_token());
 
 				// Add the exception variable to the symbol table for the catch block scope
@@ -2615,8 +2623,8 @@ private:
 				}
 			} else {
 				// catch(...) - catches all exceptions
-				// Operand format: [exception_temp (0 for catch-all), type_index (0 for catch-all), catch_end_label]
-				std::vector<IrOperand> catch_operands = {0, 0, catch_end_label};
+				// Operand format: [exception_temp (0 for catch-all), type_index (0 for catch-all), catch_end_label, is_const (0), is_reference (0), is_rvalue_reference (0)]
+				std::vector<IrOperand> catch_operands = {0, 0, catch_end_label, 0, 0, 0};
 				ir_.addInstruction(IrOpcode::CatchBegin, catch_operands, catch_clause.catch_token());
 				symbol_table.enter_scope(ScopeType::Block);
 			}
