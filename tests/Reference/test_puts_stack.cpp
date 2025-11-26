@@ -1,5 +1,7 @@
-int puts(const char* str);
-int printf(const char* format, ...);
+extern "C" {
+    int puts(const char* str);
+    int printf(const char* format, ...);
+}
 
 // Test: Proxy function that forwards to printf
 int my_printf(const char* format, ...) {
