@@ -135,12 +135,16 @@ foreach ($file in $referenceFiles) {
         $compileSuccess += $file.Name
         
         # Try to link
+        # Link with common Microsoft runtime libraries
         $linkArgs = @(
             "/LIBPATH:$libPath1",
             "/SUBSYSTEM:CONSOLE",
             "/OUT:$exeFile",
             $objFile,
-            "kernel32.lib"
+            "kernel32.lib",
+            "libcmt.lib",
+            "libvcruntime.lib",
+            "libucrt.lib"
         )
         
         if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
