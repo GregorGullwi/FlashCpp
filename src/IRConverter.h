@@ -5145,6 +5145,9 @@ private:
 					handler_info.is_reference = handler.is_reference;
 					handler_info.is_rvalue_reference = handler.is_rvalue_reference;
 					
+					// Calculate frame offset for caught exception object
+					handler_info.catch_obj_offset = getStackOffsetFromTempVar(handler.exception_temp);
+					
 					// Get type name from gTypeInfo for type descriptor generation
 					if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
 						handler_info.type_name = gTypeInfo[handler.type_index].name_;

@@ -90,6 +90,7 @@ public:
 		bool is_const;            // True if caught by const
 		bool is_reference;        // True if caught by lvalue reference
 		bool is_rvalue_reference; // True if caught by rvalue reference
+		int32_t catch_obj_offset; // Frame offset where caught exception object is stored (negative RBP offset)
 	};
 
 	// Unwind map entry for destructor calls during exception unwinding
@@ -1273,13 +1274,13 @@ public:
 					}
 					// For catch(...), pType remains 0 (no relocation needed)
 					
-					// catchObjOffset - frame offset for caught exception object
-					// TODO: Track and populate exception object frame offset from catch clause
-					// For now, set to 0 (exception object not accessible in catch block)
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
-					xdata.push_back(0x00);
+					// catchObjOffset - frame offset for caught exception object (RBP-relative)
+					// This is the stack location where the exception object is stored for access in the catch block
+					int32_t catch_offset = handler.catch_obj_offset;
+					xdata.push_back(static_cast<char>(catch_offset & 0xFF));
+					xdata.push_back(static_cast<char>((catch_offset >> 8) & 0xFF));
+					xdata.push_back(static_cast<char>((catch_offset >> 16) & 0xFF));
+					xdata.push_back(static_cast<char>((catch_offset >> 24) & 0xFF));
 					
 					// addressOfHandler - RVA of catch handler (relative to function start)
 					uint32_t handler_rva = function_start + handler.handler_offset;
