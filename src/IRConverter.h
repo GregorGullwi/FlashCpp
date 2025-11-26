@@ -3297,8 +3297,10 @@ private:
 		}
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x89); // MOV r/m64, r64
-		textSectionData.push_back(0x44); // ModR/M: [RSP+disp8], reg
-		textSectionData.push_back(0x24); // SIB: [RSP]
+		// ModR/M: mod=01 (disp8), reg=sourceRegister, r/m=100 (SIB follows)
+		uint8_t modrm = 0x44 | ((static_cast<uint8_t>(sourceRegister) & 0x07) << 3);
+		textSectionData.push_back(modrm);
+		textSectionData.push_back(0x24); // SIB: scale=0, index=RSP(4), base=RSP(4)
 		textSectionData.push_back(static_cast<uint8_t>(displacement));
 	}
 
@@ -3311,9 +3313,10 @@ private:
 		}
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x8D); // LEA
-		uint8_t modrm = 0x44 | ((static_cast<uint8_t>(destinationRegister) & 0x07) << 3); // ModR/M: reg, [RSP+disp8]
+		// ModR/M: mod=01 (disp8), reg=destinationRegister, r/m=100 (SIB follows)
+		uint8_t modrm = 0x44 | ((static_cast<uint8_t>(destinationRegister) & 0x07) << 3);
 		textSectionData.push_back(modrm);
-		textSectionData.push_back(0x24); // SIB: [RSP]
+		textSectionData.push_back(0x24); // SIB: scale=0, index=RSP(4), base=RSP(4)
 		textSectionData.push_back(static_cast<uint8_t>(displacement));
 	}
 
