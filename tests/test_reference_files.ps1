@@ -13,22 +13,33 @@ Write-Host ""
 Write-Host "Date: $(Get-Date)"
 Write-Host ""
 
-# Build the compiler if not built (Windows)
-if (-not (Test-Path "x64\Debug\FlashCpp.exe")) {
-    Write-Host "Building FlashCpp..."
+# Find the FlashCpp compiler executable
+# On GitHub Actions, MSBuild builds FlashCppMSVC.exe
+# Locally, build_flashcpp.bat builds FlashCpp.exe
+$flashCppPath = ""
+if (Test-Path "x64\Debug\FlashCppMSVC.exe") {
+    $flashCppPath = "x64\Debug\FlashCppMSVC.exe"
+} elseif (Test-Path "x64\Debug\FlashCpp.exe") {
+    $flashCppPath = "x64\Debug\FlashCpp.exe"
+} else {
+    Write-Host "FlashCpp not found, building..."
     & .\build_flashcpp.bat
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Failed to build FlashCpp" -ForegroundColor Red
         exit 1
     }
+    if (Test-Path "x64\Debug\FlashCpp.exe") {
+        $flashCppPath = "x64\Debug\FlashCpp.exe"
+    } else {
+        Write-Host "ERROR: FlashCpp.exe not found after build" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Get FlashCpp build info
-if (Test-Path "x64\Debug\FlashCpp.exe") {
-    $buildDate = (Get-Item "x64\Debug\FlashCpp.exe").LastWriteTime
-    Write-Host "FlashCpp built: $buildDate"
-}
-
+$buildDate = (Get-Item $flashCppPath).LastWriteTime
+Write-Host "Using: $flashCppPath"
+Write-Host "Built: $buildDate"
 Write-Host ""
 
 # Find the linker (link.exe) from MSVC
@@ -111,7 +122,7 @@ foreach ($file in $referenceFiles) {
     if (Test-Path $exeFile) { Remove-Item $exeFile -Force }
     
     # Compile with FlashCpp
-    $compileOutput = & .\x64\Debug\FlashCpp.exe $file.FullName 2>&1 | Out-String
+    $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
     
     if ($compileOutput -match "Object file written successfully" -and (Test-Path $objFile)) {
         Write-Host "  [COMPILE OK]" -ForegroundColor Green
