@@ -3931,7 +3931,56 @@ ParseResult Parser::parse_typedef_declaration()
 	std::string_view struct_name_for_typedef;
 	TypeIndex struct_type_index = 0;
 
-	if (peek_token().has_value() &&
+	// Check if this is an inline enum definition: typedef enum { ... } alias;
+	// or typedef enum _Name { ... } alias;
+	bool is_inline_enum = false;
+	std::string enum_name_for_typedef_storage;
+	std::string_view enum_name_for_typedef;
+	TypeIndex enum_type_index = 0;
+
+	if (peek_token().has_value() && peek_token()->value() == "enum") {
+		// Look ahead to see if this is an inline definition
+		// Pattern 1: typedef enum { ... } alias;
+		// Pattern 2: typedef enum _Name { ... } alias;
+		// Pattern 3: typedef enum class Name { ... } alias;
+		auto next_pos = current_token_;
+		consume_token(); // consume 'enum'
+
+		// Check for 'class' or 'struct' keyword (enum class / enum struct)
+		bool has_class_keyword = false;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    (peek_token()->value() == "class" || peek_token()->value() == "struct")) {
+			has_class_keyword = true;
+			consume_token(); // consume 'class' or 'struct'
+		}
+
+		// Check if next token is '{' (anonymous enum) or identifier followed by ':' or '{'
+		if (peek_token().has_value() && peek_token()->value() == "{") {
+			// Pattern 1: typedef enum { ... } alias;
+			is_inline_enum = true;
+			enum_name_for_typedef_storage = "__anonymous_typedef_enum_" + std::to_string(ast_nodes_.size());
+			enum_name_for_typedef = enum_name_for_typedef_storage;
+		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+			auto enum_name_token = peek_token();
+			consume_token(); // consume enum name
+
+			if (peek_token().has_value() && 
+			    (peek_token()->value() == "{" || peek_token()->value() == ":")) {
+				// Pattern 2: typedef enum _Name { ... } alias;
+				// or typedef enum _Name : type { ... } alias;
+				is_inline_enum = true;
+				enum_name_for_typedef = enum_name_token->value();
+			} else {
+				// Not an inline definition, restore position and parse normally
+				current_token_ = next_pos;
+				is_inline_enum = false;
+			}
+		} else {
+			// Not an inline definition, restore position and parse normally
+			current_token_ = next_pos;
+			is_inline_enum = false;
+		}
+	} else if (peek_token().has_value() &&
 	    (peek_token()->value() == "struct" || peek_token()->value() == "class")) {
 		// Look ahead to see if this is an inline definition
 		// Pattern 1: typedef struct { ... } alias;
@@ -3970,7 +4019,137 @@ ParseResult Parser::parse_typedef_declaration()
 	ASTNode type_node;
 	TypeSpecifierNode type_spec;
 
-	if (is_inline_struct) {
+	if (is_inline_enum) {
+		// Parse the inline enum definition
+		// We need to manually parse the enum body since we already consumed the keyword and name
+
+		// Register the enum type early
+		TypeInfo& enum_type_info = add_enum_type(std::string(enum_name_for_typedef));
+		enum_type_index = enum_type_info.type_index_;
+
+		// Create enum declaration node
+		// Note: We don't know if it's scoped yet - we'll determine from the parsing context
+		bool is_scoped = false; // C-style typedef enum is typically not scoped
+		auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name_for_typedef, is_scoped);
+
+		// Check for underlying type specification (: type)
+		if (peek_token().has_value() && peek_token()->value() == ":") {
+			consume_token(); // consume ':'
+
+			// Parse the underlying type
+			auto underlying_type_result = parse_type_specifier();
+			if (underlying_type_result.is_error()) {
+				return underlying_type_result;
+			}
+
+			if (auto underlying_type_node = underlying_type_result.node()) {
+				enum_ref.set_underlying_type(*underlying_type_node);
+			}
+		}
+
+		// Expect opening brace
+		if (!consume_punctuator("{")) {
+			return ParseResult::error("Expected '{' in enum definition", *peek_token());
+		}
+
+		// Create enum type info
+		auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name_for_typedef), is_scoped);
+
+		// Determine underlying type (default is int)
+		Type underlying_type = Type::Int;
+		unsigned char underlying_size = 32;
+		if (enum_ref.has_underlying_type()) {
+			const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+			underlying_type = type_spec_node.type();
+			underlying_size = type_spec_node.size_in_bits();
+		}
+
+		// Parse enumerators
+		int64_t next_value = 0;
+		while (peek_token().has_value() && peek_token()->value() != "}") {
+			// Parse enumerator name
+			auto enumerator_name_token = consume_token();
+			if (!enumerator_name_token.has_value() || enumerator_name_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected enumerator name in enum", enumerator_name_token.value_or(Token()));
+			}
+
+			int64_t value = next_value;
+			std::optional<ASTNode> enumerator_value;
+
+			// Check for explicit value
+			if (peek_token().has_value() && peek_token()->value() == "=") {
+				consume_token(); // consume '='
+
+				// Parse constant expression
+				auto value_expr_result = parse_expression();
+				if (value_expr_result.is_error()) {
+					return value_expr_result;
+				}
+
+				// Extract value from expression (simplified - assumes numeric literal)
+				if (auto value_node = value_expr_result.node()) {
+					enumerator_value = *value_node;
+					
+					if (value_node->is<ExpressionNode>()) {
+						const auto& expr = value_node->as<ExpressionNode>();
+						if (std::holds_alternative<NumericLiteralNode>(expr)) {
+							const auto& lit = std::get<NumericLiteralNode>(expr);
+							const auto& val = lit.value();
+							if (std::holds_alternative<unsigned long long>(val)) {
+								value = static_cast<int64_t>(std::get<unsigned long long>(val));
+							} else if (std::holds_alternative<double>(val)) {
+								value = static_cast<int64_t>(std::get<double>(val));
+							}
+						}
+					}
+				}
+			}
+
+			// Add enumerator
+			auto enumerator_node = emplace_node<EnumeratorNode>(*enumerator_name_token, enumerator_value);
+			enum_ref.add_enumerator(enumerator_node);
+			enum_info->addEnumerator(std::string(enumerator_name_token->value()), value);
+
+			// For unscoped enums, add enumerator to current scope as a constant
+			// This allows unscoped enum values to be used without qualification
+			if (!is_scoped) {
+				auto enum_type_node = emplace_node<TypeSpecifierNode>(
+					Type::Enum, enum_type_index, underlying_size, *enumerator_name_token);
+				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, *enumerator_name_token);
+				gSymbolTable.insert(enumerator_name_token->value(), enumerator_decl);
+			}
+
+			next_value = value + 1;
+
+			// Check for comma (more enumerators) or closing brace
+			if (peek_token().has_value() && peek_token()->value() == ",") {
+				consume_token(); // consume ','
+				// Allow trailing comma before '}'
+				if (peek_token().has_value() && peek_token()->value() == "}") {
+					break;
+				}
+			} else {
+				break;
+			}
+		}
+
+		// Expect closing brace
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' after enum enumerators", *peek_token());
+		}
+
+		// Store enum info in type info
+		enum_type_info.setEnumInfo(std::move(enum_info));
+
+		// Add enum declaration to AST
+		gSymbolTable.insert(enum_name_for_typedef, enum_node);
+		ast_nodes_.push_back(enum_node);
+
+		// Create type specifier for the typedef
+		type_spec = TypeSpecifierNode(Type::Enum, TypeQualifier::None, underlying_size, *typedef_keyword);
+		type_spec.set_type_index(enum_type_index);
+		type_node = emplace_node<TypeSpecifierNode>(type_spec);
+	} else if (is_inline_struct) {
 		// Parse the inline struct definition
 		// We need to manually parse the struct body since we already consumed the keyword and name
 
