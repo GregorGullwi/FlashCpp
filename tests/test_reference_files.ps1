@@ -1,6 +1,10 @@
 # Reference Files Test Script for FlashCpp (PowerShell)
 # This script compiles and links all .cpp files in tests/Reference/ and reports any failures
 
+# Suppress PowerShell errors from native commands writing to stderr
+# (FlashCpp writes version info to stderr which is not an error)
+$ErrorActionPreference = "SilentlyContinue"
+
 # Navigate to the repository root (relative to this script's location)
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
