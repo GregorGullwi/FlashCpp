@@ -78,6 +78,20 @@ public:
 			: return_type(ret_type), parameter_types(std::move(params)) {}
 	};
 
+	// Exception handling information for a catch handler
+	struct CatchHandlerInfo {
+		uint32_t type_index;      // Type to catch (0 for catch-all)
+		uint32_t handler_offset;  // Code offset of catch handler relative to function start
+		bool is_catch_all;        // True for catch(...)
+	};
+
+	// Exception handling information for a try block
+	struct TryBlockInfo {
+		uint32_t try_start_offset;  // Code offset where try block starts
+		uint32_t try_end_offset;    // Code offset where try block ends
+		std::vector<CatchHandlerInfo> catch_handlers;
+	};
+
 	ObjectFileWriter() {
 		std::cerr << "Creating simplified ObjectFileWriter for debugging..." << std::endl;
 
@@ -904,7 +918,7 @@ public:
 		debug_builder_.finalizeCurrentFunction();
 	}
 
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size) {
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}) {
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
 			if (existing == mangled_name) {
@@ -951,22 +965,156 @@ public:
 		xdata.push_back(0x00);
 		xdata.push_back(0x00);
 		
-		// NOTE: For full C++ exception handling, we would need to add a FuncInfo structure here
-		// containing try-block maps, catch-block descriptors, and type descriptors.
-		// However, this is complex and requires:
-		// - IP-to-state mapping for all try blocks
-		// - Type descriptor pointers for each catch clause
-		// - Catch block handler addresses
-		// - Unwind map for destructor calls during stack unwinding
-		//
-		// Current implementation:
-		// - Exceptions are thrown via _CxxThrowException (proper behavior)
-		// - Stack unwinding will work via PDATA/XDATA unwind codes
-		// - __CxxFrameHandler3 is referenced but without FuncInfo, catch blocks won't execute
-		// - Programs with uncaught exceptions will terminate properly instead of returning 0
-		//
-		// For now, this is sufficient to fix the immediate issue (throw actually throws).
-		// Full catch block support would require implementing the FuncInfo data structures.
+		// Add FuncInfo structure for C++ exception handling
+		// This contains information about try blocks and catch handlers
+		// FuncInfo structure (simplified):
+		//   DWORD magicNumber (0x19930520 or 0x19930521 for x64)
+		//   int maxState
+		//   DWORD pUnwindMap (RVA)
+		//   DWORD nTryBlocks
+		//   DWORD pTryBlockMap (RVA)
+		//   DWORD nIPMapEntries
+		//   DWORD pIPToStateMap (RVA)
+		//   ... (other fields for EH4)
+		
+		if (!try_blocks.empty()) {
+			uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
+			
+			// Magic number for FuncInfo4 (0x19930522 = EH4 with continuation addresses)
+			// Using 0x19930521 = EH3 style which is simpler
+			uint32_t magic = 0x19930521;
+			xdata.push_back(static_cast<char>(magic & 0xFF));
+			xdata.push_back(static_cast<char>((magic >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((magic >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((magic >> 24) & 0xFF));
+			
+			// maxState - maximum state number (for now, number of try blocks)
+			uint32_t max_state = static_cast<uint32_t>(try_blocks.size());
+			xdata.push_back(static_cast<char>(max_state & 0xFF));
+			xdata.push_back(static_cast<char>((max_state >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((max_state >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((max_state >> 24) & 0xFF));
+			
+			// pUnwindMap - RVA to unwind map (0 for now - no destructors to unwind)
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			
+			// nTryBlocks - number of try blocks
+			uint32_t num_try_blocks = static_cast<uint32_t>(try_blocks.size());
+			xdata.push_back(static_cast<char>(num_try_blocks & 0xFF));
+			xdata.push_back(static_cast<char>((num_try_blocks >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((num_try_blocks >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((num_try_blocks >> 24) & 0xFF));
+			
+			// pTryBlockMap - RVA to try block map (will be right after FuncInfo)
+			uint32_t tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size()) + 8; // +8 for remaining FuncInfo fields
+			xdata.push_back(static_cast<char>(tryblock_map_offset & 0xFF));
+			xdata.push_back(static_cast<char>((tryblock_map_offset >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((tryblock_map_offset >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((tryblock_map_offset >> 24) & 0xFF));
+			
+			// nIPMapEntries - number of IP-to-state map entries (0 for simple implementation)
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			
+			// pIPToStateMap - RVA to IP-to-state map (0 for simple implementation)
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			xdata.push_back(0x00);
+			
+			// Now add TryBlockMap entries
+			// Each TryBlockMapEntry:
+			//   int tryLow (state number)
+			//   int tryHigh (state number)
+			//   int catchHigh (state number after try)
+			//   int nCatches
+			//   DWORD pHandlerArray (RVA)
+			
+			uint32_t handler_array_base = tryblock_map_offset + (num_try_blocks * 20); // 20 bytes per TryBlockMapEntry
+			
+			for (size_t i = 0; i < try_blocks.size(); ++i) {
+				const auto& try_block = try_blocks[i];
+				
+				// tryLow (state when entering try block)
+				uint32_t try_low = static_cast<uint32_t>(i);
+				xdata.push_back(static_cast<char>(try_low & 0xFF));
+				xdata.push_back(static_cast<char>((try_low >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((try_low >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((try_low >> 24) & 0xFF));
+				
+				// tryHigh (state when exiting try block)
+				uint32_t try_high = static_cast<uint32_t>(i);
+				xdata.push_back(static_cast<char>(try_high & 0xFF));
+				xdata.push_back(static_cast<char>((try_high >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((try_high >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((try_high >> 24) & 0xFF));
+				
+				// catchHigh (state after handling exception)
+				uint32_t catch_high = static_cast<uint32_t>(i) + 1;
+				xdata.push_back(static_cast<char>(catch_high & 0xFF));
+				xdata.push_back(static_cast<char>((catch_high >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((catch_high >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((catch_high >> 24) & 0xFF));
+				
+				// nCatches
+				uint32_t num_catches = static_cast<uint32_t>(try_block.catch_handlers.size());
+				xdata.push_back(static_cast<char>(num_catches & 0xFF));
+				xdata.push_back(static_cast<char>((num_catches >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((num_catches >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((num_catches >> 24) & 0xFF));
+				
+				// pHandlerArray - RVA to handler array for this try block
+				uint32_t handler_array_offset = handler_array_base;
+				xdata.push_back(static_cast<char>(handler_array_offset & 0xFF));
+				xdata.push_back(static_cast<char>((handler_array_offset >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((handler_array_offset >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((handler_array_offset >> 24) & 0xFF));
+				
+				handler_array_base += num_catches * 16; // 16 bytes per HandlerType entry
+			}
+			
+			// Now add HandlerType arrays for each try block
+			// Each HandlerType:
+			//   DWORD adjectives (0x01 = const, 0x08 = reference, 0 = by-value)
+			//   DWORD pType (RVA to type descriptor, 0 for catch-all)
+			//   int catchObjOffset (frame offset of catch parameter, negative)
+			//   DWORD addressOfHandler (RVA of catch handler code)
+			
+			for (const auto& try_block : try_blocks) {
+				for (const auto& handler : try_block.catch_handlers) {
+					// adjectives (0 for simple by-value catch)
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					
+					// pType (0 for catch-all, or would be RVA to type_info)
+					// For now, using 0 for all types to make catch(...) behavior
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					
+					// catchObjOffset (0 = not used, since we're doing catch-all behavior)
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					xdata.push_back(0x00);
+					
+					// addressOfHandler - RVA of catch handler (relative to function start)
+					uint32_t handler_rva = function_start + handler.handler_offset;
+					xdata.push_back(static_cast<char>(handler_rva & 0xFF));
+					xdata.push_back(static_cast<char>((handler_rva >> 8) & 0xFF));
+					xdata.push_back(static_cast<char>((handler_rva >> 16) & 0xFF));
+					xdata.push_back(static_cast<char>((handler_rva >> 24) & 0xFF));
+				}
+			}
+		}
 		
 		// Add the XDATA to the section
 		add_data(xdata, SectionType::XDATA);
