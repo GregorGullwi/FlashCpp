@@ -3288,6 +3288,35 @@ private:
 		textSectionData.push_back(modrm);
 	}
 
+	// Helper to emit MOV [RSP+disp8], reg
+	void emitMovToRSPDisp8(X64Register sourceRegister, int8_t displacement) {
+		// MOV [RSP+disp8], reg
+		uint8_t rex = 0x48; // REX.W for 64-bit
+		if (static_cast<uint8_t>(sourceRegister) >= 8) {
+			rex |= 0x04; // REX.R for extended register
+		}
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x89); // MOV r/m64, r64
+		textSectionData.push_back(0x44); // ModR/M: [RSP+disp8], reg
+		textSectionData.push_back(0x24); // SIB: [RSP]
+		textSectionData.push_back(static_cast<uint8_t>(displacement));
+	}
+
+	// Helper to emit LEA reg, [RSP+disp8]
+	void emitLeaFromRSPDisp8(X64Register destinationRegister, int8_t displacement) {
+		// LEA reg, [RSP+disp8]
+		uint8_t rex = 0x48; // REX.W for 64-bit
+		if (static_cast<uint8_t>(destinationRegister) >= 8) {
+			rex |= 0x04; // REX.R for extended register
+		}
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x8D); // LEA
+		uint8_t modrm = 0x44 | ((static_cast<uint8_t>(destinationRegister) & 0x07) << 3); // ModR/M: reg, [RSP+disp8]
+		textSectionData.push_back(modrm);
+		textSectionData.push_back(0x24); // SIB: [RSP]
+		textSectionData.push_back(static_cast<uint8_t>(displacement));
+	}
+
 	void emitRet() {
 		textSectionData.push_back(0xC3); // RET
 	}
@@ -9097,26 +9126,14 @@ private:
 		}
 		
 		// Store exception value on stack at [RSP+32] (after shadow space)
-		// MOV [RSP+32], RAX
-		textSectionData.push_back(0x48); // REX.W
-		textSectionData.push_back(0x89); // MOV
-		textSectionData.push_back(0x44); // ModR/M: [RSP+disp8]
-		textSectionData.push_back(0x24); // SIB: [RSP]
-		textSectionData.push_back(32);   // disp8 = 32
+		emitMovToRSPDisp8(X64Register::RAX, 32);
 		
 		// Set up arguments for _CxxThrowException
 		// RCX (first argument) = pointer to exception object = RSP+32
-		// LEA RCX, [RSP+32]
-		textSectionData.push_back(0x48); // REX.W
-		textSectionData.push_back(0x8D); // LEA
-		textSectionData.push_back(0x4C); // ModR/M: RCX, [RSP+disp8]
-		textSectionData.push_back(0x24); // SIB: [RSP]
-		textSectionData.push_back(32);   // disp8 = 32
+		emitLeaFromRSPDisp8(X64Register::RCX, 32);
 		
 		// RDX (second argument) = NULL (no throw info)
-		// XOR EDX, EDX
-		textSectionData.push_back(0x33); // XOR
-		textSectionData.push_back(0xD2); // EDX, EDX
+		emitXorRegReg(X64Register::RDX);
 		
 		// Call _CxxThrowException
 		// This function never returns (it's [[noreturn]])
@@ -9138,14 +9155,10 @@ private:
 		
 		// Set up arguments for _CxxThrowException to rethrow current exception
 		// RCX (first argument) = NULL (rethrow current exception object)
-		// XOR ECX, ECX
-		textSectionData.push_back(0x33); // XOR
-		textSectionData.push_back(0xC9); // ECX, ECX
+		emitXorRegReg(X64Register::RCX);
 		
 		// RDX (second argument) = NULL (rethrow uses current throw info)
-		// XOR EDX, EDX
-		textSectionData.push_back(0x33); // XOR
-		textSectionData.push_back(0xD2); // EDX, EDX
+		emitXorRegReg(X64Register::RDX);
 		
 		// Call _CxxThrowException
 		// This function never returns (it's [[noreturn]])
