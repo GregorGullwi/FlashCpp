@@ -279,6 +279,8 @@ inline void install() {
 #include <unistd.h>
 #include <execinfo.h>
 #include <sys/utsname.h>
+#include <dlfcn.h>
+#include <cxxabi.h>
 
 namespace CrashHandler {
 
@@ -286,11 +288,15 @@ namespace CrashHandler {
 constexpr int kMaxStackFrames = 64;
 constexpr int kMaxPathLength = 512;
 constexpr int kTimestampBufferSize = 64;
+constexpr int kMaxSymbolLength = 256;
+constexpr int kMaxCommandLength = 640;  // kMaxPathLength + room for addr2line command
 
 // Preallocated static buffers - avoid memory allocation during crash handling
 // This is important for signal safety and handling out-of-memory crashes
 static char s_filenameBuffer[kMaxPathLength];
 static char s_timestampBuffer[kTimestampBufferSize];
+static char s_commandBuffer[kMaxCommandLength];
+static char s_demangledBuffer[kMaxSymbolLength];
 
 // Get signal name as a human-readable string
 inline const char* getSignalName(int sig) {
@@ -343,6 +349,114 @@ inline void getReadableTimestamp(char* buffer, size_t bufferSize) {
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
     strftime(buffer, bufferSize, "%Y-%m-%d %H:%M:%S", &timeinfo);
+}
+
+// Demangle a C++ symbol name. Returns the demangled name or the original if demangling fails.
+// Note: Uses static buffer, not thread-safe but acceptable in crash handler context.
+inline const char* demangleSymbol(const char* mangledName) {
+    if (mangledName == nullptr || mangledName[0] == '\0') {
+        return "???";
+    }
+    
+    int status = 0;
+    size_t length = kMaxSymbolLength;
+    char* result = abi::__cxa_demangle(mangledName, s_demangledBuffer, &length, &status);
+    
+    if (status == 0 && result != nullptr) {
+        return result;
+    }
+    return mangledName;
+}
+
+// Get source file and line information from an address using addr2line.
+// Writes the result to the provided buffer. Returns true if successful.
+// Note: popen is not strictly async-signal-safe, but is commonly used in crash handlers.
+inline bool getSourceLocation(const char* executablePath, void* addr, char* buffer, size_t bufferSize) {
+    if (executablePath == nullptr || addr == nullptr) {
+        buffer[0] = '\0';
+        return false;
+    }
+    
+    // Build addr2line command
+    snprintf(s_commandBuffer, kMaxCommandLength, 
+             "addr2line -e \"%s\" %p 2>/dev/null", executablePath, addr);
+    
+    FILE* pipe = popen(s_commandBuffer, "r");
+    if (pipe == nullptr) {
+        buffer[0] = '\0';
+        return false;
+    }
+    
+    // Read the output (expected format: "filename:line" or "??:?" on failure)
+    if (fgets(buffer, static_cast<int>(bufferSize), pipe) == nullptr) {
+        pclose(pipe);
+        buffer[0] = '\0';
+        return false;
+    }
+    pclose(pipe);
+    
+    // Remove trailing newline
+    size_t len = strlen(buffer);
+    if (len > 0 && buffer[len - 1] == '\n') {
+        buffer[len - 1] = '\0';
+    }
+    
+    // Check if addr2line found the source (returns "??:?" if not found)
+    if (strcmp(buffer, "??:?") == 0 || strcmp(buffer, "??:0") == 0) {
+        buffer[0] = '\0';
+        return false;
+    }
+    
+    return true;
+}
+
+// Write a single stack frame to the file with symbol and source information
+inline void writeStackFrame(FILE* file, int frameNum, void* addr) {
+    Dl_info dlInfo;
+    
+    fprintf(file, "[%2d] ", frameNum);
+    
+    if (dladdr(addr, &dlInfo)) {
+        // Calculate relative address for position-independent executables
+        void* relativeAddr = reinterpret_cast<void*>(
+            reinterpret_cast<char*>(addr) - reinterpret_cast<char*>(dlInfo.dli_fbase));
+        
+        // Print function name (demangled if possible)
+        if (dlInfo.dli_sname != nullptr) {
+            fprintf(file, "%s", demangleSymbol(dlInfo.dli_sname));
+        } else {
+            fprintf(file, "%p", addr);
+        }
+        
+        // Try to get source file and line using addr2line
+        if (dlInfo.dli_fname != nullptr) {
+            char sourceLocation[kMaxPathLength];
+            if (getSourceLocation(dlInfo.dli_fname, relativeAddr, sourceLocation, sizeof(sourceLocation))) {
+                fprintf(file, " (%s)", sourceLocation);
+            }
+        }
+        
+        // Print offset from symbol if available
+        if (dlInfo.dli_saddr != nullptr) {
+            ptrdiff_t offset = reinterpret_cast<char*>(addr) - reinterpret_cast<char*>(dlInfo.dli_saddr);
+            if (offset != 0) {
+                fprintf(file, " + 0x%tx", offset);
+            }
+        }
+        
+        // Print module name
+        if (dlInfo.dli_fname != nullptr) {
+            // Extract just the filename from the path
+            const char* moduleName = strrchr(dlInfo.dli_fname, '/');
+            moduleName = moduleName ? moduleName + 1 : dlInfo.dli_fname;
+            fprintf(file, " [%s]", moduleName);
+        }
+    } else {
+        // dladdr failed, just print the address
+        fprintf(file, "%p", addr);
+    }
+    
+    fprintf(file, "\n");
 }
 
 // Signal handler - called when the process receives a fatal signal
@@ -399,19 +513,9 @@ inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
     int frameCount = backtrace(stackFrames, kMaxStackFrames);
     
     if (frameCount > 0) {
-        // Note: backtrace_symbols allocates memory, but this is acceptable
-        // as it's only for the log file. If allocation fails, we fall back to addresses.
-        char** symbols = backtrace_symbols(stackFrames, frameCount);
-        if (symbols != nullptr) {
-            for (int i = 0; i < frameCount; ++i) {
-                fprintf(file, "[%2d] %s\n", i, symbols[i]);
-            }
-            free(symbols);
-        } else {
-            // backtrace_symbols failed (likely OOM), just print addresses
-            for (int i = 0; i < frameCount; ++i) {
-                fprintf(file, "[%2d] %p\n", i, stackFrames[i]);
-            }
+        // Write each stack frame with resolved symbol and source information
+        for (int i = 0; i < frameCount; ++i) {
+            writeStackFrame(file, i, stackFrames[i]);
         }
     } else {
         fprintf(file, "No stack frames captured.\n");
