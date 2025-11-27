@@ -2387,6 +2387,8 @@ ParseResult Parser::parse_struct_declaration()
 					delayed_function_bodies_.push_back({
 						nullptr,  // func_node (not used for constructors)
 						body_start,
+						{},       // initializer_list_start (not used - already parsed)
+						false,    // has_initializer_list
 						struct_name,
 						struct_type_index,
 						&struct_ref,
@@ -2526,6 +2528,8 @@ ParseResult Parser::parse_struct_declaration()
 				delayed_function_bodies_.push_back({
 					nullptr,  // func_node (not used for destructors)
 					body_start,
+					{},       // initializer_list_start (not used)
+					false,    // has_initializer_list
 					struct_name,
 					struct_type_index,
 					&struct_ref,
@@ -2702,6 +2706,8 @@ ParseResult Parser::parse_struct_declaration()
 				delayed_function_bodies_.push_back({
 					&member_func_ref,
 					body_start,
+					{},       // initializer_list_start (not used)
+					false,    // has_initializer_list
 					struct_name,
 					struct_type_index,
 					&struct_ref,
@@ -3501,6 +3507,17 @@ ParseResult Parser::parse_struct_declaration()
 					delayed.struct_node
 				});
 
+				// Add member functions to symbol table so they can be called within the body
+				// This implements C++20's complete-class context for inline member function bodies
+				if (delayed.struct_node) {
+					for (const auto& member_func : delayed.struct_node->member_functions()) {
+						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+						}
+					}
+				}
+
 				for (const auto& param : delayed.ctor_node->parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
 						const auto& param_decl = param.as<DeclarationNode>();
@@ -3532,6 +3549,17 @@ ParseResult Parser::parse_struct_declaration()
 					delayed.struct_node
 				});
 
+				// Add member functions to symbol table so they can be called within the body
+				// This implements C++20's complete-class context for inline member function bodies
+				if (delayed.struct_node) {
+					for (const auto& member_func : delayed.struct_node->member_functions()) {
+						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+						}
+					}
+				}
+
 				auto block_result = parse_block();
 				if (block_result.is_error()) {
 					current_template_param_names_.clear();
@@ -3560,6 +3588,17 @@ ParseResult Parser::parse_struct_declaration()
 					delayed.struct_type_index,
 					delayed.struct_node
 				});
+
+				// Add member functions to symbol table so they can be called within the body
+				// This implements C++20's complete-class context for inline member function bodies
+				if (delayed.struct_node) {
+					for (const auto& member_func : delayed.struct_node->member_functions()) {
+						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+						}
+					}
+				}
 
 				// Add parameters to symbol table
 				for (const auto& param : delayed.func_node->parameter_nodes()) {
@@ -3629,6 +3668,17 @@ ParseResult Parser::parse_struct_declaration()
 				delayed.struct_node
 			});
 
+			// Add member functions to symbol table so they can be called within the body
+			// This implements C++20's complete-class context for inline member function bodies
+			if (delayed.struct_node) {
+				for (const auto& member_func : delayed.struct_node->member_functions()) {
+					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+					}
+				}
+			}
+
 			// Add parameters to symbol table
 			for (const auto& param : delayed.ctor_node->parameter_nodes()) {
 				if (param.is<DeclarationNode>()) {
@@ -3669,6 +3719,17 @@ ParseResult Parser::parse_struct_declaration()
 				delayed.struct_node
 			});
 
+			// Add member functions to symbol table so they can be called within the body
+			// This implements C++20's complete-class context for inline member function bodies
+			if (delayed.struct_node) {
+				for (const auto& member_func : delayed.struct_node->member_functions()) {
+					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+					}
+				}
+			}
+
 			// Parse the destructor body
 			auto block_result = parse_block();
 			if (block_result.is_error()) {
@@ -3702,6 +3763,17 @@ ParseResult Parser::parse_struct_declaration()
 				delayed.struct_type_index,
 				delayed.struct_node
 			});
+
+			// Add member functions to symbol table so they can be called within the body
+			// This implements C++20's complete-class context for inline member function bodies
+			if (delayed.struct_node) {
+				for (const auto& member_func : delayed.struct_node->member_functions()) {
+					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+					}
+				}
+			}
 
 			// Add parameters to symbol table
 			for (const auto& param : delayed.func_node->parameter_nodes()) {
@@ -8210,6 +8282,27 @@ ParseResult Parser::parse_primary_expression()
 				}
 			}
 
+			// Check if this is a member function call (identifier not found but matches a member function)
+			// This handles the complete-class context where member functions declared later can be called
+			if (!member_function_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
+				const auto& context = member_function_context_stack_.back();
+				const StructDeclarationNode* struct_node = context.struct_node;
+				if (struct_node) {
+					// Check if this identifier matches any member function in the struct
+					for (const auto& member_func : struct_node->member_functions()) {
+						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+							if (func_decl.decl_node().identifier_token().value() == idenfifier_token.value()) {
+								// Found matching member function - add it to symbol table and set identifierType
+								gSymbolTable.insert(idenfifier_token.value(), member_func.function_declaration);
+								identifierType = member_func.function_declaration;
+								break;
+							}
+						}
+					}
+				}
+			}
+
 			// Check if this is a function call or constructor call (forward reference)
 			// Identifier already consumed at line 1621
 			if (consume_punctuator("("sv)) {
@@ -8345,8 +8438,9 @@ ParseResult Parser::parse_primary_expression()
 				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, idenfifier_token);
 
-				// Add to symbol table as a forward declaration
-				gSymbolTable.insert(idenfifier_token.value(), forward_decl);
+				// Add to GLOBAL symbol table as a forward declaration
+				// Using insertGlobal ensures it persists after scope exits
+				gSymbolTable.insertGlobal(idenfifier_token.value(), forward_decl);
 				identifierType = forward_decl;
 
 				if (!peek_token().has_value())
@@ -11752,6 +11846,8 @@ ParseResult Parser::parse_template_declaration() {
 						delayed_function_bodies_.push_back({
 							&member_func_ref,
 							body_start,
+							{},       // initializer_list_start (not used)
+							false,    // has_initializer_list
 							instantiated_name,
 							struct_type_info.type_index_,
 							&struct_ref,

@@ -118,9 +118,6 @@ $expectedCompileFailures = @(
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
     "test_constexpr_var.cpp",              # constexpr variable with cast parsing issue
     "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
-    "test_delayed_parsing_constructor.cpp", # Delayed parsing symbol lookup issue
-    "test_delayed_parsing_member_func.cpp", # Delayed parsing symbol lookup issue
-    "test_delayed_parsing_multiple.cpp",   # Delayed parsing symbol lookup issue
     "test_exceptions_basic.cpp",           # Exception handling not yet supported
     "test_exceptions_nested.cpp",          # Exception handling not yet supported
     "test_fold_expressions.cpp",           # Fold expressions not yet supported
