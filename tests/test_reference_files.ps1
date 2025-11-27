@@ -121,7 +121,6 @@ $expectedCompileFailures = @(
     "test_exceptions_nested.cpp",          # Exception handling not yet supported
     "test_fold_expressions.cpp",           # Fold expressions not yet supported
     "test_func_ptr_nullptr_simple.cpp",    # Function pointer nullptr handling issue
-    "test_inheritance_basic.cpp",          # Inheritance codegen issues
     "test_lambda_capture_simple.cpp",      # Lambda capture codegen issues
     "test_lambda_captures_comprehensive.cpp", # Lambda capture codegen issues
     "test_lambda_no_capture.cpp",          # Lambda codegen issues
