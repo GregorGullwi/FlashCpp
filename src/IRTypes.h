@@ -1283,14 +1283,8 @@ public:
 				}
 				oss << arg.size_in_bits << " ";
 		
-				// Value
-				if (std::holds_alternative<unsigned long long>(arg.value)) {
-					oss << std::get<unsigned long long>(arg.value);
-				} else if (std::holds_alternative<TempVar>(arg.value)) {
-					oss << '%' << std::get<TempVar>(arg.value).var_number;
-				} else if (std::holds_alternative<std::string_view>(arg.value)) {
-					oss << '%' << std::get<std::string_view>(arg.value);
-				}
+				// Value - use the helper function that handles all types including double
+				printTypedValue(oss, arg);
 			}
 	
 			oss << ")";
