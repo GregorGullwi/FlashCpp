@@ -1495,6 +1495,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		const Token& identifier_token = decl_node.identifier_token();
+		std::string_view func_name = identifier_token.value();
 		
 		// C++20 Abbreviated Function Templates: Check if any parameter has auto type
 		// If so, convert this function to an implicit function template
@@ -1517,19 +1518,23 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// If we have auto parameters, convert to abbreviated function template
 			if (!auto_params.empty()) {
 				// Create synthetic template parameters for each auto parameter
-				// Each auto becomes a unique template type parameter: T1, T2, etc.
+				// Each auto becomes a unique template type parameter: _T0, _T1, etc.
 				std::vector<ASTNode> template_params;
 				std::vector<std::string_view> template_param_names;
 				
+				// Use a static vector for string storage to ensure string_view lifetime
+				// The index within this function starts at 0 for consistent naming
+				static std::vector<std::string> synthetic_name_storage;
+				
 				for (size_t i = 0; i < auto_params.size(); ++i) {
-					// Generate synthetic parameter name like "_AbbrevT0", "_AbbrevT1", etc.
+					// Generate synthetic parameter name like "_T0", "_T1", etc.
 					// Using underscore prefix to avoid conflicts with user-defined names
-					static std::vector<std::string> synthetic_names;
-					synthetic_names.push_back("_AbbrevT" + std::to_string(synthetic_names.size()));
-					std::string_view param_name = synthetic_names.back();
+					// Index is relative to this function's auto params, not global
+					synthetic_name_storage.push_back("_T" + std::to_string(i));
+					std::string_view param_name = synthetic_name_storage.back();
 					
-					// Create a synthetic token for the parameter
-					Token param_token = auto_params[i].second;  // Reuse position from auto param
+					// Use the auto parameter's token for position/error reporting
+					Token param_token = auto_params[i].second;
 					
 					// Create a type template parameter node
 					auto param_node = emplace_node<TemplateParameterNode>(param_name, param_token);
@@ -1545,13 +1550,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				);
 				
 				// Register the template in the template registry
-				gTemplateRegistry.registerTemplate(identifier_token.value(), template_func_node);
+				gTemplateRegistry.registerTemplate(func_name, template_func_node);
 				
 				// Also register the template parameter names for lookup
-				gTemplateRegistry.registerTemplateParameters(identifier_token.value(), template_param_names);
+				gTemplateRegistry.registerTemplateParameters(func_name, template_param_names);
 				
 				// Add the template function to the symbol table
-				gSymbolTable.insert(identifier_token.value(), template_func_node);
+				gSymbolTable.insert(func_name, template_func_node);
 				
 				// Set template param names for parsing body (for template parameter recognition)
 				current_template_param_names_ = template_param_names;
@@ -1564,13 +1569,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				}
 				
 				// Has a body - save position at the '{' for delayed parsing during instantiation
+				// Note: set_template_body_position is on FunctionDeclarationNode, which is the
+				// underlying node inside TemplateFunctionDeclarationNode - this is consistent
+				// with how regular template functions store their body position
 				if (peek_token().has_value() && peek_token()->value() == "{") {
 					TokenPosition body_start = save_token_position();
-					
-					// Store the body position in the function declaration
 					func_decl.set_template_body_position(body_start);
-					
-					// Skip over the body (skip_balanced_braces will consume the '{' and everything up to matching '}')
 					skip_balanced_braces();
 				}
 				
@@ -1582,7 +1586,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Insert the FunctionDeclarationNode (which contains parameter info for overload resolution)
 		// instead of just the DeclarationNode
 		if (auto func_node = function_definition_result.node()) {
-			if (!gSymbolTable.insert(identifier_token.value(), *func_node)) {
+			if (!gSymbolTable.insert(func_name, *func_node)) {
 				// Note: With overloading support, insert() now allows multiple functions with same name
 				// It only returns false for non-function duplicate symbols
 				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
