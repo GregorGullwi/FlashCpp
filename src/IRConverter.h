@@ -2967,7 +2967,14 @@ private:
 
 	// Helper function to allocate stack space for a temporary variable
 	int allocateStackSlotForTempVar(int32_t index) {
-		auto stack_offset = getStackOffsetFromTempVar(TempVar(index));
+		TempVar tempVar(index);
+		// First check if this TempVar is already allocated
+		auto it = variable_scopes.back().identifier_offset.find(tempVar.name());
+		if (it != variable_scopes.back().identifier_offset.end()) {
+			return it->second;  // Already allocated, return existing offset
+		}
+		
+		auto stack_offset = getStackOffsetFromTempVar(tempVar);
 		// Note: stack_offset should be within allocated space (scope_stack_space <= stack_offset <= 0)
 		// However, during code generation, constructors and other operations may create additional
 		// TempVars beyond what was pre-calculated. The fallback calculation in getStackOffsetFromTempVar
@@ -2978,6 +2985,11 @@ private:
 			variable_scopes.back().scope_stack_space = stack_offset;
 		}
 		assert(variable_scopes.back().scope_stack_space <= stack_offset && stack_offset <= 0);
+		
+		// Register the TempVar's offset in identifier_offset map so subsequent lookups
+		// return the same offset even if scope_stack_space changes
+		variable_scopes.back().identifier_offset[tempVar.name()] = stack_offset;
+		
 		return stack_offset;
 	}
 
@@ -4875,7 +4887,8 @@ private:
 		pending_global_relocations_.push_back({reloc_offset, std::string(global_name), IMAGE_REL_AMD64_REL32});
 
 		// Store the loaded value to the stack
-		int result_offset = getStackOffsetFromTempVar(result_temp);
+		// Use allocateStackSlotForTempVar to ensure scope_stack_space is extended if needed
+		int result_offset = allocateStackSlotForTempVar(result_temp.var_number);
 		textSectionData.push_back(0x89); // MOV r/m32, r32
 		if (result_offset >= -128 && result_offset <= 127) {
 			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
