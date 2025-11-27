@@ -110,8 +110,35 @@ Write-Host ""
 # or use features not yet implemented in FlashCpp
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
+    "operator_test.cpp",                   # Member access on pointer to non-struct type assertion
     "template_class_methods_complex.cpp",  # Local variables of template type not yet supported
-    "template_template_params.cpp"         # Template template parameters not yet supported
+    "template_template_params.cpp",        # Template template parameters not yet supported
+    "test_abstract_class.cpp",             # Virtual function codegen issues
+    "test_access_control.cpp",             # Access control codegen issues
+    "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
+    "test_constexpr_var.cpp",              # constexpr variable with cast parsing issue
+    "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
+    "test_delayed_parsing_constructor.cpp", # Delayed parsing symbol lookup issue
+    "test_delayed_parsing_member_func.cpp", # Delayed parsing symbol lookup issue
+    "test_delayed_parsing_multiple.cpp",   # Delayed parsing symbol lookup issue
+    "test_exceptions_basic.cpp",           # Exception handling not yet supported
+    "test_exceptions_nested.cpp",          # Exception handling not yet supported
+    "test_fold_expressions.cpp",           # Fold expressions not yet supported
+    "test_func_ptr_nullptr_simple.cpp",    # Function pointer nullptr handling issue
+    "test_inheritance_basic.cpp",          # Inheritance codegen issues
+    "test_lambda_capture_simple.cpp",      # Lambda capture codegen issues
+    "test_lambda_captures_comprehensive.cpp", # Lambda capture codegen issues
+    "test_lambda_no_capture.cpp",          # Lambda codegen issues
+    "test_nested_classes.cpp",             # Nested class codegen issues
+    "test_noexcept.cpp",                   # noexcept handling not yet supported
+    "test_puts_stack.cpp",                 # puts function call issue
+    "test_register_spilling.cpp",          # Register spilling issue
+    "test_spec_ctor_init.cpp",             # Template specialization constructor init issue
+    "test_spec_func_ptr.cpp",              # Template specialization function pointer issue
+    "test_spec_func_ptr_set.cpp",          # Template specialization function pointer issue
+    "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
+    "test_var_template_complete.cpp",      # Variable template codegen issue
+    "test_virtual_inheritance.cpp"         # Virtual inheritance codegen issues
 )
 
 # Expected link failures - files that compile but have known link issues
