@@ -402,6 +402,7 @@ typedef signed long long   int64_t;
 
 //! @name COFF Symbol Table, Storage Class (symbol.storage_class)
 //! @{
+#ifndef IMAGE_SYM_CLASS_END_OF_FUNCTION    // We assume if the first one isn't defined, none of them are
 #define IMAGE_SYM_CLASS_END_OF_FUNCTION   -1 //!< Special symbol representing end of function, for debugging purposes.
 #define IMAGE_SYM_CLASS_NULL               0 //!< No storage class assigned.
 #define IMAGE_SYM_CLASS_AUTOMATIC          1 //!< Automatic (stack) variable. The Value field specifies stack frame offset.
@@ -427,6 +428,7 @@ typedef signed long long   int64_t;
 #define IMAGE_SYM_CLASS_FILE             103 //!< Used by Microsoft tools, as well as traditional COFF format, for the source-file symbol record. The symbol is followed by auxiliary records that name the file.
 #define IMAGE_SYM_CLASS_SECTION          104 //!< Definition of a section (Microsoft tools use STATIC storage class instead).
 #define IMAGE_SYM_CLASS_WEAK_EXTERNAL    105 //!< Weak external
+#endif
 
 //! @}
 
