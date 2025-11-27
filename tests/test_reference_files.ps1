@@ -132,8 +132,7 @@ $expectedCompileFailures = @(
     "test_spec_func_ptr.cpp",              # Template specialization function pointer issue
     "test_spec_func_ptr_set.cpp",          # Template specialization function pointer issue
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
-    "test_var_template_complete.cpp",      # Variable template codegen issue
-    "test_virtual_inheritance.cpp"         # Virtual inheritance codegen issues
+    "test_var_template_complete.cpp"       # Variable template codegen issue
 )
 
 # Expected link failures - files that compile but have known link issues
