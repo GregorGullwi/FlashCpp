@@ -297,6 +297,11 @@ public:
 				continue;
 			}
 			
+			// Skip pattern structs - they're templates and shouldn't generate code
+			if (type_name.find("_pattern_") != std::string::npos) {
+				continue;
+			}
+			
 			// Skip if we've already processed this TypeInfo pointer
 			// (same struct can be registered under multiple keys in gTypesByName)
 			if (processed_type_infos_.count(type_info) > 0) {
