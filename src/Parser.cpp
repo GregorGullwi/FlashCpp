@@ -7823,7 +7823,7 @@ ParseResult Parser::parse_primary_expression()
 										std::string_view element_name = StringBuilder()
 											.append(base_name)
 											.append("_")
-											.append(static_cast<int>(i))
+											.append(i)
 											.commit();
 										
 										if (gSymbolTable.lookup(element_name).has_value()) {
@@ -7840,7 +7840,7 @@ ParseResult Parser::parse_primary_expression()
 											std::string_view element_name = StringBuilder()
 												.append(base_name)
 												.append("_")
-												.append(static_cast<int>(i))
+												.append(i)
 												.commit();
 											
 											Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
@@ -8288,31 +8288,34 @@ ParseResult Parser::parse_primary_expression()
 								
 								// Try to find pack_name_0, pack_name_1, etc. in the symbol table
 								size_t pack_size = 0;
-								std::string base_name(pack_name);
 								
+								StringBuilder sb;
 								for (size_t i = 0; i < 100; ++i) {  // reasonable limit
 									// Use StringBuilder to create a persistent string
-									std::string_view element_name = StringBuilder()
-										.append(base_name)
+									std::string_view element_name = sb
+										.append(pack_name)
 										.append("_")
-										.append(static_cast<int>(i))
-										.commit();
+										.append(i)
+										.preview();
 									
 									if (gSymbolTable.lookup(element_name).has_value()) {
 										++pack_size;
 									} else {
 										break;
 									}
+
+									sb.reset();
 								}
+								sb.reset();
 								
 								if (pack_size > 0) {
 									// Add each pack element as a separate argument
 									for (size_t i = 0; i < pack_size; ++i) {
 										// Use StringBuilder to create a persistent string for the token
-										std::string_view element_name = StringBuilder()
-											.append(base_name)
+										std::string_view element_name = sb
+											.append(pack_name)
 											.append("_")
-											.append(static_cast<int>(i))
+											.append(i)
 											.commit();
 										
 										Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
@@ -8568,31 +8571,34 @@ ParseResult Parser::parse_primary_expression()
 									std::string_view pack_name = ident_node.name();
 									// Try to find pack_name_0, pack_name_1, etc. in the symbol table
 									size_t pack_size = 0;
-									std::string base_name(pack_name);
 									
+									StringBuilder sb;
 									for (size_t i = 0; i < 100; ++i) {  // reasonable limit
 										// Use StringBuilder to create a persistent string
-										std::string_view element_name = StringBuilder()
-											.append(base_name)
+										std::string_view element_name = sb
+											.append(pack_name)
 											.append("_")
-											.append(static_cast<int>(i))
-											.commit();
-										
+											.append(i)
+											.preview();
+									
 										if (gSymbolTable.lookup(element_name).has_value()) {
 											++pack_size;
 										} else {
 											break;
 										}
+
+										sb.reset();
 									}
+									sb.reset();
 									
 									if (pack_size > 0) {
 										// Add each pack element as a separate argument
 										for (size_t i = 0; i < pack_size; ++i) {
 											// Use StringBuilder to create a persistent string for the token
-											std::string_view element_name = StringBuilder()
-												.append(base_name)
+											std::string_view element_name = sb
+												.append(pack_name)
 												.append("_")
-												.append(static_cast<int>(i))
+												.append(i)
 												.commit();
 											
 											Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
@@ -13850,7 +13856,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 					StringBuilder param_name_builder;
 					param_name_builder.append(param_decl.identifier_token().value());
 					param_name_builder.append('_');
-					param_name_builder.append(static_cast<int>(arg_type_index));
+					param_name_builder.append(arg_type_index);
 					std::string_view param_name = param_name_builder.commit();
 					
 					Token param_token(Token::Type::Identifier, 
@@ -15381,7 +15387,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								
 								// Create a constant expression with the pack size
 								// Use StringBuilder to create a persistent string_view
-								std::string_view pack_size_str = StringBuilder().append(std::to_string(pack_size)).commit();
+								std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
 								Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
 								auto num_literal = emplace_node<ExpressionNode>(
 									NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
@@ -16452,7 +16458,7 @@ ASTNode Parser::substituteTemplateParameters(
 				StringBuilder param_name_builder;
 				param_name_builder.append(fold.pack_name());
 				param_name_builder.append('_');
-				param_name_builder.append(static_cast<int>(i));
+				param_name_builder.append(i);
 				std::string_view param_name = param_name_builder.commit();
 		
 				Token param_token(Token::Type::Identifier, param_name,

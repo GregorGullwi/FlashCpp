@@ -95,7 +95,7 @@ public:
         return *this;
     }
 
-    StringBuilder& append(int value) {
+    StringBuilder& append(int64_t value) {
         char buf[32];
         auto [ptr, ec] = std::to_chars(std::begin(buf), std::end(buf), value);
         if (ec == std::errc{}) {
@@ -104,7 +104,7 @@ public:
         return *this;
     }
 
-    StringBuilder& append(int64_t value) {
+    StringBuilder& append(uint64_t value) {
         char buf[32];
         auto [ptr, ec] = std::to_chars(std::begin(buf), std::end(buf), value);
         if (ec == std::errc{}) {
@@ -121,7 +121,11 @@ public:
         return append(c);
     }
 
-    StringBuilder& operator+=(int value) {
+    StringBuilder& operator+=(int64_t value) {
+        return append(value);
+    }
+
+    StringBuilder& operator+=(uint64_t value) {
         return append(value);
     }
 
@@ -132,6 +136,15 @@ public:
         std::string_view return_str(buf_start_, len);
         buf_start_ = write_ptr_ = chunk_->current_ptr();
         return return_str;
+    }
+
+    std::string_view preview() {
+        size_t len = write_ptr_ - buf_start_;
+        return std::string_view(buf_start_, len);
+    }
+
+    void reset() {
+        buf_start_ = write_ptr_ = chunk_->current_ptr();
     }
 
 private:

@@ -1740,9 +1740,9 @@ private:
 	// Generate unique labels for this if statement
 	static size_t if_counter = 0;
 	StringBuilder then_sb, else_sb, end_sb;
-	then_sb.append("if_then_").append(static_cast<int>(if_counter));
-	else_sb.append("if_else_").append(static_cast<int>(if_counter));
-	end_sb.append("if_end_").append(static_cast<int>(if_counter));
+	then_sb.append("if_then_").append(if_counter);
+	else_sb.append("if_else_").append(if_counter);
+	end_sb.append("if_end_").append(if_counter);
 	std::string_view then_label = then_sb.commit();
 	std::string_view else_label = else_sb.commit();
 	std::string_view end_label = end_sb.commit();
@@ -1808,10 +1808,10 @@ private:
 		// Generate unique labels for this for loop
 		static size_t for_counter = 0;
 		StringBuilder start_sb, body_sb, inc_sb, end_sb;
-		start_sb.append("for_start_").append(static_cast<int>(for_counter));
-		body_sb.append("for_body_").append(static_cast<int>(for_counter));
-		inc_sb.append("for_increment_").append(static_cast<int>(for_counter));
-		end_sb.append("for_end_").append(static_cast<int>(for_counter));
+		start_sb.append("for_start_").append(for_counter);
+		body_sb.append("for_body_").append(for_counter);
+		inc_sb.append("for_increment_").append(for_counter);
+		end_sb.append("for_end_").append(for_counter);
 		std::string_view loop_start_label = start_sb.commit();
 		std::string_view loop_body_label = body_sb.commit();
 		std::string_view loop_increment_label = inc_sb.commit();
@@ -1881,9 +1881,9 @@ private:
 		// Generate unique labels for this while loop
 		static size_t while_counter = 0;
 		StringBuilder start_sb, body_sb, end_sb;
-		start_sb.append("while_start_").append(static_cast<int>(while_counter));
-		body_sb.append("while_body_").append(static_cast<int>(while_counter));
-		end_sb.append("while_end_").append(static_cast<int>(while_counter));
+		start_sb.append("while_start_").append(while_counter);
+		body_sb.append("while_body_").append(while_counter);
+		end_sb.append("while_end_").append(while_counter);
 		std::string_view loop_start_label = start_sb.commit();
 		std::string_view loop_body_label = body_sb.commit();
 		std::string_view loop_end_label = end_sb.commit();
@@ -1941,9 +1941,9 @@ private:
 		// Generate unique labels for this do-while loop
 		static size_t do_while_counter = 0;
 		StringBuilder start_sb, condition_sb, end_sb;
-		start_sb.append("do_while_start_").append(static_cast<int>(do_while_counter));
-		condition_sb.append("do_while_condition_").append(static_cast<int>(do_while_counter));
-		end_sb.append("do_while_end_").append(static_cast<int>(do_while_counter));
+		start_sb.append("do_while_start_").append(do_while_counter);
+		condition_sb.append("do_while_condition_").append(do_while_counter);
+		end_sb.append("do_while_end_").append(do_while_counter);
 		std::string_view loop_start_label = start_sb.commit();
 		std::string_view loop_condition_label = condition_sb.commit();
 		std::string_view loop_end_label = end_sb.commit();
@@ -1994,8 +1994,8 @@ private:
 		// Generate unique labels for this switch statement
 		static size_t switch_counter = 0;
 		StringBuilder end_sb, default_sb;
-		end_sb.append("switch_end_").append(static_cast<int>(switch_counter));
-		default_sb.append("switch_default_").append(static_cast<int>(switch_counter));
+		end_sb.append("switch_end_").append(switch_counter);
+		default_sb.append("switch_default_").append(switch_counter);
 		std::string_view switch_end_label = end_sb.commit();
 		std::string_view default_label = default_sb.commit();
 		switch_counter++;
@@ -2029,7 +2029,7 @@ private:
 		block.get_statements().visit([&](const ASTNode& stmt) {
 			if (stmt.is<CaseLabelNode>()) {
 				StringBuilder case_sb;
-				case_sb.append("switch_case_").append(static_cast<int>(switch_counter - 1)).append("_").append(static_cast<int>(case_index));
+				case_sb.append("switch_case_").append(switch_counter - 1).append("_").append(case_index);
 				std::string_view case_label = case_sb.commit();
 				case_labels.push_back({case_label, stmt.as<CaseLabelNode>().get_case_value()});
 				case_index++;
@@ -2058,7 +2058,7 @@ private:
 
 			// Branch to case label if equal, otherwise check next case
 			StringBuilder next_check_sb;
-			next_check_sb.append("switch_check_").append(static_cast<int>(switch_counter - 1)).append("_").append(static_cast<int>(check_index + 1));
+			next_check_sb.append("switch_check_").append(switch_counter - 1).append("_").append(check_index + 1);
 			std::string_view next_check_label = next_check_sb.commit();
 
 			CondBranchOp cond_branch;
@@ -2091,7 +2091,7 @@ private:
 			if (stmt.is<CaseLabelNode>()) {
 			const CaseLabelNode& case_node = stmt.as<CaseLabelNode>();
 			StringBuilder case_sb;
-			case_sb.append("switch_case_").append(static_cast<int>(switch_counter - 1)).append("_").append(static_cast<int>(case_index));
+			case_sb.append("switch_case_").append(switch_counter - 1).append("_").append(case_index);
 			std::string_view case_label = case_sb.commit();
 
 			// Case label
@@ -2145,19 +2145,19 @@ private:
 		static size_t ranged_for_counter = 0;
 		
 		StringBuilder start_sb;
-		start_sb.append("ranged_for_start_").append(static_cast<int>(ranged_for_counter));
+		start_sb.append("ranged_for_start_").append(ranged_for_counter);
 		std::string_view loop_start_label = start_sb.commit();
 		
 		StringBuilder body_sb;
-		body_sb.append("ranged_for_body_").append(static_cast<int>(ranged_for_counter));
+		body_sb.append("ranged_for_body_").append(ranged_for_counter);
 		std::string_view loop_body_label = body_sb.commit();
 		
 		StringBuilder increment_sb;
-		increment_sb.append("ranged_for_increment_").append(static_cast<int>(ranged_for_counter));
+		increment_sb.append("ranged_for_increment_").append(ranged_for_counter);
 		std::string_view loop_increment_label = increment_sb.commit();
 		
 		StringBuilder end_sb;
-		end_sb.append("ranged_for_end_").append(static_cast<int>(ranged_for_counter));
+		end_sb.append("ranged_for_end_").append(ranged_for_counter);
 		std::string_view loop_end_label = end_sb.commit();
 		
 		ranged_for_counter++;
@@ -2239,12 +2239,12 @@ private:
 		// Create begin/end pointer variable names
 		StringBuilder sb_begin;
 		sb_begin.append("__range_begin_");
-		sb_begin.append(static_cast<int>(counter));
+		sb_begin.append(counter);
 		std::string_view begin_var_name = sb_begin.commit();
 
 		StringBuilder sb_end;
 		sb_end.append("__range_end_");
-		sb_end.append(static_cast<int>(counter));
+		sb_end.append(counter);
 		std::string_view end_var_name = sb_end.commit();
 
 		Token begin_token(Token::Type::Identifier, begin_var_name, 0, 0, 0);
@@ -2407,12 +2407,12 @@ private:
 		// Create iterator variables: auto __begin = range.begin(), __end = range.end()
 		StringBuilder sb_begin;
 		sb_begin.append("__range_begin_");
-		sb_begin.append(static_cast<int>(counter));
+		sb_begin.append(counter);
 		std::string_view begin_var_name = sb_begin.commit();
 
 		StringBuilder sb_end;
 		sb_end.append("__range_end_");
-		sb_end.append(static_cast<int>(counter));
+		sb_end.append(counter);
 		std::string_view end_var_name = sb_end.commit();
 
 		// Get return type from begin() - should be a pointer type
@@ -4141,9 +4141,9 @@ private:
 		// Generate unique labels for this ternary
 		static size_t ternary_counter = 0;
 		StringBuilder true_sb, false_sb, end_sb;
-		true_sb.append("ternary_true_").append(static_cast<int>(ternary_counter));
-		false_sb.append("ternary_false_").append(static_cast<int>(ternary_counter));
-		end_sb.append("ternary_end_").append(static_cast<int>(ternary_counter));
+		true_sb.append("ternary_true_").append(ternary_counter);
+		false_sb.append("ternary_false_").append(ternary_counter);
+		end_sb.append("ternary_end_").append(ternary_counter);
 		std::string_view true_label = true_sb.commit();
 		std::string_view false_label = false_sb.commit();
 		std::string_view end_label = end_sb.commit();
