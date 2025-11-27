@@ -19,6 +19,7 @@
 #include "CodeGen.h"
 #include "StackString.h"
 #include "IRTypes.h"
+#include "CrashHandler.h"
 
 // Global debug flag
 bool g_enable_debug_output = false;
@@ -45,6 +46,9 @@ struct PhaseTimer {
 };
 
 int main(int argc, char *argv[]) {
+    // Install crash handler for automatic crash logging with stack traces
+    CrashHandler::install();
+
     auto total_start = std::chrono::high_resolution_clock::now();
 
     CompileContext context;
