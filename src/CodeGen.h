@@ -924,51 +924,60 @@ private:
 			auto static_member_type_it = gTypesByName.find(std::string(node.name()));
 			if (static_member_type_it != gTypesByName.end()) {
 				const TypeInfo* type_info = static_member_type_it->second;
-				const StructTypeInfo* struct_info = type_info->getStructInfo();
-				if (struct_info) {
-					for (const auto& static_member : struct_info->static_members) {
-						// Build the qualified name for deduplication using type_info->name_
-						// This ensures consistency with generateStaticMemberDeclarations() which uses
-						// the type name from gTypesByName iterator (important for template instantiations)
-						std::string qualified_name = type_info->name_ + "::" + static_member.name;
-						
-						// Skip if already emitted
-						if (emitted_static_members_.count(qualified_name) > 0) {
-							continue;
-						}
-						emitted_static_members_.insert(qualified_name);
+				
+				// Skip if we've already processed this TypeInfo pointer
+				// (same struct can be registered under multiple keys in gTypesByName)
+				if (processed_type_infos_.count(type_info) > 0) {
+					// Already processed in generateStaticMemberDeclarations() or earlier visit
+				} else {
+					processed_type_infos_.insert(type_info);
+					
+					const StructTypeInfo* struct_info = type_info->getStructInfo();
+					if (struct_info) {
+						for (const auto& static_member : struct_info->static_members) {
+							// Build the qualified name for deduplication using type_info->name_
+							// This ensures consistency with generateStaticMemberDeclarations() which uses
+							// the type name from gTypesByName iterator (important for template instantiations)
+							std::string qualified_name = type_info->name_ + "::" + static_member.name;
+							
+							// Skip if already emitted
+							if (emitted_static_members_.count(qualified_name) > 0) {
+								continue;
+							}
+							emitted_static_members_.insert(qualified_name);
 
-						GlobalVariableDeclOp op;
-						op.type = static_member.type;
-						op.size_in_bits = static_cast<int>(static_member.size * 8);
-						op.var_name = qualified_name;
+							GlobalVariableDeclOp op;
+							op.type = static_member.type;
+							op.size_in_bits = static_cast<int>(static_member.size * 8);
+							op.var_name = qualified_name;
 
-						// Check if static member has an initializer
-						op.is_initialized = static_member.initializer.has_value();
-						if (op.is_initialized) {
-							// Evaluate the initializer expression
-							auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
-							// Add only the initializer value (init_operands[2] is the value)
-							if (init_operands.size() >= 3) {
-								// Convert IrOperand to IrValue
-								if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-									op.init_value = std::get<unsigned long long>(init_operands[2]);
-								} else if (std::holds_alternative<double>(init_operands[2])) {
-									op.init_value = std::get<double>(init_operands[2]);
-								} else if (std::holds_alternative<TempVar>(init_operands[2])) {
-									op.init_value = std::get<TempVar>(init_operands[2]);
-								} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-									op.init_value = std::get<std::string_view>(init_operands[2]);
+							// Check if static member has an initializer
+							op.is_initialized = static_member.initializer.has_value();
+							if (op.is_initialized) {
+								// Evaluate the initializer expression
+								auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
+								// Add only the initializer value (init_operands[2] is the value)
+								if (init_operands.size() >= 3) {
+									// Convert IrOperand to IrValue
+									if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+										op.init_value = std::get<unsigned long long>(init_operands[2]);
+									} else if (std::holds_alternative<double>(init_operands[2])) {
+										op.init_value = std::get<double>(init_operands[2]);
+									} else if (std::holds_alternative<TempVar>(init_operands[2])) {
+										op.init_value = std::get<TempVar>(init_operands[2]);
+									} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+										op.init_value = std::get<std::string_view>(init_operands[2]);
+									} else {
+										// Fallback to zero if type not recognized
+										op.init_value = 0ULL;
+									}
 								} else {
-									// Fallback to zero if type not recognized
+									// Fallback to zero if initializer evaluation failed
 									op.init_value = 0ULL;
 								}
-							} else {
-								// Fallback to zero if initializer evaluation failed
-								op.init_value = 0ULL;
 							}
+							ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
 						}
-						ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
 					}
 				}
 			}
