@@ -1,0 +1,32 @@
+=== FlashCpp Crash Report ===
+
+Timestamp: 2025-11-27 12:20:29
+Signal: 6 (SIGABRT (Abort))
+Fault Address: 0x3e900001248
+
+=== Stack Trace ===
+
+[ 0] ./x64/Debug/FlashCpp(+0x1ce850) [0x55dcf83ea850]
+[ 1] /lib/x86_64-linux-gnu/libc.so.6(+0x45330) [0x7f7d19245330]
+[ 2] /lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x11c) [0x7f7d1929eb2c]
+[ 3] /lib/x86_64-linux-gnu/libc.so.6(gsignal+0x1e) [0x7f7d1924527e]
+[ 4] /lib/x86_64-linux-gnu/libc.so.6(abort+0xdf) [0x7f7d192288ff]
+[ 5] /lib/x86_64-linux-gnu/libc.so.6(+0x2881b) [0x7f7d1922881b]
+[ 6] /lib/x86_64-linux-gnu/libc.so.6(+0x3b517) [0x7f7d1923b517]
+[ 7] ./x64/Debug/FlashCpp(+0x2e637c) [0x55dcf850237c]
+[ 8] ./x64/Debug/FlashCpp(+0x2b836f) [0x55dcf84d436f]
+[ 9] ./x64/Debug/FlashCpp(+0x1cb545) [0x55dcf83e7545]
+[10] ./x64/Debug/FlashCpp(+0x1bde1b) [0x55dcf83d9e1b]
+[11] /lib/x86_64-linux-gnu/libc.so.6(+0x2a1ca) [0x7f7d1922a1ca]
+[12] /lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x8b) [0x7f7d1922a28b]
+[13] ./x64/Debug/FlashCpp(+0x133e5) [0x55dcf822f3e5]
+
+=== System Information ===
+
+System: Linux
+Node: runnervmg1sw1
+Release: 6.11.0-1018-azure
+Version: #18~24.04.1-Ubuntu SMP Sat Jun 28 04:46:03 UTC 2025
+Machine: x86_64
+
+=== End of Crash Report ===

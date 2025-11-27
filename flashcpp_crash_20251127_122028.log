@@ -1,0 +1,22 @@
+=== FlashCpp Crash Report ===
+
+Timestamp: 2025-11-27 12:20:28
+Signal: 11 (SIGSEGV (Segmentation fault))
+Fault Address: 0x7ffc261e2998
+Segfault Code: Invalid permissions for mapped object
+
+=== Stack Trace ===
+
+[ 0] ./x64/Debug/FlashCpp(+0x1ce850) [0x5647450fe850]
+[ 1] /lib/x86_64-linux-gnu/libc.so.6(+0x45330) [0x7f21d6c45330]
+[ 2] [0x7ffc261e2998]
+
+=== System Information ===
+
+System: Linux
+Node: runnervmg1sw1
+Release: 6.11.0-1018-azure
+Version: #18~24.04.1-Ubuntu SMP Sat Jun 28 04:46:03 UTC 2025
+Machine: x86_64
+
+=== End of Crash Report ===
