@@ -106,7 +106,13 @@ $totalFiles = $referenceFiles.Count
 Write-Host "Found $totalFiles test files in tests/Reference/"
 Write-Host ""
 
-# Expected failures - files that are known to have issues
+# Expected compile failures - files that are intentionally designed to fail compilation
+# (e.g., error handling tests)
+$expectedCompileFailures = @(
+    "concept_error_test.cpp"  # Tests constraint error messages - intentionally invalid code
+)
+
+# Expected link failures - files that compile but have known link issues
 # These are typically due to features not yet implemented in FlashCpp
 $expectedLinkFailures = @(
     # Currently empty - all tests should pass
@@ -192,22 +198,29 @@ foreach ($file in $referenceFiles) {
         }
     }
     else {
-        Write-Host "  [COMPILE FAILED]" -ForegroundColor Red
-        $compileFailed += $file.Name
-        # Show compile output to help diagnose the issue
-        # Filter out the version banner and empty lines, show first few relevant lines
-        $outputLines = $compileOutput -split "`n" | Where-Object { 
-            $_.Trim() -ne "" -and 
-            $_ -notmatch "===== FLASHCPP VERSION" -and
-            $_ -notmatch "^Compiling:" -and
-            $_ -notmatch "^Processing:"
-        } | Select-Object -First 5
-        if ($outputLines) {
-            foreach ($line in $outputLines) {
-                Write-Host "    $($line.Trim())" -ForegroundColor Yellow
+        # Check if this is an expected compile failure
+        if ($expectedCompileFailures -contains $file.Name) {
+            Write-Host "  [COMPILE FAILED - EXPECTED]" -ForegroundColor Yellow
+            # Don't count expected failures as actual failures
+        }
+        else {
+            Write-Host "  [COMPILE FAILED]" -ForegroundColor Red
+            $compileFailed += $file.Name
+            # Show compile output to help diagnose the issue
+            # Filter out the version banner and empty lines, show first few relevant lines
+            $outputLines = $compileOutput -split "`n" | Where-Object { 
+                $_.Trim() -ne "" -and 
+                $_ -notmatch "===== FLASHCPP VERSION" -and
+                $_ -notmatch "^Compiling:" -and
+                $_ -notmatch "^Processing:"
+            } | Select-Object -First 5
+            if ($outputLines) {
+                foreach ($line in $outputLines) {
+                    Write-Host "    $($line.Trim())" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "    (No error details available - obj file not created)" -ForegroundColor Yellow
             }
-        } else {
-            Write-Host "    (No error details available - obj file not created)" -ForegroundColor Yellow
         }
     }
     
