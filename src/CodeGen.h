@@ -919,8 +919,10 @@ private:
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info) {
 					for (const auto& static_member : struct_info->static_members) {
-						// Build the qualified name for deduplication
-						std::string qualified_name = std::string(node.name()) + "::" + static_member.name;
+						// Build the qualified name for deduplication using type_info->name_
+						// This ensures consistency with generateStaticMemberDeclarations() which uses
+						// the type name from gTypesByName iterator (important for template instantiations)
+						std::string qualified_name = type_info->name_ + "::" + static_member.name;
 						
 						// Skip if already emitted
 						if (emitted_static_members_.count(qualified_name) > 0) {
