@@ -6445,7 +6445,7 @@ private:
 				// Look up the object in the symbol table
 				const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
 				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
-					assert(false && "Object not found in symbol table");
+					std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
 					return {};
 				}
 
@@ -6456,7 +6456,7 @@ private:
 				// References are automatically dereferenced for member access
 				// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
 				if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
-					assert(false && "Member access on non-struct type");
+					std::cerr << "error: member access '.' on non-struct type '" << object_name << "'\n";
 					return {};
 				}
 
@@ -6483,7 +6483,7 @@ private:
 				// For nested member access, we need to get the type_index from the result
 				// The base_type should be Type::Struct
 				if (base_type != Type::Struct) {
-					assert(false && "Nested member access on non-struct type");
+					std::cerr << "error: nested member access on non-struct type\n";
 					return {};
 				}
 
@@ -6507,20 +6507,20 @@ private:
 
 				// This should be a dereference operator (*)
 				if (unary_op.op() != "*") {
-					assert(false && "Member access on non-dereference unary operator");
+					std::cerr << "error: member access on non-dereference unary operator\n";
 					return {};
 				}
 
 				// Get the pointer operand
 				const ASTNode& operand_node = unary_op.get_operand();
 				if (!operand_node.is<ExpressionNode>()) {
-					assert(false && "Dereference operand is not an expression");
+					std::cerr << "error: dereference operand is not an expression\n";
 					return {};
 				}
 
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 				if (!std::holds_alternative<IdentifierNode>(operand_expr)) {
-					assert(false && "Dereference operand is not an identifier");
+					std::cerr << "error: dereference operand is not an identifier\n";
 					return {};
 				}
 
@@ -6530,7 +6530,7 @@ private:
 				// Look up the pointer in the symbol table
 				const std::optional<ASTNode> symbol = symbol_table.lookup(ptr_name);
 				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
-					assert(false && "Pointer not found in symbol table");
+					std::cerr << "error: pointer '" << ptr_name << "' not found in symbol table\n";
 					return {};
 				}
 
@@ -6539,12 +6539,12 @@ private:
 
 				// Verify this is a pointer to a struct type
 				if (ptr_type.pointer_depth() == 0) {
-					assert(false && "Member access on non-pointer type");
+					std::cerr << "error: member access '->' on non-pointer type '" << ptr_name << "'\n";
 					return {};
 				}
 
 				if (ptr_type.type() != Type::Struct && ptr_type.type() != Type::UserDefined) {
-					assert(false && "Member access on pointer to non-struct type");
+					std::cerr << "error: member access '->' on pointer to non-struct type '" << ptr_name << "'\n";
 					return {};
 				}
 
@@ -6553,7 +6553,7 @@ private:
 				base_type_index = ptr_type.type_index();
 			}
 			else {
-				assert(false && "Member access on unsupported expression type");
+				std::cerr << "error: member access on unsupported expression type\n";
 				return {};
 			}
 		}
@@ -6564,7 +6564,7 @@ private:
 			// Look up the object in the symbol table
 			const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
 			if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
-				assert(false && "Object not found in symbol table");
+				std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
 				return {};
 			}
 
@@ -6573,7 +6573,7 @@ private:
 
 			// Verify this is a struct type
 			if (object_type.type() != Type::Struct) {
-				assert(false && "Member access on non-struct type");
+				std::cerr << "error: member access '.' on non-struct type '" << object_name << "'\n";
 				return {};
 			}
 
@@ -6582,7 +6582,7 @@ private:
 			base_type_index = object_type.type_index();
 		}
 		else {
-			assert(false && "Member access on unsupported object type");
+			std::cerr << "error: member access on unsupported object type\n";
 			return {};
 		}
 
@@ -6644,12 +6644,11 @@ private:
 		const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
 
 		if (!member) {
-			std::cerr << "Error: Member '" << member_name << "' not found in struct '" << type_info->name_ << "' (type_index=" << type_info->type_index_ << ")\n";
-			std::cerr << "  Available members:\n";
+			std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name_ << "'\n";
+			std::cerr << "  available members:\n";
 			for (const auto& m : struct_info->members) {
-				std::cerr << "    - " << m.name << " (type=" << static_cast<int>(m.type) << ", offset=" << m.offset << ")\n";
+				std::cerr << "    - " << m.name << "\n";
 			}
-			assert(false && "Member not found in struct or base classes");
 			return {};
 		}
 
