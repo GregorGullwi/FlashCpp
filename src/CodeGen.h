@@ -296,6 +296,14 @@ public:
 			if (!type_info->isStruct()) {
 				continue;
 			}
+			
+			// Skip if we've already processed this TypeInfo pointer
+			// (same struct can be registered under multiple keys in gTypesByName)
+			if (processed_type_infos_.count(type_info) > 0) {
+				continue;
+			}
+			processed_type_infos_.insert(type_info);
+			
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
 			if (!struct_info || struct_info->static_members.empty()) {
 				continue;
@@ -8217,6 +8225,10 @@ private:
 
 	// Track emitted static members to avoid duplicates
 	std::unordered_set<std::string> emitted_static_members_;
+	
+	// Track processed TypeInfo pointers to avoid processing the same struct twice
+	// (same struct can be registered under multiple keys in gTypesByName)
+	std::unordered_set<const TypeInfo*> processed_type_infos_;
 
 	// Current lambda context (for tracking captured variables)
 	// When generating lambda body, this contains the closure type name
