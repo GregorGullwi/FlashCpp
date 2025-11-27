@@ -12,19 +12,11 @@ public:
     T get() {
         return value;
     }
-    
-    // Function that creates a local variable of type T
-    T add(T x) {
-        T result = value;
-        result = result + x;
-        return result;
-    }
 };
 
 int main() {
     Container<int> c;
-    c.set(10);
-    int x = c.add(32);  // Should return 42
-    return x;
+    c.set(42);
+    int x = c.get();
+    return x - 42;
 }
-
