@@ -6635,7 +6635,7 @@ private:
 					std::cerr << "    - " << name << " (type_index=" << ti->type_index_ << ")\n";
 				}
 			}
-			assert(false && "Struct type info not found");
+			std::cerr << "error: struct type info not found\n";
 			return {};
 		}
 
@@ -6667,7 +6667,6 @@ private:
 				std::cerr << " from '" << current_context->name << "'";
 			}
 			std::cerr << "\n";
-			assert(false && "Access control violation");
 			return {};
 		}
 
