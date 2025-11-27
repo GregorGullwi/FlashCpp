@@ -2966,33 +2966,18 @@ private:
 	}
 
 	// Helper function to allocate stack space for a temporary variable
+	// This is now just a thin wrapper around getStackOffsetFromTempVar which handles allocation
 	int allocateStackSlotForTempVar(int32_t index) {
 		TempVar tempVar(index);
-		// getStackOffsetFromTempVar checks identifier_offset first, then falls back to formula
-		auto stack_offset = getStackOffsetFromTempVar(tempVar);
-		// Note: stack_offset should be within allocated space (scope_stack_space <= stack_offset <= 0)
-		// However, during code generation, constructors and other operations may create additional
-		// TempVars beyond what was pre-calculated. The fallback calculation in getStackOffsetFromTempVar
-		// handles this by using var_number * -8, which may exceed the original allocation.
-		// We extend the scope_stack_space dynamically if needed.
-		if (stack_offset < variable_scopes.back().scope_stack_space) {
-			// Extend the stack space allocation to accommodate this TempVar
-			variable_scopes.back().scope_stack_space = stack_offset;
-		}
-		assert(variable_scopes.back().scope_stack_space <= stack_offset && stack_offset <= 0);
-		
-		// Register the TempVar's offset in identifier_offset map so subsequent lookups
-		// return the same offset even if scope_stack_space changes
-		variable_scopes.back().identifier_offset[tempVar.name()] = stack_offset;
-		
-		return stack_offset;
+		return getStackOffsetFromTempVar(tempVar);
 	}
 
 	// Get stack offset for a TempVar using formula-based allocation
 	// TempVars are allocated dynamically after named variables using formula:
 	// TempVar(N) is at [rbp - (named_vars_base + (N-1) * 8)]
+	// This function also allocates the stack slot if it doesn't exist yet
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
-		// Check if this TempVar was pre-allocated (named variables)
+		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
 			auto it = variable_scopes.back().identifier_offset.find(tempVar.name());
 			if (it != variable_scopes.back().identifier_offset.end()) {
@@ -3009,6 +2994,16 @@ private:
 		if (tempVar.var_number > max_temp_var_index_) {
 			max_temp_var_index_ = tempVar.var_number;
 		}
+		
+		// Extend scope_stack_space if the computed offset exceeds current allocation
+		// This ensures assertions checking scope_stack_space <= offset remain valid
+		if (offset < variable_scopes.back().scope_stack_space) {
+			variable_scopes.back().scope_stack_space = offset;
+		}
+		
+		// Register the TempVar's offset in identifier_offset map so subsequent lookups
+		// return the same offset even if scope_stack_space changes
+		variable_scopes.back().identifier_offset[tempVar.name()] = offset;
 		
 		return offset;
 	}
@@ -6957,7 +6952,9 @@ private:
 	}
 
 	void storeIncDecResultValue(TempVar result_var, X64Register source_reg, int size_in_bits) {
-		storeValueToStack(getStackOffsetFromTempVar(result_var), size_in_bits, source_reg);
+		// getStackOffsetFromTempVar automatically allocates stack space if needed
+		int32_t offset = getStackOffsetFromTempVar(result_var);
+		storeValueToStack(offset, size_in_bits, source_reg);
 	}
 
 	UnaryOperandLocation resolveTypedValueLocation(const TypedValue& typed_value) {
