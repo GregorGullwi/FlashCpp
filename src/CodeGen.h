@@ -5371,11 +5371,73 @@ private:
 			// Get return type
 			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 		
-			// Generate mangled name
+			// Generate mangled name (include struct name for member functions)
 			if (func_decl.linkage() != Linkage::C) {
-				function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic());
+				std::string_view struct_name_for_call = func_decl.is_member_function() ? func_decl.parent_struct_name() : "";
+				function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic(), struct_name_for_call);
 			}
 			found_overload = true;
+		}
+
+		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
+		if (!found_overload && gSymbolTable_overloads.size() == 1 && gSymbolTable_overloads[0].is<FunctionDeclarationNode>()) {
+			const auto& func_decl = gSymbolTable_overloads[0].as<FunctionDeclarationNode>();
+		
+			// Extract parameter types
+			for (const auto& param_node : func_decl.parameter_nodes()) {
+				if (param_node.is<DeclarationNode>()) {
+					const auto& param_decl = param_node.as<DeclarationNode>();
+					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					param_types.push_back(param_type);
+				}
+			}
+		
+			// Get return type
+			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		
+			// Generate mangled name (include struct name for member functions)
+			if (func_decl.linkage() != Linkage::C) {
+				std::string_view struct_name_for_call = func_decl.is_member_function() ? func_decl.parent_struct_name() : "";
+				function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic(), struct_name_for_call);
+			}
+			found_overload = true;
+		}
+
+		// Final fallback: if we're in a member function, check the current struct's member functions
+		if (!found_overload && !current_struct_name_.empty()) {
+			auto type_it = gTypesByName.find(std::string(current_struct_name_));
+			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+				if (struct_info) {
+					for (const auto& member_func : struct_info->member_functions) {
+						// Check if this member function matches the function we're trying to call
+						if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+							if (func_decl.decl_node().identifier_token().value() == func_name_view) {
+								// Found matching member function
+								// Extract parameter types
+								for (const auto& param_node : func_decl.parameter_nodes()) {
+									if (param_node.is<DeclarationNode>()) {
+										const auto& param_decl = param_node.as<DeclarationNode>();
+										const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+										param_types.push_back(param_type);
+									}
+								}
+								
+								// Get return type
+								const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+								
+								// Generate mangled name for member function
+								if (func_decl.linkage() != Linkage::C) {
+									function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic(), current_struct_name_);
+								}
+								found_overload = true;
+								break;
+							}
+						}
+					}
+				}
+			}
 		}
 	
 		// Always add the return variable and function name (mangled for overload resolution)
