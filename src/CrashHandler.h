@@ -8,6 +8,11 @@
 // - Exception/signal type and address
 // - Full stack trace with function names, source files, and line numbers
 // - System information
+//
+// Safety notes:
+// - Uses preallocated static buffers to avoid memory allocation during crash handling
+// - On Linux/macOS, some functions used (backtrace, fprintf) are not strictly 
+//   async-signal-safe, but are commonly used in crash handlers and work reliably
 
 #ifdef _WIN32
 
@@ -15,7 +20,6 @@
 #include <dbghelp.h>
 #include <cstdio>
 #include <ctime>
-#include <string>
 
 #pragma comment(lib, "dbghelp.lib")
 
@@ -23,6 +27,12 @@ namespace CrashHandler {
 
 // Constants
 constexpr int kMaxStackFrames = 64;
+constexpr int kMaxPathLength = 512;
+constexpr int kTimestampBufferSize = 64;
+
+// Preallocated static buffers - avoid memory allocation during crash
+static char s_filenameBuffer[kMaxPathLength];
+static char s_timestampBuffer[kTimestampBufferSize];
 
 // Get the exception code as a human-readable string
 inline const char* getExceptionCodeString(DWORD code) {
@@ -51,24 +61,20 @@ inline const char* getExceptionCodeString(DWORD code) {
     }
 }
 
-// Generate a timestamp string for the crash log filename
-inline std::string getTimestampString() {
+// Generate a timestamp string into the provided buffer (no allocation)
+inline void getTimestampString(char* buffer, size_t bufferSize) {
     time_t now = time(nullptr);
     struct tm timeinfo;
     localtime_s(&timeinfo, &now);
-    char buffer[64];
-    strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &timeinfo);
-    return std::string(buffer);
+    strftime(buffer, bufferSize, "%Y%m%d_%H%M%S", &timeinfo);
 }
 
-// Generate a human-readable timestamp string for the crash log content
-inline std::string getReadableTimestamp() {
+// Generate a human-readable timestamp string into the provided buffer (no allocation)
+inline void getReadableTimestamp(char* buffer, size_t bufferSize) {
     time_t now = time(nullptr);
     struct tm timeinfo;
     localtime_s(&timeinfo, &now);
-    char buffer[64];
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-    return std::string(buffer);
+    strftime(buffer, bufferSize, "%Y-%m-%d %H:%M:%S", &timeinfo);
 }
 
 // Write the stack trace to a file
@@ -181,23 +187,24 @@ inline void writeStackTrace(FILE* file, CONTEXT* context) {
 
 // The unhandled exception filter - called when the process crashes
 inline LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
-    // Generate crash log filename with timestamp
-    std::string filename = "flashcpp_crash_" + getTimestampString() + ".log";
+    // Generate crash log filename with timestamp using preallocated buffers
+    getTimestampString(s_timestampBuffer, kTimestampBufferSize);
+    snprintf(s_filenameBuffer, kMaxPathLength, "flashcpp_crash_%s.log", s_timestampBuffer);
 
     FILE* file = nullptr;
-    if (fopen_s(&file, filename.c_str(), "w") != 0 || file == nullptr) {
+    if (fopen_s(&file, s_filenameBuffer, "w") != 0 || file == nullptr) {
         // Failed to open crash log file, output to stderr
         fprintf(stderr, "\n=== CRASH DETECTED ===\n");
-        fprintf(stderr, "Failed to create crash log file: %s\n", filename.c_str());
+        fprintf(stderr, "Failed to create crash log file: %s\n", s_filenameBuffer);
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
     // Write header
     fprintf(file, "=== FlashCpp Crash Report ===\n\n");
 
-    // Write timestamp
-    std::string timestamp = getReadableTimestamp();
-    fprintf(file, "Timestamp: %s\n", timestamp.c_str());
+    // Write timestamp (reuse buffer for readable format)
+    getReadableTimestamp(s_timestampBuffer, kTimestampBufferSize);
+    fprintf(file, "Timestamp: %s\n", s_timestampBuffer);
 
     // Write exception information
     EXCEPTION_RECORD* record = exceptionInfo->ExceptionRecord;
@@ -247,7 +254,7 @@ inline LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     fprintf(stderr, "==========================================================\n");
     fprintf(stderr, "Exception: %s (0x%08lX)\n",
             getExceptionCodeString(record->ExceptionCode), record->ExceptionCode);
-    fprintf(stderr, "A crash log has been written to: %s\n", filename.c_str());
+    fprintf(stderr, "A crash log has been written to: %s\n", s_filenameBuffer);
     fprintf(stderr, "Please report this issue with the crash log attached.\n");
     fprintf(stderr, "==========================================================\n");
 
@@ -269,7 +276,6 @@ inline void install() {
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
-#include <string>
 #include <unistd.h>
 #include <execinfo.h>
 #include <sys/utsname.h>
@@ -278,6 +284,13 @@ namespace CrashHandler {
 
 // Constants
 constexpr int kMaxStackFrames = 64;
+constexpr int kMaxPathLength = 512;
+constexpr int kTimestampBufferSize = 64;
+
+// Preallocated static buffers - avoid memory allocation during crash handling
+// This is important for signal safety and handling out-of-memory crashes
+static char s_filenameBuffer[kMaxPathLength];
+static char s_timestampBuffer[kTimestampBufferSize];
 
 // Get signal name as a human-readable string
 inline const char* getSignalName(int sig) {
@@ -316,24 +329,20 @@ inline const char* getFpeCodeDescription(int code) {
     }
 }
 
-// Generate a timestamp string for the crash log filename
-inline std::string getTimestampString() {
+// Generate a timestamp string into the provided buffer (no allocation)
+inline void getTimestampString(char* buffer, size_t bufferSize) {
     time_t now = time(nullptr);
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
-    char buffer[64];
-    strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &timeinfo);
-    return std::string(buffer);
+    strftime(buffer, bufferSize, "%Y%m%d_%H%M%S", &timeinfo);
 }
 
-// Generate a human-readable timestamp string for the crash log content
-inline std::string getReadableTimestamp() {
+// Generate a human-readable timestamp string into the provided buffer (no allocation)
+inline void getReadableTimestamp(char* buffer, size_t bufferSize) {
     time_t now = time(nullptr);
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
-    char buffer[64];
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-    return std::string(buffer);
+    strftime(buffer, bufferSize, "%Y-%m-%d %H:%M:%S", &timeinfo);
 }
 
 // Signal handler - called when the process receives a fatal signal
@@ -341,15 +350,17 @@ inline std::string getReadableTimestamp() {
 // additional debugging info, but is not used here to keep the implementation simple.
 // Note: Some functions used here (backtrace, fprintf) are not strictly async-signal-safe,
 // but are commonly used in crash handlers and work reliably in practice.
+// Safety: Uses preallocated static buffers to avoid memory allocation.
 inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
-    // Generate crash log filename with timestamp
-    std::string filename = "flashcpp_crash_" + getTimestampString() + ".log";
+    // Generate crash log filename with timestamp using preallocated buffers
+    getTimestampString(s_timestampBuffer, kTimestampBufferSize);
+    snprintf(s_filenameBuffer, kMaxPathLength, "flashcpp_crash_%s.log", s_timestampBuffer);
 
-    FILE* file = fopen(filename.c_str(), "w");
+    FILE* file = fopen(s_filenameBuffer, "w");
     if (file == nullptr) {
         // Failed to open crash log file, write to stderr instead
         fprintf(stderr, "\n=== CRASH DETECTED ===\n");
-        fprintf(stderr, "Failed to create crash log file: %s\n", filename.c_str());
+        fprintf(stderr, "Failed to create crash log file: %s\n", s_filenameBuffer);
         fprintf(stderr, "Signal: %d (%s)\n", sig, getSignalName(sig));
         if (info != nullptr) {
             fprintf(stderr, "Fault Address: %p\n", info->si_addr);
@@ -363,9 +374,9 @@ inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
     // Write header
     fprintf(file, "=== FlashCpp Crash Report ===\n\n");
 
-    // Write timestamp
-    std::string timestamp = getReadableTimestamp();
-    fprintf(file, "Timestamp: %s\n", timestamp.c_str());
+    // Write timestamp (reuse buffer for readable format)
+    getReadableTimestamp(s_timestampBuffer, kTimestampBufferSize);
+    fprintf(file, "Timestamp: %s\n", s_timestampBuffer);
 
     // Write signal information
     fprintf(file, "Signal: %d (%s)\n", sig, getSignalName(sig));
@@ -388,6 +399,8 @@ inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
     int frameCount = backtrace(stackFrames, kMaxStackFrames);
     
     if (frameCount > 0) {
+        // Note: backtrace_symbols allocates memory, but this is acceptable
+        // as it's only for the log file. If allocation fails, we fall back to addresses.
         char** symbols = backtrace_symbols(stackFrames, frameCount);
         if (symbols != nullptr) {
             for (int i = 0; i < frameCount; ++i) {
@@ -395,7 +408,7 @@ inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
             }
             free(symbols);
         } else {
-            // backtrace_symbols failed, just print addresses
+            // backtrace_symbols failed (likely OOM), just print addresses
             for (int i = 0; i < frameCount; ++i) {
                 fprintf(file, "[%2d] %p\n", i, stackFrames[i]);
             }
@@ -425,7 +438,7 @@ inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
     fprintf(stderr, "                    FLASHCPP CRASHED!\n");
     fprintf(stderr, "==========================================================\n");
     fprintf(stderr, "Signal: %s\n", getSignalName(sig));
-    fprintf(stderr, "A crash log has been written to: %s\n", filename.c_str());
+    fprintf(stderr, "A crash log has been written to: %s\n", s_filenameBuffer);
     fprintf(stderr, "Please report this issue with the crash log attached.\n");
     fprintf(stderr, "==========================================================\n");
 
