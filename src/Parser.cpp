@@ -1495,6 +1495,90 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		const Token& identifier_token = decl_node.identifier_token();
+		
+		// C++20 Abbreviated Function Templates: Check if any parameter has auto type
+		// If so, convert this function to an implicit function template
+		if (auto func_node_ptr = function_definition_result.node()) {
+			FunctionDeclarationNode& func_decl = func_node_ptr->as<FunctionDeclarationNode>();
+			
+			// Count auto parameters and collect their info
+			std::vector<std::pair<size_t, Token>> auto_params;  // (param_index, param_token)
+			const auto& params = func_decl.parameter_nodes();
+			for (size_t i = 0; i < params.size(); ++i) {
+				if (params[i].is<DeclarationNode>()) {
+					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					if (param_type.type() == Type::Auto) {
+						auto_params.emplace_back(i, param_decl.identifier_token());
+					}
+				}
+			}
+			
+			// If we have auto parameters, convert to abbreviated function template
+			if (!auto_params.empty()) {
+				// Create synthetic template parameters for each auto parameter
+				// Each auto becomes a unique template type parameter: T1, T2, etc.
+				std::vector<ASTNode> template_params;
+				std::vector<std::string_view> template_param_names;
+				
+				for (size_t i = 0; i < auto_params.size(); ++i) {
+					// Generate synthetic parameter name like "_AbbrevT0", "_AbbrevT1", etc.
+					// Using underscore prefix to avoid conflicts with user-defined names
+					static std::vector<std::string> synthetic_names;
+					synthetic_names.push_back("_AbbrevT" + std::to_string(synthetic_names.size()));
+					std::string_view param_name = synthetic_names.back();
+					
+					// Create a synthetic token for the parameter
+					Token param_token = auto_params[i].second;  // Reuse position from auto param
+					
+					// Create a type template parameter node
+					auto param_node = emplace_node<TemplateParameterNode>(param_name, param_token);
+					template_params.push_back(param_node);
+					template_param_names.push_back(param_name);
+				}
+				
+				// Create the TemplateFunctionDeclarationNode wrapping the function
+				auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
+					std::move(template_params),
+					*func_node_ptr,
+					std::nullopt  // No requires clause for abbreviated templates
+				);
+				
+				// Register the template in the template registry
+				gTemplateRegistry.registerTemplate(identifier_token.value(), template_func_node);
+				
+				// Also register the template parameter names for lookup
+				gTemplateRegistry.registerTemplateParameters(identifier_token.value(), template_param_names);
+				
+				// Add the template function to the symbol table
+				gSymbolTable.insert(identifier_token.value(), template_func_node);
+				
+				// Set template param names for parsing body (for template parameter recognition)
+				current_template_param_names_ = template_param_names;
+				
+				// Check if this is just a declaration (no body)
+				if (peek_token().has_value() && peek_token()->value() == ";") {
+					consume_token();  // consume ';'
+					current_template_param_names_.clear();
+					return saved_position.success(template_func_node);
+				}
+				
+				// Has a body - save position at the '{' for delayed parsing during instantiation
+				if (peek_token().has_value() && peek_token()->value() == "{") {
+					TokenPosition body_start = save_token_position();
+					
+					// Store the body position in the function declaration
+					func_decl.set_template_body_position(body_start);
+					
+					// Skip over the body (skip_balanced_braces will consume the '{' and everything up to matching '}')
+					skip_balanced_braces();
+				}
+				
+				current_template_param_names_.clear();
+				return saved_position.success(template_func_node);
+			}
+		}
+		
 		// Insert the FunctionDeclarationNode (which contains parameter info for overload resolution)
 		// instead of just the DeclarationNode
 		if (auto func_node = function_definition_result.node()) {
