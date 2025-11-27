@@ -192,6 +192,16 @@ public:
 			return evaluate_function_call(std::get<FunctionCallNode>(expr), context);
 		}
 
+		// For QualifiedIdentifierNode (e.g., Template<T>::member)
+		if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+			return evaluate_qualified_identifier(std::get<QualifiedIdentifierNode>(expr), context);
+		}
+
+		// For MemberAccessNode (e.g., obj.member or ptr->member)
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			return evaluate_member_access(std::get<MemberAccessNode>(expr), context);
+		}
+
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
 	}
@@ -785,6 +795,46 @@ public:
 
 		// Unsupported operator
 		return EvalResult::error("Unary operator '" + std::string(op) + "' not supported in constant expressions");
+	}
+
+	// Evaluate qualified identifier (e.g., Namespace::var or Template<T>::member)
+	static EvalResult evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context) {
+		// Look up the qualified name in the symbol table
+		if (!context.symbols) {
+			return EvalResult::error("Cannot evaluate qualified identifier: no symbol table provided");
+		}
+
+		// Try to look up the qualified name
+		auto symbol_opt = context.symbols->lookup_qualified(qualified_id.namespaces(), qualified_id.name());
+		if (!symbol_opt.has_value()) {
+			// For now, return error - in the future we may need to handle template instantiation
+			return EvalResult::error("Undefined qualified identifier in constant expression: " + qualified_id.full_name());
+		}
+
+		const ASTNode& symbol_node = *symbol_opt;
+
+		// Check if it's a variable declaration (constexpr)
+		if (symbol_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+			if (!var_decl.is_constexpr()) {
+				return EvalResult::error("Qualified variable must be constexpr: " + qualified_id.full_name());
+			}
+			const auto& initializer = var_decl.initializer();
+			if (!initializer.has_value()) {
+				return EvalResult::error("Constexpr variable has no initializer: " + qualified_id.full_name());
+			}
+			return evaluate(initializer.value(), context);
+		}
+
+		// Could be other types like enum constants - add support as needed
+		return EvalResult::error("Qualified identifier is not a constant expression: " + qualified_id.full_name());
+	}
+
+	// Evaluate member access (e.g., obj.member or struct_type::static_member)
+	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context) {
+		// For now, member access is not supported in constant expressions
+		// This would require evaluating the object and then accessing its member
+		return EvalResult::error("Member access not supported in constant expressions");
 	}
 };
 

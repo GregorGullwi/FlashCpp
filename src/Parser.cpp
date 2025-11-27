@@ -4035,6 +4035,13 @@ ParseResult Parser::parse_static_assert()
 		return ParseResult::error("Expected ';' after static_assert", *current_token_);
 	}
 
+	// If we're inside a template body, defer static_assert evaluation until instantiation
+	// The expression may depend on template parameters that are not yet known
+	if (parsing_template_body_ && !current_template_param_names_.empty()) {
+		// Skip evaluation - the static_assert will be checked during template instantiation
+		return saved_position.success();
+	}
+
 	// Evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
