@@ -1,12 +1,13 @@
 #pragma once
 
-// Crash handler for Windows - generates crash logs with stack traces
+// Crash handler for Windows and Linux - generates crash logs with stack traces
 // This module provides automatic crash logging when the compiler encounters
-// an unhandled exception. The crash log includes:
+// an unhandled exception (Windows) or fatal signal (Linux/macOS). 
+// The crash log includes:
 // - Timestamp
-// - Exception type and address
+// - Exception/signal type and address
 // - Full stack trace with function names, source files, and line numbers
-// - Module information
+// - System information
 
 #ifdef _WIN32
 
@@ -260,12 +261,203 @@ inline void install() {
 
 } // namespace CrashHandler
 
-#else // !_WIN32
+#elif defined(__linux__) || defined(__APPLE__)
 
-// Stub implementation for non-Windows platforms
+// Linux/macOS implementation using signal handlers and backtrace
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <cstring>
+#include <string>
+#include <unistd.h>
+#include <execinfo.h>
+#include <sys/utsname.h>
+
+namespace CrashHandler {
+
+// Constants
+constexpr int kMaxStackFrames = 64;
+
+// Get signal name as a human-readable string
+inline const char* getSignalName(int sig) {
+    switch (sig) {
+        case SIGSEGV: return "SIGSEGV (Segmentation fault)";
+        case SIGABRT: return "SIGABRT (Abort)";
+        case SIGFPE:  return "SIGFPE (Floating point exception)";
+        case SIGILL:  return "SIGILL (Illegal instruction)";
+        case SIGBUS:  return "SIGBUS (Bus error)";
+        case SIGTRAP: return "SIGTRAP (Trap)";
+        default:      return "Unknown signal";
+    }
+}
+
+// Get signal code description for SIGSEGV
+inline const char* getSegfaultCodeDescription(int code) {
+    switch (code) {
+        case SEGV_MAPERR: return "Address not mapped to object";
+        case SEGV_ACCERR: return "Invalid permissions for mapped object";
+        default:          return "Unknown";
+    }
+}
+
+// Get signal code description for SIGFPE
+inline const char* getFpeCodeDescription(int code) {
+    switch (code) {
+        case FPE_INTDIV: return "Integer divide by zero";
+        case FPE_INTOVF: return "Integer overflow";
+        case FPE_FLTDIV: return "Floating-point divide by zero";
+        case FPE_FLTOVF: return "Floating-point overflow";
+        case FPE_FLTUND: return "Floating-point underflow";
+        case FPE_FLTRES: return "Floating-point inexact result";
+        case FPE_FLTINV: return "Floating-point invalid operation";
+        case FPE_FLTSUB: return "Subscript out of range";
+        default:         return "Unknown";
+    }
+}
+
+// Generate a timestamp string for the crash log filename
+inline std::string getTimestampString() {
+    time_t now = time(nullptr);
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    char buffer[64];
+    strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &timeinfo);
+    return std::string(buffer);
+}
+
+// Generate a human-readable timestamp string for the crash log content
+inline std::string getReadableTimestamp() {
+    time_t now = time(nullptr);
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    char buffer[64];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    return std::string(buffer);
+}
+
+// Signal handler - called when the process receives a fatal signal
+// Note: The 'context' parameter contains CPU registers and could be used for
+// additional debugging info, but is not used here to keep the implementation simple.
+// Note: Some functions used here (backtrace, fprintf) are not strictly async-signal-safe,
+// but are commonly used in crash handlers and work reliably in practice.
+inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
+    // Generate crash log filename with timestamp
+    std::string filename = "flashcpp_crash_" + getTimestampString() + ".log";
+
+    FILE* file = fopen(filename.c_str(), "w");
+    if (file == nullptr) {
+        // Failed to open crash log file, write to stderr instead
+        fprintf(stderr, "\n=== CRASH DETECTED ===\n");
+        fprintf(stderr, "Failed to create crash log file: %s\n", filename.c_str());
+        fprintf(stderr, "Signal: %d (%s)\n", sig, getSignalName(sig));
+        if (info != nullptr) {
+            fprintf(stderr, "Fault Address: %p\n", info->si_addr);
+        }
+        // Re-raise signal with default handler
+        signal(sig, SIG_DFL);
+        kill(getpid(), sig);
+        _exit(1);
+    }
+
+    // Write header
+    fprintf(file, "=== FlashCpp Crash Report ===\n\n");
+
+    // Write timestamp
+    std::string timestamp = getReadableTimestamp();
+    fprintf(file, "Timestamp: %s\n", timestamp.c_str());
+
+    // Write signal information
+    fprintf(file, "Signal: %d (%s)\n", sig, getSignalName(sig));
+    
+    if (info != nullptr) {
+        fprintf(file, "Fault Address: %p\n", info->si_addr);
+        
+        // Additional info based on signal type
+        if (sig == SIGSEGV) {
+            fprintf(file, "Segfault Code: %s\n", getSegfaultCodeDescription(info->si_code));
+        } else if (sig == SIGFPE) {
+            fprintf(file, "FPE Code: %s\n", getFpeCodeDescription(info->si_code));
+        }
+    }
+
+    // Write stack trace
+    fprintf(file, "\n=== Stack Trace ===\n\n");
+    
+    void* stackFrames[kMaxStackFrames];
+    int frameCount = backtrace(stackFrames, kMaxStackFrames);
+    
+    if (frameCount > 0) {
+        char** symbols = backtrace_symbols(stackFrames, frameCount);
+        if (symbols != nullptr) {
+            for (int i = 0; i < frameCount; ++i) {
+                fprintf(file, "[%2d] %s\n", i, symbols[i]);
+            }
+            free(symbols);
+        } else {
+            // backtrace_symbols failed, just print addresses
+            for (int i = 0; i < frameCount; ++i) {
+                fprintf(file, "[%2d] %p\n", i, stackFrames[i]);
+            }
+        }
+    } else {
+        fprintf(file, "No stack frames captured.\n");
+    }
+
+    // Write system information
+    fprintf(file, "\n=== System Information ===\n\n");
+    
+    struct utsname sysInfo;
+    if (uname(&sysInfo) == 0) {
+        fprintf(file, "System: %s\n", sysInfo.sysname);
+        fprintf(file, "Node: %s\n", sysInfo.nodename);
+        fprintf(file, "Release: %s\n", sysInfo.release);
+        fprintf(file, "Version: %s\n", sysInfo.version);
+        fprintf(file, "Machine: %s\n", sysInfo.machine);
+    }
+
+    fprintf(file, "\n=== End of Crash Report ===\n");
+    fclose(file);
+
+    // Also print to stderr so the user knows what happened
+    fprintf(stderr, "\n");
+    fprintf(stderr, "==========================================================\n");
+    fprintf(stderr, "                    FLASHCPP CRASHED!\n");
+    fprintf(stderr, "==========================================================\n");
+    fprintf(stderr, "Signal: %s\n", getSignalName(sig));
+    fprintf(stderr, "A crash log has been written to: %s\n", filename.c_str());
+    fprintf(stderr, "Please report this issue with the crash log attached.\n");
+    fprintf(stderr, "==========================================================\n");
+
+    // Re-raise the signal to get the default behavior (core dump, etc.)
+    signal(sig, SIG_DFL);
+    kill(getpid(), sig);
+}
+
+// Install the crash handler - call this at program startup
+inline void install() {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = signalHandler;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+
+    // Install handlers for common crash signals
+    sigaction(SIGSEGV, &sa, nullptr);  // Segmentation fault
+    sigaction(SIGABRT, &sa, nullptr);  // Abort
+    sigaction(SIGFPE, &sa, nullptr);   // Floating point exception
+    sigaction(SIGILL, &sa, nullptr);   // Illegal instruction
+    sigaction(SIGBUS, &sa, nullptr);   // Bus error
+}
+
+} // namespace CrashHandler
+
+#else // Other platforms
+
+// Stub implementation for unsupported platforms
 namespace CrashHandler {
     inline void install() {
-        // No-op on non-Windows platforms
+        // No-op on unsupported platforms
     }
 }
 
