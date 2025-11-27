@@ -1522,16 +1522,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				std::vector<ASTNode> template_params;
 				std::vector<std::string_view> template_param_names;
 				
-				// Use a static vector for string storage to ensure string_view lifetime
-				// The index within this function starts at 0 for consistent naming
-				static std::vector<std::string> synthetic_name_storage;
-				
 				for (size_t i = 0; i < auto_params.size(); ++i) {
 					// Generate synthetic parameter name like "_T0", "_T1", etc.
 					// Using underscore prefix to avoid conflicts with user-defined names
-					// Index is relative to this function's auto params, not global
-					synthetic_name_storage.push_back("_T" + std::to_string(i));
-					std::string_view param_name = synthetic_name_storage.back();
+					// StringBuilder.commit() returns a persistent string_view
+					StringBuilder sb;
+					std::string_view param_name = sb.append("_T").append(static_cast<int64_t>(i)).commit();
 					
 					// Use the auto parameter's token for position/error reporting
 					Token param_token = auto_params[i].second;
