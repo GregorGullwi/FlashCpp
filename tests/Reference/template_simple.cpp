@@ -6,6 +6,7 @@ T identity(T x) {
 
 int main() {
     int a = identity(42);
-    int b = identity(3);
-    return a + b - 45;
+    float b = identity(3.14f);
+    return a + static_cast<int>(b);
 }
+
