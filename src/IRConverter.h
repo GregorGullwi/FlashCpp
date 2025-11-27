@@ -2968,12 +2968,7 @@ private:
 	// Helper function to allocate stack space for a temporary variable
 	int allocateStackSlotForTempVar(int32_t index) {
 		TempVar tempVar(index);
-		// First check if this TempVar is already allocated
-		auto it = variable_scopes.back().identifier_offset.find(tempVar.name());
-		if (it != variable_scopes.back().identifier_offset.end()) {
-			return it->second;  // Already allocated, return existing offset
-		}
-		
+		// getStackOffsetFromTempVar checks identifier_offset first, then falls back to formula
 		auto stack_offset = getStackOffsetFromTempVar(tempVar);
 		// Note: stack_offset should be within allocated space (scope_stack_space <= stack_offset <= 0)
 		// However, during code generation, constructors and other operations may create additional
