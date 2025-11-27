@@ -304,6 +304,8 @@ private:
         struct DelayedFunctionBody {
                 FunctionDeclarationNode* func_node;      // The function node to attach body to
                 TokenPosition body_start;                 // Position of the '{'
+                TokenPosition initializer_list_start;     // Position of ':' for constructor initializer list (optional)
+                bool has_initializer_list;                // True if constructor has an initializer list to re-parse
                 std::string_view struct_name;            // For member function context
                 size_t struct_type_index;                // For member function context
                 StructDeclarationNode* struct_node;      // Pointer to struct being parsed
