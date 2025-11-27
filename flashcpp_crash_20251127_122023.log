@@ -1,0 +1,45 @@
+=== FlashCpp Crash Report ===
+
+Timestamp: 2025-11-27 12:20:23
+Signal: 6 (SIGABRT (Abort))
+Fault Address: 0x3e90000105a
+
+=== Stack Trace ===
+
+[ 0] ./x64/Debug/FlashCpp(+0x1ce850) [0x556201f79850]
+[ 1] /lib/x86_64-linux-gnu/libc.so.6(+0x45330) [0x7f5773a45330]
+[ 2] /lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x11c) [0x7f5773a9eb2c]
+[ 3] /lib/x86_64-linux-gnu/libc.so.6(gsignal+0x1e) [0x7f5773a4527e]
+[ 4] /lib/x86_64-linux-gnu/libc.so.6(abort+0xdf) [0x7f5773a288ff]
+[ 5] /lib/x86_64-linux-gnu/libc.so.6(+0x2881b) [0x7f5773a2881b]
+[ 6] /lib/x86_64-linux-gnu/libc.so.6(+0x3b517) [0x7f5773a3b517]
+[ 7] ./x64/Debug/FlashCpp(+0x213c10) [0x556201fbec10]
+[ 8] ./x64/Debug/FlashCpp(+0x20fe5d) [0x556201fbae5d]
+[ 9] ./x64/Debug/FlashCpp(+0x21c396) [0x556201fc7396]
+[10] ./x64/Debug/FlashCpp(+0x20ff59) [0x556201fbaf59]
+[11] ./x64/Debug/FlashCpp(+0x21c33b) [0x556201fc733b]
+[12] ./x64/Debug/FlashCpp(+0x20ff59) [0x556201fbaf59]
+[13] ./x64/Debug/FlashCpp(+0x21c33b) [0x556201fc733b]
+[14] ./x64/Debug/FlashCpp(+0x20ff59) [0x556201fbaf59]
+[15] ./x64/Debug/FlashCpp(+0x21c33b) [0x556201fc733b]
+[16] ./x64/Debug/FlashCpp(+0x20ff59) [0x556201fbaf59]
+[17] ./x64/Debug/FlashCpp(+0x26a80f) [0x55620201580f]
+[18] ./x64/Debug/FlashCpp(+0x1c2909) [0x556201f6d909]
+[19] ./x64/Debug/FlashCpp(+0x27bd1c) [0x556202026d1c]
+[20] ./x64/Debug/FlashCpp(+0x27a1e4) [0x5562020251e4]
+[21] ./x64/Debug/FlashCpp(+0x26a601) [0x556202015601]
+[22] ./x64/Debug/FlashCpp(+0x1c28c9) [0x556201f6d8c9]
+[23] ./x64/Debug/FlashCpp(+0x1bda5b) [0x556201f68a5b]
+[24] /lib/x86_64-linux-gnu/libc.so.6(+0x2a1ca) [0x7f5773a2a1ca]
+[25] /lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x8b) [0x7f5773a2a28b]
+[26] ./x64/Debug/FlashCpp(+0x133e5) [0x556201dbe3e5]
+
+=== System Information ===
+
+System: Linux
+Node: runnervmg1sw1
+Release: 6.11.0-1018-azure
+Version: #18~24.04.1-Ubuntu SMP Sat Jun 28 04:46:03 UTC 2025
+Machine: x86_64
+
+=== End of Crash Report ===
