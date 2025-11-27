@@ -315,6 +315,16 @@ public:
 			}
 			
 			for (const auto& static_member : struct_info->static_members) {
+				// Skip static members with unsubstituted sizeof... (template pattern members)
+				// These should only be instantiated when the template is instantiated
+				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
+					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
+					if (std::holds_alternative<SizeofPackNode>(expr)) {
+						// This is an uninstantiated template - skip
+						continue;
+					}
+				}
+
 				// Build the qualified name for deduplication
 				std::string qualified_name = std::string(type_name) + "::" + static_member.name;
 				
@@ -324,10 +334,14 @@ public:
 				}
 				emitted_static_members_.insert(qualified_name);
 
+				// Create a persistent string_view for the var_name using StringBuilder
+				// (string_view in GlobalVariableDeclOp would dangle if we used local std::string)
+				std::string_view persistent_name = StringBuilder().append(qualified_name).commit();
+
 				GlobalVariableDeclOp op;
 				op.type = static_member.type;
 				op.size_in_bits = static_cast<int>(static_member.size * 8);
-				op.var_name = qualified_name;
+				op.var_name = persistent_name;
 
 				// Check if static member has an initializer
 				op.is_initialized = static_member.initializer.has_value();
@@ -951,10 +965,14 @@ private:
 							}
 							emitted_static_members_.insert(qualified_name);
 
+							// Create a persistent string_view for the var_name using StringBuilder
+							// (string_view in GlobalVariableDeclOp would dangle if we used local std::string)
+							std::string_view persistent_name = StringBuilder().append(qualified_name).commit();
+
 							GlobalVariableDeclOp op;
 							op.type = static_member.type;
 							op.size_in_bits = static_cast<int>(static_member.size * 8);
-							op.var_name = qualified_name;
+							op.var_name = persistent_name;
 
 							// Check if static member has an initializer
 							op.is_initialized = static_member.initializer.has_value();
