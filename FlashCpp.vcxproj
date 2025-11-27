@@ -167,9 +167,6 @@
     <ClCompile Include="src\AstNodeTypes.cpp" />
     <ClCompile Include="src\ChunkedAnyVector.cpp" />
     <ClCompile Include="src\CodeViewDebug.cpp" />
-    <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)'!='Benchmark'">true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\Parser.cpp" />
     <!-- Main file - exclude from Test and Benchmark -->
     <ClCompile Include="src\main.cpp">

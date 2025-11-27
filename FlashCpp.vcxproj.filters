@@ -36,9 +36,6 @@
     <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\CodeViewDebug.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

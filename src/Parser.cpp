@@ -7900,29 +7900,31 @@ ParseResult Parser::parse_primary_expression()
 									
 									// Try to find pack_name_0, pack_name_1, etc. in the symbol table
 									size_t pack_size = 0;
-									std::string base_name(pack_name);
 									
+									StringBuilder sb;
 									for (size_t i = 0; i < 100; ++i) {  // reasonable limit
 										// Use StringBuilder to create a persistent string
-										std::string_view element_name = StringBuilder()
-											.append(base_name)
+										std::string_view element_name = sb
+											.append(pack_name)
 											.append("_")
 											.append(i)
-											.commit();
+											.preview();
 										
 										if (gSymbolTable.lookup(element_name).has_value()) {
 											++pack_size;
+											sb.reset();
 										} else {
 											break;
 										}
 									}
+									sb.reset();
 									
 									if (pack_size > 0) {
 										// Add each pack element as a separate argument
 										for (size_t i = 0; i < pack_size; ++i) {
 											// Use StringBuilder to create a persistent string for the token
 											std::string_view element_name = StringBuilder()
-												.append(base_name)
+												.append(pack_name)
 												.append("_")
 												.append(i)
 												.commit();
