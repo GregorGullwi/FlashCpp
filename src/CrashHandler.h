@@ -290,6 +290,7 @@ constexpr int kMaxPathLength = 512;
 constexpr int kTimestampBufferSize = 64;
 constexpr int kMaxSymbolLength = 256;
 constexpr int kMaxCommandLength = 640;  // kMaxPathLength + room for addr2line command
+constexpr int kMaxSourceLocationLength = 560;  // Path + ":" + line number
 
 // Preallocated static buffers - avoid memory allocation during crash handling
 // This is important for signal safety and handling out-of-memory crashes
@@ -370,11 +371,33 @@ inline const char* demangleSymbol(const char* mangledName) {
 
 // Get source file and line information from an address using addr2line.
 // Writes the result to the provided buffer. Returns true if successful.
-// Note: popen is not strictly async-signal-safe, but is commonly used in crash handlers.
+// 
+// Safety notes:
+// - popen() is not strictly async-signal-safe, but is commonly used in crash handlers
+//   and works reliably in practice. The alternative (fork/exec/pipe) is more complex
+//   and also not fully async-signal-safe.
+// - The trade-off is that this approach may not work correctly in pathological cases
+//   (e.g., crash during malloc), but it provides much more useful stack traces in
+//   the common case.
+// - The executable path is validated to reject characters that could be interpreted
+//   by the shell to prevent command injection.
 inline bool getSourceLocation(const char* executablePath, void* addr, char* buffer, size_t bufferSize) {
     if (executablePath == nullptr || addr == nullptr) {
         buffer[0] = '\0';
         return false;
+    }
+    
+    // Validate the executable path to prevent shell injection
+    // Only allow alphanumeric characters, forward slashes, dots, dashes, and underscores
+    for (const char* p = executablePath; *p != '\0'; ++p) {
+        char c = *p;
+        bool isValid = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                       (c >= '0' && c <= '9') || c == '/' || c == '.' ||
+                       c == '-' || c == '_' || c == '+';
+        if (!isValid) {
+            buffer[0] = '\0';
+            return false;
+        }
     }
     
     // Build addr2line command
@@ -430,7 +453,7 @@ inline void writeStackFrame(FILE* file, int frameNum, void* addr) {
         
         // Try to get source file and line using addr2line
         if (dlInfo.dli_fname != nullptr) {
-            char sourceLocation[kMaxPathLength];
+            char sourceLocation[kMaxSourceLocationLength];
             if (getSourceLocation(dlInfo.dli_fname, relativeAddr, sourceLocation, sizeof(sourceLocation))) {
                 fprintf(file, " (%s)", sourceLocation);
             }
