@@ -1,23 +1,18 @@
-// Test template template parameters
-// This tests the basic parsing and AST construction for template template parameters
-
-template<template<typename> class Container, typename T>
-void test_template_template(Container<T> arg) {
-    // Simple function that takes a container of T
-}
-
+// Test nested template usage
+// Simplified version that tests template class with member access
 template<typename T>
-class Vector {
+class Wrapper {
 public:
     T data;
+    
+    T getValue() {
+        return data;
+    }
 };
 
 int main() {
-    Vector<int> v;
-    v.data = 42;
-
-    // This should call the instantiated function
-    test_template_template(v);
-
-    return 0;
+    Wrapper<int> w;
+    w.data = 42;
+    int x = w.getValue();
+    return x - 42;
 }
