@@ -2965,17 +2965,21 @@ private:
 		return func_stack_space;
 	}
 
-	// Helper function to allocate stack space for a temporary variable
-	// This is now just a thin wrapper around getStackOffsetFromTempVar which handles allocation
+	// Helper function to get or reserve a stack slot for a temporary variable.
+	// This is now just a thin wrapper around getStackOffsetFromTempVar which 
+	// handles stack space tracking and offset registration.
 	int allocateStackSlotForTempVar(int32_t index) {
 		TempVar tempVar(index);
 		return getStackOffsetFromTempVar(tempVar);
 	}
 
-	// Get stack offset for a TempVar using formula-based allocation
+	// Get stack offset for a TempVar using formula-based allocation.
 	// TempVars are allocated dynamically after named variables using formula:
 	// TempVar(N) is at [rbp - (named_vars_base + (N-1) * 8)]
-	// This function also allocates the stack slot if it doesn't exist yet
+	// 
+	// This function also:
+	// - Extends scope_stack_space if the offset exceeds current tracked allocation
+	// - Registers the TempVar in identifier_offset for consistent subsequent lookups
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
