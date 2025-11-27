@@ -20,6 +20,9 @@
 
 namespace CrashHandler {
 
+// Constants
+constexpr int kMaxStackFrames = 64;
+
 // Get the exception code as a human-readable string
 inline const char* getExceptionCodeString(DWORD code) {
     switch (code) {
@@ -54,6 +57,16 @@ inline std::string getTimestampString() {
     localtime_s(&timeinfo, &now);
     char buffer[64];
     strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &timeinfo);
+    return std::string(buffer);
+}
+
+// Generate a human-readable timestamp string for the crash log content
+inline std::string getReadableTimestamp() {
+    time_t now = time(nullptr);
+    struct tm timeinfo;
+    localtime_s(&timeinfo, &now);
+    char buffer[64];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
     return std::string(buffer);
 }
 
@@ -107,9 +120,8 @@ inline void writeStackTrace(FILE* file, CONTEXT* context) {
 
     // Walk the stack
     int frameNum = 0;
-    const int maxFrames = 64;
 
-    while (frameNum < maxFrames) {
+    while (frameNum < kMaxStackFrames) {
         if (!StackWalk64(machineType, process, thread, &stackFrame, context,
                          nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {
             break;
@@ -121,7 +133,7 @@ inline void writeStackTrace(FILE* file, CONTEXT* context) {
         }
 
         // Get symbol information
-        char symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(TCHAR)];
+        char symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(char)];
         PSYMBOL_INFO symbol = reinterpret_cast<PSYMBOL_INFO>(symbolBuffer);
         symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
         symbol->MaxNameLen = MAX_SYM_NAME;
@@ -183,12 +195,8 @@ inline LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     fprintf(file, "=== FlashCpp Crash Report ===\n\n");
 
     // Write timestamp
-    time_t now = time(nullptr);
-    char timeBuffer[64];
-    struct tm timeinfo;
-    localtime_s(&timeinfo, &now);
-    strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-    fprintf(file, "Timestamp: %s\n", timeBuffer);
+    std::string timestamp = getReadableTimestamp();
+    fprintf(file, "Timestamp: %s\n", timestamp.c_str());
 
     // Write exception information
     EXCEPTION_RECORD* record = exceptionInfo->ExceptionRecord;
