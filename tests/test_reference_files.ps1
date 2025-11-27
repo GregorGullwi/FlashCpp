@@ -112,7 +112,6 @@ $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
     "template_class_methods_complex.cpp",  # Local variables of template type not yet supported
     "template_template_params.cpp",        # Template template parameters not yet supported
-    "test_abstract_class.cpp",             # Virtual function codegen issues
     "test_access_control.cpp",             # Access control codegen issues
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
     "test_constexpr_var.cpp",              # constexpr variable with cast parsing issue

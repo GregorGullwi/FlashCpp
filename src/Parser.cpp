@@ -7288,12 +7288,11 @@ void Parser::skip_function_trailing_specifiers()
 			continue;
 		}
 		
-		// Handle override and final (only valid for member functions, but skip anyway)
-		if (token->type() == Token::Type::Keyword &&
-			(token->value() == "override" || token->value() == "final")) {
-			consume_token();
-			continue;
-		}
+		// NOTE: Do NOT skip 'override' and 'final' here!
+		// These keywords have semantic meaning for member functions and need to be
+		// parsed and recorded by the calling code (struct parsing handles these).
+		// Skipping them here would cause the member function parsing to miss
+		// these important virtual function specifiers.
 		
 		// Handle __attribute__((...))
 		if (token->value() == "__attribute__") {
