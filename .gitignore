@@ -12,3 +12,6 @@ test_*.cpp
 test_*.obj
 *.obj
 *.ilk
+
+# Crash logs
+flashcpp_crash_*.log
