@@ -5556,26 +5556,25 @@ ParseResult Parser::parse_type_specifier()
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
 				
-// Check if this is a template template parameter usage (e.g., Container<T> where Container is a template template param)
-// When parsing a template body, if the type name is a template parameter (including template template params),
+// Check if this is a template parameter being used with template arguments (e.g., Container<T>)
+// When parsing a template body, if the type name is a template parameter (type or template template param),
 // we should NOT try to instantiate it - it's a dependent type that will be resolved during instantiation
-bool is_template_template_param = false;
+bool is_dependent_template_param = false;
 if (parsing_template_body_ && !current_template_param_names_.empty()) {
 for (const auto& param_name : current_template_param_names_) {
 if (param_name == type_name) {
-is_template_template_param = true;
+is_dependent_template_param = true;
 break;
 }
 }
 }
 
-if (is_template_template_param) {
-// This is a template template parameter being used with template arguments (e.g., Container<T>)
+if (is_dependent_template_param) {
+// This is a template parameter being used with template arguments
 // Create a dependent type reference - don't try to instantiate
-// Use the type_name (template template param name) with its template arguments
 // This will be resolved during instantiation of the containing template
 
-// Look up the TypeInfo for the template template parameter
+// Look up the TypeInfo for the template parameter
 auto type_it = gTypesByName.find(std::string(type_name));
 if (type_it != gTypesByName.end()) {
 TypeIndex type_idx = type_it->second - &gTypeInfo[0];
