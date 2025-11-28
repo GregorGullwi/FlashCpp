@@ -1855,7 +1855,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Check for initialization
 		std::optional<ASTNode> initializer;
 		
-		// Get the type specifier for brace initializer parsing
+		// Get the type specifier for brace initializer parsing and constexpr checks
+		// This is always safe since decl_node is a DeclarationNode with a TypeSpecifierNode
 		const TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
 		
 		if (peek_token().has_value() && peek_token()->value() == "=") {
@@ -1931,9 +1932,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				eval_ctx.is_constinit = is_constinit;
 				
 				auto eval_result = ConstExpr::Evaluator::evaluate(initializer.value(), eval_ctx);
-				// Note: We only report errors for constinit (which requires compile-time evaluation)
-				// For constexpr, if evaluation fails, we just accept it - the compiler will
-				// try to evaluate it at runtime or produce a better error later
+				// C++ semantics distinction between constexpr and constinit:
+				// - constexpr: variable CAN be used in constant expressions if initialized with a 
+				//   constant expression, but it's not required at parse time. If evaluation fails,
+				//   the variable is treated as a regular const variable.
+				// - constinit: variable MUST be initialized with a constant expression (C++20).
+				//   Failure to evaluate at compile time is always an error.
 				if (!eval_result.success && is_constinit) {
 					return ParseResult::error(
 						std::string(keyword_name) + " variable initializer must be a constant expression: " + eval_result.error_message,
