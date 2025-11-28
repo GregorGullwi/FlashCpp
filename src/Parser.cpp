@@ -11012,6 +11012,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& literal = std::get<NumericLiteralNode>(expr);
 		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits());
 	}
+	else if (std::holds_alternative<StringLiteralNode>(expr)) {
+		// String literals have type "const char*" (pointer to const char)
+		TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8);
+		char_type.add_pointer_level();
+		return char_type;
+	}
 	else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
 		auto symbol = this->lookup_symbol(ident.name());
