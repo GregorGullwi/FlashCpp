@@ -388,6 +388,7 @@ private:
 
         // Parsing functions for different constructs
         ParseResult parse_top_level_node();
+        ParseResult parse_pragma_pack_inner();   // NEW: Parse the contents of pragma pack()
         ParseResult parse_type_and_name();
         ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);  // NEW: Parse declarators (function pointers, arrays, etc.)
         ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators

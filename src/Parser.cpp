@@ -328,6 +328,152 @@ void Parser::skip_balanced_braces() {
 	}
 }
 
+// Helper function to parse the contents of pack(...) after the opening '('
+// Returns success and consumes the closing ')' on success
+ParseResult Parser::parse_pragma_pack_inner()
+{
+	// Check if it's empty: pack()
+	if (consume_punctuator(")")) {
+		context_.setPackAlignment(0); // Reset to default
+		return ParseResult::success();
+	}
+
+	// Check for push/pop/show: pack(push) or pack(pop) or pack(show)
+	// Full syntax:
+	//   pack(push [, identifier] [, n])
+	//   pack(pop [, {identifier | n}])
+	//   pack(show)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+		std::string_view pack_action = peek_token()->value();
+		
+		// Handle pack(show)
+		if (pack_action == "show") {
+			consume_token(); // consume 'show'
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after pragma pack show", *current_token_);
+			}
+			// Emit a warning showing the current pack alignment
+			size_t current_align = context_.getCurrentPackAlignment();
+			if (current_align == 0) {
+				std::cerr << "warning: current pack alignment is default (natural alignment)\n";
+			} else {
+				std::cerr << "warning: current pack alignment is " << current_align << "\n";
+			}
+			return ParseResult::success();
+		}
+		
+		if (pack_action == "push" || pack_action == "pop") {
+			consume_token(); // consume 'push' or 'pop'
+			
+			// Check for optional parameters
+			if (peek_token().has_value() && peek_token()->value() == ",") {
+				consume_token(); // consume ','
+				
+				// First parameter could be identifier or number
+				if (peek_token().has_value()) {
+					// Check if it's an identifier (label name)
+					if (peek_token()->type() == Token::Type::Identifier) {
+						std::string_view identifier = peek_token()->value();
+						consume_token(); // consume the identifier
+						
+						// Check for second comma and alignment value
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token(); // consume second ','
+							
+							if (peek_token().has_value()) {
+								if (peek_token()->type() == Token::Type::Literal) {
+									std::string_view value_str = peek_token()->value();
+									size_t alignment = 0;
+									auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
+									if (result.ec == std::errc()) {
+										if (pack_action == "push") {
+											context_.pushPackAlignment(identifier, alignment);
+										}
+										consume_token(); // consume the number
+									} else {
+										consume_token(); // consume invalid number
+										if (pack_action == "push") {
+											context_.pushPackAlignment(identifier);
+										} else {
+											context_.popPackAlignment(identifier);
+										}
+									}
+								} else if (peek_token()->type() == Token::Type::Identifier) {
+									// Another identifier (macro) - treat as no alignment specified
+									consume_token();
+									if (pack_action == "push") {
+										context_.pushPackAlignment(identifier);
+									} else {
+										context_.popPackAlignment(identifier);
+									}
+								}
+							}
+						} else {
+							// Just identifier, no alignment
+							if (pack_action == "push") {
+								context_.pushPackAlignment(identifier);
+							} else {
+								context_.popPackAlignment(identifier);
+							}
+						}
+					}
+					// Check if it's a number directly (no identifier)
+					else if (peek_token()->type() == Token::Type::Literal) {
+						std::string_view value_str = peek_token()->value();
+						size_t alignment = 0;
+						auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
+						if (result.ec == std::errc()) {
+							if (pack_action == "push") {
+								context_.pushPackAlignment(alignment);
+							}
+							consume_token(); // consume the number
+						} else {
+							consume_token(); // consume invalid number
+							if (pack_action == "push") {
+								context_.pushPackAlignment();
+							} else {
+								context_.popPackAlignment();
+							}
+						}
+					}
+				}
+			} else {
+				// No parameters - simple push/pop
+				if (pack_action == "push") {
+					context_.pushPackAlignment();
+				} else {
+					context_.popPackAlignment();
+				}
+			}
+			
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after pragma pack push/pop", *current_token_);
+			}
+			return ParseResult::success();
+		}
+	}
+
+	// Try to parse a number: pack(N)
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Literal) {
+		std::string_view value_str = peek_token()->value();
+		size_t alignment = 0;
+		auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
+		if (result.ec == std::errc() &&
+		    (alignment == 0 || alignment == 1 || alignment == 2 ||
+		     alignment == 4 || alignment == 8 || alignment == 16)) {
+			context_.setPackAlignment(alignment);
+			consume_token(); // consume the number
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after pack alignment value", *current_token_);
+			}
+			return ParseResult::success();
+		}
+	}
+
+	// If we get here, it's an unsupported pragma pack format
+	return ParseResult::error("Unsupported pragma pack format", *current_token_);
+}
+
 ParseResult Parser::parse_top_level_node()
 {
 	// Save the current token's position to restore later in case of a parsing
@@ -340,6 +486,48 @@ ParseResult Parser::parse_top_level_node()
 		DEBUG_BREAK();
 	}
 #endif
+
+	// Check for __pragma() - Microsoft's inline pragma syntax
+	// e.g., __pragma(pack(push, 8))
+	if (peek_token()->type() == Token::Type::Identifier && peek_token()->value() == "__pragma") {
+		consume_token(); // consume '__pragma'
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after '__pragma'", *current_token_);
+		}
+		
+		// Now parse what's inside - it could be pack(...) or something else
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+		    peek_token()->value() == "pack") {
+			consume_token(); // consume 'pack'
+			if (!consume_punctuator("(")) {
+				return ParseResult::error("Expected '(' after '__pragma(pack'", *current_token_);
+			}
+			
+			// Reuse the pack parsing logic by calling parse_pragma_pack_inner
+			auto pack_result = parse_pragma_pack_inner();
+			if (pack_result.is_error()) {
+				return pack_result;
+			}
+			
+			// Consume the outer closing ')'
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after '__pragma(...)'", *current_token_);
+			}
+			return saved_position.success();
+		} else {
+			// Unknown __pragma content - skip until balanced parens
+			int paren_depth = 1;
+			while (peek_token().has_value() && paren_depth > 0) {
+				if (peek_token()->value() == "(") {
+					paren_depth++;
+				} else if (peek_token()->value() == ")") {
+					paren_depth--;
+				}
+				consume_token();
+			}
+			return saved_position.success();
+		}
+	}
 
 	// Check for #pragma directives
 	if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "#") {
@@ -355,159 +543,12 @@ ParseResult Parser::parse_top_level_node()
 					return ParseResult::error("Expected '(' after '#pragma pack'", *current_token_);
 				}
 
-				// Check if it's empty: #pragma pack()
-				if (consume_punctuator(")")) {
-					context_.setPackAlignment(0); // Reset to default
-					return saved_position.success();
+				// Use the shared helper function to parse the pack contents
+				auto pack_result = parse_pragma_pack_inner();
+				if (pack_result.is_error()) {
+					return saved_position.propagate(std::move(pack_result));
 				}
-
-				// Check for push/pop/show: #pragma pack(push) or #pragma pack(pop) or #pragma pack(show)
-				// Full syntax:
-				//   #pragma pack(push [, identifier] [, n])
-				//   #pragma pack(pop [, {identifier | n}])
-				//   #pragma pack(show)
-				// Note: Identifiers are parsed but NOT currently stored/restored (uses simple stack only)
-				// This means #pragma pack(pop, label) just pops once from stack, ignoring the label name
-				// True named label support would require a map/stack combo in CompileContext
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-					std::string_view pack_action = peek_token()->value();
-					
-					// Handle #pragma pack(show)
-					if (pack_action == "show") {
-						consume_token(); // consume 'show'
-						if (!consume_punctuator(")")) {
-							return ParseResult::error("Expected ')' after pragma pack show", *current_token_);
-						}
-						// Emit a warning showing the current pack alignment
-						size_t current_align = context_.getCurrentPackAlignment();
-						if (current_align == 0) {
-							std::cerr << "warning: current pack alignment is default (natural alignment)\n";
-						} else {
-							std::cerr << "warning: current pack alignment is " << current_align << "\n";
-						}
-						return saved_position.success();
-					}
-					
-					if (pack_action == "push" || pack_action == "pop") {
-						consume_token(); // consume 'push' or 'pop'
-						
-						// Check for optional parameters
-						if (peek_token().has_value() && peek_token()->value() == ",") {
-							consume_token(); // consume ','
-							
-							// First parameter could be identifier or number
-							// #pragma pack(push, identifier)
-							// #pragma pack(push, identifier, n)
-							// #pragma pack(push, n)
-							// #pragma pack(pop, identifier)
-							// #pragma pack(pop, n)
-							
-							if (peek_token().has_value()) {
-								// Check if it's an identifier (label name)
-								if (peek_token()->type() == Token::Type::Identifier) {
-									std::string_view identifier = peek_token()->value();
-									consume_token(); // consume the identifier
-									
-									// Check for second comma and alignment value
-									// Pattern: pack(push/pop, identifier, n)
-									if (peek_token().has_value() && peek_token()->value() == ",") {
-										consume_token(); // consume second ','
-										
-										if (peek_token().has_value()) {
-											if (peek_token()->type() == Token::Type::Literal) {
-												std::string_view value_str = peek_token()->value();
-												size_t alignment = 0;
-												auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
-												if (result.ec == std::errc()) {
-													if (pack_action == "push") {
-														context_.pushPackAlignment(identifier, alignment);
-													}
-													// pop with identifier and number doesn't make sense in MSVC
-													consume_token(); // consume the number
-												} else {
-													consume_token(); // consume invalid number
-													if (pack_action == "push") {
-														context_.pushPackAlignment(identifier);
-													} else {
-														context_.popPackAlignment(identifier);
-													}
-												}
-											} else if (peek_token()->type() == Token::Type::Identifier) {
-												// Another identifier (macro) - treat as no alignment specified
-												consume_token();
-												if (pack_action == "push") {
-													context_.pushPackAlignment(identifier);
-												} else {
-													context_.popPackAlignment(identifier);
-												}
-											}
-										}
-									} else {
-										// Just identifier, no alignment
-										// pack(push, identifier) or pack(pop, identifier)
-										if (pack_action == "push") {
-											context_.pushPackAlignment(identifier);
-										} else {
-											context_.popPackAlignment(identifier);
-										}
-									}
-								}
-								// Check if it's a number directly (no identifier)
-								else if (peek_token()->type() == Token::Type::Literal) {
-									std::string_view value_str = peek_token()->value();
-									size_t alignment = 0;
-									auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
-									if (result.ec == std::errc()) {
-										if (pack_action == "push") {
-											context_.pushPackAlignment(alignment);
-										}
-										// pop with just a number is uncommon but valid
-										consume_token(); // consume the number
-									} else {
-										consume_token(); // consume invalid number
-										if (pack_action == "push") {
-											context_.pushPackAlignment();
-										} else {
-											context_.popPackAlignment();
-										}
-									}
-								}
-							}
-						} else {
-							// No parameters - simple push/pop
-							if (pack_action == "push") {
-								context_.pushPackAlignment();
-							} else {
-								context_.popPackAlignment();
-							}
-						}
-						
-						if (!consume_punctuator(")")) {
-							return ParseResult::error("Expected ')' after pragma pack push/pop", *current_token_);
-						}
-						return saved_position.success();
-					}
-				}
-
-				// Try to parse a number: #pragma pack(N)
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Literal) {
-					std::string_view value_str = peek_token()->value();
-					size_t alignment = 0;
-					auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
-					if (result.ec == std::errc() &&
-					    (alignment == 0 || alignment == 1 || alignment == 2 ||
-					     alignment == 4 || alignment == 8 || alignment == 16)) {
-						context_.setPackAlignment(alignment);
-						consume_token(); // consume the number
-						if (!consume_punctuator(")")) {
-							return ParseResult::error("Expected ')' after pack alignment value", *current_token_);
-						}
-						return saved_position.success();
-					}
-				}
-
-				// If we get here, it's an unsupported pragma pack format
-				return ParseResult::error("Unsupported #pragma pack format", *current_token_);
+				return saved_position.success();
 			} else {
 				// Unknown pragma - skip until end of line or until we hit a token that looks like the start of a new construct
 				// Pragmas can span multiple lines with parentheses, so we need to be careful
