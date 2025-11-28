@@ -6213,44 +6213,58 @@ private:
 				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					
+					// Check if this is a function being passed as a function pointer argument
+					if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
+						// Function being passed as function pointer - just pass its name
+						call_op.args.push_back(TypedValue{
+							.type = Type::FunctionPointer,
+							.size_in_bits = 64,  // Pointer size
+							.value = IrValue(identifier.name())
+						});
+					} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+						const auto& decl_node = symbol->as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 				
-					// Check if parameter expects a reference
-					if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-						// Parameter expects a reference - pass the address of the argument
-						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-							// Argument is already a reference - just pass it through
+						// Check if parameter expects a reference
+						if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+							// Parameter expects a reference - pass the address of the argument
+							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+								// Argument is already a reference - just pass it through
+								call_op.args.push_back(TypedValue{
+									.type = type_node.type(),
+									.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+									.value = IrValue(identifier.name())
+								});
+							} else {
+								// Argument is a value - take its address
+								TempVar addr_var = var_counter.next();
+						
+								AddressOfOp addr_op;
+								addr_op.result = addr_var;
+								addr_op.pointee_type = type_node.type();
+								addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+								addr_op.operand = identifier.name();
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+						
+								// Pass the address with pointer size
+								call_op.args.push_back(TypedValue{
+									.type = type_node.type(),
+									.size_in_bits = 64,  // Pointer size
+									.value = IrValue(addr_var)
+								});
+							}
+						} else {
+							// Regular pass by value
 							call_op.args.push_back(TypedValue{
 								.type = type_node.type(),
 								.size_in_bits = static_cast<int>(type_node.size_in_bits()),
 								.value = IrValue(identifier.name())
 							});
-						} else {
-							// Argument is a value - take its address
-							TempVar addr_var = var_counter.next();
-						
-							AddressOfOp addr_op;
-							addr_op.result = addr_var;
-							addr_op.pointee_type = type_node.type();
-							addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
-							addr_op.operand = identifier.name();
-							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-						
-							// Pass the address with pointer size
-							call_op.args.push_back(TypedValue{
-								.type = type_node.type(),
-								.size_in_bits = 64,  // Pointer size
-								.value = IrValue(addr_var)
-							});
 						}
 					} else {
-						// Regular pass by value
-						call_op.args.push_back(TypedValue{
-							.type = type_node.type(),
-							.size_in_bits = static_cast<int>(type_node.size_in_bits()),
-							.value = IrValue(identifier.name())
-						});
+						// Unknown symbol type - use toTypedValue fallback
+						call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
 					}
 				}
 				else {
