@@ -122,7 +122,6 @@ $expectedCompileFailures = @(
     "test_lambda_capture_simple.cpp",      # Lambda capture codegen issues
     "test_lambda_captures_comprehensive.cpp", # Lambda capture codegen issues
     "test_lambda_no_capture.cpp",          # Lambda codegen issues
-    "test_nested_classes.cpp",             # Nested class codegen issues
     "test_noexcept.cpp",                   # noexcept handling not yet supported
     "test_spec_ctor_init.cpp",             # Template specialization constructor init issue
     "test_spec_func_ptr.cpp",              # Template specialization function pointer issue (timeout)
