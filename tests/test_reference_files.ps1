@@ -111,7 +111,6 @@ Write-Host ""
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
     "template_template_params.cpp",        # Template template parameters not yet supported
-    "test_access_control.cpp",             # Access control codegen issues
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
     "test_constexpr_var.cpp",              # constexpr variable with cast parsing issue
     "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
