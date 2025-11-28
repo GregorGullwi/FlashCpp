@@ -127,16 +127,13 @@ $expectedCompileFailures = @(
     "test_spec_ctor_init.cpp",             # Template specialization constructor init issue
     "test_spec_func_ptr.cpp",              # Template specialization function pointer issue (timeout)
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
-    "test_using_enhanced.cpp",             # Using directive with function calls not yet supported (crashes compiler)
     "test_var_template_complete.cpp"       # Variable template codegen issue
 )
 
 # Expected link failures - files that compile but have known link issues
 # These are typically due to features not yet implemented in FlashCpp
 $expectedLinkFailures = @(
-    "test_constinit.cpp",                  # Global variable symbol generation issue
-    "test_global_namespace_scope.cpp",     # Namespace function name mangling generates duplicates
-    "test_if_constexpr.cpp"                # Global constexpr variable symbol generation issue
+    # Currently empty - all tests should pass
 )
 
 # Results tracking
