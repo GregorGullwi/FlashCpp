@@ -8088,6 +8088,10 @@ private:
 					const StructMember* member = struct_info->findMember(var_name);
 
 					if (member && capture_index < lambda_info.captured_var_decls.size()) {
+						// Check if this variable is a captured variable from an enclosing lambda
+						bool is_captured_from_enclosing = !current_lambda_closure_type_.empty() &&
+						                                   current_lambda_captures_.find(var_name) != current_lambda_captures_.end();
+
 						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 							// By-reference: store the address of the variable
 							// Get the original variable type from captured_var_decls
@@ -8099,21 +8103,55 @@ private:
 							const auto& decl = var_decl.as<DeclarationNode>();
 							const auto& orig_type = decl.type_node().as<TypeSpecifierNode>();
 
-							// Generate AddressOf: [result_var, type, size, operand]
 							TempVar addr_temp = var_counter.next();
-							AddressOfOp addr_op;
-							addr_op.result = addr_temp;
-							addr_op.pointee_type = orig_type.type();
-							addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-							addr_op.operand = std::string(var_name);  // Use std::string to avoid dangling reference
-							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
+							
+							if (is_captured_from_enclosing) {
+								// Variable is captured from enclosing lambda - need to get address from this->x
+								// For by-reference capture of an already captured variable, we need to:
+								// 1. Load the enclosing lambda's captured value (or pointer if it was by-ref)
+								// 2. Take the address of that
+								auto enclosing_kind_it = current_lambda_capture_kinds_.find(var_name);
+								bool enclosing_is_ref = (enclosing_kind_it != current_lambda_capture_kinds_.end() &&
+								                         enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+								
+								if (enclosing_is_ref) {
+									// Enclosing captured by reference - it already holds a pointer, just copy it
+									MemberLoadOp member_load;
+									member_load.result.value = addr_temp;
+									member_load.result.type = orig_type.type();  // Use original type (pointer semantics handled by IR converter)
+									member_load.result.size_in_bits = 64;  // Pointer size
+									member_load.object = std::string("this");
+									member_load.member_name = std::string_view(var_name);
+									member_load.offset = -1;  // Let IR converter find it
+									member_load.struct_type_info = nullptr;
+									member_load.is_reference = true;  // Mark as reference
+									member_load.is_rvalue_reference = false;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
+								} else {
+									// Enclosing captured by value - need to get address of this->x
+									AddressOfOp addr_op;
+									addr_op.result = addr_temp;
+									addr_op.pointee_type = orig_type.type();
+									addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
+									addr_op.operand = std::string(var_name);  // Will be resolved as this->var_name
+									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
+								}
+							} else {
+								// Regular variable - generate AddressOf directly
+								AddressOfOp addr_op;
+								addr_op.result = addr_temp;
+								addr_op.pointee_type = orig_type.type();
+								addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
+								addr_op.operand = std::string(var_name);
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
+							}
 
 							// Store the address in the closure member
 							MemberStoreOp member_store;
 							member_store.value.type = member->type;
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = addr_temp;
-							member_store.object = std::string_view(closure_var_name);
+							member_store.object = std::string(closure_var_name);
 							member_store.member_name = std::string_view(member->name);
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
@@ -8125,8 +8163,29 @@ private:
 						MemberStoreOp member_store;
 						member_store.value.type = member->type;
 						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
-						member_store.value.value = std::string_view(var_name);
-						member_store.object = std::string_view(closure_var_name);
+						
+						if (is_captured_from_enclosing) {
+							// Variable is captured from enclosing lambda - load it via member access first
+							TempVar loaded_value = var_counter.next();
+							MemberLoadOp member_load;
+							member_load.result.value = loaded_value;
+							member_load.result.type = member->type;
+							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+							member_load.object = std::string("this");
+							member_load.member_name = std::string_view(var_name);
+							member_load.offset = -1;  // Let IR converter find it
+							member_load.struct_type_info = nullptr;
+							member_load.is_reference = false;
+							member_load.is_rvalue_reference = false;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
+							
+							member_store.value.value = loaded_value;
+						} else {
+							// Regular variable - use directly
+							member_store.value.value = std::string(var_name);
+						}
+						
+						member_store.object = std::string(closure_var_name);
 						member_store.member_name = std::string_view(member->name);
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.is_reference = member->is_reference;
@@ -8174,7 +8233,31 @@ private:
 		func_decl_op.return_pointer_depth = 0;  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
-		func_decl_op.mangled_name = "";  // Lambda operator() doesn't need mangled name
+
+		// Generate proper mangled name for operator()
+		// Build TypeSpecifierNode for return type
+		TypeSpecifierNode return_type_node(lambda_info.return_type, 0, lambda_info.return_size, lambda_info.lambda_token);
+		
+		// Build TypeSpecifierNodes for parameters
+		std::vector<TypeSpecifierNode> param_types;
+		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
+			TypeSpecifierNode param_type_node(type, 0, size, lambda_info.lambda_token);
+			// Add pointer levels if needed
+			for (int i = 0; i < pointer_depth; ++i) {
+				param_type_node.add_pointer_level();
+			}
+			param_types.push_back(param_type_node);
+		}
+		
+		// Generate mangled name using the same function as regular member functions
+		std::string_view mangled = generateMangledNameForCall(
+			"operator()",
+			return_type_node,
+			param_types,
+			false,  // not variadic
+			lambda_info.closure_type_name
+		);
+		func_decl_op.mangled_name = std::string(mangled);
 
 		// Add parameters
 		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
@@ -8257,7 +8340,31 @@ private:
 		func_decl_op.return_pointer_depth = 0;  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
-		func_decl_op.mangled_name = "";  // Lambda __invoke doesn't need mangled name
+
+		// Generate proper mangled name for __invoke
+		// Build TypeSpecifierNode for return type
+		TypeSpecifierNode return_type_node(lambda_info.return_type, 0, lambda_info.return_size, lambda_info.lambda_token);
+		
+		// Build TypeSpecifierNodes for parameters
+		std::vector<TypeSpecifierNode> param_types;
+		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
+			TypeSpecifierNode param_type_node(type, 0, size, lambda_info.lambda_token);
+			// Add pointer levels if needed
+			for (int i = 0; i < pointer_depth; ++i) {
+				param_type_node.add_pointer_level();
+			}
+			param_types.push_back(param_type_node);
+		}
+		
+		// Generate mangled name for the __invoke function (free function, not member)
+		std::string_view mangled = generateMangledNameForCall(
+			lambda_info.invoke_name,
+			return_type_node,
+			param_types,
+			false,  // not variadic
+			""  // not a member function
+		);
+		func_decl_op.mangled_name = std::string(mangled);
 
 		// Add parameters
 		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
