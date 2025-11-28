@@ -8129,11 +8129,13 @@ private:
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
 								} else {
 									// Enclosing captured by value - need to get address of this->x
+									// The IR converter's handleAddressOf checks current_lambda_captures_
+									// and generates member access to this->var_name instead of direct variable access
 									AddressOfOp addr_op;
 									addr_op.result = addr_temp;
 									addr_op.pointee_type = orig_type.type();
 									addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									addr_op.operand = std::string(var_name);  // Will be resolved as this->var_name
+									addr_op.operand = std::string(var_name);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								}
 							} else {
@@ -8276,7 +8278,8 @@ private:
 		symbol_table.enter_scope(ScopeType::Function);
 
 		// Reset the temporary variable counter for each new function
-		// For member functions (operator()), reserve TempVar(1) for the implicit 'this' parameter
+		// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
+		// TempVar(1) is reserved for 'this', so we start at TempVar(2).
 		var_counter = TempVar(2);
 
 		// Set lambda context for captured variable access
@@ -8387,7 +8390,8 @@ private:
 		symbol_table.enter_scope(ScopeType::Function);
 
 		// Reset the temporary variable counter for each new function
-		// For static functions (like __invoke), start from TempVar(1)
+		// TempVar is 1-based. For static functions (like __invoke), no 'this' pointer,
+		// so TempVar() starts at 1 which is the first available slot.
 		var_counter = TempVar();
 
 		// Add lambda parameters to symbol table
