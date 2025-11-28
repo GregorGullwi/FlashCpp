@@ -2752,13 +2752,23 @@ private:
 		if (is_global || is_static_local) {
 			// Handle global variable or static local variable
 			// For static locals, mangle the name to include the function name
-			std::string var_name;
+			// Use StringBuilder to create a persistent string_view
+			// (string_view in GlobalVariableDeclOp would dangle if we used local std::string)
+			StringBuilder sb;
 			if (is_static_local) {
 				// Mangle name as: function_name.variable_name
-				var_name = std::string(current_function_name_) + "." + std::string(decl.identifier_token().value());
+				sb.append(current_function_name_).append(".").append(decl.identifier_token().value());
 			} else {
-				var_name = std::string(decl.identifier_token().value());
+				// For global variables, include namespace path for proper mangling
+				if (!current_namespace_stack_.empty()) {
+					// Build namespace-qualified name: Namespace1::Namespace2::varname
+					for (const auto& ns : current_namespace_stack_) {
+						sb.append(ns).append("::");
+					}
+				}
+				sb.append(decl.identifier_token().value());
 			}
+			std::string_view var_name = sb.commit();
 
 			// Create GlobalVariableDeclOp
 			GlobalVariableDeclOp op;
@@ -2823,7 +2833,7 @@ private:
 			// (The parser already added it to the symbol table)
 			if (is_static_local) {
 				StaticLocalInfo info;
-				info.mangled_name = var_name;
+				info.mangled_name = std::string(var_name);
 				info.type = type_node.type();
 				info.size_in_bits = static_cast<int>(type_node.size_in_bits());
 				static_local_names_[std::string(decl.identifier_token().value())] = info;
