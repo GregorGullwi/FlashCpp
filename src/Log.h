@@ -42,7 +42,7 @@ enum class LogLevel : uint8_t {
 // Set these via compiler flags: -DFLASHCPP_LOG_LEVEL=3 -DFLASHCPP_LOG_CATEGORIES=0xFF
 #ifndef FLASHCPP_LOG_LEVEL
     #ifdef NDEBUG
-        #define FLASHCPP_LOG_LEVEL 2   // Release: up to Info level (General always works)
+        #define FLASHCPP_LOG_LEVEL 2   // Release: up to Info level (General category always enabled regardless of level)
     #else
         #define FLASHCPP_LOG_LEVEL 3   // Debug: up to Debug level
     #endif
@@ -64,7 +64,7 @@ namespace detail {
 struct LogConfig {
     static inline LogLevel runtimeLevel = static_cast<LogLevel>(FLASHCPP_LOG_LEVEL);
     static inline LogCategory runtimeCategories = static_cast<LogCategory>(FLASHCPP_LOG_CATEGORIES);
-    static inline std::ostream* output_stream = &std::cout;  // Default output stream (errors always go to cerr)
+    static inline std::ostream* output_stream = &std::cout;  // Default output stream (errors always go to std::cerr)
     static inline bool use_colors = true;  // Enable/disable ANSI colors
 
     static void setLevel(LogLevel level) { runtimeLevel = level; }
@@ -150,6 +150,7 @@ struct Logger {
 
     static constexpr std::string_view categoryName() {
         switch (Category) {
+            case LogCategory::None:      return "None";
             case LogCategory::General:   return "General";
             case LogCategory::Parser:    return "Parser";
             case LogCategory::Lexer:     return "Lexer";
@@ -159,7 +160,8 @@ struct Logger {
             case LogCategory::Codegen:   return "Codegen";
             case LogCategory::Scope:     return "Scope";
             case LogCategory::Mangling:  return "Mangling";
-            default:                     return "Unknown";
+            case LogCategory::All:       return "All";
+            default:                     return "Unknown";  // Multi-category bitmask
         }
     }
 };
