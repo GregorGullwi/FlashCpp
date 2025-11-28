@@ -6202,11 +6202,27 @@ private:
 					function_name += "::";
 					function_name += mangled_func_name;
 				} else {
-					// Regular member function (not a template)
-					function_name.reserve(struct_name.size() + 2 + func_name.size());
-					function_name += struct_name;
-					function_name += "::";
-					function_name += func_name;
+					// Regular member function (not a template) - generate proper mangled name
+					// Get return type and parameter types from the function declaration
+					const auto& return_type_node = func_decl_node.type_node().as<TypeSpecifierNode>();
+					std::vector<TypeSpecifierNode> param_types;
+					for (const auto& param_node : func_decl.parameter_nodes()) {
+						if (param_node.is<DeclarationNode>()) {
+							const auto& param_decl = param_node.as<DeclarationNode>();
+							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							param_types.push_back(param_type);
+						}
+					}
+					
+					// Generate proper mangled name including parameter types
+					std::string_view mangled = generateMangledNameForCall(
+						std::string(func_name),
+						return_type_node,
+						param_types,
+						func_decl.is_variadic(),
+						struct_name
+					);
+					function_name = std::string(mangled);
 				}
 			} else {
 				// Non-member function or fallback

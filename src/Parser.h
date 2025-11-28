@@ -469,7 +469,6 @@ public:  // Public methods for template instantiation
         ParseResult parse_goto_statement();  // Add goto-statement parser
         ParseResult parse_label_statement();  // Add label-statement parser
         ParseResult parse_lambda_expression();  // Add lambda expression parser
-        ParseResult transformLambdaToStruct(const LambdaExpressionNode& lambda);  // Transform lambda to struct with operator()
         ParseResult parse_try_statement();  // Add try-catch statement parser
         ParseResult parse_throw_statement();  // Add throw statement parser
 

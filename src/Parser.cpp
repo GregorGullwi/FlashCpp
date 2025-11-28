@@ -10696,20 +10696,21 @@ ParseResult Parser::parse_lambda_expression() {
     ).as<DeclarationNode>();
 
     // Create FunctionDeclarationNode for operator()
-    FunctionDeclarationNode& operator_call_func = emplace_node<FunctionDeclarationNode>(
+    ASTNode operator_call_func_node = emplace_node<FunctionDeclarationNode>(
         operator_call_decl,
         closure_name
-    ).as<FunctionDeclarationNode>();
+    );
+    FunctionDeclarationNode& operator_call_func = operator_call_func_node.as<FunctionDeclarationNode>();
 
     // Add parameters from lambda to operator()
-    for (const auto& param : parameters) {
+    for (const auto& param : lambda.parameters()) {
         operator_call_func.add_parameter_node(param);
     }
 
     // Add operator() as a member function
     StructMemberFunction operator_call_member(
         "operator()",
-        emplace_node<FunctionDeclarationNode>(operator_call_func),
+        operator_call_func_node,  // Use the original ASTNode, not a copy
         AccessSpecifier::Public,
         false,  // not constructor
         false,  // not destructor
@@ -10722,91 +10723,6 @@ ParseResult Parser::parse_lambda_expression() {
     closure_type.struct_info_ = std::move(closure_struct_info);
 
     return ParseResult::success(lambda_node);
-}
-
-ParseResult Parser::transformLambdaToStruct(const LambdaExpressionNode& lambda) {
-    // Transform lambda into a struct with operator() (Clang-style)
-    // This is Phase 1: Simple lambdas without captures
-
-    // Generate unique struct name for this lambda
-    static int lambda_counter = 0;
-    std::string struct_name = "__lambda_" + std::to_string(lambda_counter++);
-    Token struct_token = lambda.lambda_token();
-
-    // Create struct type specifier
-    auto struct_type = emplace_node<TypeSpecifierNode>(
-        Type::Struct,
-        TypeQualifier::None,
-        0,  // size will be calculated later
-        struct_token
-    );
-
-    // Create struct type info
-    auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
-        struct_name,
-        false  // is_class = false (it's a struct)
-    );
-
-    // Add operator() as a member function
-    // Create return type for operator()
-    ASTNode return_type_node;
-    if (lambda.return_type().has_value()) {
-        return_type_node = *lambda.return_type();
-    } else {
-        // Default to int if no return type specified
-        return_type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, struct_token);
-    }
-
-    // Create operator() identifier token
-    static const std::string operator_call_name = "operator()";
-    Token operator_token(Token::Type::Identifier, operator_call_name,
-                        struct_token.line(), struct_token.column(), struct_token.file_index());
-
-    // Create declaration for operator()
-    auto [operator_decl, operator_decl_ref] = emplace_node_ref<DeclarationNode>(
-        return_type_node,
-        operator_token
-    );
-
-    // Create function declaration for operator() with parameters
-    auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-        operator_decl_ref
-    );
-
-    // Add parameters from lambda
-    for (const auto& param : lambda.parameters()) {
-        func_ref.add_parameter_node(param);
-    }
-
-    // Set the body - need to create a mutable copy
-    auto body_copy = emplace_node<BlockNode>(lambda.body().as<BlockNode>());
-    func_ref.set_definition(body_copy);
-
-    // Add operator() to the struct
-    struct_ref.add_operator_overload(
-        "()",  // operator symbol
-        func_node,
-        AccessSpecifier::Public,
-        false,  // not virtual
-        false,  // not pure virtual
-        false,  // not override
-        false   // not final
-    );
-
-    // Register the struct in the symbol table
-    gSymbolTable.insert(struct_name, struct_node);
-
-    // For now, just return the lambda node itself
-    // TODO: Return a proper struct construction expression
-    auto result_lambda = emplace_node<LambdaExpressionNode>(
-        lambda.captures(),
-        lambda.parameters(),
-        lambda.body(),
-        lambda.return_type(),
-        lambda.lambda_token()
-    );
-
-    return ParseResult::success(result_lambda);
 }
 
 ParseResult Parser::parse_if_statement() {
