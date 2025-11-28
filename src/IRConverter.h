@@ -8313,20 +8313,6 @@ private:
 			if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
 				is_pointer_access = true;
 			}
-		} else if (std::holds_alternative<std::string>(op.object)) {
-			// Handle owned string object name
-			const std::string& object_name = std::get<std::string>(op.object);
-			auto it = current_scope.identifier_offset.find(object_name);
-			if (it == current_scope.identifier_offset.end()) {
-				assert(false && "Struct object not found in scope (string)");
-				return;
-			}
-			object_base_offset = it->second;
-
-			// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
-			if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
-				is_pointer_access = true;
-			}
 		} else {
 			// Nested case: object is the result of a previous member access
 			auto object_temp = std::get<TempVar>(op.object);
@@ -8491,11 +8477,8 @@ private:
 		} else if (std::holds_alternative<std::string_view>(op.value.value)) {
 			is_variable = true;
 			variable_name = std::string(std::get<std::string_view>(op.value.value));
-		} else if (std::holds_alternative<std::string>(op.value.value)) {
-			is_variable = true;
-			variable_name = std::get<std::string>(op.value.value);
 		} else {
-			assert(false && "Value must be TempVar, unsigned long long, double, string, or string_view");
+			assert(false && "Value must be TempVar, unsigned long long, double, or string_view");
 			return;
 		}
 
@@ -8515,20 +8498,6 @@ private:
 
 			// Check if this is the 'this' pointer or a reference parameter
 			if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
-				is_pointer_access = true;
-			}
-		} else if (std::holds_alternative<std::string>(op.object)) {
-			// Handle owned string object name (e.g., dynamically generated closure names)
-			const std::string& object_name = std::get<std::string>(op.object);
-			auto it = current_scope.identifier_offset.find(object_name);
-			if (it == current_scope.identifier_offset.end()) {
-				assert(false && "Struct object not found in scope (string)");
-				return;
-			}
-			object_base_offset = it->second;
-
-			// Check if this is a reference
-			if (reference_stack_info_.count(object_base_offset) > 0) {
 				is_pointer_access = true;
 			}
 		} else {
