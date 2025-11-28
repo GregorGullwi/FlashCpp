@@ -12961,13 +12961,28 @@ ParseResult Parser::parse_template_declaration() {
 					// Add member function to struct
 					struct_ref.add_member_function(member_func_node, current_access);
 				} else {
-					// Data member
+					// Data member - need to handle default initializers (e.g., `T* ptr = nullptr;`)
 					ASTNode member_node = *member_result.node();
 					if (member_node.is<DeclarationNode>()) {
-						struct_ref.add_member(member_node, current_access);
+						// Check for default initializer
+						std::optional<ASTNode> default_initializer;
+						if (peek_token().has_value() && peek_token()->value() == "=") {
+							consume_token(); // consume '='
+							// Parse the initializer expression
+							auto init_result = parse_expression();
+							if (init_result.is_error()) {
+								return init_result;
+							}
+							if (init_result.node().has_value()) {
+								default_initializer = *init_result.node();
+							}
+						}
+						struct_ref.add_member(member_node, current_access, default_initializer);
 					}
 					// Consume semicolon after data member
-					consume_punctuator(";");
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after member declaration", *peek_token());
+					}
 				}
 			}
 			
