@@ -3742,6 +3742,36 @@ ParseResult Parser::parse_struct_declaration()
 							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
 						}
 					}
+					// Also add inherited member functions from base classes
+					if (delayed.struct_type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (struct_info) {
+							std::vector<TypeIndex> base_classes_to_search;
+							for (const auto& base : struct_info->base_classes) {
+								base_classes_to_search.push_back(base.type_index);
+							}
+							for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+								TypeIndex base_idx = base_classes_to_search[i];
+								if (base_idx >= gTypeInfo.size()) continue;
+								const TypeInfo& base_type_info = gTypeInfo[base_idx];
+								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+								if (!base_struct_info) continue;
+								for (const auto& member_func : base_struct_info->member_functions) {
+									if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+										gSymbolTable.insert(member_func.name, member_func.function_decl);
+									}
+								}
+								for (const auto& nested_base : base_struct_info->base_classes) {
+									bool already_in_list = false;
+									for (TypeIndex existing : base_classes_to_search) {
+										if (existing == nested_base.type_index) { already_in_list = true; break; }
+									}
+									if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
+								}
+							}
+						}
+					}
 				}
 
 				for (const auto& param : delayed.ctor_node->parameter_nodes()) {
@@ -3784,6 +3814,36 @@ ParseResult Parser::parse_struct_declaration()
 							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
 						}
 					}
+					// Also add inherited member functions from base classes
+					if (delayed.struct_type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (struct_info) {
+							std::vector<TypeIndex> base_classes_to_search;
+							for (const auto& base : struct_info->base_classes) {
+								base_classes_to_search.push_back(base.type_index);
+							}
+							for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+								TypeIndex base_idx = base_classes_to_search[i];
+								if (base_idx >= gTypeInfo.size()) continue;
+								const TypeInfo& base_type_info = gTypeInfo[base_idx];
+								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+								if (!base_struct_info) continue;
+								for (const auto& member_func : base_struct_info->member_functions) {
+									if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+										gSymbolTable.insert(member_func.name, member_func.function_decl);
+									}
+								}
+								for (const auto& nested_base : base_struct_info->base_classes) {
+									bool already_in_list = false;
+									for (TypeIndex existing : base_classes_to_search) {
+										if (existing == nested_base.type_index) { already_in_list = true; break; }
+									}
+									if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
+								}
+							}
+						}
+					}
 				}
 
 				auto block_result = parse_block();
@@ -3822,6 +3882,36 @@ ParseResult Parser::parse_struct_declaration()
 						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
 							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
 							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+						}
+					}
+					// Also add inherited member functions from base classes
+					if (delayed.struct_type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (struct_info) {
+							std::vector<TypeIndex> base_classes_to_search;
+							for (const auto& base : struct_info->base_classes) {
+								base_classes_to_search.push_back(base.type_index);
+							}
+							for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+								TypeIndex base_idx = base_classes_to_search[i];
+								if (base_idx >= gTypeInfo.size()) continue;
+								const TypeInfo& base_type_info = gTypeInfo[base_idx];
+								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+								if (!base_struct_info) continue;
+								for (const auto& member_func : base_struct_info->member_functions) {
+									if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+										gSymbolTable.insert(member_func.name, member_func.function_decl);
+									}
+								}
+								for (const auto& nested_base : base_struct_info->base_classes) {
+									bool already_in_list = false;
+									for (TypeIndex existing : base_classes_to_search) {
+										if (existing == nested_base.type_index) { already_in_list = true; break; }
+									}
+									if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
+								}
+							}
 						}
 					}
 				}
@@ -3903,6 +3993,36 @@ ParseResult Parser::parse_struct_declaration()
 						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
 					}
 				}
+				// Also add inherited member functions from base classes
+				if (delayed.struct_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						std::vector<TypeIndex> base_classes_to_search;
+						for (const auto& base : struct_info->base_classes) {
+							base_classes_to_search.push_back(base.type_index);
+						}
+						for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+							TypeIndex base_idx = base_classes_to_search[i];
+							if (base_idx >= gTypeInfo.size()) continue;
+							const TypeInfo& base_type_info = gTypeInfo[base_idx];
+							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							if (!base_struct_info) continue;
+							for (const auto& member_func : base_struct_info->member_functions) {
+								if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+									gSymbolTable.insert(member_func.name, member_func.function_decl);
+								}
+							}
+							for (const auto& nested_base : base_struct_info->base_classes) {
+								bool already_in_list = false;
+								for (TypeIndex existing : base_classes_to_search) {
+									if (existing == nested_base.type_index) { already_in_list = true; break; }
+								}
+								if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
+							}
+						}
+					}
+				}
 			}
 
 			// Add parameters to symbol table
@@ -3954,6 +4074,36 @@ ParseResult Parser::parse_struct_declaration()
 						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
 					}
 				}
+				// Also add inherited member functions from base classes
+				if (delayed.struct_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						std::vector<TypeIndex> base_classes_to_search;
+						for (const auto& base : struct_info->base_classes) {
+							base_classes_to_search.push_back(base.type_index);
+						}
+						for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+							TypeIndex base_idx = base_classes_to_search[i];
+							if (base_idx >= gTypeInfo.size()) continue;
+							const TypeInfo& base_type_info = gTypeInfo[base_idx];
+							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							if (!base_struct_info) continue;
+							for (const auto& member_func : base_struct_info->member_functions) {
+								if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+									gSymbolTable.insert(member_func.name, member_func.function_decl);
+								}
+							}
+							for (const auto& nested_base : base_struct_info->base_classes) {
+								bool already_in_list = false;
+								for (TypeIndex existing : base_classes_to_search) {
+									if (existing == nested_base.type_index) { already_in_list = true; break; }
+								}
+								if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
+							}
+						}
+					}
+				}
 			}
 
 			// Parse the destructor body
@@ -3997,6 +4147,36 @@ ParseResult Parser::parse_struct_declaration()
 					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
 						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
 						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+					}
+				}
+				// Also add inherited member functions from base classes
+				if (delayed.struct_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						std::vector<TypeIndex> base_classes_to_search;
+						for (const auto& base : struct_info->base_classes) {
+							base_classes_to_search.push_back(base.type_index);
+						}
+						for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+							TypeIndex base_idx = base_classes_to_search[i];
+							if (base_idx >= gTypeInfo.size()) continue;
+							const TypeInfo& base_type_info = gTypeInfo[base_idx];
+							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							if (!base_struct_info) continue;
+							for (const auto& member_func : base_struct_info->member_functions) {
+								if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+									gSymbolTable.insert(member_func.name, member_func.function_decl);
+								}
+							}
+							for (const auto& nested_base : base_struct_info->base_classes) {
+								bool already_in_list = false;
+								for (TypeIndex existing : base_classes_to_search) {
+									if (existing == nested_base.type_index) { already_in_list = true; break; }
+								}
+								if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
+							}
+						}
 					}
 				}
 			}
