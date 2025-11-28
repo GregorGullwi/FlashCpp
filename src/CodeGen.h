@@ -424,9 +424,15 @@ private:
 		// Protected members are accessible from:
 		// 1. The same class
 		// 2. Derived classes (if inherited as public or protected)
+		// 3. Nested classes within the same class (C++ allows nested classes to access protected)
 		if (member->access == AccessSpecifier::Protected) {
 			// Same class
 			if (accessing_struct == member_owner_struct) {
+				return true;
+			}
+
+			// Check if accessing_struct is nested within member_owner_struct
+			if (isNestedWithin(accessing_struct, member_owner_struct)) {
 				return true;
 			}
 
@@ -549,17 +555,29 @@ private:
 			return false;
 		}
 
-		// Private member functions are only accessible from the same class
+		// Private member functions are only accessible from:
+		// 1. The same class
+		// 2. Nested classes within the same class
 		if (member_func->access == AccessSpecifier::Private) {
-			return accessing_struct == member_owner_struct;
+			if (accessing_struct == member_owner_struct) {
+				return true;
+			}
+			// Check if accessing_struct is nested within member_owner_struct
+			return isNestedWithin(accessing_struct, member_owner_struct);
 		}
 
 		// Protected member functions are accessible from:
 		// 1. The same class
 		// 2. Derived classes
+		// 3. Nested classes within the same class (C++ allows nested classes to access protected)
 		if (member_func->access == AccessSpecifier::Protected) {
 			// Same class
 			if (accessing_struct == member_owner_struct) {
+				return true;
+			}
+
+			// Check if accessing_struct is nested within member_owner_struct
+			if (isNestedWithin(accessing_struct, member_owner_struct)) {
 				return true;
 			}
 
