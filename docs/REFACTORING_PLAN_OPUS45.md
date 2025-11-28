@@ -586,178 +586,34 @@ enum class FunctionKind {
 
 ### 2.6 Logging Infrastructure
 
-Add a zero-overhead logging system that can be configured at compile-time and runtime:
+> **Status: IMPLEMENTED** - The logging system is now available in `src/Log.h`.
+
+When writing new code or modifying existing code, use the `FLASH_LOG` macro instead of direct `std::cerr` or `std::cout` calls:
 
 ```cpp
-// ===== src/Log.h (header-only) =====
-
-#pragma once
-#include <iostream>
-#include <string_view>
-
-namespace FlashCpp {
-
-// Log categories - each can be enabled/disabled independently
-enum class LogCategory : uint32_t {
-    None        = 0,
-    Parser      = 1 << 0,   // General parser operations
-    Lexer       = 1 << 1,   // Lexer/tokenizer
-    Templates   = 1 << 2,   // Template instantiation
-    Symbols     = 1 << 3,   // Symbol table operations
-    Types       = 1 << 4,   // Type resolution
-    Codegen     = 1 << 5,   // Code generation / IR
-    Scope       = 1 << 6,   // Scope enter/exit
-    Mangling    = 1 << 7,   // Name mangling
-    All         = 0xFFFFFFFF
-};
-
-inline LogCategory operator|(LogCategory a, LogCategory b) {
-    return static_cast<LogCategory>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
-}
-inline LogCategory operator&(LogCategory a, LogCategory b) {
-    return static_cast<LogCategory>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
-}
-
-// Verbosity levels
-enum class LogLevel : uint8_t {
-    Error   = 0,  // Always shown (unless logging completely disabled)
-    Warning = 1,  // Important warnings
-    Info    = 2,  // High-level flow
-    Debug   = 3,  // Detailed debugging
-    Trace   = 4   // Very verbose tracing
-};
-
-// Compile-time configuration
-// Set these via compiler flags: -DFLASHCPP_LOG_LEVEL=3 -DFLASHCPP_LOG_CATEGORIES=0xFF
-#ifndef FLASHCPP_LOG_LEVEL
-    #ifdef NDEBUG
-        #define FLASHCPP_LOG_LEVEL 0   // Release: errors only
-    #else
-        #define FLASHCPP_LOG_LEVEL 3   // Debug: up to Debug level
-    #endif
-#endif
-
-#ifndef FLASHCPP_LOG_CATEGORIES
-    #define FLASHCPP_LOG_CATEGORIES 0xFFFFFFFF  // All categories by default
-#endif
-
-// Runtime filter (can be changed at runtime for enabled levels)
-struct LogConfig {
-    static inline LogLevel runtimeLevel = static_cast<LogLevel>(FLASHCPP_LOG_LEVEL);
-    static inline LogCategory runtimeCategories = static_cast<LogCategory>(FLASHCPP_LOG_CATEGORIES);
-    static inline std::ostream* output_stream = &std::cerr;  // Configurable output stream
-
-    static void setLevel(LogLevel level) { runtimeLevel = level; }
-    static void setCategories(LogCategory cats) { runtimeCategories = cats; }
-    static void enableCategory(LogCategory cat) {
-        runtimeCategories = runtimeCategories | cat;
-    }
-    static void disableCategory(LogCategory cat) {
-        runtimeCategories = static_cast<LogCategory>(
-            static_cast<uint32_t>(runtimeCategories) & ~static_cast<uint32_t>(cat)
-        );
-    }
-    static void setOutputStream(std::ostream* stream) { output_stream = stream; }
-    static void setOutputToStdout() { output_stream = &std::cout; }
-    static void setOutputToStderr() { output_stream = &std::cerr; }
-};
-
-// Core logging function
-template<LogLevel Level, LogCategory Category>
-struct Logger {
-    static constexpr bool enabled =
-        (static_cast<uint8_t>(Level) <= FLASHCPP_LOG_LEVEL) &&
-        ((static_cast<uint32_t>(Category) & FLASHCPP_LOG_CATEGORIES) != 0);
-
-    template<typename... Args>
-    static void log([[maybe_unused]] Args&&... args) {
-        if constexpr (enabled) {
-            // Runtime check
-            if (static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogConfig::runtimeLevel) &&
-                (static_cast<uint32_t>(Category) & static_cast<uint32_t>(LogConfig::runtimeCategories)) != 0) {
-
-                // Print prefix
-                *LogConfig::output_stream << "[" << levelName() << "][" << categoryName() << "] ";
-                (*LogConfig::output_stream << ... << args);
-                *LogConfig::output_stream << "\n";
-            }
-        }
-    }
-
-    static constexpr std::string_view levelName() {
-        switch (Level) {
-            case LogLevel::Error:   return "ERROR";
-            case LogLevel::Warning: return "WARN ";
-            case LogLevel::Info:    return "INFO ";
-            case LogLevel::Debug:   return "DEBUG";
-            case LogLevel::Trace:   return "TRACE";
-        }
-        return "?????";
-    }
-
-    static constexpr std::string_view categoryName() {
-        switch (Category) {
-            case LogCategory::Parser:    return "Parser";
-            case LogCategory::Lexer:     return "Lexer";
-            case LogCategory::Templates: return "Templates";
-            case LogCategory::Symbols:   return "Symbols";
-            case LogCategory::Types:     return "Types";
-            case LogCategory::Codegen:   return "Codegen";
-            case LogCategory::Scope:     return "Scope";
-            case LogCategory::Mangling:  return "Mangling";
-            default:                     return "General";
-        }
-        return "?";
-    }
-};
-
-// Convenience macros - zero overhead when disabled at compile time
-#define FLASH_LOG(cat, level, ...) ::FlashCpp::Logger<LogLevel::level, LogCategory::cat>::log(__VA_ARGS__)
-
-} // namespace FlashCpp
-```
-
-**Usage examples:**
-```cpp
-// In Parser.cpp
 #include "Log.h"
 using namespace FlashCpp;
 
-ParseResult Parser::parseParameterList(ParsedParameterList& out_params) {
-    FLASH_LOG(LogCategory::Parser, LogLevel::Trace, "parseParameterList: entering");
+// User-facing messages (no prefix, always enabled)
+FLASH_LOG(General, Info, "Output file: ", filename);
 
-    if (!consume_punctuator("(")) {
-        FLASH_LOG(LogCategory::Parser, LogLevel::Error, "Expected '(' at line ", current_token_->line());
-        return ParseResult::error(...);
-    }
+// Internal logging with category prefixes and colors
+FLASH_LOG(Parser, Error, "Parse error at line ", lineNum);   // Red, goes to stderr
+FLASH_LOG(Lexer, Warning, "Unexpected token");               // Yellow
+FLASH_LOG(Templates, Debug, "Instantiating template");       // No color
+FLASH_LOG(Codegen, Trace, "Generating instruction");         // Blue
 
-    while (...) {
-        FLASH_LOG(LogCategory::Parser, LogLevel::Trace, "  parsing parameter #", out_params.parameters.size());
-        // ...
-    }
-
-    FLASH_LOG(LogCategory::Parser, LogLevel::Debug, "parseParameterList: parsed ", out_params.parameters.size(), " params");
-    return ParseResult::success();
-}
+// Runtime configuration
+LogConfig::setLevel(LogLevel::Warning);
+LogConfig::disableCategory(LogCategory::Templates);
+LogConfig::setUseColors(false);
 ```
 
-**Build configurations:**
-```batch
-REM Release: no logging overhead (dead code eliminated)
-cl.exe /DNDEBUG /DFLASHCPP_LOG_LEVEL=0 ...
+**Available categories:** `General`, `Parser`, `Lexer`, `Templates`, `Symbols`, `Types`, `Codegen`, `Scope`, `Mangling`
 
-REM Debug: all logging up to Debug level
-cl.exe /DFLASHCPP_LOG_LEVEL=3 ...
+**Log levels:** `Error` < `Warning` < `Info` < `Debug` < `Trace`
 
-REM Debug with only Parser+Templates at Trace level
-cl.exe /DFLASHCPP_LOG_LEVEL=4 /DFLASHCPP_LOG_CATEGORIES=0x05 ...
-```
-
-**Migration strategy:**
-- Replace `std::cerr << "error: ..."` with `FLASH_LOG(LogCategory::Parser, LogLevel::Error, ...)`
-- Replace `std::cerr << "debug: ..."` with `FLASH_LOG(LogCategory::Parser, LogLevel::Debug, ...)`
-- Replace verbose `-v` output with `FLASH_LOG(LogCategory::Parser, LogLevel::Trace, ...)`
-- Do this incrementally during each refactoring phase
+**Migration guideline:** Replace `std::cerr << "error: ..."` with `FLASH_LOG(Parser, Error, ...)` etc.
 
 ---
 
@@ -766,14 +622,14 @@ cl.exe /DFLASHCPP_LOG_LEVEL=4 /DFLASHCPP_LOG_CATEGORIES=0x05 ...
 ### Phase 0: Preparation (Week 1)
 
 **Goals:**
-- Add logging infrastructure
+- ~~Add logging infrastructure~~ ✅ **DONE** - See `src/Log.h`
 - Add comprehensive tests for existing behavior
 - Create baseline AST dumps for regression comparison
 - Set up feature flags for gradual rollout
 
 **Tasks:**
 
-0. **Create `src/Log.h`** with the logging infrastructure above.
+0. ~~**Create `src/Log.h`**~~ ✅ **DONE** - Logging infrastructure is implemented.
 
 1. **Expand test coverage in `tests/FlashCppTest/FlashCppTest.cpp`:**
    ```cpp
@@ -1617,7 +1473,7 @@ ParseResult Parser::parseFunctionHeader(
 ### New Files to Create:
 ```
 src/
-├── Log.h                   # Logging infrastructure (header-only, zero-overhead)
+├── Log.h                   # ✅ DONE - Logging infrastructure (header-only, zero-overhead)
 ├── ParserTypes.h           # New type definitions (header-only)
 ├── ParserScopeGuards.h     # RAII guard declarations + inline implementations (header-only)
 ├── ScopedSymbolTable.h     # Hierarchical symbol tables (header-only)
