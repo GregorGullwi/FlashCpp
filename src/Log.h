@@ -101,8 +101,8 @@ struct Logger {
             case LogLevel::Info:    return "INFO ";
             case LogLevel::Debug:   return "DEBUG";
             case LogLevel::Trace:   return "TRACE";
+            default:                return "?????";
         }
-        return "?????";
     }
 
     static constexpr std::string_view categoryName() {
