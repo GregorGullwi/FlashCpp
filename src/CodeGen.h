@@ -8023,7 +8023,8 @@ private:
 		// Collect captured variable declarations from current scope
 		for (const auto& capture : lambda.captures()) {
 			if (capture.is_capture_all()) {
-				// TODO: Handle capture-all [=] and [&]
+				// Capture-all ([=] or [&]) should have been expanded by the parser into explicit captures
+				// If we see one here, it means the parser didn't expand it (shouldn't happen)
 				continue;
 			}
 
@@ -8447,7 +8448,8 @@ private:
 		size_t capture_index = 0;
 		for (const auto& capture : captures) {
 			if (capture.is_capture_all()) {
-				// TODO: Handle capture-all [=] and [&]
+				// Capture-all ([=] or [&]) should have been expanded by the parser into explicit captures
+				// If we see one here, it means the parser didn't expand it (shouldn't happen)
 				continue;
 			}
 
