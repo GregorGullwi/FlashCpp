@@ -8058,14 +8058,17 @@ private:
 		collected_lambdas_.push_back(std::move(info));
 		const LambdaInfo& lambda_info = collected_lambdas_.back();
 
-		// Create a closure variable name
-		std::string closure_var_name = "__closure_" + std::to_string(lambda_info.lambda_id);
+		// Create a closure variable name using StringBuilder for persistent string_view
+		std::string_view closure_var_name = StringBuilder()
+			.append("__closure_")
+			.append(static_cast<int64_t>(lambda_info.lambda_id))
+			.commit();
 
 		// Declare the closure variable
 		VariableDeclOp lambda_decl_op;
 		lambda_decl_op.type = Type::Struct;
 		lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-		lambda_decl_op.var_name = std::string(closure_var_name);
+		lambda_decl_op.var_name = closure_var_name;
 		lambda_decl_op.custom_alignment = 0;
 		lambda_decl_op.is_reference = false;
 		lambda_decl_op.is_rvalue_reference = false;
@@ -8084,13 +8087,13 @@ private:
 						continue;
 					}
 
-					std::string var_name(capture.identifier_name());
-					const StructMember* member = struct_info->findMember(var_name);
+					std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
+					const StructMember* member = struct_info->findMember(std::string(var_name));  // findMember needs std::string
 
 					if (member && capture_index < lambda_info.captured_var_decls.size()) {
 						// Check if this variable is a captured variable from an enclosing lambda
 						bool is_captured_from_enclosing = !current_lambda_closure_type_.empty() &&
-						                                   current_lambda_captures_.find(var_name) != current_lambda_captures_.end();
+						                                   current_lambda_captures_.find(std::string(var_name)) != current_lambda_captures_.end();
 
 						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 							// By-reference: store the address of the variable
@@ -8110,7 +8113,7 @@ private:
 								// For by-reference capture of an already captured variable, we need to:
 								// 1. Load the enclosing lambda's captured value (or pointer if it was by-ref)
 								// 2. Take the address of that
-								auto enclosing_kind_it = current_lambda_capture_kinds_.find(var_name);
+								auto enclosing_kind_it = current_lambda_capture_kinds_.find(std::string(var_name));
 								bool enclosing_is_ref = (enclosing_kind_it != current_lambda_capture_kinds_.end() &&
 								                         enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 								
@@ -8120,8 +8123,8 @@ private:
 									member_load.result.value = addr_temp;
 									member_load.result.type = orig_type.type();  // Use original type (pointer semantics handled by IR converter)
 									member_load.result.size_in_bits = 64;  // Pointer size
-									member_load.object = std::string("this");
-									member_load.member_name = std::string_view(var_name);
+									member_load.object = std::string_view("this");  // "this" is a string literal
+									member_load.member_name = var_name;  // Already a persistent string_view from AST
 									member_load.offset = -1;  // Let IR converter find it
 									member_load.struct_type_info = nullptr;
 									member_load.is_reference = true;  // Mark as reference
@@ -8135,7 +8138,7 @@ private:
 									addr_op.result = addr_temp;
 									addr_op.pointee_type = orig_type.type();
 									addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									addr_op.operand = std::string(var_name);
+									addr_op.operand = std::string(var_name);  // AddressOfOp::operand supports std::string
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								}
 							} else {
@@ -8144,7 +8147,7 @@ private:
 								addr_op.result = addr_temp;
 								addr_op.pointee_type = orig_type.type();
 								addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-								addr_op.operand = std::string(var_name);
+								addr_op.operand = std::string(var_name);  // AddressOfOp::operand supports std::string
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 							}
 
@@ -8153,7 +8156,7 @@ private:
 							member_store.value.type = member->type;
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = addr_temp;
-							member_store.object = std::string(closure_var_name);
+							member_store.object = closure_var_name;  // Already a persistent string_view
 							member_store.member_name = std::string_view(member->name);
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
@@ -8173,8 +8176,8 @@ private:
 							member_load.result.value = loaded_value;
 							member_load.result.type = member->type;
 							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-							member_load.object = std::string("this");
-							member_load.member_name = std::string_view(var_name);
+							member_load.object = std::string_view("this");  // "this" is a string literal
+							member_load.member_name = var_name;  // Already a persistent string_view from AST
 							member_load.offset = -1;  // Let IR converter find it
 							member_load.struct_type_info = nullptr;
 							member_load.is_reference = false;
@@ -8183,11 +8186,11 @@ private:
 							
 							member_store.value.value = loaded_value;
 						} else {
-							// Regular variable - use directly
-							member_store.value.value = std::string(var_name);
+							// Regular variable - use directly (var_name is already a persistent string_view from AST)
+							member_store.value.value = var_name;
 						}
 						
-						member_store.object = std::string(closure_var_name);
+						member_store.object = closure_var_name;  // Already a persistent string_view
 						member_store.member_name = std::string_view(member->name);
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.is_reference = member->is_reference;

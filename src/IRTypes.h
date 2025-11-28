@@ -504,7 +504,7 @@ private:
 // ============================================================================
 
 // Type alias for operand values (subset of IrOperand variant)
-using IrValue = std::variant<unsigned long long, double, TempVar, std::string, std::string_view>;
+using IrValue = std::variant<unsigned long long, double, TempVar, std::string_view>;
 
 // Typed value - combines IrValue with its type information
 struct TypedValue {
@@ -524,8 +524,6 @@ inline void printTypedValue(std::ostringstream& oss, const TypedValue& typedValu
 		oss << '%' << std::get<TempVar>(typedValue.value).var_number;
 	else if (std::holds_alternative<std::string_view>(typedValue.value))
 		oss << '%' << std::get<std::string_view>(typedValue.value);
-	else if (std::holds_alternative<std::string>(typedValue.value))
-		oss << '%' << std::get<std::string>(typedValue.value);
 	else
 		assert(false && "unsupported typed value");
 }
@@ -557,7 +555,7 @@ struct CallOp {
 // Member access (load member from struct/class)
 struct MemberLoadOp {
 	TypedValue result;                              // The loaded member value (type, size, result_var)
-	std::variant<std::string, std::string_view, TempVar> object; // Base object instance (string for owned names)
+	std::variant<std::string_view, TempVar> object; // Base object instance
 	std::string_view member_name;                   // Which member to access
 	int offset;                                     // Byte offset in struct
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
@@ -568,7 +566,7 @@ struct MemberLoadOp {
 // Member store (store value to struct/class member)
 struct MemberStoreOp {
 	TypedValue value;                               // Value to store (type, size, value_var)
-	std::variant<std::string, std::string_view, TempVar> object; // Target object instance (string for owned names, string_view for borrowed)
+	std::variant<std::string_view, TempVar> object; // Target object instance
 	std::string_view member_name;                   // Which member to store to
 	int offset;                                     // Byte offset in struct
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
