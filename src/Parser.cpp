@@ -10,6 +10,7 @@
 #include <ranges> // Include ranges for std::ranges::find
 #include <array> // Include array for std::array
 #include "ChunkedString.h"
+#include "Log.h"
 
 // Break into the debugger only on Windows
 #if defined(_WIN32) || defined(_WIN64)
@@ -10138,7 +10139,6 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 		// Check for explicit template arguments: obj.method<T>(args)
 		std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
 		if (peek_token().has_value() && peek_token()->value() == "<") {
-			std::cerr << ">>>>> Member function with template arguments: " << member_name_token.value() << "\n";
 			explicit_template_args = parse_explicit_template_arguments();
 			if (!explicit_template_args.has_value()) {
 				return ParseResult::error("Failed to parse template arguments for member function", *current_token_);
@@ -10146,11 +10146,8 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 		}
 
 		// Check if this is a member function call (followed by '(')
-		std::cerr << ">>>>> Checking member: " << member_name_token.value() 
-		          << " peek=" << (peek_token().has_value() ? peek_token()->value() : "NONE") << "\n";
 		if (peek_token().has_value() && peek_token()->value() == "("sv) {
 			// This is a member function call: obj.method(args)
-			std::cerr << ">>>>> IS MEMBER FUNCTION CALL: " << member_name_token.value() << "\n";
 
 			consume_token(); // consume '('
 
@@ -10158,7 +10155,6 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 			ChunkedVector<ASTNode> args;
 			std::vector<TypeSpecifierNode> arg_types;  // Collect argument types for template deduction
 			
-			std::cerr << ">>>>> About to parse arguments\n";
 			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 				while (true) {
 					auto arg_result = parse_expression();
@@ -16928,7 +16924,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	// Check if the template has a body position stored
 	if (!func_decl.has_template_body_position()) {
-		std::cerr << ">>>>> Template has NO body position!\n";
 		// No body to parse - return function without definition
 		ast_nodes_.push_back(new_func_node);
 		gTemplateRegistry.registerInstantiation(key, new_func_node);

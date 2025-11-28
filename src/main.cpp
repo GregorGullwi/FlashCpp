@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <chrono>
 #include <algorithm>
+#include <iomanip>
 
 #include "FileTree.h"
 #include "FileReader.h"
@@ -29,22 +30,53 @@ bool g_enable_debug_output = false;
 struct PhaseTimer {
     std::chrono::high_resolution_clock::time_point start;
     const char* phase_name;
-    bool enabled;
+    bool print_enabled;
+    double* accumulator = nullptr;  // Optional accumulator for phase timing
 
-    PhaseTimer(const char* name, bool enable) : phase_name(name), enabled(enable) {
-        if (enabled) {
-            start = std::chrono::high_resolution_clock::now();
-        }
+    PhaseTimer(const char* name, bool print_enable, double* accum = nullptr)
+        : phase_name(name), print_enabled(print_enable), accumulator(accum) {
+        // Always start timing
+        start = std::chrono::high_resolution_clock::now();
     }
 
     ~PhaseTimer() {
-        if (enabled) {
-            auto end = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-            printf("  %-20s: %8.3f ms\n", phase_name, duration.count() / 1000.0);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        double ms = duration.count() / 1000.0;
+
+        if (accumulator) {
+            *accumulator += ms;
+        }
+
+        if (print_enabled) {
+            FLASH_LOG(General, Info, "  ", phase_name, ": ", std::fixed, std::setprecision(3), ms, " ms\n");
         }
     }
 };
+
+// Helper function to print timing summary
+void printTimingSummary(double preprocessing_time, double parsing_time, double ir_conversion_time,
+                       double template_time, double codegen_time,
+                       std::chrono::high_resolution_clock::time_point total_start) {
+    auto total_end = std::chrono::high_resolution_clock::now();
+    auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
+    double total_ms = total_duration.count() / 1000.0;
+
+    FLASH_LOG(General, Info, "\n=== Compilation Timing ===\n");
+#if USE_OLD_STRING_APPROACH
+    FLASH_LOG(General, Info, "String approach: std::string (baseline)\n\n");
+#else
+    FLASH_LOG(General, Info, "String approach: StackString<32> (optimized)\n\n");
+#endif
+
+    FLASH_LOG(General, Info, "  Preprocessing: ", std::fixed, std::setprecision(3), preprocessing_time, " ms\n");
+    FLASH_LOG(General, Info, "  Parsing: ", std::fixed, std::setprecision(3), parsing_time, " ms\n");
+    FLASH_LOG(General, Info, "  IR Conversion: ", std::fixed, std::setprecision(3), ir_conversion_time, " ms\n");
+    FLASH_LOG(General, Info, "  Template Inst: ", std::fixed, std::setprecision(3), template_time, " ms\n");
+    FLASH_LOG(General, Info, "  Code Generation: ", std::fixed, std::setprecision(3), codegen_time, " ms\n");
+    FLASH_LOG(General, Info, "  TOTAL: ", std::fixed, std::setprecision(3), total_ms, " ms\n");
+    FLASH_LOG(General, Info, "==========================\n\n");
+}
 
 int main(int argc, char *argv[]) {
     // Install crash handler for automatic crash logging with stack traces
@@ -80,6 +112,9 @@ int main(int argc, char *argv[]) {
     bool show_perf_stats = argsparser.hasFlag("perf-stats") || argsparser.hasFlag("stats");
     bool show_timing = argsparser.hasFlag("time") || argsparser.hasFlag("timing") || show_perf_stats;
 
+    // Always show basic timing information (total time + breakdown)
+    bool show_basic_timing = true;
+
     // Set global debug flag (also enabled by verbose mode)
     g_enable_debug_output = show_debug || context.isVerboseMode();
 
@@ -106,21 +141,15 @@ int main(int argc, char *argv[]) {
     std::filesystem::path inputDirPath = inputFilePath.parent_path();
     context.addIncludeDir(inputDirPath.string());
 
-    if (show_timing) {
-        printf("\n=== Compilation Timing ===\n");
-#if USE_OLD_STRING_APPROACH
-        printf("String approach: std::string (baseline)\n\n");
-#else
-        printf("String approach: StackString<32> (optimized)\n\n");
-#endif
-    }
+    // Collect timing data silently
+    double preprocessing_time = 0.0, parsing_time = 0.0, ir_conversion_time = 0.0, template_time = 0.0, codegen_time = 0.0;
 
     FileTree file_tree;
     FileReader file_reader(context, file_tree);
     {
-        PhaseTimer timer("File I/O", show_timing);
+        PhaseTimer timer("Preprocessing", false, &preprocessing_time);
         if (!file_reader.readFile(context.getInputFile().value())) {
-            std::cerr << "Failed to read input file: " << context.getInputFile().value() << std::endl;
+            FLASH_LOG(General, Error, "Failed to read input file: ", context.getInputFile().value(), "\n");
             return 1;
         }
     }
@@ -135,6 +164,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    FLASH_LOG(General, Debug, "Verbose mode = ", (context.isVerboseMode() ? "true\n" : "false\n"));
     if (context.isVerboseMode()) {
         // Use context and file_tree to perform the desired operation
         FLASH_LOG(General, Debug, "Output file: ", context.getOutputFile(), "\n");
@@ -160,13 +190,13 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    Lexer lexer(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
-
     FLASH_LOG(General, Info, "===== FLASHCPP VERSION ", __DATE__, " " , __TIME__, " =====\n");
 
+    Lexer lexer(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
     Parser parser(lexer, context);
     {
-        PhaseTimer timer("Lexing + Parsing", show_timing);
+        PhaseTimer timer("Parsing", false, &parsing_time);
+        // Note: Lexing happens lazily during parsing in this implementation
         auto parse_result = parser.parse();
 
         if (parse_result.is_error()) {
@@ -188,105 +218,103 @@ int main(int argc, char *argv[]) {
     converter.reserveInstructions(estimated_instructions);
 
     if (show_perf_stats) {
-        printf("Estimated instructions: %zu (2 per line)\n", estimated_instructions);
+        FLASH_LOG(General, Info, "Estimated instructions: ", estimated_instructions, " (2 per line)\n");
     }
 
-    {
-        PhaseTimer timer("AST to IR", show_timing);
-        if (show_debug) {
-            std::cerr << "DEBUG: Visiting " << ast.size() << " AST nodes\n";
-            for (size_t i = 0; i < ast.size(); ++i) {
-                const auto& node = ast[i];
-                std::cerr << "  Node " << i << ": type=" << node.type_name();
-                if (node.is<StructDeclarationNode>()) {
-                    std::cerr << " (struct: " << node.as<StructDeclarationNode>().name() << ")";
-                } else if (node.is<FunctionDeclarationNode>()) {
-                    std::cerr << " (function: " << node.as<FunctionDeclarationNode>().decl_node().identifier_token().value() << ")";
-                }
-                std::cerr << "\n";
+    if (show_debug) {
+        FLASH_LOG(Codegen, Debug, "Visiting ", ast.size(), " AST nodes\n");
+        for (size_t i = 0; i < ast.size(); ++i) {
+            const auto& node = ast[i];
+            FLASH_LOG(Codegen, Debug, "  Node ", i, ": type=", node.type_name());
+            if (node.is<StructDeclarationNode>()) {
+                FLASH_LOG(Codegen, Debug, " (struct: ", node.as<StructDeclarationNode>().name(), ")");
+            } else if (node.is<FunctionDeclarationNode>()) {
+                FLASH_LOG(Codegen, Debug, " (function: ", node.as<FunctionDeclarationNode>().decl_node().identifier_token().value(), ")");
             }
+            FLASH_LOG(Codegen, Debug, "\n");
         }
+    }
+
+    // IR conversion (visiting AST nodes)
+    {
+        PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
         for (auto& node_handle : ast) {
             if (show_debug && node_handle.is<FunctionDeclarationNode>()) {
                 const auto& func = node_handle.as<FunctionDeclarationNode>();
                 bool has_def = func.get_definition().has_value();
-                std::cerr << "DEBUG: Visiting FunctionDeclarationNode: " << func.decl_node().identifier_token().value() 
-                          << " has_definition=" << has_def << "\n";
+                FLASH_LOG(Codegen, Debug, "Visiting FunctionDeclarationNode: ", func.decl_node().identifier_token().value(),
+                          " has_definition=", has_def, "\n");
                 if (has_def) {
                     const BlockNode& def_block = func.get_definition().value().as<BlockNode>();
-                    std::cerr << "  -> Block has " << def_block.get_statements().size() << " statements\n";
+                    FLASH_LOG(Codegen, Debug, "  -> Block has ", def_block.get_statements().size(), " statements\n");
                 }
             }
             converter.visit(node_handle);
         }
+    }
 
+    // Template instantiation (if any remaining)
+    {
+        PhaseTimer template_timer("Template Inst", false, &template_time);
         // Generate all collected lambdas after visiting all nodes
         converter.generateCollectedLambdas();
-        
+
         // Generate all collected local struct member functions after visiting all nodes
         converter.generateCollectedLocalStructMembers();
-        
+
         // Template instantiations now happen during parsing
         // converter.generateCollectedTemplateInstantiations();
     }
 
     const auto& ir = converter.getIr();
 
-    FLASH_LOG(General, Debug, "Verbose mode = ", (context.isVerboseMode() ? "true\n" : "false\n"));
     if (context.isVerboseMode()) {
-        std::cerr << "\n=== IR Instructions ===" << std::endl;
+        FLASH_LOG(Codegen, Debug, "\n=== IR Instructions ===\n");
         for (const auto& instruction : ir.getInstructions()) {
-            std::cerr << instruction.getReadableString() << std::endl;
+           FLASH_LOG(Codegen, Debug, instruction.getReadableString(), "\n");
         }
-        std::cerr << "=== End IR ===" << std::endl << std::endl;
+        FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
     }
 
     IrToObjConverter irConverter;
 
     try {
-        PhaseTimer timer("Code Generation", show_timing);
+        PhaseTimer timer("Code Generation", false, &codegen_time);
         irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
     } catch (const std::exception& e) {
-        std::cerr << "ERROR: Code generation failed: " << e.what() << std::endl;
-        if (show_timing) {
-            auto total_end = std::chrono::high_resolution_clock::now();
-            auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
-            printf("  %-20s: %8.3f ms\n", "TOTAL", total_duration.count() / 1000.0);
-            printf("==========================\n\n");
-        }
+        FLASH_LOG(General, Error, "Code generation failed: ", e.what(), "\n");
+        printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
         return 1;
     } catch (...) {
-        std::cerr << "ERROR: Code generation failed with unknown exception" << std::endl;
-        if (show_timing) {
-            auto total_end = std::chrono::high_resolution_clock::now();
-            auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
-            printf("  %-20s: %8.3f ms\n", "TOTAL", total_duration.count() / 1000.0);
-            printf("==========================\n\n");
-        }
+        FLASH_LOG(General, Error, "Code generation failed with unknown exception\n");
+        printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
         return 1;
     }
 
+    // Print final timing summary
+    printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
+
+    // Show additional details if --time flag is used
     if (show_timing) {
-        auto total_end = std::chrono::high_resolution_clock::now();
-        auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
-        printf("  %-20s: %8.3f ms\n", "TOTAL", total_duration.count() / 1000.0);
-        printf("==========================\n\n");
+        FLASH_LOG(General, Info, "Phase Details:\n");
+        FLASH_LOG(General, Info, "  Parsing includes: lexing + template instantiation from parsing phase\n");
+        FLASH_LOG(General, Info, "  Template Inst: lambda/struct member function generation\n");
     }
 
     if (show_perf_stats) {
         StackStringStats::print_stats();
 
 #ifdef USE_GLOBAL_OPERAND_STORAGE
-        printf("\n");  // Add spacing
+        FLASH_LOG(General, Info, "\n");
         GlobalOperandStorage::instance().printStats();
 #else
-        printf("\nNote: Chunked operand storage is disabled. Enable USE_GLOBAL_OPERAND_STORAGE to see operand stats.\n\n");
+        FLASH_LOG(General, Info, "\nNote: Chunked operand storage is disabled. Enable USE_GLOBAL_OPERAND_STORAGE to see operand stats.\n\n");
 #endif
 
         // Print IR instruction statistics
