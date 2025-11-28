@@ -701,7 +701,8 @@ private:
 			ret_type,
 			param_types_for_mangling,
 			node.is_variadic(),
-			node.is_member_function() ? std::string(struct_name_for_function) : ""
+			node.is_member_function() ? std::string(struct_name_for_function) : "",
+			current_namespace_stack_
 		);
 		func_decl_op.mangled_name = std::string(mangled_name);
 
@@ -1607,10 +1608,16 @@ private:
 
 	void visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
 		// Namespace declarations themselves don't generate IR - they just provide scope
+		// Track the current namespace for proper name mangling
+		current_namespace_stack_.push_back(std::string(node.name()));
+		
 		// Visit all declarations within the namespace
 		for (const auto& decl : node.declarations()) {
 			visit(decl);
 		}
+		
+		// Pop the namespace from the stack
+		current_namespace_stack_.pop_back();
 	}
 
 	void visitUsingDirectiveNode(const UsingDirectiveNode& node) {
@@ -5181,7 +5188,7 @@ private:
 
 	// Helper function to generate Microsoft Visual C++ mangled name for function calls
 	// This matches the mangling scheme in ObjFileWriter::generateMangledName
-	std::string_view generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "") {
+	std::string_view generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
@@ -5221,8 +5228,22 @@ private:
 			}
 			
 			builder.append("@@QA");  // @@ + calling convention for member functions (Q = __thiscall-like)
+		} else if (!namespace_path.empty()) {
+			// Namespace-scoped free function: ?name@Namespace@@YA...
+			builder.append(name);
+			builder.append('@');
+			
+			// Append namespace parts in reverse order with @ separators
+			for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+				builder.append(*it);
+				if (std::next(it) != namespace_path.rend()) {
+					builder.append('@');
+				}
+			}
+			
+			builder.append("@@YA");  // @@ + calling convention (__cdecl)
 		} else {
-			// Free function: ?name@@YA...
+			// Free function in global namespace: ?name@@YA...
 			builder.append(name);
 			builder.append("@@YA");  // @@ + calling convention (__cdecl)
 		}
@@ -8291,6 +8312,9 @@ private:
 	std::string current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits
+	
+	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
+	std::vector<std::string> current_namespace_stack_;
 
 	// Static local variable information
 	struct StaticLocalInfo {
