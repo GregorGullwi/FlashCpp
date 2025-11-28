@@ -8275,6 +8275,10 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 		symbol_table.enter_scope(ScopeType::Function);
 
+		// Reset the temporary variable counter for each new function
+		// For member functions (operator()), reserve TempVar(1) for the implicit 'this' parameter
+		var_counter = TempVar(2);
+
 		// Set lambda context for captured variable access
 		current_lambda_closure_type_ = lambda_info.closure_type_name;
 		current_lambda_captures_.clear();
@@ -8381,6 +8385,10 @@ private:
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 		symbol_table.enter_scope(ScopeType::Function);
+
+		// Reset the temporary variable counter for each new function
+		// For static functions (like __invoke), start from TempVar(1)
+		var_counter = TempVar();
 
 		// Add lambda parameters to symbol table
 		for (const auto& param_node : lambda_info.parameter_nodes) {
