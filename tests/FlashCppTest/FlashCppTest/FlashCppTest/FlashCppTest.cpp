@@ -2520,3 +2520,194 @@ TEST_CASE("Exceptions:Nested") {
 TEST_CASE("Exceptions:Noexcept") {
 	run_test_from_file("test_noexcept.cpp", "Noexcept specifier on functions", false);
 }
+
+// ===== Log.h Tests =====
+#include "Log.h"
+
+TEST_CASE("Log:LogCategoryBitOperations") {
+	using namespace FlashCpp;
+	
+	// Test OR operation
+	LogCategory combined = LogCategory::Parser | LogCategory::Lexer;
+	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
+	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
+	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Templates)) == 0);
+	
+	// Test AND operation
+	LogCategory andResult = combined & LogCategory::Parser;
+	CHECK(static_cast<uint32_t>(andResult) == static_cast<uint32_t>(LogCategory::Parser));
+	
+	// Test None
+	CHECK(static_cast<uint32_t>(LogCategory::None) == 0);
+	
+	// Test All
+	CHECK(static_cast<uint32_t>(LogCategory::All) == 0xFFFFFFFF);
+}
+
+TEST_CASE("Log:LogLevelValues") {
+	using namespace FlashCpp;
+	
+	// Verify log levels are in correct order (lower value = higher priority)
+	CHECK(static_cast<uint8_t>(LogLevel::Error) < static_cast<uint8_t>(LogLevel::Warning));
+	CHECK(static_cast<uint8_t>(LogLevel::Warning) < static_cast<uint8_t>(LogLevel::Info));
+	CHECK(static_cast<uint8_t>(LogLevel::Info) < static_cast<uint8_t>(LogLevel::Debug));
+	CHECK(static_cast<uint8_t>(LogLevel::Debug) < static_cast<uint8_t>(LogLevel::Trace));
+}
+
+TEST_CASE("Log:LogConfigRuntimeSettings") {
+	using namespace FlashCpp;
+	
+	// Save original values
+	LogLevel originalLevel = LogConfig::runtimeLevel;
+	LogCategory originalCategories = LogConfig::runtimeCategories;
+	std::ostream* originalStream = LogConfig::output_stream;
+	
+	// Test setLevel
+	LogConfig::setLevel(LogLevel::Trace);
+	CHECK(LogConfig::runtimeLevel == LogLevel::Trace);
+	
+	LogConfig::setLevel(LogLevel::Error);
+	CHECK(LogConfig::runtimeLevel == LogLevel::Error);
+	
+	// Test setCategories
+	LogConfig::setCategories(LogCategory::Parser);
+	CHECK(static_cast<uint32_t>(LogConfig::runtimeCategories) == static_cast<uint32_t>(LogCategory::Parser));
+	
+	// Test enableCategory
+	LogConfig::setCategories(LogCategory::None);
+	LogConfig::enableCategory(LogCategory::Lexer);
+	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
+	
+	LogConfig::enableCategory(LogCategory::Parser);
+	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
+	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
+	
+	// Test disableCategory
+	LogConfig::disableCategory(LogCategory::Lexer);
+	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) == 0);
+	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
+	
+	// Test stream setters
+	LogConfig::setOutputToStdout();
+	CHECK(LogConfig::output_stream == &std::cout);
+	
+	LogConfig::setOutputToStderr();
+	CHECK(LogConfig::output_stream == &std::cerr);
+	
+	// Restore original values
+	LogConfig::setLevel(originalLevel);
+	LogConfig::setCategories(originalCategories);
+	LogConfig::setOutputStream(originalStream);
+}
+
+TEST_CASE("Log:LoggerLevelName") {
+	using namespace FlashCpp;
+	
+	CHECK(Logger<LogLevel::Error, LogCategory::Parser>::levelName() == "ERROR");
+	CHECK(Logger<LogLevel::Warning, LogCategory::Parser>::levelName() == "WARN ");
+	CHECK(Logger<LogLevel::Info, LogCategory::Parser>::levelName() == "INFO ");
+	CHECK(Logger<LogLevel::Debug, LogCategory::Parser>::levelName() == "DEBUG");
+	CHECK(Logger<LogLevel::Trace, LogCategory::Parser>::levelName() == "TRACE");
+}
+
+TEST_CASE("Log:LoggerCategoryName") {
+	using namespace FlashCpp;
+	
+	CHECK(Logger<LogLevel::Error, LogCategory::Parser>::categoryName() == "Parser");
+	CHECK(Logger<LogLevel::Error, LogCategory::Lexer>::categoryName() == "Lexer");
+	CHECK(Logger<LogLevel::Error, LogCategory::Templates>::categoryName() == "Templates");
+	CHECK(Logger<LogLevel::Error, LogCategory::Symbols>::categoryName() == "Symbols");
+	CHECK(Logger<LogLevel::Error, LogCategory::Types>::categoryName() == "Types");
+	CHECK(Logger<LogLevel::Error, LogCategory::Codegen>::categoryName() == "Codegen");
+	CHECK(Logger<LogLevel::Error, LogCategory::Scope>::categoryName() == "Scope");
+	CHECK(Logger<LogLevel::Error, LogCategory::Mangling>::categoryName() == "Mangling");
+}
+
+TEST_CASE("Log:LogOutputCapture") {
+	using namespace FlashCpp;
+	
+	// Save original config
+	LogLevel originalLevel = LogConfig::runtimeLevel;
+	LogCategory originalCategories = LogConfig::runtimeCategories;
+	std::ostream* originalStream = LogConfig::output_stream;
+	
+	// Setup capture
+	std::ostringstream captureStream;
+	LogConfig::setOutputStream(&captureStream);
+	LogConfig::setLevel(LogLevel::Trace);
+	LogConfig::setCategories(LogCategory::All);
+	
+	// Log a message
+	FLASH_LOG(Parser, Error, "Test message ", 42);
+	
+	std::string output = captureStream.str();
+	CHECK(output.find("[ERROR]") != std::string::npos);
+	CHECK(output.find("[Parser]") != std::string::npos);
+	CHECK(output.find("Test message 42") != std::string::npos);
+	
+	// Clear and test different category
+	captureStream.str("");
+	FLASH_LOG(Lexer, Warning, "Lexer warning");
+	
+	output = captureStream.str();
+	CHECK(output.find("[WARN ]") != std::string::npos);
+	CHECK(output.find("[Lexer]") != std::string::npos);
+	
+	// Test category filtering - disable Parser
+	captureStream.str("");
+	LogConfig::setCategories(LogCategory::Lexer);  // Only enable Lexer
+	
+	FLASH_LOG(Parser, Error, "Should not appear");
+	output = captureStream.str();
+	// Note: compile-time check may prevent this from being filtered at runtime
+	// if the category is disabled at compile time. Only check if the logger is
+	// compile-time enabled (all categories enabled by default).
+	if (Logger<LogLevel::Error, LogCategory::Parser>::enabled) {
+		CHECK(output.empty());  // Runtime filtering should block it
+	}
+	
+	// Test level filtering
+	captureStream.str("");
+	LogConfig::setCategories(LogCategory::All);
+	LogConfig::setLevel(LogLevel::Warning);  // Only Warning and Error
+	
+	FLASH_LOG(Parser, Debug, "Debug should not appear");
+	output = captureStream.str();
+	// Only check if Debug level is enabled at compile time
+	if (Logger<LogLevel::Debug, LogCategory::Parser>::enabled) {
+		CHECK(output.empty());  // Runtime filtering should block it
+	}
+	
+	// Restore original config
+	LogConfig::setLevel(originalLevel);
+	LogConfig::setCategories(originalCategories);
+	LogConfig::setOutputStream(originalStream);
+}
+
+TEST_CASE("Log:LogMacroVariadicArgs") {
+	using namespace FlashCpp;
+	
+	// Save original config
+	LogLevel originalLevel = LogConfig::runtimeLevel;
+	LogCategory originalCategories = LogConfig::runtimeCategories;
+	std::ostream* originalStream = LogConfig::output_stream;
+	
+	// Setup capture
+	std::ostringstream captureStream;
+	LogConfig::setOutputStream(&captureStream);
+	LogConfig::setLevel(LogLevel::Trace);
+	LogConfig::setCategories(LogCategory::All);
+	
+	// Test with multiple arguments
+	FLASH_LOG(Parser, Info, "Value: ", 123, ", String: ", "test", ", Float: ", 3.14);
+	
+	std::string output = captureStream.str();
+	CHECK(output.find("Value: 123") != std::string::npos);
+	CHECK(output.find("String: test") != std::string::npos);
+	CHECK(output.find("Float: 3.14") != std::string::npos);
+	
+	// Restore original config
+	LogConfig::setLevel(originalLevel);
+	LogConfig::setCategories(originalCategories);
+	LogConfig::setOutputStream(originalStream);
+}
