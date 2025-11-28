@@ -15413,6 +15413,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Add the substituted function to the instantiated struct
 				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				
+				// Also add to struct_info so it can be found during codegen
+				struct_info_ptr->addMemberFunction(
+					std::string(decl.identifier_token().value()),
+					new_func_node,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final
+				);
 			} else {
 				// No definition, but still need to substitute parameter types and return type
 				
@@ -15501,6 +15512,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Add the substituted function to the instantiated struct
 				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				
+				// Also add to struct_info so it can be found during codegen
+				struct_info_ptr->addMemberFunction(
+					std::string(decl.identifier_token().value()),
+					new_func_node,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final
+				);
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
