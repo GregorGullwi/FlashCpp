@@ -9673,11 +9673,41 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 			}
 		}
 
-		// Check for function call operator () - for operator() overload
+		// Check for function call operator () - for operator() overload or function pointer call
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
-			// This could be operator() call on an object
-			// We need to check if the result is an object type (not a function)
-
+			// Check if the result is a member access to a function pointer
+			// If so, we should create a function pointer call instead of operator() call
+			bool is_function_pointer_call = false;
+			const MemberAccessNode* member_access = nullptr;
+			
+			if (result->is<ExpressionNode>()) {
+				const ExpressionNode& expr = result->as<ExpressionNode>();
+				if (std::holds_alternative<MemberAccessNode>(expr)) {
+					member_access = &std::get<MemberAccessNode>(expr);
+					
+					// Check if this member is a function pointer
+					// We need to look up the struct type and find the member
+					if (!member_function_context_stack_.empty()) {
+						const auto& context = member_function_context_stack_.back();
+						if (context.struct_type_index < gTypeInfo.size()) {
+							const TypeInfo& struct_type_info = gTypeInfo[context.struct_type_index];
+							const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+							if (struct_info) {
+								std::string_view member_name = member_access->member_name();
+								for (const auto& member : struct_info->members) {
+									if (member.name == member_name) {
+										if (member.type == Type::FunctionPointer) {
+											is_function_pointer_call = true;
+										}
+										break;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			
 			Token paren_token = *peek_token();
 			consume_token(); // consume '('
 
@@ -9711,21 +9741,38 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 			}
 
-			// Create operator() call as a member function call
-			// The member function name is "operator()"
-			static const std::string operator_call_name = "operator()";
-			Token operator_token(Token::Type::Identifier, operator_call_name,
-			                     paren_token.line(), paren_token.column(), paren_token.file_index());
+			if (is_function_pointer_call && member_access) {
+				// This is a call through a function pointer member (e.g., this->operation(value, x))
+				// Create a FunctionPointerCallNode or use MemberFunctionCallNode with special handling
+				// For now, we use MemberFunctionCallNode which will be handled in code generation
+				
+				// Create a placeholder function declaration with the member name
+				Token member_token(Token::Type::Identifier, member_access->member_name(),
+				                   paren_token.line(), paren_token.column(), paren_token.file_index());
+				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_token);
+				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_token);
+				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 
-			// Create a temporary function declaration for operator()
-			// This will be resolved during code generation
-			auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, operator_token);
-			auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
-			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+				// Create member function call node - code generation will detect this is a function pointer
+				result = emplace_node<ExpressionNode>(
+					MemberFunctionCallNode(*result, func_ref, std::move(args), member_token));
+			} else {
+				// Create operator() call as a member function call
+				// The member function name is "operator()"
+				static const std::string operator_call_name = "operator()";
+				Token operator_token(Token::Type::Identifier, operator_call_name,
+				                     paren_token.line(), paren_token.column(), paren_token.file_index());
 
-			// Create member function call node for operator()
-			result = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(*result, func_ref, std::move(args), operator_token));
+				// Create a temporary function declaration for operator()
+				// This will be resolved during code generation
+				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, operator_token);
+				auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
+				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+
+				// Create member function call node for operator()
+				result = emplace_node<ExpressionNode>(
+					MemberFunctionCallNode(*result, func_ref, std::move(args), operator_token));
+			}
 			continue;
 		}
 
@@ -11959,6 +12006,191 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 
+				// Check for constructor (identifier matching template name followed by '(')
+				// In full specializations, the constructor uses the base template name (e.g., "Calculator"),
+				// not the instantiated name (e.g., "Calculator_int")
+				TokenPosition saved_pos = save_token_position();
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+				    peek_token()->value() == template_name) {
+					// Look ahead to see if this is a constructor
+					auto name_token_opt = consume_token();
+					if (!name_token_opt.has_value()) {
+						return ParseResult::error("Expected constructor name", Token());
+					}
+					Token name_token = name_token_opt.value();
+					std::string_view ctor_name = name_token.value();
+					
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						// Discard saved position since we're using this as a constructor
+						discard_saved_token(saved_pos);
+						
+						// This is a constructor - use instantiated_name as the struct name
+						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, ctor_name);
+						
+						// Parse parameters
+						if (!consume_punctuator("(")) {
+							return ParseResult::error("Expected '(' for constructor parameter list", *peek_token());
+						}
+						
+						while (!consume_punctuator(")")) {
+							ParseResult type_and_name_result = parse_type_and_name();
+							if (type_and_name_result.is_error()) {
+								return type_and_name_result;
+							}
+							
+							if (auto node = type_and_name_result.node()) {
+								ctor_ref.add_parameter_node(*node);
+							}
+							
+							if (!consume_punctuator(",")) {
+								// No comma, expect closing paren
+							}
+						}
+						
+						// Enter a temporary scope for parsing the initializer list
+						gSymbolTable.enter_scope(ScopeType::Function);
+						
+						// Add parameters to symbol table
+						for (const auto& param : ctor_ref.parameter_nodes()) {
+							if (param.is<DeclarationNode>()) {
+								const auto& param_decl_node = param.as<DeclarationNode>();
+								const Token& param_token = param_decl_node.identifier_token();
+								gSymbolTable.insert(param_token.value(), param);
+							}
+						}
+						
+						// Parse member initializer list if present
+						if (peek_token().has_value() && peek_token()->value() == ":") {
+							consume_token();  // consume ':'
+							
+							while (peek_token().has_value() &&
+							       peek_token()->value() != "{" &&
+							       peek_token()->value() != ";") {
+								auto init_name_token = consume_token();
+								if (!init_name_token.has_value() || init_name_token->type() != Token::Type::Identifier) {
+									return ParseResult::error("Expected member or base class name in initializer list", init_name_token.value_or(Token()));
+								}
+								
+								std::string_view init_name = init_name_token->value();
+								
+								bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
+								bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
+								
+								if (!is_paren && !is_brace) {
+									return ParseResult::error("Expected '(' or '{' after initializer name", *peek_token());
+								}
+								
+								consume_token();  // consume '(' or '{'
+								std::string_view close_delim = is_paren ? ")" : "}";
+								
+								std::vector<ASTNode> init_args;
+								if (!peek_token().has_value() || peek_token()->value() != close_delim) {
+									do {
+										ParseResult arg_result = parse_expression();
+										if (arg_result.is_error()) {
+											return arg_result;
+										}
+										if (auto arg_node = arg_result.node()) {
+											init_args.push_back(*arg_node);
+										}
+									} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+								}
+								
+								if (!consume_punctuator(close_delim)) {
+									return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
+									                         "' after initializer arguments", *peek_token());
+								}
+								
+								// Member initializer
+								if (!init_args.empty()) {
+									ctor_ref.add_member_initializer(init_name, init_args[0]);
+								}
+								
+								if (!consume_punctuator(",")) {
+									break;
+								}
+							}
+						}
+						
+						// Check for = default or = delete
+						bool is_defaulted = false;
+						bool is_deleted = false;
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+						    peek_token()->value() == "=") {
+							consume_token(); // consume '='
+							
+							if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+								if (peek_token()->value() == "default") {
+									consume_token();
+									is_defaulted = true;
+									
+									if (!consume_punctuator(";")) {
+										gSymbolTable.exit_scope();
+										return ParseResult::error("Expected ';' after '= default'", *peek_token());
+									}
+									
+									ctor_ref.set_is_implicit(true);
+									auto [block_node, block_ref] = create_node_ref(BlockNode());
+									ctor_ref.set_definition(block_node);
+									gSymbolTable.exit_scope();
+								} else if (peek_token()->value() == "delete") {
+									consume_token();
+									is_deleted = true;
+									
+									if (!consume_punctuator(";")) {
+										gSymbolTable.exit_scope();
+										return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+									}
+									
+									gSymbolTable.exit_scope();
+									continue;
+								} else {
+									gSymbolTable.exit_scope();
+									return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+								}
+							} else {
+								gSymbolTable.exit_scope();
+								return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+							}
+						}
+						
+						// Parse constructor body if present
+						if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
+							TokenPosition body_start = save_token_position();
+							
+							skip_balanced_braces();
+							gSymbolTable.exit_scope();
+							
+							delayed_function_bodies_.push_back({
+								nullptr,
+								body_start,
+								{},
+								false,
+								instantiated_name,
+								struct_type_info.type_index_,
+								&struct_ref,
+								true,  // is_constructor
+								false,
+								&ctor_ref,
+								nullptr
+							});
+						} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
+							gSymbolTable.exit_scope();
+							return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", *peek_token());
+						} else if (!is_defaulted && !is_deleted) {
+							gSymbolTable.exit_scope();
+						}
+						
+						struct_ref.add_constructor(ctor_node, current_access);
+						continue;
+					} else {
+						// Not a constructor, restore position
+						restore_token_position(saved_pos);
+					}
+				} else {
+					discard_saved_token(saved_pos);
+				}
+
 					// Parse member declaration (use same logic as regular struct parsing)
 				auto member_result = parse_type_and_name();
 				if (member_result.is_error()) {
@@ -12146,18 +12378,33 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Add member functions to struct info
 			for (const auto& member_func_decl : struct_ref.member_functions()) {
-				const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
-				const DeclarationNode& decl = func_decl.decl_node();
+				if (member_func_decl.is_constructor) {
+					// Add constructor to struct type info
+					struct_info->addConstructor(
+						member_func_decl.function_declaration,
+						member_func_decl.access
+					);
+				} else if (member_func_decl.is_destructor) {
+					// Add destructor to struct type info
+					struct_info->addDestructor(
+						member_func_decl.function_declaration,
+						member_func_decl.access,
+						member_func_decl.is_virtual
+					);
+				} else {
+					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+					const DeclarationNode& decl = func_decl.decl_node();
 
-				struct_info->addMemberFunction(
-					std::string(decl.identifier_token().value()),
-					member_func_decl.function_declaration,
-					member_func_decl.access,
-					member_func_decl.is_virtual,
-					member_func_decl.is_pure_virtual,
-					member_func_decl.is_override,
-					member_func_decl.is_final
-				);
+					struct_info->addMemberFunction(
+						std::string(decl.identifier_token().value()),
+						member_func_decl.function_declaration,
+						member_func_decl.access,
+						member_func_decl.is_virtual,
+						member_func_decl.is_pure_virtual,
+						member_func_decl.is_override,
+						member_func_decl.is_final
+					);
+				}
 			}
 
 			// Finalize the struct layout
@@ -12450,6 +12697,197 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 				
+				// Check for constructor (identifier matching template name followed by '(')
+				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),
+				// not the instantiated pattern name (e.g., "Calculator_pattern_P")
+				TokenPosition saved_pos = save_token_position();
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+				    peek_token()->value() == template_name) {
+					// Look ahead to see if this is a constructor (next token is '(')
+					auto name_token_opt = consume_token();
+					if (!name_token_opt.has_value()) {
+						return ParseResult::error("Expected constructor name", Token());
+					}
+					Token name_token = name_token_opt.value();
+					std::string_view ctor_name = name_token.value();
+					
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						// Discard saved position since we're using this as a constructor
+						discard_saved_token(saved_pos);
+						
+						// This is a constructor - use instantiated_name as the struct name
+						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, ctor_name);
+						
+						// Parse parameters
+						if (!consume_punctuator("(")) {
+							return ParseResult::error("Expected '(' for constructor parameter list", *peek_token());
+						}
+						
+						while (!consume_punctuator(")")) {
+							ParseResult type_and_name_result = parse_type_and_name();
+							if (type_and_name_result.is_error()) {
+								return type_and_name_result;
+							}
+							
+							if (auto node = type_and_name_result.node()) {
+								ctor_ref.add_parameter_node(*node);
+							}
+							
+							if (!consume_punctuator(",")) {
+								// No comma, expect closing paren
+							}
+						}
+						
+						// Enter a temporary scope for parsing the initializer list
+						gSymbolTable.enter_scope(ScopeType::Function);
+						
+						// Add parameters to symbol table
+						for (const auto& param : ctor_ref.parameter_nodes()) {
+							if (param.is<DeclarationNode>()) {
+								const auto& param_decl_node = param.as<DeclarationNode>();
+								const Token& param_token = param_decl_node.identifier_token();
+								gSymbolTable.insert(param_token.value(), param);
+							}
+						}
+						
+						// Parse member initializer list if present
+						if (peek_token().has_value() && peek_token()->value() == ":") {
+							consume_token();  // consume ':'
+							
+							while (peek_token().has_value() &&
+							       peek_token()->value() != "{" &&
+							       peek_token()->value() != ";") {
+								auto init_name_token = consume_token();
+								if (!init_name_token.has_value() || init_name_token->type() != Token::Type::Identifier) {
+									return ParseResult::error("Expected member or base class name in initializer list", init_name_token.value_or(Token()));
+								}
+								
+								std::string_view init_name = init_name_token->value();
+								
+								bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
+								bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
+								
+								if (!is_paren && !is_brace) {
+									return ParseResult::error("Expected '(' or '{' after initializer name", *peek_token());
+								}
+								
+								consume_token();  // consume '(' or '{'
+								std::string_view close_delim = is_paren ? ")" : "}";
+								
+								std::vector<ASTNode> init_args;
+								if (!peek_token().has_value() || peek_token()->value() != close_delim) {
+									do {
+										ParseResult arg_result = parse_expression();
+										if (arg_result.is_error()) {
+											return arg_result;
+										}
+										if (auto arg_node = arg_result.node()) {
+											init_args.push_back(*arg_node);
+										}
+									} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+								}
+								
+								if (!consume_punctuator(close_delim)) {
+									return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
+									                         "' after initializer arguments", *peek_token());
+								}
+								
+								// Member initializer
+								if (!init_args.empty()) {
+									ctor_ref.add_member_initializer(init_name, init_args[0]);
+								}
+								
+								if (!consume_punctuator(",")) {
+									break;
+								}
+							}
+						}
+						
+						// Check for = default or = delete
+						bool is_defaulted = false;
+						bool is_deleted = false;
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+						    peek_token()->value() == "=") {
+							consume_token(); // consume '='
+							
+							if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+								if (peek_token()->value() == "default") {
+									consume_token();
+									is_defaulted = true;
+									
+									if (!consume_punctuator(";")) {
+										gSymbolTable.exit_scope();
+										return ParseResult::error("Expected ';' after '= default'", *peek_token());
+									}
+									
+									ctor_ref.set_is_implicit(true);
+									auto [block_node, block_ref] = create_node_ref(BlockNode());
+									ctor_ref.set_definition(block_node);
+									gSymbolTable.exit_scope();
+								} else if (peek_token()->value() == "delete") {
+									consume_token();
+									is_deleted = true;
+									
+									if (!consume_punctuator(";")) {
+										gSymbolTable.exit_scope();
+										return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+									}
+									
+									gSymbolTable.exit_scope();
+									continue;
+								} else {
+									gSymbolTable.exit_scope();
+									return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+								}
+							} else {
+								gSymbolTable.exit_scope();
+								return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
+							}
+						}
+						
+						// Parse constructor body if present
+						if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
+							TokenPosition body_start = save_token_position();
+							
+							auto type_it = gTypesByName.find(instantiated_name);
+							size_t struct_type_index = 0;
+							if (type_it != gTypesByName.end()) {
+								struct_type_index = type_it->second->type_index_;
+							}
+							
+							skip_balanced_braces();
+							gSymbolTable.exit_scope();
+							
+							delayed_function_bodies_.push_back({
+								nullptr,
+								body_start,
+								{},
+								false,
+								instantiated_name,
+								struct_type_index,
+								&struct_ref,
+								true,  // is_constructor
+								false,
+								&ctor_ref,
+								nullptr
+							});
+						} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
+							gSymbolTable.exit_scope();
+							return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", *peek_token());
+						} else if (!is_defaulted && !is_deleted) {
+							gSymbolTable.exit_scope();
+						}
+						
+						struct_ref.add_constructor(ctor_node, current_access);
+						continue;
+					} else {
+						// Not a constructor, restore position
+						restore_token_position(saved_pos);
+					}
+				} else {
+					discard_saved_token(saved_pos);
+				}
+				
 				// Parse member declaration
 				auto member_result = parse_declaration_or_function_definition();
 				if (member_result.is_error()) {
@@ -12464,6 +12902,9 @@ ParseResult Parser::parse_template_declaration() {
 					} else if (member_node.is<FunctionDeclarationNode>()) {
 						// Handle member function
 						struct_ref.add_member_function(member_node, current_access);
+					} else if (member_node.is<ConstructorDeclarationNode>()) {
+						// Handle constructor (should already be added by above code, but handle for safety)
+						struct_ref.add_constructor(member_node, current_access);
 					}
 				}
 				
@@ -12510,18 +12951,33 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Add member functions to struct info
 			for (const auto& member_func_decl : struct_ref.member_functions()) {
-				const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
-				const DeclarationNode& decl = func_decl.decl_node();
-				
-				struct_info->addMemberFunction(
-					std::string(decl.identifier_token().value()),
-					member_func_decl.function_declaration,
-					member_func_decl.access,
-					member_func_decl.is_virtual,
-					member_func_decl.is_pure_virtual,
-					member_func_decl.is_override,
-					member_func_decl.is_final
-				);
+				if (member_func_decl.is_constructor) {
+					// Add constructor to struct type info
+					struct_info->addConstructor(
+						member_func_decl.function_declaration,
+						member_func_decl.access
+					);
+				} else if (member_func_decl.is_destructor) {
+					// Add destructor to struct type info
+					struct_info->addDestructor(
+						member_func_decl.function_declaration,
+						member_func_decl.access,
+						member_func_decl.is_virtual
+					);
+				} else {
+					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+					const DeclarationNode& decl = func_decl.decl_node();
+					
+					struct_info->addMemberFunction(
+						std::string(decl.identifier_token().value()),
+						member_func_decl.function_declaration,
+						member_func_decl.access,
+						member_func_decl.is_virtual,
+						member_func_decl.is_pure_virtual,
+						member_func_decl.is_override,
+						member_func_decl.is_final
+					);
+				}
 			}
 			
 			// Finalize the struct layout with base classes
@@ -14766,38 +15222,53 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Copy member functions from pattern
 		for (const StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
-			const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-			const DeclarationNode& orig_decl = orig_func.decl_node();
-			
-			// Clone the function and substitute template parameters in return type and parameters
-			// Similar to what we do for the primary template instantiation
-			
-			// Create a new function declaration with substituted types
-			const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
-			
-			// Substitute return type if it uses a template parameter
-			Type substituted_return_type = orig_return_type.type();
-			size_t substituted_ptr_depth = orig_return_type.pointer_depth();
-			bool substituted_is_ref = orig_return_type.is_reference();
-			bool substituted_is_rvalue_ref = orig_return_type.is_rvalue_reference();
-			
-			// Check if return type needs substitution (it's probably fine as-is for patterns)
-			// For partial specializations, the pattern already has the right structure
-			// For example, Container<T*>::type() has return type int, not T
-			
-			// Create the function declaration (for now, keep original types)
-			// The key issue is that member functions need parent_struct_name set correctly
-			
-			// Just add the function as-is to the struct info and AST
-			struct_info->addMemberFunction(
-				std::string(orig_decl.identifier_token().value()),
-				mem_func.function_declaration,
-				mem_func.access,
-				mem_func.is_virtual,
-				mem_func.is_pure_virtual,
-				mem_func.is_override,
-				mem_func.is_final
-			);
+			if (mem_func.is_constructor) {
+				// Handle constructor - it's a ConstructorDeclarationNode, not FunctionDeclarationNode
+				struct_info->addConstructor(
+					mem_func.function_declaration,
+					mem_func.access
+				);
+			} else if (mem_func.is_destructor) {
+				// Handle destructor
+				struct_info->addDestructor(
+					mem_func.function_declaration,
+					mem_func.access,
+					mem_func.is_virtual
+				);
+			} else {
+				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+				const DeclarationNode& orig_decl = orig_func.decl_node();
+				
+				// Clone the function and substitute template parameters in return type and parameters
+				// Similar to what we do for the primary template instantiation
+				
+				// Create a new function declaration with substituted types
+				const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+				
+				// Substitute return type if it uses a template parameter
+				Type substituted_return_type = orig_return_type.type();
+				size_t substituted_ptr_depth = orig_return_type.pointer_depth();
+				bool substituted_is_ref = orig_return_type.is_reference();
+				bool substituted_is_rvalue_ref = orig_return_type.is_rvalue_reference();
+				
+				// Check if return type needs substitution (it's probably fine as-is for patterns)
+				// For partial specializations, the pattern already has the right structure
+				// For example, Container<T*>::type() has return type int, not T
+				
+				// Create the function declaration (for now, keep original types)
+				// The key issue is that member functions need parent_struct_name set correctly
+				
+				// Just add the function as-is to the struct info and AST
+				struct_info->addMemberFunction(
+					std::string(orig_decl.identifier_token().value()),
+					mem_func.function_declaration,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final
+				);
+			}
 		}
 
 		// Copy static members from the pattern
@@ -14851,31 +15322,62 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Copy member functions to AST node WITH CORRECT PARENT STRUCT NAME
 		// This is critical - we need to create new FunctionDeclarationNodes with instantiated_name as parent
 		for (const StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
-			const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-			
-			// Create a NEW FunctionDeclarationNode with the instantiated struct name
-			// This will set is_member_function_ = true and parent_struct_name_ correctly
-			auto new_func_node = emplace_node<FunctionDeclarationNode>(
-				const_cast<DeclarationNode&>(orig_func.decl_node()),  // Reuse declaration
-				instantiated_name  // Set correct parent struct name
-			);
-			
-			// Copy all parameters and definition
-			FunctionDeclarationNode& new_func = new_func_node.as<FunctionDeclarationNode>();
-			for (const auto& param : orig_func.parameter_nodes()) {
-				new_func.add_parameter_node(param);
-			}
-			if (orig_func.get_definition().has_value()) {
-				std::cerr << "DEBUG: Copying function definition to new function\n";
-				new_func.set_definition(*orig_func.get_definition());
+			if (mem_func.is_constructor) {
+				// Handle constructor - it's a ConstructorDeclarationNode
+				const ConstructorDeclarationNode& orig_ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+				
+				// Create a NEW ConstructorDeclarationNode with the instantiated struct name
+				auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+					instantiated_name,  // Set correct parent struct name
+					orig_ctor.name()    // Constructor name (same as template name)
+				);
+				
+				// Copy parameters
+				for (const auto& param : orig_ctor.parameter_nodes()) {
+					new_ctor_ref.add_parameter_node(param);
+				}
+				
+				// Copy member initializers
+				for (const auto& [name, expr] : orig_ctor.member_initializers()) {
+					new_ctor_ref.add_member_initializer(name, expr);
+				}
+				
+				// Copy definition if present
+				if (orig_ctor.get_definition().has_value()) {
+					new_ctor_ref.set_definition(*orig_ctor.get_definition());
+				}
+				
+				instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
+			} else if (mem_func.is_destructor) {
+				// Handle destructor
+				instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
 			} else {
-				std::cerr << "DEBUG: Original function has NO definition - may need delayed parsing\n";
+				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+				
+				// Create a NEW FunctionDeclarationNode with the instantiated struct name
+				// This will set is_member_function_ = true and parent_struct_name_ correctly
+				auto new_func_node = emplace_node<FunctionDeclarationNode>(
+					const_cast<DeclarationNode&>(orig_func.decl_node()),  // Reuse declaration
+					instantiated_name  // Set correct parent struct name
+				);
+				
+				// Copy all parameters and definition
+				FunctionDeclarationNode& new_func = new_func_node.as<FunctionDeclarationNode>();
+				for (const auto& param : orig_func.parameter_nodes()) {
+					new_func.add_parameter_node(param);
+				}
+				if (orig_func.get_definition().has_value()) {
+					std::cerr << "DEBUG: Copying function definition to new function\n";
+					new_func.set_definition(*orig_func.get_definition());
+				} else {
+					std::cerr << "DEBUG: Original function has NO definition - may need delayed parsing\n";
+				}
+				
+				instantiated_struct_ref.add_member_function(
+					new_func_node,
+					mem_func.access
+				);
 			}
-			
-			instantiated_struct_ref.add_member_function(
-				new_func_node,
-				mem_func.access
-			);
 		}
 		
 		return instantiated_struct;  // Return the struct node for code generation
