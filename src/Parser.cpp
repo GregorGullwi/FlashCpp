@@ -4805,6 +4805,9 @@ ParseResult Parser::parse_namespace() {
 				return ParseResult::error("Expected ';' after namespace alias", *current_token_);
 			}
 
+			// Add the namespace alias to the symbol table for name lookup during parsing
+			gSymbolTable.add_namespace_alias(alias_token.value(), target_namespace);
+
 			auto alias_node = emplace_node<NamespaceAliasNode>(alias_token, std::move(target_namespace));
 			return saved_position.success(alias_node);
 		}
@@ -5033,6 +5036,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				return ParseResult::error("Expected ';' after namespace alias", *current_token_);
 			}
 
+			// Add the namespace alias to the symbol table for name lookup during parsing
+			gSymbolTable.add_namespace_alias(alias_token->value(), target_namespace);
+
 			auto alias_node = emplace_node<NamespaceAliasNode>(*alias_token, std::move(target_namespace));
 			return saved_position.success(alias_node);
 		}
@@ -5065,6 +5071,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		if (!consume_punctuator(";")) {
 			return ParseResult::error("Expected ';' after using directive", *current_token_);
 		}
+
+		// Add the using directive to the symbol table for name lookup during parsing
+		gSymbolTable.add_using_directive(namespace_path);
 
 		auto directive_node = emplace_node<UsingDirectiveNode>(std::move(namespace_path), using_token);
 		return saved_position.success(directive_node);
@@ -5109,6 +5118,13 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after using declaration", *current_token_);
 	}
+
+	// Add the using declaration to the symbol table for name lookup during parsing
+	gSymbolTable.add_using_declaration(
+		std::string_view(identifier_token.value()),
+		namespace_path,
+		std::string_view(identifier_token.value())
+	);
 
 	auto decl_node = emplace_node<UsingDeclarationNode>(std::move(namespace_path), identifier_token, using_token);
 	return saved_position.success(decl_node);

@@ -1615,14 +1615,15 @@ private:
 
 	void visitUsingDirectiveNode(const UsingDirectiveNode& node) {
 		// Using directives don't generate IR - they affect name lookup in the symbol table
-		// Add the namespace to the current scope's using directives
-		gSymbolTable.add_using_directive(node.namespace_path());
+		// Add the namespace to the current scope's using directives in the local symbol table
+		// (not gSymbolTable, which is the parser's symbol table and has different scope management)
+		symbol_table.add_using_directive(node.namespace_path());
 	}
 
 	void visitUsingDeclarationNode(const UsingDeclarationNode& node) {
 		// Using declarations don't generate IR - they import a specific name into the current scope
-		// Add the using declaration to the current scope
-		gSymbolTable.add_using_declaration(
+		// Add the using declaration to the local symbol table (not gSymbolTable)
+		symbol_table.add_using_declaration(
 			node.identifier_name(),
 			node.namespace_path(),
 			node.identifier_name()
@@ -1631,8 +1632,8 @@ private:
 
 	void visitNamespaceAliasNode(const NamespaceAliasNode& node) {
 		// Namespace aliases don't generate IR - they create an alias for a namespace
-		// Add the alias to the current scope
-		gSymbolTable.add_namespace_alias(node.alias_name(), node.target_namespace());
+		// Add the alias to the local symbol table (not gSymbolTable)
+		symbol_table.add_namespace_alias(node.alias_name(), node.target_namespace());
 	}
 
 	void visitReturnStatementNode(const ReturnStatementNode& node) {

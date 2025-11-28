@@ -363,12 +363,79 @@ public:
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
+			
+			// First, check direct symbols in this scope
 			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end()) {
 				return symbolIt->second;
 			}
+			
+			// Second, check using declarations in this scope
+			auto usingIt = scope.using_declarations.find(identifier);
+			if (usingIt != scope.using_declarations.end()) {
+				const auto& [namespace_path, original_name] = usingIt->second;
+				auto result = lookup_qualified_all(namespace_path, original_name);
+				if (!result.empty()) {
+					return result;
+				}
+			}
+			
+			// Third, check using directives in this scope
+			for (const auto& using_ns : scope.using_directives) {
+				auto result = lookup_qualified_all(using_ns, identifier);
+				if (!result.empty()) {
+					return result;
+				}
+			}
 		}
 
+		return {};
+	}
+
+	// Lookup all overloads in a specific namespace
+	template<typename StringContainer>
+	std::vector<ASTNode> lookup_qualified_all(const StringContainer& namespaces, std::string_view identifier) const {
+		if (namespaces.empty()) {
+			// Global namespace - look in the empty namespace path
+			NamespacePath empty_path;
+			auto ns_it = namespace_symbols_.find(empty_path);
+			if (ns_it != namespace_symbols_.end()) {
+				for (const auto& [key, value_vec] : ns_it->second) {
+#if USE_OLD_STRING_APPROACH
+					if (key == std::string(identifier)) {
+#else
+					if (key.view() == identifier) {
+#endif
+						return value_vec;
+					}
+				}
+			}
+			return {};
+		}
+
+		// Build namespace path from the components
+		NamespacePath ns_path;
+		ns_path.reserve(namespaces.size());
+		for (const auto& ns : namespaces) {
+			ns_path.emplace_back(StringType<>(std::string_view(ns)));
+		}
+
+		// Look up in namespace symbols
+		auto ns_it = namespace_symbols_.find(ns_path);
+		if (ns_it == namespace_symbols_.end()) {
+			return {};
+		}
+
+		// Look for the identifier in the namespace
+		for (const auto& [key, value_vec] : ns_it->second) {
+#if USE_OLD_STRING_APPROACH
+			if (key == std::string(identifier)) {
+#else
+			if (key.view() == identifier) {
+#endif
+				return value_vec;
+			}
+		}
 		return {};
 	}
 
