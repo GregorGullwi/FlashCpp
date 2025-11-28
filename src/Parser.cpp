@@ -766,18 +766,19 @@ ParseResult Parser::parse_type_and_name() {
     // Function pointers have the pattern: type (*identifier)(params)
     // We need to check for '(' followed by '*' to detect this
     if (peek_token().has_value() && peek_token()->value() == "(") {
-        // Save position in case this isn't a function pointer
+        // Save position in case this isn't a function pointer or reference declarator
         TokenPosition saved_pos = save_token_position();
         consume_token(); // consume '('
 
-        // Check if next token is '*' (function pointer pattern)
+        // Check if next token is '*' (function pointer pattern) or '&' (reference to array pattern)
         if (peek_token().has_value() && peek_token()->value() == "*") {
             // This looks like a function pointer! Use parse_declarator
             restore_token_position(saved_pos);
             auto result = parse_declarator(type_spec, Linkage::None);
             if (!result.is_error()) {
                 if (auto decl_node = result.node()) {
-                    if (custom_alignment.has_value()) {
+                    // Check if result is a DeclarationNode (for function pointers) or FunctionDeclarationNode
+                    if (decl_node->is<DeclarationNode>() && custom_alignment.has_value()) {
                         decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
                     }
                 }
@@ -785,8 +786,73 @@ ParseResult Parser::parse_type_and_name() {
             }
             // If parse_declarator fails, fall through to regular parsing
             restore_token_position(saved_pos);
+        } else if (peek_token().has_value() && (peek_token()->value() == "&" || peek_token()->value() == "&&")) {
+            // This is a reference to array pattern: T (&arr)[N] or T (&&arr)[N]
+            // Pattern: type (&identifier)[array_size] or type (&&identifier)[array_size]
+            bool is_rvalue_ref = (peek_token()->value() == "&&");
+            consume_token(); // consume '&' or '&&'
+            
+            // Parse identifier
+            if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+                // Not a valid reference-to-array pattern, restore and continue
+                restore_token_position(saved_pos);
+            } else {
+                Token ref_identifier = *peek_token();
+                consume_token();
+                
+                // Expect closing ')'
+                if (!peek_token().has_value() || peek_token()->value() != ")") {
+                    // Not a valid reference-to-array pattern, restore and continue
+                    restore_token_position(saved_pos);
+                } else {
+                    consume_token(); // consume ')'
+                    
+                    // Expect array size: '[' size ']'
+                    if (!peek_token().has_value() || peek_token()->value() != "[") {
+                        // Not a reference-to-array pattern, restore and continue
+                        restore_token_position(saved_pos);
+                    } else {
+                        consume_token(); // consume '['
+                        
+                        // Parse array size expression
+                        auto size_result = parse_expression();
+                        if (size_result.is_error()) {
+                            restore_token_position(saved_pos);
+                        } else {
+                            std::optional<ASTNode> array_size_expr = size_result.node();
+                            
+                            // Expect closing ']'
+                            if (!consume_punctuator("]")) {
+                                restore_token_position(saved_pos);
+                            } else {
+                                // Successfully parsed reference-to-array pattern
+                                // Set the type_spec to be a reference
+                                if (is_rvalue_ref) {
+                                    type_spec.set_reference(true);  // rvalue reference
+                                } else {
+                                    type_spec.set_lvalue_reference(true);  // lvalue reference
+                                }
+                                type_spec.set_array(true);
+                                
+                                // Create declaration node
+                                auto decl_node = emplace_node<DeclarationNode>(
+                                    emplace_node<TypeSpecifierNode>(type_spec),
+                                    ref_identifier,
+                                    array_size_expr
+                                );
+                                
+                                if (custom_alignment.has_value()) {
+                                    decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+                                }
+                                
+                                return ParseResult::success(decl_node);
+                            }
+                        }
+                    }
+                }
+            }
         } else {
-            // Not a function pointer, restore and continue with regular parsing
+            // Not a function pointer or reference declarator, restore and continue with regular parsing
             restore_token_position(saved_pos);
         }
     }
@@ -1004,7 +1070,94 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
         Token identifier_token = *peek_token();
         consume_token();
 
-        // Expect closing ')'
+        // Check what comes after the identifier:
+        // Case 1: ')' followed by '(' -> function pointer variable: int (*fp)(params)
+        // Case 2: '(' -> function returning pointer: int (*func(params))[array_size] or int (*func(params))
+        if (peek_token().has_value() && peek_token()->value() == "(") {
+            // Case 2: This is a function returning pointer (or pointer-to-array)
+            // Pattern: type (*func_name(params))[array_size] or type (*func_name(params))
+            // Parse function parameters inside (*func_name(...))
+            consume_token(); // consume '('
+
+            // Parse parameter list for the function
+            std::vector<ASTNode> param_nodes;
+            if (!peek_token().has_value() || peek_token()->value() != ")") {
+                while (true) {
+                    // Parse parameter type and optionally name
+                    auto param_result = parse_type_and_name();
+                    if (param_result.is_error()) {
+                        return param_result;
+                    }
+                    if (param_result.node().has_value()) {
+                        param_nodes.push_back(*param_result.node());
+                    }
+
+                    // Check for comma or closing paren
+                    if (peek_token().has_value() && peek_token()->value() == ",") {
+                        consume_token();
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            if (!consume_punctuator(")")) {
+                return ParseResult::error("Expected ')' after function parameters in declarator", *current_token_);
+            }
+
+            // Now expect closing ')' for the (*func(...)) part
+            if (!consume_punctuator(")")) {
+                return ParseResult::error("Expected ')' after function declarator", *current_token_);
+            }
+
+            // Check for array declarator: '[' size ']' after the function declarator
+            // Pattern: type (*func(params))[array_size]
+            std::optional<ASTNode> array_size_expr;
+            if (peek_token().has_value() && peek_token()->value() == "[") {
+                consume_token(); // consume '['
+
+                // Parse array size expression
+                auto size_result = parse_expression();
+                if (size_result.is_error()) {
+                    return size_result;
+                }
+                array_size_expr = size_result.node();
+
+                if (!consume_punctuator("]")) {
+                    return ParseResult::error("Expected ']' after array size", *current_token_);
+                }
+
+                // The return type is: base_type (*)[array_size] = pointer to array of base_type
+                // Set the base_type to indicate it's a pointer to array
+                base_type.add_pointer_level(ptr_cv);
+                base_type.set_array(true);
+            } else {
+                // The return type is: base_type (*) = pointer to base_type
+                base_type.add_pointer_level(ptr_cv);
+            }
+
+            // Create declaration node for the function with the computed return type
+            auto decl_node = emplace_node<DeclarationNode>(
+                emplace_node<TypeSpecifierNode>(base_type),
+                identifier_token,
+                array_size_expr
+            );
+
+            // Create function declaration node
+            auto func_decl_node = emplace_node<FunctionDeclarationNode>(
+                decl_node.as<DeclarationNode>()
+            );
+
+            // Add parameters
+            FunctionDeclarationNode& func_ref = func_decl_node.as<FunctionDeclarationNode>();
+            for (const auto& param : param_nodes) {
+                func_ref.add_parameter_node(param);
+            }
+
+            return ParseResult::success(func_decl_node);
+        }
+
+        // Case 1: Expect closing ')' for function pointer variable pattern
         if (!peek_token().has_value() || peek_token()->value() != ")") {
             return ParseResult::error("Expected ')' after function pointer identifier", *current_token_);
         }
@@ -12592,26 +12745,41 @@ ParseResult Parser::parse_template_declaration() {
 			return type_and_name_result;
 		}
 
-		if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
+		// Check if parse_type_and_name already returned a FunctionDeclarationNode
+		// This happens for complex declarators like: char (*func(params))[N]
+		FunctionDeclarationNode* func_decl_ptr = nullptr;
+		if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<FunctionDeclarationNode>()) {
+			// Already have a complete function declaration
+			func_decl_ptr = &type_and_name_result.node()->as<FunctionDeclarationNode>();
+		} else if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
 			std::cerr << "ERROR: type_and_name_result has no DeclarationNode" << std::endl;
 			return ParseResult::error("Expected function declaration after template parameter list", *current_token_);
 		}
 
-		DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
+		// If we don't have a FunctionDeclarationNode yet, parse function declaration
+		std::optional<ASTNode> func_result_node;
+		if (func_decl_ptr == nullptr) {
+			DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
 
-		// Parse function declaration with parameters
-		auto func_result = parse_function_declaration(decl_node);
-		if (func_result.is_error()) {
-			std::cerr << "ERROR: parse_function_declaration failed: " << func_result.error_message() << std::endl;
-			return func_result;
+			// Parse function declaration with parameters
+			auto func_result = parse_function_declaration(decl_node);
+			if (func_result.is_error()) {
+				std::cerr << "ERROR: parse_function_declaration failed: " << func_result.error_message() << std::endl;
+				return func_result;
+			}
+
+			if (!func_result.node().has_value()) {
+				std::cerr << "ERROR: func_result has no node" << std::endl;
+				return ParseResult::error("Failed to create function declaration node", *current_token_);
+			}
+
+			func_result_node = func_result.node();
+			func_decl_ptr = &func_result_node->as<FunctionDeclarationNode>();
+		} else {
+			func_result_node = type_and_name_result.node();
 		}
 
-		if (!func_result.node().has_value()) {
-			std::cerr << "ERROR: func_result has no node" << std::endl;
-			return ParseResult::error("Failed to create function declaration node", *current_token_);
-		}
-
-		FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+		FunctionDeclarationNode& func_decl = *func_decl_ptr;
 
 		// Check for trailing requires clause: template<typename T> T func(T x) requires constraint
 		std::optional<ASTNode> trailing_requires_clause;
@@ -12656,7 +12824,7 @@ ParseResult Parser::parse_template_declaration() {
 			std::cerr << "WARNING: No body or semicolon found, token=" << (peek_token().has_value() ? peek_token()->value() : "EOF") << "\n";
 		}
 
-		decl_result = ParseResult::success(*func_result.node());
+		decl_result = ParseResult::success(*func_result_node);
 	}
 
 	if (decl_result.is_error()) {

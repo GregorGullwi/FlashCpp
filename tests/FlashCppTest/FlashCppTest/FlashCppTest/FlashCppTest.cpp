@@ -528,6 +528,61 @@ TEST_SUITE("Parser") {
 			CHECK(typeid(ast1[i].type_name()) == typeid(ast2[i].type_name()));
 		}
 	}
+
+	TEST_CASE("Function returning pointer to array") {
+		// Test the pattern: char (*func(params))[size]
+		// This is used by Windows SDK __countof_helper
+		std::string_view code = R"(
+			template <typename T, int N>
+			char (*helper(T (&arr)[N]))[N];
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		auto parse_result = parser.parse();
+		
+		if (parse_result.is_error()) {
+			std::printf("Parse error: %s\n", parse_result.error_message().c_str());
+		}
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+		// Should have at least one node (the template function declaration)
+		CHECK(ast.size() >= 1);
+		std::printf("Parsed %zu AST nodes for function returning pointer to array\n", ast.size());
+	}
+
+	TEST_CASE("Reference to array parameter") {
+		// Test the pattern: T (&arr)[N]
+		// This is used in function parameters for array references
+		std::string_view code = R"(
+			template <typename T, int N>
+			void process(T (&arr)[N]) {}
+		)";
+
+		Lexer lexer(code);
+		Parser parser(lexer, compile_context);
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		auto parse_result = parser.parse();
+		
+		if (parse_result.is_error()) {
+			std::printf("Parse error: %s\n", parse_result.error_message().c_str());
+		}
+		CHECK(!parse_result.is_error());
+
+		const auto& ast = parser.get_nodes();
+		CHECK(ast.size() >= 1);
+		std::printf("Parsed %zu AST nodes for reference to array parameter\n", ast.size());
+	}
 }
 
 TEST_SUITE("Code gen") {
