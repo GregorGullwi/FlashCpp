@@ -1,20 +1,9 @@
-// Test range-based for loops
-
+// Test range-based for loop
 int main() {
-    int result = 0;
-    
-    // Test 1: Sum array elements using range-for
-    int arr1[5];
-    arr1[0] = 1;
-    arr1[1] = 2;
-    arr1[2] = 3;
-    arr1[3] = 4;
-    arr1[4] = 5;
-    
-    for (int x : arr1) {
-        result = result + x;
+    int arr[5] = {1, 2, 3, 4, 5};
+    int sum = 0;
+    for (int x : arr) {
+        sum = sum + x;
     }
-    // result = 1 + 2 + 3 + 4 + 5 = 15
-    
-    return result;  // Expected: 15
+    return sum;  // Should return 15
 }

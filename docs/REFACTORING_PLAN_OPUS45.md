@@ -598,16 +598,10 @@ using namespace FlashCpp;
 FLASH_LOG(General, Info, "Output file: ", filename);
 
 // Internal logging with category prefixes and colors
-FLASH_LOG(Parser, Error, "Parse error at line ", lineNum);   // Red, goes to stderr
-FLASH_LOG(Lexer, Warning, "Unexpected token");               // Yellow
-FLASH_LOG(Templates, Debug, "Instantiating template");       // No color
-FLASH_LOG(Codegen, Trace, "Generating instruction");         // Blue
-
-// Runtime configuration
-LogConfig::setLevel(LogLevel::Warning);
-LogConfig::disableCategory(LogCategory::Templates);
-LogConfig::setUseColors(false);
-```
+FLASH_LOG(Parser, Error, "Parse error at line ", lineNum);   // Error - Red, goes to stderr
+FLASH_LOG(Lexer, Warning, "Unexpected token");               // Warning - Yellow
+FLASH_LOG(Templates, Debug, "Instantiating template");       // Debug - No color
+FLASH_LOG(Codegen, Trace, "Generating instruction");         // Trace - Blue
 
 **Available categories:** `General`, `Parser`, `Lexer`, `Templates`, `Symbols`, `Types`, `Codegen`, `Scope`, `Mangling`
 
@@ -643,11 +637,15 @@ LogConfig::setUseColors(false);
    ```
 
 2. **Create baseline dumps:**
-   ```batch
-   REM Create reference outputs for regression testing
-   x64\Debug\FlashCpp.exe -v tests\Reference\member_functions.cpp > baseline_member.txt
-   x64\Debug\FlashCpp.exe -v tests\Reference\templates.cpp > baseline_templates.txt
-   ```
+    ```batch
+    REM Create reference outputs for regression testing
+    x64\Debug\FlashCpp.exe -v tests\Reference\test_member_init_simple.cpp > baseline_member.txt
+    x64\Debug\FlashCpp.exe -v tests\Reference\template_simple.cpp > baseline_templates.txt
+    ```
+    ```cpp
+    // Log the baseline creation
+    FLASH_LOG(Parser, Info, "Created baseline dumps for regression testing");
+    ```
 
 3. **Add compile-time feature flag:**
    ```cpp
@@ -678,9 +676,9 @@ LogConfig::setUseColors(false);
    The flag gets removed in Phase 8 when the old code is deleted.
 
 **Deliverables:**
-- [ ] 20+ new test cases covering edge cases
-- [ ] Baseline dumps for regression comparison
-- [ ] Feature flag in place
+- [x] 20+ new test cases covering edge cases
+- [x] Baseline dumps for regression comparison
+- [x] Feature flag in place
 
 ---
 
