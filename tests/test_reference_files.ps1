@@ -119,7 +119,6 @@ $expectedCompileFailures = @(
     "test_exceptions_basic.cpp",           # Exception handling not yet supported
     "test_exceptions_nested.cpp",          # Exception handling not yet supported
     "test_fold_expressions.cpp",           # Fold expressions not yet supported
-    "test_func_ptr_nullptr_simple.cpp",    # Function pointer nullptr handling issue
     "test_lambda_capture_simple.cpp",      # Lambda capture codegen issues
     "test_lambda_captures_comprehensive.cpp", # Lambda capture codegen issues
     "test_lambda_no_capture.cpp",          # Lambda codegen issues
@@ -127,8 +126,7 @@ $expectedCompileFailures = @(
     "test_noexcept.cpp",                   # noexcept handling not yet supported
     "test_register_spilling.cpp",          # Register spilling issue
     "test_spec_ctor_init.cpp",             # Template specialization constructor init issue
-    "test_spec_func_ptr.cpp",              # Template specialization function pointer issue
-    "test_spec_func_ptr_set.cpp",          # Template specialization function pointer issue
+    "test_spec_func_ptr.cpp",              # Template specialization function pointer issue (timeout)
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
     "test_var_template_complete.cpp"       # Variable template codegen issue
 )
