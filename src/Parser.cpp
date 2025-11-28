@@ -11875,6 +11875,7 @@ unsigned char Parser::get_type_size_bits(Type type) {
 }
 
 // Parse template declaration: template<typename T> ...
+// Also handles explicit template instantiation: template void Func<int>(); or template class Container<int>;
 ParseResult Parser::parse_template_declaration() {
 	ScopedTokenPosition saved_position(*this);
 
@@ -11883,11 +11884,26 @@ ParseResult Parser::parse_template_declaration() {
 		return ParseResult::error("Expected 'template' keyword", *peek_token());
 	}
 
+	// Check if this is an explicit template instantiation (no '<' after 'template')
+	// Syntax: template void Container<int>::set(int);
+	//         template class Container<int>;
+	if (peek_token().has_value() && peek_token()->value() != "<") {
+		// This is an explicit template instantiation - skip it for now
+		// The template should already be instantiated when it's first used
+		// Just consume tokens until we hit ';'
+		while (peek_token().has_value() && peek_token()->value() != ";") {
+			consume_token();
+		}
+		if (peek_token().has_value() && peek_token()->value() == ";") {
+			consume_token(); // consume ';'
+		}
+		// Return success with no node - explicit instantiation doesn't need AST representation
+		// since FlashCpp instantiates templates on-demand when they're used
+		return saved_position.success();
+	}
+
 	// Expect '<' to start template parameter list
 	// Note: '<' is an operator, not a punctuator
-	if (!peek_token().has_value() || peek_token()->value() != "<") {
-		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
-	}
 	consume_token(); // consume '<'
 
 	// Check if this is a template specialization (template<>)
