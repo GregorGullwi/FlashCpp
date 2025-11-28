@@ -125,7 +125,6 @@ $expectedCompileFailures = @(
     "test_lambda_no_capture.cpp",          # Lambda codegen issues
     "test_nested_classes.cpp",             # Nested class codegen issues
     "test_noexcept.cpp",                   # noexcept handling not yet supported
-    "test_puts_stack.cpp",                 # puts function call issue
     "test_register_spilling.cpp",          # Register spilling issue
     "test_spec_ctor_init.cpp",             # Template specialization constructor init issue
     "test_spec_func_ptr.cpp",              # Template specialization function pointer issue
