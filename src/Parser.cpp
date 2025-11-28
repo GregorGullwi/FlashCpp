@@ -1982,13 +1982,24 @@ ParseResult Parser::parse_struct_declaration()
 	// This allows member functions (like constructors) to reference the struct type
 	// We'll fill in the struct info later after parsing all members
 	// For nested classes, we register with the qualified name to avoid conflicts
-	std::string type_name = std::string(struct_name);
 	bool is_nested_class = !struct_parsing_context_stack_.empty();
+	
+	// Create a persistent qualified name for nested classes (e.g., "Outer::Inner")
+	// This is used when creating member functions so they reference the correct struct type
+	// For top-level classes, qualified_struct_name equals struct_name
+	std::string_view qualified_struct_name = struct_name;
+	std::string type_name = std::string(struct_name);
 	if (is_nested_class) {
 		// We're inside a struct, so this is a nested class
 		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
 		const auto& context = struct_parsing_context_stack_.back();
-		type_name = std::string(context.struct_name) + "::" + type_name;
+		// Build the qualified name using StringBuilder for a persistent allocation
+		qualified_struct_name = StringBuilder()
+			.append(context.struct_name)
+			.append("::")
+			.append(struct_name)
+			.commit();
+		type_name = std::string(qualified_struct_name);
 	}
 
 	TypeInfo& struct_type_info = add_struct_type(type_name);
@@ -1997,15 +2008,6 @@ ParseResult Parser::parse_struct_declaration()
 	// from within the nested class itself (e.g., in constructors)
 	if (is_nested_class) {
 		gTypesByName.emplace(std::string(struct_name), &struct_type_info);
-	}
-
-	// Create a persistent qualified name for nested classes (e.g., "Outer::Inner")
-	// This is used when creating member functions so they reference the correct struct type
-	// For top-level classes, qualified_struct_name equals struct_name
-	std::string_view qualified_struct_name = struct_name;
-	if (is_nested_class) {
-		// Allocate a persistent string for the qualified name
-		qualified_struct_name = StringBuilder().append(type_name).commit();
 	}
 
 	// Check for alignas specifier after struct name (if not already specified)
@@ -2365,7 +2367,11 @@ ParseResult Parser::parse_struct_declaration()
 					// Update type info - use qualified name to avoid ambiguity with multiple nested classes with the same simple name
 					// The qualified name is "Outer::Inner" and was registered at the start of parse_struct_declaration
 					// Use qualified_struct_name for deeper nesting support (e.g., "Outer::Middle::Inner")
-					std::string qualified_nested_name = std::string(qualified_struct_name) + "::" + std::string(nested_struct.name());
+					std::string_view qualified_nested_name = StringBuilder()
+						.append(qualified_struct_name)
+						.append("::")
+						.append(nested_struct.name())
+						.commit();
 					auto nested_type_it = gTypesByName.find(qualified_nested_name);
 					if (nested_type_it != gTypesByName.end()) {
 						const StructTypeInfo* nested_info_const = nested_type_it->second->getStructInfo();
