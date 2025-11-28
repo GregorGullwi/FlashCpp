@@ -5734,8 +5734,12 @@ private:
 			// Add the function call instruction
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), memberFunctionCallNode.called_from()));
 
-			// Return the result
-			// TODO: Get actual return type from lambda
+			// Return the result with actual return type from lambda
+			if (lambda.return_type().has_value()) {
+				const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
+				return { ret_type.type(), static_cast<int>(ret_type.size_in_bits()), ret_var };
+			}
+			// Default to int if no explicit return type
 			return { Type::Int, 32, ret_var };
 		}
 
