@@ -255,8 +255,9 @@ public:
 
 	// Generate all collected lambdas (must be called after visiting all nodes)
 	void generateCollectedLambdas() {
-		for (const auto& lambda_info : collected_lambdas_) {
-			generateLambdaFunctions(lambda_info);
+		// Use index-based loop because nested lambdas may add new entries during iteration
+		for (size_t i = 0; i < collected_lambdas_.size(); ++i) {
+			generateLambdaFunctions(collected_lambdas_[i]);
 		}
 	}
 	
@@ -3062,12 +3063,18 @@ private:
 				}
 				return; // Early return - we've already added the variable declaration
 			} else if (init_node.is<LambdaExpressionNode>()) {
-				// Lambda expression initializer
+				// Lambda expression initializer (direct)
 				// Generate the lambda functions (operator() and __invoke)
 				const auto& lambda = init_node.as<LambdaExpressionNode>();
 				generateLambdaExpressionIr(lambda);
 				// For now, lambda variables are just empty structs (1 byte)
 				// TODO: Store function pointer or closure data in the variable
+			} else if (init_node.is<ExpressionNode>() && 
+			           std::holds_alternative<LambdaExpressionNode>(init_node.as<ExpressionNode>())) {
+				// Lambda expression wrapped in ExpressionNode
+				const auto& lambda = std::get<LambdaExpressionNode>(init_node.as<ExpressionNode>());
+				generateLambdaExpressionIr(lambda);
+				// For now, lambda variables are just empty structs (1 byte)
 			} else {
 				// Regular expression initializer
 				// For struct types with copy constructors, don't add initializer to VariableDecl
@@ -6207,10 +6214,16 @@ private:
 					function_name += mangled_func_name;
 				} else {
 					// Regular member function (not a template) - generate proper mangled name
+					// Use the function declaration from struct_info if available (has correct parameters)
+					const FunctionDeclarationNode* func_for_mangling = &func_decl;
+					if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+						func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
+					}
+					
 					// Get return type and parameter types from the function declaration
-					const auto& return_type_node = func_decl_node.type_node().as<TypeSpecifierNode>();
+					const auto& return_type_node = func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
 					std::vector<TypeSpecifierNode> param_types;
-					for (const auto& param_node : func_decl.parameter_nodes()) {
+					for (const auto& param_node : func_for_mangling->parameter_nodes()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
 							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -6223,7 +6236,7 @@ private:
 						std::string(func_name),
 						return_type_node,
 						param_types,
-						func_decl.is_variadic(),
+						func_for_mangling->is_variadic(),
 						struct_name
 					);
 					function_name = std::string(mangled);
