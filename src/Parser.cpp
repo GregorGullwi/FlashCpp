@@ -12888,28 +12888,87 @@ ParseResult Parser::parse_template_declaration() {
 					discard_saved_token(saved_pos);
 				}
 				
-				// Parse member declaration
-				auto member_result = parse_declaration_or_function_definition();
+				// Parse member declaration using delayed parsing for function bodies
+				// (Same approach as full specialization to ensure member_function_context is available)
+				auto member_result = parse_type_and_name();
 				if (member_result.is_error()) {
 					return member_result;
 				}
 				
-				if (member_result.node().has_value()) {
-					ASTNode member_node = *member_result.node();
-					if (member_node.is<VariableDeclarationNode>()) {
-						const VariableDeclarationNode& var_node = member_node.as<VariableDeclarationNode>();
-						struct_ref.add_member(var_node.declaration_node(), current_access);
-					} else if (member_node.is<FunctionDeclarationNode>()) {
-						// Handle member function
-						struct_ref.add_member_function(member_node, current_access);
-					} else if (member_node.is<ConstructorDeclarationNode>()) {
-						// Handle constructor (should already be added by above code, but handle for safety)
-						struct_ref.add_constructor(member_node, current_access);
-					}
+				if (!member_result.node().has_value()) {
+					return ParseResult::error("Expected member declaration", *peek_token());
 				}
 				
-				// Consume optional semicolon
-				consume_punctuator(";");
+				// Check if this is a member function (has '(') or data member
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					// This is a member function
+					if (!member_result.node()->is<DeclarationNode>()) {
+						return ParseResult::error("Expected declaration node for member function", *peek_token());
+					}
+					
+					DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+					
+					// Parse function declaration with parameters
+					auto func_result = parse_function_declaration(decl_node);
+					if (func_result.is_error()) {
+						return func_result;
+					}
+					
+					if (!func_result.node().has_value()) {
+						return ParseResult::error("Failed to create function declaration node", *peek_token());
+					}
+					
+					FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+					DeclarationNode& func_decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
+					
+					// Create a new FunctionDeclarationNode with member function info
+					auto [member_func_node, member_func_ref] =
+						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, instantiated_name);
+					
+					// Copy parameters from the parsed function
+					for (const auto& param : func_decl.parameter_nodes()) {
+						member_func_ref.add_parameter_node(param);
+					}
+					
+					// Check for function body and use delayed parsing
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						// Save position at start of body
+						TokenPosition body_start = save_token_position();
+						
+						// Skip over the function body by counting braces
+						skip_balanced_braces();
+						
+						// Record for delayed parsing
+						delayed_function_bodies_.push_back({
+							&member_func_ref,
+							body_start,
+							{},       // initializer_list_start (not used)
+							false,    // has_initializer_list
+							instantiated_name,
+							struct_type_info.type_index_,
+							&struct_ref,
+							false,  // is_constructor
+							false,  // is_destructor
+							nullptr,  // ctor_node
+							nullptr,  // dtor_node
+							{}  // no template parameter names for specializations
+						});
+					} else {
+						// Just a declaration, consume the semicolon
+						consume_punctuator(";");
+					}
+					
+					// Add member function to struct
+					struct_ref.add_member_function(member_func_node, current_access);
+				} else {
+					// Data member
+					ASTNode member_node = *member_result.node();
+					if (member_node.is<DeclarationNode>()) {
+						struct_ref.add_member(member_node, current_access);
+					}
+					// Consume semicolon after data member
+					consume_punctuator(";");
+				}
 			}
 			
 			// Expect closing brace
@@ -12989,6 +13048,74 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
+			
+			// Parse delayed function bodies for partial specialization member functions
+			TokenPosition position_after_struct = save_token_position();
+			for (auto& delayed : delayed_function_bodies_) {
+				// Restore token position to the start of the function body
+				restore_token_position(delayed.body_start);
+				
+				// Set up function context
+				gSymbolTable.enter_scope(ScopeType::Function);
+				member_function_context_stack_.push_back({
+					delayed.struct_name,
+					delayed.struct_type_index,
+					delayed.struct_node
+				});
+				
+				// Add 'this' pointer to symbol table
+				auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
+					Type::Struct, delayed.struct_type_index,
+					0, Token()
+				);
+				this_type_ref.add_pointer_level();
+				
+				Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+				auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
+				gSymbolTable.insert("this", this_decl_node);
+				
+				// Add function parameters to scope
+				if (delayed.func_node) {
+					for (const auto& param : delayed.func_node->parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							gSymbolTable.insert(param_decl.identifier_token().value(), param);
+						}
+					}
+				} else if (delayed.ctor_node) {
+					for (const auto& param : delayed.ctor_node->parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							gSymbolTable.insert(param_decl.identifier_token().value(), param);
+						}
+					}
+				}
+				
+				// Parse the function body
+				auto block_result = parse_block();
+				if (block_result.is_error()) {
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					return block_result;
+				}
+				
+				if (auto block = block_result.node()) {
+					if (delayed.func_node) {
+						delayed.func_node->set_definition(*block);
+					} else if (delayed.ctor_node) {
+						delayed.ctor_node->set_definition(*block);
+					}
+				}
+				
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+			}
+			
+			// Clear delayed function bodies
+			delayed_function_bodies_.clear();
+			
+			// Restore position after struct
+			restore_token_position(position_after_struct);
 			
 			// Register the specialization PATTERN (not exact match)
 			// This allows pattern matching during instantiation
