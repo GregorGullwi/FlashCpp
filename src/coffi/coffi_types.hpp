@@ -94,6 +94,8 @@ typedef signed long long   int64_t;
 
 //! @}
 
+#ifndef _WINNT_
+
 // clang-format off
 //! @name PE file characteristics
 //! @{
@@ -180,6 +182,8 @@ typedef signed long long   int64_t;
 #define IMAGE_SCN_MEM_READ               0x40000000 //!< The section can be read.
 #define IMAGE_SCN_MEM_WRITE              0x80000000 //!< The section can be written to.
 
+#endif // _WINNT_
+
 //! @}
 
 //! @name Portable Executable directories index
@@ -202,6 +206,8 @@ typedef signed long long   int64_t;
 #define DIRECTORY_RESERVED                15
 
 //! @}
+
+#ifndef _WINNT_
 
 //! @name COFF Relocations Type Indicators - Intel 386
 //! @{
@@ -384,12 +390,16 @@ typedef signed long long   int64_t;
 
 //! @}
 
+#endif // _WINNT_
+
 //! @name Microsoft tools use the type field only to indicate whether or not the symbol is a function, so that the only two resulting values are 0x0 and 0x20 for the Type field.
 //! @{
 #define IMAGE_SYM_TYPE_NOT_FUNCTION 0
 #define IMAGE_SYM_TYPE_FUNCTION     0x20
 
 //! @}
+
+#ifndef _WINNT_
 
 //! @name Complex types
 //! @{
@@ -402,7 +412,6 @@ typedef signed long long   int64_t;
 
 //! @name COFF Symbol Table, Storage Class (symbol.storage_class)
 //! @{
-#ifndef IMAGE_SYM_CLASS_END_OF_FUNCTION    // We assume if the first one isn't defined, none of them are
 #define IMAGE_SYM_CLASS_END_OF_FUNCTION   -1 //!< Special symbol representing end of function, for debugging purposes.
 #define IMAGE_SYM_CLASS_NULL               0 //!< No storage class assigned.
 #define IMAGE_SYM_CLASS_AUTOMATIC          1 //!< Automatic (stack) variable. The Value field specifies stack frame offset.
@@ -428,7 +437,6 @@ typedef signed long long   int64_t;
 #define IMAGE_SYM_CLASS_FILE             103 //!< Used by Microsoft tools, as well as traditional COFF format, for the source-file symbol record. The symbol is followed by auxiliary records that name the file.
 #define IMAGE_SYM_CLASS_SECTION          104 //!< Definition of a section (Microsoft tools use STATIC storage class instead).
 #define IMAGE_SYM_CLASS_WEAK_EXTERNAL    105 //!< Weak external
-#endif
 
 //! @}
 
@@ -442,6 +450,8 @@ typedef signed long long   int64_t;
 #define IMAGE_COMDAT_SELECT_LARGEST      6
 
 //! @}
+
+#endif // _WINNT_
 
 // See Texas Instruments documentation spraao8
 
