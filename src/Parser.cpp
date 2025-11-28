@@ -8819,7 +8819,9 @@ ParseResult Parser::parse_primary_expression()
 				const StructDeclarationNode* struct_node = context.struct_node;
 
 				// Check if this identifier matches any data member in the struct (including inherited members)
-				if (struct_node) {
+				// First try AST node members (for regular structs), then fall back to TypeInfo (for template instantiations)
+				bool found_in_ast = false;
+				if (struct_node && !struct_node->members().empty()) {
 					// First check direct members
 					for (const auto& member_decl : struct_node->members()) {
 						const ASTNode& member_node = member_decl.declaration;
@@ -8838,6 +8840,7 @@ ParseResult Parser::parse_primary_expression()
 									MemberAccessNode(this_ident, idenfifier_token));
 
 								// Don't return - let it fall through to postfix operator parsing
+								found_in_ast = true;
 								goto found_member_variable;
 							}
 						}
@@ -8866,14 +8869,17 @@ ParseResult Parser::parse_primary_expression()
 										MemberAccessNode(this_ident, idenfifier_token));
 
 									// Don't return - let it fall through to postfix operator parsing
+									found_in_ast = true;
 									goto found_member_variable;
 								}
 							}
 						}
 					}
-				} else if (context.struct_type_index != 0) {
-					// struct_node is null, but we have struct_type_index
-					// This happens during template body parsing where we don't have access to struct_node
+				}
+				
+				// If not found in AST and we have struct_type_index, try TypeInfo
+				// This handles template class instantiations where the AST node may have no members
+				if (!found_in_ast && context.struct_type_index != 0) {
 					// Look up the struct type from the type system
 					if (context.struct_type_index < gTypeInfo.size()) {
 						const TypeInfo& struct_type_info = gTypeInfo[context.struct_type_index];
@@ -16949,6 +16955,20 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+	
+	// If not found and struct_name looks like an instantiated template (e.g., Vector_int),
+	// try the base template class name (e.g., Vector::method)
+	std::string base_qualified_name;
+	if (!template_opt.has_value()) {
+		// Check if struct_name is an instantiated template class (contains '_' as type separator)
+		size_t underscore_pos = struct_name.rfind('_');
+		if (underscore_pos != std::string_view::npos) {
+			std::string_view base_name = struct_name.substr(0, underscore_pos);
+			base_qualified_name = std::string(base_name) + "::" + std::string(member_name);
+			template_opt = gTemplateRegistry.lookupTemplate(base_qualified_name);
+		}
+	}
+	
 	if (!template_opt.has_value()) {
 		return std::nullopt;  // Not a template
 	}
@@ -17163,6 +17183,27 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				if (sn.name() == struct_name) {
 					struct_node_ptr = &sn;
 					break;
+				}
+			}
+		}
+		
+		// If not found and this is a member function template of a template class,
+		// look for the base template class struct to get member info
+		if (!struct_node_ptr || struct_node_ptr->members().empty()) {
+			// Check if struct_name looks like an instantiated template class (contains '_' as type separator)
+			size_t underscore_pos = struct_name.rfind('_');
+			if (underscore_pos != std::string_view::npos) {
+				std::string_view base_name = struct_name.substr(0, underscore_pos);
+				for (auto& node : ast_nodes_) {
+					if (node.is<StructDeclarationNode>()) {
+						auto& sn = node.as<StructDeclarationNode>();
+						if (sn.name() == base_name) {
+							// Use the base template struct for member info
+							// The members are the same, just with template parameter types
+							struct_node_ptr = &sn;
+							break;
+						}
+					}
 				}
 			}
 		}
