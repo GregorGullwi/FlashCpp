@@ -20,6 +20,7 @@
 #include "StackString.h"
 #include "IRTypes.h"
 #include "CrashHandler.h"
+#include "Log.h"
 
 // Global debug flag
 bool g_enable_debug_output = false;
@@ -55,7 +56,7 @@ int main(int argc, char *argv[]) {
     CommandLineParser argsparser(argc, argv, context);
 
     if (argsparser.hasOption("h") || argsparser.hasOption("help")) {
-        std::cout << "Help message" << std::endl;
+        FLASH_LOG(General, Info, "Help message\n");
         return 0;
     }
 
@@ -85,7 +86,7 @@ int main(int argc, char *argv[]) {
     // Process input file arguments here...
     const auto& inputFileArgs = argsparser.inputFileArgs();
     if (inputFileArgs.empty()) {
-            std::cerr << "No input file specified" << std::endl;
+            FLASH_LOG(General, Error, "No input file specified\n");
             return 1;
     }
     std::filesystem::path inputFilePath(inputFileArgs.front());
@@ -136,13 +137,9 @@ int main(int argc, char *argv[]) {
 
     if (context.isVerboseMode()) {
         // Use context and file_tree to perform the desired operation
-        std::cout << "Output file: " << context.getOutputFile() << std::endl;
-        std::cout << "Verbose mode: " << (context.isVerboseMode() ? "enabled" : "disabled") << std::endl;
-        std::cout << "Input file: " << context.getInputFile().value() << std::endl;
-        std::cout << "Dependencies:" << std::endl;
-        for (const auto& dep : context.getDependencies()) {
-            std::cout << "- " << dep << std::endl;
-        }
+        FLASH_LOG(General, Debug, "Output file: ", context.getOutputFile(), "\n");
+        FLASH_LOG(General, Debug, "Verbose mode: ", (context.isVerboseMode() ? "enabled" : "disabled"), "\n");
+        FLASH_LOG(General, Debug, "Input file: ", context.getInputFile().value(), "\n");
     }
 
     const std::string& preprocessed_source = file_reader.get_result();
@@ -158,14 +155,14 @@ int main(int argc, char *argv[]) {
     GlobalOperandStorage::instance().reserve(estimated_operands);
 
     if (show_perf_stats) {
-        printf("Source lines: %zu\n", source_line_count);
-        printf("Estimated operands: %zu (8 per line)\n", estimated_operands);
+        FLASH_LOG(General, Debug, "Source lines: ", source_line_count, "\n");
+        FLASH_LOG(General, Debug, "Estimated operands: ", estimated_operands, " (8 per line)\n");
     }
 #endif
 
     Lexer lexer(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
 
-    std::cerr << "===== FLASHCPP VERSION " << __DATE__ << " " << __TIME__ << " =====\n";
+    FLASH_LOG(General, Info, "===== FLASHCPP VERSION ", __DATE__, " " , __TIME__, " =====\n");
 
     Parser parser(lexer, context);
     {
@@ -174,15 +171,13 @@ int main(int argc, char *argv[]) {
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
-            std::cerr << parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer) << std::endl;
+            FLASH_LOG(Parser, Info, parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer), "\n");
             return 1;
         }
     }
 
     const auto& ast = parser.get_nodes();
-    if (show_debug) {
-        std::cerr << "DEBUG: After parsing, AST has " << ast.size() << " nodes\n";
-    }
+    FLASH_LOG(Parser, Debug, "After parsing, AST has ", ast.size(), " nodes\n");
 
     AstToIr converter(gSymbolTable, context, parser);
 
@@ -237,7 +232,7 @@ int main(int argc, char *argv[]) {
 
     const auto& ir = converter.getIr();
 
-    std::cerr << "DEBUG: Verbose mode = " << (context.isVerboseMode() ? "true" : "false") << std::endl;
+    FLASH_LOG(General, Debug, "Verbose mode = ", (context.isVerboseMode() ? "true\n" : "false\n"));
     if (context.isVerboseMode()) {
         std::cerr << "\n=== IR Instructions ===" << std::endl;
         for (const auto& instruction : ir.getInstructions()) {
