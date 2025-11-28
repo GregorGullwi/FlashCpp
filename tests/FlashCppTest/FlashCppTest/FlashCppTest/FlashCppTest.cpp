@@ -3089,3 +3089,7 @@ TEST_CASE("VarTemplate:Constexpr") {
 TEST_CASE("Custom:Container") {
 	run_test_from_file("test_custom_container.cpp", "Custom:Container", false);
 }
+
+TEST_CASE("Template:Template") {
+	run_test_from_file("template_template_test.cpp", "Template:Template", false);
+}
