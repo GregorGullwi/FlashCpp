@@ -10,14 +10,15 @@ namespace FlashCpp {
 // Log categories - each can be enabled/disabled independently
 enum class LogCategory : uint32_t {
     None        = 0,
-    Parser      = 1 << 0,   // General parser operations
-    Lexer       = 1 << 1,   // Lexer/tokenizer
-    Templates   = 1 << 2,   // Template instantiation
-    Symbols     = 1 << 3,   // Symbol table operations
-    Types       = 1 << 4,   // Type resolution
-    Codegen     = 1 << 5,   // Code generation / IR
-    Scope       = 1 << 6,   // Scope enter/exit
-    Mangling    = 1 << 7,   // Name mangling
+    General     = 1 << 0,   // User-facing messages (no prefix, always enabled in release)
+    Parser      = 1 << 1,   // General parser operations
+    Lexer       = 1 << 2,   // Lexer/tokenizer
+    Templates   = 1 << 3,   // Template instantiation
+    Symbols     = 1 << 4,   // Symbol table operations
+    Types       = 1 << 5,   // Type resolution
+    Codegen     = 1 << 6,   // Code generation / IR
+    Scope       = 1 << 7,   // Scope enter/exit
+    Mangling    = 1 << 8,   // Name mangling
     All         = 0xFFFFFFFF
 };
 
@@ -41,7 +42,7 @@ enum class LogLevel : uint8_t {
 // Set these via compiler flags: -DFLASHCPP_LOG_LEVEL=3 -DFLASHCPP_LOG_CATEGORIES=0xFF
 #ifndef FLASHCPP_LOG_LEVEL
     #ifdef NDEBUG
-        #define FLASHCPP_LOG_LEVEL 0   // Release: errors only
+        #define FLASHCPP_LOG_LEVEL 2   // Release: up to Info level (General always works)
     #else
         #define FLASHCPP_LOG_LEVEL 3   // Debug: up to Debug level
     #endif
@@ -51,11 +52,20 @@ enum class LogLevel : uint8_t {
     #define FLASHCPP_LOG_CATEGORIES 0xFFFFFFFF  // All categories by default
 #endif
 
+// ANSI color codes for terminal output
+namespace detail {
+    constexpr const char* RESET   = "\033[0m";
+    constexpr const char* RED     = "\033[31m";
+    constexpr const char* YELLOW  = "\033[33m";
+    constexpr const char* BLUE    = "\033[34m";
+}
+
 // Runtime filter (can be changed at runtime for enabled levels)
 struct LogConfig {
     static inline LogLevel runtimeLevel = static_cast<LogLevel>(FLASHCPP_LOG_LEVEL);
     static inline LogCategory runtimeCategories = static_cast<LogCategory>(FLASHCPP_LOG_CATEGORIES);
-    static inline std::ostream* output_stream = &std::cerr;  // Configurable output stream
+    static inline std::ostream* output_stream = &std::cout;  // Default output stream (errors always go to cerr)
+    static inline bool use_colors = true;  // Enable/disable ANSI colors
 
     static void setLevel(LogLevel level) { runtimeLevel = level; }
     static void setCategories(LogCategory cats) { runtimeCategories = cats; }
@@ -70,27 +80,60 @@ struct LogConfig {
     static void setOutputStream(std::ostream* stream) { output_stream = stream; }
     static void setOutputToStdout() { output_stream = &std::cout; }
     static void setOutputToStderr() { output_stream = &std::cerr; }
+    static void setUseColors(bool enable) { use_colors = enable; }
 };
 
 // Core logging function
 template<LogLevel Level, LogCategory Category>
 struct Logger {
+    // General category is always enabled at compile time (user-facing messages)
     static constexpr bool enabled =
-        (static_cast<uint8_t>(Level) <= FLASHCPP_LOG_LEVEL) &&
-        ((static_cast<uint32_t>(Category) & FLASHCPP_LOG_CATEGORIES) != 0);
+        (Category == LogCategory::General) ||
+        ((static_cast<uint8_t>(Level) <= FLASHCPP_LOG_LEVEL) &&
+         ((static_cast<uint32_t>(Category) & FLASHCPP_LOG_CATEGORIES) != 0));
 
     template<typename... Args>
     static void log([[maybe_unused]] Args&&... args) {
         if constexpr (enabled) {
-            // Runtime check
-            if (static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogConfig::runtimeLevel) &&
-                (static_cast<uint32_t>(Category) & static_cast<uint32_t>(LogConfig::runtimeCategories)) != 0) {
+            // General category is always enabled at runtime too
+            bool runtime_enabled = (Category == LogCategory::General) ||
+                (static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogConfig::runtimeLevel) &&
+                 (static_cast<uint32_t>(Category) & static_cast<uint32_t>(LogConfig::runtimeCategories)) != 0);
 
-                // Print prefix
-                *LogConfig::output_stream << "[" << levelName() << "][" << categoryName() << "] ";
-                (*LogConfig::output_stream << ... << args);
-                *LogConfig::output_stream << "\n";
+            if (runtime_enabled) {
+                // Errors always go to stderr
+                std::ostream& out = (Level == LogLevel::Error) ? std::cerr : *LogConfig::output_stream;
+
+                // General category: no prefix (user-facing messages)
+                if constexpr (Category == LogCategory::General) {
+                    (out << ... << args);
+                    out << "\n";
+                } else {
+                    // Apply color based on log level
+                    if (LogConfig::use_colors) {
+                        out << colorCode();
+                    }
+
+                    // Print prefix
+                    out << "[" << levelName() << "][" << categoryName() << "] ";
+                    (out << ... << args);
+
+                    // Reset color
+                    if (LogConfig::use_colors) {
+                        out << detail::RESET;
+                    }
+                    out << "\n";
+                }
             }
+        }
+    }
+
+    static constexpr const char* colorCode() {
+        switch (Level) {
+            case LogLevel::Error:   return detail::RED;
+            case LogLevel::Warning: return detail::YELLOW;
+            case LogLevel::Trace:   return detail::BLUE;
+            default:                return "";  // No color for Info, Debug
         }
     }
 
@@ -107,6 +150,7 @@ struct Logger {
 
     static constexpr std::string_view categoryName() {
         switch (Category) {
+            case LogCategory::General:   return "General";
             case LogCategory::Parser:    return "Parser";
             case LogCategory::Lexer:     return "Lexer";
             case LogCategory::Templates: return "Templates";
@@ -115,7 +159,7 @@ struct Logger {
             case LogCategory::Codegen:   return "Codegen";
             case LogCategory::Scope:     return "Scope";
             case LogCategory::Mangling:  return "Mangling";
-            default:                     return "General";
+            default:                     return "Unknown";
         }
     }
 };

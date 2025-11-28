@@ -2613,6 +2613,7 @@ TEST_CASE("Log:LoggerLevelName") {
 TEST_CASE("Log:LoggerCategoryName") {
 	using namespace FlashCpp;
 	
+	CHECK(Logger<LogLevel::Error, LogCategory::General>::categoryName() == "General");
 	CHECK(Logger<LogLevel::Error, LogCategory::Parser>::categoryName() == "Parser");
 	CHECK(Logger<LogLevel::Error, LogCategory::Lexer>::categoryName() == "Lexer");
 	CHECK(Logger<LogLevel::Error, LogCategory::Templates>::categoryName() == "Templates");
@@ -2630,6 +2631,10 @@ TEST_CASE("Log:LogOutputCapture") {
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
+	bool originalColors = LogConfig::use_colors;
+	
+	// Disable colors for testing (avoid ANSI escape codes in output)
+	LogConfig::setUseColors(false);
 	
 	// Setup capture
 	std::ostringstream captureStream;
@@ -2637,11 +2642,11 @@ TEST_CASE("Log:LogOutputCapture") {
 	LogConfig::setLevel(LogLevel::Trace);
 	LogConfig::setCategories(LogCategory::All);
 	
-	// Log a message
-	FLASH_LOG(Parser, Error, "Test message ", 42);
+	// Log a message (use Info level since Error goes to stderr)
+	FLASH_LOG(Parser, Info, "Test message ", 42);
 	
 	std::string output = captureStream.str();
-	CHECK(output.find("[ERROR]") != std::string::npos);
+	CHECK(output.find("[INFO ]") != std::string::npos);
 	CHECK(output.find("[Parser]") != std::string::npos);
 	CHECK(output.find("Test message 42") != std::string::npos);
 	
@@ -2657,12 +2662,12 @@ TEST_CASE("Log:LogOutputCapture") {
 	captureStream.str("");
 	LogConfig::setCategories(LogCategory::Lexer);  // Only enable Lexer
 	
-	FLASH_LOG(Parser, Error, "Should not appear");
+	FLASH_LOG(Parser, Info, "Should not appear");
 	output = captureStream.str();
 	// Note: compile-time check may prevent this from being filtered at runtime
 	// if the category is disabled at compile time. Only check if the logger is
 	// compile-time enabled (all categories enabled by default).
-	if (Logger<LogLevel::Error, LogCategory::Parser>::enabled) {
+	if (Logger<LogLevel::Info, LogCategory::Parser>::enabled) {
 		CHECK(output.empty());  // Runtime filtering should block it
 	}
 	
@@ -2682,6 +2687,7 @@ TEST_CASE("Log:LogOutputCapture") {
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
 	LogConfig::setOutputStream(originalStream);
+	LogConfig::setUseColors(originalColors);
 }
 
 TEST_CASE("Log:LogMacroVariadicArgs") {
@@ -2691,6 +2697,10 @@ TEST_CASE("Log:LogMacroVariadicArgs") {
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
+	bool originalColors = LogConfig::use_colors;
+	
+	// Disable colors for testing
+	LogConfig::setUseColors(false);
 	
 	// Setup capture
 	std::ostringstream captureStream;
@@ -2705,6 +2715,38 @@ TEST_CASE("Log:LogMacroVariadicArgs") {
 	CHECK(output.find("Value: 123") != std::string::npos);
 	CHECK(output.find("String: test") != std::string::npos);
 	CHECK(output.find("Float: 3.14") != std::string::npos);
+	
+	// Restore original config
+	LogConfig::setLevel(originalLevel);
+	LogConfig::setCategories(originalCategories);
+	LogConfig::setOutputStream(originalStream);
+	LogConfig::setUseColors(originalColors);
+}
+
+TEST_CASE("Log:GeneralCategoryNoPrefix") {
+	using namespace FlashCpp;
+	
+	// Save original config
+	LogLevel originalLevel = LogConfig::runtimeLevel;
+	LogCategory originalCategories = LogConfig::runtimeCategories;
+	std::ostream* originalStream = LogConfig::output_stream;
+	
+	// Setup capture
+	std::ostringstream captureStream;
+	LogConfig::setOutputStream(&captureStream);
+	LogConfig::setLevel(LogLevel::Trace);
+	LogConfig::setCategories(LogCategory::All);
+	
+	// Test General category - should have no prefix
+	FLASH_LOG(General, Info, "User message without prefix");
+	
+	std::string output = captureStream.str();
+	CHECK(output.find("[") == std::string::npos);  // No brackets
+	CHECK(output.find("User message without prefix") != std::string::npos);
+	CHECK(output == "User message without prefix\n");
+	
+	// General category should always be enabled
+	CHECK(Logger<LogLevel::Info, LogCategory::General>::enabled == true);
 	
 	// Restore original config
 	LogConfig::setLevel(originalLevel);
