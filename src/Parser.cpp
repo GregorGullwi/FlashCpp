@@ -1999,6 +1999,15 @@ ParseResult Parser::parse_struct_declaration()
 		gTypesByName.emplace(std::string(struct_name), &struct_type_info);
 	}
 
+	// Create a persistent qualified name for nested classes (e.g., "Outer::Inner")
+	// This is used when creating member functions so they reference the correct struct type
+	// For top-level classes, qualified_struct_name equals struct_name
+	std::string_view qualified_struct_name = struct_name;
+	if (is_nested_class) {
+		// Allocate a persistent string for the qualified name
+		qualified_struct_name = StringBuilder().append(type_name).commit();
+	}
+
 	// Check for alignas specifier after struct name (if not already specified)
 	if (!custom_alignment.has_value()) {
 		custom_alignment = parse_alignas_specifier();
@@ -2353,8 +2362,11 @@ ParseResult Parser::parse_struct_declaration()
 					// Add to outer class
 					struct_ref.add_nested_class(*nested_node);
 
-					// Update type info
-					auto nested_type_it = gTypesByName.find(nested_struct.name());
+					// Update type info - use qualified name to avoid ambiguity with multiple nested classes with the same simple name
+					// The qualified name is "Outer::Inner" and was registered at the start of parse_struct_declaration
+					// Use qualified_struct_name for deeper nesting support (e.g., "Outer::Middle::Inner")
+					std::string qualified_nested_name = std::string(qualified_struct_name) + "::" + std::string(nested_struct.name());
+					auto nested_type_it = gTypesByName.find(qualified_nested_name);
 					if (nested_type_it != gTypesByName.end()) {
 						const StructTypeInfo* nested_info_const = nested_type_it->second->getStructInfo();
 						if (nested_info_const) {
@@ -2363,7 +2375,8 @@ ParseResult Parser::parse_struct_declaration()
 							struct_info->addNestedClass(nested_info);
 						}
 
-						// Now that enclosing class is set, register the qualified name
+						// Also register the qualified name using the StructDeclarationNode's qualified_name()
+						// This ensures consistency with the type lookup
 						std::string qualified_name = nested_struct.qualified_name();
 						if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
 							gTypesByName.emplace(qualified_name, nested_type_it->second);
@@ -2393,7 +2406,8 @@ ParseResult Parser::parse_struct_declaration()
 				// Discard saved position since we're using this as a constructor
 				discard_saved_token(saved_pos);
 				// This is a constructor
-				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(struct_name, ctor_name);
+				// Use qualified_struct_name for nested classes so the member function references the correct type
+				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(qualified_struct_name, ctor_name);
 
 				// Parse parameters
 				if (!consume_punctuator("(")) {
@@ -2647,7 +2661,8 @@ ParseResult Parser::parse_struct_declaration()
 				return ParseResult::error("Destructor cannot have parameters", *peek_token());
 			}
 
-			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(struct_name, dtor_name);
+			// Use qualified_struct_name for nested classes so the member function references the correct type
+			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(qualified_struct_name, dtor_name);
 
 			// Parse override/final specifiers for destructors
 			bool is_override = false;
@@ -2787,8 +2802,9 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Create a new FunctionDeclarationNode with member function info
 			// Pass string_view directly - FunctionDeclarationNode stores it as string_view
+			// Use qualified_struct_name for nested classes so the member function references the correct type
 			auto [member_func_node, member_func_ref] =
-				emplace_node_ref<FunctionDeclarationNode>(decl_node, struct_name);
+				emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_struct_name);
 
 			// Copy parameters from the parsed function
 			for (const auto& param : func_decl.parameter_nodes()) {
@@ -3362,8 +3378,9 @@ ParseResult Parser::parse_struct_declaration()
 		auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
 
 		// Create function declaration node
+		// Use qualified_struct_name for nested classes so the member function references the correct type
 		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-			operator_decl_node.as<DeclarationNode>(), struct_name);
+			operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
 
 		// Create parameter: const Type& other
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
@@ -3477,8 +3494,9 @@ ParseResult Parser::parse_struct_declaration()
 		auto move_operator_decl_node = emplace_node<DeclarationNode>(return_type_node, move_operator_name_token);
 
 		// Create function declaration node
+		// Use qualified_struct_name for nested classes so the member function references the correct type
 		auto [move_func_node, move_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-			move_operator_decl_node.as<DeclarationNode>(), struct_name);
+			move_operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
 
 		// Create parameter: Type&& other (rvalue reference)
 		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
@@ -3552,8 +3570,9 @@ ParseResult Parser::parse_struct_declaration()
 			auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
 			
 			// Create function declaration node
+			// Use qualified_struct_name for nested classes so the member function references the correct type
 			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-				operator_decl_node.as<DeclarationNode>(), struct_name);
+				operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
 			
 			// Create parameter: const Type& other
 			auto param_type_node = emplace_node<TypeSpecifierNode>(
