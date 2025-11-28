@@ -778,14 +778,21 @@ ParseResult Parser::parse_type_and_name() {
             if (!result.is_error()) {
                 if (auto decl_node = result.node()) {
                     // Check if result is a DeclarationNode (for function pointers) or FunctionDeclarationNode
+                    // For DeclarationNode, apply custom alignment directly
+                    // For FunctionDeclarationNode, alignment would apply to the underlying declaration
                     if (decl_node->is<DeclarationNode>() && custom_alignment.has_value()) {
                         decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+                    } else if (decl_node->is<FunctionDeclarationNode>() && custom_alignment.has_value()) {
+                        // For function declarations, alignment applies to the underlying declaration node
+                        DeclarationNode& inner_decl = const_cast<DeclarationNode&>(
+                            decl_node->as<FunctionDeclarationNode>().decl_node());
+                        inner_decl.set_custom_alignment(custom_alignment.value());
                     }
                 }
                 return result;
             }
             // If parse_declarator fails, fall through to regular parsing
-            restore_token_position(saved_pos);
+            restore_token_position(saved_pos);;
         } else if (peek_token().has_value() && (peek_token()->value() == "&" || peek_token()->value() == "&&")) {
             // This is a reference to array pattern: T (&arr)[N] or T (&&arr)[N]
             // Pattern: type (&identifier)[array_size] or type (&&identifier)[array_size]
