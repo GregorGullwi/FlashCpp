@@ -5304,7 +5304,9 @@ private:
 	// Helper to append type code for mangling to StringBuilder
 	void appendTypeCodeForMangling(StringBuilder& builder, const TypeSpecifierNode& type_node) {
 		NameMangling::appendTypeCode(builder, type_node);
-	}	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
+	}
+	
+	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 
 		const auto& decl_node = functionCallNode.function_declaration();
