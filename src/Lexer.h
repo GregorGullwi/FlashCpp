@@ -158,7 +158,7 @@ private:
 	size_t column_;
 	size_t current_file_index_ = 0;
 	mutable std::vector<std::string> file_paths_;  // Mutable to allow adding "<unknown>" in constructor
-	const std::vector<SourceLineMapping>& line_map_;
+	std::vector<SourceLineMapping> line_map_;  // Changed from reference to value to avoid dangling reference
 	
 	// Update current_file_index_ based on current line_
 	void update_file_index_from_line() {
