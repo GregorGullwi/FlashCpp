@@ -5556,6 +5556,40 @@ ParseResult Parser::parse_type_specifier()
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
 				
+// Check if this is a template template parameter usage (e.g., Container<T> where Container is a template template param)
+// When parsing a template body, if the type name is a template parameter (including template template params),
+// we should NOT try to instantiate it - it's a dependent type that will be resolved during instantiation
+bool is_template_template_param = false;
+if (parsing_template_body_ && !current_template_param_names_.empty()) {
+for (const auto& param_name : current_template_param_names_) {
+if (param_name == type_name) {
+is_template_template_param = true;
+break;
+}
+}
+}
+
+if (is_template_template_param) {
+// This is a template template parameter being used with template arguments (e.g., Container<T>)
+// Create a dependent type reference - don't try to instantiate
+// Use the type_name (template template param name) with its template arguments
+// This will be resolved during instantiation of the containing template
+
+// Look up the TypeInfo for the template template parameter
+auto type_it = gTypesByName.find(std::string(type_name));
+if (type_it != gTypesByName.end()) {
+TypeIndex type_idx = type_it->second - &gTypeInfo[0];
+auto type_spec_node = emplace_node<TypeSpecifierNode>(
+Type::UserDefined,
+type_idx,
+0,  // Size unknown for dependent type
+type_name_token,
+CVQualifier::None
+);
+return ParseResult::success(type_spec_node);
+}
+}
+
 				auto instantiated_class = try_instantiate_class_template(type_name, *template_args);
 				
 				// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
@@ -6126,6 +6160,18 @@ ParseResult Parser::parse_statement_or_declaration()
 			restore_token_position(saved_pos);
 			// Otherwise, it's a variable declaration with a template type
 			return parse_variable_declaration();
+		}
+
+		// Check if this identifier is a template parameter name (e.g., T in template<typename T>)
+		// Template parameters can be used as types in variable declarations like "T result = value;"
+		if (!current_template_param_names_.empty()) {
+			for (const auto& param_name : current_template_param_names_) {
+				if (param_name == type_name) {
+					// This is a template parameter being used as a type
+					// Parse as variable declaration
+					return parse_variable_declaration();
+				}
+			}
 		}
 
 		// If it starts with an identifier, it could be an assignment, expression,
@@ -15528,7 +15574,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// No specialization found - use the primary template
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 	if (!template_opt.has_value()) {
-		std::cerr << "ERROR: No primary template found, returning nullopt\n";
+		std::cerr << "ERROR: No primary template found for '" << template_name << "', returning nullopt\n";
 		return std::nullopt;  // No template with this name
 	}
 
