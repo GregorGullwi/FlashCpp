@@ -110,7 +110,6 @@ Write-Host ""
 # or use features not yet implemented in FlashCpp
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
-    "template_class_methods_complex.cpp",  # Local variables of template type not yet supported
     "template_template_params.cpp",        # Template template parameters not yet supported
     "test_access_control.cpp",             # Access control codegen issues
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
