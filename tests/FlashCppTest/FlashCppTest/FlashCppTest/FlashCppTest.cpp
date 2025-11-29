@@ -3340,6 +3340,10 @@ TEST_CASE("While Loops Working") {
 	run_test_from_file("while_loops_working.cpp", "While Loops Working", false);
 }
 
+TEST_CASE("Double Negation OR") {
+	run_test_from_file("test_double_negation_or.cpp", "Double Negation OR", false);
+}
+
 TEST_CASE("Template:Template") {
 	run_test_from_file("template_template_test.cpp", "Template:Template", false);
 }
