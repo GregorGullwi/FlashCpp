@@ -1811,8 +1811,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return saved_position.success();
 		}
 
-		// Add function parameters to the symbol table within a function scope
-		gSymbolTable.enter_scope(ScopeType::Function);
+		// Add function parameters to the symbol table within a function scope (Phase 3: RAII)
+		FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
 
 		// Set current function pointer for __func__, __PRETTY_FUNCTION__
 		// The FunctionDeclarationNode persists in the AST, so the pointer is safe
@@ -1834,12 +1834,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			auto block_result = parse_block();
 			if (block_result.is_error()) {
 				current_function_ = nullptr;
-				gSymbolTable.exit_scope();
+				// func_scope automatically exits scope
 				return block_result;
 			}
 
 			current_function_ = nullptr;
-			gSymbolTable.exit_scope();
+			// func_scope automatically exits scope
 
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
@@ -14975,15 +14975,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		}
 	}
 
-	// Temporarily add template parameters to type system
-	std::vector<TypeInfo*> template_type_infos;
+	// Temporarily add template parameters to type system using RAII scope guard (Phase 3)
+	FlashCpp::TemplateParameterScope template_scope;
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name_, &type_info);
-				template_type_infos.push_back(&type_info);
+				template_scope.addParameter(&type_info);
 			}
 		}
 	}
@@ -14991,19 +14991,12 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	// Parse the member function declaration
 	auto member_result = parse_type_and_name();
 	if (member_result.is_error()) {
-		// Clean up template parameters
-		for (const auto* type_info : template_type_infos) {
-			gTypesByName.erase(type_info->name_);
-		}
-		return member_result;
+		return member_result;  // template_scope automatically cleans up
 	}
 
 	if (!member_result.node().has_value() || !member_result.node()->is<DeclarationNode>()) {
-		// Clean up template parameters
-		for (const auto* type_info : template_type_infos) {
-			gTypesByName.erase(type_info->name_);
-		}
 		return ParseResult::error("Expected declaration node for member function template", *peek_token());
+		// template_scope automatically cleans up
 	}
 
 	DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
@@ -15011,19 +15004,12 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	// Parse function declaration with parameters
 	auto func_result = parse_function_declaration(decl_node);
 	if (func_result.is_error()) {
-		// Clean up template parameters
-		for (const auto* type_info : template_type_infos) {
-			gTypesByName.erase(type_info->name_);
-		}
-		return func_result;
+		return func_result;  // template_scope automatically cleans up
 	}
 
 	if (!func_result.node().has_value()) {
-		// Clean up template parameters
-		for (const auto* type_info : template_type_infos) {
-			gTypesByName.erase(type_info->name_);
-		}
 		return ParseResult::error("Failed to create function declaration node", *peek_token());
+		// template_scope automatically cleans up
 	}
 
 	FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
@@ -15056,10 +15042,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	std::string qualified_name = std::string(struct_node.name()) + "::" + std::string(decl_node.identifier_token().value());
 	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 
-	// Clean up template parameters
-	for (const auto* type_info : template_type_infos) {
-		gTypesByName.erase(type_info->name_);
-	}
+	// template_scope automatically cleans up template parameters when it goes out of scope
 
 	return saved_position.success();
 }
