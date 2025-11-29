@@ -1266,6 +1266,11 @@ public:
 	bool is_variadic() const { return is_variadic_; }
 	void set_variadic(bool variadic) { is_variadic_ = variadic; }
 
+	// For concept constraints (C++20)
+	bool has_concept_constraint() const { return concept_constraint_.has_value(); }
+	std::string_view concept_constraint() const { return concept_constraint_.value(); }
+	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
+
 private:
 	TemplateParameterKind kind_;
 	std::string_view name_;  // Points directly into source text from lexer token
@@ -1274,6 +1279,7 @@ private:
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
 	Token token_;  // For error reporting
 	bool is_variadic_ = false;  // True for parameter packs (typename... Args)
+	std::optional<std::string_view> concept_constraint_;  // Concept name for constrained parameters (e.g., Addable T)
 };
 
 // Template function declaration node - represents a function template

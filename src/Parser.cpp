@@ -14536,6 +14536,79 @@ ParseResult Parser::parse_template_parameter() {
 		return saved_position.success(param_node);
 	}
 
+	// Check for concept-constrained type parameter: Concept T, Concept<U> T
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+		std::string_view potential_concept = peek_token()->value();
+		
+		// Check if this identifier is a registered concept
+		if (gConceptRegistry.hasConcept(potential_concept)) {
+			Token concept_token = *peek_token();
+			consume_token(); // consume concept name
+			
+			// Check for template arguments: Concept<U>
+			// For now, we'll skip template argument parsing for concepts
+			// and just expect the parameter name
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				// Skip template arguments for now
+				// TODO: Parse and store concept template arguments
+				int angle_depth = 0;
+				do {
+					if (peek_token()->value() == "<") angle_depth++;
+					if (peek_token()->value() == ">") angle_depth--;
+					consume_token();
+				} while (angle_depth > 0 && peek_token().has_value());
+			}
+			
+			// Check for ellipsis (parameter pack): Concept... Ts
+			bool is_variadic = false;
+			if (peek_token().has_value() && 
+			    (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
+			    peek_token()->value() == "...") {
+				consume_token(); // consume '...'
+				is_variadic = true;
+			}
+			
+			// Expect identifier (parameter name)
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after concept constraint", *current_token_);
+			}
+			
+			Token param_name_token = *peek_token();
+			std::string_view param_name = param_name_token.value();
+			consume_token(); // consume parameter name
+			
+			// Create type parameter node (concept-constrained)
+			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
+			
+			// Store the concept constraint
+			param_node.as<TemplateParameterNode>().set_concept_constraint(potential_concept);
+			
+			// Set variadic flag if this is a parameter pack
+			if (is_variadic) {
+				param_node.as<TemplateParameterNode>().set_variadic(true);
+			}
+			
+			// Handle default arguments (e.g., Concept T = int)
+			// Note: Parameter packs cannot have default arguments
+			if (!is_variadic && peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			    peek_token()->value() == "=") {
+				consume_token(); // consume '='
+				
+				// Parse the default type
+				auto default_type_result = parse_type_specifier();
+				if (default_type_result.is_error()) {
+					return ParseResult::error("Expected type after '=' in template parameter default", *current_token_);
+				}
+				
+				if (default_type_result.node().has_value()) {
+					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
+				}
+			}
+			
+			return saved_position.success(param_node);
+		}
+	}
+	
 	// Check for type parameter: typename or class
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 		std::string_view keyword = peek_token()->value();
