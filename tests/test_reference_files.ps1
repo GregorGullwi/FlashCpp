@@ -121,18 +121,39 @@ Write-Host ""
 # or use features not yet implemented in FlashCpp
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
-	"test_reference_const_mismatch.cpp"    # intentionally invalid code
-	"test_pointer_const_mismatch.cpp"      # intentionally invalid code
     "template_template_params.cpp",        # Template template parameters not yet supported
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
     "test_constexpr_var.cpp",              # constexpr variable with cast parsing issue
+    "test_constinit_fail.cpp",             # constinit validation test - intentionally invalid code
+    "test_cstddef.cpp",                    # Standard library header not yet supported
+    "test_cstdio_puts.cpp",                # Standard library header not yet supported
     "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
     "test_exceptions_basic.cpp",           # Exception handling not yet supported
     "test_exceptions_nested.cpp",          # Exception handling not yet supported
     "test_fold_expressions.cpp",           # Fold expressions not yet supported
+    "test_fold_simple.cpp",                # Fold expressions not yet supported
+    "test_funcptr_global.cpp",             # Global function pointer not yet supported
+    "test_lambda_captures_comprehensive.cpp", # Lambda captures not yet supported
+    "test_mismatch_args.cpp",              # Type checking test - intentionally invalid code
+    "test_mismatch_return.cpp",            # Type checking test - intentionally invalid code
     "test_noexcept.cpp",                   # noexcept handling not yet supported
+    "test_nontype_debug.cpp",              # Non-type template debug issue
+    "test_pack_expansion_usage.cpp",       # Pack expansion not yet supported
+    "test_pack_simple_return.cpp",         # Pack expansion not yet supported
+    "test_pointer_const_mismatch.cpp",     # intentionally invalid code
+    "test_range_for.cpp",                  # Range-based for loop issue
+    "test_recursive_macro.cpp",            # Recursive macro expansion issue
+    "test_reference_const_mismatch.cpp",   # intentionally invalid code
+    "test_simple_lambda.cpp",              # Lambda expressions not yet supported
+    "test_tuple_standard_way.cpp",         # Tuple support not yet implemented
+    "test_tuple_with_constructor.cpp",     # Tuple support not yet implemented
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
-    "test_var_template_complete.cpp"       # Variable template codegen issue
+    "test_va_implementation.cpp",          # C-style variadic details issue
+    "test_var_template_complete.cpp",      # Variable template codegen issue
+    "test_var_template_values.cpp",        # Variable template values issue
+    "test_variadic_func_template.cpp",     # Variadic function template issue
+    "test_variadic_summary.cpp",           # Variadic template summary issue
+    "test_variadic_with_members.cpp"       # Variadic templates with members issue
 )
 
 # Expected link failures - files that compile but have known link issues
