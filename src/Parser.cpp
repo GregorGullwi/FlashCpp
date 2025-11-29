@@ -14884,7 +14884,7 @@ ParseResult Parser::parseTemplateFunctionDeclarationBody(
 		);
 	}
 	
-	// If we have a trailing requires clause, it takes precedence over the leading one
+	// Use trailing requires clause if present, otherwise use the leading one
 	std::optional<ASTNode> final_requires_clause = trailing_requires_clause.has_value() ? trailing_requires_clause : requires_clause;
 
 	// Create a template function declaration node
