@@ -8852,14 +8852,14 @@ ParseResult Parser::parse_primary_expression()
 			identifierType = lookup_symbol(idenfifier_token.value());
 		}
 		
-		// If the identifier is a template parameter reference, wrap it in ExpressionNode and return immediately
+		// If the identifier is a template parameter reference, don't return yet
+		// We need to check if it's followed by '(' for a constructor call like T(42)
 		if (identifierType.has_value() && identifierType->is<TemplateParameterReferenceNode>()) {
 			const auto& tparam_ref = identifierType->as<TemplateParameterReferenceNode>();
 			
-			// Check if it's followed by anything that would make it part of a larger expression
-			// For now, just wrap it and return
+			// Wrap it in an ExpressionNode, but continue checking for constructor calls
 			result = emplace_node<ExpressionNode>(tparam_ref);
-			return ParseResult::success(*result);
+			// Don't return - let it fall through to check for '(' below
 		}
 		
 		// Special case: if the identifier is not found but is followed by '...', 
@@ -9474,22 +9474,25 @@ ParseResult Parser::parse_primary_expression()
 						}
 					}
 				}
-				
+			
 				// Check if we're parsing a template and this identifier is a template parameter
-				if (parsing_template_class_ || !current_template_param_names_.empty()) {
+				if (!identifierType && (parsing_template_class_ || !current_template_param_names_.empty())) {
 					// Check if this identifier matches any template parameter name
 					for (const auto& param_name : current_template_param_names_) {
 						if (param_name == idenfifier_token.value()) {
 							// This is a template parameter reference
+							// Don't return yet - we need to check if this is a constructor call T(...)
 							result = emplace_node<ExpressionNode>(TemplateParameterReferenceNode(param_name, idenfifier_token));
-							return ParseResult::success(*result);
+							// Set identifierType so the constructor call logic below can detect it
+							identifierType = result;
+							break;
 						}
 					}
 				}
-
+				
 				// Check if this identifier is a concept name
 				// Concepts are used in requires clauses: requires Concept<T>
-				if (gConceptRegistry.hasConcept(idenfifier_token.value())) {
+				if (!identifierType && gConceptRegistry.hasConcept(idenfifier_token.value())) {
 					// Try to parse template arguments: Concept<T>
 					if (peek_token().has_value() && peek_token()->value() == "<") {
 						auto template_args = parse_explicit_template_arguments();
@@ -9509,24 +9512,25 @@ ParseResult Parser::parse_primary_expression()
 
 				// Not a function call, template member access, or template parameter reference
 				// But allow pack expansion (identifier...)
-				if (is_pack_expansion) {
+				if (!identifierType && is_pack_expansion) {
 					// Create a simple identifier node - the pack expansion will be handled by the caller
 					result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 					return ParseResult::success(*result);
 				}
 				
 				// Not a function call, template member access, template parameter reference, or pack expansion - this is an error
-				std::cerr << "ERROR: Missing identifier: " << idenfifier_token.value() << "\n";
-				return ParseResult::error("Missing identifier", idenfifier_token);
+				if (!identifierType) {
+					std::cerr << "ERROR: Missing identifier: " << idenfifier_token.value() << "\n";
+					return ParseResult::error("Missing identifier", idenfifier_token);
+				}
 			}
 		}
-		
 		if (identifierType && (!identifierType->is<DeclarationNode>() && 
-		         !identifierType->is<FunctionDeclarationNode>() && 
-		         !identifierType->is<VariableDeclarationNode>() &&
-		         !identifierType->is<TemplateFunctionDeclarationNode>() &&
-		         !identifierType->is<TemplateVariableDeclarationNode>() &&
-		         !identifierType->is<TemplateParameterReferenceNode>())) {
+					!identifierType->is<FunctionDeclarationNode>() && 
+					!identifierType->is<VariableDeclarationNode>() &&
+					!identifierType->is<TemplateFunctionDeclarationNode>() &&
+					!identifierType->is<TemplateVariableDeclarationNode>() &&
+					!identifierType->is<TemplateParameterReferenceNode>())) {
 			std::cerr << "ERROR: Identifier type check failed, type_name=" << identifierType->type_name() << "\n";
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *current_token_);
 		}
