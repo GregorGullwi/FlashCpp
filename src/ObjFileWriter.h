@@ -6,7 +6,6 @@
 #pragma clang diagnostic ignored "-Winconsistent-missing-override"
 #endif
 
-#include "coffi/coffi.hpp"
 #include "CodeViewDebug.h"
 #include "AstNodeTypes.h"
 #include "NameMangling.h"
@@ -19,6 +18,7 @@
 #include <iomanip>
 #include <unordered_map>
 #include <vector>
+#include "coffi/coffi.hpp"
 
 extern bool g_enable_debug_output;
 

@@ -6,6 +6,7 @@
 #include <array>
 #include <variant>
 #include <string_view>
+#include <span>
 #include <assert.h>
 #include <unordered_map>
 
@@ -2773,33 +2774,34 @@ private:
 
 	// Group IR instructions by function for analysis
 	void groupInstructionsByFunction(const Ir& ir) {
-		function_instructions.clear();
-		std::string current_func_name;
+		function_spans.clear();
+		std::string_view current_func_name;
+		size_t current_func_start = 0;
 
-		int func_decl_count = 0;
-		for (const auto& instruction : ir.getInstructions()) {
+		const auto& instructions = ir.getInstructions();
+
+		for (size_t i = 0; i < instructions.size(); ++i) {
+			const auto& instruction = instructions[i];
 			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
-				func_decl_count++;
-				// Extract function name from typed payload or operands
-				if (instruction.hasTypedPayload()) {
-					const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
-					current_func_name = func_decl.function_name;
-				} else {
-					// Function name can be either std::string or std::string_view (now at index 3)
-					if (instruction.isOperandType<std::string>(3)) {
-						current_func_name = instruction.getOperandAs<std::string>(3);
-					} else if (instruction.isOperandType<std::string_view>(3)) {
-						current_func_name = std::string(instruction.getOperandAs<std::string_view>(3));
-					}
+				// Save previous function's span
+				if (!current_func_name.empty()) {
+					function_spans[current_func_name] = std::span<const IrInstruction>(
+						&instructions[current_func_start], i - current_func_start
+					);
 				}
-				// Only create a new vector if this function name doesn't exist yet
-				if (function_instructions.find(current_func_name) == function_instructions.end()) {
-					function_instructions[current_func_name] = std::vector<IrInstruction>();
-				}
-				// If it already exists, we'll just continue appending to it
-			} else if (!current_func_name.empty()) {
-				function_instructions[current_func_name].push_back(instruction);
+
+				// Extract function name from typed payload
+				const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
+				current_func_name = func_decl.function_name;
+				current_func_start = i + 1; // Instructions start after FunctionDecl
 			}
+		}
+
+		// Save the last function's span
+		if (!current_func_name.empty()) {
+			function_spans[current_func_name] = std::span<const IrInstruction>(
+				&instructions[current_func_start], instructions.size() - current_func_start
+			);
 		}
 	}
 
@@ -2821,11 +2823,11 @@ private:
 		bool is_rvalue_reference = false;
 	};
 	
-	StackSpaceSize calculateFunctionStackSpace(const std::string& func_name, StackVariableScope& var_scope, size_t param_count) {
+	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
 
-		auto it = function_instructions.find(func_name);
-		if (it == function_instructions.end()) {
+		auto it = function_spans.find(func_name);
+		if (it == function_spans.end()) {
 			return func_stack_space; // No instructions found for this function
 		}
 
@@ -2835,7 +2837,7 @@ private:
 			size_t alignment{};  // Custom alignment from alignas(n), 0 = use natural alignment
 		};
 		std::vector<VarDecl> local_vars;
-		
+
 		// Track TempVar sizes from instructions that produce them
 		std::unordered_map<std::string_view, int> temp_var_sizes;
 
@@ -9586,7 +9588,7 @@ private:
 	TWriterClass writer;
 	std::vector<char> textSectionData;
 	std::unordered_map<std::string_view, uint32_t> functionSymbols;
-	std::unordered_map<std::string, std::vector<IrInstruction>> function_instructions;
+	std::unordered_map<std::string_view, std::span<const IrInstruction>> function_spans;
 
 	RegisterAllocator regAlloc;
 
