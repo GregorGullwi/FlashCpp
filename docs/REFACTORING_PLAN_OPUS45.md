@@ -998,7 +998,8 @@ ParseResult Parser::parseFunctionHeader(
 **Deliverables:**
 - [x] `parseFunctionHeader()` implementation
 - [x] `createFunctionFromHeader()` bridge method
-- [ ] All function types migrated (free functions using new method)
+- [x] Free function trailing specifiers now use `parseFunctionTrailingSpecifiers()` (noexcept applied properly)
+- [x] const/volatile support added to member functions
 - [x] Full test pass
 
 ---
@@ -1067,7 +1068,7 @@ ParseResult Parser::parseFunctionBodyWithContext(
 ```
 
 **Deliverables:**
-- [ ] `parseFunctionBodyWithContext()` implementation
+- [x] `parseFunctionBodyWithContext()` implementation
 - [ ] Delayed body queue unified
 - [ ] All body parsing goes through single method
 

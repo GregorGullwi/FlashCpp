@@ -6722,6 +6722,107 @@ ParseResult Parser::createFunctionFromHeader(
 	return func_node;
 }
 
+// Phase 5: Unified function body parsing
+// This method handles all the common body parsing logic including:
+// - = default handling
+// - = delete handling
+// - Declaration-only (no body)
+// - Scope setup with RAII guards
+// - 'this' pointer injection for member functions
+// - Parameter registration
+// - Block parsing
+ParseResult Parser::parseFunctionBodyWithContext(
+	const FlashCpp::FunctionParsingContext& ctx,
+	const FlashCpp::ParsedFunctionHeader& header,
+	std::optional<ASTNode>& out_body
+) {
+	// Initialize output
+	out_body = std::nullopt;
+
+	// Handle = default
+	if (header.specifiers.is_defaulted) {
+		auto [block_node, block_ref] = create_node_ref(BlockNode());
+		out_body = block_node;
+		// Note: semicolon should already be consumed by the caller after parsing specifiers
+		return ParseResult::success();
+	}
+
+	// Handle = delete
+	if (header.specifiers.is_deleted) {
+		// No body for deleted functions
+		// Note: semicolon should already be consumed by the caller after parsing specifiers
+		return ParseResult::success();
+	}
+
+	// Handle pure virtual (= 0)
+	if (header.specifiers.is_pure_virtual) {
+		// No body for pure virtual functions
+		// Note: semicolon should already be consumed by the caller after parsing specifiers
+		return ParseResult::success();
+	}
+
+	// Check for declaration only (no body) - semicolon
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		consume_token();  // consume ';'
+		return ParseResult::success();  // Declaration only, no body
+	}
+
+	// Expect function body with '{'
+	if (!peek_token().has_value() || peek_token()->value() != "{") {
+		return ParseResult::error("Expected '{' or ';' after function declaration", *current_token_);
+	}
+
+	// Set up function scope using RAII guard (Phase 3)
+	FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
+
+	// Inject 'this' pointer for member functions, constructors, and destructors
+	if (ctx.kind == FlashCpp::FunctionKind::Member ||
+	    ctx.kind == FlashCpp::FunctionKind::Constructor ||
+	    ctx.kind == FlashCpp::FunctionKind::Destructor) {
+		// Find the parent struct type
+		auto type_it = gTypesByName.find(ctx.parent_struct_name);
+		if (type_it != gTypesByName.end()) {
+			// Create 'this' pointer type: StructName*
+			auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
+				Type::Struct, type_it->second->type_index_,
+				64,  // Pointer size in bits
+				Token()
+			);
+			this_type_ref.add_pointer_level();
+
+			// Create a declaration node for 'this'
+			Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+			auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
+
+			// Insert 'this' into the symbol table
+			gSymbolTable.insert("this", this_decl_node);
+		}
+	}
+
+	// Register parameters in the symbol table
+	for (const auto& param : header.params.parameters) {
+		if (param.is<DeclarationNode>()) {
+			const auto& param_decl_node = param.as<DeclarationNode>();
+			const Token& param_token = param_decl_node.identifier_token();
+			gSymbolTable.insert(param_token.value(), param);
+		}
+	}
+
+	// Parse the block
+	auto block_result = parse_block();
+	if (block_result.is_error()) {
+		return block_result;
+	}
+
+	if (block_result.node().has_value()) {
+		out_body = *block_result.node();
+	}
+
+	// func_scope automatically exits scope when destroyed
+
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
 {
 	// Create the function declaration first
