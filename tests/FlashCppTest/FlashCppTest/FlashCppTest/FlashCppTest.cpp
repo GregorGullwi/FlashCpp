@@ -2725,31 +2725,371 @@ TEST_CASE("Log:LogMacroVariadicArgs") {
 
 TEST_CASE("Log:GeneralCategoryNoPrefix") {
 	using namespace FlashCpp;
-	
+
 	// Save original config
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
-	
+
 	// Setup capture
 	std::ostringstream captureStream;
 	LogConfig::setOutputStream(&captureStream);
 	LogConfig::setLevel(LogLevel::Trace);
 	LogConfig::setCategories(LogCategory::All);
-	
+
 	// Test General category - should have no prefix
 	FLASH_LOG(General, Info, "User message without prefix");
-	
+
 	std::string output = captureStream.str();
 	CHECK(output.find("[") == std::string::npos);  // No brackets
 	CHECK(output.find("User message without prefix") != std::string::npos);
 	CHECK(output == "User message without prefix\n");
-	
+
 	// General category should always be enabled
 	CHECK(Logger<LogLevel::Info, LogCategory::General>::enabled == true);
-	
+
 	// Restore original config
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
 	LogConfig::setOutputStream(originalStream);
+}
+
+// ===== Phase 0: Preparation - Comprehensive Parser Tests =====
+
+TEST_CASE("Parser:ParameterList:Variadic") {
+	const std::string code = R"(
+		void func(int a, ...) {}
+		void func2(int a, int b, ...) {}
+	)";
+
+	Lexer lexer(code);
+	Parser parser(lexer, compile_context);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+
+	const auto& ast = parser.get_nodes();
+	// Should parse successfully with variadic functions
+}
+
+TEST_CASE("Parser:MemberFunction:ConstVolatile") {
+	const std::string code = R"(
+		struct Test {
+			void func() const {}
+			void func2() volatile {}
+			void func3() const volatile {}
+		};
+	)";
+
+	Lexer lexer(code);
+	Parser parser(lexer, compile_context);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+}
+
+TEST_CASE("Parser:MemberFunction:OverrideFinal") {
+	const std::string code = R"(
+		struct Base {
+			virtual void func() {}
+		};
+		struct Derived : Base {
+			void func() override {}
+			void func2() final {}
+		};
+	)";
+
+	Lexer lexer(code);
+	Parser parser(lexer, compile_context);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+}
+
+TEST_CASE("Parser:Constructor:Defaulted") {
+	const std::string code = R"(
+		struct Test {
+			int x;
+			Test() = default;
+			Test(int v) : x(v) {}
+		};
+	)";
+
+	Lexer lexer(code);
+	Parser parser(lexer, compile_context);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+}
+
+TEST_CASE("Parser:Destructor:Virtual") {
+	const std::string code = R"(
+		struct Base {
+			virtual ~Base() {}
+		};
+		struct Derived : Base {
+			~Derived() override {}
+		};
+	)";
+
+	Lexer lexer(code);
+	Parser parser(lexer, compile_context);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+}
+
+TEST_CASE("Parser:Template:MemberFunction") {
+	const std::string code = R"(
+		struct Test {
+			template<typename T>
+			void func(T t) {}
+		};
+	)";
+
+	Lexer lexer(code);
+	Parser parser(lexer, compile_context);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+}
+
+TEST_CASE("Parser:Template:OutOfLine") {
+	const std::string code = R"(
+		template<typename T>
+		struct Test {
+			void func();
+		};
+
+		template<typename T>
+		void Test<T>::func() {}
+	)";
+
+	Lexer lexer(code);
+	Parser parser(lexer, compile_context);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+}
+
+// Additional test cases for moved files
+TEST_CASE("Comma:Init") {
+	run_test_from_file("test_comma_init.cpp", "Comma:Init", false);
+}
+
+TEST_CASE("Comma:Simple") {
+	run_test_from_file("test_comma_simple.cpp", "Comma:Simple", false);
+}
+
+TEST_CASE("Comma:Vars") {
+	run_test_from_file("test_comma_vars.cpp", "Comma:Vars", false);
+}
+
+TEST_CASE("Compound:Div") {
+	run_test_from_file("test_compound_div.cpp", "Compound:Div", false);
+}
+
+TEST_CASE("Concepts:Simple") {
+	run_test_from_file("test_concept_simple.cpp", "Concepts:Simple", false);
+}
+
+TEST_CASE("Concepts:Template") {
+	run_test_from_file("test_concept_template.cpp", "Concepts:Template", false);
+}
+
+TEST_CASE("ConstExpr:Func") {
+	run_test_from_file("test_constexpr_func.cpp", "ConstExpr:Func", false);
+}
+
+TEST_CASE("Container:OutOfLine") {
+	run_test_from_file("test_container_out_of_line.cpp", "Container:OutOfLine", false);
+}
+
+TEST_CASE("Decltype:Simple") {
+	run_test_from_file("test_decltype_simple.cpp", "Decltype:Simple", false);
+}
+
+TEST_CASE("Designated:Init") {
+	run_test_from_file("test_designated_init.cpp", "Designated:Init", false);
+}
+
+TEST_CASE("Div:Shift") {
+	run_test_from_file("test_div_shift.cpp", "Div:Shift", false);
+}
+
+TEST_CASE("Dynamic:CastDebug") {
+	run_test_from_file("test_dynamic_cast_debug.cpp", "Dynamic:CastDebug", false);
+}
+
+TEST_CASE("Expr:Init") {
+	run_test_from_file("test_expr_init.cpp", "Expr:Init", false);
+}
+
+TEST_CASE("Float:AddOnly") {
+	run_test_from_file("test_float_add_only.cpp", "Float:AddOnly", false);
+}
+
+TEST_CASE("Float:B") {
+	run_test_from_file("test_float_b.cpp", "Float:B", false);
+}
+
+TEST_CASE("Float:Literal") {
+	run_test_from_file("test_float_literal.cpp", "Float:Literal", false);
+}
+
+TEST_CASE("Float:Ops") {
+	run_test_from_file("test_float_ops.cpp", "Float:Ops", false);
+}
+
+TEST_CASE("Float:Simple") {
+	run_test_from_file("test_float_simple.cpp", "Float:Simple", false);
+}
+
+TEST_CASE("Float:Sum") {
+	run_test_from_file("test_float_sum.cpp", "Float:Sum", false);
+}
+
+TEST_CASE("Heap") {
+	run_test_from_file("test_heap.cpp", "Heap", false);
+}
+
+TEST_CASE("Init:Add") {
+	run_test_from_file("test_init_add.cpp", "Init:Add", false);
+}
+
+TEST_CASE("Literal:Init") {
+	run_test_from_file("test_literal_init.cpp", "Literal:Init", false);
+}
+
+TEST_CASE("Logical") {
+	run_test_from_file("test_logical.cpp", "Logical", false);
+}
+
+TEST_CASE("Mismatch:Args") {
+	run_test_from_file("test_mismatch_args.cpp", "Mismatch:Args", false);
+}
+
+TEST_CASE("Mismatch:Const") {
+	run_test_from_file("test_mismatch_const.cpp", "Mismatch:Const", false);
+}
+
+TEST_CASE("Mismatch:Return") {
+	run_test_from_file("test_mismatch_return.cpp", "Mismatch:Return", false);
+}
+
+TEST_CASE("Mod") {
+	run_test_from_file("test_mod.cpp", "Mod", false);
+}
+
+TEST_CASE("Modulo:Bitwise") {
+	run_test_from_file("test_modulo_bitwise.cpp", "Modulo:Bitwise", false);
+}
+
+TEST_CASE("New:Delete") {
+	run_test_from_file("test_new_delete.cpp", "New:Delete", false);
+}
+
+TEST_CASE("OutOfLine:Simple") {
+	run_test_from_file("test_out_of_line_simple.cpp", "OutOfLine:Simple", false);
+}
+
+TEST_CASE("Pointer:Arith") {
+	run_test_from_file("test_pointer_arith.cpp", "Pointer:Arith", false);
+}
+
+TEST_CASE("Pointer:Arithmetic") {
+	run_test_from_file("test_pointer_arithmetic.cpp", "Pointer:Arithmetic", false);
+}
+
+TEST_CASE("Pointer:Assign") {
+	run_test_from_file("test_pointer_assign.cpp", "Pointer:Assign", false);
+}
+
+TEST_CASE("Pointer:AssignCompare") {
+	run_test_from_file("test_pointer_assign_compare.cpp", "Pointer:AssignCompare", false);
+}
+
+TEST_CASE("Pointer:Compare") {
+	run_test_from_file("test_pointer_compare.cpp", "Pointer:Compare", false);
+}
+
+TEST_CASE("Pointer:ConstMismatch") {
+	run_test_from_file("test_pointer_const_mismatch.cpp", "Pointer:ConstMismatch", false);
+}
+
+TEST_CASE("Pointer:DerefAfterArith") {
+	run_test_from_file("test_pointer_deref_after_arith.cpp", "Pointer:DerefAfterArith", false);
+}
+
+TEST_CASE("Pointer:Incr") {
+	run_test_from_file("test_pointer_incr.cpp", "Pointer:Incr", false);
+}
+
+TEST_CASE("Pointer:Loop") {
+	run_test_from_file("test_pointer_loop.cpp", "Pointer:Loop", false);
+}
+
+TEST_CASE("Pointer:Simple") {
+	run_test_from_file("test_pointer_simple.cpp", "Pointer:Simple", false);
+}
+
+TEST_CASE("Pointer:Unused") {
+	run_test_from_file("test_pointer_unused.cpp", "Pointer:Unused", false);
+}
+
+TEST_CASE("Range:For") {
+	run_test_from_file("test_range_for.cpp", "Range:For", false);
+}
+
+TEST_CASE("Reference:ConstMismatch") {
+	run_test_from_file("test_reference_const_mismatch.cpp", "Reference:ConstMismatch", false);
+}
+
+TEST_CASE("Simple:Div") {
+	run_test_from_file("test_simple_div.cpp", "Simple:Div", false);
+}
+
+TEST_CASE("Simple:Init") {
+	run_test_from_file("test_simple_init.cpp", "Simple:Init", false);
+}
+
+TEST_CASE("Simple:Range") {
+	run_test_from_file("test_simple_range.cpp", "Simple:Range", false);
+}
+
+TEST_CASE("Sizeof:Inheritance") {
+	run_test_from_file("test_sizeof_inheritance.cpp", "Sizeof:Inheritance", false);
+}
+
+TEST_CASE("Sizeof:Struct") {
+	run_test_from_file("test_sizeof_struct.cpp", "Sizeof:Struct", false);
+}
+
+TEST_CASE("Toplevel:ConstOk") {
+	run_test_from_file("test_toplevel_const_ok.cpp", "Toplevel:ConstOk", false);
+}
+
+TEST_CASE("Trailing:Return") {
+	run_test_from_file("test_trailing_return.cpp", "Trailing:Return", false);
+}
+
+TEST_CASE("Typed:Binary") {
+	run_test_from_file("test_typed_binary.cpp", "Typed:Binary", false);
+}
+
+TEST_CASE("Unary:Op") {
+	run_test_from_file("test_unaryop.cpp", "Unary:Op", false);
+}
+
+TEST_CASE("Union") {
+	run_test_from_file("test_union.cpp", "Union", false);
+}
+
+TEST_CASE("Union:Size") {
+	run_test_from_file("test_union_size.cpp", "Union:Size", false);
+}
+
+TEST_CASE("VarTemplate:Constexpr") {
+	run_test_from_file("test_var_template_constexpr.cpp", "VarTemplate:Constexpr", false);
+}
+
+TEST_CASE("Custom:Container") {
+	run_test_from_file("test_custom_container.cpp", "Custom:Container", false);
+}
+
+TEST_CASE("Template:Template") {
+	run_test_from_file("template_template_test.cpp", "Template:Template", false);
 }

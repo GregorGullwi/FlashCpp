@@ -25,6 +25,11 @@
 #define WITH_DEBUG_INFO 0
 #endif // WITH_DEBUG_INFO
 
+// Feature flag for unified parsing infrastructure (Phase 0: Preparation)
+#ifndef FLASHCPP_USE_UNIFIED_PARSING
+#define FLASHCPP_USE_UNIFIED_PARSING 0  // Start disabled, enable per-phase
+#endif
+
 using namespace std::literals::string_view_literals;
 
 // RAII helper to execute a cleanup function on scope exit
