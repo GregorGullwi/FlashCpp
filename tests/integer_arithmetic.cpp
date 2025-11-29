@@ -1,3 +1,4 @@
+// Combined integer arithmetic tests
 int add(int a, int b) {
     return a + b;
 }
@@ -26,6 +27,15 @@ int complex_math(int a, int b, int c, int d) {
     );
 }
 
+int test_all_operators(int a, int b) {
+    int arithmetic = a + b - a * b / 2;
+    int shifts = (a << 1) + (b >> 1);
+    int bitwise = (a & b) | (a ^ b);
+    return arithmetic + shifts + bitwise;
+}
+
 int main() {
-    return complex_math(10, 5, 20, 8);  // Should compute: (10 + 5) * (20 - 8) / (10 + 20) = 6
-} 
+    int basic = complex_math(10, 5, 20, 8);  // 6
+    int comprehensive = test_all_operators(10, 5);  // 27
+    return basic + comprehensive;  // 33
+}
