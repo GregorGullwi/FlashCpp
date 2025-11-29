@@ -73,6 +73,18 @@ struct TemplateTypeArg {
 		, value(val)
 		, is_pack(false) {}
 	
+	// Constructor for non-type template parameters with explicit type
+	TemplateTypeArg(int64_t val, Type type)
+		: base_type(type)
+		, type_index(0)
+		, is_reference(false)
+		, is_rvalue_reference(false)
+		, pointer_depth(0)
+		, cv_qualifier(CVQualifier::None)
+		, is_value(true)
+		, value(val)
+		, is_pack(false) {}
+	
 	bool operator==(const TemplateTypeArg& other) const {
 		return base_type == other.base_type &&
 		       type_index == other.type_index &&
@@ -202,6 +214,7 @@ struct TemplateArgument {
 	Kind kind;
 	Type type_value;  // For type arguments (legacy - enum only)
 	int64_t int_value;  // For non-type integer arguments
+	Type value_type;  // For non-type arguments: the type of the value (bool, int, etc.)
 	std::string template_name;  // For template template arguments (name of the template)
 	std::optional<TypeSpecifierNode> type_specifier;  // Full type info including references, pointers, CV qualifiers
 	
@@ -220,10 +233,11 @@ struct TemplateArgument {
 		return arg;
 	}
 	
-	static TemplateArgument makeValue(int64_t v) {
+	static TemplateArgument makeValue(int64_t v, Type type = Type::Int) {
 		TemplateArgument arg;
 		arg.kind = Kind::Value;
 		arg.int_value = v;
+		arg.value_type = type;
 		return arg;
 	}
 	
