@@ -198,7 +198,7 @@ static Operator string_to_operator(std::string_view op) {
 	if (op == "|") return Operator::BitwiseOr;
 	if (op == "^") return Operator::BitwiseXor;
 	if (op == "~") return Operator::BitwiseNot;
-	std::cerr << "Invalid operator " << op;
+	FLASH_LOG(Lexer, Error, "Invalid operator ", op);
 	throw std::invalid_argument(std::string("Invalid operator: ") + std::string(op));
 }
 
@@ -355,7 +355,7 @@ public:
 		// Check for excessive include nesting depth (prevents infinite recursion)
 		constexpr size_t MAX_INCLUDE_DEPTH = 200;
 		if (filestack_.size() >= MAX_INCLUDE_DEPTH) {
-			std::cerr << "Error: Include nesting depth exceeded " << MAX_INCLUDE_DEPTH << " (possible circular include)" << std::endl;
+			FLASH_LOG(Lexer, Error, "Include nesting depth exceeded ", MAX_INCLUDE_DEPTH, " (possible circular include)");
 			return false;
 		}
 
@@ -472,7 +472,7 @@ public:
 			}
 
 			if (skipping_stack.size() == 0) {
-				std::cerr << "Internal compiler error in file " << filestack_.top().file_name << ":" << line_number << std::endl;
+				FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number);
 				return false;
 			}
 			const bool skipping = skipping_stack.top();
@@ -593,7 +593,7 @@ public:
 			}
 			else if (line.find("#elif", 0) == 0) {
 				if (skipping_stack.empty() || condition_was_true_stack.empty()) {
-					std::cerr << "Unmatched #elif directive" << std::endl;
+					FLASH_LOG(Lexer, Error, "Unmatched #elif directive");
 					return false;
 				}
 				// If a previous condition was true, start skipping
@@ -614,7 +614,7 @@ public:
 			}
 			else if (line.find("#else", 0) == 0) {
 				if (skipping_stack.empty() || condition_was_true_stack.empty()) {
-					std::cerr << "Unmatched #else directive" << std::endl;
+					FLASH_LOG(Lexer, Error, "Unmatched #else directive");
 					return false;
 				}
 				// Only execute #else block if no previous condition was true
@@ -632,7 +632,7 @@ public:
 					condition_was_true_stack.pop();
 				}
 				else {
-					std::cerr << "Unmatched #endif directive" << std::endl;
+					FLASH_LOG(Lexer, Error, "Unmatched #endif directive");
 					return false;
 				}
 			}
@@ -643,7 +643,7 @@ public:
 				if (first_non_space != std::string::npos) {
 					message = message.substr(first_non_space);
 				}
-				std::cerr << "Error: " << message << std::endl;
+				FLASH_LOG(Lexer, Error, message);
 				return false;
 			}
 			else if (line.find("#warning", 0) == 0) {
@@ -653,7 +653,7 @@ public:
 				if (first_non_space != std::string::npos) {
 					message = message.substr(first_non_space);
 				}
-				std::cerr << "Warning: " << message << std::endl;
+				FLASH_LOG(Lexer, Warning, message);
 			}
 			else if (line.find("#undef") == 0) {
 				std::istringstream iss(line);
@@ -830,7 +830,7 @@ private:
 	// Expand macros for #if/#elif expressions, preserving identifiers inside defined()
 	std::string expandMacrosForConditional(const std::string& input) {
 		if (settings_.isVerboseMode()) {
-			std::cerr << "expandMacrosForConditional input: '" << input << "'" << std::endl;
+			FLASH_LOG(Lexer, Trace, "expandMacrosForConditional input: '", input, "'");
 		}
 		
 		std::string result;
@@ -843,7 +843,7 @@ private:
 			if (defined_pos == std::string::npos) {
 				// No more "defined" keywords, expand the rest
 				if (settings_.isVerboseMode() && pos < input.size()) {
-					std::cerr << "  Expanding rest: '" << input.substr(pos) << "'" << std::endl;
+					FLASH_LOG(Lexer, Trace, "  Expanding rest: '", input.substr(pos), "'");
 				}
 				result += expandMacros(input.substr(pos));
 				break;
@@ -873,7 +873,7 @@ private:
 			
 			// Expand everything before "defined"
 			if (settings_.isVerboseMode() && defined_pos > pos) {
-				std::cerr << "  Expanding before 'defined': '" << input.substr(pos, defined_pos - pos) << "'" << std::endl;
+				FLASH_LOG(Lexer, Trace, "  Expanding before 'defined': '", input.substr(pos, defined_pos - pos), "'");
 			}
 			result += expandMacros(input.substr(pos, defined_pos - pos));
 			result += "defined";  // Add the keyword itself
@@ -917,7 +917,7 @@ private:
 		}
 		
 		if (settings_.isVerboseMode()) {
-			std::cerr << "expandMacrosForConditional output: '" << result << "'" << std::endl;
+			FLASH_LOG(Lexer, Trace, "expandMacrosForConditional output: '", result, "'");
 		}
 		
 		return result;
@@ -975,9 +975,9 @@ private:
 			
 			// Debug: Print every 100 iterations or when scan_pos jumps significantly
 			if (settings_.isVerboseMode() && (iteration_count % 100 == 0 || scan_pos - last_debug_pos > 1000)) {
-				std::cerr << "Expansion iteration " << iteration_count << " at scan_pos " << scan_pos 
-				          << " / " << output.size() << " (loop_guard=" << loop_guard << ")" << std::endl;
-				std::cerr << "  Context: " << output.substr(scan_pos, std::min<size_t>(80, output.size() - scan_pos)) << std::endl;
+				FLASH_LOG(Lexer, Trace, "Expansion iteration ", iteration_count, " at scan_pos ", scan_pos, 
+				          " / ", output.size(), " (loop_guard=", loop_guard, ")");
+				FLASH_LOG(Lexer, Trace, "  Context: ", output.substr(scan_pos, std::min<size_t>(80, output.size() - scan_pos)));
 				last_debug_pos = scan_pos;
 			}
 			
@@ -1036,10 +1036,10 @@ private:
 
 				// Debug: Print when we find a macro to expand
 				if (settings_.isVerboseMode()) {
-					std::cerr << "Found macro '" << best_pattern << "' at position " << best_pos << std::endl;
+					FLASH_LOG(Lexer, Trace, "Found macro '", best_pattern, "' at position ", best_pos);
 					size_t context_start = (best_pos >= 20) ? (best_pos - 20) : 0;
 					size_t context_len = std::min<size_t>(80, output.size() - context_start);
-					std::cerr << "  Before: " << output.substr(context_start, context_len) << std::endl;
+					FLASH_LOG(Lexer, Trace, "  Before: ", output.substr(context_start, context_len));
 				}
 
 				std::string replace_str;
@@ -1146,7 +1146,7 @@ private:
 
 				// Debug: Print replacement
 				if (settings_.isVerboseMode()) {
-					std::cerr << "  Replacement: " << replace_str.substr(0, std::min<size_t>(100, replace_str.size())) << std::endl;
+					FLASH_LOG(Lexer, Trace, "  Replacement: ", replace_str.substr(0, std::min<size_t>(100, replace_str.size())));
 				}
 
 				output = output.replace(output.begin() + best_pos, output.begin() + pattern_end, replace_str);
@@ -1157,11 +1157,12 @@ private:
 				
 				// Debug: Print new scan position
 				if (settings_.isVerboseMode()) {
-					std::cerr << "  After expansion, scan_pos moved to " << scan_pos;
 					if (replace_str.size() >= best_pattern.size()) {
-						std::cerr << " (jumped forward by " << (replace_str.size() - best_pattern.size()) << ")" << std::endl;
+						FLASH_LOG(Lexer, Trace, "  After expansion, scan_pos moved to ", scan_pos, 
+						          " (jumped forward by ", (replace_str.size() - best_pattern.size()), ")");
 					} else {
-						std::cerr << " (jumped backward by " << (best_pattern.size() - replace_str.size()) << ")" << std::endl;
+						FLASH_LOG(Lexer, Trace, "  After expansion, scan_pos moved to ", scan_pos, 
+						          " (jumped backward by ", (best_pattern.size() - replace_str.size()), ")");
 					}
 				}
 				
@@ -1173,7 +1174,7 @@ private:
 		}
 
 		if (loop_guard == 0) {
-			std::cerr << "Warning: Macro expansion limit reached for line (possible infinite recursion): " << input.substr(0, 100) << std::endl;
+			FLASH_LOG(Lexer, Warning, "Macro expansion limit reached for line (possible infinite recursion): ", input.substr(0, 100));
 		}
 
 		// Handle token-pasting operator (##) after replacing all the arguments
@@ -1199,16 +1200,16 @@ private:
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops) {
 		if (ops.empty() || values.size() < 1) {
 			if (settings_.isVerboseMode()) {
-				std::cerr << "apply_operator: ops.empty()=" << ops.empty() 
-				          << " values.size()=" << values.size() << std::endl;
+				FLASH_LOG(Lexer, Trace, "apply_operator: ops.empty()=", ops.empty(), 
+				          " values.size()=", values.size());
 			}
-			std::cerr << "Internal compiler error, values don't match the ops!" << std::endl;
+			FLASH_LOG(Lexer, Error, "Internal compiler error, values don't match the ops!");
 			return;
 		}
 
 		Operator op = ops.top();
 		if (settings_.isVerboseMode()) {
-			std::cerr << "Applying operator (values.size=" << values.size() << ")" << std::endl;
+			FLASH_LOG(Lexer, Trace, "Applying operator (values.size=", values.size(), ")");
 		}
 		
 		if (op == Operator::OpenParen) {
@@ -1272,7 +1273,7 @@ private:
 				if (right != 0) {
 					values.push(left / right);
 				} else {
-					std::cerr << "Warning: Division by zero in preprocessor expression" << std::endl;
+					FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression");
 					values.push(0);
 				}
 				break;
@@ -1280,7 +1281,7 @@ private:
 				if (right != 0) {
 					values.push(left % right);
 				} else {
-					std::cerr << "Warning: Modulo by zero in preprocessor expression" << std::endl;
+					FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression");
 					values.push(0);
 				}
 				break;
@@ -1301,7 +1302,7 @@ private:
 				values.push(left ^ right);
 				break;
 			default:
-				std::cerr << "Internal compiler error, unknown operator!" << std::endl;
+				FLASH_LOG(Lexer, Error, "Internal compiler error, unknown operator!");
 				break;
 			}
 		}
@@ -1317,7 +1318,7 @@ private:
 			std::getline(iss, debug_expr);
 			iss.clear();
 			iss.seekg(pos);
-			std::cerr << "Evaluating expression: '" << debug_expr << "'" << std::endl;
+			FLASH_LOG(Lexer, Trace, "Evaluating expression: '", debug_expr, "'");
 		}
 		
 		// Check if expression is empty (all whitespace) - treat as 0
@@ -1325,7 +1326,7 @@ private:
 		iss >> std::ws;  // Skip whitespace
 		if (iss.eof() || iss.peek() == EOF) {
 			if (settings_.isVerboseMode()) {
-				std::cerr << "  Empty expression, returning 0" << std::endl;
+				FLASH_LOG(Lexer, Trace, "  Empty expression, returning 0");
 			}
 			return 0;
 		}
@@ -1345,7 +1346,7 @@ private:
 				long value = stol(str_value);
 				values.push(value);
 				if (settings_.isVerboseMode()) {
-					std::cerr << "  Pushed value: " << value << " (values.size=" << values.size() << ")" << std::endl;
+					FLASH_LOG(Lexer, Trace, "  Pushed value: ", value, " (values.size=", values.size(), ")");
 				}
 			}
 			else if (auto it = char_info_table.find(c); it != char_info_table.end()) {
@@ -1360,7 +1361,7 @@ private:
 				const Operator op = string_to_operator(op_str);
 				
 				if (settings_.isVerboseMode()) {
-					std::cerr << "  Found operator: '" << op_str << "' (values.size=" << values.size() << ", ops.size=" << ops.size() << ")" << std::endl;
+					FLASH_LOG(Lexer, Trace, "  Found operator: '", op_str, "' (values.size=", values.size(), ", ops.size=", ops.size(), ")");
 				}
 
 				if (c == '(') {
@@ -1437,7 +1438,7 @@ private:
 					const bool value = defines_.count(symbol) > 0;
 					values.push(value);
 					if (settings_.isVerboseMode()) {
-						std::cerr << "  Pushed defined() result: " << value << " (symbol='" << symbol << "', values.size=" << values.size() << ")" << std::endl;
+						FLASH_LOG(Lexer, Trace, "  Pushed defined() result: ", value, " (symbol='", symbol, "', values.size=", values.size(), ")");
 						// Don't print stream state here anymore since it was misleading
 					}
 				}
@@ -1472,22 +1473,18 @@ private:
 		}
 
 		if (eval_loop_guard == 0) {
-			std::cerr << "Error: Expression evaluation loop limit reached (possible infinite loop in #if)" << std::endl;
+			FLASH_LOG(Lexer, Error, "Expression evaluation loop limit reached (possible infinite loop in #if)");
 			return 0;
 		}
 
 		if (values.size() == 0) {
-			std::cerr << "Internal compiler error, mismatched operator in file " << filestack_.top().file_name << ":" << filestack_.top().line_number;
-			if (settings_.isVerboseMode()) {
-				std::cerr << " - values stack is empty, ops.size()=" << ops.size() << std::endl;
-			} else {
-				std::cerr << std::endl;
-			}
+			FLASH_LOG(Lexer, Error, "Internal compiler error, mismatched operator in file ", filestack_.top().file_name, ":", filestack_.top().line_number,
+			          settings_.isVerboseMode() ? (std::string(" - values stack is empty, ops.size()=") + std::to_string(ops.size())) : "");
 			return 0;
 		}
 
 		if (settings_.isVerboseMode()) {
-			std::cerr << "Expression result: " << values.top() << " (values.size=" << values.size() << ", ops.size=" << ops.size() << ")" << std::endl;
+			FLASH_LOG(Lexer, Trace, "Expression result: ", values.top(), " (values.size=", values.size(), ", ops.size=", ops.size(), ")");
 		}
 
 		return values.top();
@@ -1507,27 +1504,27 @@ private:
 		std::string filename(token.substr(1, token.size() - 2));
 		bool found = false;
 		if (settings_.isVerboseMode()) {
-			std::cerr << "Looking for include file: " << filename << std::endl;
+			FLASH_LOG(Lexer, Trace, "Looking for include file: ", filename);
 		}
 		for (const auto& include_dir : settings_.getIncludeDirs()) {
 			std::filesystem::path include_path(include_dir);
 			include_path /= filename;  // Use /= operator which handles path separators correctly
 			std::string include_file = include_path.string();
 			if (settings_.isVerboseMode()) {
-				std::cerr << "  Checking path: " << include_file << " - exists: " << std::filesystem::exists(include_file) << std::endl;
+				FLASH_LOG(Lexer, Trace, "  Checking path: ", include_file, " - exists: ", std::filesystem::exists(include_file));
 			}
 			// Check if the file exists before trying to read it
 			// This distinguishes between "file not found" and "file found but had preprocessing error"
 			if (std::filesystem::exists(include_file)) {
 				// File exists, try to read and preprocess it
 				if (settings_.isVerboseMode()) {
-					std::cerr << "Found include file, attempting to read: " << include_file << std::endl;
+					FLASH_LOG(Lexer, Trace, "Found include file, attempting to read: ", include_file);
 				}
 				if (!readFile(include_file, include_line_number)) {
 					// Preprocessing failed (e.g., #error directive)
 					// Return false to propagate the error up
 					if (settings_.isVerboseMode()) {
-						std::cerr << "readFile returned false for: " << include_file << std::endl;
+						FLASH_LOG(Lexer, Trace, "readFile returned false for: ", include_file);
 					}
 					return false;
 				}
@@ -1537,7 +1534,7 @@ private:
 			}
 		}
 		if (!found) {
-			std::cerr << "Failed to include file: " << filename << std::endl;
+			FLASH_LOG(Lexer, Error, "Failed to include file: ", filename);
 			return false;
 		}
 		return true;
@@ -1657,7 +1654,7 @@ private:
 		iss >> new_line_number;
 
 		if (iss.fail()) {
-			std::cerr << "Invalid #line directive: expected line number" << std::endl;
+			FLASH_LOG(Lexer, Error, "Invalid #line directive: expected line number");
 			return;
 		}
 
@@ -1710,7 +1707,7 @@ private:
 				size_t close_paren = rest_of_line.find(")", open_paren);
 
 				if (close_paren == std::string::npos) {
-					std::cerr << "Missing closing parenthesis in macro argument list for " << name << std::endl;
+					FLASH_LOG(Lexer, Error, "Missing closing parenthesis in macro argument list for ", name);
 					return;
 				}
 
@@ -1730,7 +1727,7 @@ private:
 						found_variadic_args = true;
 					}
 					else if (token == "..." && found_variadic_args) {
-						std::cerr << "Duplicate variadic arguments '...' detected in macro argument list for " << name << std::endl;
+						FLASH_LOG(Lexer, Error, "Duplicate variadic arguments '...' detected in macro argument list for ", name);
 						return;
 					}
 					else {
