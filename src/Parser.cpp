@@ -8762,8 +8762,9 @@ ParseResult Parser::parse_primary_expression()
 										const auto& decl = id_type->template as<DeclarationNode>();
 										if (decl.type_node().template is<TypeSpecifierNode>()) {
 											// Preserve the full TypeSpecifierNode to retain type_index for structs
-											arg_type_node_opt = decl.type_node().template as<TypeSpecifierNode>();
-											arg_type = arg_type_node_opt->type();
+											const auto& type_spec = decl.type_node().template as<TypeSpecifierNode>();
+											arg_type_node_opt = type_spec;
+											arg_type = type_spec.type();
 											// Named variables are lvalues
 											is_lvalue = true;
 										}
