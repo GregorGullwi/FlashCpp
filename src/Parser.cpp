@@ -15257,8 +15257,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// Re-parse the function body with template parameters substituted
 		
 		// Temporarily add the concrete types to the type system with template parameter names
-		std::vector<TypeInfo*> temp_type_infos;
-		temp_type_infos.reserve(template_params.size());
+		// Using RAII scope guard (Phase 6) for automatic cleanup
+		FlashCpp::TemplateParameterScope template_scope;
 		std::vector<std::string_view> param_names;
 		param_names.reserve(template_params.size());
 		for (const auto& tparam_node : template_params) {
@@ -15273,7 +15273,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			gTypesByName.emplace(type_info.name_, &type_info);
-			temp_type_infos.push_back(&type_info);
+			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
 		// Save current position
@@ -15332,10 +15332,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// Restore parsing context
 		current_function_ = saved_current_function;
 
-		// Remove temporary type infos
-		for (const auto* type_info : temp_type_infos) {
-			gTypesByName.erase(type_info->name_);
-		}
+		// template_scope RAII guard automatically removes temporary type infos
 	} else {
 		// Copy the function body if it exists (for non-template or already-parsed bodies)
 		auto orig_body = func_decl.get_definition();
@@ -15749,7 +15746,8 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		const std::vector<ASTNode>& template_params = template_func.template_parameters();
 		
 		// Temporarily add the concrete types to the type system with template parameter names
-		std::vector<TypeInfo*> temp_type_infos;
+		// Using RAII scope guard (Phase 6) for automatic cleanup
+		FlashCpp::TemplateParameterScope template_scope;
 		std::vector<std::string_view> param_names;
 		for (const auto& tparam_node : template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
@@ -15763,7 +15761,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			gTypesByName.emplace(type_info.name_, &type_info);
-			temp_type_infos.push_back(&type_info);
+			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
 		// Save current position
@@ -15821,10 +15819,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// Restore parsing context
 		current_function_ = saved_current_function;
 
-		// Remove temporary type infos
-		for (const auto* type_info : temp_type_infos) {
-			gTypesByName.erase(type_info->name_);
-		}
+		// template_scope RAII guard automatically removes temporary type infos
 	} else {
 		// Fallback: copy the function body pointer directly (old behavior)
 		auto orig_body = func_decl.get_definition();
@@ -17532,7 +17527,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 	
 	// Temporarily add the concrete types to the type system with template parameter names
-	std::vector<TypeInfo*> temp_type_infos;
+	// Using RAII scope guard (Phase 6) for automatic cleanup
+	FlashCpp::TemplateParameterScope template_scope;
 	std::vector<std::string_view> param_names;
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
@@ -17546,7 +17542,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 		gTypesByName.emplace(type_info.name_, &type_info);
-		temp_type_infos.push_back(&type_info);
+		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
 	// Save current position
@@ -17558,10 +17554,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		// Look up the struct type info
 		auto struct_type_it = gTypesByName.find(struct_name);
 		if (struct_type_it == gTypesByName.end()) {
-			// Clean up and return error
-			for (const auto* type_info : temp_type_infos) {
-				gTypesByName.erase(type_info->name_);
-			}
+			// Clean up and return error - template_scope RAII handles type cleanup
 			restore_token_position(current_pos);
 			return std::nullopt;
 		}
@@ -17646,10 +17639,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// Restore original position (lexer only - keep AST nodes we created)
 	restore_lexer_position_only(current_pos);
 
-	// Remove temporary type infos
-	for (const auto* type_info : temp_type_infos) {
-		gTypesByName.erase(type_info->name_);
-	}
+	// template_scope RAII guard automatically removes temporary type infos
 
 	// Add the instantiated function to the AST
 	ast_nodes_.push_back(new_func_node);
@@ -17902,7 +17892,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 
 	// Temporarily add the concrete types to the type system with template parameter names
-	std::vector<TypeInfo*> temp_type_infos;
+	// Using RAII scope guard (Phase 6) for automatic cleanup
+	FlashCpp::TemplateParameterScope template_scope;
 	std::vector<std::string_view> param_names;
 	for (const auto& tparam_node : template_params) {
 		if (tparam_node.is<TemplateParameterNode>()) {
@@ -17917,7 +17908,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 		gTypesByName.emplace(type_info.name_, &type_info);
-		temp_type_infos.push_back(&type_info);
+		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
 	// Save current position
@@ -17930,10 +17921,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	auto struct_type_it = gTypesByName.find(struct_name);
 	if (struct_type_it == gTypesByName.end()) {
 		FLASH_LOG(Templates, Debug, "Struct type not found: ", struct_name);
-		// Clean up and return error
-		for (const auto* type_info : temp_type_infos) {
-			gTypesByName.erase(type_info->name_);
-		}
+		// Clean up and return error - template_scope RAII handles type cleanup
 		restore_token_position(current_pos);
 		return std::nullopt;
 	}
@@ -17997,10 +17985,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// Restore original position (lexer only - keep AST nodes we created)
 	restore_lexer_position_only(current_pos);
 
-	// Remove temporary type infos
-	for (const auto* type_info : temp_type_infos) {
-		gTypesByName.erase(type_info->name_);
-	}
+	// template_scope RAII guard automatically removes temporary type infos
 
 	// Add the instantiated function to the AST
 	ast_nodes_.push_back(new_func_node);
@@ -18178,10 +18163,8 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	// Save current parser state using save_token_position so we can restore properly
 	TokenPosition saved_cursor = save_token_position();
 
-	// Store types we add so we can clean them up
-	std::vector<TypeInfo*> temp_type_infos;
-
-	// Bind template parameters to concrete types
+	// Bind template parameters to concrete types using RAII scope guard (Phase 6)
+	FlashCpp::TemplateParameterScope template_scope;
 	for (size_t i = 0; i < template_param_names.size() && i < concrete_types.size(); ++i) {
 		Type concrete_type = concrete_types[i];
 		std::string_view param_name = template_param_names[i];
@@ -18195,7 +18178,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 
 		// Register in global type lookup
 		gTypesByName[std::string(param_name)] = &type_info;
-		temp_type_infos.push_back(&type_info);
+		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
 	// If this is a member function, set up member function context
@@ -18259,10 +18242,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 		// the parser state anyway, the symbol table will revert to its previous state
 	}
 
-	// Clean up temporary type bindings
-	for (auto* type_info : temp_type_infos) {
-		gTypesByName.erase(type_info->name_);
-	}
+	// template_scope RAII guard automatically cleans up temporary type bindings
 
 	// Restore original parser state
 	restore_lexer_position_only(saved_cursor);
