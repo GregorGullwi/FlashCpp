@@ -415,6 +415,7 @@ private:
         void registerMemberFunctionsInScope(StructDeclarationNode* struct_node, size_t struct_type_index);  // Phase 5: Register member functions in symbol table
         void registerParametersInScope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
         ParseResult parseDelayedFunctionBody(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
+        FlashCpp::SignatureValidationResult validateSignatureMatch(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
         ParseResult parse_struct_declaration();  // Add struct declaration parser
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser
