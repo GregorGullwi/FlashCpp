@@ -6532,6 +6532,136 @@ ParseResult Parser::parseFunctionTrailingSpecifiers(
 	return ParseResult::success();
 }
 
+// Phase 4: Unified function header parsing
+// This method parses the complete function header (return type, name, parameters, trailing specifiers)
+// in a unified way across all function types (free functions, member functions, constructors, etc.)
+ParseResult Parser::parseFunctionHeader(
+	const FlashCpp::FunctionParsingContext& ctx,
+	FlashCpp::ParsedFunctionHeader& out_header
+) {
+	// Initialize output header
+	out_header = FlashCpp::ParsedFunctionHeader{};
+
+	// Parse return type (if not constructor/destructor)
+	if (ctx.kind != FlashCpp::FunctionKind::Constructor && 
+	    ctx.kind != FlashCpp::FunctionKind::Destructor) {
+		auto type_result = parse_type_specifier();
+		if (type_result.is_error()) {
+			return type_result;
+		}
+		if (type_result.node().has_value() && type_result.node()->is<TypeSpecifierNode>()) {
+			// Store pointer to the type node
+			out_header.return_type = &type_result.node()->as<TypeSpecifierNode>();
+		}
+	}
+
+	// Parse function name
+	// Note: For operators, we need special handling
+	if (ctx.kind == FlashCpp::FunctionKind::Operator || ctx.kind == FlashCpp::FunctionKind::Conversion) {
+		// Operator parsing is complex - for now, just check for 'operator' keyword
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    peek_token()->value() == "operator") {
+			out_header.name_token = *peek_token();
+			consume_token();
+			// Operator symbol parsing would continue here in full implementation
+		} else {
+			return ParseResult::error("Expected 'operator' keyword", *current_token_);
+		}
+	} else if (ctx.kind == FlashCpp::FunctionKind::Constructor) {
+		// Constructor name must match the parent struct name
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected constructor name", *current_token_);
+		}
+		if (peek_token()->value() != ctx.parent_struct_name) {
+			return ParseResult::error("Constructor name must match class name", *peek_token());
+		}
+		out_header.name_token = *peek_token();
+		consume_token();
+	} else if (ctx.kind == FlashCpp::FunctionKind::Destructor) {
+		// Destructor must start with '~'
+		if (!peek_token().has_value() || peek_token()->value() != "~") {
+			return ParseResult::error("Expected '~' for destructor", *current_token_);
+		}
+		consume_token();  // consume '~'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected destructor name", *current_token_);
+		}
+		if (peek_token()->value() != ctx.parent_struct_name) {
+			return ParseResult::error("Destructor name must match class name", *peek_token());
+		}
+		out_header.name_token = *peek_token();
+		consume_token();
+	} else {
+		// Regular function name
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected function name", *current_token_);
+		}
+		out_header.name_token = *peek_token();
+		consume_token();
+	}
+
+	// Parse parameter list using Phase 1 unified method
+	auto params_result = parseParameterList(out_header.params, out_header.storage.calling_convention);
+	if (params_result.is_error()) {
+		return params_result;
+	}
+
+	// Parse trailing specifiers using Phase 2 unified method
+	auto specs_result = parseFunctionTrailingSpecifiers(out_header.member_quals, out_header.specifiers);
+	if (specs_result.is_error()) {
+		return specs_result;
+	}
+
+	// Validate specifiers for function kind
+	if (ctx.kind == FlashCpp::FunctionKind::Free) {
+		if (out_header.specifiers.is_virtual) {
+			return ParseResult::error("Free functions cannot be virtual", out_header.name_token);
+		}
+		if (out_header.specifiers.is_override || out_header.specifiers.is_final) {
+			return ParseResult::error("Free functions cannot use override/final", out_header.name_token);
+		}
+		if (out_header.specifiers.is_pure_virtual) {
+			return ParseResult::error("Free functions cannot be pure virtual", out_header.name_token);
+		}
+		// CV qualifiers don't apply to free functions
+		if (out_header.member_quals.is_const || out_header.member_quals.is_volatile) {
+			return ParseResult::error("Free functions cannot have const/volatile qualifiers", out_header.name_token);
+		}
+	}
+
+	if (ctx.kind == FlashCpp::FunctionKind::StaticMember) {
+		// Static member functions can't be virtual or have CV qualifiers
+		if (out_header.specifiers.is_virtual) {
+			return ParseResult::error("Static member functions cannot be virtual", out_header.name_token);
+		}
+		if (out_header.member_quals.is_const || out_header.member_quals.is_volatile) {
+			return ParseResult::error("Static member functions cannot have const/volatile qualifiers", out_header.name_token);
+		}
+	}
+
+	if (ctx.kind == FlashCpp::FunctionKind::Constructor) {
+		// Constructors can't be virtual, override, final, or have return type
+		if (out_header.specifiers.is_virtual) {
+			return ParseResult::error("Constructors cannot be virtual", out_header.name_token);
+		}
+		if (out_header.specifiers.is_override || out_header.specifiers.is_final) {
+			return ParseResult::error("Constructors cannot use override/final", out_header.name_token);
+		}
+	}
+
+	// Parse trailing return type if present (for auto return type)
+	if (peek_token().has_value() && peek_token()->value() == "->") {
+		consume_token();  // consume '->'
+		auto trailing_result = parse_type_specifier();
+		if (trailing_result.is_error()) {
+			return trailing_result;
+		}
+		out_header.trailing_return_type = trailing_result.node();
+	}
+
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
 {
 	// Create the function declaration first
