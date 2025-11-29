@@ -208,6 +208,10 @@ struct StructMemberFunction {
 	bool is_final = false;          // True if declared with 'final' keyword
 	int vtable_index = -1;          // Index in vtable, -1 if not virtual
 
+	// CV qualifiers for member functions (Phase 4)
+	bool is_const = false;          // True if const member function (e.g., void foo() const)
+	bool is_volatile = false;       // True if volatile member function (e.g., void foo() volatile)
+
 	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
 	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
 		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
@@ -1567,6 +1571,10 @@ struct StructMemberFunctionDecl {
 	bool is_override = false;       // True if declared with 'override' keyword
 	bool is_final = false;          // True if declared with 'final' keyword
 
+	// CV qualifiers for member functions (Phase 4)
+	bool is_const = false;          // True if const member function (e.g., void foo() const)
+	bool is_volatile = false;       // True if volatile member function (e.g., void foo() volatile)
+
 	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false,
 	                         bool is_op_overload = false, std::string_view op_symbol = "")
 		: function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
@@ -1636,12 +1644,15 @@ public:
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access,
 	                         bool is_virtual = false, bool is_pure_virtual = false,
-	                         bool is_override = false, bool is_final = false) {
+	                         bool is_override = false, bool is_final = false,
+	                         bool is_const = false, bool is_volatile = false) {
 		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
 		func_decl.is_override = is_override;
 		func_decl.is_final = is_final;
+		func_decl.is_const = is_const;
+		func_decl.is_volatile = is_volatile;
 	}
 
 	void add_constructor(ASTNode constructor_decl, AccessSpecifier access) {
@@ -1655,12 +1666,15 @@ public:
 
 	void add_operator_overload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access,
 	                           bool is_virtual = false, bool is_pure_virtual = false,
-	                           bool is_override = false, bool is_final = false) {
+	                           bool is_override = false, bool is_final = false,
+	                           bool is_const = false, bool is_volatile = false) {
 		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false, true, operator_symbol);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
 		func_decl.is_override = is_override;
 		func_decl.is_final = is_final;
+		func_decl.is_const = is_const;
+		func_decl.is_volatile = is_volatile;
 	}
 
 	// Friend declaration support
