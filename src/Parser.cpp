@@ -18293,7 +18293,7 @@ ASTNode Parser::substituteTemplateParameters(
 					} else if (arg.kind == TemplateArgument::Kind::Value) {
 						// Create a numeric literal node for the value with the correct type
 						Type value_type = arg.value_type;
-						int size_bits = (value_type == Type::Bool) ? 8 : 32;  // bool is 8 bits, int is 32 bits
+						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, std::to_string(arg.int_value),
 						                 tparam_ref.token().line(), tparam_ref.token().column(),
 						                 tparam_ref.token().file_index());
@@ -18327,7 +18327,7 @@ ASTNode Parser::substituteTemplateParameters(
 					} else if (arg.kind == TemplateArgument::Kind::Value) {
 						// Create a numeric literal node for the value with the correct type
 						Type value_type = arg.value_type;
-						int size_bits = (value_type == Type::Bool) ? 8 : 32;
+						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, std::to_string(arg.int_value), 0, 0, 0);
 						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), value_type, TypeQualifier::None, size_bits));
 					}
