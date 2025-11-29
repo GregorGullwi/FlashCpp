@@ -1083,18 +1083,18 @@ ParseResult Parser::parseFunctionBodyWithContext(
 **Tasks:**
 
 1. Update `parse_template_declaration()` to use:
-   - `TemplateParameterScope` for cleanup
-   - `parseFunctionHeader()` for function templates
+   - [x] `TemplateParameterScope` for cleanup (replaced local struct with shared RAII guard)
+   - [ ] `parseFunctionHeader()` for function templates
 
 2. Update `parse_member_function_template()` to use:
-   - `TemplateParameterScope` for cleanup  
-   - `parseFunctionHeader()` for the member function
+   - [x] `TemplateParameterScope` for cleanup (already implemented in Phase 3)
+   - [ ] `parseFunctionHeader()` for the member function
 
 3. Update `try_parse_out_of_line_template_member()` to use:
-   - Shared infrastructure
+   - [ ] Shared infrastructure
 
 **Deliverables:**
-- [ ] All template paths use RAII cleanup
+- [x] All template paths use RAII cleanup (`TemplateParameterScope`)
 - [ ] Shared header parsing
 - [ ] Consistent error handling
 
