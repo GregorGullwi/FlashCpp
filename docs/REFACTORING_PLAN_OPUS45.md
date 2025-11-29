@@ -930,7 +930,7 @@ inline void FunctionScopeGuard::injectThisPointer() {
 **Deliverables:**
 - [x] `TemplateParameterScope` class
 - [x] `FunctionScopeGuard` class (including `SymbolTableScope`)
-- [ ] All manual cleanup replaced with RAII (partial - key patterns replaced, more can be done incrementally)
+- [x] Replace key manual cleanup patterns with RAII (constructor parsing, function body parsing, template member functions)
 
 ---
 

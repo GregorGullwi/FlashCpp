@@ -1610,7 +1610,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
 		}
 		
-		gSymbolTable.enter_scope(ScopeType::Function);
+		// Enter function scope with RAII guard (Phase 3)
+		FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
 		
 		// Push member function context so that member variables are resolved correctly
 		member_function_context_stack_.push_back({
@@ -1648,7 +1649,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		
 		if (body_result.is_error()) {
 			member_function_context_stack_.pop_back();
-			gSymbolTable.exit_scope();
+			// func_scope automatically exits scope on return
 			return body_result;
 		}
 	
@@ -1658,13 +1659,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				FLASH_LOG(Parser, Error, "Function '", class_name, "::", function_name_token.value(), 
 						  "' already has a definition");
 				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
+				// func_scope automatically exits scope on return
 				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 			}
 		}
 
 		member_function_context_stack_.pop_back();
-		gSymbolTable.exit_scope();
+		// func_scope automatically exits scope at end of block
 	
 		// Return success without a node - the existing declaration already has the definition attached
 		// Don't return the node because it's already in the AST from the struct declaration
@@ -2606,9 +2607,9 @@ ParseResult Parser::parse_struct_declaration()
 				// If variadic constructor support becomes needed, ConstructorDeclarationNode
 				// can be extended with set_is_variadic() similar to FunctionDeclarationNode.
 
-				// Enter a temporary scope for parsing the initializer list
+				// Enter a temporary scope for parsing the initializer list (Phase 3: RAII)
 				// This allows the initializer expressions to reference the constructor parameters
-				gSymbolTable.enter_scope(ScopeType::Function);
+				FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
 
 				// Add parameters to symbol table so they can be referenced in the initializer list
 				for (const auto& param : ctor_ref.parameter_nodes()) {
@@ -2717,7 +2718,7 @@ ParseResult Parser::parse_struct_declaration()
 
 							// Expect ';'
 							if (!consume_punctuator(";")) {
-								gSymbolTable.exit_scope();
+								// ctor_scope automatically exits scope on return
 								return ParseResult::error("Expected ';' after '= default'", *peek_token());
 							}
 
@@ -2728,27 +2729,27 @@ ParseResult Parser::parse_struct_declaration()
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
 							ctor_ref.set_definition(block_node);
 
-							gSymbolTable.exit_scope();
+							// ctor_scope automatically exits scope when leaving this branch
 						} else if (peek_token()->value() == "delete") {
 							consume_token(); // consume 'delete'
 							is_deleted = true;
 
 							// Expect ';'
 							if (!consume_punctuator(";")) {
-								gSymbolTable.exit_scope();
+								// ctor_scope automatically exits scope on return
 								return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 							}
 
 							// For now, we'll just skip deleted constructors
 							// TODO: Track deleted constructors to prevent their use
-							gSymbolTable.exit_scope();
+							// ctor_scope automatically exits scope on continue
 							continue; // Don't add deleted constructor to struct
 						} else {
-							gSymbolTable.exit_scope();
+							// ctor_scope automatically exits scope on return
 							return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
 						}
 					} else {
-						gSymbolTable.exit_scope();
+						// ctor_scope automatically exits scope on return
 						return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
 					}
 				}
@@ -2768,8 +2769,8 @@ ParseResult Parser::parse_struct_declaration()
 					// Skip over the constructor body by counting braces
 					skip_balanced_braces();
 
-					// Exit the scope we entered for the initializer list
-					// We'll re-enter it when we parse the delayed body
+					// Dismiss the RAII scope guard - we'll re-enter when parsing the delayed body
+					ctor_scope.dismiss();
 					gSymbolTable.exit_scope();
 
 					// Record this for delayed parsing
@@ -2787,13 +2788,10 @@ ParseResult Parser::parse_struct_declaration()
 						nullptr   // dtor_node
 					});
 				} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
-					// No constructor body, just exit the scope we entered for the initializer list
-					gSymbolTable.exit_scope();
+					// No constructor body - ctor_scope automatically exits scope on return
 					return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", *peek_token());
-				} else if (!is_defaulted && !is_deleted) {
-					// Constructor declaration only (no body), exit the scope
-					gSymbolTable.exit_scope();
 				}
+				// For all other cases, ctor_scope automatically exits scope at end of block
 
 				// Add constructor to struct
 				struct_ref.add_constructor(ctor_node, current_access);
