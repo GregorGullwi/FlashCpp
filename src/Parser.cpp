@@ -6537,6 +6537,8 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 
 // Phase 6 (mangling): Generate and set mangled name on a FunctionDeclarationNode
 // This should be called after all function properties are set (parameters, variadic flag, etc.)
+// Note: The mangled name is stored as a string_view pointing to ChunkedStringAllocator storage
+// which remains valid for the lifetime of the compilation.
 void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 {
 	// Skip if already has a mangled name
@@ -6550,22 +6552,21 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 	}
 	
 	// Build namespace path from current symbol table state
+	// Convert namespace path entries to std::string for the generateMangledNameFromNode API
 	auto namespace_path = gSymbolTable.build_current_namespace_path();
 	std::vector<std::string> ns_strings;
 	ns_strings.reserve(namespace_path.size());
 	for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-		ns_strings.push_back(ns);
-#else
-		ns_strings.push_back(std::string(ns.view()));
-#endif
+		// Both StackString and std::string have implicit conversion to std::string_view
+		ns_strings.push_back(std::string(static_cast<std::string_view>(ns)));
 	}
 	
 	// Generate the mangled name using the NameMangling helper
+	// StringBuilder::commit() stores the string in ChunkedStringAllocator which has stable storage
 	StringBuilder builder;
 	NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(builder, func_node, ns_strings);
 	
-	// Set the mangled name on the node (the string_view points to stable ChunkedStringAllocator storage)
+	// Set the mangled name on the node
 	func_node.set_mangled_name(mangled.view());
 }
 

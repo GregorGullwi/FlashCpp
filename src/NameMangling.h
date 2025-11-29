@@ -9,20 +9,20 @@
 
 namespace NameMangling {
 
-// Toggle between old (std::string) and new (string_view) implementations
-#ifndef FLASHCPP_USE_STRINGVIEW_MANGLING
-#define FLASHCPP_USE_STRINGVIEW_MANGLING 1
-#endif
-
 // A mangled name that can be stored as either:
-// - A committed string_view (points to StringBuilder's stable storage)
+// - A committed string_view (points to StringBuilder/ChunkedStringAllocator stable storage)
 // - A std::string (fallback for compatibility/testing)
+//
+// IMPORTANT: When constructing from string_view, the caller must ensure the underlying
+// storage remains valid for the lifetime of the MangledName. Typically this means using
+// StringBuilder::commit() which stores strings in the global ChunkedStringAllocator.
 class MangledName {
 public:
 	// Default: empty name
 	MangledName() : storage_(std::string_view{}) {}
 	
 	// Construct from committed string_view (preferred - zero allocation)
+	// Note: The caller must ensure the string_view's storage outlives this MangledName
 	explicit MangledName(std::string_view committed_sv) 
 		: storage_(committed_sv) {}
 	
@@ -245,6 +245,8 @@ inline MangledName generateMangledName(
 }
 
 // Overload that accepts std::string namespace_path for backward compatibility
+// Note: This creates a temporary vector copy. For new code, prefer the string_view version.
+// TODO: Consider deprecating this in favor of the string_view version once all callers migrate.
 inline MangledName generateMangledName(
 	StringBuilder& builder,
 	std::string_view func_name,
@@ -254,7 +256,7 @@ inline MangledName generateMangledName(
 	std::string_view struct_name,
 	const std::vector<std::string>& namespace_path
 ) {
-	// Convert std::string vector to string_view vector
+	// Convert std::string vector to string_view vector (safe since string_view refs point to strings in namespace_path)
 	std::vector<std::string_view> sv_path;
 	sv_path.reserve(namespace_path.size());
 	for (const auto& ns : namespace_path) {
