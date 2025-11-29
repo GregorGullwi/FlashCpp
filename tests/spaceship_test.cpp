@@ -1,7 +1,6 @@
 // Combined basic spaceship operator tests
 struct Point1 {
-    int x;
-    int y;
+    int x, y;
     int operator<=>(const Point1& other) const {
         if (x != other.x) return x - other.x;
         return y - other.y;
@@ -9,8 +8,7 @@ struct Point1 {
 };
 
 struct Point2 {
-    int x;
-    int y;
+    int x, y;
     int operator<=>(const Point2& other) const {
         if (x < other.x) return -1;
         if (x > other.x) return 1;
@@ -26,8 +24,7 @@ struct SimpleOrdering {
 };
 
 struct Point3 {
-    int x;
-    int y;
+    int x, y;
     SimpleOrdering operator<=>(const Point3& other) const {
         if (x < other.x) return SimpleOrdering(-1);
         if (x > other.x) return SimpleOrdering(1);
