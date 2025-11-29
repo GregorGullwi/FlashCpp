@@ -2362,7 +2362,7 @@ private:
 		// loop_var_decl is a VariableDeclarationNode from the parser
 		// We need to extract its DeclarationNode and create a new VariableDeclarationNode with the initializer
 		if (!loop_var_decl.is<VariableDeclarationNode>()) {
-			std::cerr << "ERROR: loop_var_decl is not a VariableDeclarationNode!\n";
+			FLASH_LOG(Codegen, Error, "loop_var_decl is not a VariableDeclarationNode!");
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
@@ -2412,14 +2412,14 @@ private:
 
 		// Get the struct type info
 		if (range_type.type_index() >= gTypeInfo.size()) {
-			std::cerr << "error: Invalid type index for range expression\n";
+			FLASH_LOG(Codegen, Error, "Invalid type index for range expression");
 			return;
 		}
 
 		const TypeInfo& type_info = gTypeInfo[range_type.type_index()];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (!struct_info) {
-			std::cerr << "error: Range expression is not a struct type\n";
+			FLASH_LOG(Codegen, Error, "Range expression is not a struct type");
 			return;
 		}
 
@@ -2428,7 +2428,7 @@ private:
 		const StructMemberFunction* end_func = struct_info->findMemberFunction("end");
 
 		if (!begin_func || !end_func) {
-			std::cerr << "error: Range-based for loop requires type to have both begin() and end() methods\n";
+			FLASH_LOG(Codegen, Error, "Range-based for loop requires type to have both begin() and end() methods");
 			return;
 		}
 
@@ -2732,7 +2732,7 @@ private:
 			// Extract type information from the operands
 			// operands format: [type, size, value_or_temp_var] - always 3 elements
 			if (expr_operands.size() < 3) {
-				std::cerr << "error: Invalid expression operands for throw statement\n";
+				FLASH_LOG(Codegen, Error, "Invalid expression operands for throw statement");
 				return;
 			}
 			
@@ -2921,7 +2921,7 @@ private:
 
 							// Check if this is an abstract class (only for non-pointer types)
 							if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
-								std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name_ << "'\n";
+								FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name_, "'");
 								assert(false && "Cannot instantiate abstract class");
 							}
 
@@ -3135,7 +3135,7 @@ private:
 				if (type_info.struct_info_) {
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
-						std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name_ << "'\n";
+						FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name_, "'");
 						assert(false && "Cannot instantiate abstract class");
 					}
 
@@ -3249,7 +3249,7 @@ private:
 			// sizeof... should have been replaced with a constant during template instantiation
 			// If we reach here, it means sizeof... wasn't properly substituted
 			// This is an error - sizeof... can only appear in template contexts
-			std::cerr << "ERROR: sizeof... operator found during code generation - should have been substituted during template instantiation\n";
+			FLASH_LOG(Codegen, Error, "sizeof... operator found during code generation - should have been substituted during template instantiation");
 			return {};
 		}
 		else if (std::holds_alternative<OffsetofExprNode>(exprNode)) {
@@ -3295,7 +3295,7 @@ private:
 		else if (std::holds_alternative<FoldExpressionNode>(exprNode)) {
 			// Fold expressions should have been expanded during template instantiation
 			// If we reach here, it means the fold wasn't properly substituted
-			std::cerr << "ERROR: Fold expression found during code generation - should have been expanded during template instantiation\n";
+			FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
 			return {};
 		}
 		else {
@@ -3443,9 +3443,9 @@ private:
 		}
 
 		if (!symbol.has_value()) {
-			std::cerr << "ERROR: Symbol '" << identifierNode.name() << "' not found in symbol table during code generation\n";
-			std::cerr << "  Current function: " << current_function_name_ << "\n";
-			std::cerr << "  Current struct: " << current_struct_name_ << "\n";
+			FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
+			FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
+			FLASH_LOG(Codegen, Error, "  Current struct: ", current_struct_name_);
 			assert(false && "Expected symbol to exist");
 			return {};
 		}
@@ -3537,7 +3537,7 @@ private:
 		}
 
 		// If we get here, the symbol is not a known type
-		std::cerr << "ERROR: Unknown symbol type for identifier '" << identifierNode.name() << "'\n";
+		FLASH_LOG(Codegen, Error, "Unknown symbol type for identifier '", identifierNode.name(), "'");
 		assert(false && "Identifier is not a DeclarationNode");
 		return {};
 	}
@@ -3930,7 +3930,7 @@ private:
 						} else if (symbol->is<VariableDeclarationNode>()) {
 							type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
 						} else {
-							std::cerr << "Could not type for identifier " << identifier.name();
+							FLASH_LOG(Codegen, Error, "Could not type for identifier ", identifier.name());
 							assert(false && "Invalid type node");
 						}
 						
@@ -5531,8 +5531,8 @@ private:
 					symbol = global_symbol_table_->lookup(identifier.name());
 				}
 				if (!symbol.has_value()) {
-					std::cerr << "ERROR: Symbol '" << identifier.name() << "' not found for function argument\n";
-					std::cerr << "  Current function: " << current_function_name_ << "\n";
+					FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");
+					FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
 					throw std::runtime_error("Missing symbol for function argument");
 				}
 
@@ -5544,7 +5544,7 @@ private:
 				}
 
 				if (!decl_ptr) {
-					std::cerr << "ERROR: Function argument '" << identifier.name() << "' is not a DeclarationNode\n";
+					FLASH_LOG(Codegen, Error, "Function argument '", identifier.name(), "' is not a DeclarationNode");
 					throw std::runtime_error("Unexpected symbol type for function argument");
 				}
 
@@ -5985,10 +5985,10 @@ private:
 				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 					// DEBUG removed
 					if (!argument.is<ExpressionNode>()) {
-						std::cerr << "NO\n";
+						FLASH_LOG(Codegen, Debug, "Argument is not an ExpressionNode");
 						return;
 					}
-					std::cerr << "YES\n";
+					FLASH_LOG(Codegen, Trace, "Argument is an ExpressionNode");
 					
 					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 					
@@ -6067,22 +6067,22 @@ private:
 							
 							if (!constraint_result.satisfied) {
 								// Constraint not satisfied - report detailed error
-								std::cerr << "\n";
-								std::cerr << "error: constraint not satisfied for template function '" 
-								          << func_name << "'\n";
-								std::cerr << "  " << constraint_result.error_message << "\n";
+								// Build template arguments string
+								std::string args_str;
+								for (size_t i = 0; i < arg_types.size(); ++i) {
+									if (i > 0) args_str += ", ";
+									args_str += std::string(TemplateRegistry::typeToString(arg_types[i]));
+								}
+								
+								FLASH_LOG(Codegen, Error, "constraint not satisfied for template function '", func_name, "'");
+								FLASH_LOG(Codegen, Error, "  ", constraint_result.error_message);
 								if (!constraint_result.failed_requirement.empty()) {
-									std::cerr << "  failed requirement: " << constraint_result.failed_requirement << "\n";
+									FLASH_LOG(Codegen, Error, "  failed requirement: ", constraint_result.failed_requirement);
 								}
 								if (!constraint_result.suggestion.empty()) {
-									std::cerr << "  suggestion: " << constraint_result.suggestion << "\n";
+									FLASH_LOG(Codegen, Error, "  suggestion: ", constraint_result.suggestion);
 								}
-								std::cerr << "  template arguments: ";
-								for (size_t i = 0; i < arg_types.size(); ++i) {
-									if (i > 0) std::cerr << ", ";
-									std::cerr << TemplateRegistry::typeToString(arg_types[i]);
-								}
-								std::cerr << "\n\n";
+								FLASH_LOG(Codegen, Error, "  template arguments: ", args_str);
 								
 								// Don't create instantiation - constraint failed
 								should_instantiate = false;
@@ -6144,17 +6144,10 @@ private:
 			const StructTypeInfo* current_context = getCurrentStructContext();
 			std::string current_function = getCurrentFunctionName();
 			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context, current_function)) {
-				std::cerr << "Error: Cannot access ";
-				if (called_member_func->access == AccessSpecifier::Private) {
-					std::cerr << "private";
-				} else if (called_member_func->access == AccessSpecifier::Protected) {
-					std::cerr << "protected";
-				}
-				std::cerr << " member function '" << called_member_func->name << "' of '" << struct_info->name << "'";
-				if (current_context) {
-					std::cerr << " from '" << current_context->name << "'";
-				}
-				std::cerr << "\n";
+				std::string access_str = (called_member_func->access == AccessSpecifier::Private) ? "private" : "protected";
+				std::string context_str = current_context ? (std::string(" from '") + current_context->name + "'") : "";
+				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->name, 
+				          "' of '", struct_info->name, "'", context_str);
 				assert(false && "Access control violation");
 				return { Type::Int, 32, TempVar{0} };
 			}
@@ -6591,7 +6584,7 @@ private:
 				}
 				
 				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
-					std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
+					FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table");
 					return {};
 				}
 
@@ -6602,7 +6595,7 @@ private:
 				// References are automatically dereferenced for member access
 				// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
 				if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
-					std::cerr << "error: member access '.' on non-struct type '" << object_name << "'\n";
+					FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
 					return {};
 				}
 
@@ -6629,7 +6622,7 @@ private:
 				// For nested member access, we need to get the type_index from the result
 				// The base_type should be Type::Struct
 				if (base_type != Type::Struct) {
-					std::cerr << "error: nested member access on non-struct type\n";
+					FLASH_LOG(Codegen, Error, "nested member access on non-struct type");
 					return {};
 				}
 
@@ -6653,20 +6646,20 @@ private:
 
 				// This should be a dereference operator (*)
 				if (unary_op.op() != "*") {
-					std::cerr << "error: member access on non-dereference unary operator\n";
+					FLASH_LOG(Codegen, Error, "member access on non-dereference unary operator");
 					return {};
 				}
 
 				// Get the pointer operand
 				const ASTNode& operand_node = unary_op.get_operand();
 				if (!operand_node.is<ExpressionNode>()) {
-					std::cerr << "error: dereference operand is not an expression\n";
+					FLASH_LOG(Codegen, Error, "dereference operand is not an expression");
 					return {};
 				}
 
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 				if (!std::holds_alternative<IdentifierNode>(operand_expr)) {
-					std::cerr << "error: dereference operand is not an identifier\n";
+					FLASH_LOG(Codegen, Error, "dereference operand is not an identifier");
 					return {};
 				}
 
@@ -6676,7 +6669,7 @@ private:
 				// Look up the pointer in the symbol table
 				const std::optional<ASTNode> symbol = symbol_table.lookup(ptr_name);
 				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
-					std::cerr << "error: pointer '" << ptr_name << "' not found in symbol table\n";
+					FLASH_LOG(Codegen, Error, "pointer '", ptr_name, "' not found in symbol table");
 					return {};
 				}
 
@@ -6685,12 +6678,12 @@ private:
 
 				// Verify this is a pointer to a struct type
 				if (ptr_type.pointer_depth() == 0) {
-					std::cerr << "error: member access '->' on non-pointer type '" << ptr_name << "'\n";
+					FLASH_LOG(Codegen, Error, "member access '->' on non-pointer type '", ptr_name, "'");
 					return {};
 				}
 
 				if (ptr_type.type() != Type::Struct && ptr_type.type() != Type::UserDefined) {
-					std::cerr << "error: member access '->' on pointer to non-struct type '" << ptr_name << "'\n";
+					FLASH_LOG(Codegen, Error, "member access '->' on pointer to non-struct type '", ptr_name, "'");
 					return {};
 				}
 
@@ -6699,7 +6692,7 @@ private:
 				base_type_index = ptr_type.type_index();
 			}
 			else {
-				std::cerr << "error: member access on unsupported expression type\n";
+				FLASH_LOG(Codegen, Error, "member access on unsupported expression type");
 				return {};
 			}
 		}
