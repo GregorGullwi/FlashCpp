@@ -10287,6 +10287,29 @@ ParseResult Parser::parse_primary_expression()
 			ParseResult type_result = parse_type_specifier();
 
 			if (!type_result.is_error() && type_result.node().has_value()) {
+				// Parse reference declarators: & or &&
+				// This handles C-style casts like (Widget&&)value
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+					std::string_view op_value = peek_token()->value();
+					if (op_value == "&&" || op_value == "&") {
+						// Don't modify the original type node - create a copy with reference set
+						TypeSpecifierNode& old_type_spec = type_result.node()->as<TypeSpecifierNode>();
+						bool is_rvalue = (op_value == "&&");
+						consume_token();
+						
+						// Create new TypeSpecifierNode with same properties plus reference
+						TypeSpecifierNode new_type_spec(
+							old_type_spec.type(), old_type_spec.type_index(), old_type_spec.size_in_bits(),
+							old_type_spec.token(), old_type_spec.cv_qualifier());
+						new_type_spec.set_reference(is_rvalue);
+						new_type_spec.copy_pointer_levels_from(old_type_spec);
+						
+						// Replace the parse result with the new node (wrap in proper node type)
+						auto new_type_node = emplace_node<TypeSpecifierNode>(new_type_spec);
+						type_result = ParseResult::success(new_type_node);
+					}
+				}
+
 				// Successfully parsed as type, check if followed by ')'
 				if (consume_punctuator(")")) {
 					// This is a C-style cast: (Type)expression
