@@ -996,8 +996,8 @@ ParseResult Parser::parseFunctionHeader(
 6. Template member functions
 
 **Deliverables:**
-- [ ] `parseFunctionHeader()` implementation
-- [ ] All function types migrated
+- [x] `parseFunctionHeader()` implementation
+- [ ] All function types migrated (free functions using new method)
 - [ ] Full test pass
 
 ---
