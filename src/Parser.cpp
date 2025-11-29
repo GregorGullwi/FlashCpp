@@ -1575,6 +1575,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	
 		// existing_func_ref is already defined earlier after validation
 		if (body_result.node().has_value()) {
+			// Generate mangled name before setting definition (Phase 6 mangling)
+			compute_and_set_mangled_name(existing_func_ref);
 			if (!existing_func_ref.set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Function '", class_name, "::", function_name_token.value(), 
 						  "' already has a definition");
@@ -1779,7 +1781,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
-					node->as<FunctionDeclarationNode>().set_definition(*block);
+					FunctionDeclarationNode& func_decl = node->as<FunctionDeclarationNode>();
+					// Generate mangled name before finalizing (Phase 6 mangling)
+					compute_and_set_mangled_name(func_decl);
+					func_decl.set_definition(*block);
 					return saved_position.success(*node);
 				}
 			}
@@ -2662,6 +2667,8 @@ ParseResult Parser::parse_struct_declaration()
 
 							// Create an empty block for the constructor body
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
+							// Note: ConstructorDeclarationNode doesn't have mangled_name yet
+							// TODO: Add mangled_name support to ConstructorDeclarationNode
 							ctor_ref.set_definition(block_node);
 
 							// ctor_scope automatically exits scope when leaving this branch
@@ -2811,6 +2818,8 @@ ParseResult Parser::parse_struct_declaration()
 
 						// Create an empty block for the destructor body
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						// Note: DestructorDeclarationNode doesn't have mangled_name yet
+						// TODO: Add mangled_name support to DestructorDeclarationNode
 						dtor_ref.set_definition(block_node);
 					} else if (peek_token()->value() == "delete") {
 						consume_token(); // consume 'delete'
@@ -2993,6 +3002,8 @@ ParseResult Parser::parse_struct_declaration()
 
 				// Create an empty block for the function body
 				auto [block_node, block_ref] = create_node_ref(BlockNode());
+				// Generate mangled name before setting definition (Phase 6 mangling)
+				compute_and_set_mangled_name(member_func_ref);
 				member_func_ref.set_definition(block_node);
 			}
 			
@@ -3567,6 +3578,8 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Create an empty block for the operator= body
 		auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
+		// Generate mangled name before setting definition (Phase 6 mangling)
+		compute_and_set_mangled_name(func_ref);
 		func_ref.set_definition(op_block_node);
 
 		// Mark this as an implicit operator=
@@ -3683,6 +3696,8 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Create an empty block for the operator= body
 		auto [move_op_block_node, move_op_block_ref] = create_node_ref(BlockNode());
+		// Generate mangled name before setting definition (Phase 6 mangling)
+		compute_and_set_mangled_name(move_func_ref);
 		move_func_ref.set_definition(move_op_block_node);
 
 		// Mark this as an implicit operator=
@@ -3822,6 +3837,8 @@ ParseResult Parser::parse_struct_declaration()
 			// Add return statement to block
 			op_block_ref.add_statement_node(return_stmt);
 			
+			// Generate mangled name before setting definition (Phase 6 mangling)
+			compute_and_set_mangled_name(func_ref);
 			func_ref.set_definition(op_block_node);
 			
 			// Note: Not marking as implicit because we want the body to be processed
