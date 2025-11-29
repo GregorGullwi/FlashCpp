@@ -177,6 +177,60 @@ inline OpCodeWithSize generateSSEInstructionNoPrefix(uint8_t opcode1, uint8_t op
 }
 
 /**
+ * @brief Generates a properly encoded double-precision SSE instruction with 0x66 prefix.
+ * 
+ * This function handles double-precision scalar instructions like comisd, ucomisd that use
+ * the 0x66 operand-size override prefix. The format is: 66 [REX] 0F opcode ModR/M
+ * 
+ * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
+ * @param opcode2 Second opcode byte (e.g., 0x2F for comisd)
+ * @param xmm_dst Destination XMM register
+ * @param xmm_src Source XMM register
+ * @return An OpCodeWithSize struct containing the instruction bytes
+ */
+inline OpCodeWithSize generateSSEInstructionDouble(uint8_t opcode1, uint8_t opcode2, 
+                                                    X64Register xmm_dst, X64Register xmm_src) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* ptr = result.op_codes.data();
+	
+	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
+	uint8_t src_index = xmm_modrm_bits(xmm_src);
+	
+	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
+	
+	// 0x66 operand-size override prefix comes FIRST
+	*ptr++ = 0x66;
+	result.size_in_bytes++;
+	
+	// REX prefix comes AFTER 0x66 but BEFORE opcode
+	if (needs_rex) {
+		uint8_t rex = 0x40;  // Base REX prefix
+		if (dst_index >= 8) {
+			rex |= 0x04;  // REX.R - extends ModR/M reg field
+		}
+		if (src_index >= 8) {
+			rex |= 0x01;  // REX.B - extends ModR/M r/m field
+		}
+		*ptr++ = rex;
+		result.size_in_bytes++;
+	}
+	
+	// Emit opcode bytes
+	*ptr++ = opcode1;
+	result.size_in_bytes++;
+	*ptr++ = opcode2;
+	result.size_in_bytes++;
+	
+	// ModR/M byte: 11 reg r/m (register-to-register mode)
+	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
+	*ptr++ = modrm;
+	result.size_in_bytes++;
+	
+	return result;
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'mov destination_register, [rbp + offset]'.
  *
  * This function creates the byte sequence for moving a 64-bit pointer value from a
@@ -6401,7 +6455,7 @@ private:
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
 			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
@@ -6435,7 +6489,7 @@ private:
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
 			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
@@ -6469,7 +6523,7 @@ private:
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
 			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
@@ -6503,7 +6557,7 @@ private:
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
 			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
@@ -6537,7 +6591,7 @@ private:
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
 			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
@@ -6571,7 +6625,7 @@ private:
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
 			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
-			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
