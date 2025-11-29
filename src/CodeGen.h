@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <typeinfo>
 #include "IRConverter.h"
+#include "Log.h"
 
 class Parser;
 
@@ -639,32 +640,32 @@ private:
 			current_struct_name_.clear();
 		}
 
-		// DEBUG: Check what we're receiving
-		const TypeSpecifierNode& debug_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
-		std::cerr << "\n===== CODEGEN visitFunctionDeclarationNode: " << func_decl.identifier_token().value() << " =====\n";
-		std::cerr << "  return_type: " << (int)debug_ret_type.type() << " size: " << (int)debug_ret_type.size_in_bits() << " ptr_depth: " << debug_ret_type.pointer_depth() << "\n";
-		std::cerr << "  is_member_function: " << node.is_member_function() << "\n";
-		if (node.is_member_function()) {
-			std::cerr << "  parent_struct_name: " << node.parent_struct_name() << "\n";
-		}
-		std::cerr << "  parameter_count: " << node.parameter_nodes().size() << "\n";
-		for (size_t i = 0; i < node.parameter_nodes().size(); ++i) {
-			const auto& param = node.parameter_nodes()[i];
-			if (param.is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = param.as<DeclarationNode>();
-				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				std::cerr << "  param[" << i << "]: name='" << param_decl.identifier_token().value() 
-						  << "' type=" << (int)param_type.type() 
-						  << " size=" << (int)param_type.size_in_bits()
-						  << " ptr_depth=" << param_type.pointer_depth()
-						  << " base_cv=" << (int)param_type.cv_qualifier();
-				for (size_t j = 0; j < param_type.pointer_levels().size(); ++j) {
-					std::cerr << " ptr[" << j << "]_cv=" << (int)param_type.pointer_levels()[j].cv_qualifier;
-				}
-				std::cerr << "\n";
+		if (FLASH_LOG_ENABLED(Codegen, Debug)) {
+			const TypeSpecifierNode& debug_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
+			FLASH_LOG(Codegen, Debug, "===== CODEGEN visitFunctionDeclarationNode: ", func_decl.identifier_token().value(), " =====");
+			FLASH_LOG(Codegen, Debug, "  return_type: ", (int)debug_ret_type.type(), " size: ", (int)debug_ret_type.size_in_bits(), " ptr_depth: ", debug_ret_type.pointer_depth());
+			FLASH_LOG(Codegen, Debug, "  is_member_function: ", node.is_member_function());
+			if (node.is_member_function()) {
+				FLASH_LOG(Codegen, Debug, "  parent_struct_name: ", node.parent_struct_name());
 			}
+			FLASH_LOG(Codegen, Debug, "  parameter_count: ", node.parameter_nodes().size());
+			for (size_t i = 0; i < node.parameter_nodes().size(); ++i) {
+				const auto& param = node.parameter_nodes()[i];
+				if (param.is<DeclarationNode>()) {
+					const DeclarationNode& param_decl = param.as<DeclarationNode>();
+					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					FLASH_LOG(Codegen, Debug, "  param[", i, "]: name='", param_decl.identifier_token().value()
+							  , "' type=", (int)param_type.type() 
+							  , " size=", (int)param_type.size_in_bits()
+							  , " ptr_depth=", param_type.pointer_depth()
+							  , " base_cv=", (int)param_type.cv_qualifier());
+					for (size_t j = 0; j < param_type.pointer_levels().size(); ++j) {
+						FLASH_LOG(Codegen, Debug, " ptr[", j, "]_cv=", (int)param_type.pointer_levels()[j].cv_qualifier);
+					}
+				}
+			}
+			FLASH_LOG(Codegen, Debug, "=====");
 		}
-		std::cerr << "=====\n";
 
 		// Clear static local names map for new function
 		static_local_names_.clear();

@@ -23,3 +23,9 @@ Delete binaries, dumps, and logs before you summarize your work. Feel free to le
 
 ## Debugging & Reference Tips
 Use `dumpbin.exe`, locate the path with `where.exe`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `x64/Debug/FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source. Output file will end up in the working folder.
+
+## Logging Configuration
+Control log verbosity at runtime using command-line options:
+- `--log-level=level` — Set global log level (error, warning, info, debug, trace, or 0-4)
+- `--log-level=category:level` — Set log level for a specific category (e.g., Parser:trace, Codegen:debug)
+Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen, Scope, Mangling, All

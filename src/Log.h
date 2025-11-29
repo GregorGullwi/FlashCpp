@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string_view>
 #include <cstdint>
+#include <unordered_map>
 
 namespace FlashCpp {
 
@@ -44,7 +45,7 @@ enum class LogLevel : uint8_t {
     #ifdef NDEBUG
         #define FLASHCPP_LOG_LEVEL 2   // Release: up to Info level (General category always enabled regardless of level)
     #else
-        #define FLASHCPP_LOG_LEVEL 3   // Debug: up to Debug level
+        #define FLASHCPP_LOG_LEVEL 2   // Debug: up to Debug level
     #endif
 #endif
 
@@ -64,10 +65,16 @@ namespace detail {
 struct LogConfig {
     static inline LogLevel runtimeLevel = static_cast<LogLevel>(FLASHCPP_LOG_LEVEL);
     static inline LogCategory runtimeCategories = static_cast<LogCategory>(FLASHCPP_LOG_CATEGORIES);
+    static inline std::unordered_map<uint32_t, LogLevel> categoryLevels;  // Per-category log levels
     static inline std::ostream* output_stream = &std::cout;  // Default output stream (errors always go to std::cerr)
     static inline bool use_colors = true;  // Enable/disable ANSI colors
 
     static void setLevel(LogLevel level) { runtimeLevel = level; }
+    static void setLevel(LogCategory cat, LogLevel level) { categoryLevels[static_cast<uint32_t>(cat)] = level; }
+    static LogLevel getLevelForCategory(LogCategory cat) {
+        auto it = categoryLevels.find(static_cast<uint32_t>(cat));
+        return it != categoryLevels.end() ? it->second : runtimeLevel;
+    }
     static void setCategories(LogCategory cats) { runtimeCategories = cats; }
     static void enableCategory(LogCategory cat) {
         runtimeCategories = runtimeCategories | cat;
@@ -87,17 +94,17 @@ struct LogConfig {
 template<LogLevel Level, LogCategory Category>
 struct Logger {
     // General category is always enabled at compile time (user-facing messages)
+    // For other categories, enable if category is allowed at compile time (runtime level controls execution)
     static constexpr bool enabled =
         (Category == LogCategory::General) ||
-        ((static_cast<uint8_t>(Level) <= FLASHCPP_LOG_LEVEL) &&
-         ((static_cast<uint32_t>(Category) & FLASHCPP_LOG_CATEGORIES) != 0));
+        ((static_cast<uint32_t>(Category) & FLASHCPP_LOG_CATEGORIES) != 0);
 
     template<typename... Args>
     static void log([[maybe_unused]] Args&&... args) {
         if constexpr (enabled) {
             // General category is always enabled at runtime too
             bool runtime_enabled = (Category == LogCategory::General) ||
-                (static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogConfig::runtimeLevel) &&
+                (static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogConfig::getLevelForCategory(Category)) &&
                  (static_cast<uint32_t>(Category) & static_cast<uint32_t>(LogConfig::runtimeCategories)) != 0);
 
             if (runtime_enabled) {
@@ -166,7 +173,28 @@ struct Logger {
     }
 };
 
+// Check if logging is enabled for a specific category/level combination
+// This allows avoiding construction of expensive debug strings when logging is disabled
+template<LogLevel Level, LogCategory Category>
+constexpr bool isLogEnabled() {
+    // Compile-time check: General category is always enabled
+    // For other categories, enable if category is allowed at compile time
+    constexpr bool compile_time_enabled =
+        (Category == LogCategory::General) ||
+        ((static_cast<uint32_t>(Category) & FLASHCPP_LOG_CATEGORIES) != 0);
+
+    if constexpr (!compile_time_enabled) {
+        return false;
+    }
+
+    // Runtime check
+    return (Category == LogCategory::General) ||
+           (static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogConfig::getLevelForCategory(Category)) &&
+            (static_cast<uint32_t>(Category) & static_cast<uint32_t>(LogConfig::runtimeCategories)) != 0);
+}
+
 // Convenience macros - zero overhead when disabled at compile time
 #define FLASH_LOG(cat, level, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#define FLASH_LOG_ENABLED(cat, level) ::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>()
 
 } // namespace FlashCpp

@@ -9616,20 +9616,6 @@ ParseResult Parser::parse_primary_expression()
 							// First, get all overloads of this function
 							auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
 
-							for (size_t i = 0; i < all_overloads.size(); ++i) {
-								std::cerr << "  overload " << i << ": ";
-								if (all_overloads[i].is<DeclarationNode>()) {
-									const auto& decl = all_overloads[i].as<DeclarationNode>();
-									std::cerr << "DeclarationNode - " << decl.identifier_token().value();
-								} else if (all_overloads[i].is<FunctionDeclarationNode>()) {
-									const auto& func = all_overloads[i].as<FunctionDeclarationNode>();
-									std::cerr << "FunctionDeclarationNode - " << func.decl_node().identifier_token().value();
-								} else {
-									std::cerr << "Other node type";
-								}
-								std::cerr << std::endl;
-							}
-
 							// Extract argument types
 							std::vector<TypeSpecifierNode> arg_types;
 							for (size_t i = 0; i < args.size(); ++i) {

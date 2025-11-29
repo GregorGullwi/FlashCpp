@@ -62,20 +62,28 @@ void printTimingSummary(double preprocessing_time, double parsing_time, double i
     auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
     double total_ms = total_duration.count() / 1000.0;
 
-    FLASH_LOG(General, Info, "\n=== Compilation Timing ===\n");
-#if USE_OLD_STRING_APPROACH
-    FLASH_LOG(General, Info, "String approach: std::string (baseline)\n\n");
-#else
-    FLASH_LOG(General, Info, "String approach: StackString<32> (optimized)\n\n");
-#endif
+    FLASH_LOG(General, Info, "\n=== Compilation Timing ===");
 
-    FLASH_LOG(General, Info, "  Preprocessing: ", std::fixed, std::setprecision(3), preprocessing_time, " ms\n");
-    FLASH_LOG(General, Info, "  Parsing: ", std::fixed, std::setprecision(3), parsing_time, " ms\n");
-    FLASH_LOG(General, Info, "  IR Conversion: ", std::fixed, std::setprecision(3), ir_conversion_time, " ms\n");
-    FLASH_LOG(General, Info, "  Template Inst: ", std::fixed, std::setprecision(3), template_time, " ms\n");
-    FLASH_LOG(General, Info, "  Code Generation: ", std::fixed, std::setprecision(3), codegen_time, " ms\n");
-    FLASH_LOG(General, Info, "  TOTAL: ", std::fixed, std::setprecision(3), total_ms, " ms\n");
-    FLASH_LOG(General, Info, "==========================\n\n");
+    // Calculate percentages
+    double prep_pct = (preprocessing_time / total_ms) * 100.0;
+    double parse_pct = (parsing_time / total_ms) * 100.0;
+    double ir_pct = (ir_conversion_time / total_ms) * 100.0;
+    double temp_pct = (template_time / total_ms) * 100.0;
+    double code_pct = (codegen_time / total_ms) * 100.0;
+
+    // Print table header
+    FLASH_LOG(General, Info, "Phase            | Time (ms)  | Percentage");
+    FLASH_LOG(General, Info, "-----------------|------------|-----------");
+
+    // Print each phase
+    FLASH_LOG(General, Info, "Preprocessing    | ", std::fixed, std::setprecision(3), std::setw(10), preprocessing_time, " | ", std::setw(9), prep_pct, "%");
+    FLASH_LOG(General, Info, "Parsing          | ", std::fixed, std::setprecision(3), std::setw(10), parsing_time, " | ", std::setw(9), parse_pct, "%");
+    FLASH_LOG(General, Info, "IR Conversion    | ", std::fixed, std::setprecision(3), std::setw(10), ir_conversion_time, " | ", std::setw(9), ir_pct, "%");
+    FLASH_LOG(General, Info, "Template Inst    | ", std::fixed, std::setprecision(3), std::setw(10), template_time, " | ", std::setw(9), temp_pct, "%");
+    FLASH_LOG(General, Info, "Code Generation  | ", std::fixed, std::setprecision(3), std::setw(10), codegen_time, " | ", std::setw(9), code_pct, "%");
+    FLASH_LOG(General, Info, "-----------------|------------|-----------");
+    FLASH_LOG(General, Info, "TOTAL            | ", std::fixed, std::setprecision(3), std::setw(10), total_ms, " | ", std::setw(9), 100.0, "%");
+    FLASH_LOG(General, Info, "\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -86,6 +94,58 @@ int main(int argc, char *argv[]) {
 
     CompileContext context;
     CommandLineParser argsparser(argc, argv, context);
+
+    // Helper functions for parsing log levels and categories
+    auto parseLevel = [](std::string_view sv) -> FlashCpp::LogLevel {
+        if (sv == "error" || sv == "0") return FlashCpp::LogLevel::Error;
+        if (sv == "warning" || sv == "1") return FlashCpp::LogLevel::Warning;
+        if (sv == "info" || sv == "2") return FlashCpp::LogLevel::Info;
+        if (sv == "debug" || sv == "3") return FlashCpp::LogLevel::Debug;
+        if (sv == "trace" || sv == "4") return FlashCpp::LogLevel::Trace;
+        return FlashCpp::LogLevel::Info; // default
+    };
+
+    auto parseCategory = [](std::string_view sv) -> FlashCpp::LogCategory {
+        if (sv == "General") return FlashCpp::LogCategory::General;
+        if (sv == "Parser") return FlashCpp::LogCategory::Parser;
+        if (sv == "Lexer") return FlashCpp::LogCategory::Lexer;
+        if (sv == "Templates") return FlashCpp::LogCategory::Templates;
+        if (sv == "Symbols") return FlashCpp::LogCategory::Symbols;
+        if (sv == "Types") return FlashCpp::LogCategory::Types;
+        if (sv == "Codegen") return FlashCpp::LogCategory::Codegen;
+        if (sv == "Scope") return FlashCpp::LogCategory::Scope;
+        if (sv == "Mangling") return FlashCpp::LogCategory::Mangling;
+        if (sv == "All") return FlashCpp::LogCategory::All;
+        return FlashCpp::LogCategory::General; // default
+    };
+
+    // Handle log level setting from command line
+    if (argsparser.hasOption("log-level")) {
+        auto level_str = argsparser.optionValue("log-level");
+        if (std::holds_alternative<std::string_view>(level_str)) {
+            std::string_view level_sv = std::get<std::string_view>(level_str);
+            size_t colon_pos = level_sv.find(':');
+            if (colon_pos != std::string_view::npos) {
+                // Category-specific: category:level
+                std::string_view cat_sv = level_sv.substr(0, colon_pos);
+                std::string_view lev_sv = level_sv.substr(colon_pos + 1);
+                FlashCpp::LogCategory cat = parseCategory(cat_sv);
+                FlashCpp::LogLevel level = parseLevel(lev_sv);
+                // Check if category is enabled at compile time
+                if ((static_cast<uint32_t>(cat) & FLASHCPP_LOG_CATEGORIES) != 0 || cat == FlashCpp::LogCategory::General) {
+                    FlashCpp::LogConfig::setLevel(cat, level);
+                    FLASH_LOG(General, Info, "Set log level for category ", cat_sv, " to ", lev_sv);
+                } else {
+                    FLASH_LOG(General, Error, "Cannot set log level for category ", cat_sv, ": category disabled at compile time");
+                }
+            } else {
+                // Global level
+                FlashCpp::LogLevel level = parseLevel(level_sv);
+                FlashCpp::LogConfig::setLevel(level);
+                FLASH_LOG(General, Info, "Set global log level to ", level_sv);
+            }
+        }
+    }
 
     if (argsparser.hasOption("h") || argsparser.hasOption("help")) {
         FLASH_LOG(General, Info, "Help message\n");
@@ -149,7 +209,7 @@ int main(int argc, char *argv[]) {
     {
         PhaseTimer timer("Preprocessing", false, &preprocessing_time);
         if (!file_reader.readFile(context.getInputFile().value())) {
-            FLASH_LOG(General, Error, "Failed to read input file: ", context.getInputFile().value(), "\n");
+            FLASH_LOG(General, Error, "Failed to read input file: ", context.getInputFile().value());
             return 1;
         }
     }
@@ -164,12 +224,12 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    FLASH_LOG(General, Debug, "Verbose mode = ", (context.isVerboseMode() ? "true\n" : "false\n"));
+    FLASH_LOG(General, Debug, "Verbose mode = ", (context.isVerboseMode() ? "true" : "false"));
     if (context.isVerboseMode()) {
         // Use context and file_tree to perform the desired operation
-        FLASH_LOG(General, Debug, "Output file: ", context.getOutputFile(), "\n");
-        FLASH_LOG(General, Debug, "Verbose mode: ", (context.isVerboseMode() ? "enabled" : "disabled"), "\n");
-        FLASH_LOG(General, Debug, "Input file: ", context.getInputFile().value(), "\n");
+        FLASH_LOG(General, Debug, "Output file: ", context.getOutputFile());
+        FLASH_LOG(General, Debug, "Verbose mode: ", (context.isVerboseMode() ? "enabled" : "disabled"));
+        FLASH_LOG(General, Debug, "Input file: ", context.getInputFile().value());
     }
 
     const std::string& preprocessed_source = file_reader.get_result();
@@ -185,12 +245,17 @@ int main(int argc, char *argv[]) {
     GlobalOperandStorage::instance().reserve(estimated_operands);
 
     if (show_perf_stats) {
-        FLASH_LOG(General, Debug, "Source lines: ", source_line_count, "\n");
-        FLASH_LOG(General, Debug, "Estimated operands: ", estimated_operands, " (8 per line)\n");
+        FLASH_LOG(General, Debug, "Source lines: ", source_line_count);
+        FLASH_LOG(General, Debug, "Estimated operands: ", estimated_operands, " (8 per line)");
     }
 #endif
 
-    FLASH_LOG(General, Info, "===== FLASHCPP VERSION ", __DATE__, " " , __TIME__, " =====\n");
+    FLASH_LOG(General, Info, "===== FLASHCPP VERSION ", __DATE__, " " , __TIME__, " =====");
+#if USE_OLD_STRING_APPROACH
+    FLASH_LOG(General, Debug, "String approach: std::string (baseline)");
+#else
+    FLASH_LOG(General, Debug, "String approach: StackString<32> (optimized)");
+#endif
 
     Lexer lexer(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
     Parser parser(lexer, context);
@@ -201,7 +266,7 @@ int main(int argc, char *argv[]) {
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
-            FLASH_LOG(Parser, Info, parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer), "\n");
+            FLASH_LOG(Parser, Info, parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer));
             return 1;
         }
     }
@@ -218,7 +283,7 @@ int main(int argc, char *argv[]) {
     converter.reserveInstructions(estimated_instructions);
 
     if (show_perf_stats) {
-        FLASH_LOG(General, Info, "Estimated instructions: ", estimated_instructions, " (2 per line)\n");
+        FLASH_LOG(General, Info, "Estimated instructions: ", estimated_instructions, " (2 per line)");
     }
 
     if (show_debug) {
@@ -243,10 +308,10 @@ int main(int argc, char *argv[]) {
                 const auto& func = node_handle.as<FunctionDeclarationNode>();
                 bool has_def = func.get_definition().has_value();
                 FLASH_LOG(Codegen, Debug, "Visiting FunctionDeclarationNode: ", func.decl_node().identifier_token().value(),
-                          " has_definition=", has_def, "\n");
+                          " has_definition=", has_def);
                 if (has_def) {
                     const BlockNode& def_block = func.get_definition().value().as<BlockNode>();
-                    FLASH_LOG(Codegen, Debug, "  -> Block has ", def_block.get_statements().size(), " statements\n");
+                    FLASH_LOG(Codegen, Debug, "  -> Block has ", def_block.get_statements().size(), " statements");
                 }
             }
             converter.visit(node_handle);
@@ -271,7 +336,7 @@ int main(int argc, char *argv[]) {
     if (context.isVerboseMode()) {
         FLASH_LOG(Codegen, Debug, "\n=== IR Instructions ===\n");
         for (const auto& instruction : ir.getInstructions()) {
-           FLASH_LOG(Codegen, Debug, instruction.getReadableString(), "\n");
+           FLASH_LOG(Codegen, Debug, instruction.getReadableString());
         }
         FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
     }
@@ -282,14 +347,14 @@ int main(int argc, char *argv[]) {
         PhaseTimer timer("Code Generation", false, &codegen_time);
         irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
     } catch (const std::exception& e) {
-        FLASH_LOG(General, Error, "Code generation failed: ", e.what(), "\n");
+        FLASH_LOG(General, Error, "Code generation failed: ", e.what());
         printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
         return 1;
     } catch (...) {
-        FLASH_LOG(General, Error, "Code generation failed with unknown exception\n");
+        FLASH_LOG(General, Error, "Code generation failed with unknown exception");
         printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
@@ -302,9 +367,9 @@ int main(int argc, char *argv[]) {
 
     // Show additional details if --time flag is used
     if (show_timing) {
-        FLASH_LOG(General, Info, "Phase Details:\n");
-        FLASH_LOG(General, Info, "  Parsing includes: lexing + template instantiation from parsing phase\n");
-        FLASH_LOG(General, Info, "  Template Inst: lambda/struct member function generation\n");
+        FLASH_LOG(General, Info, "Phase Details:");
+        FLASH_LOG(General, Info, "  Parsing includes: lexing + template instantiation from parsing phase");
+        FLASH_LOG(General, Info, "  Template Inst: lambda/struct member function generation");
     }
 
     if (show_perf_stats) {
