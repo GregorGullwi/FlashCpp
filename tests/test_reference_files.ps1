@@ -154,9 +154,9 @@ $currentFile = 0
 foreach ($file in $referenceFiles) {
     $currentFile++
     $baseName = $file.BaseName
-    # Output files go to output directory
-    $objFile = "output\$baseName.obj"
-    $exeFile = "output\$baseName.exe"
+    # FlashCpp writes .obj to current directory (repo root), not source directory
+    $objFile = "$baseName.obj"
+    $exeFile = "$baseName.exe"
     
     Write-Host "[$currentFile/$totalFiles] Testing: $($file.Name)"
     
@@ -164,9 +164,9 @@ foreach ($file in $referenceFiles) {
     if (Test-Path $objFile) { Remove-Item $objFile -Force }
     if (Test-Path $exeFile) { Remove-Item $exeFile -Force }
     
-    # Compile with FlashCpp, output obj to output directory
-    $compileOutput = & .\$flashCppPath -o $objFile $file.FullName 2>&1 | Out-String
-
+    # Compile with FlashCpp
+    $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
+    
     # Check if compilation succeeded by verifying obj file was created
     if (Test-Path $objFile) {
         Write-Host "  [COMPILE OK]" -ForegroundColor Green
