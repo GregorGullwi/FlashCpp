@@ -28,7 +28,7 @@ jobs:
         shell: powershell
         run: |
           # Run the reference files test script
-          # This compiles and links all .cpp files in tests/Reference/
+          # This compiles and links all .cpp files in tests/
           # and fails the build if any compilation or linking errors occur
           .\tests\test_reference_files.ps1
           if ($LASTEXITCODE -ne 0) {
