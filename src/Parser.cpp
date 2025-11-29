@@ -3955,7 +3955,7 @@ ParseResult Parser::parse_struct_declaration()
 		// Save the current token position (right after the struct definition)
 		TokenPosition position_after_struct = save_token_position();
 
-		// Parse all delayed function bodies and attach them to the function nodes
+		// Parse all delayed function bodies using unified helper (Phase 5)
 		for (auto& delayed : delayed_function_bodies_) {
 			// Restore template parameter context for this delayed body
 			current_template_param_names_ = delayed.template_param_names;
@@ -3963,100 +3963,13 @@ ParseResult Parser::parse_struct_declaration()
 			// Restore token position to the start of the function body
 			restore_token_position(delayed.body_start);
 
-			if (delayed.is_constructor && delayed.ctor_node) {
-				gSymbolTable.enter_scope(ScopeType::Function);
-				current_function_ = nullptr;
-				
-				// Use Phase 5 helper to set up member function context
-				setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
-
-				for (const auto& param : delayed.ctor_node->parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& param_decl = param.as<DeclarationNode>();
-						gSymbolTable.insert(param_decl.identifier_token().value(), param);
-					}
-				}
-
-				auto block_result = parse_block();
-				if (block_result.is_error()) {
-					current_template_param_names_.clear();
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
-					struct_parsing_context_stack_.pop_back();
-					return block_result;
-				}
-
-				if (auto block = block_result.node()) {
-					delayed.ctor_node->set_definition(*block);
-				}
-
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
-			} else if (delayed.is_destructor && delayed.dtor_node) {
-				gSymbolTable.enter_scope(ScopeType::Function);
-				current_function_ = nullptr;
-				
-				// Use Phase 5 helper to set up member function context
-				setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
-
-				auto block_result = parse_block();
-				if (block_result.is_error()) {
-					current_template_param_names_.clear();
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
-					struct_parsing_context_stack_.pop_back();
-					return block_result;
-				}
-
-				if (auto block = block_result.node()) {
-					delayed.dtor_node->set_definition(*block);
-				}
-
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
-			} else if (delayed.func_node) {
-				// Parse regular member function body
-				gSymbolTable.enter_scope(ScopeType::Function);
-
-				// Set current function pointer
-				current_function_ = delayed.func_node;
-
-				// Use Phase 5 helper to set up member function context
-				setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
-
-				// Add parameters to symbol table
-				for (const auto& param : delayed.func_node->parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& param_decl = param.as<DeclarationNode>();
-						gSymbolTable.insert(param_decl.identifier_token().value(), param);
-					}
-				}
-
-				// Parse the function body
-				auto block_result = parse_block();
-				if (block_result.is_error()) {
-					FLASH_LOG(Parser, Error, "Failed to parse template member function body: ", 
-					          block_result.error_message());
-					// Clean up context
-					current_function_ = nullptr;
-					current_template_param_names_.clear();
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
-					struct_parsing_context_stack_.pop_back();
-					return block_result;
-				}
-				
-				if (block_result.node().has_value()) {
-					// Attach body to function node - this will be copied during instantiation
-					delayed.func_node->set_definition(*block_result.node());
-				} else {
-					FLASH_LOG(Parser, Warning, "parse_block returned success but no node for template member function");
-				}
-
-				// Clean up context
-				current_function_ = nullptr;
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
+			// Use Phase 5 unified delayed body parsing
+			std::optional<ASTNode> body;
+			auto result = parseDelayedFunctionBody(delayed, body);
+			if (result.is_error()) {
+				current_template_param_names_.clear();
+				struct_parsing_context_stack_.pop_back();
+				return result;
 			}
 
 			current_template_param_names_.clear();
@@ -4075,114 +3988,17 @@ ParseResult Parser::parse_struct_declaration()
 	// We'll restore this after parsing all delayed bodies
 	TokenPosition position_after_struct = save_token_position();
 
+	// Parse all delayed function bodies using unified helper (Phase 5)
 	for (auto& delayed : delayed_function_bodies_) {
 		// Restore token position to the start of the function body
 		restore_token_position(delayed.body_start);
 
-		if (delayed.is_constructor) {
-			// Parse constructor body
-			// Re-enter the scope for the constructor (we exited it when we delayed parsing)
-			gSymbolTable.enter_scope(ScopeType::Function);
-
-			// Set up member function context
-			current_function_ = nullptr;  // Constructors don't have a return type
-			
-			// Use Phase 5 helper to set up member function context
-			setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
-
-			// Add parameters to symbol table
-			for (const auto& param : delayed.ctor_node->parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					const auto& param_decl = param.as<DeclarationNode>();
-					gSymbolTable.insert(param_decl.identifier_token().value(), param);
-				}
-			}
-
-			// Parse the constructor body
-			auto block_result = parse_block();
-			if (block_result.is_error()) {
-				current_function_ = nullptr;
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
-				struct_parsing_context_stack_.pop_back();
-				return block_result;
-			}
-
-			// Attach body to constructor node
-			if (auto block = block_result.node()) {
-				delayed.ctor_node->set_definition(*block);
-			}
-
-			// Clean up context
-			current_function_ = nullptr;
-			member_function_context_stack_.pop_back();
-			gSymbolTable.exit_scope();
-
-		} else if (delayed.is_destructor) {
-			// Parse destructor body
-			gSymbolTable.enter_scope(ScopeType::Function);
-			current_function_ = nullptr;
-
-			// Use Phase 5 helper to set up member function context
-			setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
-
-			// Parse the destructor body
-			auto block_result = parse_block();
-			if (block_result.is_error()) {
-				current_function_ = nullptr;
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
-				struct_parsing_context_stack_.pop_back();
-				return block_result;
-			}
-
-			// Attach body to destructor node
-			if (auto block = block_result.node()) {
-				delayed.dtor_node->set_definition(*block);
-			}
-
-			// Clean up context
-			current_function_ = nullptr;
-			member_function_context_stack_.pop_back();
-			gSymbolTable.exit_scope();
-
-		} else {
-			// Parse regular member function body
-			gSymbolTable.enter_scope(ScopeType::Function);
-
-			// Set current function pointer for __func__, __PRETTY_FUNCTION__
-			current_function_ = delayed.func_node;
-
-			// Use Phase 5 helper to set up member function context
-			setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
-
-			// Add parameters to symbol table
-			for (const auto& param : delayed.func_node->parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					const auto& param_decl = param.as<DeclarationNode>();
-					gSymbolTable.insert(param_decl.identifier_token().value(), param);
-				}
-			}
-
-			// Parse the function body
-			auto block_result = parse_block();
-			if (block_result.is_error()) {
-				current_function_ = nullptr;
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
-				struct_parsing_context_stack_.pop_back();
-				return block_result;
-			}
-
-			// Attach body to function node
-			if (auto block = block_result.node()) {
-				delayed.func_node->set_definition(*block);
-			}
-
-			// Clean up context
-			current_function_ = nullptr;
-			member_function_context_stack_.pop_back();
-			gSymbolTable.exit_scope();
+		// Use Phase 5 unified delayed body parsing
+		std::optional<ASTNode> body;
+		auto result = parseDelayedFunctionBody(delayed, body);
+		if (result.is_error()) {
+			struct_parsing_context_stack_.pop_back();
+			return result;
 		}
 	}
 
@@ -6615,6 +6431,81 @@ void Parser::setupMemberFunctionContext(StructDeclarationNode* struct_node, std:
 
 	// Register member functions in symbol table for complete-class context
 	registerMemberFunctionsInScope(struct_node, struct_type_index);
+}
+
+// Phase 5: Helper to register function parameters in the symbol table
+void Parser::registerParametersInScope(const std::vector<ASTNode>& params) {
+	for (const auto& param : params) {
+		if (param.is<DeclarationNode>()) {
+			const auto& param_decl = param.as<DeclarationNode>();
+			gSymbolTable.insert(param_decl.identifier_token().value(), param);
+		} else if (param.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = param.as<VariableDeclarationNode>();
+			const DeclarationNode& param_decl = var_decl.declaration();
+			gSymbolTable.insert(param_decl.identifier_token().value(), param);
+		}
+	}
+}
+
+// Phase 5: Unified delayed function body parsing
+ParseResult Parser::parseDelayedFunctionBody(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body) {
+	out_body = std::nullopt;
+	
+	// Enter function scope
+	gSymbolTable.enter_scope(ScopeType::Function);
+	
+	// Set up member function context
+	setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
+	
+	// Get the appropriate function node and parameters
+	FunctionDeclarationNode* func_node = nullptr;
+	const std::vector<ASTNode>* params = nullptr;
+	
+	if (delayed.is_constructor && delayed.ctor_node) {
+		current_function_ = nullptr;  // Constructors don't have return type
+		params = &delayed.ctor_node->parameter_nodes();
+	} else if (delayed.is_destructor && delayed.dtor_node) {
+		current_function_ = nullptr;  // Destructors don't have return type
+		// Destructors have no parameters
+	} else if (delayed.func_node) {
+		func_node = delayed.func_node;
+		current_function_ = func_node;
+		params = &func_node->parameter_nodes();
+	}
+	
+	// Register parameters in symbol table
+	if (params) {
+		registerParametersInScope(*params);
+	}
+	
+	// Parse the function body
+	auto block_result = parse_block();
+	if (block_result.is_error()) {
+		// Clean up
+		current_function_ = nullptr;
+		member_function_context_stack_.pop_back();
+		gSymbolTable.exit_scope();
+		return block_result;
+	}
+	
+	// Set the body on the appropriate node
+	if (block_result.node().has_value()) {
+		out_body = *block_result.node();
+		if (delayed.is_constructor && delayed.ctor_node) {
+			delayed.ctor_node->set_definition(*block_result.node());
+		} else if (delayed.is_destructor && delayed.dtor_node) {
+			delayed.dtor_node->set_definition(*block_result.node());
+		} else if (delayed.func_node) {
+			delayed.func_node->set_definition(*block_result.node());
+		}
+	}
+	
+	// Clean up context
+	current_function_ = nullptr;
+	member_function_context_stack_.pop_back();
+	gSymbolTable.exit_scope();
+	
+	return ParseResult::success();
 }
 
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
