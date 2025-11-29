@@ -2437,15 +2437,15 @@ TEST_CASE("ConstExpr:Structs") {
 }
 
 TEST_CASE("ConstExpr:Complete") {
-	run_test_from_file("test_constexpr_complete.cpp", "Constexpr comprehensive test - all working features", true);
+	run_test_from_file("test_constexpr_complete.cpp", "Constexpr comprehensive test - all working features", false);
 }
 
 TEST_CASE("ConstExpr:Simple") {
-	run_test_from_file("test_constexpr_simple.cpp", "Constexpr simple test", true);
+	run_test_from_file("test_constexpr_simple.cpp", "Constexpr simple test", false);
 }
 
 TEST_CASE("ConstExpr:VarRef") {
-	run_test_from_file("test_constexpr_varref.cpp", "Constexpr variable references", true);
+	run_test_from_file("test_constexpr_varref.cpp", "Constexpr variable references", false);
 }
 
 TEST_CASE("ConstExpr:UB") {
@@ -2455,19 +2455,19 @@ TEST_CASE("ConstExpr:UB") {
 }
 
 TEST_CASE("RangedFor:Simple") {
-	run_test_from_file("test_range_for_simple.cpp", "Range-based for loop simple test", true);
+	run_test_from_file("test_range_for_simple.cpp", "Range-based for loop simple test", false);
 }
 
 TEST_CASE("RangedFor:Arrays") {
-	run_test_from_file("test_range_for.cpp", "Range-based for loop with arrays", true);
+	run_test_from_file("test_range_for.cpp", "Range-based for loop with arrays", false);
 }
 
 TEST_CASE("RangedFor:BeginEnd") {
-	run_test_from_file("test_range_for_begin_end.cpp", "Range-based for loop with begin/end methods", true);
+	run_test_from_file("test_range_for_begin_end.cpp", "Range-based for loop with begin/end methods", false);
 }
 
 TEST_CASE("RangedFor:ConstRef") {
-	run_test_from_file("test_range_for_const_ref.cpp", "Range-based for loop with const reference", true);
+	run_test_from_file("test_range_for_const_ref.cpp", "Range-based for loop with const reference", false);
 }
 
 TEST_CASE("Struct:PassingByReference") {
