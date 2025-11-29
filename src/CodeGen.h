@@ -3528,7 +3528,16 @@ private:
 			return { Type::FunctionPointer, 64, func_addr_var };
 		}
 
-		// If we get here, the symbol is not a DeclarationNode
+		// Check if it's a TemplateVariableDeclarationNode (variable template)
+		if (symbol->is<TemplateVariableDeclarationNode>()) {
+			// Variable template without instantiation - should not reach codegen
+			// The parser should have instantiated it already
+			assert(false && "Uninstantiated variable template in codegen");
+			return {};
+		}
+
+		// If we get here, the symbol is not a known type
+		std::cerr << "ERROR: Unknown symbol type for identifier '" << identifierNode.name() << "'\n";
 		assert(false && "Identifier is not a DeclarationNode");
 		return {};
 	}

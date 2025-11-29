@@ -8852,6 +8852,54 @@ ParseResult Parser::parse_primary_expression()
 			identifierType = lookup_symbol(idenfifier_token.value());
 		}
 		
+		// If identifier not found in symbol table, check if it's a class/struct type name
+		// This handles constructor calls like Widget(42)
+		if (!identifierType.has_value()) {
+			auto type_it = gTypesByName.find(std::string(idenfifier_token.value()));
+			if (type_it != gTypesByName.end() && peek_token().has_value() && peek_token()->value() == "(") {
+				// This is a constructor call - handle it directly here
+				consume_token();  // consume '('
+				
+				// Parse constructor arguments
+				ChunkedVector<ASTNode> args;
+				while (current_token_.has_value() && 
+				       (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")")) {
+					auto argResult = parse_expression();
+					if (argResult.is_error()) {
+						return argResult;
+					}
+					if (auto node = argResult.node()) {
+						args.push_back(*node);
+					}
+					
+					if (current_token_.has_value() && current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+						consume_token();  // consume ','
+					} else if (!current_token_.has_value() || current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+						return ParseResult::error("Expected ',' or ')' in constructor arguments", *current_token_);
+					}
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+				}
+				
+				// Create TypeSpecifierNode for the class
+				TypeIndex type_index = type_it->second->type_index_;
+				unsigned char type_size = 0;
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (type_info.struct_info_) {
+						type_size = static_cast<unsigned char>(type_info.struct_info_->total_size * 8);
+					}
+				}
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, idenfifier_token);
+				
+				// Create ConstructorCallNode
+				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+				return ParseResult::success(*result);
+			}
+		}
+		
 		// If the identifier is a template parameter reference, don't return yet
 		// We need to check if it's followed by '(' for a constructor call like T(42)
 		if (identifierType.has_value() && identifierType->is<TemplateParameterReferenceNode>()) {
@@ -9561,11 +9609,22 @@ ParseResult Parser::parse_primary_expression()
 					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(idenfifier_token.value());
 					if (var_template_opt.has_value()) {
 						auto instantiated_var = try_instantiate_variable_template(idenfifier_token.value(), *explicit_template_args);
-						if (instantiated_var.has_value() && instantiated_var->is<VariableDeclarationNode>()) {
-							const auto& var_decl = instantiated_var->as<VariableDeclarationNode>();
-							const auto& decl = var_decl.declaration();
+						if (instantiated_var.has_value()) {
+							// Could be VariableDeclarationNode (first instantiation) or DeclarationNode (already instantiated)
+							std::string_view inst_name;
+							if (instantiated_var->is<VariableDeclarationNode>()) {
+								const auto& var_decl = instantiated_var->as<VariableDeclarationNode>();
+								const auto& decl = var_decl.declaration();
+								inst_name = decl.identifier_token().value();
+							} else if (instantiated_var->is<DeclarationNode>()) {
+								const auto& decl = instantiated_var->as<DeclarationNode>();
+								inst_name = decl.identifier_token().value();
+							} else {
+								inst_name = idenfifier_token.value();  // Fallback
+							}
+							
 							// Return identifier reference to the instantiated variable
-							Token inst_token(Token::Type::Identifier, decl.identifier_token().value(), 
+							Token inst_token(Token::Type::Identifier, inst_name, 
 							                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 							result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 							return ParseResult::success(*result);
