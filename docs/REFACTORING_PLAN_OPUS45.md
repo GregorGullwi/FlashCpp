@@ -1157,7 +1157,7 @@ bool Parser::validateSignatureMatch(
 **Deliverables:**
 - [x] `validateSignatureMatch()` implementation - returns `SignatureValidationResult` with detailed mismatch info
 - [x] Out-of-line member validation unified - replaced ~80 lines of validation code with single method call
-- [ ] Out-of-line template validation unified (deferred - templates use delayed instantiation)
+- [x] Out-of-line template validation unified - `try_parse_out_of_line_template_member()` now validates against template class declarations
 
 ---
 
