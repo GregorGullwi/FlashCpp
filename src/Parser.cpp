@@ -12241,9 +12241,9 @@ ParseResult Parser::parse_template_declaration() {
 	// Now parse what comes after the template parameter list
 	// We support function templates and class templates
 
-	// Add template parameters to the type system temporarily
+	// Add template parameters to the type system temporarily using RAII scope guard (Phase 6)
 	// This allows them to be used in the function body or class members
-	std::vector<TypeInfo*> template_type_infos;
+	FlashCpp::TemplateParameterScope template_scope;
 	std::vector<std::string_view> template_param_names;  // string_view from Token storage
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
@@ -12259,22 +12259,10 @@ ParseResult Parser::parse_template_declaration() {
 				// Create a TypeInfo entry for the template parameter
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name_, &type_info);
-				template_type_infos.push_back(&type_info);
+				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
 		}
 	}
-
-	// RAII cleanup for template parameters registered in gTypesByName
-	// This ensures cleanup happens on ALL return paths (success or error)
-	struct TemplateParamCleanup {
-		std::vector<TypeInfo*>& type_infos;
-		~TemplateParamCleanup() {
-			for (const auto* type_info : type_infos) {
-				gTypesByName.erase(type_info->name_);
-				// Note: We don't remove from gTypeInfo because it's a deque and removing would invalidate pointers
-			}
-		}
-	} cleanup_guard{template_type_infos};
 
 	// Check if it's a concept template: template<typename T> concept Name = ...;
 	bool is_concept_template = peek_token().has_value() &&
