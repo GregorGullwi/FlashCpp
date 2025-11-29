@@ -3308,13 +3308,68 @@ ParseResult Parser::parse_struct_declaration()
 				}
 			}
 
-			// Expect semicolon after member declaration
+			// Add the first member to struct with current access level and default initializer
+			struct_ref.add_member(*member_result.node(), current_access, default_initializer);
+
+			// Check for comma-separated additional declarations (e.g., int x, y, z;)
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume ','
+
+				// Parse the identifier (name) - reuse the same type
+				auto identifier_token = consume_token();
+				if (!identifier_token || identifier_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after comma in member declaration list", *identifier_token);
+				}
+
+				// Create a new DeclarationNode with the same type
+				ASTNode new_decl = emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(type_spec),
+					*identifier_token
+				);
+
+				// Check for optional initialization for this member
+				std::optional<ASTNode> additional_init;
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+				    peek_token()->value() == "{") {
+					auto init_result = parse_brace_initializer(type_spec);
+					if (init_result.is_error()) {
+						return init_result;
+					}
+					if (init_result.node().has_value()) {
+						additional_init = *init_result.node();
+					}
+				}
+				else if (peek_token().has_value() && peek_token()->value() == "=") {
+					consume_token(); // consume '='
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+					    peek_token()->value() == "{") {
+						auto init_result = parse_brace_initializer(type_spec);
+						if (init_result.is_error()) {
+							return init_result;
+						}
+						if (init_result.node().has_value()) {
+							additional_init = *init_result.node();
+						}
+					} else {
+						// Parse expression with precedence > comma operator (precedence 1)
+						auto init_result = parse_expression(2);
+						if (init_result.is_error()) {
+							return init_result;
+						}
+						if (init_result.node().has_value()) {
+							additional_init = *init_result.node();
+						}
+					}
+				}
+
+				// Add this member to the struct
+				struct_ref.add_member(new_decl, current_access, additional_init);
+			}
+
+			// Expect semicolon after member declaration(s)
 			if (!consume_punctuator(";")) {
 				return ParseResult::error("Expected ';' after struct member declaration", *peek_token());
 			}
-
-			// Add member to struct with current access level and default initializer
-			struct_ref.add_member(*member_result.node(), current_access, default_initializer);
 		}
 	}
 
@@ -4994,6 +5049,26 @@ ParseResult Parser::parse_typedef_declaration()
 			auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
 			members.push_back({member_decl_node, current_access, std::nullopt});
 			struct_ref.add_member(member_decl_node, current_access, std::nullopt);
+
+			// Handle comma-separated declarations (e.g., int x, y, z;)
+			const TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume ','
+
+				// Parse the next member name
+				auto next_member_name = consume_token();
+				if (!next_member_name.has_value() || next_member_name->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected member name after comma", next_member_name.value_or(Token()));
+				}
+
+				// Create declaration with same type
+				auto next_member_decl = emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(member_type_spec),
+					*next_member_name
+				);
+				members.push_back({next_member_decl, current_access, std::nullopt});
+				struct_ref.add_member(next_member_decl, current_access, std::nullopt);
+			}
 
 			// Expect semicolon
 			if (!consume_punctuator(";")) {
@@ -12855,6 +12930,37 @@ ParseResult Parser::parse_template_declaration() {
 
 					struct_ref.add_member(*member_result.node(), current_access, default_initializer);
 
+					// Handle comma-separated declarations (e.g., int x, y, z;)
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+						consume_token(); // consume ','
+
+						// Parse the next member name
+						auto next_member_name = consume_token();
+						if (!next_member_name.has_value() || next_member_name->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected member name after comma", *peek_token());
+						}
+
+						// Check for optional initialization
+						std::optional<ASTNode> additional_init;
+						if (peek_token().has_value() && peek_token()->value() == "=") {
+							consume_token(); // consume '='
+							auto init_result = parse_expression(2);
+							if (init_result.is_error()) {
+								return init_result;
+							}
+							if (init_result.node().has_value()) {
+								additional_init = *init_result.node();
+							}
+						}
+
+						// Create declaration with same type
+						ASTNode next_member_decl = emplace_node<DeclarationNode>(
+							emplace_node<TypeSpecifierNode>(type_spec),
+							*next_member_name
+						);
+						struct_ref.add_member(next_member_decl, current_access, additional_init);
+					}
+
 					// Consume semicolon
 					if (!consume_punctuator(";")) {
 						return ParseResult::error("Expected ';' after member declaration", *peek_token());
@@ -13515,6 +13621,9 @@ ParseResult Parser::parse_template_declaration() {
 					// Data member - need to handle default initializers (e.g., `T* ptr = nullptr;`)
 					ASTNode member_node = *member_result.node();
 					if (member_node.is<DeclarationNode>()) {
+						const DeclarationNode& decl_node = member_node.as<DeclarationNode>();
+						const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+
 						// Check for default initializer
 						std::optional<ASTNode> default_initializer;
 						if (peek_token().has_value() && peek_token()->value() == "=") {
@@ -13529,6 +13638,37 @@ ParseResult Parser::parse_template_declaration() {
 							}
 						}
 						struct_ref.add_member(member_node, current_access, default_initializer);
+
+						// Handle comma-separated declarations (e.g., int x, y, z;)
+						while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+							consume_token(); // consume ','
+
+							// Parse the next member name
+							auto next_member_name = consume_token();
+							if (!next_member_name.has_value() || next_member_name->type() != Token::Type::Identifier) {
+								return ParseResult::error("Expected member name after comma", *peek_token());
+							}
+
+							// Check for optional initialization
+							std::optional<ASTNode> additional_init;
+							if (peek_token().has_value() && peek_token()->value() == "=") {
+								consume_token(); // consume '='
+								auto init_result = parse_expression(2);
+								if (init_result.is_error()) {
+									return init_result;
+								}
+								if (init_result.node().has_value()) {
+									additional_init = *init_result.node();
+								}
+							}
+
+							// Create declaration with same type
+							ASTNode next_member_decl = emplace_node<DeclarationNode>(
+								emplace_node<TypeSpecifierNode>(type_spec),
+								*next_member_name
+							);
+							struct_ref.add_member(next_member_decl, current_access, additional_init);
+						}
 					}
 					// Consume semicolon after data member
 					if (!consume_punctuator(";")) {
