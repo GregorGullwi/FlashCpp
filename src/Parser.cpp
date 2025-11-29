@@ -3318,7 +3318,7 @@ ParseResult Parser::parse_struct_declaration()
 				// Parse the identifier (name) - reuse the same type
 				auto identifier_token = consume_token();
 				if (!identifier_token || identifier_token->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected identifier after comma in member declaration list", *identifier_token);
+					return ParseResult::error("Expected identifier after comma in member declaration list", *current_token_);
 				}
 
 				// Create a new DeclarationNode with the same type
@@ -5058,7 +5058,7 @@ ParseResult Parser::parse_typedef_declaration()
 				// Parse the next member name
 				auto next_member_name = consume_token();
 				if (!next_member_name.has_value() || next_member_name->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected member name after comma", next_member_name.value_or(Token()));
+					return ParseResult::error("Expected member name after comma", *current_token_);
 				}
 
 				// Create declaration with same type
