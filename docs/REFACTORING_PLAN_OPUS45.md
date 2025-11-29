@@ -1085,10 +1085,12 @@ ParseResult Parser::parseFunctionBodyWithContext(
 1. Update `parse_template_declaration()` to use:
    - [x] `TemplateParameterScope` for cleanup (replaced local struct with shared RAII guard)
    - [x] `parseParameterList()` via `parse_function_declaration()` - template functions benefit from Phase 1 through the existing call chain
+   - [x] `parseTemplateFunctionDeclarationBody()` - shared helper for function template declaration parsing
 
 2. Update `parse_member_function_template()` to use:
    - [x] `TemplateParameterScope` for cleanup (already implemented in Phase 3)
    - [x] `parseParameterList()` via `parse_function_declaration()` - member function templates benefit from Phase 1 through the existing call chain
+   - [x] `parseTemplateFunctionDeclarationBody()` - shared helper for function template declaration parsing
 
 3. Update `try_parse_out_of_line_template_member()` to use:
    - [x] `parseParameterList()` (Phase 1) for parameters
@@ -1101,12 +1103,16 @@ ParseResult Parser::parseFunctionBodyWithContext(
    - [x] `try_instantiate_member_function_template_explicit()`
    - [x] `parseTemplateBody()`
 
+5. **NEW: Shared Template Function Declaration Helper:**
+   - [x] Implemented `parseTemplateFunctionDeclarationBody()` method
+   - [x] Handles: type_and_name + function_declaration + trailing requires + body handling
+   - [x] Eliminates ~90 lines of duplicated code between `parse_template_declaration()` and `parse_member_function_template()`
+
 **Deliverables:**
 - [x] All template paths use RAII cleanup (`TemplateParameterScope`) - **eliminated all manual gTypesByName.erase() calls**
 - [x] Shared parameter parsing - all template functions use `parseParameterList()` through `parse_function_declaration()`
 - [x] Consistent error handling through RAII guards
-
-**Note:** Direct `parseFunctionHeader()` integration was considered but would require significant restructuring of the template parsing flow. The current architecture already benefits from Phase 1-3 infrastructure through the existing call chain (`parse_template_declaration()` → `parse_function_declaration()` → `parseParameterList()`).
+- [x] **Shared header parsing** - `parseTemplateFunctionDeclarationBody()` used by both `parse_template_declaration()` and `parse_member_function_template()`
 
 ---
 

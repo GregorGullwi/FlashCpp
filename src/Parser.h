@@ -425,6 +425,13 @@ private:
         ParseResult parse_concept_declaration();   // NEW: Parse C++20 concept declarations
        ParseResult parse_requires_expression();   // NEW: Parse C++20 requires expressions
         ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member function templates
+        // Phase 6: Shared helper for template function declaration parsing
+        // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
+        // Returns the TemplateFunctionDeclarationNode in out_template_node
+        ParseResult parseTemplateFunctionDeclarationBody(
+            std::vector<ASTNode>& template_params,
+            std::optional<ASTNode> requires_clause,
+            ASTNode& out_template_node);
         ParseResult parse_template_parameter_list(std::vector<ASTNode>& out_params);  // NEW: Parse template parameter list
         ParseResult parse_template_parameter();  // NEW: Parse a single template parameter
         ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
