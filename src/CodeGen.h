@@ -594,9 +594,9 @@ private:
 		try {
 			return node.as<DeclarationNode>();
 		} catch (...) {
-			std::cerr << "BAD DeclarationNode cast in " << context
-			          << ": type_name=" << node.type_name()
-			          << " has_value=" << node.has_value() << "\n";
+			FLASH_LOG(Codegen, Error, "BAD DeclarationNode cast in ", context,
+			          ": type_name=", node.type_name(),
+			          " has_value=", node.has_value());
 			throw;
 		}
 	}
@@ -941,12 +941,12 @@ private:
 						visitDestructorDeclarationNode(func_decl.as<DestructorDeclarationNode>());
 					}
 				} catch (const std::exception& ex) {
-					std::cerr << "ERROR: Exception while visiting member function in struct "
-					          << struct_name << ": " << ex.what() << "\n";
+					FLASH_LOG(Codegen, Error, "Exception while visiting member function in struct ",
+					          struct_name, ": ", ex.what());
 					throw;
 				} catch (...) {
-					std::cerr << "ERROR: Unknown exception while visiting member function in struct "
-					          << struct_name << "\n";
+					FLASH_LOG(Codegen, Error, "Unknown exception while visiting member function in struct ",
+					          struct_name);
 					throw;
 				}
 			}
@@ -955,7 +955,7 @@ private:
 			// Visit nested classes recursively
 			for (const auto& nested_class_node : node.nested_classes()) {
 				if (nested_class_node.is<StructDeclarationNode>()) {
-					std::cerr << "  Visiting nested class\n";
+					FLASH_LOG(Codegen, Debug, "  Visiting nested class");
 					visitStructDeclarationNode(nested_class_node.as<StructDeclarationNode>());
 				}
 			}
@@ -1731,8 +1731,8 @@ private:
 			auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
 			
 			if (!result.success) {
-				std::cerr << "Error: if constexpr condition is not a constant expression: " 
-				          << result.error_message << std::endl;
+				FLASH_LOG(Codegen, Error, "if constexpr condition is not a constant expression: ", 
+				          result.error_message);
 				return;
 			}
 
@@ -2200,13 +2200,13 @@ private:
 		
 		// Check what kind of range expression we have
 		if (!range_expr.is<ExpressionNode>()) {
-			std::cerr << "error: Range expression must be an expression\n";
+			FLASH_LOG(Codegen, Error, "Range expression must be an expression");
 			return;
 		}
 
 		auto& expr_variant = range_expr.as<ExpressionNode>();
 		if (!std::holds_alternative<IdentifierNode>(expr_variant)) {
-			std::cerr << "error: Currently only identifiers are supported as range expressions\n";
+			FLASH_LOG(Codegen, Error, "Currently only identifiers are supported as range expressions");
 			return;
 		}
 
@@ -2216,7 +2216,7 @@ private:
 		// Look up the range object in the symbol table
 		const std::optional<ASTNode> range_symbol = symbol_table.lookup(range_name);
 		if (!range_symbol.has_value() || !range_symbol->is<DeclarationNode>()) {
-			std::cerr << "error: Range object '" << range_name << "' not found in symbol table\n";
+			FLASH_LOG(Codegen, Error, "Range object '", range_name, "' not found in symbol table");
 			return;
 		}
 
@@ -2226,7 +2226,7 @@ private:
 		// C++ standard: pointers are NOT valid range expressions (no size information)
 		// Only arrays and types with begin()/end() are allowed
 		if (range_type.pointer_depth() > 0 && !range_decl.is_array()) {
-			std::cerr << "error: Cannot use pointer in range-based for loop; use array or type with begin()/end()\n";
+			FLASH_LOG(Codegen, Error, "Cannot use pointer in range-based for loop; use array or type with begin()/end()");
 			return;
 		}
 
@@ -2242,7 +2242,7 @@ private:
 			                       loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		else {
-			std::cerr << "error: Range expression must be an array or a type with begin()/end() methods\n";
+			FLASH_LOG(Codegen, Error, "Range expression must be an array or a type with begin()/end() methods");
 			return;
 		}
 	}
@@ -2260,7 +2260,7 @@ private:
 		// Get array size
 		auto array_size_node = array_decl.array_size();
 		if (!array_size_node.has_value()) {
-			std::cerr << "error: Array must have a known size for range-based for loop\n";
+			FLASH_LOG(Codegen, Error, "Array must have a known size for range-based for loop");
 			return;
 		}
 
