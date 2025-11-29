@@ -928,9 +928,9 @@ inline void FunctionScopeGuard::injectThisPointer() {
 ```
 
 **Deliverables:**
-- [ ] `TemplateParameterScope` class
-- [ ] `FunctionScopeGuard` class
-- [ ] All manual cleanup replaced with RAII
+- [x] `TemplateParameterScope` class
+- [x] `FunctionScopeGuard` class (including `SymbolTableScope`)
+- [ ] All manual cleanup replaced with RAII (partial - key patterns replaced, more can be done incrementally)
 
 ---
 

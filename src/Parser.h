@@ -21,6 +21,7 @@
 #include "CompileContext.h"
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
 #include "ParserTypes.h"       // Unified parsing types (Phase 1)
+#include "ParserScopeGuards.h" // RAII scope guards (Phase 3)
 
 #ifndef WITH_DEBUG_INFO
 #define WITH_DEBUG_INFO 0
@@ -572,3 +573,58 @@ struct TypedNumeric {
         unsigned char sizeInBits = 0;
         NumericLiteralValue value = 0ULL;
 };
+
+// =============================================================================
+// Phase 3: Inline implementations for scope guards that need Parser internals
+// =============================================================================
+
+namespace FlashCpp {
+
+// FunctionScopeGuard::addParameters implementation
+// Adds function parameters to the symbol table within the function scope
+inline void FunctionScopeGuard::addParameters(const std::vector<ASTNode>& params) {
+	for (const auto& param : params) {
+		if (param.is<DeclarationNode>()) {
+			const auto& param_decl_node = param.as<DeclarationNode>();
+			const Token& param_token = param_decl_node.identifier_token();
+			gSymbolTable.insert(param_token.value(), param);
+		}
+	}
+}
+
+// FunctionScopeGuard::injectThisPointer implementation
+// Creates and injects 'this' pointer for member functions
+inline void FunctionScopeGuard::injectThisPointer() {
+	// Only inject 'this' for member functions, constructors, and destructors
+	if (ctx_.kind != FunctionKind::Member &&
+	    ctx_.kind != FunctionKind::Constructor &&
+	    ctx_.kind != FunctionKind::Destructor) {
+		return;
+	}
+	
+	// Find the parent struct type
+	auto type_it = gTypesByName.find(ctx_.parent_struct_name);
+	if (type_it == gTypesByName.end()) {
+		return;  // Can't inject 'this' without knowing the struct type
+	}
+	
+	// Create 'this' pointer type: StructName*
+	// Note: This creates a temporary node that will be cleaned up with the scope
+	TypeSpecifierNode this_type_node(
+		Type::Struct, 
+		type_it->second->type_index_,
+		64,  // Pointer size in bits
+		Token()
+	);
+	this_type_node.add_pointer_level();
+	
+	// Create a declaration node for 'this'
+	Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+	ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(this_type_node);
+	ASTNode this_decl = ASTNode::emplace_node<DeclarationNode>(type_node, this_token);
+	
+	// Insert 'this' into the symbol table
+	gSymbolTable.insert("this", this_decl);
+}
+
+} // namespace FlashCpp
