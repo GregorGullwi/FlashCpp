@@ -708,22 +708,29 @@ private:
 		func_decl_op.linkage = node.linkage();
 		func_decl_op.is_variadic = node.is_variadic();
 
-		// Generate mangled name now while we have full type information with CV-qualifiers
-		// Extract parameter types for mangling
-		std::vector<TypeSpecifierNode> param_types_for_mangling;
-		for (const auto& param : node.parameter_nodes()) {
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+		// Use pre-computed mangled name from AST node if available (Phase 6 migration)
+		// Fall back to generating it here if not (for backward compatibility during migration)
+		std::string_view mangled_name;
+		if (node.has_mangled_name()) {
+			mangled_name = node.mangled_name();
+		} else {
+			// Generate mangled name now while we have full type information with CV-qualifiers
+			// Extract parameter types for mangling
+			std::vector<TypeSpecifierNode> param_types_for_mangling;
+			for (const auto& param : node.parameter_nodes()) {
+				const DeclarationNode& param_decl = param.as<DeclarationNode>();
+				param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+			}
+			
+			mangled_name = generateMangledNameForCall(
+				std::string(func_decl.identifier_token().value()),
+				ret_type,
+				param_types_for_mangling,
+				node.is_variadic(),
+				node.is_member_function() ? std::string(struct_name_for_function) : "",
+				current_namespace_stack_
+			);
 		}
-		
-		std::string_view mangled_name = generateMangledNameForCall(
-			std::string(func_decl.identifier_token().value()),
-			ret_type,
-			param_types_for_mangling,
-			node.is_variadic(),
-			node.is_member_function() ? std::string(struct_name_for_function) : "",
-			current_namespace_stack_
-		);
 		func_decl_op.mangled_name = std::string(mangled_name);
 
 		// Add parameters to function declaration
