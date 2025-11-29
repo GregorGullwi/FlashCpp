@@ -3966,52 +3966,9 @@ ParseResult Parser::parse_struct_declaration()
 			if (delayed.is_constructor && delayed.ctor_node) {
 				gSymbolTable.enter_scope(ScopeType::Function);
 				current_function_ = nullptr;
-				member_function_context_stack_.push_back({
-					delayed.struct_name,
-					delayed.struct_type_index,
-					delayed.struct_node
-				});
-
-				// Add member functions to symbol table so they can be called within the body
-				// This implements C++20's complete-class context for inline member function bodies
-				if (delayed.struct_node) {
-					for (const auto& member_func : delayed.struct_node->member_functions()) {
-						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
-							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
-						}
-					}
-					// Also add inherited member functions from base classes
-					if (delayed.struct_type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info) {
-							std::vector<TypeIndex> base_classes_to_search;
-							for (const auto& base : struct_info->base_classes) {
-								base_classes_to_search.push_back(base.type_index);
-							}
-							for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
-								TypeIndex base_idx = base_classes_to_search[i];
-								if (base_idx >= gTypeInfo.size()) continue;
-								const TypeInfo& base_type_info = gTypeInfo[base_idx];
-								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-								if (!base_struct_info) continue;
-								for (const auto& member_func : base_struct_info->member_functions) {
-									if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-										gSymbolTable.insert(member_func.name, member_func.function_decl);
-									}
-								}
-								for (const auto& nested_base : base_struct_info->base_classes) {
-									bool already_in_list = false;
-									for (TypeIndex existing : base_classes_to_search) {
-										if (existing == nested_base.type_index) { already_in_list = true; break; }
-									}
-									if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
-								}
-							}
-						}
-					}
-				}
+				
+				// Use Phase 5 helper to set up member function context
+				setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
 
 				for (const auto& param : delayed.ctor_node->parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
@@ -4038,52 +3995,9 @@ ParseResult Parser::parse_struct_declaration()
 			} else if (delayed.is_destructor && delayed.dtor_node) {
 				gSymbolTable.enter_scope(ScopeType::Function);
 				current_function_ = nullptr;
-				member_function_context_stack_.push_back({
-					delayed.struct_name,
-					delayed.struct_type_index,
-					delayed.struct_node
-				});
-
-				// Add member functions to symbol table so they can be called within the body
-				// This implements C++20's complete-class context for inline member function bodies
-				if (delayed.struct_node) {
-					for (const auto& member_func : delayed.struct_node->member_functions()) {
-						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
-							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
-						}
-					}
-					// Also add inherited member functions from base classes
-					if (delayed.struct_type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info) {
-							std::vector<TypeIndex> base_classes_to_search;
-							for (const auto& base : struct_info->base_classes) {
-								base_classes_to_search.push_back(base.type_index);
-							}
-							for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
-								TypeIndex base_idx = base_classes_to_search[i];
-								if (base_idx >= gTypeInfo.size()) continue;
-								const TypeInfo& base_type_info = gTypeInfo[base_idx];
-								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-								if (!base_struct_info) continue;
-								for (const auto& member_func : base_struct_info->member_functions) {
-									if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-										gSymbolTable.insert(member_func.name, member_func.function_decl);
-									}
-								}
-								for (const auto& nested_base : base_struct_info->base_classes) {
-									bool already_in_list = false;
-									for (TypeIndex existing : base_classes_to_search) {
-										if (existing == nested_base.type_index) { already_in_list = true; break; }
-									}
-									if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
-								}
-							}
-						}
-					}
-				}
+				
+				// Use Phase 5 helper to set up member function context
+				setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
 
 				auto block_result = parse_block();
 				if (block_result.is_error()) {
@@ -4107,53 +4021,8 @@ ParseResult Parser::parse_struct_declaration()
 				// Set current function pointer
 				current_function_ = delayed.func_node;
 
-				// Set up member function context
-				member_function_context_stack_.push_back({
-					delayed.struct_name,
-					delayed.struct_type_index,
-					delayed.struct_node
-				});
-
-				// Add member functions to symbol table so they can be called within the body
-				// This implements C++20's complete-class context for inline member function bodies
-				if (delayed.struct_node) {
-					for (const auto& member_func : delayed.struct_node->member_functions()) {
-						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
-							gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
-						}
-					}
-					// Also add inherited member functions from base classes
-					if (delayed.struct_type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info) {
-							std::vector<TypeIndex> base_classes_to_search;
-							for (const auto& base : struct_info->base_classes) {
-								base_classes_to_search.push_back(base.type_index);
-							}
-							for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
-								TypeIndex base_idx = base_classes_to_search[i];
-								if (base_idx >= gTypeInfo.size()) continue;
-								const TypeInfo& base_type_info = gTypeInfo[base_idx];
-								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-								if (!base_struct_info) continue;
-								for (const auto& member_func : base_struct_info->member_functions) {
-									if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-										gSymbolTable.insert(member_func.name, member_func.function_decl);
-									}
-								}
-								for (const auto& nested_base : base_struct_info->base_classes) {
-									bool already_in_list = false;
-									for (TypeIndex existing : base_classes_to_search) {
-										if (existing == nested_base.type_index) { already_in_list = true; break; }
-									}
-									if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
-								}
-							}
-						}
-					}
-				}
+				// Use Phase 5 helper to set up member function context
+				setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
 
 				// Add parameters to symbol table
 				for (const auto& param : delayed.func_node->parameter_nodes()) {
@@ -4217,52 +4086,9 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Set up member function context
 			current_function_ = nullptr;  // Constructors don't have a return type
-			member_function_context_stack_.push_back({
-				delayed.struct_name,
-				delayed.struct_type_index,
-				delayed.struct_node
-			});
-
-			// Add member functions to symbol table so they can be called within the body
-			// This implements C++20's complete-class context for inline member function bodies
-			if (delayed.struct_node) {
-				for (const auto& member_func : delayed.struct_node->member_functions()) {
-					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
-						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
-					}
-				}
-				// Also add inherited member functions from base classes
-				if (delayed.struct_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					if (struct_info) {
-						std::vector<TypeIndex> base_classes_to_search;
-						for (const auto& base : struct_info->base_classes) {
-							base_classes_to_search.push_back(base.type_index);
-						}
-						for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
-							TypeIndex base_idx = base_classes_to_search[i];
-							if (base_idx >= gTypeInfo.size()) continue;
-							const TypeInfo& base_type_info = gTypeInfo[base_idx];
-							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-							if (!base_struct_info) continue;
-							for (const auto& member_func : base_struct_info->member_functions) {
-								if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-									gSymbolTable.insert(member_func.name, member_func.function_decl);
-								}
-							}
-							for (const auto& nested_base : base_struct_info->base_classes) {
-								bool already_in_list = false;
-								for (TypeIndex existing : base_classes_to_search) {
-									if (existing == nested_base.type_index) { already_in_list = true; break; }
-								}
-								if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
-							}
-						}
-					}
-				}
-			}
+			
+			// Use Phase 5 helper to set up member function context
+			setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
 
 			// Add parameters to symbol table
 			for (const auto& param : delayed.ctor_node->parameter_nodes()) {
@@ -4297,53 +4123,8 @@ ParseResult Parser::parse_struct_declaration()
 			gSymbolTable.enter_scope(ScopeType::Function);
 			current_function_ = nullptr;
 
-			// Set up member function context
-			member_function_context_stack_.push_back({
-				delayed.struct_name,
-				delayed.struct_type_index,
-				delayed.struct_node
-			});
-
-			// Add member functions to symbol table so they can be called within the body
-			// This implements C++20's complete-class context for inline member function bodies
-			if (delayed.struct_node) {
-				for (const auto& member_func : delayed.struct_node->member_functions()) {
-					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
-						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
-					}
-				}
-				// Also add inherited member functions from base classes
-				if (delayed.struct_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					if (struct_info) {
-						std::vector<TypeIndex> base_classes_to_search;
-						for (const auto& base : struct_info->base_classes) {
-							base_classes_to_search.push_back(base.type_index);
-						}
-						for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
-							TypeIndex base_idx = base_classes_to_search[i];
-							if (base_idx >= gTypeInfo.size()) continue;
-							const TypeInfo& base_type_info = gTypeInfo[base_idx];
-							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-							if (!base_struct_info) continue;
-							for (const auto& member_func : base_struct_info->member_functions) {
-								if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-									gSymbolTable.insert(member_func.name, member_func.function_decl);
-								}
-							}
-							for (const auto& nested_base : base_struct_info->base_classes) {
-								bool already_in_list = false;
-								for (TypeIndex existing : base_classes_to_search) {
-									if (existing == nested_base.type_index) { already_in_list = true; break; }
-								}
-								if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
-							}
-						}
-					}
-				}
-			}
+			// Use Phase 5 helper to set up member function context
+			setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
 
 			// Parse the destructor body
 			auto block_result = parse_block();
@@ -4372,53 +4153,8 @@ ParseResult Parser::parse_struct_declaration()
 			// Set current function pointer for __func__, __PRETTY_FUNCTION__
 			current_function_ = delayed.func_node;
 
-			// Set up member function context
-			member_function_context_stack_.push_back({
-				delayed.struct_name,
-				delayed.struct_type_index,
-				delayed.struct_node
-			});
-
-			// Add member functions to symbol table so they can be called within the body
-			// This implements C++20's complete-class context for inline member function bodies
-			if (delayed.struct_node) {
-				for (const auto& member_func : delayed.struct_node->member_functions()) {
-					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
-						gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
-					}
-				}
-				// Also add inherited member functions from base classes
-				if (delayed.struct_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[delayed.struct_type_index];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					if (struct_info) {
-						std::vector<TypeIndex> base_classes_to_search;
-						for (const auto& base : struct_info->base_classes) {
-							base_classes_to_search.push_back(base.type_index);
-						}
-						for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
-							TypeIndex base_idx = base_classes_to_search[i];
-							if (base_idx >= gTypeInfo.size()) continue;
-							const TypeInfo& base_type_info = gTypeInfo[base_idx];
-							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-							if (!base_struct_info) continue;
-							for (const auto& member_func : base_struct_info->member_functions) {
-								if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-									gSymbolTable.insert(member_func.name, member_func.function_decl);
-								}
-							}
-							for (const auto& nested_base : base_struct_info->base_classes) {
-								bool already_in_list = false;
-								for (TypeIndex existing : base_classes_to_search) {
-									if (existing == nested_base.type_index) { already_in_list = true; break; }
-								}
-								if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
-							}
-						}
-					}
-				}
-			}
+			// Use Phase 5 helper to set up member function context
+			setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
 
 			// Add parameters to symbol table
 			for (const auto& param : delayed.func_node->parameter_nodes()) {
@@ -6821,6 +6557,64 @@ ParseResult Parser::parseFunctionBodyWithContext(
 	// func_scope automatically exits scope when destroyed
 
 	return ParseResult::success();
+}
+
+// Phase 5: Helper method to register member functions in the symbol table
+// This implements C++20's complete-class context for inline member function bodies
+void Parser::registerMemberFunctionsInScope(StructDeclarationNode* struct_node, size_t struct_type_index) {
+	// Add member functions from the struct itself
+	if (struct_node) {
+		for (const auto& member_func : struct_node->member_functions()) {
+			if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+				const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+				gSymbolTable.insert(func_decl.decl_node().identifier_token().value(), member_func.function_declaration);
+			}
+		}
+	}
+
+	// Also add inherited member functions from base classes
+	if (struct_type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[struct_type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		if (struct_info) {
+			std::vector<TypeIndex> base_classes_to_search;
+			for (const auto& base : struct_info->base_classes) {
+				base_classes_to_search.push_back(base.type_index);
+			}
+			for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+				TypeIndex base_idx = base_classes_to_search[i];
+				if (base_idx >= gTypeInfo.size()) continue;
+				const TypeInfo& base_type_info = gTypeInfo[base_idx];
+				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+				if (!base_struct_info) continue;
+				for (const auto& member_func : base_struct_info->member_functions) {
+					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+						gSymbolTable.insert(member_func.name, member_func.function_decl);
+					}
+				}
+				for (const auto& nested_base : base_struct_info->base_classes) {
+					bool already_in_list = false;
+					for (TypeIndex existing : base_classes_to_search) {
+						if (existing == nested_base.type_index) { already_in_list = true; break; }
+					}
+					if (!already_in_list) base_classes_to_search.push_back(nested_base.type_index);
+				}
+			}
+		}
+	}
+}
+
+// Phase 5: Helper method to set up member function context and scope
+void Parser::setupMemberFunctionContext(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index) {
+	// Push member function context
+	member_function_context_stack_.push_back({
+		struct_name,
+		struct_type_index,
+		struct_node
+	});
+
+	// Register member functions in symbol table for complete-class context
+	registerMemberFunctionsInScope(struct_node, struct_type_index);
 }
 
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
