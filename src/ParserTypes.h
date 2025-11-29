@@ -83,4 +83,31 @@ struct ParsedFunctionHeader {
 	std::optional<ASTNode> trailing_return_type;
 };
 
+// Result of signature validation (Phase 7)
+enum class SignatureMismatch {
+	None,                        // Signatures match
+	ParameterCount,              // Different number of parameters
+	ParameterType,               // Parameter types don't match
+	ParameterCVQualifier,        // Pointer/reference CV qualifiers don't match
+	ParameterPointerLevel,       // Pointer level CV qualifiers don't match
+	ReturnType,                  // Return types don't match
+	InternalError                // Could not extract type information
+};
+
+struct SignatureValidationResult {
+	SignatureMismatch mismatch = SignatureMismatch::None;
+	size_t parameter_index = 0;  // Which parameter failed (1-based), if applicable
+	std::string error_message;   // Detailed error message
+
+	bool is_match() const { return mismatch == SignatureMismatch::None; }
+	
+	static SignatureValidationResult success() {
+		return SignatureValidationResult{SignatureMismatch::None, 0, ""};
+	}
+	
+	static SignatureValidationResult error(SignatureMismatch m, size_t param_idx = 0, std::string msg = "") {
+		return SignatureValidationResult{m, param_idx, std::move(msg)};
+	}
+};
+
 } // namespace FlashCpp

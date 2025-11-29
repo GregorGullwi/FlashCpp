@@ -1508,92 +1508,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		FunctionDeclarationNode& existing_func_ref = const_cast<FunctionDeclarationNode&>(
 			existing_member->function_decl.as<FunctionDeclarationNode>());
 	
-		// Validate parameter count
-		if (func_ref.parameter_nodes().size() != existing_func_ref.parameter_nodes().size()) {
-			FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name, "::", function_name_token.value(), 
-					  "' has ", func_ref.parameter_nodes().size(), " parameters, but declaration has ", 
-					  existing_func_ref.parameter_nodes().size(), " parameters");
-			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
-		}
-	
-		// Validate parameter types
-		for (size_t i = 0; i < func_ref.parameter_nodes().size(); ++i) {
-			const ASTNode& def_param = func_ref.parameter_nodes()[i];
-			const ASTNode& decl_param = existing_func_ref.parameter_nodes()[i];
-			
-			// Extract type information from both parameters
-			TypeSpecifierNode const* def_type = nullptr;
-			TypeSpecifierNode const* decl_type = nullptr;
-			
-			if (def_param.is<DeclarationNode>()) {
-				def_type = &def_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-			} else if (def_param.is<VariableDeclarationNode>()) {
-				def_type = &def_param.as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-			}
-			
-			if (decl_param.is<DeclarationNode>()) {
-				decl_type = &decl_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-			} else if (decl_param.is<VariableDeclarationNode>()) {
-				decl_type = &decl_param.as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-			}
-			
-			if (!def_type || !decl_type) {
-				FLASH_LOG(Parser, Error, "Unable to extract parameter types for validation");
-				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
-			}
-			
-			// Compare types (ignore top-level cv-qualifiers on parameters - they don't affect signature)
-			if (def_type->type() != decl_type->type() ||
-				def_type->type_index() != decl_type->type_index() ||
-				def_type->pointer_depth() != decl_type->pointer_depth() ||
-				def_type->is_reference() != decl_type->is_reference()) {
-				FLASH_LOG(Parser, Error, "Parameter ", (i + 1), " type mismatch in out-of-line definition of '", 
-						  class_name, "::", function_name_token.value(), "'");
-				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
-			}
-		
-			// For pointers/references, compare cv-qualifiers on pointed-to/referenced type
-			if (def_type->pointer_depth() > 0) {
-				// cv-qualifiers on the pointed-to type matter: int* vs const int*
-				if (def_type->cv_qualifier() != decl_type->cv_qualifier()) {
-					FLASH_LOG(Parser, Error, "Parameter ", (i + 1), " pointer cv-qualifier mismatch in out-of-line definition of '", 
-							  class_name, "::", function_name_token.value(), "'");
-					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
-				}
-				// cv-qualifiers on pointer levels also matter: int* const vs int*
-				const auto& def_levels = def_type->pointer_levels();
-				const auto& decl_levels = decl_type->pointer_levels();
-				for (size_t p = 0, e = def_levels.size(); p < e; ++p) {
-					if (def_levels[p].cv_qualifier != decl_levels[p].cv_qualifier) {
-						FLASH_LOG(Parser, Error, "Parameter ", (i + 1), " pointer cv-qualifier mismatch in out-of-line definition of '", 
-								  class_name, "::", function_name_token.value(), "'");
-						return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
-					}
-				}
-			}
-		
-			// For references, compare cv-qualifiers on the base type (since references bind to const/non-const)
-			if (def_type->is_reference()) {
-				if (def_type->cv_qualifier() != decl_type->cv_qualifier()) {
-					FLASH_LOG(Parser, Error, "Parameter ", (i + 1), " reference cv-qualifier mismatch in out-of-line definition of '", 
-							  class_name, "::", function_name_token.value(), "'");
-					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
-				}
-			}
-		}
-	
-		// Validate return type
-		const DeclarationNode& def_decl = func_ref.decl_node();
-		const DeclarationNode& existing_decl = existing_func_ref.decl_node();
-		const TypeSpecifierNode& def_return_type = def_decl.type_node().as<TypeSpecifierNode>();
-		const TypeSpecifierNode& existing_return_type = existing_decl.type_node().as<TypeSpecifierNode>();
-			
-		if (def_return_type.type() != existing_return_type.type() ||
-			def_return_type.type_index() != existing_return_type.type_index() ||
-			def_return_type.pointer_depth() != existing_return_type.pointer_depth() ||
-			def_return_type.is_reference() != existing_return_type.is_reference()) {
-			FLASH_LOG(Parser, Error, "Return type mismatch in out-of-line definition of '", 
-						class_name, "::", function_name_token.value(), "'");
+		// Phase 7: Use unified signature validation
+		auto validation_result = validateSignatureMatch(existing_func_ref, func_ref);
+		if (!validation_result.is_match()) {
+			FLASH_LOG(Parser, Error, validation_result.error_message, " in out-of-line definition of '", 
+					  class_name, "::", function_name_token.value(), "'");
 			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 		}
 		
@@ -6506,6 +6425,96 @@ ParseResult Parser::parseDelayedFunctionBody(DelayedFunctionBody& delayed, std::
 	gSymbolTable.exit_scope();
 	
 	return ParseResult::success();
+}
+
+// Phase 7: Unified signature validation for out-of-line definitions
+// Compares a declaration's signature with a definition's signature and returns detailed mismatch information
+FlashCpp::SignatureValidationResult Parser::validateSignatureMatch(
+	const FunctionDeclarationNode& declaration,
+	const FunctionDeclarationNode& definition)
+{
+	using namespace FlashCpp;
+	
+	// Helper lambda to extract TypeSpecifierNode from a parameter
+	auto extract_param_type = [](const ASTNode& param) -> const TypeSpecifierNode* {
+		if (param.is<DeclarationNode>()) {
+			return &param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+		} else if (param.is<VariableDeclarationNode>()) {
+			return &param.as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+		}
+		return nullptr;
+	};
+	
+	// Validate parameter count
+	const auto& decl_params = declaration.parameter_nodes();
+	const auto& def_params = definition.parameter_nodes();
+	
+	if (decl_params.size() != def_params.size()) {
+		std::string msg = "Declaration has " + std::to_string(decl_params.size()) +
+		                  " parameters, definition has " + std::to_string(def_params.size());
+		return SignatureValidationResult::error(SignatureMismatch::ParameterCount, 0, std::move(msg));
+	}
+	
+	// Validate each parameter type
+	for (size_t i = 0; i < decl_params.size(); ++i) {
+		const TypeSpecifierNode* decl_type = extract_param_type(decl_params[i]);
+		const TypeSpecifierNode* def_type = extract_param_type(def_params[i]);
+		
+		if (!decl_type || !def_type) {
+			return SignatureValidationResult::error(SignatureMismatch::InternalError, i + 1,
+				"Unable to extract parameter type information");
+		}
+		
+		// Compare basic type properties (ignore top-level cv-qualifiers on parameters - they don't affect signature)
+		if (def_type->type() != decl_type->type() ||
+			def_type->type_index() != decl_type->type_index() ||
+			def_type->pointer_depth() != decl_type->pointer_depth() ||
+			def_type->is_reference() != decl_type->is_reference()) {
+			std::string msg = "Parameter " + std::to_string(i + 1) + " type mismatch";
+			return SignatureValidationResult::error(SignatureMismatch::ParameterType, i + 1, std::move(msg));
+		}
+		
+		// For pointers, compare cv-qualifiers on pointed-to type (int* vs const int*)
+		if (def_type->pointer_depth() > 0) {
+			if (def_type->cv_qualifier() != decl_type->cv_qualifier()) {
+				std::string msg = "Parameter " + std::to_string(i + 1) + " pointer cv-qualifier mismatch";
+				return SignatureValidationResult::error(SignatureMismatch::ParameterCVQualifier, i + 1, std::move(msg));
+			}
+			
+			// cv-qualifiers on pointer levels also matter: int* const vs int*
+			const auto& def_levels = def_type->pointer_levels();
+			const auto& decl_levels = decl_type->pointer_levels();
+			for (size_t p = 0; p < def_levels.size(); ++p) {
+				if (def_levels[p].cv_qualifier != decl_levels[p].cv_qualifier) {
+					std::string msg = "Parameter " + std::to_string(i + 1) + " pointer level cv-qualifier mismatch";
+					return SignatureValidationResult::error(SignatureMismatch::ParameterPointerLevel, i + 1, std::move(msg));
+				}
+			}
+		}
+		
+		// For references, compare cv-qualifiers on the base type (const T& vs T&)
+		if (def_type->is_reference()) {
+			if (def_type->cv_qualifier() != decl_type->cv_qualifier()) {
+				std::string msg = "Parameter " + std::to_string(i + 1) + " reference cv-qualifier mismatch";
+				return SignatureValidationResult::error(SignatureMismatch::ParameterCVQualifier, i + 1, std::move(msg));
+			}
+		}
+	}
+	
+	// Validate return type
+	const DeclarationNode& decl_decl = declaration.decl_node();
+	const DeclarationNode& def_decl = definition.decl_node();
+	const TypeSpecifierNode& decl_return_type = decl_decl.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& def_return_type = def_decl.type_node().as<TypeSpecifierNode>();
+	
+	if (def_return_type.type() != decl_return_type.type() ||
+		def_return_type.type_index() != decl_return_type.type_index() ||
+		def_return_type.pointer_depth() != decl_return_type.pointer_depth() ||
+		def_return_type.is_reference() != decl_return_type.is_reference()) {
+		return SignatureValidationResult::error(SignatureMismatch::ReturnType, 0, "Return type mismatch");
+	}
+	
+	return SignatureValidationResult::success();
 }
 
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
