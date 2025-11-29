@@ -8,7 +8,6 @@ core.*
 
 # Prevent reserved-name file on Windows
 nul
-test_*.cpp
 test_*.obj
 *.obj
 *.ilk
