@@ -20,6 +20,7 @@
 #include "SymbolTable.h"
 #include "CompileContext.h"
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
+#include "ParserTypes.h"       // Unified parsing types (Phase 1)
 
 #ifndef WITH_DEBUG_INFO
 #define WITH_DEBUG_INFO 0
@@ -404,6 +405,7 @@ private:
         ParseResult parse_decltype_specifier();  // NEW: Parse decltype(expr) type specifier
         ParseResult parse_declaration_or_function_definition();
         ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
+        ParseResult parseParameterList(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);  // Phase 1: Unified parameter list parsing
         ParseResult parse_struct_declaration();  // Add struct declaration parser
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser
