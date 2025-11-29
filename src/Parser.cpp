@@ -18082,6 +18082,29 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 	func_ref.set_is_variadic(params.is_variadic);
 
+	// Phase 7: Validate signature against the template class declaration (if it exists)
+	// Look up the template class to find the member function declaration
+	auto template_class_opt = gTemplateRegistry.lookupTemplate(class_name);
+	if (template_class_opt.has_value() && template_class_opt->is<TemplateClassDeclarationNode>()) {
+		const TemplateClassDeclarationNode& template_class = template_class_opt->as<TemplateClassDeclarationNode>();
+		const StructDeclarationNode& struct_decl = template_class.class_declaration().as<StructDeclarationNode>();
+		
+		// Find the member function with matching name
+		for (const auto& member : struct_decl.member_functions()) {
+			const FunctionDeclarationNode& member_func = member.function_declaration.as<FunctionDeclarationNode>();
+			if (member_func.decl_node().identifier_token().value() == function_name_token.value()) {
+				// Use validateSignatureMatch for validation
+				auto validation_result = validateSignatureMatch(member_func, func_ref);
+				if (!validation_result.is_match()) {
+					FLASH_LOG(Parser, Warning, validation_result.error_message, " in out-of-line template member '",
+					          class_name, "::", function_name_token.value(), "'");
+					// Don't fail - templates may have dependent types that can't be fully resolved yet
+				}
+				break;
+			}
+		}
+	}
+
 	// Save the position of the function body for delayed parsing
 	TokenPosition body_start = save_token_position();
 
