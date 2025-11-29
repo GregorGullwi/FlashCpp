@@ -1463,7 +1463,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		
 		// Parse the function parameters using unified parameter list parsing (Phase 1)
 		FlashCpp::ParsedParameterList params;
-		auto param_result = parseParameterList(params, attr_info.calling_convention);
+		auto param_result = parse_parameter_list(params, attr_info.calling_convention);
 		if (param_result.is_error()) {
 			FLASH_LOG(Parser, Error, "Error parsing parameter list");
 			return param_result;
@@ -1509,7 +1509,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			existing_member->function_decl.as<FunctionDeclarationNode>());
 	
 		// Phase 7: Use unified signature validation
-		auto validation_result = validateSignatureMatch(existing_func_ref, func_ref);
+		auto validation_result = validate_signature_match(existing_func_ref, func_ref);
 		if (!validation_result.is_match()) {
 			FLASH_LOG(Parser, Error, validation_result.error_message, " in out-of-line definition of '", 
 					  class_name, "::", function_name_token.value(), "'");
@@ -1613,7 +1613,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// For free functions: noexcept is applied, const/volatile/&/&&/override/final are ignored
 		FlashCpp::MemberQualifiers member_quals;
 		FlashCpp::FunctionSpecifiers func_specs;
-		auto specs_result = parseFunctionTrailingSpecifiers(member_quals, func_specs);
+		auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
 		if (specs_result.is_error()) {
 			return specs_result;
 		}
@@ -2526,7 +2526,7 @@ ParseResult Parser::parse_struct_declaration()
 
 				// Parse parameters using unified parameter list parsing (Phase 1)
 				FlashCpp::ParsedParameterList params;
-				auto param_result = parseParameterList(params);
+				auto param_result = parse_parameter_list(params);
 				if (param_result.is_error()) {
 					return param_result;
 				}
@@ -2966,7 +2966,7 @@ ParseResult Parser::parse_struct_declaration()
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
 			FlashCpp::MemberQualifiers member_quals;
 			FlashCpp::FunctionSpecifiers func_specs;
-			auto specs_result = parseFunctionTrailingSpecifiers(member_quals, func_specs);
+			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
 			if (specs_result.is_error()) {
 				return specs_result;
 			}
@@ -3884,7 +3884,7 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Use Phase 5 unified delayed body parsing
 			std::optional<ASTNode> body;
-			auto result = parseDelayedFunctionBody(delayed, body);
+			auto result = parse_delayed_function_body(delayed, body);
 			if (result.is_error()) {
 				current_template_param_names_.clear();
 				struct_parsing_context_stack_.pop_back();
@@ -3914,7 +3914,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Use Phase 5 unified delayed body parsing
 		std::optional<ASTNode> body;
-		auto result = parseDelayedFunctionBody(delayed, body);
+		auto result = parse_delayed_function_body(delayed, body);
 		if (result.is_error()) {
 			struct_parsing_context_stack_.pop_back();
 			return result;
@@ -5778,7 +5778,7 @@ ParseResult Parser::parse_decltype_specifier()
 // - Variadic parameters: (int x, ...)
 // - Default values: (int x = 0, float y = 1.0)
 // - Empty parameter lists: ()
-ParseResult Parser::parseParameterList(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention)
+ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention)
 {
 	out_params.parameters.clear();
 	out_params.is_variadic = false;
@@ -5872,7 +5872,7 @@ ParseResult Parser::parseParameterList(FlashCpp::ParsedParameterList& out_params
 // - Virtual specifiers: override, final
 // - Special definitions: = 0 (pure virtual), = default, = delete
 // - Attributes: __attribute__((...))
-ParseResult Parser::parseFunctionTrailingSpecifiers(
+ParseResult Parser::parse_function_trailing_specifiers(
 	FlashCpp::MemberQualifiers& out_quals,
 	FlashCpp::FunctionSpecifiers& out_specs
 ) {
@@ -6014,7 +6014,7 @@ ParseResult Parser::parseFunctionTrailingSpecifiers(
 // Phase 4: Unified function header parsing
 // This method parses the complete function header (return type, name, parameters, trailing specifiers)
 // in a unified way across all function types (free functions, member functions, constructors, etc.)
-ParseResult Parser::parseFunctionHeader(
+ParseResult Parser::parse_function_header(
 	const FlashCpp::FunctionParsingContext& ctx,
 	FlashCpp::ParsedFunctionHeader& out_header
 ) {
@@ -6080,13 +6080,13 @@ ParseResult Parser::parseFunctionHeader(
 	}
 
 	// Parse parameter list using Phase 1 unified method
-	auto params_result = parseParameterList(out_header.params, out_header.storage.calling_convention);
+	auto params_result = parse_parameter_list(out_header.params, out_header.storage.calling_convention);
 	if (params_result.is_error()) {
 		return params_result;
 	}
 
 	// Parse trailing specifiers using Phase 2 unified method
-	auto specs_result = parseFunctionTrailingSpecifiers(out_header.member_quals, out_header.specifiers);
+	auto specs_result = parse_function_trailing_specifiers(out_header.member_quals, out_header.specifiers);
 	if (specs_result.is_error()) {
 		return specs_result;
 	}
@@ -6143,7 +6143,7 @@ ParseResult Parser::parseFunctionHeader(
 
 // Phase 4: Create a FunctionDeclarationNode from a ParsedFunctionHeader
 // This bridges the unified header parsing with the existing AST node creation
-ParseResult Parser::createFunctionFromHeader(
+ParseResult Parser::create_function_from_header(
 	const FlashCpp::ParsedFunctionHeader& header,
 	const FlashCpp::FunctionParsingContext& ctx
 ) {
@@ -6202,7 +6202,7 @@ ParseResult Parser::createFunctionFromHeader(
 // - 'this' pointer injection for member functions
 // - Parameter registration
 // - Block parsing
-ParseResult Parser::parseFunctionBodyWithContext(
+ParseResult Parser::parse_function_body_with_context(
 	const FlashCpp::FunctionParsingContext& ctx,
 	const FlashCpp::ParsedFunctionHeader& header,
 	std::optional<ASTNode>& out_body
@@ -6296,7 +6296,7 @@ ParseResult Parser::parseFunctionBodyWithContext(
 
 // Phase 5: Helper method to register member functions in the symbol table
 // This implements C++20's complete-class context for inline member function bodies
-void Parser::registerMemberFunctionsInScope(StructDeclarationNode* struct_node, size_t struct_type_index) {
+void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_node, size_t struct_type_index) {
 	// Add member functions from the struct itself
 	if (struct_node) {
 		for (const auto& member_func : struct_node->member_functions()) {
@@ -6340,7 +6340,7 @@ void Parser::registerMemberFunctionsInScope(StructDeclarationNode* struct_node, 
 }
 
 // Phase 5: Helper method to set up member function context and scope
-void Parser::setupMemberFunctionContext(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index) {
+void Parser::setup_member_function_context(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index) {
 	// Push member function context
 	member_function_context_stack_.push_back({
 		struct_name,
@@ -6349,11 +6349,11 @@ void Parser::setupMemberFunctionContext(StructDeclarationNode* struct_node, std:
 	});
 
 	// Register member functions in symbol table for complete-class context
-	registerMemberFunctionsInScope(struct_node, struct_type_index);
+	register_member_functions_in_scope(struct_node, struct_type_index);
 }
 
 // Phase 5: Helper to register function parameters in the symbol table
-void Parser::registerParametersInScope(const std::vector<ASTNode>& params) {
+void Parser::register_parameters_in_scope(const std::vector<ASTNode>& params) {
 	for (const auto& param : params) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
@@ -6367,14 +6367,14 @@ void Parser::registerParametersInScope(const std::vector<ASTNode>& params) {
 }
 
 // Phase 5: Unified delayed function body parsing
-ParseResult Parser::parseDelayedFunctionBody(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body) {
+ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body) {
 	out_body = std::nullopt;
 	
 	// Enter function scope
 	gSymbolTable.enter_scope(ScopeType::Function);
 	
 	// Set up member function context
-	setupMemberFunctionContext(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
+	setup_member_function_context(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
 	
 	// Get the appropriate function node and parameters
 	FunctionDeclarationNode* func_node = nullptr;
@@ -6394,7 +6394,7 @@ ParseResult Parser::parseDelayedFunctionBody(DelayedFunctionBody& delayed, std::
 	
 	// Register parameters in symbol table
 	if (params) {
-		registerParametersInScope(*params);
+		register_parameters_in_scope(*params);
 	}
 	
 	// Parse the function body
@@ -6429,7 +6429,7 @@ ParseResult Parser::parseDelayedFunctionBody(DelayedFunctionBody& delayed, std::
 
 // Phase 7: Unified signature validation for out-of-line definitions
 // Compares a declaration's signature with a definition's signature and returns detailed mismatch information
-FlashCpp::SignatureValidationResult Parser::validateSignatureMatch(
+FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 	const FunctionDeclarationNode& declaration,
 	const FunctionDeclarationNode& definition)
 {
@@ -6533,7 +6533,7 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 
 	// Use unified parameter list parsing (Phase 1)
 	FlashCpp::ParsedParameterList params;
-	auto param_result = parseParameterList(params, calling_convention);
+	auto param_result = parse_parameter_list(params, calling_convention);
 	if (param_result.is_error()) {
 		return param_result;
 	}
@@ -6547,7 +6547,7 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 	// Note: Trailing specifiers (const, volatile, &, &&, noexcept, override, final, 
 	// = 0, = default, = delete, __attribute__) are NOT handled here.
 	// Each call site is responsible for handling trailing specifiers as appropriate:
-	// - Free functions: call skip_function_trailing_specifiers() or parseFunctionTrailingSpecifiers()
+	// - Free functions: call skip_function_trailing_specifiers() or parse_function_trailing_specifiers()
 	// - Member functions: the struct member parsing handles these with full semantic information
 
 	return func_node;
@@ -14180,7 +14180,7 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Otherwise, parse as function template using shared helper (Phase 6)
 		ASTNode template_func_node;
-		auto body_result = parseTemplateFunctionDeclarationBody(template_params, requires_clause, template_func_node);
+		auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
 		if (body_result.is_error()) {
 			return body_result;
 		}
@@ -14210,7 +14210,7 @@ ParseResult Parser::parse_template_declaration() {
 	ASTNode decl_node = *decl_result.node();
 
 	// Create appropriate template node based on what was parsed
-	// Note: Function templates are now handled above via parseTemplateFunctionDeclarationBody() (Phase 6)
+	// Note: Function templates are now handled above via parse_template_function_declaration_body() (Phase 6)
 	if (decl_node.is<StructDeclarationNode>()) {
 		// Create a TemplateClassDeclarationNode with parameter names for lookup
 		std::vector<std::string_view> param_names;
@@ -14823,7 +14823,7 @@ ParseResult Parser::parse_template_template_parameter_form() {
 // This eliminates duplication between parse_template_declaration() and parse_member_function_template()
 // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
 // Template parameters must already be registered in gTypesByName via TemplateParameterScope
-ParseResult Parser::parseTemplateFunctionDeclarationBody(
+ParseResult Parser::parse_template_function_declaration_body(
 	std::vector<ASTNode>& template_params,
 	std::optional<ASTNode> requires_clause,
 	ASTNode& out_template_node
@@ -14960,7 +14960,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	// Member templates don't support requires clauses yet
 	std::optional<ASTNode> empty_requires_clause;
 	ASTNode template_func_node;
-	auto body_result = parseTemplateFunctionDeclarationBody(template_params, empty_requires_clause, template_func_node);
+	auto body_result = parse_template_function_declaration_body(template_params, empty_requires_clause, template_func_node);
 	if (body_result.is_error()) {
 		return body_result;  // template_scope automatically cleans up
 	}
@@ -18071,7 +18071,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	// Parse parameters using unified parameter list parsing (Phase 1)
 	FlashCpp::ParsedParameterList params;
-	auto param_result = parseParameterList(params);
+	auto param_result = parse_parameter_list(params);
 	if (param_result.is_error()) {
 		return std::nullopt;
 	}
@@ -18093,8 +18093,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		for (const auto& member : struct_decl.member_functions()) {
 			const FunctionDeclarationNode& member_func = member.function_declaration.as<FunctionDeclarationNode>();
 			if (member_func.decl_node().identifier_token().value() == function_name_token.value()) {
-				// Use validateSignatureMatch for validation
-				auto validation_result = validateSignatureMatch(member_func, func_ref);
+				// Use validate_signature_match for validation
+				auto validation_result = validate_signature_match(member_func, func_ref);
 				if (!validation_result.is_match()) {
 					FLASH_LOG(Parser, Warning, validation_result.error_message, " in out-of-line template member '",
 					          class_name, "::", function_name_token.value(), "'");

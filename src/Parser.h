@@ -406,16 +406,16 @@ private:
         ParseResult parse_decltype_specifier();  // NEW: Parse decltype(expr) type specifier
         ParseResult parse_declaration_or_function_definition();
         ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
-        ParseResult parseParameterList(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);  // Phase 1: Unified parameter list parsing
-        ParseResult parseFunctionTrailingSpecifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);  // Phase 2: Unified trailing specifiers
-        ParseResult parseFunctionHeader(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
-        ParseResult createFunctionFromHeader(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
-        ParseResult parseFunctionBodyWithContext(const FlashCpp::FunctionParsingContext& ctx, const FlashCpp::ParsedFunctionHeader& header, std::optional<ASTNode>& out_body);  // Phase 5: Unified body parsing
-        void setupMemberFunctionContext(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index);  // Phase 5: Helper for member function scope setup
-        void registerMemberFunctionsInScope(StructDeclarationNode* struct_node, size_t struct_type_index);  // Phase 5: Register member functions in symbol table
-        void registerParametersInScope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
-        ParseResult parseDelayedFunctionBody(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
-        FlashCpp::SignatureValidationResult validateSignatureMatch(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
+        ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);  // Phase 1: Unified parameter list parsing
+        ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);  // Phase 2: Unified trailing specifiers
+        ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
+        ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
+        ParseResult parse_function_body_with_context(const FlashCpp::FunctionParsingContext& ctx, const FlashCpp::ParsedFunctionHeader& header, std::optional<ASTNode>& out_body);  // Phase 5: Unified body parsing
+        void setup_member_function_context(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index);  // Phase 5: Helper for member function scope setup
+        void register_member_functions_in_scope(StructDeclarationNode* struct_node, size_t struct_type_index);  // Phase 5: Register member functions in symbol table
+        void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
+        ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
+        FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
         ParseResult parse_struct_declaration();  // Add struct declaration parser
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser
@@ -428,7 +428,7 @@ private:
         // Phase 6: Shared helper for template function declaration parsing
         // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
         // Returns the TemplateFunctionDeclarationNode in out_template_node
-        ParseResult parseTemplateFunctionDeclarationBody(
+        ParseResult parse_template_function_declaration_body(
             std::vector<ASTNode>& template_params,
             std::optional<ASTNode> requires_clause,
             ASTNode& out_template_node);
@@ -593,11 +593,9 @@ struct TypedNumeric {
 // Phase 3: Inline implementations for scope guards that need Parser internals
 // =============================================================================
 
-namespace FlashCpp {
-
 // FunctionScopeGuard::addParameters implementation
 // Adds function parameters to the symbol table within the function scope
-inline void FunctionScopeGuard::addParameters(const std::vector<ASTNode>& params) {
+inline void FlashCpp::FunctionScopeGuard::addParameters(const std::vector<ASTNode>& params) {
 	for (const auto& param : params) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl_node = param.as<DeclarationNode>();
@@ -609,7 +607,7 @@ inline void FunctionScopeGuard::addParameters(const std::vector<ASTNode>& params
 
 // FunctionScopeGuard::injectThisPointer implementation
 // Creates and injects 'this' pointer for member functions
-inline void FunctionScopeGuard::injectThisPointer() {
+inline void FlashCpp::FunctionScopeGuard::injectThisPointer() {
 	// Only inject 'this' for member functions, constructors, and destructors
 	if (ctx_.kind != FunctionKind::Member &&
 	    ctx_.kind != FunctionKind::Constructor &&
@@ -641,5 +639,3 @@ inline void FunctionScopeGuard::injectThisPointer() {
 	// Insert 'this' into the symbol table
 	gSymbolTable.insert("this", this_decl);
 }
-
-} // namespace FlashCpp
