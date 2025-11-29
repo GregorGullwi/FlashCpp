@@ -100,10 +100,10 @@ if ($libPath3) { Write-Host "  $libPath3" }
 Write-Host ""
 
 # Get all .cpp files from tests/Reference
-$referenceFiles = Get-ChildItem -Path "tests\Reference" -Filter "*.cpp" | Sort-Object Name
+$referenceFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
 
 $totalFiles = $referenceFiles.Count
-Write-Host "Found $totalFiles test files in tests/Reference/"
+Write-Host "Found $totalFiles test files in tests/"
 Write-Host ""
 
 # Expected compile failures - files that are intentionally designed to fail compilation

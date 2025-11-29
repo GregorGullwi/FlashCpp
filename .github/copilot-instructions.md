@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/FlashCppTest/...` with fixtures in `tests/Reference/`. Generated binaries belong in `x64/` or `Debug/` and stay untracked. Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workflows.
+FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/*.cpp`. Generated binaries belong in `x64/` or `Debug/` and stay untracked. Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workflows.
 
 ## Build, Test, and Development Commands
 - Path to the Windows SDK is "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\"
@@ -16,10 +16,10 @@ FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit i
 Target warning-clean builds under both MSVC and clang. Use tab indentation, same-line braces, and keep includes grouped `<system>` before quotes. Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase. Prefer `std::string_view` for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
 
 ## Testing Guidelines
-The doctest runner lives in `tests/FlashCppTest/FlashCppTest/FlashCppTest.cpp`. Add coverage with `TEST_CASE` blocks (e.g., `"Parser:IfWithInit"`). Run `link_and_run_test_debug.bat` for MSVC smoke tests, or `make test && ./x64/test` under WSL/Linux. Shared expectations belong in `tests/Reference/`; document intentional skips inline. Don't forget to add kernel32.lib to the link command line.
+The doctest runner lives in `tests/FlashCppTest/FlashCppTest/FlashCppTest.cpp`. Add coverage with `TEST_CASE` blocks (e.g., `"Parser:IfWithInit"`). Run `link_and_run_test_debug.bat` for MSVC smoke tests, or `make test && ./x64/test` under WSL/Linux. Shared expectations belong in `tests/`; document intentional skips inline. Don't forget to add kernel32.lib to the link command line.
 
 ## Workspace Hygiene
 Delete binaries, dumps, and logs before you summarize your work. Feel free to leave debug output in the source code. Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
 
 ## Debugging & Reference Tips
-`build_and_dump.bat` compares MSVC-generated objects against FlashCpp output via `dumpbin`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `x64/Debug/FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source.
+Use `dumpbin.exe`, locate the path with `where.exe`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `x64/Debug/FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source. Output file will end up in the working folder.

@@ -28,9 +28,11 @@ bool g_enable_debug_output = false;
 
 // Helper function to read test files from Reference directory
 std::string read_test_file(const std::string& filename) {
-    std::ifstream file("tests/Reference/" + filename);
+    std::ifstream file("tests/" + filename);
     if (!file.is_open()) {
-        throw std::runtime_error("Could not open test file: tests/Reference/" + filename);
+		std::cerr << "Could not open test file: tests/" + filename;
+        assert(false && "Could not open test file");
+		return {};
     }
 
     std::stringstream buffer;
