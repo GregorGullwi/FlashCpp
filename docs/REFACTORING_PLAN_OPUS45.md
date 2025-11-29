@@ -997,8 +997,9 @@ ParseResult Parser::parseFunctionHeader(
 
 **Deliverables:**
 - [x] `parseFunctionHeader()` implementation
+- [x] `createFunctionFromHeader()` bridge method
 - [ ] All function types migrated (free functions using new method)
-- [ ] Full test pass
+- [x] Full test pass
 
 ---
 

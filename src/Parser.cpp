@@ -6662,6 +6662,58 @@ ParseResult Parser::parseFunctionHeader(
 	return ParseResult::success();
 }
 
+// Phase 4: Create a FunctionDeclarationNode from a ParsedFunctionHeader
+// This bridges the unified header parsing with the existing AST node creation
+ParseResult Parser::createFunctionFromHeader(
+	const FlashCpp::ParsedFunctionHeader& header,
+	const FlashCpp::FunctionParsingContext& ctx
+) {
+	// Create the type specifier node for the return type
+	ASTNode type_node;
+	if (header.return_type != nullptr) {
+		type_node = ASTNode::emplace_node<TypeSpecifierNode>(*header.return_type);
+	} else {
+		// For constructors/destructors, create a void return type
+		type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, 0, 0, Token());
+	}
+
+	// Create the declaration node with type and name
+	auto [decl_node, decl_ref] = emplace_node_ref<DeclarationNode>(type_node, header.name_token);
+
+	// Create the function declaration node using the DeclarationNode reference
+	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_ref);
+
+	// Set calling convention
+	func_ref.set_calling_convention(header.storage.calling_convention);
+
+	// Set linkage
+	if (header.storage.linkage != Linkage::None) {
+		func_ref.set_linkage(header.storage.linkage);
+	} else if (current_linkage_ != Linkage::None) {
+		func_ref.set_linkage(current_linkage_);
+	}
+
+	// Add parameters
+	for (const auto& param : header.params.parameters) {
+		func_ref.add_parameter_node(param);
+	}
+	func_ref.set_is_variadic(header.params.is_variadic);
+
+	// Set noexcept if specified
+	if (header.specifiers.is_noexcept) {
+		func_ref.set_noexcept(true);
+		if (header.specifiers.noexcept_expr.has_value()) {
+			func_ref.set_noexcept_expression(*header.specifiers.noexcept_expr);
+		}
+	}
+
+	// Set constexpr/consteval
+	func_ref.set_is_constexpr(header.storage.is_constexpr);
+	func_ref.set_is_consteval(header.storage.is_consteval);
+
+	return func_node;
+}
+
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
 {
 	// Create the function declaration first
