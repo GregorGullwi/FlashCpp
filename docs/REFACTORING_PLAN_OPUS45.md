@@ -1074,7 +1074,7 @@ ParseResult Parser::parseFunctionBodyWithContext(
 
 ---
 
-### Phase 6: Template Consolidation (Week 8)
+### Phase 6: Template Consolidation (Week 8) ✅ COMPLETE
 
 **Goals:**
 - Ensure all template paths share common parsing infrastructure
@@ -1084,19 +1084,27 @@ ParseResult Parser::parseFunctionBodyWithContext(
 
 1. Update `parse_template_declaration()` to use:
    - [x] `TemplateParameterScope` for cleanup (replaced local struct with shared RAII guard)
-   - [ ] `parseFunctionHeader()` for function templates
+   - [ ] `parseFunctionHeader()` for function templates (deferred - requires significant restructuring)
 
 2. Update `parse_member_function_template()` to use:
    - [x] `TemplateParameterScope` for cleanup (already implemented in Phase 3)
-   - [ ] `parseFunctionHeader()` for the member function
+   - [ ] `parseFunctionHeader()` for the member function (deferred - requires significant restructuring)
 
 3. Update `try_parse_out_of_line_template_member()` to use:
-   - [ ] Shared infrastructure
+   - [x] `parseParameterList()` (Phase 1) for parameters
+   - [x] `TemplateParameterScope` for type cleanup (via template instantiation functions)
+
+4. Template instantiation functions updated to use `TemplateParameterScope`:
+   - [x] `instantiate_function_template()`
+   - [x] `try_instantiate_template()`
+   - [x] `try_instantiate_member_function_template()`
+   - [x] `try_instantiate_member_function_template_explicit()`
+   - [x] `parseTemplateBody()`
 
 **Deliverables:**
-- [x] All template paths use RAII cleanup (`TemplateParameterScope`)
-- [ ] Shared header parsing
-- [ ] Consistent error handling
+- [x] All template paths use RAII cleanup (`TemplateParameterScope`) - **eliminated all manual gTypesByName.erase() calls**
+- [ ] Shared header parsing (deferred - parseFunctionHeader integration requires restructuring)
+- [x] Consistent error handling through RAII guards
 
 ---
 
