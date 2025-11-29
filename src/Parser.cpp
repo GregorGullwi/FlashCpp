@@ -8742,6 +8742,7 @@ ParseResult Parser::parse_primary_expression()
 					// Try to deduce the type of this argument
 					if (node->is<ExpressionNode>()) {
 						const auto& expr = node->as<ExpressionNode>();
+						std::optional<TypeSpecifierNode> arg_type_node_opt;
 						Type arg_type = Type::Int;  // Default assumption
 						bool is_lvalue = false;  // Track if this is an lvalue for perfect forwarding
 					
@@ -8760,7 +8761,9 @@ ParseResult Parser::parse_primary_expression()
 									if (id_type->template is<DeclarationNode>()) {
 										const auto& decl = id_type->template as<DeclarationNode>();
 										if (decl.type_node().template is<TypeSpecifierNode>()) {
-											arg_type = decl.type_node().template as<TypeSpecifierNode>().type();
+											// Preserve the full TypeSpecifierNode to retain type_index for structs
+											arg_type_node_opt = decl.type_node().template as<TypeSpecifierNode>();
+											arg_type = arg_type_node_opt->type();
 											// Named variables are lvalues
 											is_lvalue = true;
 										}
@@ -8769,7 +8772,9 @@ ParseResult Parser::parse_primary_expression()
 							}
 						}, expr);
 					
-						TypeSpecifierNode arg_type_node(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
+						TypeSpecifierNode arg_type_node = arg_type_node_opt.value_or(
+							TypeSpecifierNode(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token())
+						);
 						if (is_lvalue) {
 							// Mark as lvalue reference for perfect forwarding template deduction
 							arg_type_node.set_lvalue_reference(true);
@@ -11962,8 +11967,9 @@ ParseResult Parser::parse_template_declaration() {
 			// This allows them to be recognized when referenced in the template body
 			template_param_names.push_back(tparam.name());  // string_view from Token
 			
-			// Only Type parameters need TypeInfo registration
-			if (tparam.kind() == TemplateParameterKind::Type) {
+			// Type parameters and Template template parameters need TypeInfo registration
+			// This allows them to be recognized during type parsing (e.g., Container<T>)
+			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
