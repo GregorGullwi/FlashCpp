@@ -413,6 +413,8 @@ private:
         ParseResult parseFunctionBodyWithContext(const FlashCpp::FunctionParsingContext& ctx, const FlashCpp::ParsedFunctionHeader& header, std::optional<ASTNode>& out_body);  // Phase 5: Unified body parsing
         void setupMemberFunctionContext(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index);  // Phase 5: Helper for member function scope setup
         void registerMemberFunctionsInScope(StructDeclarationNode* struct_node, size_t struct_type_index);  // Phase 5: Register member functions in symbol table
+        void registerParametersInScope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
+        ParseResult parseDelayedFunctionBody(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
         ParseResult parse_struct_declaration();  // Add struct declaration parser
         ParseResult parse_enum_declaration();    // Add enum declaration parser
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser
