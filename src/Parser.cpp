@@ -2595,8 +2595,11 @@ ParseResult Parser::parse_struct_declaration()
 				for (const auto& param : params.parameters) {
 					ctor_ref.add_parameter_node(param);
 				}
-				// Note: constructors can be variadic (e.g., for placement new), but this is rare
-				// We don't set is_variadic on constructors as the current node type doesn't support it
+				// Note: Variadic constructors are extremely rare in C++ and not commonly used.
+				// The AST node type doesn't currently track variadic status for constructors.
+				// For now, we silently accept them without storing the variadic flag.
+				// If variadic constructor support becomes needed, ConstructorDeclarationNode
+				// can be extended with set_is_variadic() similar to FunctionDeclarationNode.
 
 				// Enter a temporary scope for parsing the initializer list
 				// This allows the initializer expressions to reference the constructor parameters
