@@ -18307,6 +18307,34 @@ ASTNode Parser::substituteTemplateParameters(
 			// If we couldn't substitute, return the original node
 			return node;
 		}
+		
+		// Check if this is an IdentifierNode that matches a template parameter name
+		// (This handles the case where template parameters are stored as IdentifierNode in the AST)
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+			std::string_view id_name = id_node.name();
+			
+			// Check if this identifier matches a template parameter name
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == id_name) {
+					const TemplateArgument& arg = template_args[i];
+					
+					if (arg.kind == TemplateArgument::Kind::Type) {
+						// Create an identifier node for the concrete type
+						Token type_token(Token::Type::Identifier, std::string(get_type_name(arg.type_value)), 0, 0, 0);
+						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
+					} else if (arg.kind == TemplateArgument::Kind::Value) {
+						// Create a numeric literal node for the value with the correct type
+						Type value_type = arg.value_type;
+						int size_bits = (value_type == Type::Bool) ? 8 : 32;
+						Token value_token(Token::Type::Literal, std::to_string(arg.int_value), 0, 0, 0);
+						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), value_type, TypeQualifier::None, size_bits));
+					}
+					break;
+				}
+			}
+		}
 
 		// For other expression types, recursively substitute in subexpressions
 		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
