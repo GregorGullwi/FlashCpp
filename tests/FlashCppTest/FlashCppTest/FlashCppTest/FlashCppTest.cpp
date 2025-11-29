@@ -1333,19 +1333,19 @@ TEST_CASE("Compound assignment operators") {
 }
 
 TEST_CASE("All loops") {
-	run_test_from_file("test_all_loops.cpp", "All loops", false);
+	run_test_from_file("all_loops.cpp", "All loops", false);
 }
 
 TEST_CASE("All increments") {
-	run_test_from_file("test_all_increments.cpp", "All increments", false);
+	run_test_from_file("all_increments.cpp", "All increments", false);
 }
 
 TEST_CASE("All test mix") {
-	run_test_from_file("test_all_mix.cpp", "Mixed things", false);
+	run_test_from_file("all_mix.cpp", "Mixed things", false);
 }
 
 TEST_CASE("All XMM registers") {
-	run_test_from_file("test_all_xmm_registers.cpp", "XMM register allocation tests", false);
+	run_test_from_file("all_xmm_registers.cpp", "XMM register allocation tests", false);
 }
 
 TEST_CASE("Const test") {
