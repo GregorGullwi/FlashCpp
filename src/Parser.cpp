@@ -1461,34 +1461,19 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Create the FunctionDeclarationNode with parent struct name (marks it as member function)
 		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, class_name);
 		
-		// Parse the function parameters
-		if (!peek_token().has_value() || peek_token()->value() != "(") {
-			FLASH_LOG(Parser, Error, "Expected '(' after function name");
-			return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
+		// Parse the function parameters using unified parameter list parsing (Phase 1)
+		FlashCpp::ParsedParameterList params;
+		auto param_result = parseParameterList(params, attr_info.calling_convention);
+		if (param_result.is_error()) {
+			FLASH_LOG(Parser, Error, "Error parsing parameter list");
+			return param_result;
 		}
-		consume_token();  // consume '('
-		
-		while (peek_token().has_value() && peek_token()->value() != ")") {
-			auto param_result = parse_type_and_name();
-			if (param_result.is_error()) {
-				FLASH_LOG(Parser, Error, "Error parsing parameter");
-				return param_result;
-			}
-			
-			if (param_result.node().has_value()) {
-				func_ref.add_parameter_node(*param_result.node());
-			}
-			
-			if (peek_token().has_value() && peek_token()->value() == ",") {
-				consume_token();
-			}
+
+		// Apply parsed parameters to the function
+		for (const auto& param : params.parameters) {
+			func_ref.add_parameter_node(param);
 		}
-		
-		if (!peek_token().has_value() || peek_token()->value() != ")") {
-			FLASH_LOG(Parser, Error, "Expected ')' after parameter list");
-			return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
-		}
-		consume_token();  // consume ')'
+		func_ref.set_is_variadic(params.is_variadic);
 		
 		// Apply attributes
 		func_ref.set_calling_convention(attr_info.calling_convention);
@@ -2599,28 +2584,19 @@ ParseResult Parser::parse_struct_declaration()
 				// Use qualified_struct_name for nested classes so the member function references the correct type
 				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(qualified_struct_name, ctor_name);
 
-				// Parse parameters
-				if (!consume_punctuator("(")) {
-					return ParseResult::error("Expected '(' for constructor parameter list", *peek_token());
+				// Parse parameters using unified parameter list parsing (Phase 1)
+				FlashCpp::ParsedParameterList params;
+				auto param_result = parseParameterList(params);
+				if (param_result.is_error()) {
+					return param_result;
 				}
 
-				while (!consume_punctuator(")")) {
-					// Parse parameter type and name
-					ParseResult type_and_name_result = parse_type_and_name();
-					if (type_and_name_result.is_error()) {
-						return type_and_name_result;
-					}
-
-					if (auto node = type_and_name_result.node()) {
-						ctor_ref.add_parameter_node(*node);
-					}
-
-					// Check if next token is comma (more parameters) or closing paren (done)
-					if (!consume_punctuator(",")) {
-						// No comma, so we expect a closing paren on the next iteration
-						// Don't break here - let the while loop condition consume the ')'
-					}
+				// Apply parsed parameters to the constructor
+				for (const auto& param : params.parameters) {
+					ctor_ref.add_parameter_node(param);
 				}
+				// Note: constructors can be variadic (e.g., for placement new), but this is rare
+				// We don't set is_variadic on constructors as the current node type doesn't support it
 
 				// Enter a temporary scope for parsing the initializer list
 				// This allows the initializer expressions to reference the constructor parameters
@@ -6346,15 +6322,101 @@ ParseResult Parser::parse_decltype_specifier()
 	return saved_position.success(emplace_node<TypeSpecifierNode>(*type_spec_opt));
 }
 
-ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
+// Phase 1: Unified parameter list parsing
+// This method handles all the common parameter parsing logic:
+// - Basic parameters: (int x, float y)
+// - Variadic parameters: (int x, ...)
+// - Default values: (int x = 0, float y = 1.0)
+// - Empty parameter lists: ()
+ParseResult Parser::parseParameterList(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention)
 {
-	// Parse parameters
+	out_params.parameters.clear();
+	out_params.is_variadic = false;
+
 	if (!consume_punctuator("(")) {
-		return ParseResult::error("Expected '(' for function parameter list",
-			*current_token_);
+		return ParseResult::error("Expected '(' for parameter list", *current_token_);
 	}
 
-	// Create the function declaration
+	while (!consume_punctuator(")")) {
+		// Check for variadic parameter (...)
+		if (peek_token().has_value() && peek_token()->value() == "...") {
+			consume_token(); // consume '...'
+			out_params.is_variadic = true;
+
+			// Validate calling convention for variadic functions
+			// Only __cdecl and __vectorcall support variadic parameters (caller cleanup)
+			if (calling_convention != CallingConvention::Default &&
+			    calling_convention != CallingConvention::Cdecl &&
+			    calling_convention != CallingConvention::Vectorcall) {
+				return ParseResult::error(
+					"Variadic functions must use __cdecl or __vectorcall calling convention "
+					"(other conventions use callee cleanup which is incompatible with variadic arguments)",
+					*current_token_);
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after variadic '...'", *current_token_);
+			}
+			break;
+		}
+
+		// Parse parameter type and name
+		ParseResult type_and_name_result = parse_type_and_name();
+		if (type_and_name_result.is_error()) {
+			return type_and_name_result;
+		}
+
+		if (auto node = type_and_name_result.node()) {
+			out_params.parameters.push_back(*node);
+		}
+
+		// Parse default parameter value (if present)
+		if (consume_punctuator("=")) {
+			// Parse the default value expression
+			auto default_value = parse_expression();
+			if (default_value.is_error()) {
+				return default_value;
+			}
+			// TODO: Store default value in parameter node
+		}
+
+		if (consume_punctuator(",")) {
+			// After a comma, check if the next token is '...' for variadic parameters
+			if (peek_token().has_value() && peek_token()->value() == "...") {
+				consume_token(); // consume '...'
+				out_params.is_variadic = true;
+
+				// Validate calling convention for variadic functions
+				if (calling_convention != CallingConvention::Default &&
+				    calling_convention != CallingConvention::Cdecl &&
+				    calling_convention != CallingConvention::Vectorcall) {
+					return ParseResult::error(
+						"Variadic functions must use __cdecl or __vectorcall calling convention "
+						"(other conventions use callee cleanup which is incompatible with variadic arguments)",
+						*current_token_);
+				}
+
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after variadic '...'", *current_token_);
+				}
+				break;
+			}
+			continue;
+		}
+		else if (consume_punctuator(")")) {
+			break;
+		}
+		else {
+			return ParseResult::error("Expected ',' or ')' in parameter list", *current_token_);
+		}
+	}
+
+	return ParseResult::success();
+}
+
+ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
+{
+	// Create the function declaration first
 	auto [func_node, func_ref] =
 		create_node_ref<FunctionDeclarationNode>(declaration_node);
 	
@@ -6366,83 +6428,18 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		func_ref.set_linkage(current_linkage_);
 	}
 
-	while (!consume_punctuator(")"sv)) {
-		// Check for variadic parameter (...)
-		if (peek_token().has_value() && peek_token()->value() == "...") {
-			consume_token(); // consume '...'
-			// Mark the function as variadic
-			func_ref.set_is_variadic(true);
-			
-			// Validate calling convention for variadic functions
-			// Only __cdecl and __vectorcall support variadic parameters (caller cleanup)
-			CallingConvention cc = func_ref.calling_convention();
-			if (cc != CallingConvention::Default && 
-			    cc != CallingConvention::Cdecl && 
-			    cc != CallingConvention::Vectorcall) {
-				return ParseResult::error(
-					"Variadic functions must use __cdecl or __vectorcall calling convention "
-					"(other conventions use callee cleanup which is incompatible with variadic arguments)", 
-					*current_token_);
-			}
-			
-			// The function is marked as variadic, but we don't need to store the ... parameter
-			if (!consume_punctuator(")"sv)) {
-				return ParseResult::error("Expected ')' after variadic parameter '...'", *current_token_);
-			}
-			break;
-		}
-
-		// Parse parameter type and name (identifier)
-		ParseResult type_and_name_result = parse_type_and_name();
-		if (type_and_name_result.is_error()) {
-			return type_and_name_result;
-		}
-
-		if (auto node = type_and_name_result.node()) {
-			func_ref.add_parameter_node(*node);
-		}
-
-		// Parse default parameter value (if present)
-		if (consume_punctuator("="sv)) {
-
-			// Parse the default value expression
-			auto default_value = parse_expression();
-			// Set the default value
-		}
-
-		if (consume_punctuator(","sv)) {
-			// After a comma, check if the next token is '...' for variadic parameters
-			if (peek_token().has_value() && peek_token()->value() == "...") {
-				consume_token(); // consume '...'
-				func_ref.set_is_variadic(true);
-				
-				// Validate calling convention for variadic functions
-				// Only __cdecl and __vectorcall support variadic parameters (caller cleanup)
-				CallingConvention cc = func_ref.calling_convention();
-				if (cc != CallingConvention::Default && 
-				    cc != CallingConvention::Cdecl && 
-				    cc != CallingConvention::Vectorcall) {
-					return ParseResult::error(
-						"Variadic functions must use __cdecl or __vectorcall calling convention "
-						"(other conventions use callee cleanup which is incompatible with variadic arguments)", 
-						*current_token_);
-				}
-				
-				if (!consume_punctuator(")"sv)) {
-					return ParseResult::error("Expected ')' after variadic parameter '...'", *current_token_);
-				}
-				break;
-			}
-			continue;
-		}
-		else if (consume_punctuator(")"sv)) {
-			break;
-		}
-		else {
-			return ParseResult::error(
-				"Expected ',' or ')' in function parameter list", *current_token_);
-		}
+	// Use unified parameter list parsing (Phase 1)
+	FlashCpp::ParsedParameterList params;
+	auto param_result = parseParameterList(params, calling_convention);
+	if (param_result.is_error()) {
+		return param_result;
 	}
+
+	// Apply the parsed parameters to the function
+	for (const auto& param : params.parameters) {
+		func_ref.add_parameter_node(param);
+	}
+	func_ref.set_is_variadic(params.is_variadic);
 
 	// Check for noexcept specifier after parameters
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
@@ -18076,27 +18073,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
 	auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, function_name_token.value());
 
-	// Parse parameters
-	consume_token();  // consume '('
-	while (peek_token().has_value() && peek_token()->value() != ")") {
-		auto param_result = parse_type_and_name();
-		if (param_result.is_error()) {
-			return std::nullopt;
-		}
-
-		if (param_result.node().has_value()) {
-			func_ref.add_parameter_node(*param_result.node());
-		}
-
-		if (peek_token().has_value() && peek_token()->value() == ",") {
-			consume_token();
-		}
+	// Parse parameters using unified parameter list parsing (Phase 1)
+	FlashCpp::ParsedParameterList params;
+	auto param_result = parseParameterList(params);
+	if (param_result.is_error()) {
+		return std::nullopt;
 	}
 
-	if (!peek_token().has_value() || peek_token()->value() != ")") {
-		return std::nullopt;  // Error - expected ')'
+	// Apply parsed parameters to the function
+	for (const auto& param : params.parameters) {
+		func_ref.add_parameter_node(param);
 	}
-	consume_token();  // consume ')'
+	func_ref.set_is_variadic(params.is_variadic);
 
 	// Save the position of the function body for delayed parsing
 	TokenPosition body_start = save_token_position();
