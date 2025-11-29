@@ -28,6 +28,7 @@
 #include "CommandLineParser.h"
 #include "Lexer.h"
 #include "Parser.h"
+#include "Log.h"
 #include "LibClangIRGenerator.h"
 #include "CodeGen.h"
 #include "IRTypes.h"
@@ -387,7 +388,7 @@ TimingResults compileWithLibClang(const std::string& sourceFile) {
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <source_file>\n";
+        FLASH_LOG(General, Error, "Usage: ", argv[0], " <source_file>");
         return 1;
     }
     
@@ -429,7 +430,7 @@ int main(int argc, char* argv[]) {
     if (libclangStats.objGenTimes.size() > 0 && std::filesystem::exists("output/libclang_output.o")) {
         std::string linkCmd = "clang output/libclang_output.o -o output/libclang.exe";
         if (std::system(linkCmd.c_str()) != 0) {
-            std::cerr << "Failed to link libclang.exe. Command: " << linkCmd << "\n";
+            FLASH_LOG(General, Error, "Failed to link libclang.exe. Command: ", linkCmd);
         } else {
             std::cout << "Generated executable: output/libclang.exe\n";
         }

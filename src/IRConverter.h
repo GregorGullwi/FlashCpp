@@ -3092,11 +3092,11 @@ private:
 						}
 						// Add more payload types here as they produce TempVars
 					} catch (const std::exception& e) {
-						std::cerr << "WARNING [calculateFunctionStackSpace]: Exception while processing typed payload for opcode " 
-						          << static_cast<int>(instruction.getOpcode()) << ": " << e.what() << "\n";
+						FLASH_LOG(Codegen, Warning, "[calculateFunctionStackSpace]: Exception while processing typed payload for opcode ", 
+						          static_cast<int>(instruction.getOpcode()), ": ", e.what());
 					} catch (...) {
-						std::cerr << "WARNING [calculateFunctionStackSpace]: Unknown exception while processing typed payload for opcode " 
-						          << static_cast<int>(instruction.getOpcode()) << "\n";
+						FLASH_LOG(Codegen, Warning, "[calculateFunctionStackSpace]: Unknown exception while processing typed payload for opcode ", 
+						          static_cast<int>(instruction.getOpcode()));
 					}
 				}
 				
@@ -5138,7 +5138,7 @@ private:
 					}
 				}
 				if (!pointer_initialized) {
-					std::cerr << "ERROR: Reference initializer is not an addressable lvalue" << std::endl;
+					FLASH_LOG(Codegen, Error, "Reference initializer is not an addressable lvalue");
 					assert(false && "Reference initializer must be an lvalue");
 				}
 			} else {
@@ -5220,10 +5220,10 @@ private:
 					auto rvalue_var_name = std::get<std::string_view>(init.value);
 					auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
 					if (src_it == current_scope.identifier_offset.end()) {
-						std::cerr << "ERROR: Variable '" << rvalue_var_name << "' not found in symbol table\n";
-						std::cerr << "Available variables in current scope:\n";
+						FLASH_LOG(Codegen, Error, "Variable '", rvalue_var_name, "' not found in symbol table");
+						FLASH_LOG(Codegen, Error, "Available variables in current scope:");
 						for (const auto& [name, offset] : current_scope.identifier_offset) {
-							std::cerr << "  - " << name << " at offset " << offset << "\n";
+							FLASH_LOG(Codegen, Error, "  - ", name, " at offset ", offset);
 						}
 					}
 					assert(src_it != current_scope.identifier_offset.end());
@@ -5482,10 +5482,10 @@ private:
 		
 		// DEBUG: Check if we're skipping the prologue
 		if (total_stack_space == 0 && func_name_str.find("insert") != std::string::npos) {
-			std::cerr << "WARNING: Function " << func_name_str << " has total_stack_space=0!\n";
-			std::cerr << "  named_vars_size=" << func_stack_space.named_vars_size << "\n";
-			std::cerr << "  shadow_stack_space=" << func_stack_space.shadow_stack_space << "\n";
-			std::cerr << "  temp_vars_size=" << func_stack_space.temp_vars_size << "\n";
+			FLASH_LOG(Codegen, Warning, "Function ", func_name_str, " has total_stack_space=0!");
+			FLASH_LOG(Codegen, Warning, "  named_vars_size=", func_stack_space.named_vars_size);
+			FLASH_LOG(Codegen, Warning, "  shadow_stack_space=", func_stack_space.shadow_stack_space);
+			FLASH_LOG(Codegen, Warning, "  temp_vars_size=", func_stack_space.temp_vars_size);
 		}
 
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
@@ -5579,8 +5579,8 @@ private:
 							if (vt.vtable_symbol == vtable_symbol) {
 								if (member_func->vtable_index < static_cast<int>(vt.function_symbols.size())) {
 									vt.function_symbols[member_func->vtable_index] = mangled_name;
-									std::cerr << "  Added virtual function " << func_name_str 
-									          << " at vtable index " << member_func->vtable_index << std::endl;
+									FLASH_LOG(Codegen, Debug, "  Added virtual function ", func_name_str, 
+									          " at vtable index ", member_func->vtable_index);
 								}
 								break;
 							}
@@ -5618,7 +5618,7 @@ private:
 
 		// For RBP-relative addressing, we start with negative offset after total allocated space
 		if (variable_scopes.empty()) {
-			std::cerr << "FATAL: variable_scopes is EMPTY!\n"; std::cerr.flush();
+			FLASH_LOG(Codegen, Error, "FATAL: variable_scopes is EMPTY!");
 			std::abort();
 		}
 		variable_scopes.back().scope_stack_space = -total_stack_space;
@@ -5822,7 +5822,7 @@ private:
 
 	void handleReturn(const IrInstruction& instruction) {
 		if (variable_scopes.empty()) {
-			std::cerr << "FATAL [handleReturn]: variable_scopes is EMPTY!\n"; std::cerr.flush();
+			FLASH_LOG(Codegen, Error, "FATAL [handleReturn]: variable_scopes is EMPTY!");
 			std::abort();
 		}
 		
@@ -8749,7 +8749,7 @@ private:
 				}
 			}
 			if (!pointer_loaded) {
-				std::cerr << "ERROR: Reference member initializer must be an lvalue" << std::endl;
+				FLASH_LOG(Codegen, Error, "Reference member initializer must be an lvalue");
 				assert(false && "Reference member initializer must be an lvalue");
 			}
 		} else if (is_literal) {
@@ -9760,7 +9760,7 @@ private:
 		for (const auto& branch : pending_branches_) {
 			auto label_it = label_positions_.find(branch.target_label);
 			if (label_it == label_positions_.end()) {
-				std::cerr << "ERROR: Label not found: " << branch.target_label << std::endl;
+				FLASH_LOG(Codegen, Error, "Label not found: ", branch.target_label);
 				continue;
 			}
 

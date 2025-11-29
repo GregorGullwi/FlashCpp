@@ -9,6 +9,7 @@
 #include "AstNodeTypes.h"
 #include "Token.h"
 #include "StackString.h"
+#include "Log.h"
 
 enum class ScopeType {
 	Global,
@@ -344,8 +345,8 @@ public:
 			auto it = std::find(template_params->begin(), template_params->end(), identifier);
 			if (it != template_params->end()) {
 				// This is a template parameter - create a TemplateParameterReferenceNode
-				std::cerr << "DEBUG: SymbolTable lookup found template parameter '" << identifier 
-				          << "' in provided template params, creating TemplateParameterReferenceNode\n";
+				FLASH_LOG(Symbols, Debug, "SymbolTable lookup found template parameter '", identifier, 
+				          "' in provided template params, creating TemplateParameterReferenceNode");
 				Token token(Token::Type::Identifier, std::string(identifier), 0, 0, 0);
 				return ASTNode::emplace_node<TemplateParameterReferenceNode>(identifier, token);
 			}
