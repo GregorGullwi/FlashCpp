@@ -3791,14 +3791,18 @@ private:
 						
 						// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 						textSectionData.push_back(0x66);
-						uint8_t rex_movq = 0x48;
+						uint8_t xmm_idx = xmm_modrm_bits(target_reg);
+						uint8_t rex_movq = 0x48;  // REX.W
+						if (xmm_idx >= 8) {
+							rex_movq |= 0x04; // REX.R for XMM8-XMM15 destination
+						}
 						if (static_cast<uint8_t>(temp_gpr) >= static_cast<uint8_t>(X64Register::R8)) {
 							rex_movq |= 0x01; // REX.B for source GPR
 						}
 						textSectionData.push_back(rex_movq);
 						textSectionData.push_back(0x0F);
 						textSectionData.push_back(0x6E);
-						uint8_t modrm_movq = 0xC0 + (xmm_modrm_bits(target_reg) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
+						uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
 						textSectionData.push_back(modrm_movq);
 						
 						// Release the temporary GPR
@@ -4123,25 +4127,10 @@ private:
 						}
 
 						// Now load from stack to target register
-						prefix = (argType == Type::Float) ? 0xF3 : 0xF2;
+						// Use emitFloatMovFromFrame which correctly handles XMM8-XMM15 with REX prefix
+						bool is_float = (argType == Type::Float);
 						int load_offset = allocateStackSlotForTempVar(src_reg_temp.var_number);
-						textSectionData.push_back(prefix);
-						textSectionData.push_back(0x0F);
-						textSectionData.push_back(0x10);
-
-						uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
-						if (load_offset >= -128 && load_offset <= 127) {
-							modrm = 0x45 | (reg_bits << 3);
-							textSectionData.push_back(modrm);
-							textSectionData.push_back(static_cast<uint8_t>(load_offset));
-						} else {
-							modrm = 0x85 | (reg_bits << 3);
-							textSectionData.push_back(modrm);
-							for (int j = 0; j < 4; ++j) {
-								textSectionData.push_back(static_cast<uint8_t>(load_offset & 0xFF));
-								load_offset >>= 8;
-							}
-						}
+						emitFloatMovFromFrame(target_reg, load_offset, is_float);
 					} else {
 						// Store RAX to the newly allocated stack slot first
 						emitMovToFrameBySize(X64Register::RAX, stack_offset, 64);
@@ -5790,20 +5779,27 @@ private:
 			if (is_float_param) {
 				// For floating-point parameters, use movss/movsd to store from XMM register
 				uint8_t prefix = (param.param_type == Type::Float) ? 0xF3 : 0xF2;
+				
+				// Check if we need REX prefix for XMM8-XMM15
+				uint8_t xmm_reg = xmm_modrm_bits(param.src_reg);
+				bool needs_rex = (xmm_reg >= 8);
+				
 				textSectionData.push_back(prefix);
+				if (needs_rex) {
+					textSectionData.push_back(0x44);  // REX.R - extends ModR/M reg field
+				}
 				textSectionData.push_back(0x0F);
 				textSectionData.push_back(0x11); // Store variant (movss/movsd [mem], xmm)
 
-				// ModR/M byte for [RBP + offset]
+				// ModR/M byte for [RBP + offset] - use only low 3 bits of xmm register
 				int32_t stack_offset = param.offset;
-				uint8_t xmm_reg = static_cast<uint8_t>(param.src_reg) - static_cast<uint8_t>(X64Register::XMM0);
 
 				if (stack_offset >= -128 && stack_offset <= 127) {
-					uint8_t modrm = 0x45 + (xmm_reg << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+					uint8_t modrm = 0x45 + ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
 					textSectionData.push_back(modrm);
 					textSectionData.push_back(static_cast<uint8_t>(stack_offset));
 				} else {
-					uint8_t modrm = 0x85 + (xmm_reg << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+					uint8_t modrm = 0x85 + ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
 					textSectionData.push_back(modrm);
 					for (int j = 0; j < 4; ++j) {
 						textSectionData.push_back(static_cast<uint8_t>(stack_offset & 0xFF));
