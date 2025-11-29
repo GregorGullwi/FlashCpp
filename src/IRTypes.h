@@ -9,6 +9,7 @@
 #include <cassert>
 
 #include "AstNodeTypes.h"
+#include "Log.h"
 
 // Forward declare IrInstruction for circular dependency resolution
 class IrInstruction;
@@ -2030,7 +2031,7 @@ public:
 		break;
 
 		default:
-			std::cerr << "Unhandled opcode: " << static_cast<std::underlying_type_t<IrOpcode>>(opcode_);
+			FLASH_LOG(Codegen, Error, "Unhandled opcode: ", static_cast<std::underlying_type_t<IrOpcode>>(opcode_));
 			assert(false && "Unhandled opcode");
 			break;
 		}

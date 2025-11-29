@@ -8,6 +8,7 @@
 #include <stack>
 #include <unordered_map>
 #include "ChunkedAnyVector.h"
+#include "Log.h"
 
 class CompileContext {
 public:
@@ -41,7 +42,7 @@ public:
 
 	void addIncludeDir(std::string_view includeDir) {
 		if (isVerboseMode()) {
-			std::cerr << "Adding include directory: " << includeDir << std::endl;
+			FLASH_LOG(General, Info, "Adding include directory: ", includeDir);
 		}
 		includeDirs_.emplace_back(includeDir);
 	}
