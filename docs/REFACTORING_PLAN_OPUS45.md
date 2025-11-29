@@ -779,9 +779,9 @@ ParseResult Parser::parseParameterList(ParsedParameterList& out_params) {
 ```
 
 **Deliverables:**
-- [ ] `parseParameterList()` implementation
-- [ ] All parameter parsing unified
-- [ ] Zero behavior changes (diff baseline dumps)
+- [x] `parseParameterList()` implementation
+- [x] All parameter parsing unified
+- [x] Zero behavior changes (diff baseline dumps)
 
 ---
 
@@ -882,9 +882,9 @@ ParseResult Parser::parseFunctionTrailingSpecifiers(
 ```
 
 **Deliverables:**
-- [ ] `parseFunctionTrailingSpecifiers()` implementation
-- [ ] Member function parsing updated
-- [ ] Constructor/destructor parsing updated
+- [x] `parseFunctionTrailingSpecifiers()` implementation
+- [x] Member function parsing updated
+- [ ] Constructor/destructor parsing updated (deferred - current handling is sufficient)
 
 ---
 
