@@ -146,15 +146,22 @@ static_assert(hex_val == 255, "hex literals should work");
 constexpr int bin_val = 255;
 static_assert(bin_val == 255, "binary value should work");
 
-// ===== TYPE CONVERSIONS (using constructor syntax) =====
-constexpr int from_bool = int(true);
-static_assert(from_bool == 1, "int(true) should be 1");
+// ===== TYPE CONVERSIONS =====
+constexpr int from_bool = static_cast<int>(true);
+static_assert(from_bool == 1, "static_cast<int>(true) should be 1");
 
-constexpr bool from_int = bool(42);
-static_assert(from_int, "bool(42) should be true");
+constexpr bool from_int = static_cast<bool>(42);
+static_assert(from_int, "static_cast<bool>(42) should be true");
 
-constexpr double from_int_dbl = double(100);
+constexpr double from_int_dbl = static_cast<double>(100);
 // Can't easily test floating point equality in static_assert
+
+// Test C-style casts as well
+constexpr int c_style_from_bool = (int)true;
+static_assert(c_style_from_bool == 1, "(int)true should be 1");
+
+constexpr bool c_style_from_int = (bool)0;
+static_assert(!c_style_from_int, "(bool)0 should be false");
 
 // ===== SUMMARY =====
 // This test demonstrates that the FlashCpp constexpr implementation supports:
@@ -167,9 +174,10 @@ constexpr double from_int_dbl = double(100);
 // - Complex expressions with correct precedence
 // - Constinit for static initialization
 // - sizeof operator
-// - Type conversions using constructor syntax
+// - Type conversions using static_cast and C-style casts
 // - Various literal formats (decimal, hex, binary, negative)
 
-void test() {
+int main() {
     // If this compiles and links, all constexpr tests passed!
+    return 0;
 }

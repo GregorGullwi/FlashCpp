@@ -202,6 +202,11 @@ public:
 			return evaluate_member_access(std::get<MemberAccessNode>(expr), context);
 		}
 
+		// For StaticCastNode (static_cast<Type>(expr) and C-style casts)
+		if (std::holds_alternative<StaticCastNode>(expr)) {
+			return evaluate_static_cast(std::get<StaticCastNode>(expr), context);
+		}
+
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
 	}
@@ -320,8 +325,57 @@ private:
 			case Type::LongDouble:
 				return EvalResult::from_double(arg_result.as_double());
 			
+		default:
+			return EvalResult::error("Unsupported type in constructor call for constant evaluation");
+		}
+	}
+
+	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context) {
+		// Evaluate static_cast<Type>(expr) and C-style casts in constant expressions
+		
+		// Get the target type
+		const ASTNode& type_node = cast_node.target_type();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Cast without valid type specifier");
+		}
+		
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		Type target_type = type_spec.type();
+		
+		// Evaluate the expression being cast
+		const ASTNode& expr = cast_node.expr();
+		auto expr_result = evaluate(expr, context);
+		if (!expr_result.success) {
+			return expr_result;
+		}
+		
+		// Perform the type conversion
+		switch (target_type) {
+			case Type::Bool:
+				return EvalResult::from_bool(expr_result.as_bool());
+			
+			case Type::Char:
+			case Type::Short:
+			case Type::Int:
+			case Type::Long:
+			case Type::LongLong:
+				return EvalResult::from_int(expr_result.as_int());
+			
+			case Type::UnsignedChar:
+			case Type::UnsignedShort:
+			case Type::UnsignedInt:
+			case Type::UnsignedLong:
+			case Type::UnsignedLongLong:
+				// For unsigned types, convert to unsigned
+				return EvalResult::from_uint(static_cast<unsigned long long>(expr_result.as_int()));
+			
+			case Type::Float:
+			case Type::Double:
+			case Type::LongDouble:
+				return EvalResult::from_double(expr_result.as_double());
+			
 			default:
-				return EvalResult::error("Unsupported type in constructor call for constant evaluation");
+				return EvalResult::error("Unsupported type in static_cast for constant evaluation");
 		}
 	}
 
