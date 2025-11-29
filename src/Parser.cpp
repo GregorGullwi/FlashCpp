@@ -14999,12 +14999,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			if (std::holds_alternative<NumericLiteralNode>(expr)) {
 				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 				const auto& val = lit.value();
+				Type literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
 				if (std::holds_alternative<unsigned long long>(val)) {
-					template_args.emplace_back(static_cast<int64_t>(std::get<unsigned long long>(val)));
+					template_args.emplace_back(static_cast<int64_t>(std::get<unsigned long long>(val)), literal_type);
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
 				} else if (std::holds_alternative<double>(val)) {
-					template_args.emplace_back(static_cast<int64_t>(std::get<double>(val)));
+					template_args.emplace_back(static_cast<int64_t>(std::get<double>(val)), literal_type);
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
 				} else {
@@ -15263,7 +15264,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (arg.kind == TemplateArgument::Kind::Type) {
 					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
 				} else if (arg.kind == TemplateArgument::Kind::Value) {
-					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value));
+					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
 				}
 			}
 		
@@ -15752,7 +15753,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				if (arg.kind == TemplateArgument::Kind::Type) {
 					converted_template_args.push_back(TemplateArgument::makeType(arg.type_value));
 				} else if (arg.kind == TemplateArgument::Kind::Value) {
-					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value));
+					converted_template_args.push_back(TemplateArgument::makeValue(arg.int_value, arg.value_type));
 				}
 			}
 		
@@ -16865,7 +16866,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::vector<TemplateArgument> converted_template_args;
 				for (const auto& ttype_arg : template_args_to_use) {
 					if (ttype_arg.is_value) {
-						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value));
+						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
 					} else {
 						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
 					}
@@ -17008,7 +17009,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::vector<TemplateArgument> converted_template_args;
 				for (const auto& ttype_arg : template_args_to_use) {
 					if (ttype_arg.is_value) {
-						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value));
+						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
 					} else {
 						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
 					}
@@ -17070,7 +17071,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::vector<TemplateArgument> converted_template_args;
 				for (const auto& ttype_arg : template_args_to_use) {
 					if (ttype_arg.is_value) {
-						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value));
+						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
 					} else {
 						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
 					}
@@ -17203,7 +17204,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					converted_template_args.reserve(template_args_to_use.size());
 					for (const auto& ttype_arg : template_args_to_use) {
 						if (ttype_arg.is_value) {
-							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value));
+							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
 						} else {
 							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
 						}
@@ -18290,11 +18291,13 @@ ASTNode Parser::substituteTemplateParameters(
 						                tparam_ref.token().file_index());
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.kind == TemplateArgument::Kind::Value) {
-						// Create a numeric literal node for the value
+						// Create a numeric literal node for the value with the correct type
+						Type value_type = arg.value_type;
+						int size_bits = (value_type == Type::Bool) ? 8 : 32;  // bool is 8 bits, int is 32 bits
 						Token value_token(Token::Type::Literal, std::to_string(arg.int_value),
 						                 tparam_ref.token().line(), tparam_ref.token().column(),
 						                 tparam_ref.token().file_index());
-						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), Type::Int, TypeQualifier::None, 32));
+						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), value_type, TypeQualifier::None, size_bits));
 					}
 					// For template template parameters, not yet supported
 					break;
