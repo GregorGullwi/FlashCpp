@@ -1069,7 +1069,7 @@ ParseResult Parser::parseFunctionBodyWithContext(
 
 **Deliverables:**
 - [x] `parseFunctionBodyWithContext()` implementation
-- [ ] Delayed body queue unified
+- [x] Delayed body queue unified (helper methods `setupMemberFunctionContext()` and `registerMemberFunctionsInScope()`)
 - [ ] All body parsing goes through single method
 
 ---
