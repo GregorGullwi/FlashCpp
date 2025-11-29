@@ -1338,7 +1338,7 @@ std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
 
 struct RegisterAllocator
 {
-	static constexpr uint8_t REGISTER_COUNT = static_cast<uint8_t>(X64Register::Count) - 1;
+	static constexpr uint8_t REGISTER_COUNT = static_cast<uint8_t>(X64Register::Count);
 	struct AllocatedRegister {
 		X64Register reg = X64Register::Count;
 		bool isAllocated = false;
@@ -5493,7 +5493,7 @@ private:
 		functionSymbols[func_name] = func_offset;
 
 		// Track function for debug information
-		current_function_name_ = func_name;  // Direct assignment, no temporary
+		current_function_name_ = func_name_str;  // Use the std::string directly, not the string_view
 		current_function_mangled_name_ = mangled_name;
 		current_function_offset_ = func_offset;
 
