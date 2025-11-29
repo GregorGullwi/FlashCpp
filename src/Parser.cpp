@@ -6422,19 +6422,12 @@ ParseResult Parser::parseFunctionTrailingSpecifiers(
 		}
 
 		// Parse ref qualifiers (& and &&)
-		if (token->type() == Token::Type::Punctuator) {
+		if (token->type() == Token::Type::Punctuator || token->type() == Token::Type::Operator) {
 			if (token->value() == "&") {
 				consume_token();
-				// Check for && (rvalue ref)
-				if (peek_token().has_value() && peek_token()->value() == "&") {
-					consume_token();
-					out_quals.is_rvalue_ref = true;
-				} else {
-					out_quals.is_lvalue_ref = true;
-				}
+				out_quals.is_lvalue_ref = true;
 				continue;
 			}
-			// Note: && as single token
 			if (token->value() == "&&") {
 				consume_token();
 				out_quals.is_rvalue_ref = true;
@@ -6484,6 +6477,9 @@ ParseResult Parser::parseFunctionTrailingSpecifiers(
 		}
 
 		// Parse override/final
+		// Note: 'override' and 'final' are contextual keywords in C++11+
+		// They may be tokenized as either Keyword or Identifier depending on context
+		// We accept both to be safe
 		if (token->type() == Token::Type::Keyword || token->type() == Token::Type::Identifier) {
 			std::string_view kw = token->value();
 			if (kw == "override") {
