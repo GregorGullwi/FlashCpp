@@ -1172,6 +1172,12 @@ public:
 	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
 
+	// Pre-computed mangled name for consistent access across all compiler stages
+	// Generated once during parsing, reused by CodeGen and ObjFileWriter
+	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
+	std::string_view mangled_name() const { return mangled_name_; }
+	bool has_mangled_name() const { return !mangled_name_.empty(); }
+
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
@@ -1189,6 +1195,7 @@ private:
 	bool is_consteval_;
 	bool is_noexcept_ = false;  // True if function is declared noexcept
 	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
+	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
 
 class FunctionCallNode {

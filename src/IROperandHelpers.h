@@ -32,14 +32,14 @@ inline IrValue toIrValue(const IrOperand& operand) {
 	}
 }
 
-TypedValue toTypedValue(std::span<const IrOperand> operands) {
+inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value]");
 	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value]");
 	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value]");
 	return { .type = std::get<Type>(operands[0]), .size_in_bits = std::get<int>(operands[1]), .value = toIrValue(operands[2]) };
 }
 
-TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
+inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 	return toTypedValue(std::span<const IrOperand>(operands));
 }
 

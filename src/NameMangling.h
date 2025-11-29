@@ -3,10 +3,57 @@
 #include "AstNodeTypes.h"
 #include "IRTypes.h"
 #include "ChunkedString.h"
+#include <variant>
 
 // Shared MSVC name mangling utilities used by both CodeGen and ObjectFileWriter
 
 namespace NameMangling {
+
+// Toggle between old (std::string) and new (string_view) implementations
+#ifndef FLASHCPP_USE_STRINGVIEW_MANGLING
+#define FLASHCPP_USE_STRINGVIEW_MANGLING 1
+#endif
+
+// A mangled name that can be stored as either:
+// - A committed string_view (points to StringBuilder's stable storage)
+// - A std::string (fallback for compatibility/testing)
+class MangledName {
+public:
+	// Default: empty name
+	MangledName() : storage_(std::string_view{}) {}
+	
+	// Construct from committed string_view (preferred - zero allocation)
+	explicit MangledName(std::string_view committed_sv) 
+		: storage_(committed_sv) {}
+	
+	// Construct from string (fallback - owns the data)
+	explicit MangledName(std::string owned_str) 
+		: storage_(std::move(owned_str)) {}
+	
+	// Always returns a string_view (zero-copy for both variants)
+	std::string_view view() const {
+		return std::visit([](const auto& s) -> std::string_view {
+			return s;
+		}, storage_);
+	}
+	
+	// Implicit conversion to string_view for convenience
+	operator std::string_view() const { return view(); }
+	
+	// Check if empty
+	bool empty() const { return view().empty(); }
+	
+	// For compatibility with code expecting std::string
+	std::string to_string() const { return std::string(view()); }
+	
+	// Comparison operators
+	bool operator==(const MangledName& other) const { return view() == other.view(); }
+	bool operator==(std::string_view other) const { return view() == other; }
+	bool operator<(const MangledName& other) const { return view() < other.view(); }
+	
+private:
+	std::variant<std::string_view, std::string> storage_;
+};
 
 // Helper to append CV-qualifier code (A/B/C/D) to output
 inline void appendCVQualifier(auto& output, CVQualifier cv) {
@@ -98,6 +145,149 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		}
 		default: output += 'H'; break;  // Default to int for unknown types
 	}
+}
+
+// Generate MSVC mangled name for a function
+// Uses StringBuilder for efficient string construction and returns a committed string_view
+// Parameters:
+//   builder: StringBuilder instance to use for building the name
+//   func_name: The unmangled function name
+//   return_type: Return type for the function
+//   param_types: Vector of parameter types
+//   is_variadic: True if function has ... ellipsis parameter
+//   struct_name: Class/struct name for member functions (empty for free functions)
+//   namespace_path: Namespace components for namespace-scoped functions
+// Returns: MangledName containing the committed string_view
+inline MangledName generateMangledName(
+	StringBuilder& builder,
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	bool is_variadic = false,
+	std::string_view struct_name = "",
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	// Special case: main function is never mangled
+	if (func_name == "main") {
+		builder.append("main");
+		return MangledName(builder.commit());
+	}
+
+	builder.append('?');
+	
+	// Handle member functions vs free functions
+	if (!struct_name.empty()) {
+		// Member function: ?name@ClassName@@QA...
+		// Extract just the function name (after ::)
+		std::string_view func_only_name = func_name;
+		size_t pos = func_name.rfind("::");
+		if (pos != std::string_view::npos) {
+			func_only_name = func_name.substr(pos + 2);
+		}
+		builder.append(func_only_name);
+		builder.append('@');
+		
+		// For nested classes, reverse the order: "Outer::Inner" -> "Inner@Outer"
+		std::vector<std::string_view> class_parts;
+		std::string_view remaining = struct_name;
+		size_t class_pos;
+		while ((class_pos = remaining.find("::")) != std::string_view::npos) {
+			class_parts.push_back(remaining.substr(0, class_pos));
+			remaining = remaining.substr(class_pos + 2);
+		}
+		class_parts.push_back(remaining);  // Add last part
+		
+		// Append in reverse order with @ separators
+		for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
+			builder.append(*it);
+			if (std::next(it) != class_parts.rend()) {
+				builder.append('@');
+			}
+		}
+		
+		builder.append("@@QA");  // @@ + calling convention for member functions (Q = __thiscall-like)
+	} else if (!namespace_path.empty()) {
+		// Namespace-scoped free function: ?name@Namespace@@YA...
+		builder.append(func_name);
+		builder.append('@');
+		
+		// Append namespace parts in reverse order with @ separators
+		for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+			builder.append(*it);
+			if (std::next(it) != namespace_path.rend()) {
+				builder.append('@');
+			}
+		}
+		
+		builder.append("@@YA");  // @@ + calling convention (__cdecl)
+	} else {
+		// Free function in global namespace: ?name@@YA...
+		builder.append(func_name);
+		builder.append("@@YA");  // @@ + calling convention (__cdecl)
+	}
+
+	// Add return type code
+	appendTypeCode(builder, return_type);
+
+	// Add parameter type codes
+	for (const auto& param_type : param_types) {
+		appendTypeCode(builder, param_type);
+	}
+
+	// End marker - different for variadic vs non-variadic
+	if (is_variadic) {
+		builder.append("ZZ");  // Variadic functions end with 'ZZ' in MSVC mangling
+	} else {
+		builder.append("@Z");  // Non-variadic functions end with '@Z'
+	}
+
+	return MangledName(builder.commit());
+}
+
+// Overload that accepts std::string namespace_path for backward compatibility
+inline MangledName generateMangledName(
+	StringBuilder& builder,
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string>& namespace_path
+) {
+	// Convert std::string vector to string_view vector
+	std::vector<std::string_view> sv_path;
+	sv_path.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		sv_path.push_back(ns);
+	}
+	return generateMangledName(builder, func_name, return_type, param_types, is_variadic, struct_name, sv_path);
+}
+
+// Generate mangled name from a FunctionDeclarationNode
+// This is the main entry point for generating mangled names during parsing
+// The function extracts all necessary information from the AST node
+inline MangledName generateMangledNameFromNode(
+	StringBuilder& builder,
+	const FunctionDeclarationNode& func_node,
+	const std::vector<std::string>& namespace_path = {}
+) {
+	const DeclarationNode& decl_node = func_node.decl_node();
+	const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	std::string_view func_name = decl_node.identifier_token().value();
+	
+	// Extract parameter types
+	std::vector<TypeSpecifierNode> param_types;
+	param_types.reserve(func_node.parameter_nodes().size());
+	for (const auto& param : func_node.parameter_nodes()) {
+		const DeclarationNode& param_decl = param.as<DeclarationNode>();
+		param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+	}
+	
+	// Get struct name for member functions
+	std::string_view struct_name = func_node.is_member_function() ? func_node.parent_struct_name() : "";
+	
+	return generateMangledName(builder, func_name, return_type, param_types, 
+	                           func_node.is_variadic(), struct_name, namespace_path);
 }
 
 } // namespace NameMangling

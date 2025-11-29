@@ -5,6 +5,7 @@
 #include "OverloadResolution.h"
 #include "TemplateRegistry.h"
 #include "ConstExprEvaluator.h"
+#include "NameMangling.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -6515,6 +6516,40 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 	}
 	
 	return SignatureValidationResult::success();
+}
+
+// Phase 6 (mangling): Generate and set mangled name on a FunctionDeclarationNode
+// This should be called after all function properties are set (parameters, variadic flag, etc.)
+void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
+{
+	// Skip if already has a mangled name
+	if (func_node.has_mangled_name()) {
+		return;
+	}
+	
+	// Skip C linkage functions - they don't get mangled
+	if (func_node.linkage() == Linkage::C) {
+		return;
+	}
+	
+	// Build namespace path from current symbol table state
+	auto namespace_path = gSymbolTable.build_current_namespace_path();
+	std::vector<std::string> ns_strings;
+	ns_strings.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+		ns_strings.push_back(ns);
+#else
+		ns_strings.push_back(std::string(ns.view()));
+#endif
+	}
+	
+	// Generate the mangled name using the NameMangling helper
+	StringBuilder builder;
+	NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(builder, func_node, ns_strings);
+	
+	// Set the mangled name on the node (the string_view points to stable ChunkedStringAllocator storage)
+	func_node.set_mangled_name(mangled.view());
 }
 
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
