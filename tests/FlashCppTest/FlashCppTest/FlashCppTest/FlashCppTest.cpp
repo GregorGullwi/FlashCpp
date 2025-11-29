@@ -3092,6 +3092,254 @@ TEST_CASE("Custom:Container") {
 	run_test_from_file("test_custom_container.cpp", "Custom:Container", false);
 }
 
+TEST_CASE("Arithmetic Test") {
+	run_test_from_file("arithmetic_test.cpp", "Arithmetic Test", false);
+}
+
+TEST_CASE("Clang Lambda Example") {
+	run_test_from_file("clang_lambda_example.cpp", "Clang Lambda Example", false);
+}
+
+TEST_CASE("Concept Abbreviated") {
+	run_test_from_file("concept_abbreviated.cpp", "Concept Abbreviated", false);
+}
+
+TEST_CASE("Concept Advanced Requires") {
+	run_test_from_file("concept_advanced_requires.cpp", "Concept Advanced Requires", false);
+}
+
+TEST_CASE("Concept Advanced Subsumption") {
+	run_test_from_file("concept_advanced_subsumption.cpp", "Concept Advanced Subsumption", false);
+}
+
+TEST_CASE("Concept Error Test") {
+	run_test_from_file("concept_error_test.cpp", "Concept Error Test", false);
+}
+
+TEST_CASE("Concept Requires Expr") {
+	run_test_from_file("concept_requires_expr.cpp", "Concept Requires Expr", false);
+}
+
+TEST_CASE("Concept Return Type Req") {
+	run_test_from_file("concept_return_type_req.cpp", "Concept Return Type Req", false);
+}
+
+TEST_CASE("Concept Subsumption") {
+	run_test_from_file("concept_subsumption.cpp", "Concept Subsumption", false);
+}
+
+TEST_CASE("Concept Trailing") {
+	run_test_from_file("concept_trailing.cpp", "Concept Trailing", false);
+}
+
+TEST_CASE("Concept Type Traits") {
+	run_test_from_file("concept_type_traits.cpp", "Concept Type Traits", false);
+}
+
+TEST_CASE("Countof Test") {
+	run_test_from_file("countof_test.cpp", "Countof Test", false);
+}
+
+TEST_CASE("Goto Test") {
+	run_test_from_file("goto_test.cpp", "Goto Test", false);
+}
+
+TEST_CASE("If Only Return") {
+	run_test_from_file("if_only_return.cpp", "If Only Return", false);
+}
+
+TEST_CASE("If Then Return") {
+	run_test_from_file("if_then_return.cpp", "If Then Return", false);
+}
+
+TEST_CASE("If With Comparison") {
+	run_test_from_file("if_with_comparison.cpp", "If With Comparison", false);
+}
+
+TEST_CASE("If With Var") {
+	run_test_from_file("if_with_var.cpp", "If With Var", false);
+}
+
+TEST_CASE("Just Return") {
+	run_test_from_file("just_return.cpp", "Just Return", false);
+}
+
+TEST_CASE("Member Func Template Call") {
+	run_test_from_file("member_func_template_call.cpp", "Member Func Template Call", false);
+}
+
+TEST_CASE("Member Func Template Simple") {
+	run_test_from_file("member_func_template_simple.cpp", "Member Func Template Simple", false);
+}
+
+TEST_CASE("Member Function Template") {
+	run_test_from_file("member_function_template.cpp", "Member Function Template", false);
+}
+
+TEST_CASE("Member Template Direct") {
+	run_test_from_file("member_template_direct.cpp", "Member Template Direct", false);
+}
+
+TEST_CASE("Minimal If") {
+	run_test_from_file("minimal_if.cpp", "Minimal If", false);
+}
+
+TEST_CASE("Operator Test") {
+	run_test_from_file("operator_test.cpp", "Operator Test", false);
+}
+
+TEST_CASE("Problem Statement Example") {
+	run_test_from_file("problem_statement_example.cpp", "Problem Statement Example", false);
+}
+
+TEST_CASE("Simple Add") {
+	run_test_from_file("simple_add.cpp", "Simple Add", false);
+}
+
+TEST_CASE("Simple Class Test") {
+	run_test_from_file("simple_class_test.cpp", "Simple Class Test", false);
+}
+
+TEST_CASE("Simple Comparison Test") {
+	run_test_from_file("simple_comparison_test.cpp", "Simple Comparison Test", false);
+}
+
+TEST_CASE("Simple If") {
+	run_test_from_file("simple_if.cpp", "Simple If", false);
+}
+
+TEST_CASE("Simple Template") {
+	run_test_from_file("simple_template.cpp", "Simple Template", false);
+}
+
+TEST_CASE("Simple Test") {
+	run_test_from_file("simple_test.cpp", "Simple Test", false);
+}
+
+TEST_CASE("Single Call Test") {
+	run_test_from_file("single_call_test.cpp", "Single Call Test", false);
+}
+
+TEST_CASE("Spaceship Member Access") {
+	run_test_from_file("spaceship_member_access.cpp", "Spaceship Member Access", false);
+}
+
+TEST_CASE("Spaceship Simple Int") {
+	run_test_from_file("spaceship_simple_int.cpp", "Spaceship Simple Int", false);
+}
+
+TEST_CASE("Spaceship Simple") {
+	run_test_from_file("spaceship_simple.cpp", "Spaceship Simple", false);
+}
+
+TEST_CASE("Stored Results Test") {
+	run_test_from_file("stored_results_test.cpp", "Stored Results Test", false);
+}
+
+TEST_CASE("Struct Constructor Init Test") {
+	run_test_from_file("struct_constructor_init_test.cpp", "Struct Constructor Init Test", false);
+}
+
+TEST_CASE("Struct Member Test") {
+	run_test_from_file("struct_member_test.cpp", "Struct Member Test", false);
+}
+
+TEST_CASE("Template Basic") {
+	run_test_from_file("template_basic.cpp", "Template Basic", false);
+}
+
+TEST_CASE("Template Concrete") {
+	run_test_from_file("template_concrete.cpp", "Template Concrete", false);
+}
+
+TEST_CASE("Template Expr") {
+	run_test_from_file("template_expr.cpp", "Template Expr", false);
+}
+
+TEST_CASE("Template Inline Test") {
+	run_test_from_file("template_inline_test.cpp", "Template Inline Test", false);
+}
+
+TEST_CASE("Template Instantiation Simple") {
+	run_test_from_file("template_instantiation_simple.cpp", "Template Instantiation Simple", false);
+}
+
+TEST_CASE("Template Local") {
+	run_test_from_file("template_local.cpp", "Template Local", false);
+}
+
+TEST_CASE("Template Partial Specialization Test") {
+	run_test_from_file("template_partial_specialization_test.cpp", "Template Partial Specialization Test", false);
+}
+
+TEST_CASE("Template Primary Only") {
+	run_test_from_file("template_primary_only.cpp", "Template Primary Only", false);
+}
+
+TEST_CASE("Template Return Only") {
+	run_test_from_file("template_return_only.cpp", "Template Return Only", false);
+}
+
+TEST_CASE("Template Spec Debug") {
+	run_test_from_file("template_spec_debug.cpp", "Template Spec Debug", false);
+}
+
+TEST_CASE("Template Spec Empty") {
+	run_test_from_file("template_spec_empty.cpp", "Template Spec Empty", false);
+}
+
+TEST_CASE("Template Specialization Basic") {
+	run_test_from_file("template_specialization_basic.cpp", "Template Specialization Basic", false);
+}
+
+TEST_CASE("Template Specialization Using Test") {
+	run_test_from_file("template_specialization_using_test.cpp", "Template Specialization Using Test", false);
+}
+
+TEST_CASE("Template Template Just Func") {
+	run_test_from_file("template_template_just_func.cpp", "Template Template Just Func", false);
+}
+
+TEST_CASE("Template Template Minimal") {
+	run_test_from_file("template_template_minimal.cpp", "Template Template Minimal", false);
+}
+
+TEST_CASE("Template Template With Inst") {
+	run_test_from_file("template_template_with_inst.cpp", "Template Template With Inst", false);
+}
+
+TEST_CASE("Template Template With Member") {
+	run_test_from_file("template_template_with_member.cpp", "Template Template With Member", false);
+}
+
+TEST_CASE("Template Template With Vector") {
+	run_test_from_file("template_template_with_vector.cpp", "Template Template With Vector", false);
+}
+
+TEST_CASE("Template Void Return") {
+	run_test_from_file("template_void_return.cpp", "Template Void Return", false);
+}
+
+TEST_CASE("Template With Variable") {
+	run_test_from_file("template_with_variable.cpp", "Template With Variable", false);
+}
+
+TEST_CASE("Ultra Minimal If") {
+	run_test_from_file("ultra_minimal_if.cpp", "Ultra Minimal If", false);
+}
+
+TEST_CASE("Ultra Minimal If2") {
+	run_test_from_file("ultra_minimal_if2.cpp", "Ultra Minimal If2", false);
+}
+
+TEST_CASE("Ultra Minimal If3") {
+	run_test_from_file("ultra_minimal_if3.cpp", "Ultra Minimal If3", false);
+}
+
+TEST_CASE("While Loops Working") {
+	run_test_from_file("while_loops_working.cpp", "While Loops Working", false);
+}
+
 TEST_CASE("Template:Template") {
 	run_test_from_file("template_template_test.cpp", "Template:Template", false);
 }
