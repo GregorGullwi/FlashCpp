@@ -8448,6 +8448,8 @@ private:
 		// Get the object's base stack offset or pointer
 		int32_t object_base_offset = 0;
 		bool is_pointer_access = false;  // true if object is 'this' or a reference parameter (both are pointers)
+		bool is_global_access = false;   // true if object is a global variable
+		std::string_view global_object_name;  // name for global variable access
 		const StackVariableScope& current_scope = variable_scopes.back();
 
 		// Get object base offset
@@ -8455,14 +8457,27 @@ private:
 			std::string_view object_name = std::get<std::string_view>(op.object);
 			auto it = current_scope.identifier_offset.find(object_name);
 			if (it == current_scope.identifier_offset.end()) {
-				assert(false && "Struct object not found in scope");
-				return;
-			}
-			object_base_offset = it->second;
+				// Not found in local scope - check if it's a global variable
+				bool found_global = false;
+				for (const auto& global : global_variables_) {
+					if (global.name == object_name) {
+						found_global = true;
+						is_global_access = true;
+						global_object_name = global.name;
+						break;
+					}
+				}
+				if (!found_global) {
+					assert(false && "Struct object not found in scope or globals");
+					return;
+				}
+			} else {
+				object_base_offset = it->second;
 
-			// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
-			if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
-				is_pointer_access = true;
+				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
+				if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
+					is_pointer_access = true;
+				}
 			}
 		} else {
 			// Nested case: object is the result of a previous member access
@@ -8506,7 +8521,44 @@ private:
 		// Allocate a register for loading the member value
 		X64Register temp_reg = allocateRegisterWithSpilling();
 
-		if (is_pointer_access) {
+		if (is_global_access) {
+			// For global struct variables: load address of global using LEA with RIP-relative addressing
+			// LEA RAX, [RIP + global_name]
+			// Then load from [RAX + member_offset]
+			
+			// Step 1: LEA temp_reg, [RIP + global]
+			// 48 8D 05 xx xx xx xx  ; LEA RAX, [RIP+disp32]
+			textSectionData.push_back(0x48);  // REX.W prefix
+			textSectionData.push_back(0x8D);  // LEA opcode
+			// ModR/M: 00 (mod) | reg (temp_reg) | 101 (RIP+disp32)
+			uint8_t modrm = 0x05 | ((static_cast<uint8_t>(temp_reg) & 0x7) << 3);
+			textSectionData.push_back(modrm);
+			
+			// Add relocation for the global variable
+			uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			pending_global_relocations_.push_back({reloc_offset, std::string(global_object_name), IMAGE_REL_AMD64_REL32});
+			
+			// Step 2: Load member from [temp_reg + offset]
+			OpCodeWithSize load_opcodes;
+			if (member_size_bytes == 8) {
+				load_opcodes = generateMovFromMemory(temp_reg, temp_reg, op.offset);
+			} else if (member_size_bytes == 4) {
+				load_opcodes = generateMovFromMemory32(temp_reg, temp_reg, op.offset);
+			} else if (member_size_bytes == 2) {
+				load_opcodes = generateMovFromMemory16(temp_reg, temp_reg, op.offset);
+			} else if (member_size_bytes == 1) {
+				load_opcodes = generateMovFromMemory8(temp_reg, temp_reg, op.offset);
+			} else {
+				assert(false && "Unsupported member size");
+				return;
+			}
+			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+		} else if (is_pointer_access) {
 			// For 'this' pointer: load pointer into RCX, then load from [RCX + member_offset]
 			auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RCX, object_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
