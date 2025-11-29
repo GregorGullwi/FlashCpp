@@ -14178,97 +14178,25 @@ ParseResult Parser::parse_template_declaration() {
 			return saved_position.success();  // Successfully parsed out-of-line definition
 		}
 
-		// Otherwise, parse as function template
-		// For function templates, we need to use delayed parsing for the body
-		// instead of parsing it immediately like regular functions
-		
-		// Parse the function declaration manually to handle delayed body parsing
-		auto type_and_name_result = parse_type_and_name();
-		if (type_and_name_result.is_error()) {
-			FLASH_LOG(Parser, Error, "parse_type_and_name failed: ", type_and_name_result.error_message());
-			return type_and_name_result;
+		// Otherwise, parse as function template using shared helper (Phase 6)
+		ASTNode template_func_node;
+		auto body_result = parseTemplateFunctionDeclarationBody(template_params, requires_clause, template_func_node);
+		if (body_result.is_error()) {
+			return body_result;
 		}
 
-		// Check if parse_type_and_name already returned a FunctionDeclarationNode
-		// This happens for complex declarators like: char (*func(params))[N]
-		FunctionDeclarationNode* func_decl_ptr = nullptr;
-		if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<FunctionDeclarationNode>()) {
-			// Already have a complete function declaration
-			func_decl_ptr = &type_and_name_result.node()->as<FunctionDeclarationNode>();
-		} else if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
-			FLASH_LOG(Parser, Error, "type_and_name_result has no DeclarationNode");
-			return ParseResult::error("Expected function declaration after template parameter list", *current_token_);
-		}
+		// Get the function name for registration
+		const TemplateFunctionDeclarationNode& template_decl = template_func_node.as<TemplateFunctionDeclarationNode>();
+		const FunctionDeclarationNode& func_decl = template_decl.function_declaration().as<FunctionDeclarationNode>();
+		const DeclarationNode& func_decl_node = func_decl.decl_node();
 
-		// If we don't have a FunctionDeclarationNode yet, parse function declaration
-		std::optional<ASTNode> func_result_node;
-		if (func_decl_ptr == nullptr) {
-			DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
+		// Register the template in the template registry
+		gTemplateRegistry.registerTemplate(func_decl_node.identifier_token().value(), template_func_node);
 
-			// Parse function declaration with parameters
-			auto func_result = parse_function_declaration(decl_node);
-			if (func_result.is_error()) {
-				FLASH_LOG(Parser, Error, "parse_function_declaration failed: ", func_result.error_message());
-				return func_result;
-			}
+		// Add the template function to the symbol table so it can be found during overload resolution
+		gSymbolTable.insert(func_decl_node.identifier_token().value(), template_func_node);
 
-			if (!func_result.node().has_value()) {
-				FLASH_LOG(Parser, Error, "func_result has no node");
-				return ParseResult::error("Failed to create function declaration node", *current_token_);
-			}
-
-			func_result_node = func_result.node();
-			func_decl_ptr = &func_result_node->as<FunctionDeclarationNode>();
-		} else {
-			func_result_node = type_and_name_result.node();
-		}
-
-		FunctionDeclarationNode& func_decl = *func_decl_ptr;
-
-		// Check for trailing requires clause: template<typename T> T func(T x) requires constraint
-		std::optional<ASTNode> trailing_requires_clause;
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "requires") {
-			Token requires_token = *peek_token();
-			consume_token(); // consume 'requires'
-			
-			// Parse the constraint expression
-			auto constraint_result = parse_expression();
-			if (constraint_result.is_error()) {
-				return constraint_result;
-			}
-			
-			// Create RequiresClauseNode for trailing requires
-			trailing_requires_clause = emplace_node<RequiresClauseNode>(
-				*constraint_result.node(),
-				requires_token
-			);
-		}
-		
-		// If we have a trailing requires clause, it takes precedence over the leading one
-		// (or both could be combined in a full implementation, but for simplicity we use trailing if present)
-		if (trailing_requires_clause.has_value()) {
-			requires_clause = trailing_requires_clause;
-		}
-		
-		// Check if there's a function body or just a semicolon
-		if (peek_token().has_value() && peek_token()->value() == ";") {
-			// Just a declaration, consume the semicolon
-			consume_token();
-		} else if (peek_token().has_value() && peek_token()->value() == "{") {
-			// Has a body - save position at the '{' 
-			// This way when we restore, current_token_ will be '{' and we can parse normally
-			TokenPosition body_start = save_token_position();
-			
-			// Store the body position in the function declaration so we can re-parse it later
-			func_decl.set_template_body_position(body_start);
-			
-			// Skip over the body (skip_balanced_braces will consume the '{' and everything up to the matching '}')
-			skip_balanced_braces();
-		} else {
-			FLASH_LOG(Parser, Warning, "No body or semicolon found, token=", (peek_token().has_value() ? std::string(peek_token()->value()) : "EOF"));
-		}
-
-		decl_result = ParseResult::success(*func_result_node);
+		return saved_position.success(template_func_node);
 	}
 
 	if (decl_result.is_error()) {
@@ -14282,24 +14210,8 @@ ParseResult Parser::parse_template_declaration() {
 	ASTNode decl_node = *decl_result.node();
 
 	// Create appropriate template node based on what was parsed
-	if (decl_node.is<FunctionDeclarationNode>()) {
-		// Create a TemplateFunctionDeclarationNode
-		auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-			std::move(template_params),
-			decl_node,
-			requires_clause
-		);
-
-		// Register the template in the template registry
-		const FunctionDeclarationNode& func_decl = decl_node.as<FunctionDeclarationNode>();
-		const DeclarationNode& func_decl_node = func_decl.decl_node();
-		gTemplateRegistry.registerTemplate(func_decl_node.identifier_token().value(), template_func_node);
-
-		// Add the template function to the symbol table so it can be found during overload resolution
-		gSymbolTable.insert(func_decl_node.identifier_token().value(), template_func_node);
-
-		return saved_position.success(template_func_node);
-	} else if (decl_node.is<StructDeclarationNode>()) {
+	// Note: Function templates are now handled above via parseTemplateFunctionDeclarationBody() (Phase 6)
+	if (decl_node.is<StructDeclarationNode>()) {
 		// Create a TemplateClassDeclarationNode with parameter names for lookup
 		std::vector<std::string_view> param_names;
 		for (const auto& param : template_params) {
@@ -14907,6 +14819,100 @@ ParseResult Parser::parse_template_template_parameter_form() {
 	return ParseResult::error("Expected 'typename' or 'class' in template template parameter form", *current_token_);
 }
 
+// Phase 6: Shared helper for template function declaration parsing
+// This eliminates duplication between parse_template_declaration() and parse_member_function_template()
+// Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
+// Template parameters must already be registered in gTypesByName via TemplateParameterScope
+ParseResult Parser::parseTemplateFunctionDeclarationBody(
+	std::vector<ASTNode>& template_params,
+	std::optional<ASTNode> requires_clause,
+	ASTNode& out_template_node
+) {
+	// Parse the function declaration (type and name)
+	auto type_and_name_result = parse_type_and_name();
+	if (type_and_name_result.is_error()) {
+		return type_and_name_result;
+	}
+
+	// Check if parse_type_and_name already returned a FunctionDeclarationNode
+	// This happens for complex declarators like: char (*func(params))[N]
+	FunctionDeclarationNode* func_decl_ptr = nullptr;
+	std::optional<ASTNode> func_result_node;
+	
+	if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<FunctionDeclarationNode>()) {
+		// Already have a complete function declaration
+		func_result_node = type_and_name_result.node();
+		func_decl_ptr = &func_result_node->as<FunctionDeclarationNode>();
+	} else if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
+		return ParseResult::error("Expected declaration node for template function", *peek_token());
+	} else {
+		// Need to parse function declaration from DeclarationNode
+		DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
+
+		// Parse function declaration with parameters
+		auto func_result = parse_function_declaration(decl_node);
+		if (func_result.is_error()) {
+			return func_result;
+		}
+
+		if (!func_result.node().has_value()) {
+			return ParseResult::error("Failed to create function declaration node", *peek_token());
+		}
+
+		func_result_node = func_result.node();
+		func_decl_ptr = &func_result_node->as<FunctionDeclarationNode>();
+	}
+
+	FunctionDeclarationNode& func_decl = *func_decl_ptr;
+
+	// Check for trailing requires clause: template<typename T> T func(T x) requires constraint
+	std::optional<ASTNode> trailing_requires_clause;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "requires") {
+		Token requires_token = *peek_token();
+		consume_token(); // consume 'requires'
+		
+		// Parse the constraint expression
+		auto constraint_result = parse_expression();
+		if (constraint_result.is_error()) {
+			return constraint_result;
+		}
+		
+		// Create RequiresClauseNode for trailing requires
+		trailing_requires_clause = emplace_node<RequiresClauseNode>(
+			*constraint_result.node(),
+			requires_token
+		);
+	}
+	
+	// If we have a trailing requires clause, it takes precedence over the leading one
+	std::optional<ASTNode> final_requires_clause = trailing_requires_clause.has_value() ? trailing_requires_clause : requires_clause;
+
+	// Create a template function declaration node
+	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
+		std::move(template_params),
+		*func_result_node,
+		final_requires_clause
+	);
+
+	// Handle function body: semicolon (declaration only) or braces (definition)
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		// Just a declaration, consume the semicolon
+		consume_token();
+	} else if (peek_token().has_value() && peek_token()->value() == "{") {
+		// Has a body - save position at the '{'
+		TokenPosition body_start = save_token_position();
+		
+		// Store the body position in the function declaration so we can re-parse it later
+		func_decl.set_template_body_position(body_start);
+		
+		// Skip over the body (skip_balanced_braces consumes the '{' and everything up to the matching '}')
+		skip_balanced_braces();
+	}
+
+	out_template_node = template_func_node;
+	return ParseResult::success(template_func_node);
+}
+
 // Parse member function template inside a class
 // Pattern: template<typename U> ReturnType functionName(U param) { ... }
 ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access) {
@@ -14925,7 +14931,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Parse template parameter list
 	std::vector<ASTNode> template_params;
-	std::vector<std::string_view> template_param_names;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
@@ -14937,14 +14942,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
 	}
 	consume_token(); // consume '>'
-
-	// Extract template parameter names
-	for (const auto& param : template_params) {
-		if (param.is<TemplateParameterNode>()) {
-			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-			template_param_names.push_back(tparam.name());
-		}
-	}
 
 	// Temporarily add template parameters to type system using RAII scope guard (Phase 3)
 	FlashCpp::TemplateParameterScope template_scope;
@@ -14959,54 +14956,19 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		}
 	}
 
-	// Parse the member function declaration
-	auto member_result = parse_type_and_name();
-	if (member_result.is_error()) {
-		return member_result;  // template_scope automatically cleans up
-	}
-
-	if (!member_result.node().has_value() || !member_result.node()->is<DeclarationNode>()) {
-		return ParseResult::error("Expected declaration node for member function template", *peek_token());
-		// template_scope automatically cleans up
-	}
-
-	DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-
-	// Parse function declaration with parameters
-	auto func_result = parse_function_declaration(decl_node);
-	if (func_result.is_error()) {
-		return func_result;  // template_scope automatically cleans up
-	}
-
-	if (!func_result.node().has_value()) {
-		return ParseResult::error("Failed to create function declaration node", *peek_token());
-		// template_scope automatically cleans up
-	}
-
-	FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
-
-	// Create a template function declaration node (member templates don't support requires clauses yet)
+	// Use shared helper to parse function declaration body (Phase 6)
+	// Member templates don't support requires clauses yet
 	std::optional<ASTNode> empty_requires_clause;
-	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-		std::move(template_params),
-		*func_result.node(),
-		empty_requires_clause
-	);
-
-	// Check if there's a function body or just a semicolon
-	if (peek_token().has_value() && peek_token()->value() == ";") {
-		// Just a declaration, consume the semicolon
-		consume_token();
-	} else if (peek_token().has_value() && peek_token()->value() == "{") {
-		// Has a body - save position AT the '{'
-		TokenPosition body_start = save_token_position();
-		
-		// Store the body position in the function declaration so we can re-parse it later
-		func_decl.set_template_body_position(body_start);
-		
-		// Skip over the body (including the opening and closing braces)
-		skip_balanced_braces();
+	ASTNode template_func_node;
+	auto body_result = parseTemplateFunctionDeclarationBody(template_params, empty_requires_clause, template_func_node);
+	if (body_result.is_error()) {
+		return body_result;  // template_scope automatically cleans up
 	}
+
+	// Get the function name for registration
+	const TemplateFunctionDeclarationNode& template_decl = template_func_node.as<TemplateFunctionDeclarationNode>();
+	const FunctionDeclarationNode& func_decl = template_decl.function_declaration().as<FunctionDeclarationNode>();
+	const DeclarationNode& decl_node = func_decl.decl_node();
 
 	// Add to struct as a member function template
 	// Register the template in the global registry with qualified name (ClassName::functionName)
