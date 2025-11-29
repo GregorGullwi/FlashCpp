@@ -6582,8 +6582,14 @@ private:
 				const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
 				std::string_view object_name = object_ident.name();
 
-				// Look up the object in the symbol table
-				const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+				// Look up the object in the symbol table (local first, then global)
+				std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+				
+				// If not found locally, try global symbol table (for global struct variables)
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(object_name);
+				}
+				
 				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
 					std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
 					return {};
@@ -6701,8 +6707,14 @@ private:
 			const IdentifierNode& object_ident = object_node.as<IdentifierNode>();
 			std::string_view object_name = object_ident.name();
 
-			// Look up the object in the symbol table
-			const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+			// Look up the object in the symbol table (local first, then global)
+			std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+			
+			// If not found locally, try global symbol table (for global struct variables)
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(object_name);
+			}
+			
 			if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
 				std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
 				return {};
