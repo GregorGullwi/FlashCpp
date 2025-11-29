@@ -3344,6 +3344,10 @@ TEST_CASE("Double Negation OR") {
 	run_test_from_file("test_double_negation_or.cpp", "Double Negation OR", false);
 }
 
+TEST_CASE("Conversion Operators") {
+	run_test_from_file("test_conversion_operator.cpp", "Conversion operators", false);
+}
+
 TEST_CASE("Template:Template") {
 	run_test_from_file("template_template_test.cpp", "Template:Template", false);
 }

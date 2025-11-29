@@ -1002,7 +1002,32 @@ ParseResult Parser::parse_type_and_name() {
             operator_name = (operator_symbol == "=") ? operator_eq_name : operator_spaceship_name;
         }
         else {
-            return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
+            // Try to parse conversion operator: operator type()
+            auto type_result = parse_type_specifier();
+            if (type_result.is_error()) {
+                return type_result;
+            }
+            if (!type_result.node().has_value()) {
+                return ParseResult::error("Expected type specifier after 'operator' keyword", operator_keyword_token);
+            }
+
+            // Now expect "("
+            if (!peek_token().has_value() || peek_token()->value() != "(") {
+                return ParseResult::error("Expected '(' after conversion operator type", operator_keyword_token);
+            }
+            consume_token(); // consume '('
+
+            if (!peek_token().has_value() || peek_token()->value() != ")") {
+                return ParseResult::error("Expected ')' after '(' in conversion operator", operator_keyword_token);
+            }
+            consume_token(); // consume ')'
+
+            // Create operator name like "operator int" using StringBuilder
+            const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+            StringBuilder op_name_builder;
+            op_name_builder.append("operator ");
+            op_name_builder.append(type_spec.getReadableString());
+            operator_name = op_name_builder.commit();
         }
 
         // Create a synthetic identifier token for the operator
@@ -2938,9 +2963,54 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Parse member declaration (could be data member or member function)
 		// Note: is_virtual was already checked above (line 794)
-		auto member_result = parse_type_and_name();
-		if (member_result.is_error()) {
-			return member_result;
+		
+		// Special handling for conversion operators: operator type()
+		// Conversion operators don't have a return type, so we need to detect them early
+		ParseResult member_result;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    peek_token()->value() == "operator") {
+			// This is a conversion operator - parse it specially
+			Token operator_keyword_token = *peek_token();
+			consume_token(); // consume 'operator'
+			
+			// Parse the target type
+			auto type_result = parse_type_specifier();
+			if (type_result.is_error()) {
+				return type_result;
+			}
+			if (!type_result.node().has_value()) {
+				return ParseResult::error("Expected type specifier after 'operator' keyword in conversion operator", operator_keyword_token);
+			}
+			
+			// Create operator name like "operator int" using StringBuilder
+			const TypeSpecifierNode& target_type = type_result.node()->as<TypeSpecifierNode>();
+			StringBuilder op_name_builder;
+			op_name_builder.append("operator ");
+			op_name_builder.append(target_type.getReadableString());
+			std::string_view operator_name = op_name_builder.commit();
+			
+			// Create a synthetic identifier token for the operator
+			Token identifier_token = Token(Token::Type::Identifier, operator_name,
+			                              operator_keyword_token.line(), operator_keyword_token.column(),
+			                              operator_keyword_token.file_index());
+			
+			// Create a void type specifier for the "return type" (conversion operators don't have explicit return types)
+			// The return type is implicitly the target type, but we'll use void as a placeholder
+			TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0, operator_keyword_token);
+			
+			// Create declaration node with void type and operator name
+			ASTNode decl_node = emplace_node<DeclarationNode>(
+				emplace_node<TypeSpecifierNode>(void_type),
+				identifier_token
+			);
+			
+			member_result = ParseResult::success(decl_node);
+		} else {
+			// Regular member (data or function)
+			member_result = parse_type_and_name();
+			if (member_result.is_error()) {
+				return member_result;
+			}
 		}
 
 		// Get the member node - we need to check this exists before proceeding
