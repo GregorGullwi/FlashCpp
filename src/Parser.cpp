@@ -1690,10 +1690,25 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Continue with function-specific logic
 		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
 		
-		// Skip trailing specifiers and attributes that can appear after function parameters
-		// These include: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
-		// For free functions, these are mostly just skipped (noexcept is the main one that applies)
-		skip_function_trailing_specifiers();
+		// Parse trailing specifiers using Phase 2 unified method (instead of just skipping them)
+		// For free functions: noexcept is applied, const/volatile/&/&&/override/final are ignored
+		FlashCpp::MemberQualifiers member_quals;
+		FlashCpp::FunctionSpecifiers func_specs;
+		auto specs_result = parseFunctionTrailingSpecifiers(member_quals, func_specs);
+		if (specs_result.is_error()) {
+			return specs_result;
+		}
+		
+		// Apply noexcept specifier to free functions
+		if (func_specs.is_noexcept) {
+			if (auto func_node_ptr = function_definition_result.node()) {
+				FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
+				func_node.set_noexcept(true);
+				if (func_specs.noexcept_expr.has_value()) {
+					func_node.set_noexcept_expression(*func_specs.noexcept_expr);
+				}
+			}
+		}
 		
 		if (type_specifier.type() == Type::Auto) {
 			const bool is_trailing_return_type = (peek_token()->value() == "->");
@@ -3046,14 +3061,6 @@ ParseResult Parser::parse_struct_declaration()
 			bool is_defaulted = func_specs.is_defaulted;
 			bool is_deleted = func_specs.is_deleted;
 
-			// Note: const/volatile qualifiers are parsed but not stored in the function node yet.
-			// Full support for const/volatile member function semantics would require:
-			// 1. Adding is_const/is_volatile fields to FunctionDeclarationNode or StructMemberFunction
-			// 2. Updating type checking to enforce const correctness
-			// 3. Adjusting name mangling to include cv-qualifiers
-			(void)is_const_member;  // Suppress unused variable warning
-			(void)is_volatile_member;
-
 			// Handle defaulted functions: set implicit flag and create empty body
 			if (is_defaulted) {
 				// Expect ';'
@@ -3069,16 +3076,15 @@ ParseResult Parser::parse_struct_declaration()
 				member_func_ref.set_definition(block_node);
 			}
 			
-			// Handle deleted functions
+			// Handle deleted functions: skip adding to struct (they cannot be called)
 			if (is_deleted) {
 				// Expect ';'
 				if (!consume_punctuator(";")) {
 					return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 				}
-
-				// For now, we'll just skip deleted functions
-				// TODO: Track deleted functions to prevent their use
-				continue; // Don't add deleted function to struct
+				// Deleted functions are not added to the struct - they exist only to prevent
+				// implicit generation of special member functions or to disable certain overloads
+				continue;
 			}
 
 			// Validate pure virtual functions must be declared with 'virtual'
@@ -3135,11 +3141,13 @@ ParseResult Parser::parse_struct_declaration()
 				// Extract the operator symbol (e.g., "operator=" -> "=")
 				std::string_view operator_symbol = func_name.substr(8);  // Skip "operator"
 				struct_ref.add_operator_overload(operator_symbol, member_func_node, current_access,
-				                                 is_virtual, is_pure_virtual, is_override, is_final);
+				                                 is_virtual, is_pure_virtual, is_override, is_final,
+				                                 is_const_member, is_volatile_member);
 			} else {
 				// Add regular member function to struct
 				struct_ref.add_member_function(member_func_node, current_access,
-				                               is_virtual, is_pure_virtual, is_override, is_final);
+				                               is_virtual, is_pure_virtual, is_override, is_final,
+				                               is_const_member, is_volatile_member);
 			}
 		} else {
 			// This is a data member
