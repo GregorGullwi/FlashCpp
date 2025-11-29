@@ -1688,6 +1688,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		
 		// Continue with function-specific logic
 		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
+		
+		// Skip trailing specifiers and attributes that can appear after function parameters
+		// These include: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
+		// For free functions, these are mostly just skipped (noexcept is the main one that applies)
+		skip_function_trailing_specifiers();
+		
 		if (type_specifier.type() == Type::Auto) {
 			const bool is_trailing_return_type = (peek_token()->value() == "->");
 			if (is_trailing_return_type) {
@@ -1822,8 +1828,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				}
 			}
 
-			// Skip noexcept specifier if present (e.g., void func() noexcept { ... })
-			skip_noexcept_specifier();
+			// Note: trailing specifiers were already skipped after parse_function_declaration()
 
 			// Parse function body
 			auto block_result = parse_block();
@@ -3025,97 +3030,62 @@ ParseResult Parser::parse_struct_declaration()
 				member_func_ref.add_parameter_node(param);
 			}
 
-			// Check for const/volatile qualifiers after parameter list
-			// Note: These qualifiers are currently parsed but not stored in the function node.
+			// Use unified trailing specifiers parsing (Phase 2)
+			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
+			FlashCpp::MemberQualifiers member_quals;
+			FlashCpp::FunctionSpecifiers func_specs;
+			auto specs_result = parseFunctionTrailingSpecifiers(member_quals, func_specs);
+			if (specs_result.is_error()) {
+				return specs_result;
+			}
+
+			// Extract parsed specifiers for use in member function registration
+			bool is_const_member = member_quals.is_const;
+			bool is_volatile_member = member_quals.is_volatile;
+			bool is_override = func_specs.is_override;
+			bool is_final = func_specs.is_final;
+			bool is_pure_virtual = func_specs.is_pure_virtual;
+			bool is_defaulted = func_specs.is_defaulted;
+			bool is_deleted = func_specs.is_deleted;
+
+			// Note: const/volatile qualifiers are parsed but not stored in the function node yet.
 			// Full support for const/volatile member function semantics would require:
 			// 1. Adding is_const/is_volatile fields to FunctionDeclarationNode or StructMemberFunction
 			// 2. Updating type checking to enforce const correctness
 			// 3. Adjusting name mangling to include cv-qualifiers
-			// For now, we just consume the tokens to allow parsing to succeed.
-			bool is_const_member = false;
-			bool is_volatile_member = false;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view keyword = peek_token()->value();
-				if (keyword == "const") {
-					is_const_member = true;
-					consume_token();
-				} else if (keyword == "volatile") {
-					is_volatile_member = true;
-					consume_token();
-				} else {
-					break;  // Not a cv-qualifier
+			(void)is_const_member;  // Suppress unused variable warning
+			(void)is_volatile_member;
+
+			// Handle defaulted functions: set implicit flag and create empty body
+			if (is_defaulted) {
+				// Expect ';'
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after '= default'", *peek_token());
 				}
+
+				// Mark as implicit (same behavior as compiler-generated)
+				member_func_ref.set_is_implicit(true);
+
+				// Create an empty block for the function body
+				auto [block_node, block_ref] = create_node_ref(BlockNode());
+				member_func_ref.set_definition(block_node);
+			}
+			
+			// Handle deleted functions
+			if (is_deleted) {
+				// Expect ';'
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+				}
+
+				// For now, we'll just skip deleted functions
+				// TODO: Track deleted functions to prevent their use
+				continue; // Don't add deleted function to struct
 			}
 
-			// Check for override, final, = 0, = default, or = delete after parameters
-			bool is_override = false;
-			bool is_final = false;
-			bool is_pure_virtual = false;
-			bool is_defaulted = false;
-			bool is_deleted = false;
-
-			// Parse override/final specifiers
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view keyword = peek_token()->value();
-				if (keyword == "override") {
-					is_override = true;
-					consume_token();
-				} else if (keyword == "final") {
-					is_final = true;
-					consume_token();
-				} else {
-					break;  // Not a function specifier
-				}
-			}
-
-			// Check for = 0 (pure virtual), = default, or = delete
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-			    peek_token()->value() == "=") {
-				consume_token(); // consume '='
-
-				if (peek_token().has_value()) {
-					if (peek_token()->type() == Token::Type::Literal && peek_token()->value() == "0") {
-						// Pure virtual function (= 0)
-						consume_token();  // consume '0'
-						is_pure_virtual = true;
-						if (!is_virtual) {
-							return ParseResult::error("Pure virtual function must be declared with 'virtual' keyword", *peek_token());
-						}
-					} else if (peek_token()->type() == Token::Type::Keyword) {
-						if (peek_token()->value() == "default") {
-							consume_token(); // consume 'default'
-							is_defaulted = true;
-
-							// Expect ';'
-							if (!consume_punctuator(";")) {
-								return ParseResult::error("Expected ';' after '= default'", *peek_token());
-							}
-
-							// Mark as implicit (same behavior as compiler-generated)
-							member_func_ref.set_is_implicit(true);
-
-							// Create an empty block for the function body
-							auto [block_node, block_ref] = create_node_ref(BlockNode());
-							member_func_ref.set_definition(block_node);
-						} else if (peek_token()->value() == "delete") {
-							consume_token(); // consume 'delete'
-							is_deleted = true;
-
-							// Expect ';'
-							if (!consume_punctuator(";")) {
-								return ParseResult::error("Expected ';' after '= delete'", *peek_token());
-							}
-
-							// For now, we'll just skip deleted functions
-							// TODO: Track deleted functions to prevent their use
-							continue; // Don't add deleted function to struct
-						} else {
-							return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
-						}
-					} else {
-						return ParseResult::error("Expected '0', 'default', or 'delete' after '='", *peek_token());
-					}
-				}
+			// Validate pure virtual functions must be declared with 'virtual'
+			if (is_pure_virtual && !is_virtual) {
+				return ParseResult::error("Pure virtual function must be declared with 'virtual' keyword", *peek_token());
 			}
 
 			// Parse function body if present (and not defaulted/deleted)
@@ -6417,6 +6387,157 @@ ParseResult Parser::parseParameterList(FlashCpp::ParsedParameterList& out_params
 	return ParseResult::success();
 }
 
+// Phase 2: Unified trailing specifiers parsing
+// This method handles all common trailing specifiers after function parameters:
+// - CV qualifiers: const, volatile
+// - Ref qualifiers: &, &&
+// - noexcept specifier: noexcept, noexcept(expr)
+// - Virtual specifiers: override, final
+// - Special definitions: = 0 (pure virtual), = default, = delete
+// - Attributes: __attribute__((...))
+ParseResult Parser::parseFunctionTrailingSpecifiers(
+	FlashCpp::MemberQualifiers& out_quals,
+	FlashCpp::FunctionSpecifiers& out_specs
+) {
+	// Initialize output structures
+	out_quals = FlashCpp::MemberQualifiers{};
+	out_specs = FlashCpp::FunctionSpecifiers{};
+
+	while (peek_token().has_value()) {
+		auto token = peek_token();
+
+		// Parse CV qualifiers (const, volatile)
+		if (token->type() == Token::Type::Keyword) {
+			std::string_view kw = token->value();
+			if (kw == "const") {
+				out_quals.is_const = true;
+				consume_token();
+				continue;
+			}
+			if (kw == "volatile") {
+				out_quals.is_volatile = true;
+				consume_token();
+				continue;
+			}
+		}
+
+		// Parse ref qualifiers (& and &&)
+		if (token->type() == Token::Type::Punctuator) {
+			if (token->value() == "&") {
+				consume_token();
+				// Check for && (rvalue ref)
+				if (peek_token().has_value() && peek_token()->value() == "&") {
+					consume_token();
+					out_quals.is_rvalue_ref = true;
+				} else {
+					out_quals.is_lvalue_ref = true;
+				}
+				continue;
+			}
+			// Note: && as single token
+			if (token->value() == "&&") {
+				consume_token();
+				out_quals.is_rvalue_ref = true;
+				continue;
+			}
+		}
+
+		// Parse noexcept specifier
+		if (token->type() == Token::Type::Keyword && token->value() == "noexcept") {
+			consume_token(); // consume 'noexcept'
+			out_specs.is_noexcept = true;
+
+			// Check for noexcept(expr) form
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token(); // consume '('
+
+				// Parse the constant expression
+				auto expr_result = parse_expression();
+				if (expr_result.is_error()) {
+					return expr_result;
+				}
+
+				if (expr_result.node().has_value()) {
+					out_specs.noexcept_expr = *expr_result.node();
+				}
+
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after noexcept expression", *current_token_);
+				}
+			}
+			continue;
+		}
+
+		// Parse throw() (old-style exception specification) - just skip it
+		if (token->type() == Token::Type::Keyword && token->value() == "throw") {
+			consume_token(); // consume 'throw'
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token(); // consume '('
+				int paren_depth = 1;
+				while (peek_token().has_value() && paren_depth > 0) {
+					if (peek_token()->value() == "(") paren_depth++;
+					else if (peek_token()->value() == ")") paren_depth--;
+					consume_token();
+				}
+			}
+			continue;
+		}
+
+		// Parse override/final
+		if (token->type() == Token::Type::Keyword || token->type() == Token::Type::Identifier) {
+			std::string_view kw = token->value();
+			if (kw == "override") {
+				out_specs.is_override = true;
+				consume_token();
+				continue;
+			}
+			if (kw == "final") {
+				out_specs.is_final = true;
+				consume_token();
+				continue;
+			}
+		}
+
+		// Parse = 0 (pure virtual), = default, = delete
+		if (token->type() == Token::Type::Operator && token->value() == "=") {
+			auto next = peek_token(1);
+			if (next.has_value()) {
+				if (next->value() == "0") {
+					consume_token(); // consume '='
+					consume_token(); // consume '0'
+					out_specs.is_pure_virtual = true;
+					continue;
+				}
+				if (next->value() == "default") {
+					consume_token(); // consume '='
+					consume_token(); // consume 'default'
+					out_specs.is_defaulted = true;
+					continue;
+				}
+				if (next->value() == "delete") {
+					consume_token(); // consume '='
+					consume_token(); // consume 'delete'
+					out_specs.is_deleted = true;
+					continue;
+				}
+			}
+			// '=' followed by something else - not a trailing specifier
+			break;
+		}
+
+		// Parse __attribute__((...))
+		if (token->value() == "__attribute__") {
+			skip_gcc_attributes();
+			continue;
+		}
+
+		// Not a trailing specifier, stop
+		break;
+	}
+
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention)
 {
 	// Create the function declaration first
@@ -6444,36 +6565,11 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 	}
 	func_ref.set_is_variadic(params.is_variadic);
 
-	// Check for noexcept specifier after parameters
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
-	    peek_token()->value() == "noexcept") {
-		consume_token(); // consume 'noexcept'
-		func_ref.set_noexcept(true);
-		
-		// Check for noexcept(expr) form
-		if (peek_token().has_value() && peek_token()->value() == "(") {
-			consume_token(); // consume '('
-			
-			// Parse the constant expression
-			auto expr_result = parse_expression();
-			if (expr_result.is_error()) {
-				return expr_result;
-			}
-			
-			if (expr_result.node().has_value()) {
-				func_ref.set_noexcept_expression(*expr_result.node());
-			}
-			
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' to close noexcept expression", *current_token_);
-			}
-		}
-	}
-  
-  // Skip trailing specifiers and attributes that can appear after function parameters
-	// These include: noexcept, noexcept(...), const, volatile, &, &&, override, final, = 0, = default, = delete
-	// and __attribute__((...))
-	skip_function_trailing_specifiers();
+	// Note: Trailing specifiers (const, volatile, &, &&, noexcept, override, final, 
+	// = 0, = default, = delete, __attribute__) are NOT handled here.
+	// Each call site is responsible for handling trailing specifiers as appropriate:
+	// - Free functions: call skip_function_trailing_specifiers() or parseFunctionTrailingSpecifiers()
+	// - Member functions: the struct member parsing handles these with full semantic information
 
 	return func_node;
 }
