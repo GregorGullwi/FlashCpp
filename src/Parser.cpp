@@ -16814,6 +16814,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					
+					// Set up member function context so member variables (like 'value') are resolved
+					// as this->value instead of causing "missing identifier" errors
+					member_function_context_stack_.push_back({
+						instantiated_name,
+						struct_type_info.type_index_,
+						&instantiated_struct_ref
+					});
+					
 					// Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);
 					
@@ -16821,6 +16829,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (!peek_token().has_value() || peek_token()->value() != "{") {
 						std::cerr << "ERROR: Expected '{' at body_start position, got: " 
 						          << (peek_token().has_value() ? peek_token()->value() : "EOF") << "\n";
+						member_function_context_stack_.pop_back();
 						gSymbolTable.exit_scope();
 						restore_lexer_position_only(saved_pos);
 						continue;
@@ -16828,6 +16837,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Parse the function body
 					auto body_result = parse_block();
+					
+					// Pop member function context
+					member_function_context_stack_.pop_back();
 					
 					// Pop parameter scope
 					gSymbolTable.exit_scope();
