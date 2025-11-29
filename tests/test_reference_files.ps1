@@ -99,17 +99,30 @@ if ($libPath2) { Write-Host "  $libPath2" }
 if ($libPath3) { Write-Host "  $libPath3" }
 Write-Host ""
 
-# Get all .cpp files from tests/Reference
+# Get all .cpp files from tests/
 $referenceFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
 
+# Filter to only files that have a main function
+$filesWithMain = @()
+foreach ($file in $referenceFiles) {
+    $sourceContent = Get-Content $file.FullName -Raw
+    $hasMain = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
+    if ($hasMain) {
+        $filesWithMain += $file
+    }
+}
+
+$referenceFiles = $filesWithMain
 $totalFiles = $referenceFiles.Count
-Write-Host "Found $totalFiles test files in tests/"
+Write-Host "Found $totalFiles test files with main() in tests/"
 Write-Host ""
 
 # Expected compile failures - files that are intentionally designed to fail compilation
 # or use features not yet implemented in FlashCpp
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
+	"test_reference_const_mismatch.cpp"    # intentionally invalid code
+	"test_pointer_const_mismatch.cpp"      # intentionally invalid code
     "template_template_params.cpp",        # Template template parameters not yet supported
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
     "test_constexpr_var.cpp",              # constexpr variable with cast parsing issue
@@ -133,14 +146,17 @@ $compileSuccess = @()
 $compileFailed = @()
 $linkSuccess = @()
 $linkFailed = @()
+$runSuccess = @()
+$runFailed = @()
+$missingExpected = @()
 
 $currentFile = 0
 foreach ($file in $referenceFiles) {
     $currentFile++
     $baseName = $file.BaseName
-    # FlashCpp writes .obj to current directory (repo root), not source directory
-    $objFile = "$baseName.obj"
-    $exeFile = "$baseName.exe"
+    # Output files go to output directory
+    $objFile = "output\$baseName.obj"
+    $exeFile = "output\$baseName.exe"
     
     Write-Host "[$currentFile/$totalFiles] Testing: $($file.Name)"
     
@@ -148,9 +164,9 @@ foreach ($file in $referenceFiles) {
     if (Test-Path $objFile) { Remove-Item $objFile -Force }
     if (Test-Path $exeFile) { Remove-Item $exeFile -Force }
     
-    # Compile with FlashCpp
-    $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
-    
+    # Compile with FlashCpp, output obj to output directory
+    $compileOutput = & .\$flashCppPath -o $objFile $file.FullName 2>&1 | Out-String
+
     # Check if compilation succeeded by verifying obj file was created
     if (Test-Path $objFile) {
         Write-Host "  [COMPILE OK]" -ForegroundColor Green
