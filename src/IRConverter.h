@@ -57,6 +57,126 @@ inline uint8_t xmm_modrm_bits(X64Register xmm_reg) {
 }
 
 /**
+ * @brief Checks if an XMM register requires a REX prefix (XMM8-XMM15).
+ * 
+ * @param xmm_reg The XMM register to check
+ * @return true if the register is XMM8-XMM15, false otherwise
+ */
+inline bool xmm_needs_rex(X64Register xmm_reg) {
+	uint8_t xmm_index = xmm_modrm_bits(xmm_reg);
+	return xmm_index >= 8;
+}
+
+/**
+ * @brief Generates a properly encoded SSE instruction for XMM register operations.
+ * 
+ * This function handles the REX prefix for XMM8-XMM15 registers. For SSE instructions,
+ * the REX prefix format is: 0100WRXB where:
+ * - W is 0 for most SSE ops (legacy SSE, not 64-bit extension)
+ * - R extends the ModR/M reg field (for xmm_dst >= XMM8)
+ * - X extends the SIB index field (not used for reg-reg ops)
+ * - B extends the ModR/M r/m field (for xmm_src >= XMM8)
+ * 
+ * @param prefix1 First prefix byte (e.g., 0xF3 for single-precision, 0xF2 for double-precision)
+ * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
+ * @param opcode2 Second opcode byte (e.g., 0x58 for addss/addsd)
+ * @param xmm_dst Destination XMM register
+ * @param xmm_src Source XMM register
+ * @return An OpCodeWithSize struct containing the instruction bytes
+ */
+inline OpCodeWithSize generateSSEInstruction(uint8_t prefix1, uint8_t opcode1, uint8_t opcode2, 
+                                              X64Register xmm_dst, X64Register xmm_src) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* ptr = result.op_codes.data();
+	
+	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
+	uint8_t src_index = xmm_modrm_bits(xmm_src);
+	
+	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
+	
+	// Always emit the mandatory prefix (F3 or F2)
+	*ptr++ = prefix1;
+	result.size_in_bytes++;
+	
+	// REX prefix must come after F3/F2 but before 0F for SSE instructions
+	if (needs_rex) {
+		uint8_t rex = 0x40;  // Base REX prefix
+		if (dst_index >= 8) {
+			rex |= 0x04;  // REX.R - extends ModR/M reg field
+		}
+		if (src_index >= 8) {
+			rex |= 0x01;  // REX.B - extends ModR/M r/m field
+		}
+		*ptr++ = rex;
+		result.size_in_bytes++;
+	}
+	
+	// Emit opcode bytes
+	*ptr++ = opcode1;
+	result.size_in_bytes++;
+	*ptr++ = opcode2;
+	result.size_in_bytes++;
+	
+	// ModR/M byte: 11 reg r/m (register-to-register mode)
+	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
+	*ptr++ = modrm;
+	result.size_in_bytes++;
+	
+	return result;
+}
+
+/**
+ * @brief Generates a properly encoded SSE instruction without mandatory prefix (like comiss).
+ * 
+ * This function handles the REX prefix for XMM8-XMM15 registers. For SSE instructions
+ * without mandatory prefix (F3/F2), the format is: [REX] 0F opcode ModR/M
+ * 
+ * @param opcode1 First opcode byte (usually 0x0F for two-byte opcodes)
+ * @param opcode2 Second opcode byte (e.g., 0x2F for comiss)
+ * @param xmm_dst Destination XMM register
+ * @param xmm_src Source XMM register
+ * @return An OpCodeWithSize struct containing the instruction bytes
+ */
+inline OpCodeWithSize generateSSEInstructionNoPrefix(uint8_t opcode1, uint8_t opcode2, 
+                                                      X64Register xmm_dst, X64Register xmm_src) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* ptr = result.op_codes.data();
+	
+	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
+	uint8_t src_index = xmm_modrm_bits(xmm_src);
+	
+	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
+	
+	// REX prefix must come before opcode for SSE instructions without mandatory prefix
+	if (needs_rex) {
+		uint8_t rex = 0x40;  // Base REX prefix
+		if (dst_index >= 8) {
+			rex |= 0x04;  // REX.R - extends ModR/M reg field
+		}
+		if (src_index >= 8) {
+			rex |= 0x01;  // REX.B - extends ModR/M r/m field
+		}
+		*ptr++ = rex;
+		result.size_in_bytes++;
+	}
+	
+	// Emit opcode bytes
+	*ptr++ = opcode1;
+	result.size_in_bytes++;
+	*ptr++ = opcode2;
+	result.size_in_bytes++;
+	
+	// ModR/M byte: 11 reg r/m (register-to-register mode)
+	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
+	*ptr++ = modrm;
+	result.size_in_bytes++;
+	
+	return result;
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'mov destination_register, [rbp + offset]'.
  *
  * This function creates the byte sequence for moving a 64-bit pointer value from a
@@ -644,7 +764,7 @@ OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register base_reg
  * This function creates the byte sequence for loading a float/double value from
  * a frame-relative address (RBP + offset) into an XMM register.
  *
- * @param destinationRegister The destination XMM register (XMM0-XMM3).
+ * @param destinationRegister The destination XMM register (XMM0-XMM15).
  * @param offset The signed byte offset from RBP.
  * @param is_float True for movss (float), false for movsd (double).
  * @return OpCodeWithSize containing the generated opcodes and their size.
@@ -658,23 +778,29 @@ OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_
 	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
 	result.size_in_bytes++;
 
+	// Check if we need REX prefix for XMM8-XMM15
+	uint8_t xmm_reg = xmm_modrm_bits(destinationRegister);
+	if (xmm_reg >= 8) {
+		// REX.R - extends ModR/M reg field for XMM8-XMM15
+		*current_byte_ptr++ = 0x44;  // REX.R
+		result.size_in_bytes++;
+	}
+
 	// Opcode: 0F 10 for movss/movsd xmm, [mem]
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0x10;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte
-	uint8_t xmm_reg = static_cast<uint8_t>(destinationRegister) - static_cast<uint8_t>(X64Register::XMM0);
-
+	// ModR/M byte - use only low 3 bits of xmm register
 	if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement
-		uint8_t modrm = 0x45 + (xmm_reg << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+		uint8_t modrm = 0x45 + ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		*current_byte_ptr++ = static_cast<uint8_t>(offset);
 		result.size_in_bytes += 2;
 	} else {
 		// 32-bit displacement
-		uint8_t modrm = 0x85 + (xmm_reg << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+		uint8_t modrm = 0x85 + ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 
@@ -708,23 +834,29 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
 	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
 	result.size_in_bytes++;
 
+	// Check if we need REX prefix for XMM8-XMM15
+	uint8_t xmm_reg = xmm_modrm_bits(sourceRegister);
+	if (xmm_reg >= 8) {
+		// REX.R - extends ModR/M reg field for XMM8-XMM15
+		*current_byte_ptr++ = 0x44;  // REX.R
+		result.size_in_bytes++;
+	}
+
 	// Opcode: 0F 11 for movss/movsd [mem], xmm - store variant
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0x11;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte
-	uint8_t xmm_reg = static_cast<uint8_t>(sourceRegister) - static_cast<uint8_t>(X64Register::XMM0);
-
+	// ModR/M byte - use only low 3 bits of xmm register
 	if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement
-		uint8_t modrm = 0x45 + (xmm_reg << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+		uint8_t modrm = 0x45 + ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		*current_byte_ptr++ = static_cast<uint8_t>(offset);
 		result.size_in_bytes += 2;
 	} else {
 		// 32-bit displacement
-		uint8_t modrm = 0x85 + (xmm_reg << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+		uint8_t modrm = 0x85 + ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 
@@ -6182,16 +6314,15 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point addition");
 
 		// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		if (ctx.result_value.type == Type::Float) {
-			// addss xmm_dst, xmm_src (F3 0F 58 /r)
-			std::array<uint8_t, 4> addssInst = { 0xF3, 0x0F, 0x58, 0xC0 };
-			addssInst[3] = 0xC0 + ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-			textSectionData.insert(textSectionData.end(), addssInst.begin(), addssInst.end());
+			// addss xmm_dst, xmm_src (F3 [REX] 0F 58 /r)
+			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// addsd xmm_dst, xmm_src (F2 0F 58 /r)
-			std::array<uint8_t, 4> addsdInst = { 0xF2, 0x0F, 0x58, 0xC0 };
-			addsdInst[3] = 0xC0 + ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-			textSectionData.insert(textSectionData.end(), addsdInst.begin(), addsdInst.end());
+			// addsd xmm_dst, xmm_src (F2 [REX] 0F 58 /r)
+			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Store the result to the appropriate destination
@@ -6203,16 +6334,15 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point subtraction");
 
 		// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		if (ctx.result_value.type == Type::Float) {
-			// subss xmm_dst, xmm_src (F3 0F 5C /r)
-			std::array<uint8_t, 4> subssInst = { 0xF3, 0x0F, 0x5C, 0xC0 };
-			subssInst[3] = 0xC0 + ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-			textSectionData.insert(textSectionData.end(), subssInst.begin(), subssInst.end());
+			// subss xmm_dst, xmm_src (F3 [REX] 0F 5C /r)
+			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// subsd xmm_dst, xmm_src (F2 0F 5C /r)
-			std::array<uint8_t, 4> subsdInst = { 0xF2, 0x0F, 0x5C, 0xC0 };
-			subsdInst[3] = 0xC0 + ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-			textSectionData.insert(textSectionData.end(), subsdInst.begin(), subsdInst.end());
+			// subsd xmm_dst, xmm_src (F2 [REX] 0F 5C /r)
+			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Store the result to the appropriate destination
@@ -6224,16 +6354,15 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point multiplication");
 
 		// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		if (ctx.result_value.type == Type::Float) {
-			// mulss xmm_dst, xmm_src (F3 0F 59 /r)
-			std::array<uint8_t, 4> mulssInst = { 0xF3, 0x0F, 0x59, 0xC0 };
-			mulssInst[3] = 0xC0 + ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-			textSectionData.insert(textSectionData.end(), mulssInst.begin(), mulssInst.end());
+			// mulss xmm_dst, xmm_src (F3 [REX] 0F 59 /r)
+			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// mulsd xmm_dst, xmm_src (F2 0F 59 /r)
-			std::array<uint8_t, 4> mulsdInst = { 0xF2, 0x0F, 0x59, 0xC0 };
-			mulsdInst[3] = 0xC0 + ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-			textSectionData.insert(textSectionData.end(), mulsdInst.begin(), mulsdInst.end());
+			// mulsd xmm_dst, xmm_src (F2 [REX] 0F 59 /r)
+			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Store the result to the appropriate destination
@@ -6245,16 +6374,15 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point division");
 
 		// Use SSE divss (scalar single-precision) or divsd (scalar double-precision)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		if (ctx.result_value.type == Type::Float) {
-			// divss xmm_dst, xmm_src (F3 0F 5E /r)
-			std::array<uint8_t, 4> divssInst = { 0xF3, 0x0F, 0x5E, 0xC0 };
-			divssInst[3] = 0xC0 + ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-			textSectionData.insert(textSectionData.end(), divssInst.begin(), divssInst.end());
+			// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
+			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// divsd xmm_dst, xmm_src (F2 0F 5E /r)
-			std::array<uint8_t, 4> divsdInst = { 0xF2, 0x0F, 0x5E, 0xC0 };
-			divsdInst[3] = 0xC0 + ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
-			textSectionData.insert(textSectionData.end(), divsdInst.begin(), divsdInst.end());
+			// divsd xmm_dst, xmm_src (F2 [REX] 0F 5E /r)
+			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Store the result to the appropriate destination
@@ -6266,19 +6394,15 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point equal comparison");
 
 		// Use SSE comiss/comisd for comparison
-		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
-		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
-		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		if (ctx.result_value.type == Type::Float) {
-			// comiss xmm1, xmm2 (0F 2F /r)
-			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// comisd xmm1, xmm2 (66 0F 2F /r)
-			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Allocate a general-purpose register for the boolean result
@@ -6303,20 +6427,16 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point not equal comparison");
 
 		// Use SSE comiss/comisd for comparison
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		Type type = ctx.result_value.type; // Use type from context instead of old instruction format
-		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
-		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
-		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
-			// comiss xmm1, xmm2 (0F 2F /r)
-			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// comisd xmm1, xmm2 (66 0F 2F /r)
-			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Allocate a general-purpose register for the boolean result
@@ -6341,20 +6461,16 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point less than comparison");
 
 		// Use SSE comiss/comisd for comparison
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		Type type = ctx.result_value.type; // Use type from context instead of old instruction format
-		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
-		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
-		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
-			// comiss xmm1, xmm2 (0F 2F /r)
-			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// comisd xmm1, xmm2 (66 0F 2F /r)
-			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Allocate a general-purpose register for the boolean result
@@ -6379,20 +6495,16 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point less than or equal comparison");
 
 		// Use SSE comiss/comisd for comparison
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		Type type = ctx.result_value.type; // Use type from context instead of old instruction format
-		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
-		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
-		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
-			// comiss xmm1, xmm2 (0F 2F /r)
-			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// comisd xmm1, xmm2 (66 0F 2F /r)
-			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Allocate a general-purpose register for the boolean result
@@ -6417,20 +6529,16 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point greater than comparison");
 
 		// Use SSE comiss/comisd for comparison
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		Type type = ctx.result_value.type; // Use type from context instead of old instruction format
-		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
-		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
-		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
-			// comiss xmm1, xmm2 (0F 2F /r)
-			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// comisd xmm1, xmm2 (66 0F 2F /r)
-			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Allocate a general-purpose register for the boolean result
@@ -6455,20 +6563,16 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point greater than or equal comparison");
 
 		// Use SSE comiss/comisd for comparison
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		Type type = ctx.result_value.type; // Use type from context instead of old instruction format
-		// XMM registers are encoded as 0-3 in ModR/M byte, but enum values are 16-19
-		uint8_t lhs_xmm = static_cast<uint8_t>(ctx.result_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
-		uint8_t rhs_xmm = static_cast<uint8_t>(ctx.rhs_physical_reg) - static_cast<uint8_t>(X64Register::XMM0);
 		if (type == Type::Float) {
-			// comiss xmm1, xmm2 (0F 2F /r)
-			std::array<uint8_t, 3> comissInst = { 0x0F, 0x2F, 0xC0 };
-			comissInst[2] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comissInst.begin(), comissInst.end());
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else if (ctx.result_value.type == Type::Double) {
-			// comisd xmm1, xmm2 (66 0F 2F /r)
-			std::array<uint8_t, 4> comisdInst = { 0x66, 0x0F, 0x2F, 0xC0 };
-			comisdInst[3] = 0xC0 + (lhs_xmm << 3) + rhs_xmm;
-			textSectionData.insert(textSectionData.end(), comisdInst.begin(), comisdInst.end());
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			auto inst = generateSSEInstruction(0x66, 0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Allocate a general-purpose register for the boolean result
@@ -7404,20 +7508,15 @@ private:
 		X64Register result_xmm = allocateXMMRegisterWithSpilling();
 
 		// cvtss2sd (float to double) or cvtsd2ss (double to float)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 		if (op.from.type == Type::Float && op.to_type == Type::Double) {
-			// cvtss2sd xmm, xmm (F3 0F 5A /r)
-			uint8_t xmm_src = static_cast<uint8_t>(source_xmm) - static_cast<uint8_t>(X64Register::XMM0);
-			uint8_t xmm_dst = static_cast<uint8_t>(result_xmm) - static_cast<uint8_t>(X64Register::XMM0);
-			uint8_t modrm = 0xC0 | ((xmm_dst & 0x07) << 3) | (xmm_src & 0x07);
-			std::array<uint8_t, 4> cvt = { 0xF3, 0x0F, 0x5A, modrm };
-			textSectionData.insert(textSectionData.end(), cvt.begin(), cvt.end());
+			// cvtss2sd xmm, xmm (F3 [REX] 0F 5A /r)
+			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5A, result_xmm, source_xmm);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else {
-			// cvtsd2ss xmm, xmm (F2 0F 5A /r)
-			uint8_t xmm_src = static_cast<uint8_t>(source_xmm) - static_cast<uint8_t>(X64Register::XMM0);
-			uint8_t xmm_dst = static_cast<uint8_t>(result_xmm) - static_cast<uint8_t>(X64Register::XMM0);
-			uint8_t modrm = 0xC0 | ((xmm_dst & 0x07) << 3) | (xmm_src & 0x07);
-			std::array<uint8_t, 4> cvt = { 0xF2, 0x0F, 0x5A, modrm };
-			textSectionData.insert(textSectionData.end(), cvt.begin(), cvt.end());
+			// cvtsd2ss xmm, xmm (F2 [REX] 0F 5A /r)
+			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5A, result_xmm, source_xmm);
+			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 
 		// Release source XMM
