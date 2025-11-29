@@ -7711,10 +7711,16 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	TypedNumeric typeInfo;
 	char* end_ptr = nullptr;
 
+	// Check if this is a hex or binary literal FIRST, before checking for exponent
+	// This is important because 'e' and 'f' are valid hex digits (a-f)
+	bool is_hex_literal = lowerText.find("0x") == 0;
+	bool is_binary_literal = lowerText.find("0b") == 0;
+
 	// Check if this is a floating-point literal (contains '.', 'e', or 'E', or has 'f'/'l' suffix)
+	// BUT only check for 'e' (exponent) and 'f' (float suffix) if NOT a hex literal
 	bool has_decimal_point = lowerText.find('.') != std::string::npos;
-	bool has_exponent = lowerText.find('e') != std::string::npos;
-	bool has_float_suffix = lowerText.find('f') != std::string::npos;
+	bool has_exponent = !is_hex_literal && lowerText.find('e') != std::string::npos;
+	bool has_float_suffix = !is_hex_literal && lowerText.find('f') != std::string::npos;
 	bool is_floating_point = has_decimal_point || has_exponent || has_float_suffix;
 
 	if (is_floating_point) {
@@ -7751,12 +7757,12 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	}
 
 	// Integer literal parsing
-	if (lowerText.find("0x") == 0) {
+	if (is_hex_literal) {
 		// Hexadecimal literal
 		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8);
 		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 16);
 	}
-	else if (lowerText.find("0b") == 0) {
+	else if (is_binary_literal) {
 		// Binary literal
 		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8);
 		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 2);
