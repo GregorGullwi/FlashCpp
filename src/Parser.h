@@ -574,6 +574,17 @@ public:  // Public methods for template instantiation
             }
         }
 
+        // Helper to get DeclarationNode from a symbol that could be either DeclarationNode or VariableDeclarationNode
+        // Returns nullptr if the symbol is neither type
+        static const DeclarationNode* get_decl_from_symbol(const ASTNode& symbol) {
+            if (symbol.is<DeclarationNode>()) {
+                return &symbol.as<DeclarationNode>();
+            } else if (symbol.is<VariableDeclarationNode>()) {
+                return &symbol.as<VariableDeclarationNode>().declaration();
+            }
+            return nullptr;
+        }
+
         TokenPosition save_token_position();
         void restore_token_position(const TokenPosition& token_position, const std::source_location location = std::source_location::current());
         void restore_lexer_position_only(const TokenPosition& token_position);  // Restore lexer without erasing AST nodes

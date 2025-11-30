@@ -6903,8 +6903,8 @@ ParseResult Parser::parse_variable_declaration()
 		var_decl.set_is_constexpr(is_constexpr);
 		var_decl.set_is_constinit(is_constinit);
 
-		// Add the VariableDeclarationNode to the symbol table (not just DeclarationNode)
-		// This preserves the is_constexpr flag for constant expression evaluation
+		// Add the VariableDeclarationNode to the symbol table
+		// This preserves the is_constexpr flag and initializer for constant expression evaluation
 		const Token& identifier_token = decl.identifier_token();
 		gSymbolTable.insert(identifier_token.value(), var_decl_node);
 
@@ -10700,9 +10700,10 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 								// Look up identifier type from symbol table
 								const auto& ident = std::get<IdentifierNode>(expr);
 								auto symbol = lookup_symbol(ident.name());
-								if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-									const auto& decl = symbol->as<DeclarationNode>();
-									arg_type = decl.type_node().as<TypeSpecifierNode>().type();
+								if (symbol.has_value()) {
+									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+										arg_type = decl->type_node().as<TypeSpecifierNode>().type();
+									}
 								}
 							}
 						}
@@ -10736,13 +10737,14 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 				if (std::holds_alternative<IdentifierNode>(expr)) {
 					const auto& ident = std::get<IdentifierNode>(expr);
 					auto symbol = lookup_symbol(ident.name());
-					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-						const auto& decl = symbol->as<DeclarationNode>();
-						const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
-						if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
-							TypeIndex type_idx = type_spec.type_index();
-							if (type_idx < gTypeInfo.size()) {
-								object_struct_name = gTypeInfo[type_idx].name_;
+					if (symbol.has_value()) {
+						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+							const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+							if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
+								TypeIndex type_idx = type_spec.type_index();
+								if (type_idx < gTypeInfo.size()) {
+									object_struct_name = gTypeInfo[type_idx].name_;
+								}
 							}
 						}
 					}
@@ -11423,8 +11425,8 @@ ParseResult Parser::parse_lambda_expression() {
             std::optional<ASTNode> var_symbol = lookup_symbol(var_name);
             if (var_symbol.has_value()) {
                 // Check if this is a variable (not a function or type)
-                // Variables are stored as DeclarationNode in the symbol table
-                if (var_symbol->is<DeclarationNode>()) {
+                // Variables are stored as DeclarationNode or VariableDeclarationNode in the symbol table
+                if (const DeclarationNode* decl = get_decl_from_symbol(*var_symbol)) {
                     // Check if this variable is already explicitly captured
                     bool already_captured = false;
                     for (const auto& existing_capture : expanded_captures) {
@@ -11437,8 +11439,7 @@ ParseResult Parser::parse_lambda_expression() {
                     if (!already_captured) {
                         // Create a capture node for this variable with SPECIFIC kind (not AllByValue/AllByReference)
                         // Use the identifier token from the declaration to ensure stable string_view
-                        const auto& decl = var_symbol->as<DeclarationNode>();
-                        Token var_token = decl.identifier_token();
+                        Token var_token = decl->identifier_token();
                         expanded_captures.emplace_back(specific_kind, var_token);  // Use ByValue or ByReference, not AllByValue/AllByReference
                         // Store the declaration for later use
                         captured_var_decls_for_all.push_back(*var_symbol);
@@ -11487,12 +11488,12 @@ ParseResult Parser::parse_lambda_expression() {
                 continue;
             }
 
-            if (!var_symbol->is<DeclarationNode>()) {
+            const DeclarationNode* var_decl = get_decl_from_symbol(*var_symbol);
+            if (!var_decl) {
                 continue;
             }
 
-            const auto& var_decl = var_symbol->as<DeclarationNode>();
-            const auto& var_type = var_decl.type_node().as<TypeSpecifierNode>();
+            const auto& var_type = var_decl->type_node().as<TypeSpecifierNode>();
 
             // Determine size and alignment based on capture kind
             size_t member_size;
@@ -12054,22 +12055,23 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
 		auto symbol = this->lookup_symbol(ident.name());
-		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-			const auto& decl = symbol->as<DeclarationNode>();
-			TypeSpecifierNode type = decl.type_node().as<TypeSpecifierNode>();
+		if (symbol.has_value()) {
+			if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+				TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
 
-			// Handle array-to-pointer decay
-			// When an array is used in an expression (except with sizeof, &, etc.),
-			// it decays to a pointer to its first element
-			if (decl.array_size().has_value()) {
-				// This is an array declaration - decay to pointer
-				// Create a new TypeSpecifierNode with one level of pointer
-				TypeSpecifierNode pointer_type = type;
-				pointer_type.add_pointer_level();
-				return pointer_type;
+				// Handle array-to-pointer decay
+				// When an array is used in an expression (except with sizeof, &, etc.),
+				// it decays to a pointer to its first element
+				if (decl->array_size().has_value()) {
+					// This is an array declaration - decay to pointer
+					// Create a new TypeSpecifierNode with one level of pointer
+					TypeSpecifierNode pointer_type = type;
+					pointer_type.add_pointer_level();
+					return pointer_type;
+				}
+
+				return type;
 			}
-
-			return type;
 		}
 	}
 	else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
