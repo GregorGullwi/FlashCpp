@@ -1,5 +1,5 @@
 // Test non-type template parameters - debug version
-#include <stdio.h>
+// Using extern "C" printf declaration instead of <stdio.h>
 
 template<int N>
 struct Container {
