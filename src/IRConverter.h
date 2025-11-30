@@ -5377,9 +5377,11 @@ private:
 		emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
 
 		// Step 6: Load target RTTI pointer into RDX (second argument)
+		// Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
 		StringBuilder sb;
-		sb.append("__rtti_");
+		sb.append("??_R4.?AV");
 		sb.append(op.target_type_name);
+		sb.append("@@6B@");
 		std::string_view target_rtti_symbol = sb.commit();
 		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
 
