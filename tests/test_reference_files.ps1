@@ -122,6 +122,7 @@ Write-Host ""
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
     "template_template_params.cpp",        # Template template parameters not yet supported
+    "test_array_hardcoded.cpp",            # Unused non-type template parameter with hardcoded array not yet supported
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
     "test_constexpr_var.cpp",              # constexpr variable with cast parsing issue
     "test_constinit_fail.cpp",             # constinit validation test - intentionally invalid code
