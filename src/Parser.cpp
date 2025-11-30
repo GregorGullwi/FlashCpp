@@ -6707,6 +6707,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"const_cast", &Parser::parse_expression_statement},
 			{"reinterpret_cast", &Parser::parse_expression_statement},
 			{"typeid", &Parser::parse_expression_statement},
+			{"static_assert", &Parser::parse_static_assert},
 		};
 
 		auto keyword_iter = keyword_parsing_functions.find(current_token.value());
@@ -6890,10 +6891,6 @@ ParseResult Parser::parse_variable_declaration()
 	// Helper lambda to create a single variable declaration
 	auto create_var_decl = [&](DeclarationNode& decl, std::optional<ASTNode> init_expr) -> ASTNode {
 
-		// Add the variable to the symbol table
-		const Token& identifier_token = decl.identifier_token();
-		gSymbolTable.insert(identifier_token.value(), emplace_node<DeclarationNode>(decl));
-
 		// Create and return a VariableDeclarationNode with storage class
 		ASTNode var_decl_node = emplace_node<VariableDeclarationNode>(
 			emplace_node<DeclarationNode>(decl),
@@ -6901,7 +6898,15 @@ ParseResult Parser::parse_variable_declaration()
 			storage_class
 		);
 
-		const VariableDeclarationNode& var_decl = var_decl_node.as<VariableDeclarationNode>();
+		// Set constexpr/constinit flags
+		VariableDeclarationNode& var_decl = var_decl_node.as<VariableDeclarationNode>();
+		var_decl.set_is_constexpr(is_constexpr);
+		var_decl.set_is_constinit(is_constinit);
+
+		// Add the VariableDeclarationNode to the symbol table (not just DeclarationNode)
+		// This preserves the is_constexpr flag for constant expression evaluation
+		const Token& identifier_token = decl.identifier_token();
+		gSymbolTable.insert(identifier_token.value(), var_decl_node);
 
 		return var_decl_node;
 	};
