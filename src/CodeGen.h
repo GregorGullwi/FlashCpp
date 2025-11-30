@@ -3117,8 +3117,9 @@ private:
 				// For struct types with copy constructors, don't add initializer to VariableDecl
 				// It will be handled by ConstructorCall below
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
+				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 				bool is_struct_with_constructor = false;
-				if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
+				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index() < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 					if (type_info.struct_info_ && type_info.struct_info_->hasConstructor()) {
 						is_struct_with_constructor = true;
@@ -3126,6 +3127,7 @@ private:
 				}
 				
 				bool is_copy_init_for_struct = (type_node.type() == Type::Struct && 
+				                                 type_node.pointer_depth() == 0 &&
 				                                 node.initializer() && 
 				                                 init_node.is<ExpressionNode>() && 
 				                                 !init_node.is<InitializerListNode>() &&
@@ -3164,7 +3166,8 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 		// If this is a struct type with a constructor, generate a constructor call
-		if (type_node.type() == Type::Struct) {
+		// IMPORTANT: Only for non-pointer struct types. Pointers are just addresses, no constructor needed.
+		if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0) {
 			TypeIndex type_index = type_node.type_index();
 			if (type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index];
@@ -3209,7 +3212,8 @@ private:
 							// No initializer - check if we need to call default constructor
 							// Call default constructor if:
 							// 1. It's user-defined (not implicit), OR
-							// 2. The struct has default member initializers (implicit ctor needs to init them)
+							// 2. The struct has default member initializers (implicit ctor needs to init them), OR
+							// 3. The struct has a vtable (implicit ctor needs to init the vptr)
 							const StructMemberFunction* default_ctor = type_info.struct_info_->findDefaultConstructor();
 							bool is_implicit_default_ctor = false;
 							if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
@@ -3218,7 +3222,8 @@ private:
 							}
 
 							bool needs_default_ctor_call = !is_implicit_default_ctor ||
-							                               type_info.struct_info_->hasDefaultMemberInitializers();
+							                               type_info.struct_info_->hasDefaultMemberInitializers() ||
+							                               type_info.struct_info_->has_vtable;
 
 							if (needs_default_ctor_call) {
 								// Generate default constructor call
@@ -8111,10 +8116,16 @@ private:
 		if (std::holds_alternative<TempVar>(expr_operands[2])) {
 			source_ptr = std::get<TempVar>(expr_operands[2]);
 		} else if (std::holds_alternative<std::string_view>(expr_operands[2])) {
-			// For a named variable, we need to convert to TempVar - this shouldn't normally happen
-			// but we'll handle it gracefully
+			// For a named variable, load it into a temp first
 			source_ptr = var_counter.next();
-			// Would need to load the variable into a temp here, but skip for now
+			std::string_view var_name = std::get<std::string_view>(expr_operands[2]);
+			
+			// Generate assignment to load the variable into the temp
+			AssignmentOp load_op;
+			load_op.result = source_ptr;
+			load_op.lhs = TypedValue{std::get<Type>(expr_operands[0]), std::get<int>(expr_operands[1]), source_ptr};
+			load_op.rhs = TypedValue{std::get<Type>(expr_operands[0]), std::get<int>(expr_operands[1]), var_name};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_op), dynamicCastNode.cast_token()));
 		} else {
 			source_ptr = TempVar{0};
 		}

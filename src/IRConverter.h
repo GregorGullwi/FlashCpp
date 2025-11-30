@@ -3751,10 +3751,12 @@ private:
 
 	// Helper to emit MOV reg, reg
 	void emitMovRegReg(X64Register dest, X64Register src) {
+		// MOV r/m64, r64 (opcode 0x89)
+		// ModR/M: reg = source, r/m = destination
 		// Determine REX prefix based on registers
 		uint8_t rex = 0x48; // REX.W for 64-bit
-		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04; // REX.R
-		if (static_cast<uint8_t>(src) >= 8) rex |= 0x01;  // REX.B
+		if (static_cast<uint8_t>(src) >= 8) rex |= 0x04;  // REX.R extends reg field (source)
+		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x01; // REX.B extends r/m field (dest)
 		
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x89); // MOV r/m64, r64
