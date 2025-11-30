@@ -131,8 +131,6 @@ $expectedCompileFailures = @(
     "test_lambda_captures_comprehensive.cpp", # Lambda captures not yet supported
     "test_mismatch_args.cpp",              # Type checking test - intentionally invalid code
     "test_mismatch_return.cpp",            # Type checking test - intentionally invalid code
-    "test_noexcept.cpp",                   # noexcept handling not yet supported
-    "test_nontype_debug.cpp",              # Non-type template debug issue
     "test_pack_expansion_usage.cpp",       # Pack expansion not yet supported
     "test_pack_simple_return.cpp",         # Pack expansion not yet supported
     "test_pointer_const_mismatch.cpp",     # intentionally invalid code
