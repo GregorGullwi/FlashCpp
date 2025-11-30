@@ -9907,8 +9907,11 @@ ParseResult Parser::parse_primary_expression()
 					auto object_expr = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 
 					// Find the operator() function declaration in the struct
-					const auto& decl = identifierType->as<DeclarationNode>();
-					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					const DeclarationNode* decl = get_decl_from_symbol(*identifierType);
+					if (!decl) {
+						return ParseResult::error("Invalid declaration for operator() call", idenfifier_token);
+					}
+					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
 					TypeIndex type_index = type_node.type_index();
 					const TypeInfo& type_info = gTypeInfo[type_index];
 
