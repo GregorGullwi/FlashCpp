@@ -2686,6 +2686,28 @@ private:
 		textSectionData.push_back(modrm_byte);
 	}
 	
+	// Helper function to emit a binary operation instruction (reg-to-reg)
+	void emitBinaryOpInstruction(uint8_t opcode, X64Register src_reg, X64Register dst_reg, int size_in_bits) {
+		// Determine if we need REX.W based on operand size
+		uint8_t rex_prefix = (size_in_bits == 64) ? 0x48 : 0x40;
+		
+		// Check if registers need REX extensions
+		if (static_cast<uint8_t>(src_reg) >= 8) {
+			rex_prefix |= 0x04; // Set REX.R for source (reg field)
+		}
+		if (static_cast<uint8_t>(dst_reg) >= 8) {
+			rex_prefix |= 0x01; // Set REX.B for destination (rm field)
+		}
+		
+		// Build ModR/M byte: 11 (register mode) + src in reg field + dst in rm field
+		uint8_t modrm_byte = 0xC0 | ((static_cast<uint8_t>(src_reg) & 0x07) << 3) | (static_cast<uint8_t>(dst_reg) & 0x07);
+		
+		// Emit the instruction
+		textSectionData.push_back(rex_prefix);
+		textSectionData.push_back(opcode);
+		textSectionData.push_back(modrm_byte);
+	}
+	
 	// Helper function to emit a comparison instruction (CMP + SETcc + MOVZX)
 	void emitComparisonInstruction(const ArithmeticOperationContext& ctx, uint8_t setcc_opcode) {
 		// Compare operands: cmp r/m64, r64
@@ -7842,47 +7864,47 @@ private:
 
 	void handleAndAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise and assignment");
-		std::array<uint8_t, 3> andInst = { 0x48, 0x21, 0xC0 };
-		andInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), andInst.begin(), andInst.end());
+		emitBinaryOpInstruction(0x21, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
 		storeArithmeticResult(ctx);
 	}
 
 	void handleOrAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise or assignment");
-		std::array<uint8_t, 3> orInst = { 0x48, 0x09, 0xC0 };
-		orInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
+		emitBinaryOpInstruction(0x09, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
 		storeArithmeticResult(ctx);
 	}
 
 	void handleXorAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise xor assignment");
-		std::array<uint8_t, 3> xorInst = { 0x48, 0x31, 0xC0 };
-		xorInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), xorInst.begin(), xorInst.end());
+		emitBinaryOpInstruction(0x31, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
 		storeArithmeticResult(ctx);
 	}
 
 	void handleShlAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left assignment");
+		
+		// Move RHS to CL register
 		std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xC1 };
 		movInst[2] = 0xC1 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3);
 		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-		std::array<uint8_t, 3> shlInst = { 0x48, 0xD3, 0xE0 };
-		shlInst[2] = 0xE0 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), shlInst.begin(), shlInst.end());
+		
+		// Emit SHL instruction with correct size
+		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		
 		storeArithmeticResult(ctx);
 	}
 
 	void handleShrAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right assignment");
+		
+		// Move RHS to CL register
 		std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xC1 };
 		movInst[2] = 0xC1 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3);
 		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-		std::array<uint8_t, 3> sarInst = { 0x48, 0xD3, 0xF8 };
-		sarInst[2] = 0xF8 + static_cast<uint8_t>(ctx.result_physical_reg);
-		textSectionData.insert(textSectionData.end(), sarInst.begin(), sarInst.end());
+		
+		// Emit SAR instruction with correct size
+		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		
 		storeArithmeticResult(ctx);
 	}
 
