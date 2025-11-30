@@ -8278,8 +8278,8 @@ private:
 				return;
 			}
 
-			// Get struct size in bytes from TypedValue
-			int struct_size_bytes = op.lhs.size_in_bits / 8;
+			// Get struct size in bytes from TypedValue (round up to handle partial bytes)
+			int struct_size_bytes = (op.lhs.size_in_bits + 7) / 8;
 			
 			// Copy struct using 8-byte chunks, then handle remaining bytes
 			int offset = 0;
