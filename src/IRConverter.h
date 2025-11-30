@@ -3312,7 +3312,10 @@ private:
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 			} else {
-				emitMovToFrameBySize(actual_source_reg, final_result_offset, ctx.result_value.size_in_bits);
+				emitMovToFrameSized(
+					SizedRegister{actual_source_reg, 64, false},  // source: 64-bit register
+					SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+				);
 			}
 		}
 		else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
@@ -3619,7 +3622,10 @@ private:
 					assert(variable_scopes.back().scope_stack_space <= stackVariableOffset && stackVariableOffset <= 0);
 
 					// Store the computed result from register to stack using size-appropriate MOV
-					emitMovToFrameBySize(reg, stackVariableOffset, size_in_bits);
+					emitMovToFrameSized(
+						SizedRegister{reg, 64, false},  // source: 64-bit register
+						SizedStackSlot{stackVariableOffset, size_in_bits, false}  // dest: sized stack slot
+					);
 				}
 			});
 	}
@@ -4101,7 +4107,10 @@ private:
 
 		// If the register is dirty, write it back to the stack using size-appropriate MOV
 		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
-			emitMovToFrameBySize(spill_reg, reg_info.stackVariableOffset, reg_info.size_in_bits);
+			emitMovToFrameSized(
+				SizedRegister{spill_reg, 64, false},  // source: 64-bit register
+				SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits, false}  // dest: sized stack slot
+			);
 		}
 
 		// Release the register and allocate it again
@@ -4349,7 +4358,10 @@ private:
 					bool is_float = (call_op.return_type == Type::Float);
 					emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
 				} else {
-					emitMovToFrameBySize(X64Register::RAX, result_offset, call_op.return_size_in_bits);
+					emitMovToFrameSized(
+						SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
+						SizedStackSlot{result_offset, call_op.return_size_in_bits, isSignedType(call_op.return_type)}  // dest
+					);
 				}
 			}
 			
@@ -4572,8 +4584,11 @@ private:
 						int load_offset = allocateStackSlotForTempVar(src_reg_temp.var_number);
 						emitFloatMovFromFrame(target_reg, load_offset, is_float);
 					} else {
-						// Store RAX to the newly allocated stack slot first
-						emitMovToFrameBySize(X64Register::RAX, stack_offset, 64);
+						// Store RAX to the newly allocated stack slot first (64-bit)
+						emitMovToFrameSized(
+							SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
+							SizedStackSlot{stack_offset, 64, false}  // dest: 64-bit
+						);
 
 						// Now load from stack to target register
 						emitMovFromFrame(target_reg, stack_offset);
@@ -4689,7 +4704,10 @@ private:
 		if (!is_void_function) {
 			// Get size from result variable (stored at offset-4)
 			int result_size_bits = 64;  // Default to 64 bits for now
-			emitMovToFrameBySize(X64Register::RAX, result_offset, result_size_bits);
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
+				SizedStackSlot{result_offset, result_size_bits, false}  // dest: 64-bit
+			);
 		}
 		// Clean up stack arguments
 		if (!stack_args.empty()) {
@@ -5025,7 +5043,10 @@ private:
 
 		// Step 5: Store return value from RAX to result variable using the correct size
 		if (op.result.type != Type::Void) {
-			emitMovToFrameBySize(X64Register::RAX, result_offset, op.result.size_in_bits);
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
+				SizedStackSlot{result_offset, op.result.size_in_bits, isSignedType(op.result.type)}  // dest
+			);
 		}
 
 		regAlloc.reset();
@@ -5666,7 +5687,10 @@ private:
 				}
 
 				// Store the value from register to stack (size-aware)
-				emitMovToFrameBySize(allocated_reg_val, dst_offset, op.size_in_bits);
+				emitMovToFrameSized(
+					SizedRegister{allocated_reg_val, 64, false},  // source: 64-bit register
+					SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}  // dest
+				);
 
 				// Release the register since the value is now in the stack
 				regAlloc.release(allocated_reg_val);
@@ -6272,7 +6296,10 @@ private:
 				// For integer parameters, use size-appropriate MOV
 				// References are always passed as 64-bit pointers regardless of the type they refer to
 				int store_size = (param.is_reference || param.pointer_depth > 0) ? 64 : param.param_size;
-				emitMovToFrameBySize(param.src_reg, param.offset, store_size);
+				emitMovToFrameSized(
+					SizedRegister{param.src_reg, 64, false},  // source: 64-bit register
+					SizedStackSlot{param.offset, store_size, isSignedType(param.param_type)}  // dest
+				);
 				
 				// Release the parameter register from the register allocator
 				// Parameters are now on the stack, so the register allocator should not
@@ -6396,8 +6423,11 @@ private:
 						bits >>= 8;
 					}
 					
-					// mov [rbp + offset], rax (store to stack)
-					emitMovToFrameBySize(X64Register::RAX, literal_offset, 64);
+					// mov [rbp + offset], rax (store to stack - 64-bit)
+					emitMovToFrameSized(
+						SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
+						SizedStackSlot{literal_offset, 64, false}  // dest: 64-bit for float bits
+					);
 					
 					// Load from stack to XMM0
 					// movss/movsd xmm0, [rbp + offset]
@@ -7362,7 +7392,10 @@ private:
 		switch (size_in_bits) {
 		case 64:
 		case 32:
-			emitMovToFrameBySize(source_reg, offset, size_in_bits);
+			emitMovToFrameSized(
+				SizedRegister{source_reg, 64, false},  // source: 64-bit register
+				SizedStackSlot{offset, size_in_bits, false}  // dest: sized stack slot
+			);
 			break;
 		case 16:
 			emitStoreWordToFrame(source_reg, offset);
@@ -8661,8 +8694,11 @@ private:
 			emitLoadFromAddressInRAX(textSectionData, element_size_bytes);
 		}
 			
-		// Store result in temp variable's stack location
-		emitMovToFrameBySize(X64Register::RAX, index_offset, 64);
+		// Store result in temp variable's stack location (64-bit for array result)
+		emitMovToFrameSized(
+			SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
+			SizedStackSlot{static_cast<int32_t>(index_offset), 64, false}  // dest: 64-bit
+		);
 	}
 
 
