@@ -4350,7 +4350,7 @@ private:
 												ArrayStoreOp payload;
 												payload.element_type = element_type;
 												payload.element_size_in_bits = element_size;
-												payload.array = std::string(object_name) + "." + std::string(member_name);
+												payload.array = StringBuilder().append(object_name).append(".").append(member_name).commit();
 												payload.member_offset = static_cast<int64_t>(member->offset);
 												
 												// Set index as TypedValue
@@ -6536,7 +6536,7 @@ private:
 										payload.result = result_var;
 										payload.element_type = element_type;
 										payload.element_size_in_bits = element_size_bits;
-										payload.array = std::string(object_name) + "." + std::string(member_name);
+										payload.array = StringBuilder().append(object_name).append(".").append(member_name).commit();
 										payload.member_offset = static_cast<int64_t>(member->offset);
 										
 										// Set index as TypedValue
