@@ -128,7 +128,6 @@ $expectedCompileFailures = @(
     "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
     "test_exceptions_basic.cpp",           # Exception handling not yet supported
     "test_exceptions_nested.cpp",          # Exception handling not yet supported
-    "test_funcptr_global.cpp",             # Global function pointer not yet supported
     "test_lambda_captures_comprehensive.cpp", # Lambda captures not yet supported
     "test_mismatch_args.cpp",              # Type checking test - intentionally invalid code
     "test_mismatch_return.cpp",            # Type checking test - intentionally invalid code
