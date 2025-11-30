@@ -714,18 +714,11 @@ private:
 		if (node.has_mangled_name()) {
 			mangled_name = node.mangled_name();
 		} else {
-			// Generate mangled name now while we have full type information with CV-qualifiers
-			// Extract parameter types for mangling
-			std::vector<TypeSpecifierNode> param_types_for_mangling;
-			for (const auto& param : node.parameter_nodes()) {
-				const DeclarationNode& param_decl = param.as<DeclarationNode>();
-				param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
-			}
-			
+			// Generate mangled name using the overload that accepts parameter nodes directly
 			mangled_name = generateMangledNameForCall(
 				std::string(func_decl.identifier_token().value()),
 				ret_type,
-				param_types_for_mangling,
+				node.parameter_nodes(),
 				node.is_variadic(),
 				node.is_member_function() ? std::string(struct_name_for_function) : "",
 				current_namespace_stack_
@@ -1082,14 +1075,6 @@ private:
 		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
 		ctor_decl_op.is_variadic = false;  // Constructors are never variadic
 
-		// Generate mangled name for constructor
-		std::vector<TypeSpecifierNode> param_types_for_mangling;
-		for (const auto& param : node.parameter_nodes()) {
-			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor mangle params");
-			param_types_for_mangling.push_back(param_decl.type_node().as<TypeSpecifierNode>());
-		}
-	
-	
 		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
 		// For nested classes, use just the last component as the constructor name
 		std::string ctor_name = std::string(ctor_function_name);
@@ -1097,7 +1082,7 @@ private:
 		ctor_decl_op.mangled_name = generateMangledNameForCall(
 			ctor_name,
 			void_type,
-			param_types_for_mangling,
+			node.parameter_nodes(),  // Use parameter nodes directly
 			false,  // not variadic
 			std::string(parent_class_name)  // parent class name for mangling (e.g., "Outer" for "Outer::Inner::Inner")
 		);
@@ -5315,6 +5300,72 @@ private:
 			builder.append("ZZ");  // Variadic functions end with 'ZZ' in MSVC mangling
 		} else {
 			builder.append("@Z");  // Non-variadic functions end with '@Z'
+		}
+
+		return builder.commit();
+	}
+
+	// Overload that accepts parameter nodes directly to avoid creating a temporary vector
+	std::string_view generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
+		// Special case: main function is never mangled
+		if (name == "main") {
+			return "main";
+		}
+
+		StringBuilder builder;
+		builder.append('?');
+		
+		// Handle member functions vs free functions
+		if (!struct_name.empty()) {
+			// Member function: ?name@ClassName@@QA...
+			std::string func_only_name = name;
+			size_t pos = name.rfind("::");
+			if (pos != std::string::npos) {
+				func_only_name = name.substr(pos + 2);
+			}
+			builder.append(func_only_name);
+			builder.append('@');
+			
+			// For nested classes, reverse the order using rfind
+			std::string_view remaining = struct_name;
+			size_t sep_pos;
+			while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+				builder.append(remaining.substr(sep_pos + 2));
+				builder.append('@');
+				remaining = remaining.substr(0, sep_pos);
+			}
+			builder.append(remaining);
+			
+			builder.append("@@QA");
+		} else if (!namespace_path.empty()) {
+			builder.append(name);
+			builder.append('@');
+			for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+				builder.append(*it);
+				if (std::next(it) != namespace_path.rend()) {
+					builder.append('@');
+				}
+			}
+			builder.append("@@YA");
+		} else {
+			builder.append(name);
+			builder.append("@@YA");
+		}
+
+		// Add return type code
+		appendTypeCodeForMangling(builder, return_type);
+
+		// Add parameter type codes directly from param nodes
+		for (const auto& param : param_nodes) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			appendTypeCodeForMangling(builder, param_decl.type_node().as<TypeSpecifierNode>());
+		}
+
+		// End marker
+		if (is_variadic) {
+			builder.append("ZZ");
+		} else {
+			builder.append("@Z");
 		}
 
 		return builder.commit();
