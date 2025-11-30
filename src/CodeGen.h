@@ -3176,46 +3176,57 @@ private:
 					}
 
 					if (type_info.struct_info_->hasConstructor()) {
-						// Check if the default constructor is implicit (auto-generated)
-						const StructMemberFunction* default_ctor = type_info.struct_info_->findDefaultConstructor();
-						bool is_implicit_constructor = false;
-						if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-							const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
-							is_implicit_constructor = ctor_node.is_implicit();
-						}
-					
-						// Only generate constructor call for user-defined constructors
-						if (!is_implicit_constructor) {
-							// Check if we have an initializer
-							bool has_copy_init = false;
-							if (node.initializer()) {
-								const ASTNode& init_node = *node.initializer();
-								if (init_node.is<ExpressionNode>() && !init_node.is<InitializerListNode>()) {
-									// For copy initialization like "AllSizes b = a;", the initializer
-									// operands were already appended to the VariableDecl instruction.
-									// We need to generate a copy constructor call instead of default constructor.
-									// The initializer operands are in format: [type, size, value]
-									has_copy_init = true;
-								}
+						// Check if we have a copy/move initializer like "Tiny t2 = t;"
+						bool has_copy_init = false;
+						if (node.initializer()) {
+							const ASTNode& init_node = *node.initializer();
+							if (init_node.is<ExpressionNode>() && !init_node.is<InitializerListNode>()) {
+								// For copy initialization like "AllSizes b = a;", we need to
+								// generate a copy constructor call.
+								has_copy_init = true;
 							}
+						}
 
-							// Generate constructor call
+						// For copy initialization, ALWAYS generate a copy constructor call
+						// (even for implicit copy constructors - they still need to be called)
+						if (has_copy_init) {
+							// Generate copy constructor call
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = std::string(type_info.name_);
-							ctor_op.object = decl.identifier_token().value();    // Object variable name (string_view)
+							ctor_op.object = decl.identifier_token().value();
 
-							if (has_copy_init && node.initializer()) {
-								// Add initializer as copy constructor parameter
-								const ASTNode& init_node = *node.initializer();
-								auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-								// init_operands = [type, size, value]
-								if (init_operands.size() >= 3) {
-									TypedValue init_arg = toTypedValue(init_operands);
-									ctor_op.arguments.push_back(std::move(init_arg));
-								}
+							// Add initializer as copy constructor parameter
+							const ASTNode& init_node = *node.initializer();
+							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							// init_operands = [type, size, value]
+							if (init_operands.size() >= 3) {
+								TypedValue init_arg = toTypedValue(init_operands);
+								ctor_op.arguments.push_back(std::move(init_arg));
 							}
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
+						} else {
+							// No initializer - check if we need to call default constructor
+							// Call default constructor if:
+							// 1. It's user-defined (not implicit), OR
+							// 2. The struct has default member initializers (implicit ctor needs to init them)
+							const StructMemberFunction* default_ctor = type_info.struct_info_->findDefaultConstructor();
+							bool is_implicit_default_ctor = false;
+							if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+								const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+								is_implicit_default_ctor = ctor_node.is_implicit();
+							}
+
+							bool needs_default_ctor_call = !is_implicit_default_ctor ||
+							                               type_info.struct_info_->hasDefaultMemberInitializers();
+
+							if (needs_default_ctor_call) {
+								// Generate default constructor call
+								ConstructorCallOp ctor_op;
+								ctor_op.struct_name = std::string(type_info.name_);
+								ctor_op.object = decl.identifier_token().value();
+								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
+							}
 						}
 					}
 				}

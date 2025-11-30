@@ -1,1 +1,1 @@
-struct Small { short a = 1000; }; int main() { Small s; return s.a; }
+struct Small { short a = 200; }; int main() { Small s; return s.a; }

@@ -2981,8 +2981,7 @@ private:
 					} else {
 						// For integers, use regular MOV
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						auto mov_opcodes = generateMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second, ctx.result_value.size_in_bits);
-						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second, ctx.result_value.size_in_bits);
 						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 					}
 				}
@@ -3033,8 +3032,7 @@ private:
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						auto mov_opcodes = generateMovFromFrameBySize(ctx.result_physical_reg, lhs_stack_var_addr, ctx.result_value.size_in_bits);
-						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_stack_var_addr, ctx.result_value.size_in_bits);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 				}
@@ -9269,11 +9267,11 @@ private:
 		// Calculate member size in bytes
 		int member_size_bytes = op.value.size_in_bits / 8;
 
-		// Load the value into a register
-		X64Register value_reg = X64Register::RAX;
+		// Load the value into a register - allocate through register allocator to avoid conflicts
+		X64Register value_reg = allocateRegisterWithSpilling();
 
 		if (op.is_reference) {
-			value_reg = allocateRegisterWithSpilling();
+			// value_reg already allocated above
 			bool pointer_loaded = false;
 			if (is_variable) {
 				// Load address of the variable
@@ -9342,21 +9340,25 @@ private:
 
 		// Store the value to the member's location
 		if (is_pointer_access) {
-			// For 'this' pointer or reference: load pointer into RCX, then store to [RCX + offset]
-			auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RCX, object_base_offset);
+			// For 'this' pointer or reference: load pointer into base_reg, then store to [base_reg + offset]
+			// IMPORTANT: Allocate a register for the base pointer to avoid clobbering value_reg
+			X64Register base_reg = allocateRegisterWithSpilling();
+			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, object_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 			
-			// Store value_reg to [RCX + op.offset] using helper function
-			emitStoreToMemory(textSectionData, value_reg, X64Register::RCX, op.offset, member_size_bytes);
+			// Store value_reg to [base_reg + op.offset] using helper function
+			emitStoreToMemory(textSectionData, value_reg, base_reg, op.offset, member_size_bytes);
+			
+			// Release the base register
+			regAlloc.release(base_reg);
 		} else {
 			// For regular struct variables on the stack: store to [RBP + member_stack_offset]
 			emitStoreToMemory(textSectionData, value_reg, X64Register::RBP, member_stack_offset, member_size_bytes);
 		}
 
-		if (op.is_reference) {
-			regAlloc.release(value_reg);
-		}
+		// Release value_reg - we allocated it above
+		regAlloc.release(value_reg);
 	}
 
 	void handleAddressOf(const IrInstruction& instruction) {
@@ -9763,9 +9765,7 @@ private:
 				int arg_offset = getStackOffsetFromTempVar(temp_var);
 				if (is_float_arg) {
 					bool is_float = (argType == Type::Float);
-					auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitFloatMovFromFrame(target_reg, arg_offset, is_float);
 				} else {
 					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(

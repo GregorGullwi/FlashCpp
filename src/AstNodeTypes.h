@@ -653,6 +653,18 @@ struct StructTypeInfo {
 		return false;
 	}
 
+	// Check if any member has a default initializer (e.g., "int x = 5;")
+	// This is important because implicit default constructors must be called
+	// to initialize these members.
+	bool hasDefaultMemberInitializers() const {
+		for (const auto& member : members) {
+			if (member.default_initializer.has_value()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Check if the class has a user-defined destructor
 	// Note: In FlashCpp's type system, destructors are only stored in member_functions
 	// if explicitly declared by the user, so hasDestructor() == hasUserDefinedDestructor()
