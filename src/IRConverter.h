@@ -526,16 +526,16 @@ OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, int32_t 
 }
 
 /**
- * @brief Generates x86-64 binary opcodes for 'movsx r64, byte ptr [rbp + offset]'.
+ * @brief Generates MOVSX r64, byte ptr [rbp + offset].
  *
- * Load an 8-bit signed value from RBP-relative address and sign-extend to 64 bits.
- * Encoding: REX.W 0F BE /r
+ * Loads an 8-bit value from the stack (source_size=8) and sign-extends to 64-bit register.
+ * Internal function - prefer using generateMovFromFrameSized() for clarity.
  *
- * @param destinationRegister The destination register.
- * @param offset The signed byte offset from RBP.
+ * @param destinationRegister The destination 64-bit register.
+ * @param offset The signed byte offset from RBP (stack slot location).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovsxFromFrame8(X64Register destinationRegister, int32_t offset) {
+OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -584,16 +584,16 @@ OpCodeWithSize generateMovsxFromFrame8(X64Register destinationRegister, int32_t 
 }
 
 /**
- * @brief Generates x86-64 binary opcodes for 'movsx r64, word ptr [rbp + offset]'.
+ * @brief Generates MOVSX r64, word ptr [rbp + offset].
  *
- * Load a 16-bit signed value from RBP-relative address and sign-extend to 64 bits.
- * Encoding: REX.W 0F BF /r
+ * Loads a 16-bit value from the stack (source_size=16) and sign-extends to 64-bit register.
+ * Internal function - prefer using generateMovFromFrameSized() for clarity.
  *
- * @param destinationRegister The destination register.
- * @param offset The signed byte offset from RBP.
+ * @param destinationRegister The destination 64-bit register.
+ * @param offset The signed byte offset from RBP (stack slot location).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovsxFromFrame16(X64Register destinationRegister, int32_t offset) {
+OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -642,16 +642,16 @@ OpCodeWithSize generateMovsxFromFrame16(X64Register destinationRegister, int32_t
 }
 
 /**
- * @brief Generates x86-64 binary opcodes for 'movsxd r64, dword ptr [rbp + offset]'.
+ * @brief Generates MOVSXD r64, dword ptr [rbp + offset].
  *
- * Load a 32-bit signed value from RBP-relative address and sign-extend to 64 bits.
- * Encoding: REX.W 63 /r
+ * Loads a 32-bit value from the stack (source_size=32) and sign-extends to 64-bit register.
+ * Internal function - prefer using generateMovFromFrameSized() for clarity.
  *
- * @param destinationRegister The destination register.
- * @param offset The signed byte offset from RBP.
+ * @param destinationRegister The destination 64-bit register.
+ * @param offset The signed byte offset from RBP (stack slot location).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovsxdFromFrame32(X64Register destinationRegister, int32_t offset) {
+OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -699,40 +699,56 @@ OpCodeWithSize generateMovsxdFromFrame32(X64Register destinationRegister, int32_
 }
 
 /**
- * @brief Helper function to generate MOV from frame based on operand size and signedness.
+ * @brief Generate MOV from frame using sized source (stack slot) to 64-bit register.
  *
- * For signed types smaller than 64-bit, uses MOVSX to sign-extend.
- * For unsigned types smaller than 64-bit, uses MOVZX to zero-extend.
- * For 64-bit types, uses regular MOV.
+ * This is the main entry point for size-aware frame loads. It takes a SizedStackSlot
+ * to specify the source operand's size and signedness, and loads into a 64-bit register.
+ *
+ * For signed source values smaller than 64-bit, uses MOVSX/MOVSXD to sign-extend.
+ * For unsigned source values smaller than 64-bit, uses MOVZX to zero-extend.
+ * For 64-bit source values, uses regular MOV.
+ *
+ * @param destinationRegister The destination 64-bit register.
+ * @param source The sized stack slot specifying offset, size, and signedness.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovFromFrameSized(X64Register destinationRegister, SizedStackSlot source) {
+	if (source.size_in_bits == 64) {
+		return generatePtrMovFromFrame(destinationRegister, source.offset);
+	} else if (source.size_in_bits == 32) {
+		if (source.is_signed) {
+			return generateMovsxdFromFrame_32to64(destinationRegister, source.offset);
+		} else {
+			return generateMovFromFrame32(destinationRegister, source.offset);
+		}
+	} else if (source.size_in_bits == 16) {
+		if (source.is_signed) {
+			return generateMovsxFromFrame_16to64(destinationRegister, source.offset);
+		} else {
+			return generateMovzxFromFrame16(destinationRegister, source.offset);
+		}
+	} else { // 8-bit
+		if (source.is_signed) {
+			return generateMovsxFromFrame_8to64(destinationRegister, source.offset);
+		} else {
+			return generateMovzxFromFrame8(destinationRegister, source.offset);
+		}
+	}
+}
+
+/**
+ * @brief Legacy helper - generate MOV from frame based on operand size and signedness.
+ *
+ * @deprecated Prefer using generateMovFromFrameSized(reg, SizedStackSlot) for clarity.
  *
  * @param destinationRegister The destination register.
  * @param offset The signed offset from RBP.
- * @param size_in_bits The size of the value in bits.
+ * @param size_in_bits The size of the source value in bits (8, 16, 32, or 64).
  * @param is_signed True if the value is signed (use MOVSX), false for unsigned (use MOVZX).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
 OpCodeWithSize generateMovFromFrameBySizeAndSign(X64Register destinationRegister, int32_t offset, int size_in_bits, bool is_signed) {
-	if (size_in_bits == 64) {
-		return generatePtrMovFromFrame(destinationRegister, offset);
-	} else if (size_in_bits == 32) {
-		if (is_signed) {
-			return generateMovsxdFromFrame32(destinationRegister, offset);
-		} else {
-			return generateMovFromFrame32(destinationRegister, offset);
-		}
-	} else if (size_in_bits == 16) {
-		if (is_signed) {
-			return generateMovsxFromFrame16(destinationRegister, offset);
-		} else {
-			return generateMovzxFromFrame16(destinationRegister, offset);
-		}
-	} else { // 8-bit
-		if (is_signed) {
-			return generateMovsxFromFrame8(destinationRegister, offset);
-		} else {
-			return generateMovzxFromFrame8(destinationRegister, offset);
-		}
-	}
+	return generateMovFromFrameSized(destinationRegister, SizedStackSlot{offset, size_in_bits, is_signed});
 }
 
 OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
@@ -3644,10 +3660,20 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
-	// Helper to generate and emit size-aware MOV from frame using SizedRegister
-	// This handles sign extension for signed types smaller than 64-bit
+	// Helper to generate and emit size-aware MOV from frame
+	// Takes SizedRegister for destination (register + size) and SizedStackSlot for source (offset + size)
+	// This makes both source and destination sizes explicit for clarity
+	void emitMovFromFrameSized(SizedRegister dest, SizedStackSlot source) {
+		auto opcodes = generateMovFromFrameSized(dest.reg, source);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	}
+
+	// Overload that takes separate parameters for backward compatibility
+	// The source size and signedness determine the load instruction
 	void emitMovFromFrameSized(SizedRegister dest, int32_t offset) {
-		auto opcodes = generateMovFromFrameBySizeAndSign(dest.reg, offset, dest.size_in_bits, dest.is_signed);
+		// Use dest's size and signedness as the source's size and signedness
+		// (the value on stack matches what we're loading into the register)
+		auto opcodes = generateMovFromFrameSized(dest.reg, SizedStackSlot{offset, dest.size_in_bits, dest.is_signed});
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
@@ -4247,8 +4273,12 @@ private:
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						} else {
-							// Use size-aware load with sign extension for signed types
-							emitMovFromFrameSized(SizedRegister{target_reg, arg.size_in_bits, isSignedType(arg.type)}, var_offset);
+							// Use size-aware load: source (stack slot) -> destination (register)
+							// Both sizes are explicit for clarity
+							emitMovFromFrameSized(
+								SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
+								SizedStackSlot{var_offset, arg.size_in_bits, isSignedType(arg.type)}  // source: sized stack slot
+							);
 							regAlloc.flushSingleDirtyRegister(target_reg);
 						}
 					} else if (std::holds_alternative<std::string_view>(arg.value)) {
@@ -4260,8 +4290,11 @@ private:
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						} else {
-							// Use size-aware load with sign extension for signed types
-							emitMovFromFrameSized(SizedRegister{target_reg, arg.size_in_bits, isSignedType(arg.type)}, var_offset);
+							// Use size-aware load: source (stack slot) -> destination (register)
+							emitMovFromFrameSized(
+								SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
+								SizedStackSlot{var_offset, arg.size_in_bits, isSignedType(arg.type)}  // source: sized stack slot
+							);
 							regAlloc.flushSingleDirtyRegister(target_reg);
 						}
 					}
@@ -7100,8 +7133,8 @@ private:
 				reg = reg_opt.value();
 			} else {
 				reg = allocateRegisterWithSpilling();
-				// Use sign-aware loading for signed types
-				auto mov_opcodes = generateMovFromFrameBySizeAndSign(reg, stack_addr, typed_value.size_in_bits, is_signed);
+				// Use size-aware loading: source (stack slot) -> destination (64-bit register)
+				auto mov_opcodes = generateMovFromFrameSized(reg, SizedStackSlot{stack_addr, typed_value.size_in_bits, is_signed});
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 					mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(reg);
@@ -7119,8 +7152,8 @@ private:
 					reg = reg_opt.value();
 				} else {
 					reg = allocateRegisterWithSpilling();
-					// Use sign-aware loading for signed types
-					auto mov_opcodes = generateMovFromFrameBySizeAndSign(reg, var_id->second, typed_value.size_in_bits, is_signed);
+					// Use size-aware loading: source (stack slot) -> destination (64-bit register)
+					auto mov_opcodes = generateMovFromFrameSized(reg, SizedStackSlot{var_id->second, typed_value.size_in_bits, is_signed});
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 						mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(reg);
@@ -8253,8 +8286,11 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					// Load from RHS stack location with proper size/sign extension
-					emitMovFromFrameSized(SizedRegister{source_reg, op.rhs.size_in_bits, isSignedType(rhs_type)}, rhs_offset);
+					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
+					emitMovFromFrameSized(
+						SizedRegister{source_reg, 64, false},  // dest: 64-bit register
+						SizedStackSlot{rhs_offset, op.rhs.size_in_bits, isSignedType(rhs_type)}  // source: sized stack slot
+					);
 				}
 			}
 		} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
@@ -8272,8 +8308,11 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					// Load from RHS stack location with proper size/sign extension
-					emitMovFromFrameSized(SizedRegister{source_reg, op.rhs.size_in_bits, isSignedType(rhs_type)}, rhs_offset);
+					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
+					emitMovFromFrameSized(
+						SizedRegister{source_reg, 64, false},  // dest: 64-bit register
+						SizedStackSlot{rhs_offset, op.rhs.size_in_bits, isSignedType(rhs_type)}  // source: sized stack slot
+					);
 				}
 			}
 		} else if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
@@ -8626,8 +8665,11 @@ private:
 				TempVar index_var = std::get<TempVar>(op.index.value);
 				int64_t index_offset = getStackOffsetFromTempVar(index_var);
 				
-				// Load index with sign extension for signed types
-				emitMovFromFrameSized(SizedRegister{X64Register::RCX, op.index.size_in_bits, isSignedType(op.index.type)}, static_cast<int32_t>(index_offset));
+				// Load index: source (sized stack slot) -> dest (64-bit RCX)
+				emitMovFromFrameSized(
+					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
+					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits, isSignedType(op.index.type)}  // source: index from stack
+				);
 				
 				if (element_size_bytes > 1) {
 					textSectionData.push_back(0x48); // REX.W
@@ -8710,10 +8752,13 @@ private:
 				uint64_t value = std::get<unsigned long long>(op.value.value);
 				emitMovImm64(X64Register::RAX, value);
 			} else if (std::holds_alternative<TempVar>(op.value.value)) {
-				// Value from temp var - use size-aware load
+				// Value from temp var: source (sized stack slot) -> dest (64-bit register)
 				TempVar value_var = std::get<TempVar>(op.value.value);
 				int64_t value_offset = getStackOffsetFromTempVar(value_var);
-				emitMovFromFrameSized(SizedRegister{value_reg, op.value.size_in_bits, isSignedType(op.value.type)}, static_cast<int32_t>(value_offset));
+				emitMovFromFrameSized(
+					SizedRegister{value_reg, 64, false},  // dest: 64-bit register
+					SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
+				);
 			}
 			
 			// Get array base offset
