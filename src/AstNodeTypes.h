@@ -116,6 +116,28 @@ inline bool isSignedType(Type t) {
 		case Type::Long:
 		case Type::LongLong:
 			return true;
+		// Explicitly unsigned types
+		case Type::Bool:
+		case Type::UnsignedChar:
+		case Type::UnsignedShort:
+		case Type::UnsignedInt:
+		case Type::UnsignedLong:
+		case Type::UnsignedLongLong:
+		// Non-integer types
+		case Type::Float:
+		case Type::Double:
+		case Type::LongDouble:
+		case Type::Void:
+		case Type::UserDefined:
+		case Type::Auto:
+		case Type::Function:
+		case Type::Struct:
+		case Type::Enum:
+		case Type::FunctionPointer:
+		case Type::MemberFunctionPointer:
+		case Type::MemberObjectPointer:
+		case Type::Nullptr:
+		case Type::Invalid:
 		default:
 			return false;
 	}
