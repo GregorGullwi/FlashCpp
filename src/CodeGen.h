@@ -8353,7 +8353,7 @@ private:
 			false,  // not variadic
 			lambda_info.closure_type_name
 		);
-		func_decl_op.mangled_name = std::string(mangled);
+		func_decl_op.mangled_name = mangled;
 
 		// Add parameters
 		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
@@ -8465,7 +8465,7 @@ private:
 			false,  // not variadic
 			""  // not a member function
 		);
-		func_decl_op.mangled_name = std::string(mangled);
+		func_decl_op.mangled_name = mangled;
 
 		// Add parameters
 		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
@@ -8655,8 +8655,8 @@ private:
 		// Add variadic flag (template functions are typically not variadic, but check anyway)
 		func_decl_op.is_variadic = template_func_decl.is_variadic();
 
-		// Mangled name is the full function name
-		func_decl_op.mangled_name = std::string(full_func_name);
+		// Mangled name is the full function name (already stored in StringBuilder's stable storage)
+		func_decl_op.mangled_name = full_func_name;
 
 		// Add function parameters with concrete types
 		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
