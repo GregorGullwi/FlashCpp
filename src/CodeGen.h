@@ -3383,8 +3383,39 @@ private:
 			}
 		}
 
-		// Check if we're in a member function and this identifier is a member variable
-		if (!current_struct_name_.empty()) {
+		// Check if this is a static local variable FIRST (before any other lookups)
+		auto static_local_it = static_local_names_.find(std::string(identifierNode.name()));
+		if (static_local_it != static_local_names_.end()) {
+			// This is a static local - generate GlobalLoad with mangled name
+			const StaticLocalInfo& info = static_local_it->second;
+
+			// Generate GlobalLoad with mangled name
+			TempVar result_temp = var_counter.next();
+			GlobalLoadOp op;
+			op.result.type = info.type;
+			op.result.size_in_bits = info.size_in_bits;
+			op.result.value = result_temp;
+			op.global_name = info.mangled_name;  // Use mangled name
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+
+			// Return the temp variable that will hold the loaded value
+			return { info.type, info.size_in_bits, result_temp };
+		}
+
+		// Try local symbol table (for local variables, parameters, etc.) BEFORE checking member variables
+		// This ensures constructor parameters shadow member variables in initializer expressions
+		std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
+		bool is_global = false;
+
+		// If not found locally, try global symbol table (for enum values, global variables, namespace-scoped variables, etc.)
+		if (!symbol.has_value() && global_symbol_table_) {
+			symbol = global_symbol_table_->lookup(identifierNode.name());
+			is_global = symbol.has_value();  // If found in global table, it's a global
+		}
+
+		// Only check if it's a member variable if NOT found in symbol tables
+		// This gives priority to parameters and local variables over member variables
+		if (!symbol.has_value() && !current_struct_name_.empty()) {
 			// Look up the struct type
 			auto type_it = gTypesByName.find(std::string(current_struct_name_));
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
@@ -3411,35 +3442,6 @@ private:
 					}
 				}
 			}
-		}
-
-		// Check if this is a static local variable FIRST (before symbol table lookup)
-		auto static_local_it = static_local_names_.find(std::string(identifierNode.name()));
-		if (static_local_it != static_local_names_.end()) {
-			// This is a static local - generate GlobalLoad with mangled name
-			const StaticLocalInfo& info = static_local_it->second;
-
-			// Generate GlobalLoad with mangled name
-			TempVar result_temp = var_counter.next();
-			GlobalLoadOp op;
-			op.result.type = info.type;
-			op.result.size_in_bits = info.size_in_bits;
-			op.result.value = result_temp;
-			op.global_name = info.mangled_name;  // Use mangled name
-			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
-
-			// Return the temp variable that will hold the loaded value
-			return { info.type, info.size_in_bits, result_temp };
-		}
-
-		// First try local symbol table (for local variables, parameters, etc.)
-		std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
-		bool is_global = false;
-
-		// If not found locally, try global symbol table (for enum values, global variables, namespace-scoped variables, etc.)
-		if (!symbol.has_value() && global_symbol_table_) {
-			symbol = global_symbol_table_->lookup(identifierNode.name());
-			is_global = symbol.has_value();  // If found in global table, it's a global
 		}
 
 		if (!symbol.has_value()) {
