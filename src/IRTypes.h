@@ -1426,8 +1426,10 @@ public:
 			const ArrayStoreOp& op = std::any_cast<const ArrayStoreOp&>(getTypedPayload());
 			oss << "array_store [" << static_cast<int>(op.element_type) << "][" << op.element_size_in_bits << "] ";
 				
-			if (std::holds_alternative<std::string>(op.array))
-				oss << '%' << std::get<std::string>(op.array);
+			if (std::holds_alternative<std::string>(op.array)) {
+				std::cerr << "Error: ArrayStoreOp.array should use string_view (via StringBuilder), not std::string\n";
+				assert(false && "ArrayStoreOp.array should use string_view (via StringBuilder), not std::string");
+			}
 			else if (std::holds_alternative<std::string_view>(op.array))
 				oss << '%' << std::get<std::string_view>(op.array);
 			else
