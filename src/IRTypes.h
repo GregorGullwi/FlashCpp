@@ -1400,7 +1400,9 @@ public:
 			oss << '%' << op.result.var_number << " = array_access ";
 			oss << "[" << static_cast<int>(op.element_type) << "][" << op.element_size_in_bits << "] ";
 				
-			if (std::holds_alternative<std::string_view>(op.array))
+			if (std::holds_alternative<std::string>(op.array))
+				oss << '%' << std::get<std::string>(op.array);
+			else if (std::holds_alternative<std::string_view>(op.array))
 				oss << '%' << std::get<std::string_view>(op.array);
 			else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
