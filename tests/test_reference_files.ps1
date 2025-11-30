@@ -121,7 +121,6 @@ Write-Host ""
 # or use features not yet implemented in FlashCpp
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
-    "template_template_params.cpp",        # Template template parameters not yet supported
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
     "test_constinit_fail.cpp",             # constinit validation test - intentionally invalid code
     "test_cstddef.cpp",                    # Standard library header not yet supported
@@ -140,15 +139,13 @@ $expectedCompileFailures = @(
     "test_pack_expansion_usage.cpp",       # Pack expansion not yet supported
     "test_pack_simple_return.cpp",         # Pack expansion not yet supported
     "test_pointer_const_mismatch.cpp",     # intentionally invalid code
-    "test_range_for.cpp",                  # Range-based for loop issue
-    "test_recursive_macro.cpp",            # Recursive macro expansion issue
+    "test_recursive_macro.cpp",            # Recursive macro produces identifier (correct behavior per C standard)
     "test_reference_const_mismatch.cpp",   # intentionally invalid code
     "test_simple_lambda.cpp",              # Lambda expressions not yet supported
     "test_tuple_standard_way.cpp",         # Tuple support not yet implemented
     "test_tuple_with_constructor.cpp",     # Tuple support not yet implemented
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
     "test_va_implementation.cpp",          # C-style variadic details issue
-    "test_var_template_complete.cpp",      # Variable template codegen issue
     "test_var_template_values.cpp",        # Variable template values issue
     "test_variadic_func_template.cpp",     # Variadic function template issue
     "test_variadic_summary.cpp",           # Variadic template summary issue

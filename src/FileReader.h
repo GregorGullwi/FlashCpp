@@ -680,7 +680,7 @@ public:
 				processLineDirective(line);
 			}
 			else {
-				if (line.size() > 0 && (line.find_last_of(' ') != line.size() - 1))
+				if (line.size() > 0)
 					line = expandMacros(line);
 
 				if (isPreprocessorOnlyMode) {

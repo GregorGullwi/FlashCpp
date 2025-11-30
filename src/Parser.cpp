@@ -6958,8 +6958,22 @@ ParseResult Parser::parse_variable_declaration()
 	else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
 		consume_token(); // consume the '=' operator
 
-		// Check if this is a brace initializer (e.g., Point p = {10, 20})
+		// Check if this is a brace initializer (e.g., Point p = {10, 20} or int arr[5] = {1, 2, 3, 4, 5})
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+			// If this is an array declaration, set the array info on type_specifier
+			if (first_decl.is_array()) {
+				std::optional<size_t> array_size_val;
+				if (first_decl.array_size().has_value()) {
+					// Try to evaluate the array size as a constant expression
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					auto eval_result = ConstExpr::Evaluator::evaluate(*first_decl.array_size(), eval_ctx);
+					if (eval_result.success) {
+						array_size_val = static_cast<size_t>(eval_result.as_int());
+					}
+				}
+				type_specifier.set_array(true, array_size_val);
+			}
+
 			// Parse brace initializer list
 			ParseResult init_list_result = parse_brace_initializer(type_specifier);
 			if (init_list_result.is_error()) {
@@ -7065,6 +7079,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 {
 	// Parse brace initializer list: { expr1, expr2, ... }
 	// This is used for struct initialization like: Point p = {10, 20};
+	// or for array initialization like: int arr[5] = {1, 2, 3, 4, 5};
 
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' for brace initializer", *current_token_);
@@ -7073,9 +7088,64 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// Create an InitializerListNode to hold the initializer expressions
 	auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
 
-	// Get the struct type information for validation
+	// Handle array brace initialization
+	if (type_specifier.is_array()) {
+		// Get the array size if specified
+		std::optional<size_t> array_size = type_specifier.array_size();
+		size_t element_count = 0;
+
+		// Parse comma-separated initializer expressions
+		while (true) {
+			// Check if we've reached the end of the initializer list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				break;
+			}
+
+			// Check if we have too many initializers
+			if (array_size.has_value() && element_count >= *array_size) {
+				return ParseResult::error("Too many initializers for array", *current_token_);
+			}
+
+			// Parse the initializer expression with precedence > comma operator (precedence 1)
+			// This prevents comma from being treated as an operator in initializer lists
+			ParseResult init_expr_result = parse_expression(2);
+			if (init_expr_result.is_error()) {
+				return init_expr_result;
+			}
+
+			// Add the initializer to the list
+			if (init_expr_result.node().has_value()) {
+				init_list_ref.add_initializer(*init_expr_result.node());
+			} else {
+				return ParseResult::error("Expected initializer expression", *current_token_);
+			}
+
+			element_count++;
+
+			// Check for comma or end of list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume the comma
+
+				// Allow trailing comma before '}'
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+					break;
+				}
+			} else {
+				// No comma, so we should be at the end
+				break;
+			}
+		}
+
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		}
+
+		return ParseResult::success(init_list_node);
+	}
+
+	// Handle struct brace initialization
 	if (type_specifier.type() != Type::Struct) {
-		return ParseResult::error("Brace initializers are currently only supported for struct types", *current_token_);
+		return ParseResult::error("Brace initializers are currently only supported for struct and array types", *current_token_);
 	}
 
 	TypeIndex type_index = type_specifier.type_index();
