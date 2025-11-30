@@ -28,4 +28,5 @@ Use `dumpbin.exe`, locate the path with `where.exe`, which is great for spotting
 Control log verbosity at runtime using command-line options:
 - `--log-level=level` — Set global log level (error, warning, info, debug, trace, or 0-4)
 - `--log-level=category:level` — Set log level for a specific category (e.g., Parser:trace, Codegen:debug)
+To show IR, use `--log-level=Codegen:debug`
 Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen, Scope, Mangling, All

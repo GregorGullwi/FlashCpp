@@ -1076,12 +1076,16 @@ OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t offset) {
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX prefix may be needed for R8-R15
-	bool needs_rex = static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8);
+	// REX prefix needed for R8-R15, or to access low byte (instead of high byte) of RSP, RBP, RSI, RDI
+	bool needs_rex = static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8) ||
+	                 sourceRegister == X64Register::RSP || sourceRegister == X64Register::RBP ||
+	                 sourceRegister == X64Register::RSI || sourceRegister == X64Register::RDI;
 	
 	if (needs_rex) {
 		uint8_t rex_prefix = 0x40; // Base REX
-		rex_prefix |= (1 << 2); // Set R bit for R8-R15
+		if (static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex_prefix |= (1 << 2); // Set R bit for R8-R15
+		}
 		*current_byte_ptr++ = rex_prefix;
 		result.size_in_bytes++;
 	}
@@ -7378,7 +7382,7 @@ private:
 				result_physical_reg = reg_opt.value();
 			} else {
 				result_physical_reg = allocateRegisterWithSpilling();
-				emitMovFromFrame(result_physical_reg, stack_offset);
+				emitMovFromFrameBySize(result_physical_reg, stack_offset, size_in_bits);
 				regAlloc.flushSingleDirtyRegister(result_physical_reg);
 			}
 		} else if (std::holds_alternative<unsigned long long>(unary_op.value.value)) {
@@ -7402,9 +7406,9 @@ private:
 			// Check if it's a local variable first
 			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
 			if (var_id != variable_scopes.back().identifier_offset.end()) {
-				// It's a local variable on the stack
+				// It's a local variable on the stack - use the correct size
 				auto stack_offset = var_id->second;
-				emitMovFromFrame(result_physical_reg, stack_offset);
+				emitMovFromFrameBySize(result_physical_reg, stack_offset, size_in_bits);
 			} else {
 				// It's a global variable - this shouldn't happen for unary ops on locals
 				// but we need to handle it for completeness
@@ -7419,14 +7423,31 @@ private:
 		// Perform the specific unary operation
 		switch (op) {
 			case UnaryOperation::LogicalNot: {
-				// Compare with 0: cmp reg, 0
-				std::array<uint8_t, 4> cmpInst = { 0x48, 0x83, 0xF8, 0x00 }; // cmp r64, imm8
-				cmpInst[2] = 0xF8 + static_cast<uint8_t>(result_physical_reg);
+				// Compare with 0: cmp reg, 0 (using full instruction encoding with REX support)
+				uint8_t reg_num = static_cast<uint8_t>(result_physical_reg);
+				uint8_t rex_prefix = 0x48; // REX.W for 64-bit operation
+				if (reg_num >= 8) {
+					rex_prefix |= 0x01; // Set REX.B for R8-R15
+					reg_num &= 0x07;
+				}
+				uint8_t modrm = 0xF8 | reg_num; // mod=11, opcode_ext=111 (CMP), r/m=reg
+				std::array<uint8_t, 4> cmpInst = { rex_prefix, 0x83, modrm, 0x00 };
 				textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
 
 				// Set result to 1 if zero (sete), 0 otherwise
-				std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, 0xC0 }; // sete r8
-				seteInst[2] = 0xC0 + static_cast<uint8_t>(result_physical_reg);
+				uint8_t sete_rex = 0x00;
+				uint8_t sete_reg = static_cast<uint8_t>(result_physical_reg);
+				if (sete_reg >= 8) {
+					sete_rex = 0x41; // REX with B bit for R8-R15
+					sete_reg &= 0x07;
+				} else if (sete_reg >= 4) {
+					// RSP, RBP, RSI, RDI need REX to access low byte
+					sete_rex = 0x40;
+				}
+				if (sete_rex != 0) {
+					textSectionData.push_back(sete_rex);
+				}
+				std::array<uint8_t, 3> seteInst = { 0x0F, 0x94, static_cast<uint8_t>(0xC0 | sete_reg) };
 				textSectionData.insert(textSectionData.end(), seteInst.begin(), seteInst.end());
 				break;
 			}
@@ -9955,7 +9976,7 @@ private:
 			snprintf(buf, sizeof(buf), "%02X ", bytes[i]);
 			hex_bytes += buf;
 		}
-		FLASH_LOG(Codegen, Debug, "[ASM] {}: {}", context, hex_bytes);
+		FLASH_LOG(Codegen, Debug, std::format("[ASM] {}: {}", context, hex_bytes));
 	}
 
 	TWriterClass writer;

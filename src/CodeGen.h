@@ -886,10 +886,31 @@ private:
 			});
 		}
 
-		// Add implicit return for void functions if no explicit return was added
-		if (ret_type.type() == Type::Void) {
-			ReturnOp ret_op;  // No return value for void
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+		// Add implicit return if needed
+		// Check if the last instruction is a return
+		bool ends_with_return = false;
+		if (!ir_.getInstructions().empty()) {
+			const auto& last_instr = ir_.getInstructions().back();
+			ends_with_return = (last_instr.getOpcode() == IrOpcode::Return);
+		}
+
+		if (!ends_with_return) {
+			// Add implicit return for void functions
+			if (ret_type.type() == Type::Void) {
+				ReturnOp ret_op;  // No return value for void
+				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+			}
+			// Special case: main() implicitly returns 0 if no return statement
+			else if (func_decl.identifier_token().value() == "main") {
+				ReturnOp ret_op;
+				ret_op.return_value = 0ULL;  // Implicit return 0
+				ret_op.return_type = Type::Int;
+				ret_op.return_size = 32;
+				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+			}
+			// For other non-void functions, this is an error (missing return statement)
+			// TODO: This should be a compile error, but for now we'll allow it
+			// Full implementation requires control flow analysis to check all paths
 		}
 
 		symbol_table.exit_scope();
@@ -1670,6 +1691,19 @@ private:
 			const auto& expr_opt = node.expression();
 			assert(expr_opt->is<ExpressionNode>());
 			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>());
+			
+			// Check if this is a void return with a void expression (e.g., return void_func();)
+			if (!operands.empty() && operands.size() >= 1) {
+				Type expr_type = std::get<Type>(operands[0]);
+				
+				// If returning a void expression in a void function, just emit void return
+				// (the expression was already evaluated for its side effects)
+				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
+					ReturnOp ret_op;  // No return value for void
+					ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
+					return;
+				}
+			}
 			
 			// Convert to the function's return type if necessary
 			if (!operands.empty() && operands.size() >= 2) {
@@ -3895,6 +3929,8 @@ private:
 				.result = result_var
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalNot, unary_op, Token()));
+			// Logical NOT always returns bool8
+			return { Type::Bool, 8, result_var };
 		}
 		else if (unaryOperatorNode.op() == "~") {
 			// Bitwise NOT - use UnaryOp struct
@@ -5006,22 +5042,24 @@ private:
 			
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		// Logical operations (typed, always i1/bool)
+		// Logical operations (typed, always bool8 - bool is 8 bits in C++)
 		else if (op == "&&") {
 			BinaryOp bin_op{
-				.lhs = { Type::Bool, 1, toIrValue(lhsIrOperands[2]) },
-				.rhs = { Type::Bool, 1, toIrValue(rhsIrOperands[2]) },
+				.lhs = { Type::Bool, 8, toIrValue(lhsIrOperands[2]) },
+				.rhs = { Type::Bool, 8, toIrValue(rhsIrOperands[2]) },
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalAnd, std::move(bin_op), binaryOperatorNode.get_token()));
+			return { Type::Bool, 8, result_var };  // Logical operations return bool8
 		}
 		else if (op == "||") {
 			BinaryOp bin_op{
-				.lhs = { Type::Bool, 1, toIrValue(lhsIrOperands[2]) },
-				.rhs = { Type::Bool, 1, toIrValue(rhsIrOperands[2]) },
+				.lhs = { Type::Bool, 8, toIrValue(lhsIrOperands[2]) },
+				.rhs = { Type::Bool, 8, toIrValue(rhsIrOperands[2]) },
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(bin_op), binaryOperatorNode.get_token()));
+			return { Type::Bool, 8, result_var };  // Logical operations return bool8
 		}
 		// Comparison operations (typed)
 		else if (op == "==" && !is_floating_point_op) {
@@ -5207,8 +5245,8 @@ private:
 
 				ir_.addInstruction(IrInstruction(float_cmp_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 
-				// Float comparisons return boolean (i1)
-				return { Type::Bool, 1, result_var };
+				// Float comparisons return boolean (bool8)
+				return { Type::Bool, 8, result_var };
 			}
 
 			// Assignment using typed payload
@@ -5225,10 +5263,10 @@ private:
 			}
 		}
 	
-		// For comparison operations, return boolean type (1 bit)
+		// For comparison operations, return boolean type (8 bits - bool size in C++)
 		// For other operations, return the common type
 		if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
-			return { Type::Bool, 1, result_var };
+			return { Type::Bool, 8, result_var };
 		} else {
 			// Return the result variable with its type and size
 			return { commonType, get_type_size_bits(commonType), result_var };

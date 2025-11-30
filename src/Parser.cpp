@@ -10160,7 +10160,7 @@ ParseResult Parser::parse_primary_expression()
 		// Handle bool literals
 		bool value = (current_token_->value() == "true");
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
-			static_cast<unsigned long long>(value), Type::Bool, TypeQualifier::None, 1));
+			static_cast<unsigned long long>(value), Type::Bool, TypeQualifier::None, 8));
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "nullptr"sv) {
