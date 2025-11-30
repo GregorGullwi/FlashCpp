@@ -680,6 +680,8 @@ public:
 				processLineDirective(line);
 			}
 			else {
+				// Expand macros in non-directive lines (regular source code).
+				// Only expand if the line is non-empty to avoid unnecessary processing.
 				if (line.size() > 0)
 					line = expandMacros(line);
 
