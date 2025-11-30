@@ -267,6 +267,28 @@ struct SizedRegister {
 	static SizedRegister u8(X64Register r) { return {r, 8, false}; }
 };
 
+/// Bundles a stack slot offset with its size and signedness.
+/// Use this to specify the source operand when loading from stack.
+struct SizedStackSlot {
+	int32_t offset;       // Offset from RBP
+	int size_in_bits;     // 8, 16, 32, or 64
+	bool is_signed;       // true = value is signed, false = unsigned
+	
+	SizedStackSlot(int32_t off, int size, bool sign = false)
+		: offset(off), size_in_bits(size), is_signed(sign) {}
+	
+	// Convenience constructors for common cases
+	static SizedStackSlot ptr(int32_t off) { return {off, 64, false}; }
+	static SizedStackSlot i64(int32_t off) { return {off, 64, true}; }
+	static SizedStackSlot i32(int32_t off) { return {off, 32, true}; }
+	static SizedStackSlot i16(int32_t off) { return {off, 16, true}; }
+	static SizedStackSlot i8(int32_t off) { return {off, 8, true}; }
+	static SizedStackSlot u64(int32_t off) { return {off, 64, false}; }
+	static SizedStackSlot u32(int32_t off) { return {off, 32, false}; }
+	static SizedStackSlot u16(int32_t off) { return {off, 16, false}; }
+	static SizedStackSlot u8(int32_t off) { return {off, 8, false}; }
+};
+
 template <size_t N>
 constexpr auto make_temp_string() {
 	// Max: "temp_" + 3-digit number + '\0'
