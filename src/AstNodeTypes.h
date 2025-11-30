@@ -1514,6 +1514,11 @@ public:
 		return true;
 	}
 
+	// Pre-computed mangled name for consistent access across all compiler stages
+	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
+	std::string_view mangled_name() const { return mangled_name_; }
+	bool has_mangled_name() const { return !mangled_name_.empty(); }
+
 private:
 	std::string_view struct_name_;  // Points directly into source text from lexer token
 	std::string_view name_;         // Points directly into source text from lexer token
@@ -1523,6 +1528,7 @@ private:
 	std::optional<DelegatingInitializer> delegating_initializer_;  // Delegating constructor call
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
+	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
 
 // Destructor declaration node
@@ -1547,10 +1553,16 @@ public:
 		return true;
 	}
 
+	// Pre-computed mangled name for consistent access across all compiler stages
+	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
+	std::string_view mangled_name() const { return mangled_name_; }
+	bool has_mangled_name() const { return !mangled_name_.empty(); }
+
 private:
 	std::string_view struct_name_;  // Points directly into source text from lexer token
 	std::string_view name_;         // Points directly into source text from lexer token
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
+	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
 
 // Struct member with access specifier

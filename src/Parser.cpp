@@ -2667,8 +2667,9 @@ ParseResult Parser::parse_struct_declaration()
 
 							// Create an empty block for the constructor body
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
-							// Note: ConstructorDeclarationNode doesn't have mangled_name yet
-							// TODO: Add mangled_name support to ConstructorDeclarationNode
+							// Generate mangled name for the constructor
+							NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(ctor_ref);
+							ctor_ref.set_mangled_name(mangled.view());
 							ctor_ref.set_definition(block_node);
 
 							// ctor_scope automatically exits scope when leaving this branch
@@ -2818,8 +2819,9 @@ ParseResult Parser::parse_struct_declaration()
 
 						// Create an empty block for the destructor body
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
-						// Note: DestructorDeclarationNode doesn't have mangled_name yet
-						// TODO: Add mangled_name support to DestructorDeclarationNode
+						// Generate mangled name for the destructor
+						NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
+						dtor_ref.set_mangled_name(mangled.view());
 						dtor_ref.set_definition(block_node);
 					} else if (peek_token()->value() == "delete") {
 						consume_token(); // consume 'delete'
@@ -6551,20 +6553,17 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 		return;
 	}
 	
-	// Build namespace path from current symbol table state
-	// Convert namespace path entries to std::string for the generateMangledNameFromNode API
+	// Build namespace path from current symbol table state as string_view vector
 	auto namespace_path = gSymbolTable.build_current_namespace_path();
-	std::vector<std::string> ns_strings;
-	ns_strings.reserve(namespace_path.size());
+	std::vector<std::string_view> ns_path;
+	ns_path.reserve(namespace_path.size());
 	for (const auto& ns : namespace_path) {
 		// Both StackString and std::string have implicit conversion to std::string_view
-		ns_strings.push_back(std::string(static_cast<std::string_view>(ns)));
+		ns_path.push_back(static_cast<std::string_view>(ns));
 	}
 	
 	// Generate the mangled name using the NameMangling helper
-	// StringBuilder::commit() stores the string in ChunkedStringAllocator which has stable storage
-	StringBuilder builder;
-	NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(builder, func_node, ns_strings);
+	NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(func_node, ns_path);
 	
 	// Set the mangled name on the node
 	func_node.set_mangled_name(mangled.view());
