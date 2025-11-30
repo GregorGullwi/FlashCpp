@@ -271,7 +271,7 @@ inline MangledName generateMangledNameFromNode(
 }
 
 // Generate mangled name for a constructor
-// MSVC mangles constructors as ?0ClassName@@... where 0 is the constructor marker
+// MSVC mangles constructors as ??0ClassName@Namespace@@... where 0 is the constructor marker
 inline MangledName generateMangledNameForConstructor(
 	std::string_view struct_name,
 	const std::vector<TypeSpecifierNode>& param_types,
@@ -281,7 +281,14 @@ inline MangledName generateMangledNameForConstructor(
 	
 	builder.append("??0");  // Constructor marker in MSVC mangling
 	builder.append(struct_name);
-	builder.append("@@QAE");  // @@ + calling convention for constructors (QAE = __thiscall, no return)
+	
+	// Add namespace path if present
+	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+		builder.append('@');
+		builder.append(*it);
+	}
+	
+	builder.append("@@QAE");  // @@ + __thiscall calling convention
 	
 	// Add parameter type codes
 	for (const auto& param_type : param_types) {
@@ -294,7 +301,7 @@ inline MangledName generateMangledNameForConstructor(
 }
 
 // Generate mangled name for a destructor
-// MSVC mangles destructors as ?1ClassName@@...  where 1 is the destructor marker
+// MSVC mangles destructors as ??1ClassName@Namespace@@... where 1 is the destructor marker
 inline MangledName generateMangledNameForDestructor(
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path = {}
@@ -303,7 +310,16 @@ inline MangledName generateMangledNameForDestructor(
 	
 	builder.append("??1");  // Destructor marker in MSVC mangling
 	builder.append(struct_name);
-	builder.append("@@QAE@XZ");  // @@ + calling convention + void params + end marker
+	
+	// Add namespace path if present
+	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+		builder.append('@');
+		builder.append(*it);
+	}
+	
+	// @@ = scope terminator, QAE = __thiscall calling convention,
+	// @X = void parameters (no params), Z = end marker
+	builder.append("@@QAE@XZ");
 	
 	return MangledName(builder.commit());
 }
