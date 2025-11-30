@@ -5905,10 +5905,17 @@ private:
 			object_name = object_ident.name();
 
 			// Look up the object in the symbol table
-			const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-			if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-				object_decl = &symbol->as<DeclarationNode>();
-				object_type = object_decl->type_node().as<TypeSpecifierNode>();
+			std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+			// Also check global symbol table if not found locally
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(object_name);
+			}
+			if (symbol.has_value()) {
+				// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
+				object_decl = get_decl_from_symbol(*symbol);
+				if (object_decl) {
+					object_type = object_decl->type_node().as<TypeSpecifierNode>();
+				}
 			}
 		} else if (std::holds_alternative<UnaryOperatorNode>(object_expr)) {
 			// Handle dereference operator (from ptr->member transformation)
@@ -6707,12 +6714,18 @@ private:
 					symbol = global_symbol_table_->lookup(object_name);
 				}
 				
-				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
+				if (!symbol.has_value()) {
 					FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table");
 					return {};
 				}
 
-				const DeclarationNode& object_decl = symbol->as<DeclarationNode>();
+				// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
+				const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
+				if (!object_decl_ptr) {
+					FLASH_LOG(Codegen, Error, "object '", object_name, "' is not a declaration");
+					return {};
+				}
+				const DeclarationNode& object_decl = *object_decl_ptr;
 				const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
 
 				// Verify this is a struct type (or a reference to a struct type)
@@ -6832,12 +6845,18 @@ private:
 				symbol = global_symbol_table_->lookup(object_name);
 			}
 			
-			if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
+			if (!symbol.has_value()) {
 				std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
 				return {};
 			}
 
-			const DeclarationNode& object_decl = symbol->as<DeclarationNode>();
+			// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
+			const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
+			if (!object_decl_ptr) {
+				std::cerr << "error: object '" << object_name << "' is not a declaration\n";
+				return {};
+			}
+			const DeclarationNode& object_decl = *object_decl_ptr;
 			const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
 
 			// Verify this is a struct type
