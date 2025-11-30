@@ -224,6 +224,80 @@ inline MangledName generateMangledName(
 	return MangledName(builder.commit());
 }
 
+// Overload that accepts parameter nodes directly to avoid creating a temporary vector
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<ASTNode>& param_nodes,
+	bool is_variadic = false,
+	std::string_view struct_name = "",
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	StringBuilder builder;
+	
+	// Special case: main function is never mangled
+	if (func_name == "main") {
+		builder.append("main");
+		return MangledName(builder.commit());
+	}
+
+	builder.append('?');
+	
+	// Handle member functions vs free functions
+	if (!struct_name.empty()) {
+		std::string_view func_only_name = func_name;
+		size_t pos = func_name.rfind("::");
+		if (pos != std::string_view::npos) {
+			func_only_name = func_name.substr(pos + 2);
+		}
+		builder.append(func_only_name);
+		builder.append('@');
+		
+		// For nested classes, reverse the order using rfind
+		std::string_view remaining = struct_name;
+		size_t sep_pos;
+		while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+			builder.append(remaining.substr(sep_pos + 2));
+			builder.append('@');
+			remaining = remaining.substr(0, sep_pos);
+		}
+		builder.append(remaining);
+		
+		builder.append("@@QA");
+	} else if (!namespace_path.empty()) {
+		builder.append(func_name);
+		builder.append('@');
+		for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+			builder.append(*it);
+			if (std::next(it) != namespace_path.rend()) {
+				builder.append('@');
+			}
+		}
+		builder.append("@@YA");
+	} else {
+		builder.append(func_name);
+		builder.append("@@YA");
+	}
+
+	// Add return type code
+	appendTypeCode(builder, return_type);
+
+	// Add parameter type codes directly from param nodes
+	for (const auto& param : param_nodes) {
+		const DeclarationNode& param_decl = param.as<DeclarationNode>();
+		appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+	}
+
+	// End marker
+	if (is_variadic) {
+		builder.append("ZZ");
+	} else {
+		builder.append("@Z");
+	}
+
+	return MangledName(builder.commit());
+}
+
 // Generate mangled name from a FunctionDeclarationNode
 // This is the main entry point for generating mangled names during parsing
 // The function extracts all necessary information from the AST node
@@ -235,18 +309,11 @@ inline MangledName generateMangledNameFromNode(
 	const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 	std::string_view func_name = decl_node.identifier_token().value();
 	
-	// Extract parameter types
-	std::vector<TypeSpecifierNode> param_types;
-	param_types.reserve(func_node.parameter_nodes().size());
-	for (const auto& param : func_node.parameter_nodes()) {
-		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
-	}
-	
 	// Get struct name for member functions
 	std::string_view struct_name = func_node.is_member_function() ? func_node.parent_struct_name() : "";
 	
-	return generateMangledName(func_name, return_type, param_types, 
+	// Use the overload that accepts parameter nodes directly
+	return generateMangledName(func_name, return_type, func_node.parameter_nodes(), 
 	                           func_node.is_variadic(), struct_name, namespace_path);
 }
 
@@ -273,6 +340,36 @@ inline MangledName generateMangledNameForConstructor(
 	// Add parameter type codes
 	for (const auto& param_type : param_types) {
 		appendTypeCode(builder, param_type);
+	}
+	
+	builder.append("@Z");  // End marker
+	
+	return MangledName(builder.commit());
+}
+
+// Overload that accepts parameter nodes directly to avoid creating a temporary vector
+inline MangledName generateMangledNameForConstructor(
+	std::string_view struct_name,
+	const std::vector<ASTNode>& param_nodes,
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	StringBuilder builder;
+	
+	builder.append("??0");  // Constructor marker in MSVC mangling
+	builder.append(struct_name);
+	
+	// Add namespace path if present
+	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+		builder.append('@');
+		builder.append(*it);
+	}
+	
+	builder.append("@@QAE");  // @@ + __thiscall calling convention
+	
+	// Add parameter type codes directly from param nodes
+	for (const auto& param : param_nodes) {
+		const DeclarationNode& param_decl = param.as<DeclarationNode>();
+		appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
 	}
 	
 	builder.append("@Z");  // End marker
@@ -309,15 +406,8 @@ inline MangledName generateMangledNameFromNode(
 	const ConstructorDeclarationNode& ctor_node,
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
-	// Extract parameter types
-	std::vector<TypeSpecifierNode> param_types;
-	param_types.reserve(ctor_node.parameter_nodes().size());
-	for (const auto& param : ctor_node.parameter_nodes()) {
-		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
-	}
-	
-	return generateMangledNameForConstructor(ctor_node.struct_name(), param_types, namespace_path);
+	// Use the overload that accepts parameter nodes directly
+	return generateMangledNameForConstructor(ctor_node.struct_name(), ctor_node.parameter_nodes(), namespace_path);
 }
 
 // Generate mangled name from a DestructorDeclarationNode
