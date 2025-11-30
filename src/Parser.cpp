@@ -8625,12 +8625,14 @@ ParseResult Parser::parse_primary_expression()
 		Token first_identifier = *current_token_;
 		consume_token(); // consume identifier
 
-		// Helper to get DeclarationNode from either DeclarationNode or FunctionDeclarationNode
+		// Helper to get DeclarationNode from either DeclarationNode, FunctionDeclarationNode, or VariableDeclarationNode
 		auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
 			if (node.is<DeclarationNode>()) {
 				return &node.as<DeclarationNode>();
 			} else if (node.is<FunctionDeclarationNode>()) {
 				return &node.as<FunctionDeclarationNode>().decl_node();
+			} else if (node.is<VariableDeclarationNode>()) {
+				return &node.as<VariableDeclarationNode>().declaration();
 			}
 			return nullptr;
 		};
@@ -8768,12 +8770,14 @@ ParseResult Parser::parse_primary_expression()
 		}
 
 		// Check if this is a qualified identifier (namespace::identifier)
-		// Helper to get DeclarationNode from either DeclarationNode or FunctionDeclarationNode
+		// Helper to get DeclarationNode from either DeclarationNode, FunctionDeclarationNode, or VariableDeclarationNode
 		auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
 			if (node.is<DeclarationNode>()) {
 				return &node.as<DeclarationNode>();
 			} else if (node.is<FunctionDeclarationNode>()) {
 				return &node.as<FunctionDeclarationNode>().decl_node();
+			} else if (node.is<VariableDeclarationNode>()) {
+				return &node.as<VariableDeclarationNode>().declaration();
 			}
 			return nullptr;
 		};
@@ -9765,25 +9769,27 @@ ParseResult Parser::parse_primary_expression()
 
 			// Check if this looks like a function call
 			// Only consume '(' if the identifier is actually a function OR a function pointer OR has operator()
-			bool is_function_decl = identifierType->is<FunctionDeclarationNode>() || identifierType->is<TemplateFunctionDeclarationNode>();
+			bool is_function_decl = identifierType && (identifierType->is<FunctionDeclarationNode>() || identifierType->is<TemplateFunctionDeclarationNode>());
 			bool is_function_pointer = false;
 			bool has_operator_call = false;
-			if (identifierType->is<DeclarationNode>()) {
-				const auto& decl = identifierType->as<DeclarationNode>();
-				const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-				is_function_pointer = type_node.is_function_pointer();
+			if (identifierType) {
+				const DeclarationNode* decl = get_decl_from_symbol(*identifierType);
+				if (decl) {
+					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
+					is_function_pointer = type_node.is_function_pointer();
 
-				// Check if this is a struct with operator()
-				if (type_node.type() == Type::Struct) {
-					TypeIndex type_index = type_node.type_index();
-					if (type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_index];
-						if (type_info.struct_info_) {
-							// Check if struct has operator()
-							for (const auto& member_func : type_info.struct_info_->member_functions) {
-								if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
-									has_operator_call = true;
-									break;
+					// Check if this is a struct with operator()
+					if (type_node.type() == Type::Struct) {
+						TypeIndex type_index = type_node.type_index();
+						if (type_index < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index];
+							if (type_info.struct_info_) {
+								// Check if struct has operator()
+								for (const auto& member_func : type_info.struct_info_->member_functions) {
+									if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
+										has_operator_call = true;
+										break;
+									}
 								}
 							}
 						}
@@ -9791,7 +9797,7 @@ ParseResult Parser::parse_primary_expression()
 				}
 			}
 			// Check if this is a template parameter (for constructor calls like T(...))
-			bool is_template_parameter = identifierType->is<TemplateParameterReferenceNode>();
+			bool is_template_parameter = identifierType && identifierType->is<TemplateParameterReferenceNode>();
 			
 			bool is_function_call = peek_token().has_value() && peek_token()->value() == "(" &&
 			                        (is_function_decl || is_function_pointer || has_operator_call || explicit_template_args.has_value() || is_template_parameter);
