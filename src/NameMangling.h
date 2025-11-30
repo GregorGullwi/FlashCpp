@@ -175,22 +175,15 @@ inline MangledName generateMangledName(
 		builder.append('@');
 		
 		// For nested classes, reverse the order: "Outer::Inner" -> "Inner@Outer"
-		std::vector<std::string_view> class_parts;
+		// Use rfind to iterate backwards without any allocation
 		std::string_view remaining = struct_name;
-		size_t class_pos;
-		while ((class_pos = remaining.find("::")) != std::string_view::npos) {
-			class_parts.push_back(remaining.substr(0, class_pos));
-			remaining = remaining.substr(class_pos + 2);
+		size_t sep_pos;
+		while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+			builder.append(remaining.substr(sep_pos + 2));
+			builder.append('@');
+			remaining = remaining.substr(0, sep_pos);
 		}
-		class_parts.push_back(remaining);  // Add last part
-		
-		// Append in reverse order with @ separators
-		for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
-			builder.append(*it);
-			if (std::next(it) != class_parts.rend()) {
-				builder.append('@');
-			}
-		}
+		builder.append(remaining);  // Append the first (outermost) part
 		
 		builder.append("@@QA");  // @@ + calling convention for member functions (Q = __thiscall-like)
 	} else if (!namespace_path.empty()) {
