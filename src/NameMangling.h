@@ -150,7 +150,6 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 // Generate MSVC mangled name for a function
 // Uses StringBuilder for efficient string construction and returns a committed string_view
 // Parameters:
-//   builder: StringBuilder instance to use for building the name
 //   func_name: The unmangled function name
 //   return_type: Return type for the function
 //   param_types: Vector of parameter types
@@ -159,7 +158,6 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 //   namespace_path: Namespace components for namespace-scoped functions
 // Returns: MangledName containing the committed string_view
 inline MangledName generateMangledName(
-	StringBuilder& builder,
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
@@ -167,6 +165,8 @@ inline MangledName generateMangledName(
 	std::string_view struct_name = "",
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
+	StringBuilder builder;
+	
 	// Special case: main function is never mangled
 	if (func_name == "main") {
 		builder.append("main");
@@ -244,34 +244,12 @@ inline MangledName generateMangledName(
 	return MangledName(builder.commit());
 }
 
-// Overload that accepts std::string namespace_path for backward compatibility
-// Note: This creates a temporary vector copy. For new code, prefer the string_view version.
-// TODO: Consider deprecating this in favor of the string_view version once all callers migrate.
-inline MangledName generateMangledName(
-	StringBuilder& builder,
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
-	bool is_variadic,
-	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path
-) {
-	// Convert std::string vector to string_view vector (safe since string_view refs point to strings in namespace_path)
-	std::vector<std::string_view> sv_path;
-	sv_path.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		sv_path.push_back(ns);
-	}
-	return generateMangledName(builder, func_name, return_type, param_types, is_variadic, struct_name, sv_path);
-}
-
 // Generate mangled name from a FunctionDeclarationNode
 // This is the main entry point for generating mangled names during parsing
 // The function extracts all necessary information from the AST node
 inline MangledName generateMangledNameFromNode(
-	StringBuilder& builder,
 	const FunctionDeclarationNode& func_node,
-	const std::vector<std::string>& namespace_path = {}
+	const std::vector<std::string_view>& namespace_path = {}
 ) {
 	const DeclarationNode& decl_node = func_node.decl_node();
 	const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
@@ -288,8 +266,70 @@ inline MangledName generateMangledNameFromNode(
 	// Get struct name for member functions
 	std::string_view struct_name = func_node.is_member_function() ? func_node.parent_struct_name() : "";
 	
-	return generateMangledName(builder, func_name, return_type, param_types, 
+	return generateMangledName(func_name, return_type, param_types, 
 	                           func_node.is_variadic(), struct_name, namespace_path);
+}
+
+// Generate mangled name for a constructor
+// MSVC mangles constructors as ?0ClassName@@... where 0 is the constructor marker
+inline MangledName generateMangledNameForConstructor(
+	std::string_view struct_name,
+	const std::vector<TypeSpecifierNode>& param_types,
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	StringBuilder builder;
+	
+	builder.append("??0");  // Constructor marker in MSVC mangling
+	builder.append(struct_name);
+	builder.append("@@QAE");  // @@ + calling convention for constructors (QAE = __thiscall, no return)
+	
+	// Add parameter type codes
+	for (const auto& param_type : param_types) {
+		appendTypeCode(builder, param_type);
+	}
+	
+	builder.append("@Z");  // End marker
+	
+	return MangledName(builder.commit());
+}
+
+// Generate mangled name for a destructor
+// MSVC mangles destructors as ?1ClassName@@...  where 1 is the destructor marker
+inline MangledName generateMangledNameForDestructor(
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	StringBuilder builder;
+	
+	builder.append("??1");  // Destructor marker in MSVC mangling
+	builder.append(struct_name);
+	builder.append("@@QAE@XZ");  // @@ + calling convention + void params + end marker
+	
+	return MangledName(builder.commit());
+}
+
+// Generate mangled name from a ConstructorDeclarationNode
+inline MangledName generateMangledNameFromNode(
+	const ConstructorDeclarationNode& ctor_node,
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	// Extract parameter types
+	std::vector<TypeSpecifierNode> param_types;
+	param_types.reserve(ctor_node.parameter_nodes().size());
+	for (const auto& param : ctor_node.parameter_nodes()) {
+		const DeclarationNode& param_decl = param.as<DeclarationNode>();
+		param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+	}
+	
+	return generateMangledNameForConstructor(ctor_node.struct_name(), param_types, namespace_path);
+}
+
+// Generate mangled name from a DestructorDeclarationNode
+inline MangledName generateMangledNameFromNode(
+	const DestructorDeclarationNode& dtor_node,
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path);
 }
 
 } // namespace NameMangling
