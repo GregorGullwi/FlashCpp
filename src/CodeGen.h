@@ -731,7 +731,7 @@ private:
 				current_namespace_stack_
 			);
 		}
-		func_decl_op.mangled_name = std::string(mangled_name);
+		func_decl_op.mangled_name = mangled_name;
 
 		// Add parameters to function declaration
 		for (const auto& param : node.parameter_nodes()) {

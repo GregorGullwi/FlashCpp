@@ -708,7 +708,7 @@ struct FunctionDeclOp {
 	std::string struct_name;  // Empty for non-member functions
 	Linkage linkage = Linkage::None;
 	bool is_variadic = false;
-	std::string mangled_name;
+	std::string_view mangled_name;
 	std::vector<FunctionParam> parameters;
 };
 
