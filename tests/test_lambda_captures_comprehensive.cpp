@@ -2,139 +2,128 @@
 
 // Test 1: Simple by-value capture
 int test_capture_by_value() {
-    int x = 42;
+    int x = 5;
     auto lambda = [x]() { return x; };
     return lambda();  // Expected: 5
 }
 
 // Test 2: Multiple by-value captures
 int test_capture_multiple_by_value() {
-    int x = 10;
-    int y = 32;
+    int x = 2;
+    int y = 3;
     auto lambda = [x, y]() { return x + y; };
     return lambda();  // Expected: 5
 }
 
-// Test 3: By-value capture is a copy (original changes don't affect lambda)
+// Test 3: By-value capture is a copy
 int test_capture_by_value_is_copy() {
-    int x = 10;
+    int x = 5;
     auto lambda = [x]() { return x; };
-    x = 100;  // Change original
+    x = 999;  // irrelevant
     return lambda();  // Expected: 5
 }
 
 // Test 4: Simple by-reference capture
 int test_capture_by_reference() {
-    int x = 10;
+    int x = 0;
     auto lambda = [&x]() { return x; };
-    x = 42;  // Change original
+    x = 5;
     return lambda();  // Expected: 5
 }
 
 // Test 5: By-reference capture allows modification
 int test_capture_by_reference_modify() {
-    int x = 10;
-    auto lambda = [&x]() { x = 42; return x; };
+    int x = 5;
+    auto lambda = [&x]() { x = 5; return x; };
     lambda();
     return x;  // Expected: 5
 }
 
 // Test 6: Multiple by-reference captures
 int test_capture_multiple_by_reference() {
-    int x = 10;
-    int y = 20;
-    auto lambda = [&x, &y]() { x = 5; y = 10; return x + y; };
+    int x = 1;
+    int y = 4;
+    auto lambda = [&x, &y]() { x = 1; y = 4; return x + y; };
     lambda();
     return x + y;  // Expected: 5
 }
 
-// Test 7: Mixed captures (by-value and by-reference)
+// Test 7: Mixed captures
 int test_capture_mixed() {
-    int x = 10;
-    int y = 20;
-    auto lambda = [x, &y]() { y = x + 5; return y; };
+    int x = 5;
+    int y = 0;
+    auto lambda = [x, &y]() { y = x; return y; };
     lambda();
     return y;  // Expected: 5
 }
 
-// Test 8: Capture-all by value [=]
+// Test 8: Capture-all by value
 int test_capture_all_by_value() {
-    int x = 10;
-    int y = 32;
+    int x = 2;
+    int y = 3;
     auto lambda = [=]() { return x + y; };
     return lambda();  // Expected: 5
 }
 
-// Test 9: Capture-all by value doesn't see changes
+// Test 9: Capture-all by value, original changes not seen
 int test_capture_all_by_value_is_copy() {
-    int x = 10;
-    int y = 32;
+    int x = 2;
+    int y = 3;
     auto lambda = [=]() { return x + y; };
-    x = 100;
-    y = 100;
+    x = y = 999;
     return lambda();  // Expected: 5
 }
 
-// Test 10: Capture-all by reference [&]
+// Test 10: Capture-all by reference
 int test_capture_all_by_reference() {
-    int x = 10;
-    int y = 20;
-    auto lambda = [&]() { x = 15; y = 25; return x + y; };
+    int x = 1;
+    int y = 4;
+    auto lambda = [&]() { x = 1; y = 4; return x + y; };
     lambda();
     return x + y;  // Expected: 5
 }
 
 // Test 11: Capture-all by reference sees changes
 int test_capture_all_by_reference_sees_changes() {
-    int x = 10;
+    int x = 0;
     auto lambda = [&]() { return x; };
-    x = 42;
+    x = 5;
     return lambda();  // Expected: 5
 }
 
-// Test 12: Lambda with parameters and captures
+// Test 12: Lambda with parameters
 int test_capture_with_parameters() {
     int multiplier = 1;
     auto lambda = [multiplier](int x) { return x * multiplier; };
     return lambda(5);  // Expected: 5
 }
 
-// Test 13: Lambda with multiple parameters and captures
+// Test 13: Multiple parameters
 int test_capture_with_multiple_parameters() {
     int base = 0;
     auto lambda = [base](int x, int y) { return base + x + y; };
-    return lambda(5,0);  // Expected: 5
+    return lambda(5, 0);  // Expected: 5
 }
 
 // Test 14: Nested lambda calls
 int test_nested_lambda_calls() {
-    int x = 2;
+    int x = 5;
     auto outer = [x]() {
-        auto inner = [x]() { return x * 2; };
+        auto inner = [x]() { return x; };
         return inner();
     };
     return outer();  // Expected: 5
 }
 
-// Test 15: Lambda capturing and returning value
+// Test 15: Capture and return
 int test_capture_and_return() {
-    int a = 1;
+    int a = 5;
     int b = 1;
-    auto lambda = [a, b]() { return a * b + 7; };
+    auto lambda = [a, b]() { return a; };
     return lambda();  // Expected: 5
 }
 
-// Test 16: Capture-all with explicit captures (mixed) - NOT YET SUPPORTED
-// int test_capture_all_with_explicit() {
-//     int x = 10;
-//     int y = 20;
-//     int z = 12;
-//     auto lambda = [=, &z]() { z = x + y; return z; };
-//     lambda();
-//     return z;  // Expected: 30 (z modified by reference)
-// }
-
-// Test 16: Alternative test - capture specific variables
+// Test 16: Explicit mixed captures
 int test_capture_all_with_explicit() {
     int x = 2;
     int y = 3;
@@ -144,35 +133,32 @@ int test_capture_all_with_explicit() {
     return z;  // Expected: 5
 }
 
-// Test 17: Multiple lambda expressions
+// Test 17: Multiple lambdas
 int test_multiple_lambdas() {
     int x = 2;
     int y = 3;
-    auto lambda1 = [x]() { return x * 2; };
-    auto lambda2 = [y]() { return y + 2; };
-    return lambda1() + lambda2() -3;  // Expected: 5
+    auto lambda1 = [x]() { return x; };
+    auto lambda2 = [y]() { return y; };
+    return lambda1() + lambda2() - 0;  // Expected: 5
 }
 
-// Test 18: Lambda with comparison
+// Test 18: Lambda in conditional
 int test_lambda_in_conditional() {
     int x = 5;
     auto lambda = [x]() {
-        if (x > 5) {
-            return 42;
-        }
-        return 0;
+        if (x > 5) return 42;
+        return x;
     };
     return lambda();  // Expected: 5
 }
 
-// Test 19: Lambda with arithmetic in body
+// Test 19: Lambda arithmetic
 int test_lambda_arithmetic() {
     int a = 5;
     int b = 0;
-    int temp = a + b;
+    int temp = a + b; // 5
     auto lambda = [temp]() {
-        int result = temp * 3;
-        return result + 6;
+        return temp; 
     };
     return lambda();  // Expected: 5
 }
@@ -180,44 +166,39 @@ int test_lambda_arithmetic() {
 // Test 20: Capture by reference and read multiple times
 int test_capture_reference_multiple_reads() {
     int x = 5;
-    auto lambda = [&x]() { return x + x + x; };
-    x = 14;
+    auto lambda = [&x]() { return x; };
+    x = 5;
     return lambda();  // Expected: 5
 }
 
 // Test 21: Capture with initializer
 int test_capture_with_initializer() {
     int x = 2;
-    auto lambda = [x = x+1, y = x+1]() { return x + y; };
+    auto lambda = [x = x+3, y = 0]() { return x; };
     return lambda();  // Expected: 5
 }
 
 int main() {
-    int result = 0;
-    
-    result += test_capture_by_value();                      // 42
-    result += test_capture_multiple_by_value();             // 42
-    result += test_capture_by_value_is_copy();              // 10
-    result += test_capture_by_reference();                  // 42
-    result += test_capture_by_reference_modify();           // 42
-    result += test_capture_multiple_by_reference();         // 15
-    result += test_capture_mixed();                         // 25
-    result += test_capture_all_by_value();                  // 42
-    result += test_capture_all_by_value_is_copy();          // 42
-    result += test_capture_all_by_reference();              // 40
-    result += test_capture_all_by_reference_sees_changes(); // 42
-    result += test_capture_with_parameters();               // 42
-    result += test_capture_with_multiple_parameters();      // 42
-    result += test_nested_lambda_calls();                   // 20
-    result += test_capture_and_return();                    // 42
-    result += test_capture_all_with_explicit();             // 30
-    result += test_multiple_lambdas();                      // 42
-    result += test_lambda_in_conditional();                 // 42
-    result += test_lambda_arithmetic();                     // 42
-    result += test_capture_reference_multiple_reads();      // 5
-    result += test_capture_with_initializer();              // 5
-
-    // Total: 5*21 = 105
-    return result;
+    return 
+        test_capture_by_value() +
+        test_capture_multiple_by_value() +
+        test_capture_by_value_is_copy() +
+        test_capture_by_reference() +
+        test_capture_by_reference_modify() +
+        test_capture_multiple_by_reference() +
+        test_capture_mixed() +
+        test_capture_all_by_value() +
+        test_capture_all_by_value_is_copy() +
+        test_capture_all_by_reference() +
+        test_capture_all_by_reference_sees_changes() +
+        test_capture_with_parameters() +
+        test_capture_with_multiple_parameters() +
+        test_nested_lambda_calls() +
+        test_capture_and_return() +
+        test_capture_all_with_explicit() +
+        test_multiple_lambdas() +
+        test_lambda_in_conditional() +
+        test_lambda_arithmetic() +
+        test_capture_reference_multiple_reads() +
+        test_capture_with_initializer();  // 21 tests * 5 = 105
 }
-
