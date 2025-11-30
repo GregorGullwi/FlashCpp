@@ -20,6 +20,17 @@
 
 class Parser;
 
+// Helper to get DeclarationNode from a symbol that could be either DeclarationNode or VariableDeclarationNode
+// Returns nullptr if the symbol is neither type
+inline const DeclarationNode* get_decl_from_symbol(const ASTNode& symbol) {
+	if (symbol.is<DeclarationNode>()) {
+		return &symbol.as<DeclarationNode>();
+	} else if (symbol.is<VariableDeclarationNode>()) {
+		return &symbol.as<VariableDeclarationNode>().declaration();
+	}
+	return nullptr;
+}
+
 // MSVC RTTI runtime structures (must match ObjFileWriter.h MSVC format):
 // These are the actual structures that exist at runtime in the object file
 
@@ -8240,12 +8251,12 @@ private:
 							// By-reference: store the address of the variable
 							// Get the original variable type from captured_var_decls
 							const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
-							if (!var_decl.is<DeclarationNode>()) {
+							const DeclarationNode* decl = get_decl_from_symbol(var_decl);
+							if (!decl) {
 								capture_index++;
 								continue;
 							}
-							const auto& decl = var_decl.as<DeclarationNode>();
-							const auto& orig_type = decl.type_node().as<TypeSpecifierNode>();
+							const auto& orig_type = decl->type_node().as<TypeSpecifierNode>();
 
 							TempVar addr_temp = var_counter.next();
 							
@@ -8442,9 +8453,9 @@ private:
 				// Store the original type of the captured variable
 				if (capture_index < lambda_info.captured_var_decls.size()) {
 					const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
-					if (var_decl.is<DeclarationNode>()) {
-						const auto& decl = var_decl.as<DeclarationNode>();
-						current_lambda_capture_types_[var_name] = decl.type_node().as<TypeSpecifierNode>();
+					const DeclarationNode* decl = get_decl_from_symbol(var_decl);
+					if (decl) {
+						current_lambda_capture_types_[var_name] = decl->type_node().as<TypeSpecifierNode>();
 					}
 				}
 				capture_index++;
