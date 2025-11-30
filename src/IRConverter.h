@@ -525,6 +525,216 @@ OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, int32_t 
 	return result;
 }
 
+/**
+ * @brief Generates x86-64 binary opcodes for 'movsx r64, byte ptr [rbp + offset]'.
+ *
+ * Load an 8-bit signed value from RBP-relative address and sign-extend to 64 bits.
+ * Encoding: REX.W 0F BE /r
+ *
+ * @param destinationRegister The destination register.
+ * @param offset The signed byte offset from RBP.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovsxFromFrame8(X64Register destinationRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX.W prefix for 64-bit sign extension
+	uint8_t rex_prefix = 0x48; // REX.W
+	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+		rex_prefix |= 0x04; // REX.R for R8-R15
+	}
+	*current_byte_ptr++ = rex_prefix;
+	result.size_in_bytes++;
+
+	// Opcode: 0F BE for MOVSX r64, r/m8
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0xBE;
+	result.size_in_bytes += 2;
+
+	// ModR/M and displacement
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x01; // RBP needs displacement even for 0
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // 8-bit displacement
+	} else {
+		mod_field = 0x02; // 32-bit displacement
+	}
+
+	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// Displacement
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	} else {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
+/**
+ * @brief Generates x86-64 binary opcodes for 'movsx r64, word ptr [rbp + offset]'.
+ *
+ * Load a 16-bit signed value from RBP-relative address and sign-extend to 64 bits.
+ * Encoding: REX.W 0F BF /r
+ *
+ * @param destinationRegister The destination register.
+ * @param offset The signed byte offset from RBP.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovsxFromFrame16(X64Register destinationRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX.W prefix for 64-bit sign extension
+	uint8_t rex_prefix = 0x48; // REX.W
+	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+		rex_prefix |= 0x04; // REX.R for R8-R15
+	}
+	*current_byte_ptr++ = rex_prefix;
+	result.size_in_bytes++;
+
+	// Opcode: 0F BF for MOVSX r64, r/m16
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0xBF;
+	result.size_in_bytes += 2;
+
+	// ModR/M and displacement
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x01; // RBP needs displacement even for 0
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // 8-bit displacement
+	} else {
+		mod_field = 0x02; // 32-bit displacement
+	}
+
+	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// Displacement
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	} else {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
+/**
+ * @brief Generates x86-64 binary opcodes for 'movsxd r64, dword ptr [rbp + offset]'.
+ *
+ * Load a 32-bit signed value from RBP-relative address and sign-extend to 64 bits.
+ * Encoding: REX.W 63 /r
+ *
+ * @param destinationRegister The destination register.
+ * @param offset The signed byte offset from RBP.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovsxdFromFrame32(X64Register destinationRegister, int32_t offset) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// REX.W prefix for 64-bit sign extension
+	uint8_t rex_prefix = 0x48; // REX.W
+	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
+		rex_prefix |= 0x04; // REX.R for R8-R15
+	}
+	*current_byte_ptr++ = rex_prefix;
+	result.size_in_bytes++;
+
+	// Opcode: 63 for MOVSXD r64, r/m32
+	*current_byte_ptr++ = 0x63;
+	result.size_in_bytes++;
+
+	// ModR/M and displacement
+	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
+	uint8_t mod_field;
+	if (offset == 0) {
+		mod_field = 0x01; // RBP needs displacement even for 0
+	} else if (offset >= -128 && offset <= 127) {
+		mod_field = 0x01; // 8-bit displacement
+	} else {
+		mod_field = 0x02; // 32-bit displacement
+	}
+
+	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05;
+	*current_byte_ptr++ = modrm_byte;
+	result.size_in_bytes++;
+
+	// Displacement
+	if (offset == 0 || (offset >= -128 && offset <= 127)) {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes++;
+	} else {
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
+/**
+ * @brief Helper function to generate MOV from frame based on operand size and signedness.
+ *
+ * For signed types smaller than 64-bit, uses MOVSX to sign-extend.
+ * For unsigned types smaller than 64-bit, uses MOVZX to zero-extend.
+ * For 64-bit types, uses regular MOV.
+ *
+ * @param destinationRegister The destination register.
+ * @param offset The signed offset from RBP.
+ * @param size_in_bits The size of the value in bits.
+ * @param is_signed True if the value is signed (use MOVSX), false for unsigned (use MOVZX).
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateMovFromFrameBySizeAndSign(X64Register destinationRegister, int32_t offset, int size_in_bits, bool is_signed) {
+	if (size_in_bits == 64) {
+		return generatePtrMovFromFrame(destinationRegister, offset);
+	} else if (size_in_bits == 32) {
+		if (is_signed) {
+			return generateMovsxdFromFrame32(destinationRegister, offset);
+		} else {
+			return generateMovFromFrame32(destinationRegister, offset);
+		}
+	} else if (size_in_bits == 16) {
+		if (is_signed) {
+			return generateMovsxFromFrame16(destinationRegister, offset);
+		} else {
+			return generateMovzxFromFrame16(destinationRegister, offset);
+		}
+	} else { // 8-bit
+		if (is_signed) {
+			return generateMovsxFromFrame8(destinationRegister, offset);
+		} else {
+			return generateMovzxFromFrame8(destinationRegister, offset);
+		}
+	}
+}
+
 OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
 	if (size_in_bits == 8) {
 		return generateMovzxFromFrame8(destinationRegister, offset);
@@ -3434,6 +3644,13 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to generate and emit size-aware MOV from frame using SizedRegister
+	// This handles sign extension for signed types smaller than 64-bit
+	void emitMovFromFrameSized(SizedRegister dest, int32_t offset) {
+		auto opcodes = generateMovFromFrameBySizeAndSign(dest.reg, offset, dest.size_in_bits, dest.is_signed);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	}
+
 	// Helper to generate and emit LEA from frame
 	void emitLeaFromFrame(X64Register destinationRegister, int32_t offset) {
 		auto opcodes = generateLeaFromFrame(destinationRegister, offset);
@@ -4030,7 +4247,8 @@ private:
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						} else {
-							emitMovFromFrame(target_reg, var_offset);
+							// Use size-aware load with sign extension for signed types
+							emitMovFromFrameSized(SizedRegister{target_reg, arg.size_in_bits, isSignedType(arg.type)}, var_offset);
 							regAlloc.flushSingleDirtyRegister(target_reg);
 						}
 					} else if (std::holds_alternative<std::string_view>(arg.value)) {
@@ -4042,7 +4260,8 @@ private:
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						} else {
-							emitMovFromFrame(target_reg, var_offset);
+							// Use size-aware load with sign extension for signed types
+							emitMovFromFrameSized(SizedRegister{target_reg, arg.size_in_bits, isSignedType(arg.type)}, var_offset);
 							regAlloc.flushSingleDirtyRegister(target_reg);
 						}
 					}
@@ -4256,37 +4475,13 @@ private:
 							}
 						}
 						else {
-							// Check if this is an 8-bit value that needs MOVZX
+							// Check if this is an 8-bit value that needs MOVZX/MOVSX
 							if (argSize == 8) {
-								// MOVZX target_reg, byte ptr [rbp+var_offset]
-								// Encoding: 0F B6 /r with REX.R if target_reg >= R8
-								uint8_t rex_prefix = 0;
-								if (static_cast<uint8_t>(target_reg) >= 8) {
-									rex_prefix = 0x44; // REX.R for R8-R15 destination
-								}
-								if (rex_prefix != 0) {
-									textSectionData.push_back(rex_prefix);
-								}
-								textSectionData.push_back(0x0F);
-								textSectionData.push_back(0xB6);
-								
-								// ModR/M byte: Mod=01/10 (disp8/disp32), Reg=target, R/M=101 (RBP)
-								uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
-								if (var_offset >= -128 && var_offset <= 127) {
-									uint8_t modrm = 0x45 | (reg_bits << 3); // Mod=01, R/M=101 (RBP)
-									textSectionData.push_back(modrm);
-									textSectionData.push_back(static_cast<uint8_t>(var_offset));
-								} else {
-									uint8_t modrm = 0x85 | (reg_bits << 3); // Mod=10, R/M=101 (RBP)
-									textSectionData.push_back(modrm);
-									for (int j = 0; j < 4; ++j) {
-										textSectionData.push_back(static_cast<uint8_t>(var_offset & 0xFF));
-										var_offset >>= 8;
-									}
-								}
+								// Use size-aware load with sign extension for signed types
+								emitMovFromFrameSized(SizedRegister{target_reg, argSize, isSignedType(argType)}, var_offset);
 							} else {
-								// Use the existing generateMovFromFrame function for consistency
-								emitMovFromFrame(target_reg, var_offset);
+								// Use size-aware load with sign extension for signed types
+								emitMovFromFrameSized(SizedRegister{target_reg, argSize, isSignedType(argType)}, var_offset);
 							}
 							regAlloc.flushSingleDirtyRegister(target_reg);
 						}
@@ -4364,16 +4559,16 @@ private:
 					value >>= 8;
 				}
 			} else if (std::holds_alternative<std::string_view>(arg.value)) {
-				// Local variable
+				// Local variable - use size-aware load with sign extension
 				std::string_view var_name = std::get<std::string_view>(arg.value);
 				int var_offset = variable_scopes.back().identifier_offset[var_name];
-				emitMovFromFrame(temp_reg, var_offset);
+				emitMovFromFrameSized(SizedRegister{temp_reg, arg.size, isSignedType(arg.type)}, var_offset);
 				regAlloc.flushSingleDirtyRegister(temp_reg);
 			} else if (std::holds_alternative<TempVar>(arg.value)) {
-				// Temp var
+				// Temp var - use size-aware load with sign extension
 				auto temp_var = std::get<TempVar>(arg.value);
 				int var_offset = getStackOffsetFromTempVar(temp_var);
-				emitMovFromFrame(temp_reg, var_offset);
+				emitMovFromFrameSized(SizedRegister{temp_reg, arg.size, isSignedType(arg.type)}, var_offset);
 				regAlloc.flushSingleDirtyRegister(temp_reg);
 			} else if (std::holds_alternative<double>(arg.value)) {
 				// Floating-point literal
@@ -4606,8 +4801,8 @@ private:
 					// LEA target_reg, [RBP + param_offset]
 					emitLeaFromFrame(target_reg, param_offset);
 				} else {
-					// For value parameters, load value (MOV)
-					emitMovFromFrame(target_reg, param_offset);
+					// For value parameters, load value (MOV) with proper size/sign extension
+					emitMovFromFrameSized(SizedRegister{target_reg, paramSize, isSignedType(paramType)}, param_offset);
 				}
 			} else if (std::holds_alternative<std::string_view>(paramValue)) {
 				// Load from variable
@@ -4620,8 +4815,8 @@ private:
 						// LEA target_reg, [RBP + param_offset]
 						emitLeaFromFrame(target_reg, param_offset);
 					} else {
-						// For value parameters, load value (MOV)
-						emitMovFromFrame(target_reg, param_offset);
+						// For value parameters, load value (MOV) with proper size/sign extension
+						emitMovFromFrameSized(SizedRegister{target_reg, paramSize, isSignedType(paramType)}, param_offset);
 					}
 				}
 			}
@@ -6891,6 +7086,7 @@ private:
 
 	X64Register loadTypedValueIntoRegister(const TypedValue& typed_value) {
 		X64Register reg = X64Register::Count;
+		bool is_signed = isSignedType(typed_value.type);
 		
 		if (std::holds_alternative<TempVar>(typed_value.value)) {
 			auto temp = std::get<TempVar>(typed_value.value);
@@ -6904,7 +7100,8 @@ private:
 				reg = reg_opt.value();
 			} else {
 				reg = allocateRegisterWithSpilling();
-				auto mov_opcodes = generateMovFromFrameBySize(reg, stack_addr, typed_value.size_in_bits);
+				// Use sign-aware loading for signed types
+				auto mov_opcodes = generateMovFromFrameBySizeAndSign(reg, stack_addr, typed_value.size_in_bits, is_signed);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 					mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(reg);
@@ -6922,7 +7119,8 @@ private:
 					reg = reg_opt.value();
 				} else {
 					reg = allocateRegisterWithSpilling();
-					auto mov_opcodes = generateMovFromFrameBySize(reg, var_id->second, typed_value.size_in_bits);
+					// Use sign-aware loading for signed types
+					auto mov_opcodes = generateMovFromFrameBySizeAndSign(reg, var_id->second, typed_value.size_in_bits, is_signed);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 						mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(reg);
@@ -8055,8 +8253,8 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					// Load from RHS stack location into RAX
-					emitMovFromFrame(source_reg, rhs_offset);
+					// Load from RHS stack location with proper size/sign extension
+					emitMovFromFrameSized(SizedRegister{source_reg, op.rhs.size_in_bits, isSignedType(rhs_type)}, rhs_offset);
 				}
 			}
 		} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
@@ -8074,8 +8272,8 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					// Load from RHS stack location into RAX
-					emitMovFromFrame(source_reg, rhs_offset);
+					// Load from RHS stack location with proper size/sign extension
+					emitMovFromFrameSized(SizedRegister{source_reg, op.rhs.size_in_bits, isSignedType(rhs_type)}, rhs_offset);
 				}
 			}
 		} else if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
@@ -8428,7 +8626,8 @@ private:
 				TempVar index_var = std::get<TempVar>(op.index.value);
 				int64_t index_offset = getStackOffsetFromTempVar(index_var);
 				
-				emitMovFromFrame(X64Register::RCX, index_offset);
+				// Load index with sign extension for signed types
+				emitMovFromFrameSized(SizedRegister{X64Register::RCX, op.index.size_in_bits, isSignedType(op.index.type)}, static_cast<int32_t>(index_offset));
 				
 				if (element_size_bytes > 1) {
 					textSectionData.push_back(0x48); // REX.W
@@ -8511,10 +8710,10 @@ private:
 				uint64_t value = std::get<unsigned long long>(op.value.value);
 				emitMovImm64(X64Register::RAX, value);
 			} else if (std::holds_alternative<TempVar>(op.value.value)) {
-				// Value from temp var
+				// Value from temp var - use size-aware load
 				TempVar value_var = std::get<TempVar>(op.value.value);
 				int64_t value_offset = getStackOffsetFromTempVar(value_var);
-				emitMovFromFrame(value_reg, value_offset);
+				emitMovFromFrameSized(SizedRegister{value_reg, op.value.size_in_bits, isSignedType(op.value.type)}, static_cast<int32_t>(value_offset));
 			}
 			
 			// Get array base offset
@@ -9426,7 +9625,8 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					emitMovFromFrame(target_reg, arg_offset);
+					// Use size-aware load with sign extension
+					emitMovFromFrameSized(SizedRegister{target_reg, arg.size_in_bits, isSignedType(argType)}, arg_offset);
 				}
 			} else if (std::holds_alternative<std::string_view>(arg.value)) {
 				std::string_view var_name = std::get<std::string_view>(arg.value);
@@ -9437,7 +9637,8 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					emitMovFromFrame(target_reg, arg_offset);
+					// Use size-aware load with sign extension
+					emitMovFromFrameSized(SizedRegister{target_reg, arg.size_in_bits, isSignedType(argType)}, arg_offset);
 				}
 			} else if (std::holds_alternative<unsigned long long>(arg.value)) {
 				// Immediate value
