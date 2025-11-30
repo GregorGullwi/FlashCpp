@@ -9084,11 +9084,10 @@ ParseResult Parser::parse_primary_expression()
 								// Look up the identifier's type
 								auto id_type = lookup_symbol(inner.name());
 								if (id_type.has_value()) {
-									if (id_type->template is<DeclarationNode>()) {
-										const auto& decl = id_type->template as<DeclarationNode>();
-										if (decl.type_node().template is<TypeSpecifierNode>()) {
+									if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
+										if (decl->type_node().template is<TypeSpecifierNode>()) {
 											// Preserve the full TypeSpecifierNode to retain type_index for structs
-											const auto& type_spec = decl.type_node().template as<TypeSpecifierNode>();
+											const auto& type_spec = decl->type_node().template as<TypeSpecifierNode>();
 											arg_type_node_opt = type_spec;
 											arg_type = type_spec.type();
 											// Named variables are lvalues
@@ -9430,10 +9429,9 @@ ParseResult Parser::parse_primary_expression()
 										// Look up the identifier's type
 										auto id_type = lookup_symbol(inner.name());
 										if (id_type.has_value()) {
-											if (id_type->template is<DeclarationNode>()) {
-												const auto& decl = id_type->template as<DeclarationNode>();
-												if (decl.type_node().template is<TypeSpecifierNode>()) {
-													arg_type = decl.type_node().template as<TypeSpecifierNode>().type();
+											if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
+												if (decl->type_node().template is<TypeSpecifierNode>()) {
+													arg_type = decl->type_node().template as<TypeSpecifierNode>().type();
 												}
 											}
 										}
