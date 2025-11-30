@@ -45,7 +45,7 @@ enum class LogLevel : uint8_t {
     #ifdef NDEBUG
         #define FLASHCPP_LOG_LEVEL 2   // Release: up to Info level (General category always enabled regardless of level)
     #else
-        #define FLASHCPP_LOG_LEVEL 2   // Debug: up to Debug level
+        #define FLASHCPP_LOG_LEVEL 4   // Debug: up to Debug level
     #endif
 #endif
 

@@ -194,6 +194,8 @@ int get_floating_point_rank(Type type) {
 
 int get_type_size_bits(Type type) {
     switch (type) {
+        case Type::Bool:
+            return 8;
         case Type::Char:
         case Type::UnsignedChar:
             return 8;

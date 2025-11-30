@@ -333,7 +333,7 @@ int main(int argc, char *argv[]) {
 
     const auto& ir = converter.getIr();
 
-    if (context.isVerboseMode()) {
+    if (FLASH_LOG_ENABLED(Codegen, Debug)) {
         FLASH_LOG(Codegen, Debug, "\n=== IR Instructions ===\n");
         for (const auto& instruction : ir.getInstructions()) {
            FLASH_LOG(Codegen, Debug, instruction.getReadableString());
