@@ -5059,11 +5059,15 @@ private:
 		flushAllDirtyRegisters();
 
 		// Load count into RAX - handle TempVar, std::string_view (identifier), and constant values
+		// Array counts are typically size_t (unsigned 64-bit on x64)
 		if (std::holds_alternative<TempVar>(op.count)) {
-			// Count is a TempVar - load from stack
+			// Count is a TempVar - load from stack (assume 64-bit for size_t)
 			TempVar count_var = std::get<TempVar>(op.count);
 			int count_offset = getStackOffsetFromTempVar(count_var);
-			emitMovFromFrame(X64Register::RAX, count_offset);
+			emitMovFromFrameSized(
+				SizedRegister{X64Register::RAX, 64, false},
+				SizedStackSlot{count_offset, 64, false}  // size_t is 64-bit unsigned
+			);
 		} else if (std::holds_alternative<std::string_view>(op.count)) {
 			// Count is an identifier (variable name) - load from stack
 			std::string_view count_name = std::get<std::string_view>(op.count);
@@ -5074,7 +5078,10 @@ private:
 				return;
 			}
 			int count_offset = it->second;
-			emitMovFromFrame(X64Register::RAX, count_offset);
+			emitMovFromFrameSized(
+				SizedRegister{X64Register::RAX, 64, false},
+				SizedStackSlot{count_offset, 64, false}  // size_t is 64-bit unsigned
+			);
 		} else if (std::holds_alternative<unsigned long long>(op.count)) {
 			// Count is a constant - load immediate value
 			uint64_t count_value = std::get<unsigned long long>(op.count);
@@ -8253,40 +8260,76 @@ private:
 				return;
 			}
 
-			// Get RHS source
-			X64Register source_reg = X64Register::RAX;
-
+			// Get RHS source offset
+			int32_t rhs_offset = -1;
 			if (std::holds_alternative<std::string_view>(op.rhs.value)) {
 				std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
 				auto it = variable_scopes.back().identifier_offset.find(rhs_var_name);
 				if (it != variable_scopes.back().identifier_offset.end()) {
-					int32_t rhs_offset = it->second;
-					// Load struct from RHS stack location into RAX (8 bytes for small structs)
-					emitMovFromFrame(source_reg, rhs_offset);
+					rhs_offset = it->second;
 				}
 			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
 				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
-				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
-				// Check if the value is already in RAX (e.g., from function return)
-				if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
-					source_reg = rhs_reg.value();
-					if (source_reg != X64Register::RAX) {
-						// Move from source register to RAX
-						auto move_opcodes = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, source_reg, 8);
-						textSectionData.insert(textSectionData.end(), move_opcodes.op_codes.begin(),
-												move_opcodes.op_codes.begin() + move_opcodes.size_in_bytes);
-						source_reg = X64Register::RAX;
-					}
-				} else {
-					// Load struct from RHS stack location into RAX (8 bytes for small structs)
-					emitMovFromFrame(source_reg, rhs_offset);
-				}
+				rhs_offset = getStackOffsetFromTempVar(rhs_var);
 			}
 
-			// Store RAX to LHS stack location (8 bytes for small structs)
-			auto store_opcodes = generatePtrMovToFrame(source_reg, lhs_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-								   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			if (rhs_offset == -1) {
+				assert(false && "RHS variable not found in struct assignment");
+				return;
+			}
+
+			// Get struct size in bytes from TypedValue
+			int struct_size_bytes = op.lhs.size_in_bits / 8;
+			
+			// Copy struct using 8-byte chunks, then handle remaining bytes
+			int offset = 0;
+			while (offset + 8 <= struct_size_bytes) {
+				// Load 8 bytes from RHS: MOV RAX, [RBP + rhs_offset + offset]
+				emitMovFromFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{rhs_offset + offset, 64, false}
+				);
+				// Store 8 bytes to LHS: MOV [RBP + lhs_offset + offset], RAX
+				emitMovToFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{lhs_offset + offset, 64, false}
+				);
+				offset += 8;
+			}
+			
+			// Handle remaining bytes (4, 2, 1)
+			if (offset + 4 <= struct_size_bytes) {
+				emitMovFromFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{rhs_offset + offset, 32, false}
+				);
+				emitMovToFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{lhs_offset + offset, 32, false}
+				);
+				offset += 4;
+			}
+			if (offset + 2 <= struct_size_bytes) {
+				emitMovFromFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{rhs_offset + offset, 16, false}
+				);
+				emitMovToFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{lhs_offset + offset, 16, false}
+				);
+				offset += 2;
+			}
+			if (offset + 1 <= struct_size_bytes) {
+				emitMovFromFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{rhs_offset + offset, 8, false}
+				);
+				emitMovToFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{lhs_offset + offset, 8, false}
+				);
+			}
 			return;
 		}
 
