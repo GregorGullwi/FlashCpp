@@ -3,15 +3,13 @@
 #include "AstNodeTypes.h"
 #include "IRTypes.h"
 #include "ChunkedString.h"
-#include <variant>
 
 // Shared MSVC name mangling utilities used by both CodeGen and ObjectFileWriter
 
 namespace NameMangling {
 
-// A mangled name that can be stored as either:
-// - A committed string_view (points to StringBuilder/ChunkedStringAllocator stable storage)
-// - A std::string (fallback for compatibility/testing)
+// A mangled name stored as a string_view pointing to stable storage
+// (typically from StringBuilder::commit() which uses ChunkedStringAllocator)
 //
 // IMPORTANT: When constructing from string_view, the caller must ensure the underlying
 // storage remains valid for the lifetime of the MangledName. Typically this means using
@@ -19,40 +17,29 @@ namespace NameMangling {
 class MangledName {
 public:
 	// Default: empty name
-	MangledName() : storage_(std::string_view{}) {}
+	MangledName() : storage_{} {}
 	
 	// Construct from committed string_view (preferred - zero allocation)
 	// Note: The caller must ensure the string_view's storage outlives this MangledName
 	explicit MangledName(std::string_view committed_sv) 
 		: storage_(committed_sv) {}
 	
-	// Construct from string (fallback - owns the data)
-	explicit MangledName(std::string owned_str) 
-		: storage_(std::move(owned_str)) {}
-	
-	// Always returns a string_view (zero-copy for both variants)
-	std::string_view view() const {
-		return std::visit([](const auto& s) -> std::string_view {
-			return s;
-		}, storage_);
-	}
+	// Always returns a string_view (zero-copy)
+	std::string_view view() const { return storage_; }
 	
 	// Implicit conversion to string_view for convenience
-	operator std::string_view() const { return view(); }
+	operator std::string_view() const { return storage_; }
 	
 	// Check if empty
-	bool empty() const { return view().empty(); }
-	
-	// For compatibility with code expecting std::string
-	std::string to_string() const { return std::string(view()); }
+	bool empty() const { return storage_.empty(); }
 	
 	// Comparison operators
-	bool operator==(const MangledName& other) const { return view() == other.view(); }
-	bool operator==(std::string_view other) const { return view() == other; }
-	bool operator<(const MangledName& other) const { return view() < other.view(); }
+	bool operator==(const MangledName& other) const { return storage_ == other.storage_; }
+	bool operator==(std::string_view other) const { return storage_ == other; }
+	bool operator<(const MangledName& other) const { return storage_ < other.storage_; }
 	
 private:
-	std::variant<std::string_view, std::string> storage_;
+	std::string_view storage_;
 };
 
 // Helper to append CV-qualifier code (A/B/C/D) to output
