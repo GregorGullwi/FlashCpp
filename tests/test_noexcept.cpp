@@ -17,5 +17,5 @@ int main() {
     int result2 = another_safe();
     printf("another_safe: %d (expected 100)\n", result2);
     
-    return result + result2 - 142;  // Should return 0
+    return result + result2 - (42 + 100);  // Should return 0
 }
