@@ -7145,7 +7145,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 	// Handle struct brace initialization
 	if (type_specifier.type() != Type::Struct) {
-		return ParseResult::error("Brace initializers are currently only supported for struct and array types", *current_token_);
+		return ParseResult::error("Brace initializers only supported for struct and array types", *current_token_);
 	}
 
 	TypeIndex type_index = type_specifier.type_index();
