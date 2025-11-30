@@ -22,6 +22,10 @@
     #define DEBUG_BREAK() ((void)0)
 #endif
 
+// Maximum number of elements allowed in a parameter pack for fold expressions
+// This prevents infinite loops and excessive memory usage in case of bugs
+static constexpr size_t MAX_PACK_ELEMENTS = 1000;
+
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
 ChunkedStringAllocator gChunkedStringAllocator;
@@ -18544,8 +18548,8 @@ ASTNode Parser::substituteTemplateParameters(
 				num_pack_elements++;
 				
 				// Safety limit to prevent infinite loops
-				if (num_pack_elements > 1000) {
-					FLASH_LOG(Templates, Error, "Fold expression pack '", fold.pack_name(), "' has too many elements (>1000)");
+				if (num_pack_elements > MAX_PACK_ELEMENTS) {
+					FLASH_LOG(Templates, Error, "Fold expression pack '", fold.pack_name(), "' has too many elements (>", MAX_PACK_ELEMENTS, ")");
 					break;
 				}
 			}
