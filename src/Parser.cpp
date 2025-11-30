@@ -286,13 +286,24 @@ void Parser::restore_token_position(const TokenPosition& saved_token_pos, const 
     current_token_ = saved_token.current_token_;
 	
     // Erase AST nodes that were added after the saved position,
-    // BUT preserve FunctionDeclarationNodes which might be template instantiations.
-    // Template instantiations are registered in the cache and may be referenced later.
+    // BUT preserve FunctionDeclarationNodes which may be template instantiations.
+    // 
+    // Template instantiations are registered in gTemplateRegistry.instantiations_ cache
+    // when try_instantiate_template() is called. If we erase the instantiated function
+    // from ast_nodes_, the cache will have a reference to a node that won't be visited
+    // by the code generator, resulting in undefined symbols at link time.
+    // 
+    // This can happen when parsing expressions like `(all(1,1,1) ? 1 : 0)`:
+    // 1. Parser tries fold expression patterns, saving position
+    // 2. Parser parses `all(1,1,1)`, which instantiates the template
+    // 3. Parser finds it's not a fold expression, restores position
+    // 4. Without this fix, the instantiation would be erased but remain in cache
     size_t new_size = saved_token.ast_nodes_size_;
     auto it = ast_nodes_.begin() + new_size;
     while (it != ast_nodes_.end()) {
         if (it->is<FunctionDeclarationNode>()) {
-            // Keep function declarations - they might be template instantiations
+            // Keep function declarations - they may be template instantiations
+            // that are already registered in the template cache
             ++it;
         } else {
             it = ast_nodes_.erase(it);
