@@ -15800,11 +15800,12 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
 					}
 					
-					// Create parameter name: base_name + index (e.g., args_0, args_1, ...)
+					// Create parameter name: base_name + pack-relative index (e.g., args_0, args_1, ...)
+					// Use pack-relative index so fold expression expansion can use 0-based indices
 					StringBuilder param_name_builder;
 					param_name_builder.append(param_decl.identifier_token().value());
 					param_name_builder.append('_');
-					param_name_builder.append(arg_type_index);
+					param_name_builder.append(arg_type_index - pack_start_index);
 					std::string_view param_name = param_name_builder.commit();
 					
 					Token param_token(Token::Type::Identifier, 
@@ -18522,20 +18523,34 @@ ASTNode Parser::substituteTemplateParameters(
 		
 			// The fold pack_name refers to a function parameter pack (like "args")
 			// We need to expand it into individual parameter references (like "args_0", "args_1", "args_2")
-			// The number of expansions comes from the number of template arguments
 			std::vector<ASTNode> pack_values;
 		
-			// Count how many times the pack was instantiated by counting template args
-			// For variadic templates, all args from the first variadic parameter onward are pack elements
+			// Count pack elements by looking up pack_name_0, pack_name_1, etc. in the symbol table
+			// This is more reliable than counting template args since non-pack function parameters
+			// don't affect the pack element count
 			size_t num_pack_elements = 0;
-			for (size_t i = 0; i < template_params.size(); ++i) {
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.is_variadic()) {
-					// All remaining template arguments belong to this pack
-					num_pack_elements = template_args.size() - i;
+			while (true) {
+				StringBuilder param_name_builder;
+				param_name_builder.append(fold.pack_name());
+				param_name_builder.append('_');
+				param_name_builder.append(num_pack_elements);
+				std::string_view param_name = param_name_builder.commit();
+				
+				// Check if this parameter exists in the symbol table
+				auto lookup_result = gSymbolTable.lookup(param_name);
+				if (!lookup_result.has_value()) {
+					break;  // No more pack elements
+				}
+				num_pack_elements++;
+				
+				// Safety limit to prevent infinite loops
+				if (num_pack_elements > 1000) {
+					FLASH_LOG(Templates, Error, "Fold expression pack '", fold.pack_name(), "' has too many elements (>1000)");
 					break;
 				}
 			}
+			
+			FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
 		
 			if (num_pack_elements == 0) {
 				FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
