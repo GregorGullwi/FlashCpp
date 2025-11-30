@@ -716,11 +716,11 @@ private:
 		} else {
 			// Generate mangled name using the overload that accepts parameter nodes directly
 			mangled_name = generateMangledNameForCall(
-				std::string(func_decl.identifier_token().value()),
+				func_decl.identifier_token().value(),
 				ret_type,
 				node.parameter_nodes(),
 				node.is_variadic(),
-				node.is_member_function() ? std::string(struct_name_for_function) : "",
+				node.is_member_function() ? struct_name_for_function : std::string_view{},
 				current_namespace_stack_
 			);
 		}
@@ -1077,14 +1077,13 @@ private:
 
 		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
 		// For nested classes, use just the last component as the constructor name
-		std::string ctor_name = std::string(ctor_function_name);
 		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 		ctor_decl_op.mangled_name = generateMangledNameForCall(
-			ctor_name,
+			ctor_function_name,
 			void_type,
 			node.parameter_nodes(),  // Use parameter nodes directly
 			false,  // not variadic
-			std::string(parent_class_name)  // parent class name for mangling (e.g., "Outer" for "Outer::Inner::Inner")
+			parent_class_name  // parent class name for mangling (e.g., "Outer" for "Outer::Inner::Inner")
 		);
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
@@ -5225,7 +5224,7 @@ private:
 
 	// Helper function to generate Microsoft Visual C++ mangled name for function calls
 	// This matches the mangling scheme in ObjFileWriter::generateMangledName
-	std::string_view generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
@@ -5238,9 +5237,9 @@ private:
 		if (!struct_name.empty()) {
 			// Member function: ?name@ClassName@@QA...
 			//  Extract just the function name (after ::)
-			std::string func_only_name = name;
+			std::string_view func_only_name = name;
 			size_t pos = name.rfind("::");
-			if (pos != std::string::npos) {
+			if (pos != std::string_view::npos) {
 				func_only_name = name.substr(pos + 2);
 			}
 			builder.append(func_only_name);
@@ -5304,7 +5303,7 @@ private:
 	}
 
 	// Overload that accepts parameter nodes directly to avoid creating a temporary vector
-	std::string_view generateMangledNameForCall(const std::string& name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
 		// Special case: main function is never mangled
 		if (name == "main") {
 			return "main";
@@ -5316,9 +5315,9 @@ private:
 		// Handle member functions vs free functions
 		if (!struct_name.empty()) {
 			// Member function: ?name@ClassName@@QA...
-			std::string func_only_name = name;
+			std::string_view func_only_name = name;
 			size_t pos = name.rfind("::");
-			if (pos != std::string::npos) {
+			if (pos != std::string_view::npos) {
 				func_only_name = name.substr(pos + 2);
 			}
 			builder.append(func_only_name);
