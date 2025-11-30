@@ -3668,15 +3668,6 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
-	// Overload that takes separate parameters for backward compatibility
-	// The source size and signedness determine the load instruction
-	void emitMovFromFrameSized(SizedRegister dest, int32_t offset) {
-		// Use dest's size and signedness as the source's size and signedness
-		// (the value on stack matches what we're loading into the register)
-		auto opcodes = generateMovFromFrameSized(dest.reg, SizedStackSlot{offset, dest.size_in_bits, dest.is_signed});
-		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
-	}
-
 	// Helper to generate and emit LEA from frame
 	void emitLeaFromFrame(X64Register destinationRegister, int32_t offset) {
 		auto opcodes = generateLeaFromFrame(destinationRegister, offset);
@@ -4508,14 +4499,11 @@ private:
 							}
 						}
 						else {
-							// Check if this is an 8-bit value that needs MOVZX/MOVSX
-							if (argSize == 8) {
-								// Use size-aware load with sign extension for signed types
-								emitMovFromFrameSized(SizedRegister{target_reg, argSize, isSignedType(argType)}, var_offset);
-							} else {
-								// Use size-aware load with sign extension for signed types
-								emitMovFromFrameSized(SizedRegister{target_reg, argSize, isSignedType(argType)}, var_offset);
-							}
+							// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
+							emitMovFromFrameSized(
+								SizedRegister{target_reg, 64, false},  // dest: 64-bit register
+								SizedStackSlot{var_offset, argSize, isSignedType(argType)}  // source: sized stack slot
+							);
 							regAlloc.flushSingleDirtyRegister(target_reg);
 						}
 					}
@@ -4592,16 +4580,22 @@ private:
 					value >>= 8;
 				}
 			} else if (std::holds_alternative<std::string_view>(arg.value)) {
-				// Local variable - use size-aware load with sign extension
+				// Local variable: source (sized stack slot) -> dest (64-bit register)
 				std::string_view var_name = std::get<std::string_view>(arg.value);
 				int var_offset = variable_scopes.back().identifier_offset[var_name];
-				emitMovFromFrameSized(SizedRegister{temp_reg, arg.size, isSignedType(arg.type)}, var_offset);
+				emitMovFromFrameSized(
+					SizedRegister{temp_reg, 64, false},  // dest: 64-bit register
+					SizedStackSlot{var_offset, arg.size, isSignedType(arg.type)}  // source: sized stack slot
+				);
 				regAlloc.flushSingleDirtyRegister(temp_reg);
 			} else if (std::holds_alternative<TempVar>(arg.value)) {
-				// Temp var - use size-aware load with sign extension
+				// Temp var: source (sized stack slot) -> dest (64-bit register)
 				auto temp_var = std::get<TempVar>(arg.value);
 				int var_offset = getStackOffsetFromTempVar(temp_var);
-				emitMovFromFrameSized(SizedRegister{temp_reg, arg.size, isSignedType(arg.type)}, var_offset);
+				emitMovFromFrameSized(
+					SizedRegister{temp_reg, 64, false},  // dest: 64-bit register
+					SizedStackSlot{var_offset, arg.size, isSignedType(arg.type)}  // source: sized stack slot
+				);
 				regAlloc.flushSingleDirtyRegister(temp_reg);
 			} else if (std::holds_alternative<double>(arg.value)) {
 				// Floating-point literal
@@ -4834,8 +4828,11 @@ private:
 					// LEA target_reg, [RBP + param_offset]
 					emitLeaFromFrame(target_reg, param_offset);
 				} else {
-					// For value parameters, load value (MOV) with proper size/sign extension
-					emitMovFromFrameSized(SizedRegister{target_reg, paramSize, isSignedType(paramType)}, param_offset);
+					// For value parameters: source (sized stack slot) -> dest (64-bit register)
+					emitMovFromFrameSized(
+						SizedRegister{target_reg, 64, false},  // dest: 64-bit register
+						SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}  // source: sized stack slot
+					);
 				}
 			} else if (std::holds_alternative<std::string_view>(paramValue)) {
 				// Load from variable
@@ -4848,8 +4845,11 @@ private:
 						// LEA target_reg, [RBP + param_offset]
 						emitLeaFromFrame(target_reg, param_offset);
 					} else {
-						// For value parameters, load value (MOV) with proper size/sign extension
-						emitMovFromFrameSized(SizedRegister{target_reg, paramSize, isSignedType(paramType)}, param_offset);
+						// For value parameters: source (sized stack slot) -> dest (64-bit register)
+						emitMovFromFrameSized(
+							SizedRegister{target_reg, 64, false},  // dest: 64-bit register
+							SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}  // source: sized stack slot
+						);
 					}
 				}
 			}
@@ -9670,8 +9670,11 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					// Use size-aware load with sign extension
-					emitMovFromFrameSized(SizedRegister{target_reg, arg.size_in_bits, isSignedType(argType)}, arg_offset);
+					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
+					emitMovFromFrameSized(
+						SizedRegister{target_reg, 64, false},  // dest: 64-bit register
+						SizedStackSlot{arg_offset, arg.size_in_bits, isSignedType(argType)}  // source: sized stack slot
+					);
 				}
 			} else if (std::holds_alternative<std::string_view>(arg.value)) {
 				std::string_view var_name = std::get<std::string_view>(arg.value);
@@ -9682,8 +9685,11 @@ private:
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				} else {
-					// Use size-aware load with sign extension
-					emitMovFromFrameSized(SizedRegister{target_reg, arg.size_in_bits, isSignedType(argType)}, arg_offset);
+					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
+					emitMovFromFrameSized(
+						SizedRegister{target_reg, 64, false},  // dest: 64-bit register
+						SizedStackSlot{arg_offset, arg.size_in_bits, isSignedType(argType)}  // source: sized stack slot
+					);
 				}
 			} else if (std::holds_alternative<unsigned long long>(arg.value)) {
 				// Immediate value
