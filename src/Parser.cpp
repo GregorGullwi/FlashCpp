@@ -285,13 +285,19 @@ void Parser::restore_token_position(const TokenPosition& saved_token_pos, const 
     SavedToken saved_token = saved_tokens_.at(saved_token_pos.cursor_);
     current_token_ = saved_token.current_token_;
 	
-	if (context_.isVerboseMode()) {
-		size_t old_size = ast_nodes_.size();
-		ast_nodes_.erase(ast_nodes_.begin() + saved_token.ast_nodes_size_,
-			ast_nodes_.end());
-	}
-    ast_nodes_.erase(ast_nodes_.begin() + saved_token.ast_nodes_size_,
-        ast_nodes_.end());
+    // Erase AST nodes that were added after the saved position,
+    // BUT preserve FunctionDeclarationNodes which might be template instantiations.
+    // Template instantiations are registered in the cache and may be referenced later.
+    size_t new_size = saved_token.ast_nodes_size_;
+    auto it = ast_nodes_.begin() + new_size;
+    while (it != ast_nodes_.end()) {
+        if (it->is<FunctionDeclarationNode>()) {
+            // Keep function declarations - they might be template instantiations
+            ++it;
+        } else {
+            it = ast_nodes_.erase(it);
+        }
+    }
     //saved_tokens_.erase(saved_token_pos.cursor_);
 }
 
@@ -18533,15 +18539,18 @@ ASTNode Parser::substituteTemplateParameters(
 			// This is more reliable than counting template args since non-pack function parameters
 			// don't affect the pack element count
 			size_t num_pack_elements = 0;
+			StringBuilder param_name_builder;
 			while (true) {
-				StringBuilder param_name_builder;
+				// Build the parameter name: pack_name + "_" + index
 				param_name_builder.append(fold.pack_name());
 				param_name_builder.append('_');
 				param_name_builder.append(num_pack_elements);
-				std::string_view param_name = param_name_builder.commit();
+				std::string_view param_name = param_name_builder.preview();
 				
 				// Check if this parameter exists in the symbol table
 				auto lookup_result = gSymbolTable.lookup(param_name);
+				param_name_builder.reset();  // Reset for next iteration
+				
 				if (!lookup_result.has_value()) {
 					break;  // No more pack elements
 				}
