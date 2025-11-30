@@ -106,6 +106,21 @@ enum class Type : int_fast16_t {
 
 using TypeIndex = size_t;
 
+/// Helper function to determine if a Type is signed (for MOVSX vs MOVZX)
+/// MSVC treats char as signed by default.
+inline bool isSignedType(Type t) {
+	switch (t) {
+		case Type::Char:      // char is signed by default in MSVC
+		case Type::Short:
+		case Type::Int:
+		case Type::Long:
+		case Type::LongLong:
+			return true;
+		default:
+			return false;
+	}
+}
+
 // Linkage specification for functions (C vs C++)
 enum class Linkage : uint8_t {
 	None,           // Default C++ linkage (with name mangling)

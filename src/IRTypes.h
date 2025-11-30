@@ -244,6 +244,29 @@ enum class X64Register : uint8_t {
 	Count
 };
 
+/// Bundles a register with its operational size and signedness.
+/// Use this instead of bare X64Register when emitting MOV instructions
+/// to ensure correct operand size encoding.
+struct SizedRegister {
+	X64Register reg;
+	int size_in_bits;    // 8, 16, 32, or 64
+	bool is_signed;      // true = use MOVSX, false = use MOVZX for loads < 64-bit
+	
+	SizedRegister(X64Register r, int size, bool sign = false)
+		: reg(r), size_in_bits(size), is_signed(sign) {}
+	
+	// Convenience constructors for common cases
+	static SizedRegister ptr(X64Register r) { return {r, 64, false}; }
+	static SizedRegister i64(X64Register r) { return {r, 64, true}; }
+	static SizedRegister i32(X64Register r) { return {r, 32, true}; }
+	static SizedRegister i16(X64Register r) { return {r, 16, true}; }
+	static SizedRegister i8(X64Register r) { return {r, 8, true}; }
+	static SizedRegister u64(X64Register r) { return {r, 64, false}; }
+	static SizedRegister u32(X64Register r) { return {r, 32, false}; }
+	static SizedRegister u16(X64Register r) { return {r, 16, false}; }
+	static SizedRegister u8(X64Register r) { return {r, 8, false}; }
+};
+
 template <size_t N>
 constexpr auto make_temp_string() {
 	// Max: "temp_" + 3-digit number + '\0'
@@ -513,6 +536,7 @@ struct TypedValue {
 	int size_in_bits = 0;	// 4 bytes
 	IrValue value;          // 32 bytes (variant)
 	bool is_reference = false;  // True if this should be passed by reference (address)
+	bool is_signed = false;     // True for signed types (use MOVSX), false for unsigned (use MOVZX)
 };
 
 // Helper function to print TypedValue
