@@ -2708,6 +2708,11 @@ private:
 		textSectionData.push_back(modrm_byte);
 	}
 	
+	// Helper function to emit MOV reg, reg instruction with size awareness
+	void emitMovRegToReg(X64Register src_reg, X64Register dst_reg, int src_size_in_bits) {
+		emitBinaryOpInstruction(0x89, src_reg, dst_reg, src_size_in_bits);
+	}
+	
 	// Helper function to emit a comparison instruction (CMP + SETcc + MOVZX)
 	void emitComparisonInstruction(const ArithmeticOperationContext& ctx, uint8_t setcc_opcode) {
 		// Compare operands: cmp r/m64, r64
@@ -7882,11 +7887,10 @@ private:
 
 	void handleShlAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left assignment");
+		auto bin_op = extractBinaryOp(instruction).value();
 		
-		// Move RHS to CL register
-		std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xC1 };
-		movInst[2] = 0xC1 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3);
-		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		// Move RHS to CL register (using RHS size for the move)
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits);
 		
 		// Emit SHL instruction with correct size
 		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits);
@@ -7896,11 +7900,10 @@ private:
 
 	void handleShrAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right assignment");
+		auto bin_op = extractBinaryOp(instruction).value();
 		
-		// Move RHS to CL register
-		std::array<uint8_t, 3> movInst = { 0x48, 0x89, 0xC1 };
-		movInst[2] = 0xC1 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3);
-		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		// Move RHS to CL register (using RHS size for the move)
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits);
 		
 		// Emit SAR instruction with correct size
 		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits);
