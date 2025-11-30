@@ -698,41 +698,6 @@ OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, i
 	return result;
 }
 
-/**
- * @brief Legacy helper - generate MOV from frame based on operand size and signedness.
- *
- * @deprecated Prefer using emitMovFromFrameSized(SizedRegister, SizedStackSlot) for clarity.
- *
- * @param destinationRegister The destination register.
- * @param offset The signed offset from RBP.
- * @param size_in_bits The size of the source value in bits (8, 16, 32, or 64).
- * @param is_signed True if the value is signed (use MOVSX), false for unsigned (use MOVZX).
- * @return OpCodeWithSize containing the generated opcodes and their size.
- */
-OpCodeWithSize generateMovFromFrameBySizeAndSign(X64Register destinationRegister, int32_t offset, int size_in_bits, bool is_signed) {
-	if (size_in_bits == 64) {
-		return generatePtrMovFromFrame(destinationRegister, offset);
-	} else if (size_in_bits == 32) {
-		if (is_signed) {
-			return generateMovsxdFromFrame_32to64(destinationRegister, offset);
-		} else {
-			return generateMovFromFrame32(destinationRegister, offset);
-		}
-	} else if (size_in_bits == 16) {
-		if (is_signed) {
-			return generateMovsxFromFrame_16to64(destinationRegister, offset);
-		} else {
-			return generateMovzxFromFrame16(destinationRegister, offset);
-		}
-	} else { // 8-bit
-		if (is_signed) {
-			return generateMovsxFromFrame_8to64(destinationRegister, offset);
-		} else {
-			return generateMovzxFromFrame8(destinationRegister, offset);
-		}
-	}
-}
-
 OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
 	if (size_in_bits == 8) {
 		return generateMovzxFromFrame8(destinationRegister, offset);
