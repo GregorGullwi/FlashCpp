@@ -4765,6 +4765,13 @@ private:
 			int paramSize = arg.size_in_bits;
 			TypeIndex arg_type_index = arg.type_index;
 			
+			// Skip void "parameters" - these are not valid constructor parameters
+			// May occur if return type was accidentally included in arguments
+			if (paramType == Type::Void && paramSize == 0) {
+				FLASH_LOG(Codegen, Warning, "Skipping void argument in constructor call for ", struct_name);
+				continue;
+			}
+			
 			// Build TypeSpecifierNode for this parameter
 			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(paramSize), Token{});
 			
