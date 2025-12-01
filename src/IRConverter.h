@@ -4759,6 +4759,14 @@ private:
 
 		// Extract parameter types for overload resolution
 		std::vector<TypeSpecifierNode> parameter_types;
+		
+		// Debug: log all arguments for this constructor call
+		FLASH_LOG(Codegen, Debug, "Constructor call for ", struct_name, " with ", num_params, " arguments");
+		for (size_t i = 0; i < num_params; ++i) {
+			const TypedValue& arg = ctor_op.arguments[i];
+			FLASH_LOG(Codegen, Debug, "  Arg ", i, ": type=", static_cast<int>(arg.type), " size=", arg.size_in_bits, " type_index=", arg.type_index);
+		}
+		
 		for (size_t i = 0; i < num_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
 			Type paramType = arg.type;
