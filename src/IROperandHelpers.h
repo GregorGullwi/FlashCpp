@@ -33,18 +33,22 @@ inline IrValue toIrValue(const IrOperand& operand) {
 }
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
-	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][optional type_index]");
-	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][optional type_index]");
-	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][optional type_index]");
+	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][type_index]");
+	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][type_index]");
+	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][type_index]");
 	
 	TypedValue result;
 	result.type = std::get<Type>(operands[0]);
 	result.size_in_bits = std::get<int>(operands[1]);
 	result.value = toIrValue(operands[2]);
 	
-	// Optional 4th element: type_index for struct types
+	// type_index is required for struct types to enable proper name mangling.
+	// For primitive types, it defaults to 0 if not provided.
+	// Struct type producers (like generateConstructorCallIr) should always provide type_index.
 	if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
 		result.type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operands[3]));
+	} else {
+		result.type_index = 0;
 	}
 	
 	return result;

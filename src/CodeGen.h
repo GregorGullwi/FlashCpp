@@ -2980,7 +2980,9 @@ private:
 							// Check if there's a constructor that matches the number of initializers
 							// For aggregate initialization Point{1, 2}, we need a constructor with 2 parameters
 							// If no matching constructor exists, use direct member initialization
+							// Also consider constructors with default arguments
 							bool has_matching_constructor = false;
+							const ConstructorDeclarationNode* matching_ctor = nullptr;
 							if (!use_direct_member_init && struct_info.hasAnyConstructor()) {
 								size_t num_initializers = initializers.size();
 								for (const auto& func : struct_info.member_functions) {
@@ -2995,10 +2997,36 @@ private:
 											}
 										} else if (func.function_decl.is<ConstructorDeclarationNode>()) {
 											const auto& ctor_decl = func.function_decl.as<ConstructorDeclarationNode>();
-											size_t param_count = ctor_decl.parameter_nodes().size();
+											const auto& params = ctor_decl.parameter_nodes();
+											size_t param_count = params.size();
+											
+											// Exact match
 											if (param_count == num_initializers) {
 												has_matching_constructor = true;
+												matching_ctor = &ctor_decl;
 												break;
+											}
+											
+											// Check if constructor has default arguments that cover the gap
+											if (param_count > num_initializers) {
+												// Check if parameters from num_initializers onwards all have defaults
+												bool all_have_defaults = true;
+												for (size_t i = num_initializers; i < param_count; ++i) {
+													if (params[i].is<DeclarationNode>()) {
+														if (!params[i].as<DeclarationNode>().has_default_value()) {
+															all_have_defaults = false;
+															break;
+														}
+													} else {
+														all_have_defaults = false;
+														break;
+													}
+												}
+												if (all_have_defaults) {
+													has_matching_constructor = true;
+													matching_ctor = &ctor_decl;
+													break;
+												}
 											}
 										}
 									}
@@ -3026,6 +3054,28 @@ private:
 										assert(false && "Initializer must be an ExpressionNode");
 									}
 								}
+								
+								// Fill in default arguments for missing parameters
+								if (matching_ctor) {
+									const auto& params = matching_ctor->parameter_nodes();
+									size_t num_explicit_args = ctor_op.arguments.size();
+									for (size_t i = num_explicit_args; i < params.size(); ++i) {
+										if (params[i].is<DeclarationNode>()) {
+											const auto& param_decl = params[i].as<DeclarationNode>();
+											if (param_decl.has_default_value()) {
+												const ASTNode& default_node = param_decl.default_value();
+												if (default_node.is<ExpressionNode>()) {
+													auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+													if (default_operands.size() >= 3) {
+														TypedValue default_arg = toTypedValue(default_operands);
+														ctor_op.arguments.push_back(std::move(default_arg));
+													}
+												}
+											}
+										}
+									}
+								}
+								
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							} else {
 								// No constructor - use direct member initialization
@@ -9020,16 +9070,19 @@ private:
 		
 		// Get the actual size of the struct from gTypeInfo
 		int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
+		const StructTypeInfo* struct_info = nullptr;
 		if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 			if (type_info.struct_info_) {
 				actual_size_bits = static_cast<int>(type_info.struct_info_->total_size * 8);
+				struct_info = type_info.struct_info_.get();
 			}
 		} else {
 			// Fallback: look up by name
 			auto type_it = gTypesByName.find(constructor_name);
 			if (type_it != gTypesByName.end() && type_it->second->struct_info_) {
 				actual_size_bits = static_cast<int>(type_it->second->struct_info_->total_size * 8);
+				struct_info = type_it->second->struct_info_.get();
 			}
 		}
 		
@@ -9047,6 +9100,55 @@ private:
 				ctor_op.arguments.push_back(std::move(tv));
 			}
 		});
+
+		// Fill in default arguments for parameters that weren't explicitly provided
+		// Find the matching constructor and add default values for missing parameters
+		if (struct_info) {
+			size_t num_explicit_args = ctor_op.arguments.size();
+			
+			// Find a constructor that has MORE parameters than explicit arguments
+			// and has default values for those extra parameters
+			for (const auto& func : struct_info->member_functions) {
+				if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+					const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+					const auto& params = ctor_node.parameter_nodes();
+					
+					// Only consider constructors that have MORE parameters than explicit args
+					// (constructors with exact match don't need default argument filling)
+					if (params.size() > num_explicit_args) {
+						// Check if the remaining parameters all have default values
+						bool all_remaining_have_defaults = true;
+						for (size_t i = num_explicit_args; i < params.size(); ++i) {
+							if (params[i].is<DeclarationNode>()) {
+								if (!params[i].as<DeclarationNode>().has_default_value()) {
+									all_remaining_have_defaults = false;
+									break;
+								}
+							} else {
+								all_remaining_have_defaults = false;
+								break;
+							}
+						}
+						
+						if (all_remaining_have_defaults) {
+							// Generate IR for the default values of the remaining parameters
+							for (size_t i = num_explicit_args; i < params.size(); ++i) {
+								const auto& param_decl = params[i].as<DeclarationNode>();
+								const ASTNode& default_node = param_decl.default_value();
+								if (default_node.is<ExpressionNode>()) {
+									auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+									if (default_operands.size() >= 3) {
+										TypedValue default_arg = toTypedValue(default_operands);
+										ctor_op.arguments.push_back(std::move(default_arg));
+									}
+								}
+							}
+							break;  // Found a matching constructor
+						}
+					}
+				}
+			}
+		}
 
 		// Add the constructor call instruction (use ConstructorCall opcode)
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
