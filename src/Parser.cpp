@@ -11403,36 +11403,16 @@ ParseResult Parser::parse_lambda_expression() {
         return ParseResult::error("Expected ']' after lambda captures", *current_token_);
     }
 
-    // Parse parameter list (optional)
+    // Parse parameter list (optional) using unified parse_parameter_list (Phase 1)
     std::vector<ASTNode> parameters;
     if (peek_token().has_value() && peek_token()->value() == "(") {
-        consume_token(); // consume '('
-
-        // Parse parameters
-        if (!peek_token().has_value() || peek_token()->value() != ")") {
-            while (true) {
-                // Parse parameter declaration (type + name only, no initializer)
-                ParseResult param_result = parse_type_and_name();
-                if (param_result.is_error()) {
-                    return param_result;
-                }
-                if (param_result.node().has_value()) {
-                    parameters.push_back(*param_result.node());
-                }
-
-                // Check for comma (more parameters) or closing paren
-                if (peek_token().has_value() && peek_token()->value() == ",") {
-                    consume_token(); // consume comma
-                } else {
-                    break;
-                }
-            }
+        FlashCpp::ParsedParameterList params;
+        auto param_result = parse_parameter_list(params);
+        if (param_result.is_error()) {
+            return param_result;
         }
-
-        // Expect ')'
-        if (!consume_punctuator(")")) {
-            return ParseResult::error("Expected ')' after lambda parameters", *current_token_);
-        }
+        parameters = std::move(params.parameters);
+        // Note: params.is_variadic could be used for variadic lambdas (C++14+)
     }
 
     // Parse optional return type (-> type)
