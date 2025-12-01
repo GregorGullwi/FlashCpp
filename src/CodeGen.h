@@ -2791,12 +2791,15 @@ private:
 				value_temp = std::get<TempVar>(expr_operands[2]);
 			}
 			
+			// Extract TypeIndex from expression operands (now at position 3 since all operands have 4 elements)
+			TypeIndex exception_type_index = 0;
+			if (expr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(expr_operands[3])) {
+				exception_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(expr_operands[3]));
+			}
+			
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
-			// TODO: Extract TypeIndex for struct types from expression context
-			// Currently using TypeIndex(0) as placeholder - IRConverter will handle type matching
-			// through the exception handling runtime metadata (type descriptors in XDATA)
-			throw_op.type_index = TypeIndex(0);
+			throw_op.type_index = exception_type_index;
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
 			throw_op.value = value_temp;
 			throw_op.is_rvalue = true;  // Default to rvalue for now
