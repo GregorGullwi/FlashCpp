@@ -3178,8 +3178,8 @@ private:
 				// For now, lambda variables are just empty structs (1 byte)
 			} else {
 				// Regular expression initializer
-				// For struct types with copy constructors, don't add initializer to VariableDecl
-				// It will be handled by ConstructorCall below
+				// For struct types with copy constructors, check if it's an rvalue (function return)
+				// before deciding whether to use constructor call or direct initialization
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 				bool is_struct_with_constructor = false;
@@ -3197,9 +3197,20 @@ private:
 				                                 !init_node.is<InitializerListNode>() &&
 				                                 is_struct_with_constructor);
 				
+				
 				if (!is_copy_init_for_struct) {
 					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+				} else {
+					// For struct with constructor, evaluate the initializer to check if it's an rvalue
+					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+					// Check if this is an rvalue (TempVar) - function return value
+					bool is_rvalue = (init_operands.size() >= 3 && std::holds_alternative<TempVar>(init_operands[2]));
+					if (is_rvalue) {
+						// For rvalues, use direct initialization (no constructor call)
+						operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+					}
+					// For lvalues, skip adding to operands - will use constructor call below
 				}
 			}
 		}
@@ -3227,6 +3238,11 @@ private:
 			TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
 			decl_op.initializer = std::move(tv);
 		}
+		
+		// Track whether the variable was already initialized with an rvalue (function return value)
+		// Check if the VariableDecl has an initializer set BEFORE we move decl_op
+		bool has_rvalue_initializer = decl_op.initializer.has_value();
+		
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 		// If this is a struct type with a constructor, generate a constructor call
@@ -3244,8 +3260,10 @@ private:
 
 					if (type_info.struct_info_->hasConstructor()) {
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"
+						// Skip if the variable was already initialized with an rvalue (function return)
 						bool has_copy_init = false;
-						if (node.initializer()) {
+						
+						if (node.initializer() && !has_rvalue_initializer) {
 							const ASTNode& init_node = *node.initializer();
 							if (init_node.is<ExpressionNode>() && !init_node.is<InitializerListNode>()) {
 								// For copy initialization like "AllSizes b = a;", we need to
@@ -3256,6 +3274,7 @@ private:
 
 						// For copy initialization, ALWAYS generate a copy constructor call
 						// (even for implicit copy constructors - they still need to be called)
+						// UNLESS the initializer was already added (rvalue temp case)
 						if (has_copy_init) {
 							// Generate copy constructor call
 							ConstructorCallOp ctor_op;
@@ -3272,7 +3291,7 @@ private:
 							}
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
-						} else {
+						} else if (!has_rvalue_initializer) {
 							// No initializer - check if we need to call default constructor
 							// Call default constructor if:
 							// 1. It's user-defined (not implicit), OR
@@ -5912,6 +5931,7 @@ private:
 		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
 		// Operands come in groups of 3 (type, size, value) or 4 (type, size, value, type_index)
 		// toTypedValue handles both cases
+		size_t arg_idx = 0;
 		for (size_t i = 2; i < irOperands.size(); ) {
 			// Peek ahead to determine operand group size
 			// If there are at least 4 more operands and the 4th is an integer, assume it's type_index
@@ -5925,8 +5945,19 @@ private:
 				}
 			}
 			
-			call_op.args.push_back(toTypedValue(std::span<const IrOperand>(&irOperands[i], group_size)));
+			TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], group_size));
+			
+			// Check if this parameter is a reference type
+			if (arg_idx < param_types.size()) {
+				const TypeSpecifierNode& param_type = param_types[arg_idx];
+				if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+					arg.is_reference = true;
+				}
+			}
+			
+			call_op.args.push_back(arg);
 			i += group_size;
+			arg_idx++;
 		}
 
 		// Add the function call instruction with typed payload
@@ -6596,7 +6627,8 @@ private:
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
 									.size_in_bits = static_cast<int>(type_node.size_in_bits()),
-									.value = IrValue(identifier.name())
+									.value = IrValue(identifier.name()),
+									.is_reference = true
 								});
 							} else {
 								// Argument is a value - take its address
@@ -6613,7 +6645,8 @@ private:
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
 									.size_in_bits = 64,  // Pointer size
-									.value = IrValue(addr_var)
+									.value = IrValue(addr_var),
+									.is_reference = true
 								});
 							}
 						} else {
