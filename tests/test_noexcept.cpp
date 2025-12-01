@@ -6,16 +6,25 @@ int safe_function() noexcept {
     return 42;
 }
 
-int another_safe() noexcept(true) {
-    return 100;
+int conditional_noexcept(bool b) noexcept(false) {
+    if (b) {
+        return 100;
+    }
+    throw 1;
 }
 
 int main() {
     int result = safe_function();
     printf("safe_function: %d (expected 42)\n", result);
     
-    int result2 = another_safe();
-    printf("another_safe: %d (expected 100)\n", result2);
+    int result2 = conditional_noexcept(true);
+    printf("conditional_noexcept(true): %d (expected 100)\n", result2);
     
-    return result + result2 - (42 + 100);  // Should return 0
+    try {
+        conditional_noexcept(false);
+    } catch (int e) {
+        printf("Caught exception: %d (expected 1)\n", e);
+    }
+    
+    return 0;
 }
