@@ -781,7 +781,7 @@ private:
 					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 
 					// Add 'this' to symbol table (it's the implicit first parameter)
-					symbol_table.insert("this", this_decl);
+					symbol_table.insert("this"sv, this_decl);
 				}
 			}
 		}
@@ -1156,7 +1156,7 @@ private:
 				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 
 				// Add 'this' to symbol table (it's the implicit first parameter)
-				symbol_table.insert("this", this_decl);
+				symbol_table.insert("this"sv, this_decl);
 			}
 		}
 
@@ -1597,7 +1597,7 @@ private:
 				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 
 				// Add 'this' to symbol table (it's the implicit first parameter)
-				symbol_table.insert("this", this_decl);
+				symbol_table.insert("this"sv, this_decl);
 			}
 		}
 
@@ -2704,7 +2704,7 @@ private:
 				symbol_table.enter_scope(ScopeType::Block);
 				
 				// Register the exception parameter in the symbol table
-				std::string exception_var_name(decl.identifier_token().value());
+				std::string_view exception_var_name = decl.identifier_token().value();
 				if (!exception_var_name.empty()) {
 					// Create a variable declaration for the exception parameter
 					VariableDeclOp decl_op;
@@ -8893,7 +8893,7 @@ private:
 			auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type_node, this_token);
 			
 			// Add 'this' to symbol table
-			symbol_table.insert("this", this_decl);
+			symbol_table.insert("this"sv, this_decl);
 		}
 
 		// Add function parameters to symbol table for name resolution during body parsing

@@ -649,5 +649,5 @@ inline void FlashCpp::FunctionScopeGuard::injectThisPointer() {
 	ASTNode this_decl = ASTNode::emplace_node<DeclarationNode>(type_node, this_token);
 	
 	// Insert 'this' into the symbol table
-	gSymbolTable.insert("this", this_decl);
+	gSymbolTable.insert("this"sv, this_decl);
 }

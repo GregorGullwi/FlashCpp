@@ -116,6 +116,10 @@ inline bool signaturesMatch(const std::vector<Type>& sig1, const std::vector<Typ
 
 class SymbolTable {
 public:
+	bool insert(const std::string& identifier, ASTNode node) {
+		assert(false && "Use StringBuilder to pass a string_view to SymbolTable::insert, don't use std::string");
+	}
+
 	bool insert(std::string_view identifier, ASTNode node) {
 		auto& current_scope = symbol_table_stack_.back();
 		auto it = current_scope.symbols.find(identifier);
