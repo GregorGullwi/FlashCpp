@@ -384,9 +384,30 @@ std::string TypeSpecifierNode::getReadableString() const {
 const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
     for (const auto& func : member_functions) {
         if (func.is_constructor) {
-            // Check if it's a default constructor (no parameters)
+            // Check if it's a default constructor:
+            // - Either has no parameters, OR
+            // - All parameters have default values
             const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-            if (ctor_node.parameter_nodes().empty()) {
+            const auto& params = ctor_node.parameter_nodes();
+            
+            if (params.empty()) {
+                // No parameters - this is a default constructor
+                return &func;
+            }
+            
+            // Check if all parameters have default values
+            bool all_params_have_defaults = true;
+            for (const auto& param : params) {
+                if (param.is<DeclarationNode>()) {
+                    if (!param.as<DeclarationNode>().has_default_value()) {
+                        all_params_have_defaults = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (all_params_have_defaults) {
+                // All parameters have defaults - this can be called as a default constructor
                 return &func;
             }
         }

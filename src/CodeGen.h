@@ -3240,6 +3240,30 @@ private:
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = std::string(type_info.name_);
 								ctor_op.object = decl.identifier_token().value();
+								
+								// If the constructor has parameters with default values, generate the default arguments
+								if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+									const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+									const auto& params = ctor_node.parameter_nodes();
+									
+									for (const auto& param : params) {
+										if (param.is<DeclarationNode>()) {
+											const auto& param_decl = param.as<DeclarationNode>();
+											if (param_decl.has_default_value()) {
+												// Generate IR for the default value expression
+												const ASTNode& default_node = param_decl.default_value();
+												if (default_node.is<ExpressionNode>()) {
+													auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+													if (default_operands.size() >= 3) {
+														TypedValue default_arg = toTypedValue(default_operands);
+														ctor_op.arguments.push_back(std::move(default_arg));
+													}
+												}
+											}
+										}
+									}
+								}
+								
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							}
 						}
@@ -9027,8 +9051,9 @@ private:
 		// Add the constructor call instruction (use ConstructorCall opcode)
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
 
-		// Return the result variable with the constructed type
-		return { type_spec.type(), actual_size_bits, ret_var };
+		// Return the result variable with the constructed type, including type_index for struct types
+		TypeIndex result_type_index = type_spec.type_index();
+		return { type_spec.type(), actual_size_bits, ret_var, static_cast<unsigned long long>(result_type_index) };
 	}
 
 };
