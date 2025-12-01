@@ -4370,8 +4370,8 @@ private:
 		// Generate unique labels for this ternary
 		static size_t ternary_counter = 0;
 		std::string_view true_label = StringBuilder().append("ternary_true_").append(ternary_counter).commit();
-		std::string_view false_label = .append("ternary_false_").append(ternary_counter).commit();
-		std::string_view end_label = .append("ternary_end_").append(ternary_counter).commit();
+		std::string_view false_label = StringBuilder().append("ternary_false_").append(ternary_counter).commit();
+		std::string_view end_label = StringBuilder().append("ternary_end_").append(ternary_counter).commit();
 		ternary_counter++;
 
 		// Evaluate the condition
