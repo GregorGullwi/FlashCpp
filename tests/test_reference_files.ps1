@@ -132,8 +132,6 @@ $expectedCompileFailures = @(
     "test_mismatch_args.cpp",              # Type checking test - intentionally invalid code
     "test_mismatch_return.cpp",            # Type checking test - intentionally invalid code
     "test_noexcept.cpp",                   # Exception handling (throw/try/catch) not yet supported
-    "test_pack_expansion_usage.cpp",       # Pack expansion not yet supported
-    "test_pack_simple_return.cpp",         # Pack expansion not yet supported
     "test_pointer_const_mismatch.cpp",     # intentionally invalid code
     "test_recursive_macro.cpp",            # Recursive macro produces identifier (correct behavior per C standard)
     "test_reference_const_mismatch.cpp",   # intentionally invalid code
@@ -144,7 +142,6 @@ $expectedCompileFailures = @(
     "test_va_implementation.cpp",          # C-style variadic details issue
     "test_var_template_values.cpp",        # Variable template values issue
     "test_variadic_func_template.cpp",     # Variadic function template issue
-    "test_variadic_summary.cpp",           # Variadic template summary issue
     "test_variadic_with_members.cpp"       # Variadic templates with members issue
 )
 
