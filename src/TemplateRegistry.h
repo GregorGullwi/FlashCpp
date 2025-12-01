@@ -433,7 +433,7 @@ public:
 	// Register a template function declaration
 	void registerTemplate(std::string_view name, ASTNode template_node) {
 		std::string key(name);
-		templates_[key] = template_node;
+		templates_[key].push_back(template_node);
 	}
 
 	// Register template parameter names for a template
@@ -502,10 +502,19 @@ public:
 	std::optional<ASTNode> lookupTemplate(std::string_view name) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = templates_.find(name);
+		if (it != templates_.end() && !it->second.empty()) {
+			return it->second.front();  // Return first overload for backwards compatibility
+		}
+		return std::nullopt;
+	}
+	
+	// Look up all template overloads for a given name
+	std::vector<ASTNode> lookupAllTemplates(std::string_view name) const {
+		auto it = templates_.find(name);
 		if (it != templates_.end()) {
 			return it->second;
 		}
-		return std::nullopt;
+		return {};
 	}
 	
 	// Check if a template instantiation already exists
@@ -693,8 +702,8 @@ public:
 	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
 
 private:
-	// Map from template name to template declaration node (supports heterogeneous lookup)
-	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> templates_;
+	// Map from template name to template declaration nodes - supports multiple overloads (supports heterogeneous lookup)
+	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
 
 	// Map from template name to template parameter names (supports heterogeneous lookup)
 	std::unordered_map<std::string, std::vector<std::string_view>, TransparentStringHash, std::equal_to<>> template_parameters_;
