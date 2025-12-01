@@ -118,6 +118,7 @@ class SymbolTable {
 public:
 	bool insert(const std::string& identifier, ASTNode node) {
 		assert(false && "Use StringBuilder to pass a string_view to SymbolTable::insert, don't use std::string");
+		return false;
 	}
 
 	bool insert(std::string_view identifier, ASTNode node) {
