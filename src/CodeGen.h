@@ -2644,10 +2644,13 @@ private:
 		static size_t try_counter = 0;
 		size_t current_try_id = try_counter++;
 		
-		StringBuilder handlers_sb, end_sb;
+		// Create and commit each label separately to avoid StringBuilder overlap
+		StringBuilder handlers_sb;
 		handlers_sb.append("__try_handlers_").append(current_try_id);
-		end_sb.append("__try_end_").append(current_try_id);
 		std::string_view handlers_label = handlers_sb.commit();
+		
+		StringBuilder end_sb;
+		end_sb.append("__try_end_").append(current_try_id);
 		std::string_view end_label = end_sb.commit();
 
 		// Emit TryBegin marker
