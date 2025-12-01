@@ -3622,13 +3622,17 @@ private:
 
 				// Return the temp variable that will hold the loaded value
 				// For pointers, return 64 bits (pointer size)
-				return { type_node.type(), size_bits, result_temp };
+				// Include type_index for struct types
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			}
 
 			// Regular local variable
 			// For pointers, return 64 bits (pointer size)
 			int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
-			return { type_node.type(), size_bits, identifierNode.name() };
+			// Include type_index for struct types (needed for proper name mangling)
+			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+			return { type_node.type(), size_bits, identifierNode.name(), static_cast<unsigned long long>(type_index) };
 		}
 
 		// Check if it's a VariableDeclarationNode (global variable)
@@ -3647,7 +3651,9 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
-			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
+			// Include type_index for struct types
+			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
 		}
 		
 		// Check if it's a FunctionDeclarationNode (function name used as value)
