@@ -6365,7 +6365,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 				if (!base_struct_info) continue;
 				for (const auto& member_func : base_struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-						gSymbolTable.insert(member_func.name, member_func.function_decl);
+						gSymbolTable.insert(std::string_view(member_func.name), member_func.function_decl);
 					}
 				}
 				for (const auto& nested_base : base_struct_info->base_classes) {
