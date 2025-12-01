@@ -3193,9 +3193,9 @@ private:
 			std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
-		else if (instruction.isOperandType<double>(6)) {
+		else if (std::holds_alternative<double>(bin_op.rhs.value)) {
 			// RHS is a floating-point literal value
-			auto rhs_value = instruction.getOperandAs<double>(6);
+			auto rhs_value = std::get<double>(bin_op.rhs.value);
 			ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling();
 
 			// For floating-point, we need to load the value into an XMM register
