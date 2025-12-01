@@ -126,12 +126,9 @@ $expectedCompileFailures = @(
     "test_cstddef.cpp",                    # Standard library header not yet supported
     "test_cstdio_puts.cpp",                # Standard library header not yet supported
     "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
-    "test_exceptions_basic.cpp",           # Exception handling not yet supported
-    "test_exceptions_nested.cpp",          # Exception handling not yet supported
     "test_lambda_captures_comprehensive.cpp", # Lambda captures not yet supported
     "test_mismatch_args.cpp",              # Type checking test - intentionally invalid code
     "test_mismatch_return.cpp",            # Type checking test - intentionally invalid code
-    "test_noexcept.cpp",                   # Exception handling (throw/try/catch) not yet supported
     "test_pointer_const_mismatch.cpp",     # intentionally invalid code
     "test_recursive_macro.cpp",            # Recursive macro produces identifier (correct behavior per C standard)
     "test_reference_const_mismatch.cpp",   # intentionally invalid code
