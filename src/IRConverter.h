@@ -4773,10 +4773,15 @@ private:
 			int paramSize = arg.size_in_bits;
 			TypeIndex arg_type_index = arg.type_index;
 			
-			// Skip void "parameters" - these are not valid constructor parameters
-			// May occur if return type was accidentally included in arguments
-			if (paramType == Type::Void && paramSize == 0) {
-				FLASH_LOG(Codegen, Warning, "Skipping void argument in constructor call for ", struct_name);
+			// Skip invalid arguments that shouldn't be constructor parameters:
+			// 1. Void types with size 0
+			// 2. Struct/UserDefined types with type_index=0 (invalid - would mangle as "void")
+			bool is_invalid_void = (paramType == Type::Void && paramSize == 0);
+			bool is_invalid_struct = ((paramType == Type::Struct || paramType == Type::UserDefined) && arg_type_index == 0);
+			
+			if (is_invalid_void || is_invalid_struct) {
+				FLASH_LOG(Codegen, Warning, "Skipping invalid argument in constructor call for ", struct_name, 
+				          ": type=", static_cast<int>(paramType), " size=", paramSize, " type_index=", arg_type_index);
 				continue;
 			}
 			
