@@ -5903,9 +5903,23 @@ private:
 		call_op.is_member_function = false;
 		
 		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
-		for (size_t i = 2, e = irOperands.size(); i < irOperands.size(); i += 3) {
-			assert(i + 2 < irOperands.size());
-			call_op.args.push_back(toTypedValue(std::span<const IrOperand>(&irOperands[i], 3)));
+		// Operands come in groups of 3 (type, size, value) or 4 (type, size, value, type_index)
+		// toTypedValue handles both cases
+		for (size_t i = 2; i < irOperands.size(); ) {
+			// Peek ahead to determine operand group size
+			// If there are at least 4 more operands and the 4th is an integer, assume it's type_index
+			size_t group_size = 3;
+			if (i + 3 < irOperands.size() && std::holds_alternative<unsigned long long>(irOperands[i + 3])) {
+				// Check if this looks like a type_index by seeing if i+4 would be start of next group
+				// or end of operands
+				bool next_is_type = (i + 4 >= irOperands.size() || std::holds_alternative<Type>(irOperands[i + 4]));
+				if (next_is_type) {
+					group_size = 4;
+				}
+			}
+			
+			call_op.args.push_back(toTypedValue(std::span<const IrOperand>(&irOperands[i], group_size)));
+			i += group_size;
 		}
 
 		// Add the function call instruction with typed payload
