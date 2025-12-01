@@ -5873,7 +5873,7 @@ private:
 					
 					// Calculate frame offset for caught exception object
 					// Skip for catch-all handlers (they don't have an exception variable)
-					if (!handler.is_catch_all && handler.exception_temp.var_number > 0) {
+					if (!handler.is_catch_all) {
 						handler_info.catch_obj_offset = getStackOffsetFromTempVar(handler.exception_temp);
 					} else {
 						handler_info.catch_obj_offset = 0;  // No exception object for catch(...)
