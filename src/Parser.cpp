@@ -14290,7 +14290,7 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			
 			if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
-				return ParseResult::error("Expected function name in template specialization", *peek_token());
+				return ParseResult::error("Expected function name in template specialization", *current_token_);
 			}
 			
 			DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
@@ -14320,7 +14320,11 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Parse the function body (specializations must be defined, not just declared)
 			if (!peek_token().has_value() || peek_token()->value() != "{") {
-				return ParseResult::error("Template specializations must have a definition (body)", *current_token_);
+				std::string error_msg = "Template specializations must have a definition (body)";
+				if (peek_token().has_value()) {
+					error_msg += ", found '" + std::string(peek_token()->value()) + "'";
+				}
+				return ParseResult::error(error_msg, *current_token_);
 			}
 			
 			// Enter function scope for parsing the body
@@ -14349,10 +14353,11 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Register the specialization with the template registry
 			// This makes it available when the template is instantiated with these args
-			gTemplateRegistry.registerSpecialization(func_base_name, spec_template_args, *func_result.node());
+			ASTNode func_node_copy = *func_result.node();
+			gTemplateRegistry.registerSpecialization(func_base_name, spec_template_args, func_node_copy);
 			
 			// Also add to AST so it gets code-generated
-			return saved_position.success(*func_result.node());
+			return saved_position.success(func_node_copy);
 		}
 
 		// Otherwise, parse as function template using shared helper (Phase 6)
