@@ -1633,6 +1633,10 @@ public:
 				oss << " ";
 				if (type_it != gNativeTypes.end()) {
 					oss << type_it->second;
+				} else if (arg.type == Type::Struct) {
+					oss << "struct";
+				} else if (arg.type == Type::Enum) {
+					oss << "enum";
 				}
 				oss << arg.size_in_bits << " ";
 				// Print the IrValue directly (not TypedValue)
