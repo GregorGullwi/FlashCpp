@@ -16649,6 +16649,60 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
+		// Handle pack expansion: Args... values => values0, values1, etc.
+		if (decl.is_parameter_pack()) {
+			// This member is a parameter pack expansion like "Args... values"
+			// We need to expand it to multiple members: values0, values1, etc.
+			// The type is a variadic template parameter - find which one
+			std::string_view base_name = decl.identifier_token().value();
+			
+			// Find the variadic template parameter that this pack references
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.is_variadic()) {
+					// This is the variadic parameter - expand for each argument starting at index i
+					size_t pack_start = i;
+					size_t pack_size = template_args_to_use.size() - pack_start;
+					
+					for (size_t j = 0; j < pack_size; ++j) {
+						const TemplateTypeArg& arg = template_args_to_use[pack_start + j];
+						
+						// Create indexed member name: "values" => "values0", "values1", etc.
+						std::string indexed_name = std::string(base_name) + std::to_string(j);
+						
+						// Get the type for this pack element
+						Type member_type = arg.base_type;
+						TypeIndex member_type_index = arg.type_index;
+						
+						// Calculate size
+						size_t member_size;
+						if (arg.pointer_depth > 0 || arg.is_reference || arg.is_rvalue_reference) {
+							member_size = 8; // 64-bit pointer/reference
+						} else {
+							member_size = get_type_size_bits(member_type) / 8;
+						}
+						
+						size_t member_alignment = get_type_alignment(member_type, member_size);
+						
+						struct_info->addMember(
+							indexed_name,
+							member_type,
+							member_type_index,
+							member_size,
+							member_alignment,
+							member_decl.access,
+							std::nullopt, // No default initializer for pack expansions
+							arg.is_reference,
+							arg.is_rvalue_reference,
+							(arg.is_reference || arg.is_rvalue_reference) ? get_type_size_bits(member_type) : 0
+						);
+					}
+					break;
+				}
+			}
+			continue; // Skip the normal member addition since we expanded the pack
+		}
+
 		// Substitute template parameter if the member type is a template parameter
 		auto [member_type, member_type_index] = substitute_template_parameter(
 			type_spec, template_params, template_args_to_use
