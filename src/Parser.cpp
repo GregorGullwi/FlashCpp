@@ -14277,6 +14277,84 @@ ParseResult Parser::parse_template_declaration() {
 			return saved_position.success();  // Successfully parsed out-of-line definition
 		}
 
+		// Check if this is a function template specialization (template<>)
+		// For specializations, we need to parse and instantiate immediately as a concrete function
+		if (is_specialization) {
+			// Parse the function with explicit template arguments in the name
+			// Pattern: template<> ReturnType FunctionName<Args>(params) { body }
+			
+			// Parse return type and function name
+			auto type_and_name_result = parse_type_and_name();
+			if (type_and_name_result.is_error()) {
+				return type_and_name_result;
+			}
+			
+			if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
+				return ParseResult::error("Expected function name in template specialization", *peek_token());
+			}
+			
+			DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
+			std::string_view func_base_name = decl_node.identifier_token().value();
+			
+			// Parse explicit template arguments (e.g., <int>, <int, int>)
+			std::vector<TemplateTypeArg> spec_template_args;
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				auto template_args_opt = parse_explicit_template_arguments();
+				if (!template_args_opt.has_value()) {
+					return ParseResult::error("Failed to parse template arguments in function specialization", *current_token_);
+				}
+				spec_template_args = *template_args_opt;
+			}
+			
+			// Parse function parameters
+			auto func_result = parse_function_declaration(decl_node);
+			if (func_result.is_error()) {
+				return func_result;
+			}
+			
+			if (!func_result.node().has_value() || !func_result.node()->is<FunctionDeclarationNode>()) {
+				return ParseResult::error("Failed to parse function in template specialization", *current_token_);
+			}
+			
+			FunctionDeclarationNode& func_node = func_result.node()->as<FunctionDeclarationNode>();
+			
+			// Parse the function body (specializations must be defined, not just declared)
+			if (!peek_token().has_value() || peek_token()->value() != "{") {
+				return ParseResult::error("Template specializations must have a definition (body)", *current_token_);
+			}
+			
+			// Enter function scope for parsing the body
+			gSymbolTable.enter_scope(ScopeType::Function);
+			
+			// Add parameters to symbol table
+			for (const auto& param : func_node.parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					const DeclarationNode& param_decl = param.as<DeclarationNode>();
+					gSymbolTable.insert(param_decl.identifier_token().value(), param);
+				}
+			}
+			
+			// Parse the function body
+			auto body_result = parse_block();
+			gSymbolTable.exit_scope();
+			
+			if (body_result.is_error()) {
+				return body_result;
+			}
+			
+			// Set the body on the function
+			if (body_result.node().has_value()) {
+				func_node.set_definition(*body_result.node());
+			}
+			
+			// Register the specialization with the template registry
+			// This makes it available when the template is instantiated with these args
+			gTemplateRegistry.registerSpecialization(func_base_name, spec_template_args, *func_result.node());
+			
+			// Also add to AST so it gets code-generated
+			return saved_position.success(*func_result.node());
+		}
+
 		// Otherwise, parse as function template using shared helper (Phase 6)
 		ASTNode template_func_node;
 		auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
@@ -14947,20 +15025,6 @@ ParseResult Parser::parse_template_function_declaration_body(
 	} else {
 		// Need to parse function declaration from DeclarationNode
 		DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
-
-		// For function template specializations (template<>), check for explicit template arguments
-		// Pattern: template<> ReturnType FunctionName<Args>(params)
-		// The explicit template arguments appear between the function name and parameter list
-		if (template_params.empty() && peek_token().has_value() && peek_token()->value() == "<") {
-			// This is a function template specialization with explicit template arguments
-			// Parse and consume the template arguments (e.g., <int>, <int, int>)
-			auto template_args_opt = parse_explicit_template_arguments();
-			// Note: We consume the arguments but don't need to store them for now
-			// The instantiation will be handled by the template registry
-			if (!template_args_opt.has_value()) {
-				return ParseResult::error("Failed to parse explicit template arguments in function specialization", *current_token_);
-			}
-		}
 
 		// Parse function declaration with parameters
 		auto func_result = parse_function_declaration(decl_node);
