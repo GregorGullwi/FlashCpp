@@ -4350,14 +4350,20 @@ private:
 
 		// Generate unique labels for this ternary
 		static size_t ternary_counter = 0;
-		StringBuilder true_sb, false_sb, end_sb;
-		true_sb.append("ternary_true_").append(ternary_counter);
-		false_sb.append("ternary_false_").append(ternary_counter);
-		end_sb.append("ternary_end_").append(ternary_counter);
+		size_t current_ternary_id = ternary_counter++;
+		
+		StringBuilder true_sb;
+		true_sb.append("ternary_true_").append(current_ternary_id);
 		std::string_view true_label = true_sb.commit();
+		
+		StringBuilder false_sb;
+		false_sb.append("ternary_false_").append(current_ternary_id);
 		std::string_view false_label = false_sb.commit();
+		
+		StringBuilder end_sb;
+		end_sb.append("ternary_end_").append(current_ternary_id);
 		std::string_view end_label = end_sb.commit();
-		ternary_counter++;		// Evaluate the condition
+		// Evaluate the condition
 
 		auto condition_operands = visitExpressionNode(ternaryNode.condition().as<ExpressionNode>());
 	
