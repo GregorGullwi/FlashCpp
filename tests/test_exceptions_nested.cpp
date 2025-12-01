@@ -1,5 +1,5 @@
 // Nested exception handling test
-#include <cstdio>
+extern "C" int printf(const char*, ...);
 
 int test_nested_try() {
     try {

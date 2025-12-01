@@ -1,5 +1,5 @@
 // Basic exception handling test - try/catch/throw
-#include <cstdio>
+extern "C" int printf(const char*, ...);
 
 int test_simple_throw_catch() {
     try {
