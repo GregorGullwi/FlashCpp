@@ -2082,6 +2082,51 @@ public:
 		}
 		break;
 
+		// Exception handling opcodes
+		case IrOpcode::TryBegin:
+		{
+			const auto& op = getTypedPayload<BranchOp>();
+			oss << "try_begin @" << op.target_label;
+		}
+		break;
+
+		case IrOpcode::TryEnd:
+			oss << "try_end";
+			break;
+
+		case IrOpcode::CatchBegin:
+		{
+			const auto& op = getTypedPayload<CatchBeginOp>();
+			oss << "catch_begin ";
+			if (op.type_index == 0) {
+				oss << "...";  // catch-all
+			} else {
+				oss << "type_" << op.type_index;
+			}
+			oss << " %" << op.exception_temp.var_number;
+			if (op.is_const) oss << " const";
+			if (op.is_reference) oss << "&";
+			if (op.is_rvalue_reference) oss << "&&";
+			oss << " -> @" << op.catch_end_label;
+		}
+		break;
+
+		case IrOpcode::CatchEnd:
+			oss << "catch_end";
+			break;
+
+		case IrOpcode::Throw:
+		{
+			const auto& op = getTypedPayload<ThrowOp>();
+			oss << "throw %" << op.value.var_number << " : type_" << op.type_index << " (" << op.size_in_bytes << " bytes)";
+			if (op.is_rvalue) oss << " rvalue";
+		}
+		break;
+
+		case IrOpcode::Rethrow:
+			oss << "rethrow";
+			break;
+
 		default:
 			FLASH_LOG(Codegen, Error, "Unhandled opcode: ", static_cast<std::underlying_type_t<IrOpcode>>(opcode_));
 			assert(false && "Unhandled opcode");

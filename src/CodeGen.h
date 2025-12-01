@@ -2640,11 +2640,15 @@ private:
 		// For now, we'll generate a simplified version that doesn't actually implement exception handling
 		// but allows the code to compile and run
 
-		// Generate unique labels for exception handling
+		// Generate unique labels for exception handling using StringBuilder
 		static size_t try_counter = 0;
-		std::string try_id = std::to_string(try_counter++);
-		std::string handlers_label = "__try_handlers_" + try_id;
-		std::string end_label = "__try_end_" + try_id;
+		size_t current_try_id = try_counter++;
+		
+		StringBuilder handlers_sb, end_sb;
+		handlers_sb.append("__try_handlers_").append(current_try_id);
+		end_sb.append("__try_end_").append(current_try_id);
+		std::string_view handlers_label = handlers_sb.commit();
+		std::string_view end_label = end_sb.commit();
 
 		// Emit TryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = handlers_label}, node.try_token()));
@@ -2666,8 +2670,10 @@ private:
 			const auto& catch_clause_node = node.catch_clauses()[catch_index];
 			const auto& catch_clause = catch_clause_node.as<CatchClauseNode>();
 			
-			// Generate unique label for this catch handler end
-			std::string catch_end_label = "__catch_end_" + try_id + "_" + std::to_string(catch_index);
+			// Generate unique label for this catch handler end using StringBuilder
+			StringBuilder catch_end_sb;
+			catch_end_sb.append("__catch_end_").append(current_try_id).append("_").append(catch_index);
+			std::string_view catch_end_label = catch_end_sb.commit();
 
 			// If this is a typed catch (not catch(...))
 			if (!catch_clause.is_catch_all()) {
