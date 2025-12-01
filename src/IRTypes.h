@@ -1629,7 +1629,12 @@ public:
 
 			// Add constructor arguments
 			for (const auto& arg : op.arguments) {
-				oss << " " << gNativeTypes.find(arg.type)->second << arg.size_in_bits << " ";
+				auto type_it = gNativeTypes.find(arg.type);
+				oss << " ";
+				if (type_it != gNativeTypes.end()) {
+					oss << type_it->second;
+				}
+				oss << arg.size_in_bits << " ";
 				// Print the IrValue directly (not TypedValue)
 				if (std::holds_alternative<TempVar>(arg.value))
 					oss << '%' << std::get<TempVar>(arg.value).var_number;
