@@ -499,22 +499,26 @@ public:
 	}
 	
 	// Look up a template by name
+	// Look up a template by name
+	// If multiple overloads exist, returns the first one registered
+	// For all overloads, use lookupAllTemplates()
 	std::optional<ASTNode> lookupTemplate(std::string_view name) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = templates_.find(name);
 		if (it != templates_.end() && !it->second.empty()) {
-			return it->second.front();  // Return first overload for backwards compatibility
+			return it->second.front();  // Return first overload
 		}
 		return std::nullopt;
 	}
 	
 	// Look up all template overloads for a given name
-	std::vector<ASTNode> lookupAllTemplates(std::string_view name) const {
+	// Returns a reference to the internal vector for efficiency
+	const std::vector<ASTNode>* lookupAllTemplates(std::string_view name) const {
 		auto it = templates_.find(name);
 		if (it != templates_.end()) {
-			return it->second;
+			return &it->second;
 		}
-		return {};
+		return nullptr;
 	}
 	
 	// Check if a template instantiation already exists
