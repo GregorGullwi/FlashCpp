@@ -12243,6 +12243,14 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// Fallback: return a placeholder struct type
 		return TypeSpecifierNode(Type::Struct, 0, 8, lambda.lambda_token());
 	}
+	else if (std::holds_alternative<ConstructorCallNode>(expr)) {
+		// For constructor calls like Widget(42), return the type being constructed
+		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
+		const ASTNode& type_node = ctor_call.type_node();
+		if (type_node.is<TypeSpecifierNode>()) {
+			return type_node.as<TypeSpecifierNode>();
+		}
+	}
 	// Add more cases as needed
 
 	return std::nullopt;
