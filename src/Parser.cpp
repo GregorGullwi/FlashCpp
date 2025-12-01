@@ -1172,33 +1172,11 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
         if (peek_token().has_value() && peek_token()->value() == "(") {
             // Case 2: This is a function returning pointer (or pointer-to-array)
             // Pattern: type (*func_name(params))[array_size] or type (*func_name(params))
-            // Parse function parameters inside (*func_name(...))
-            consume_token(); // consume '('
-
-            // Parse parameter list for the function
-            std::vector<ASTNode> param_nodes;
-            if (!peek_token().has_value() || peek_token()->value() != ")") {
-                while (true) {
-                    // Parse parameter type and optionally name
-                    auto param_result = parse_type_and_name();
-                    if (param_result.is_error()) {
-                        return param_result;
-                    }
-                    if (param_result.node().has_value()) {
-                        param_nodes.push_back(*param_result.node());
-                    }
-
-                    // Check for comma or closing paren
-                    if (peek_token().has_value() && peek_token()->value() == ",") {
-                        consume_token();
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            if (!consume_punctuator(")")) {
-                return ParseResult::error("Expected ')' after function parameters in declarator", *current_token_);
+            // Parse function parameters using unified parse_parameter_list (Phase 1)
+            FlashCpp::ParsedParameterList params;
+            auto param_result = parse_parameter_list(params);
+            if (param_result.is_error()) {
+                return param_result;
             }
 
             // Now expect closing ')' for the (*func(...)) part
@@ -1246,9 +1224,10 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
             // Add parameters
             FunctionDeclarationNode& func_ref = func_decl_node.as<FunctionDeclarationNode>();
-            for (const auto& param : param_nodes) {
+            for (const auto& param : params.parameters) {
                 func_ref.add_parameter_node(param);
             }
+            func_ref.set_is_variadic(params.is_variadic);
 
             return ParseResult::success(func_decl_node);
         }
