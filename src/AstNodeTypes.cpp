@@ -403,6 +403,10 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
                         all_params_have_defaults = false;
                         break;
                     }
+                } else {
+                    // Parameter is not a DeclarationNode - treat as not having a default
+                    all_params_have_defaults = false;
+                    break;
                 }
             }
             
