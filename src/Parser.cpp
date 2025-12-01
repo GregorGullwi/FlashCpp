@@ -1570,7 +1570,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		
 		Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
 		auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
-		gSymbolTable.insert("this", this_decl_node);
+		gSymbolTable.insert("this"sv, this_decl_node);
 		
 		// Add function parameters to symbol table (use the EXISTING function's parameters)
 		// existing_func_ref is already defined earlier after validation
@@ -6307,7 +6307,7 @@ ParseResult Parser::parse_function_body_with_context(
 			auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
 
 			// Insert 'this' into the symbol table
-			gSymbolTable.insert("this", this_decl_node);
+			gSymbolTable.insert("this"sv, this_decl_node);
 		}
 	}
 
@@ -11273,9 +11273,8 @@ ParseResult Parser::parse_try_statement() {
         // Add exception parameter to symbol table (if it's not catch(...))
         if (!is_catch_all && exception_declaration.has_value()) {
             const auto& decl = exception_declaration->as<DeclarationNode>();
-            std::string param_name(decl.identifier_token().value());
-            if (!param_name.empty()) {
-                gSymbolTable.insert(param_name, *exception_declaration);
+            if (!decl.identifier_token().value().empty()) {
+                gSymbolTable.insert(decl.identifier_token().value(), *exception_declaration);
             }
         }
 
@@ -14085,7 +14084,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
 				auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
-				gSymbolTable.insert("this", this_decl_node);
+				gSymbolTable.insert("this"sv, this_decl_node);
 				
 				// Add function parameters to scope
 				if (delayed.func_node) {
@@ -17680,87 +17679,87 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
 	restore_lexer_position_only(func_decl.template_body_position());
 
-		// Look up the struct type info
-		auto struct_type_it = gTypesByName.find(struct_name);
-		if (struct_type_it == gTypesByName.end()) {
-			// Clean up and return error - template_scope RAII handles type cleanup
-			restore_token_position(current_pos);
-			return std::nullopt;
-		}
+	// Look up the struct type info
+	auto struct_type_it = gTypesByName.find(struct_name);
+	if (struct_type_it == gTypesByName.end()) {
+		// Clean up and return error - template_scope RAII handles type cleanup
+		restore_token_position(current_pos);
+		return std::nullopt;
+	}
 
-		const TypeInfo* struct_type_info = struct_type_it->second;
-		TypeIndex struct_type_index = struct_type_info->type_index_;
+	const TypeInfo* struct_type_info = struct_type_it->second;
+	TypeIndex struct_type_index = struct_type_info->type_index_;
 
-		// Set up parsing context for the member function
-		gSymbolTable.enter_scope(ScopeType::Function);
-		current_function_ = &new_func_ref;
+	// Set up parsing context for the member function
+	gSymbolTable.enter_scope(ScopeType::Function);
+	current_function_ = &new_func_ref;
 		
-		// Find the struct node
-		StructDeclarationNode* struct_node_ptr = nullptr;
-		for (auto& node : ast_nodes_) {
-			if (node.is<StructDeclarationNode>()) {
-				auto& sn = node.as<StructDeclarationNode>();
-				if (sn.name() == struct_name) {
-					struct_node_ptr = &sn;
-					break;
-				}
+	// Find the struct node
+	StructDeclarationNode* struct_node_ptr = nullptr;
+	for (auto& node : ast_nodes_) {
+		if (node.is<StructDeclarationNode>()) {
+			auto& sn = node.as<StructDeclarationNode>();
+			if (sn.name() == struct_name) {
+				struct_node_ptr = &sn;
+				break;
 			}
 		}
+	}
 		
-		// If not found and this is a member function template of a template class,
-		// look for the base template class struct to get member info
-		if (!struct_node_ptr || struct_node_ptr->members().empty()) {
-			// Check if struct_name looks like an instantiated template class (contains '_' as type separator)
-			size_t underscore_pos = struct_name.rfind('_');
-			if (underscore_pos != std::string_view::npos) {
-				std::string_view base_name = struct_name.substr(0, underscore_pos);
-				for (auto& node : ast_nodes_) {
-					if (node.is<StructDeclarationNode>()) {
-						auto& sn = node.as<StructDeclarationNode>();
-						if (sn.name() == base_name) {
-							// Use the base template struct for member info
-							// The members are the same, just with template parameter types
-							struct_node_ptr = &sn;
-							break;
-						}
+	// If not found and this is a member function template of a template class,
+	// look for the base template class struct to get member info
+	if (!struct_node_ptr || struct_node_ptr->members().empty()) {
+		// Check if struct_name looks like an instantiated template class (contains '_' as type separator)
+		size_t underscore_pos = struct_name.rfind('_');
+		if (underscore_pos != std::string_view::npos) {
+			std::string_view base_name = struct_name.substr(0, underscore_pos);
+			for (auto& node : ast_nodes_) {
+				if (node.is<StructDeclarationNode>()) {
+					auto& sn = node.as<StructDeclarationNode>();
+					if (sn.name() == base_name) {
+						// Use the base template struct for member info
+						// The members are the same, just with template parameter types
+						struct_node_ptr = &sn;
+						break;
 					}
 				}
 			}
 		}
+	}
 		
-		member_function_context_stack_.push_back({
-			struct_name,
-			struct_type_index,
-			struct_node_ptr
-		});
+	member_function_context_stack_.push_back({
+		struct_name,
+		struct_type_index,
+		struct_node_ptr
+	});
 
-		// Add 'this' pointer to symbol table
-		ASTNode this_type = emplace_node<TypeSpecifierNode>(
-			Type::UserDefined,
-			struct_type_index,
-			64,  // Pointer size
-			Token()
-		);
+	// Add 'this' pointer to symbol table
+	ASTNode this_type = emplace_node<TypeSpecifierNode>(
+		Type::UserDefined,
+		struct_type_index,
+		64,  // Pointer size
+		Token()
+	);
 
-		Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
-		auto this_decl = emplace_node<DeclarationNode>(this_type, this_token);
-		gSymbolTable.insert("this", this_decl);
+	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
+	auto this_decl = emplace_node<DeclarationNode>(this_type, this_token);
+	gSymbolTable.insert("this"sv, this_decl);
 
-		// Add parameters to symbol table
-		for (const auto& param : new_func_ref.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& param_decl = param.as<DeclarationNode>();
-				gSymbolTable.insert(param_decl.identifier_token().value(), param);
-			}
+	// Add parameters to symbol table
+	for (const auto& param : new_func_ref.parameter_nodes()) {
+		if (param.is<DeclarationNode>()) {
+			const auto& param_decl = param.as<DeclarationNode>();
+			gSymbolTable.insert(param_decl.identifier_token().value(), param);
 		}
+	}
 
-		// Parse the function body
-		auto block_result = parse_block();
-		if (!block_result.is_error() && block_result.node().has_value()) {
-			new_func_ref.set_definition(*block_result.node());
-		}
+	// Parse the function body
+	auto block_result = parse_block();
+	if (!block_result.is_error() && block_result.node().has_value()) {
+		new_func_ref.set_definition(*block_result.node());
+	}
 
-		// Clean up context
+	// Clean up context
 	current_function_ = nullptr;
 	member_function_context_stack_.pop_back();
 	gSymbolTable.exit_scope();
@@ -18090,7 +18089,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 	Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
 	auto this_decl = emplace_node<DeclarationNode>(this_type, this_token);
-	gSymbolTable.insert("this", this_decl);
+	gSymbolTable.insert("this"sv, this_decl);
 
 	// Add parameters to symbol table
 	for (const auto& param : new_func_ref.parameter_nodes()) {
@@ -18359,7 +18358,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			this_decl_node = ASTNode::emplace_node<DeclarationNode>(this_type_node, this_token);
 			
 			// Add to global symbol table
-			gSymbolTable.insert("this", this_decl_node);
+			gSymbolTable.insert("this"sv, this_decl_node);
 			
 			// Also push member function context for good measure
 			// Try to find the StructDeclarationNode in the symbol table
