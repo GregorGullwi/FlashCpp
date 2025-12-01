@@ -1319,17 +1319,18 @@ private:
 							const TypeInfo& base_type_info = gTypeInfo[base.type_index];
 
 							// Build constructor call: Base::Base(this, other)
-							// For copy constructors, pass 'other' as the copy source
+							// For copy constructors, pass 'other' as the copy source (cast to base class reference)
 							// For move constructors, pass 'other' as the move source
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = std::string(base_type_info.name_);
 							ctor_op.object = std::string_view("this");  // 'this' pointer (base subobject is at offset 0 for now)
 							// Add 'other' parameter for copy/move constructor
+							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 							TypedValue other_arg;
 							other_arg.type = Type::Struct;  // Parameter type (struct reference)
-							other_arg.size_in_bits = static_cast<int>(struct_info->total_size * 8);  // Parameter size in bits
+							other_arg.size_in_bits = static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8);
 							other_arg.value = "other"sv;  // Parameter value ('other' object)
-							other_arg.type_index = struct_type_info->type_index_;  // Type index for struct name lookup
+							other_arg.type_index = base.type_index;  // Use BASE class type index for proper mangling
 							ctor_op.arguments.push_back(std::move(other_arg));
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
