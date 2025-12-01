@@ -3493,11 +3493,12 @@ private:
 								deref_op.pointer = ptr_temp;
 								ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 
-								return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp };
+								TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : 0;
+								return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
 							}
 
 							// Fallback: return the pointer temp
-							return { member->type, 64, ptr_temp };
+							return { member->type, 64, ptr_temp, 0ULL };
 						} else {
 							// By-value capture: direct member access
 							TempVar result_temp = var_counter.next();
@@ -3513,7 +3514,8 @@ private:
 							member_load.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-							return { member->type, static_cast<int>(member->size * 8), result_temp };
+							TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+							return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 						}
 					}
 				}
@@ -3536,7 +3538,7 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
-			return { info.type, info.size_in_bits, result_temp };
+			return { info.type, info.size_in_bits, result_temp, 0ULL };
 		}
 
 		// Try local symbol table (for local variables, parameters, etc.) BEFORE checking member variables
@@ -3575,7 +3577,8 @@ private:
 						member_load.struct_type_info = nullptr;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-						return { member->type, static_cast<int>(member->size * 8), result_temp };
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 					}
 				}
 			}
@@ -3670,7 +3673,7 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
-			return { Type::FunctionPointer, 64, func_addr_var };
+			return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
 		}
 
 		// Check if it's a TemplateVariableDeclarationNode (variable template)
@@ -3729,7 +3732,8 @@ private:
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 						// Return the temp variable that will hold the loaded value
-						return { static_member->type, static_cast<int>(static_member->size * 8), result_temp };
+						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
+						return { static_member->type, static_cast<int>(static_member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 					}
 				}
 			}
@@ -3749,7 +3753,7 @@ private:
 		if (!found_symbol.has_value()) {
 			// For external functions (like std::print), we might not have them in our symbol table
 			// Return a placeholder - the actual linking will happen later
-			return { Type::Int, 32, qualifiedIdNode.name() };
+			return { Type::Int, 32, qualifiedIdNode.name(), 0ULL };
 		}
 
 		if (found_symbol->is<DeclarationNode>()) {
@@ -3771,10 +3775,12 @@ private:
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Return the temp variable that will hold the loaded value
-				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp };
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
 			} else {
 				// Local variable - just return the name
-				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), qualifiedIdNode.name() };
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), qualifiedIdNode.name(), static_cast<unsigned long long>(type_index) };
 			}
 		}
 
@@ -3796,13 +3802,14 @@ private:
 
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
-			return { type_node.type(), size_bits, result_temp };
+			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+			return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {
 			// This is a function - just return the name for function calls
 			// The actual function call handling is done elsewhere
-			return { Type::Function, 64, qualifiedIdNode.name() };
+			return { Type::Function, 64, qualifiedIdNode.name(), 0ULL };
 		}
 
 		// If we get here, the symbol is not a supported type
@@ -3816,10 +3823,10 @@ private:
 		// Check if it's a floating-point type
 		if (is_floating_point_type(numericLiteralNode.type())) {
 			// For floating-point literals, the value is stored as double
-			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<double>(numericLiteralNode.value()) };
+			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<double>(numericLiteralNode.value()), 0ULL };
 		} else {
 			// For integer literals, the value is stored as unsigned long long
-			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()) };
+			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()), 0ULL };
 		}
 	}
 
@@ -3854,14 +3861,14 @@ private:
 			if (std::holds_alternative<unsigned long long>(operands[2])) {
 				unsigned long long value = std::get<unsigned long long>(operands[2]);
 				// For integer literals, the value remains the same (truncation/extension happens at runtime)
-				return { toType, toSize, value };
+				return { toType, toSize, value, 0ULL };
 			} else if (std::holds_alternative<int>(operands[2])) {
 				int value = std::get<int>(operands[2]);
 				// Convert to unsigned long long for consistency
 				return { toType, toSize, static_cast<unsigned long long>(value) };
 			} else if (std::holds_alternative<double>(operands[2])) {
 				double value = std::get<double>(operands[2]);
-				return { toType, toSize, value };
+				return { toType, toSize, value, 0ULL };
 			}
 		}
 
@@ -3907,7 +3914,7 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Truncate, std::move(conv_op), source_token));
 		}
 		// Return the converted operands
-		return { toType, toSize, resultVar };
+		return { toType, toSize, resultVar, 0ULL };
 	}
 
 	std::vector<IrOperand>
@@ -3925,7 +3932,7 @@ private:
 
 		// Return the result as a char pointer (const char*)
 		// We use Type::Char with 64-bit size to indicate it's a pointer
-		return { Type::Char, 64, result_var };
+		return { Type::Char, 64, result_var, 0ULL };
 	}
 
 	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode) {
@@ -4003,7 +4010,7 @@ private:
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 				
 				// Return pointer to element (64-bit pointer)
-				return { element_type, 64, addr_var };
+				return { element_type, 64, addr_var, 0ULL };
 			}
 		}
 
@@ -4037,7 +4044,7 @@ private:
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalNot, unary_op, Token()));
 			// Logical NOT always returns bool8
-			return { Type::Bool, 8, result_var };
+			return { Type::Bool, 8, result_var, 0ULL };
 		}
 		else if (unaryOperatorNode.op() == "~") {
 			// Bitwise NOT - use UnaryOp struct
@@ -4120,7 +4127,7 @@ private:
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
 					// Return pointer value (64-bit)
-					return { operandType, 64, result_var };
+					return { operandType, 64, result_var, 0ULL };
 				} else {
 					// ptr++ (postfix): save old value, increment, return old value
 					TempVar old_value = var_counter.next();
@@ -4149,7 +4156,7 @@ private:
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
 					// Return old pointer value
-					return { operandType, 64, old_value };
+					return { operandType, 64, old_value, 0ULL };
 				}
 			} else {
 				// Regular integer increment
@@ -4220,7 +4227,7 @@ private:
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
 					// Return pointer value (64-bit)
-					return { operandType, 64, result_var };
+					return { operandType, 64, result_var, 0ULL };
 				} else {
 					// ptr-- (postfix): save old value, decrement, return old value
 					TempVar old_value = var_counter.next();
@@ -4249,7 +4256,7 @@ private:
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
 					// Return old pointer value
-					return { operandType, 64, old_value };
+					return { operandType, 64, old_value, 0ULL };
 				}
 			} else {
 				// Regular integer decrement
@@ -4283,7 +4290,7 @@ private:
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 			// Return 64-bit pointer
-			return { operandType, 64, result_var };
+			return { operandType, 64, result_var, 0ULL };
 		}
 		else if (unaryOperatorNode.op() == "*") {
 			// Dereference operator: *x
@@ -4319,14 +4326,14 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
 		
 			// Return the dereferenced value with the element type size
-			return { operandType, element_size, result_var };
+			return { operandType, element_size, result_var, 0ULL };
 		}
 		else {
 			assert(false && "Unary operator not implemented yet");
 		}
 
 		// Return the result
-		return { operandType, std::get<int>(operandIrOperands[1]), result_var };
+		return { operandType, std::get<int>(operandIrOperands[1]), result_var, 0ULL };
 	}
 
 	std::vector<IrOperand> generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
@@ -4400,7 +4407,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
 		
 		// Return the result variable
-		return { result_type, result_size, result_var };
+		return { result_type, result_size, result_var, 0ULL };
 	}
 
 	std::vector<IrOperand> generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
@@ -4737,7 +4744,7 @@ private:
 										ir_.addInstruction(IrOpcode::FunctionCall, std::move(call_operands), binaryOperatorNode.get_token());
 
 										// Return the LHS value as the result (operator= returns *this)
-										return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), ret_var };
+										return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), ret_var, 0ULL };
 									}
 								}
 							}
@@ -4837,7 +4844,7 @@ private:
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 						
 						// Return the result
-						return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), result_var };
+						return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), result_var, 0ULL };
 					}
 				}
 			}
@@ -4997,7 +5004,7 @@ private:
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 							
 							// Return the result
-							return { return_type, return_size, result_var };
+							return { return_type, return_size, result_var, 0ULL };
 						}
 					}
 				}
@@ -5081,7 +5088,7 @@ private:
 		ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
 			// Return pointer type with 64-bit size
-			return { lhsType, 64, result_var };
+			return { lhsType, 64, result_var, 0ULL };
 		}
 	
 		// Apply integer promotions and find common type
@@ -5157,7 +5164,7 @@ private:
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalAnd, std::move(bin_op), binaryOperatorNode.get_token()));
-			return { Type::Bool, 8, result_var };  // Logical operations return bool8
+			return { Type::Bool, 8, result_var, 0ULL };  // Logical operations return bool8
 		}
 		else if (op == "||") {
 			BinaryOp bin_op{
@@ -5166,7 +5173,7 @@ private:
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(bin_op), binaryOperatorNode.get_token()));
-			return { Type::Bool, 8, result_var };  // Logical operations return bool8
+			return { Type::Bool, 8, result_var, 0ULL };  // Logical operations return bool8
 		}
 		// Comparison operations (typed)
 		else if (op == "==" && !is_floating_point_op) {
@@ -5325,7 +5332,7 @@ private:
 			};
 
 			ir_.addInstruction(IrInstruction(float_opcode, std::move(bin_op), binaryOperatorNode.get_token()));			// Return the result variable with float type and size
-				return { commonType, get_type_size_bits(commonType), result_var };
+				return { commonType, get_type_size_bits(commonType), result_var, 0ULL };
 			}
 
 			// Float comparison operations use typed BinaryOp
@@ -5353,7 +5360,7 @@ private:
 				ir_.addInstruction(IrInstruction(float_cmp_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 
 				// Float comparisons return boolean (bool8)
-				return { Type::Bool, 8, result_var };
+				return { Type::Bool, 8, result_var, 0ULL };
 			}
 
 			// Assignment using typed payload
@@ -5373,10 +5380,10 @@ private:
 		// For comparison operations, return boolean type (8 bits - bool size in C++)
 		// For other operations, return the common type
 		if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
-			return { Type::Bool, 8, result_var };
+			return { Type::Bool, 8, result_var, 0ULL };
 		} else {
 			// Return the result variable with its type and size
-			return { commonType, get_type_size_bits(commonType), result_var };
+			return { commonType, get_type_size_bits(commonType), result_var, 0ULL };
 		}
 	}
 
@@ -5580,10 +5587,10 @@ private:
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return { sig.return_type, 64, ret_var };  // 64 bits for return value
+					return { sig.return_type, 64, ret_var, 0ULL };  // 64 bits for return value
 				} else {
 					// Fallback to int if no signature
-					return { Type::Int, 32, ret_var };
+					return { Type::Int, 32, ret_var, 0ULL };
 				}
 			}
 		}
@@ -5926,7 +5933,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
 		// Return the result variable with its type and size
-		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var };
+		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var, 0ULL };
 	}
 
 	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
@@ -5985,10 +5992,10 @@ private:
 			// Return the result with actual return type from lambda
 			if (lambda.return_type().has_value()) {
 				const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
-				return { ret_type.type(), static_cast<int>(ret_type.size_in_bits()), ret_var };
+				return { ret_type.type(), static_cast<int>(ret_type.size_in_bits()), ret_var, 0ULL };
 			}
 			// Default to int if no explicit return type
-			return { Type::Int, 32, ret_var };
+			return { Type::Int, 32, ret_var, 0ULL };
 		}
 
 		// Regular member function call on an expression
@@ -6193,7 +6200,7 @@ private:
 							// Return with function pointer's return type
 							// TODO: Need to get the actual return type from the function signature stored in the member's TypeSpecifierNode
 							// For now, assume int return type (common case)
-							return { Type::Int, 32, ret_var };
+							return { Type::Int, 32, ret_var, 0ULL };
 						}
 					}
 				}
@@ -6636,7 +6643,7 @@ private:
 
 		// Return the result variable with its type and size
 		const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
-		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var };
+		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var, 0ULL };
 	}
 
 	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode) {
@@ -6731,7 +6738,7 @@ private:
 										ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 										// Return the result with the element type
-										return { element_type, element_size_bits, result_var };
+										return { element_type, element_size_bits, result_var, 0ULL };
 									}
 								}
 							}
@@ -6787,7 +6794,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 		// Return the result with the element type
-		return { element_type, element_size_bits, result_var };
+		return { element_type, element_size_bits, result_var, 0ULL };
 	}
 
 	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode) {
@@ -7994,7 +8001,7 @@ private:
 		
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return { type, size_in_bits, result_var };
+		return { type, size_in_bits, result_var, 0ULL };
 	}
 
 	std::vector<IrOperand> generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
@@ -8070,7 +8077,7 @@ private:
 		    (source_type == Type::Enum && target_type == Type::UnsignedInt) ||
 		    (source_type == Type::UnsignedInt && target_type == Type::Enum)) {
 			// Return the value with the new type
-			return { target_type, target_size, expr_operands[2] };
+			return { target_type, target_size, expr_operands[2], 0ULL };
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
@@ -8096,7 +8103,7 @@ private:
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp };
+			return { target_type, target_size, result_temp, 0ULL };
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
@@ -8119,7 +8126,7 @@ private:
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp };
+			return { target_type, target_size, result_temp, 0ULL };
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
@@ -8142,12 +8149,12 @@ private:
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp };
+			return { target_type, target_size, result_temp, 0ULL };
 		}
 
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
-		return { target_type, target_size, expr_operands[2] };
+		return { target_type, target_size, expr_operands[2], 0ULL };
 	}
 
 	std::vector<IrOperand> generateTypeidIr(const TypeidNode& typeidNode) {
@@ -8207,7 +8214,7 @@ private:
 
 		// Return pointer to type_info (64-bit pointer)
 		// Use void* type for now (Type::Void with pointer depth)
-		return { Type::Void, 64, result_temp };
+		return { Type::Void, 64, result_temp, 0ULL };
 	}
 
 	std::vector<IrOperand> generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
@@ -8266,7 +8273,7 @@ private:
 		// Return the casted pointer/reference
 		Type result_type = target_type_node.type();
 		int result_size = static_cast<int>(target_type_node.size_in_bits());
-		return { result_type, result_size, result_temp };
+		return { result_type, result_size, result_temp, 0ULL };
 	}
 
 	// Structure to track variables that need destructors called
