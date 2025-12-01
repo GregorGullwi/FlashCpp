@@ -74,6 +74,10 @@ private:
 
 extern ChunkedStringAllocator gChunkedStringAllocator;
 
+#ifdef NDEBUG
+static class StringBuilder* gCurrentStringBuilder = nullptr;
+#endif // NDEBUG
+
 class StringBuilder {
 public:
     explicit StringBuilder(ChunkedStringAllocator& allocator = gChunkedStringAllocator)
@@ -83,6 +87,10 @@ public:
     }
 
     StringBuilder& append(std::string_view sv) {
+    #ifdef NDEBUG
+        assert((gCurrentStringBuilder == nullptr || gCurrentStringBuilder == this) && "More than one StringBuilder in the same scope detected. Call .commit() or .reset() before you start with the next string!");
+        gChunkedStringAllocator = this;
+    #endif
         ensure_capacity(sv.size());
         std::memcpy(write_ptr_, sv.data(), sv.size());
         write_ptr_ += sv.size();
@@ -90,6 +98,10 @@ public:
     }
 
     StringBuilder& append(char c) {
+    #ifdef NDEBUG
+        assert((gCurrentStringBuilder == nullptr || gCurrentStringBuilder == this) && "More than one StringBuilder in the same scope detected. Call .commit() or .reset() before you start with the next string!");
+        gChunkedStringAllocator = this;
+    #endif
         ensure_capacity(1);
         *write_ptr_++ = c;
         return *this;
@@ -130,6 +142,9 @@ public:
     }
 
     std::string_view commit() {
+    #ifdef NDEBUG
+        gChunkedStringAllocator = nullptr;
+    #endif
         size_t len = write_ptr_ - buf_start_;
         append('\0');
         chunk_->allocate(len + 1);
@@ -144,6 +159,9 @@ public:
     }
 
     void reset() {
+    #ifdef NDEBUG
+        gChunkedStringAllocator = nullptr;
+    #endif
         buf_start_ = write_ptr_ = chunk_->current_ptr();
     }
 
