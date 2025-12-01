@@ -12975,37 +12975,21 @@ ParseResult Parser::parse_template_declaration() {
 						// This is a constructor - use instantiated_name as the struct name
 						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, ctor_name);
 						
-						// Parse parameters
-						if (!consume_punctuator("(")) {
-							return ParseResult::error("Expected '(' for constructor parameter list", *peek_token());
+						// Parse parameters using unified parse_parameter_list (Phase 1)
+						FlashCpp::ParsedParameterList params;
+						auto param_result = parse_parameter_list(params);
+						if (param_result.is_error()) {
+							return param_result;
 						}
-						
-						while (!consume_punctuator(")")) {
-							ParseResult type_and_name_result = parse_type_and_name();
-							if (type_and_name_result.is_error()) {
-								return type_and_name_result;
-							}
-							
-							if (auto node = type_and_name_result.node()) {
-								ctor_ref.add_parameter_node(*node);
-							}
-							
-							if (!consume_punctuator(",")) {
-								// No comma, expect closing paren
-							}
+						for (const auto& param : params.parameters) {
+							ctor_ref.add_parameter_node(param);
 						}
 						
 						// Enter a temporary scope for parsing the initializer list
 						gSymbolTable.enter_scope(ScopeType::Function);
 						
-						// Add parameters to symbol table
-						for (const auto& param : ctor_ref.parameter_nodes()) {
-							if (param.is<DeclarationNode>()) {
-								const auto& param_decl_node = param.as<DeclarationNode>();
-								const Token& param_token = param_decl_node.identifier_token();
-								gSymbolTable.insert(param_token.value(), param);
-							}
-						}
+						// Register parameters in symbol table using helper (Phase 5)
+						register_parameters_in_scope(ctor_ref.parameter_nodes());
 						
 						// Parse member initializer list if present
 						if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -13697,37 +13681,21 @@ ParseResult Parser::parse_template_declaration() {
 						// This is a constructor - use instantiated_name as the struct name
 						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, ctor_name);
 						
-						// Parse parameters
-						if (!consume_punctuator("(")) {
-							return ParseResult::error("Expected '(' for constructor parameter list", *peek_token());
+						// Parse parameters using unified parse_parameter_list (Phase 1)
+						FlashCpp::ParsedParameterList params;
+						auto param_result = parse_parameter_list(params);
+						if (param_result.is_error()) {
+							return param_result;
 						}
-						
-						while (!consume_punctuator(")")) {
-							ParseResult type_and_name_result = parse_type_and_name();
-							if (type_and_name_result.is_error()) {
-								return type_and_name_result;
-							}
-							
-							if (auto node = type_and_name_result.node()) {
-								ctor_ref.add_parameter_node(*node);
-							}
-							
-							if (!consume_punctuator(",")) {
-								// No comma, expect closing paren
-							}
+						for (const auto& param : params.parameters) {
+							ctor_ref.add_parameter_node(param);
 						}
 						
 						// Enter a temporary scope for parsing the initializer list
 						gSymbolTable.enter_scope(ScopeType::Function);
 						
-						// Add parameters to symbol table
-						for (const auto& param : ctor_ref.parameter_nodes()) {
-							if (param.is<DeclarationNode>()) {
-								const auto& param_decl_node = param.as<DeclarationNode>();
-								const Token& param_token = param_decl_node.identifier_token();
-								gSymbolTable.insert(param_token.value(), param);
-							}
-						}
+						// Register parameters in symbol table using helper (Phase 5)
+						register_parameters_in_scope(ctor_ref.parameter_nodes());
 						
 						// Parse member initializer list if present
 						if (peek_token().has_value() && peek_token()->value() == ":") {
