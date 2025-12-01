@@ -4350,15 +4350,12 @@ private:
 
 		// Generate unique labels for this ternary
 		static size_t ternary_counter = 0;
-		StringBuilder true_sb, false_sb, end_sb;
-		true_sb.append("ternary_true_").append(ternary_counter);
-		false_sb.append("ternary_false_").append(ternary_counter);
-		end_sb.append("ternary_end_").append(ternary_counter);
-		std::string_view true_label = true_sb.commit();
-		std::string_view false_label = false_sb.commit();
-		std::string_view end_label = end_sb.commit();
-		ternary_counter++;		// Evaluate the condition
+		std::string_view true_label = StringBuilder().append("ternary_true_").append(ternary_counter).commit();
+		std::string_view false_label = .append("ternary_false_").append(ternary_counter).commit();
+		std::string_view end_label = .append("ternary_end_").append(ternary_counter).commit();
+		ternary_counter++;
 
+		// Evaluate the condition
 		auto condition_operands = visitExpressionNode(ternaryNode.condition().as<ExpressionNode>());
 	
 		// Generate conditional branch: if condition true goto true_label, else goto false_label
