@@ -971,12 +971,18 @@ public:
 	bool is_parameter_pack() const { return is_parameter_pack_; }
 	void set_parameter_pack(bool is_pack) { is_parameter_pack_ = is_pack; }
 
+	// Default value support (for function parameters with default arguments)
+	bool has_default_value() const { return default_value_.has_value(); }
+	const ASTNode& default_value() const { return default_value_.value(); }
+	void set_default_value(ASTNode value) { default_value_ = value; }
+
 private:
 	ASTNode type_node_;
 	Token identifier_;
 	std::optional<ASTNode> array_size_;  // For array declarations like int arr[10]
 	size_t custom_alignment_;            // Custom alignment from alignas(n), 0 = use natural alignment
 	bool is_parameter_pack_;             // True for parameter packs like Args... args
+	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
 };
 
 class IdentifierNode {

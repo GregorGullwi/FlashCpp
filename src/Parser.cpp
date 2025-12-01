@@ -5862,13 +5862,21 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		}
 
 		// Parse default parameter value (if present)
-		if (consume_punctuator("=")) {
+		// Note: '=' is an Operator token, not a Punctuator token
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
+			consume_token(); // consume '='
 			// Parse the default value expression
 			auto default_value = parse_expression();
 			if (default_value.is_error()) {
 				return default_value;
 			}
-			// TODO: Store default value in parameter node
+			// Store default value in parameter node
+			if (default_value.node().has_value() && !out_params.parameters.empty()) {
+				auto& last_param = out_params.parameters.back();
+				if (last_param.is<DeclarationNode>()) {
+					last_param.as<DeclarationNode>().set_default_value(*default_value.node());
+				}
+			}
 		}
 
 		if (consume_punctuator(",")) {

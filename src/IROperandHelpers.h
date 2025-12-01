@@ -33,10 +33,21 @@ inline IrValue toIrValue(const IrOperand& operand) {
 }
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
-	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value]");
-	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value]");
-	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value]");
-	return { .type = std::get<Type>(operands[0]), .size_in_bits = std::get<int>(operands[1]), .value = toIrValue(operands[2]) };
+	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][optional type_index]");
+	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][optional type_index]");
+	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][optional type_index]");
+	
+	TypedValue result;
+	result.type = std::get<Type>(operands[0]);
+	result.size_in_bits = std::get<int>(operands[1]);
+	result.value = toIrValue(operands[2]);
+	
+	// Optional 4th element: type_index for struct types
+	if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
+		result.type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operands[3]));
+	}
+	
+	return result;
 }
 
 inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
