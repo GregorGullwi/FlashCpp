@@ -1329,6 +1329,7 @@ private:
 							other_arg.type = Type::Struct;  // Parameter type (struct reference)
 							other_arg.size_in_bits = static_cast<int>(struct_info->total_size * 8);  // Parameter size in bits
 							other_arg.value = "other"sv;  // Parameter value ('other' object)
+							other_arg.type_index = struct_type_info->type_index_;  // Type index for struct name lookup
 							ctor_op.arguments.push_back(std::move(other_arg));
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));

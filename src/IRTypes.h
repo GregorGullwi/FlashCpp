@@ -559,6 +559,7 @@ struct TypedValue {
 	IrValue value;          // 32 bytes (variant)
 	bool is_reference = false;  // True if this should be passed by reference (address)
 	bool is_signed = false;     // True for signed types (use MOVSX), false for unsigned (use MOVZX)
+	TypeIndex type_index = 0;   // Index into gTypeInfo for struct/enum types (0 = not set)
 };
 
 // Helper function to print TypedValue
@@ -1633,10 +1634,13 @@ public:
 				oss << " ";
 				if (type_it != gNativeTypes.end()) {
 					oss << type_it->second;
-				} else if (arg.type == Type::Struct) {
-					oss << "struct";
-				} else if (arg.type == Type::Enum) {
-					oss << "enum";
+				} else if (arg.type == Type::Struct || arg.type == Type::Enum) {
+					// Try to get the type name from gTypeInfo using type_index
+					if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+						oss << gTypeInfo[arg.type_index].name_;
+					} else {
+						oss << (arg.type == Type::Struct ? "struct" : "enum");
+					}
 				}
 				oss << arg.size_in_bits << " ";
 				// Print the IrValue directly (not TypedValue)
