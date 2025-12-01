@@ -14948,6 +14948,20 @@ ParseResult Parser::parse_template_function_declaration_body(
 		// Need to parse function declaration from DeclarationNode
 		DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
 
+		// For function template specializations (template<>), check for explicit template arguments
+		// Pattern: template<> ReturnType FunctionName<Args>(params)
+		// The explicit template arguments appear between the function name and parameter list
+		if (template_params.empty() && peek_token().has_value() && peek_token()->value() == "<") {
+			// This is a function template specialization with explicit template arguments
+			// Parse and consume the template arguments (e.g., <int>, <int, int>)
+			auto template_args_opt = parse_explicit_template_arguments();
+			// Note: We consume the arguments but don't need to store them for now
+			// The instantiation will be handled by the template registry
+			if (!template_args_opt.has_value()) {
+				return ParseResult::error("Failed to parse explicit template arguments in function specialization", *current_token_);
+			}
+		}
+
 		// Parse function declaration with parameters
 		auto func_result = parse_function_declaration(decl_node);
 		if (func_result.is_error()) {

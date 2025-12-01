@@ -293,6 +293,21 @@ if ($linkFailed.Count -gt 0) {
     Write-Host ""
 }
 
+# Check for expected failures that don't contain "fail" in the filename
+# These might be legitimate tests that should be fixed rather than permanently excluded
+$expectedFailuresWithoutFail = $expectedCompileFailures + $expectedLinkFailures | Where-Object {
+    $_ -notmatch "fail"
+} | Sort-Object -Unique
+
+if ($expectedFailuresWithoutFail.Count -gt 0) {
+    Write-Host "=== Expected failure files without 'fail' in name ===" -ForegroundColor Yellow
+    Write-Host "(These files are marked as expected failures but may be legitimate tests to fix)" -ForegroundColor Yellow
+    $expectedFailuresWithoutFail | ForEach-Object {
+        Write-Host "  - $_" -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
+
 # Exit with error if any compilation or linking failed
 $exitCode = 0
 if ($compileFailed.Count -gt 0 -or $linkFailed.Count -gt 0) {
