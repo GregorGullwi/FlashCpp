@@ -16251,7 +16251,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
 	if (existing_type != gTypesByName.end()) {
-		FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
 		return std::nullopt;
 	}
 	
