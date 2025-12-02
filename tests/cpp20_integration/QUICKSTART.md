@@ -2,7 +2,7 @@
 
 ## Overview
 
-A comprehensive integration test for FlashCpp has been created in `tests/cpp20_integration/`. This test exercises **290 test points** across **9 major C++20 feature categories**, excluding coroutines, modules, and multithreading as requested.
+A comprehensive integration test for FlashCpp has been created in `tests/cpp20_integration/`. This test exercises **390 test points** across **9 major C++20 feature categories**, excluding coroutines, modules, and multithreading as requested.
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ cd tests/cpp20_integration
 
 This will:
 1. Compile the test with standard clang++
-2. Run all 290 test points
+2. Run all 390 test points
 3. Display a detailed breakdown of features tested
 4. Return 0 on complete success
 
@@ -24,7 +24,7 @@ This will:
 ```
 ✅ TEST RESULT: SUCCESS (Exit code: 0)
 
-All 290 test points passed! The integration test successfully covers:
+All 390 test points passed! The integration test successfully covers:
 
   [30 pts] Basic Types & Literals
   [50 pts] Operators
@@ -35,6 +35,7 @@ All 290 test points passed! The integration test successfully covers:
   [10 pts] Constexpr
   [10 pts] Lambdas
   [60 pts] Modern C++ Features
+  [100 pts] Advanced Features
 ```
 
 ## What's Tested
@@ -98,13 +99,24 @@ All 290 test points passed! The integration test successfully covers:
 - Unions
 - Designated initializers
 
+### 10. Advanced Features (100 points)
+- String literals
+- Multi-dimensional arrays
+- Pointer to pointer
+- Complex struct initialization
+- References and const references
+- Ternary operator
+- Nested structures
+- Static variables
+- Global variables
+
 ## File Organization
 
 ```
 tests/cpp20_integration/
 ├── README.md                          # Detailed documentation
-├── SUMMARY.md                         # Test results and FlashCpp limitations
-├── cpp20_simple_integration_test.cpp  # Main test file (290 points)
+├── bugs/README.md for known bugs                         # Test results and FlashCpp limitations
+├── cpp20_simple_integration_test.cpp  # Main test file (390 points)
 ├── flashcpp_minimal_test.cpp          # Simplified version
 ├── cpp20_integration_test.cpp         # Advanced version
 └── run_integration_test.sh            # Test runner script
@@ -116,7 +128,7 @@ The integration test has been verified to:
 - ✅ Compile successfully with clang++ 18.0+
 - ✅ Compile successfully with g++ 13.0+  
 - ✅ Run correctly and return exit code 0
-- ✅ Cover 290 test points across 9 feature categories
+- ✅ Cover 390 test points across 9 feature categories
 - ✅ Exercise the majority of C++20 features
 
 ## What's NOT Tested
@@ -135,7 +147,7 @@ As requested in the problem statement:
 - `sizeof...` operator not fully implemented
 - Some template specializations cause parser errors
 
-See `tests/cpp20_integration/SUMMARY.md` for detailed compatibility information.
+See `tests/cpp20_integration/bugs/README.md for known bugs` for detailed compatibility information.
 
 ## Usage
 
@@ -164,15 +176,15 @@ Add to your CI pipeline:
 
 ## Success Criteria
 
-- **Complete Success**: Exit code 0 (all 290 points)
-- **Partial Success**: Exit code = (290 - points_earned)
+- **Complete Success**: Exit code 0 (all 390 points)
+- **Partial Success**: Exit code = (390 - points_earned)
 - **Failure**: Exit code indicates number of missing points
 
 ## Documentation
 
 For more details, see:
 - `tests/cpp20_integration/README.md` - Comprehensive documentation
-- `tests/cpp20_integration/SUMMARY.md` - Test results and analysis
+- `tests/cpp20_integration/bugs/README.md for known bugs` - Test results and analysis
 - `tests/cpp20_integration/cpp20_simple_integration_test.cpp` - Annotated source code
 
 ## Contributing
@@ -187,7 +199,7 @@ When extending the test:
 ## Summary
 
 This integration test provides:
-- ✅ **Comprehensive C++20 coverage** (290 test points)
+- ✅ **Comprehensive C++20 coverage** (390 test points)
 - ✅ **Standards-compliant code** (compiles with clang++/g++)
 - ✅ **Self-verifying** (returns meaningful exit codes)
 - ✅ **Well-documented** (with detailed README files)
