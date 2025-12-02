@@ -416,23 +416,20 @@ public:
 				continue;
 			}
 			
-			// Check if this struct needs a trivial default constructor
-			// It needs one if:
-			// 1. It has the needs_default_constructor flag set, OR
-			// 2. It has no constructors defined AND has base classes that need construction
+			// Only generate trivial constructor if explicitly marked as needing one
+			// The needs_default_constructor flag is set during template instantiation
+			// when a struct has no constructors but needs a default one
+			if (!struct_info->needs_default_constructor) {
+				continue;
+			}
+			
+			// Check if there are already constructors defined
 			bool has_constructor = false;
 			for (const auto& mem_func : struct_info->member_functions) {
 				if (mem_func.is_constructor) {
 					has_constructor = true;
 					break;
 				}
-			}
-			
-			bool needs_trivial_ctor = struct_info->needs_default_constructor || 
-			                          (!has_constructor && !struct_info->base_classes.empty());
-			
-			if (!needs_trivial_ctor && has_constructor) {
-				continue;
 			}
 			
 			// Generate trivial default constructor if no constructor exists
