@@ -13193,6 +13193,10 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						struct_ref.add_constructor(ctor_node, current_access);
+						
+						// Add to AST for code generation
+						// Full specializations are not template patterns - they need their constructors emitted
+						ast_nodes_.push_back(ctor_node);
 						continue;
 					} else {
 						// Not a constructor, restore position
@@ -13288,6 +13292,10 @@ ParseResult Parser::parse_template_declaration() {
 						false,  // is_override
 						false   // is_final
 					);
+					
+					// Add to AST for code generation
+					// Full specializations are not template patterns - they need their member functions emitted
+					ast_nodes_.push_back(member_func_node);
 				} else {
 					// This is a data member
 					std::optional<ASTNode> default_initializer;
@@ -13419,8 +13427,10 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			// Add member functions to struct info
+			bool has_constructor = false;
 			for (const auto& member_func_decl : struct_ref.member_functions()) {
 				if (member_func_decl.is_constructor) {
+					has_constructor = true;
 					// Add constructor to struct type info
 					struct_info_ptr->addConstructor(
 						member_func_decl.function_declaration,
@@ -13448,6 +13458,10 @@ ParseResult Parser::parse_template_declaration() {
 					);
 				}
 			}
+
+			// If no constructor was found, mark that we need a default one
+			struct_info_ptr->needs_default_constructor = !has_constructor;
+			FLASH_LOG(Templates, Debug, "Full spec ", instantiated_name, " has_constructor=", has_constructor);
 
 			// Finalize the struct layout
 			struct_info_ptr->finalize();
@@ -16486,10 +16500,12 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 ) {
 	// Generate the instantiated class name
 	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+	FLASH_LOG(Templates, Debug, "instantiate_full_specialization called for: ", instantiated_name);
 	
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
 	if (existing_type != gTypesByName.end()) {
+		FLASH_LOG(Templates, Debug, "Full spec already instantiated: ", instantiated_name);
 		return std::nullopt;  // Already instantiated
 	}
 	
@@ -16556,21 +16572,82 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	for (const auto& mem_func : spec_struct.member_functions()) {
 		if (mem_func.is_constructor) {
 			has_constructor = true;
+			
+			// Handle constructor - it's a ConstructorDeclarationNode
+			const ConstructorDeclarationNode& orig_ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+			
+			// Create a NEW ConstructorDeclarationNode with the instantiated struct name
+			auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+				instantiated_name,  // Set correct parent struct name
+				orig_ctor.name()    // Constructor name
+			);
+			
+			// Copy parameters
+			for (const auto& param : orig_ctor.parameter_nodes()) {
+				new_ctor_ref.add_parameter_node(param);
+			}
+			
+			// Copy member initializers
+			for (const auto& [name, expr] : orig_ctor.member_initializers()) {
+				new_ctor_ref.add_member_initializer(name, expr);
+			}
+			
+			// Copy definition if present
+			if (orig_ctor.get_definition().has_value()) {
+				new_ctor_ref.set_definition(*orig_ctor.get_definition());
+			}
+			
 			// Add the constructor to struct_info
-			struct_info->addConstructor(mem_func.function_declaration, mem_func.access);
+			struct_info->addConstructor(new_ctor_node, mem_func.access);
+			
+			// Add to AST for code generation
+			ast_nodes_.push_back(new_ctor_node);
 		} else if (mem_func.is_destructor) {
-			struct_info->addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
+			// Handle destructor - create new node with correct struct name
+			const DestructorDeclarationNode& orig_dtor = mem_func.function_declaration.as<DestructorDeclarationNode>();
+			
+			auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
+				instantiated_name,
+				orig_dtor.name()
+			);
+			
+			// Copy definition if present
+			if (orig_dtor.get_definition().has_value()) {
+				new_dtor_ref.set_definition(*orig_dtor.get_definition());
+			}
+			
+			struct_info->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
+			ast_nodes_.push_back(new_dtor_node);
 		} else {
-			const FunctionDeclarationNode& func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			
+			// Create a NEW FunctionDeclarationNode with the instantiated struct name
+			auto new_func_node = emplace_node<FunctionDeclarationNode>(
+				const_cast<DeclarationNode&>(orig_func.decl_node()),
+				instantiated_name
+			);
+			
+			// Copy all parameters and definition
+			FunctionDeclarationNode& new_func = new_func_node.as<FunctionDeclarationNode>();
+			for (const auto& param : orig_func.parameter_nodes()) {
+				new_func.add_parameter_node(param);
+			}
+			if (orig_func.get_definition().has_value()) {
+				new_func.set_definition(*orig_func.get_definition());
+			}
+			
 			struct_info->addMemberFunction(
-				std::string(func.decl_node().identifier_token().value()),
-				mem_func.function_declaration,
+				std::string(orig_func.decl_node().identifier_token().value()),
+				new_func_node,
 				mem_func.access,
 				mem_func.is_virtual,
 				mem_func.is_pure_virtual,
 				mem_func.is_override,
 				mem_func.is_final
 			);
+			
+			// Add to AST for code generation
+			ast_nodes_.push_back(new_func_node);
 		}
 	}
 	
