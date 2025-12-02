@@ -3101,7 +3101,7 @@ TEST_CASE("Concept Advanced Subsumption") {
 }
 
 TEST_CASE("Concept Error Test") {
-	run_test_from_file("concept_error_test.cpp", "Concept Error Test", false);
+	run_test_from_file("concept_error_test_fail.cpp", "Concept Error Test", false);
 }
 
 TEST_CASE("Concept Requires Expr") {
