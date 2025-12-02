@@ -11371,22 +11371,31 @@ ParseResult Parser::parse_lambda_expression() {
                     // Capture-all by reference: [&]
                     captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::AllByReference));
                 }
-            } else if (token->type() == Token::Type::Identifier) {
-                // Could be [x] or [x = expr]
-                Token id_token = *token;
-                consume_token();
-                
-                // Check for init-capture: [x = expr]
-                if (peek_token().has_value() && peek_token()->value() == "=") {
-                    consume_token(); // consume '='
-                    auto init_expr = parse_expression();
-                    if (init_expr.is_error()) {
-                        return init_expr;
+            } else if (token->type() == Token::Type::Identifier || token->type() == Token::Type::Keyword) {
+                // Check for 'this' keyword first
+                if (token->value() == "this") {
+                    Token this_token = *token;
+                    consume_token();
+                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::This, this_token));
+                } else if (token->type() == Token::Type::Identifier) {
+                    // Could be [x] or [x = expr]
+                    Token id_token = *token;
+                    consume_token();
+                    
+                    // Check for init-capture: [x = expr]
+                    if (peek_token().has_value() && peek_token()->value() == "=") {
+                        consume_token(); // consume '='
+                        auto init_expr = parse_expression();
+                        if (init_expr.is_error()) {
+                            return init_expr;
+                        }
+                        captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token, *init_expr.node()));
+                    } else {
+                        // Simple value capture: [x]
+                        captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token));
                     }
-                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token, *init_expr.node()));
                 } else {
-                    // Simple value capture: [x]
-                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token));
+                    return ParseResult::error("Expected capture specifier in lambda", *token);
                 }
             } else {
                 return ParseResult::error("Expected capture specifier in lambda", *token);
@@ -11566,6 +11575,28 @@ ParseResult Parser::parse_lambda_expression() {
             if (capture.is_capture_all()) {
                 // Capture-all should have been expanded before this point
                 continue;
+            }
+            
+            // Handle [this] capture
+            if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+                // [this] capture: store a pointer to the enclosing object (8 bytes on x64)
+                // We'll store it with a special member name so it can be accessed later
+                TypeSpecifierNode ptr_type(Type::Void, TypeQualifier::None, 64);
+                ptr_type.add_pointer_level();  // Make it a void*
+                
+                closure_struct_info->addMember(
+                    "__this",           // Special member name for captured this
+                    Type::Void,         // Base type (will be treated as pointer)
+                    0,                  // No type index
+                    8,                  // Pointer size on x64
+                    8,                  // Alignment
+                    AccessSpecifier::Public,
+                    std::nullopt,       // No initializer
+                    false,              // Not a reference
+                    false,              // Not rvalue reference
+                    64                  // Size in bits
+                );
+                continue;  // Skip the rest of processing for this capture
             }
 
             std::string_view var_name = capture.identifier_name();

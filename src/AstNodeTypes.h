@@ -2308,7 +2308,8 @@ public:
 		ByValue,      // [x]
 		ByReference,  // [&x]
 		AllByValue,   // [=]
-		AllByReference // [&]
+		AllByReference, // [&]
+		This          // [this]
 	};
 
 	explicit LambdaCaptureNode(CaptureKind kind, Token identifier = Token(), std::optional<ASTNode> initializer = std::nullopt)
@@ -2325,7 +2326,7 @@ public:
 
 private:
 	CaptureKind kind_;
-	Token identifier_;  // Empty for capture-all
+	Token identifier_;  // Empty for capture-all and [this]
 	std::optional<ASTNode> initializer_;  // For init-captures like [x = expr]
 };
 
