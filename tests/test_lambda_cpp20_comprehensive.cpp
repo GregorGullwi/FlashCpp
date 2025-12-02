@@ -136,16 +136,16 @@ int test_lambda_in_conditional() {
 
 // Test 19: C++20 Template lambda (if supported)
 // Note: This is a C++20 feature that may not be fully supported yet
-// int test_template_lambda() {
-//     auto lambda = []<typename T>(T value) { return value; };
-//     return lambda(5);  // 5
-// }
+int test_template_lambda() {
+    auto lambda = []<typename T>(T value) { return value; };
+    return lambda(5);  // 5
+}
 
 // Test 20: Multiple captures with different types
 int test_multiple_different_captures() {
     int x = 2;
-    int y = 3;
-    auto lambda = [x, y]() { return x + y; };
+    double y = 3.0;
+    auto lambda = [x, y]() { return x + (int)y; };
     return lambda();  // 5
 }
 
@@ -191,6 +191,32 @@ int test_init_capture_by_ref() {
     return x;  // 5
 }
 
+// Test 26: C++17 *this capture (copy all values from this)
+struct TestCopyThis {
+    int value = 5;
+    
+    auto get_lambda() {
+        // Captures a copy of the entire object
+        return [*this]() { return this->value; };
+    }
+};
+
+int test_copy_this_capture() {
+    TestCopyThis obj;
+    auto lambda = obj.get_lambda();
+    return lambda();  // 5
+}
+
+// Test 27: Recursive lambda using auto&& self parameter
+int test_recursive_lambda() {
+    auto factorial = [](auto&& self, int n) -> int {
+        if (n <= 1) return 1;
+        return n * self(self, n - 1);
+    };
+    // Calculate factorial(5) / factorial(4) = 5
+    return factorial(factorial, 5) / factorial(factorial, 4);  // 5
+}
+
 int main() {
     int result = 0;
     
@@ -212,6 +238,7 @@ int main() {
     result += test_multiple_statements();             // 5
     result += test_const_capture();                   // 5
     result += test_lambda_in_conditional();           // 5
+    // result += test_template_lambda();                 // 5 (C++20 template lambda - commented until supported)
     result += test_multiple_different_captures();     // 5
     result += test_ref_capture_modify();              // 5
     
@@ -223,7 +250,9 @@ int main() {
     
     result += test_multiple_params();                 // 5
     result += test_init_capture_by_ref();             // 5
+    result += test_copy_this_capture();               // 5
+    result += test_recursive_lambda();                // 5
     
-    // Total: 24 tests * 5 = 120
+    // Total: 26 tests * 5 = 130
     return result;
 }
