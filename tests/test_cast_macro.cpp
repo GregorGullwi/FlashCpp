@@ -1,7 +1,7 @@
-#define SIMPLE(x) (x + 1)
+#define CAST(x, type) ((type)(x))
 
 int test() {
-    int result = SIMPLE(5);
+    int result = CAST(5, int);
     return result;
 }
 
