@@ -129,7 +129,7 @@ Write-Host ""
 # NOTE: Files with _fail.cpp suffix are automatically tested separately
 #
 # Intentionally invalid code (tests error detection):
-#   - concept_error_test.cpp - Tests constraint error messages
+#   - concept_error_test_fail.cpp - Tests constraint error messages
 #
 # Unimplemented features:
 $expectedCompileFailures = @(
