@@ -328,29 +328,18 @@ struct TemplatePattern {
 			}
 		
 			// Find the template parameter name for this pattern arg
-			// We need to look up which parameter index this is based on base_type
-			// For now, we'll use a heuristic: check all template parameters
+			// Use the position to match with the corresponding template parameter
 			std::string param_name;
 			bool found_param = false;
 		
-			for (const ASTNode& param_node : template_params) {
-				if (!param_node.is<TemplateParameterNode>()) {
-					continue;
-				}
-			
-				const TemplateParameterNode& template_param = param_node.as<TemplateParameterNode>();
-				// All template parameters are Type::UserDefined, so we can't distinguish by type alone
-				// The pattern registration should have set type_index correctly
-				// For now, assume first occurrence - we'll improve this later
-				if (!found_param) {
-					param_name = std::string(template_param.name());
-					found_param = true;
-					break;
-				}
+			if (i < template_params.size() && template_params[i].is<TemplateParameterNode>()) {
+				const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+				param_name = std::string(template_param.name());
+				found_param = true;
 			}
 		
 			if (!found_param) {
-				return false;  // No template parameter found
+				return false;  // No template parameter found for this position
 			}
 		
 			// Check if we've already seen this parameter
