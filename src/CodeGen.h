@@ -773,15 +773,8 @@ private:
 		if (node.has_mangled_name()) {
 			mangled_name = node.mangled_name();
 		} else {
-			// Generate mangled name using the overload that accepts parameter nodes directly
-			mangled_name = generateMangledNameForCall(
-				func_decl.identifier_token().value(),
-				ret_type,
-				node.parameter_nodes(),
-				node.is_variadic(),
-				node.is_member_function() ? struct_name_for_function : std::string_view{},
-				current_namespace_stack_
-			);
+			// Generate mangled name using the FunctionDeclarationNode overload
+			mangled_name = generateMangledNameForCall(node, struct_name_for_function, current_namespace_stack_);
 		}
 		func_decl_op.mangled_name = mangled_name;
 
@@ -5482,154 +5475,29 @@ private:
 	}
 
 	// Helper function to generate Microsoft Visual C++ mangled name for function calls
-	// This matches the mangling scheme in ObjFileWriter::generateMangledName
+	// Delegates to NameMangling::generateMangledName to keep all mangling logic in one place
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
-		// Special case: main function is never mangled
-		if (name == "main") {
-			return "main";
-		}
-
-		StringBuilder builder;
-		builder.append('?');
-		
-		// Handle member functions vs free functions
-		if (!struct_name.empty()) {
-			// Member function: ?name@ClassName@@QA...
-			//  Extract just the function name (after ::)
-			std::string_view func_only_name = name;
-			size_t pos = name.rfind("::");
-			if (pos != std::string_view::npos) {
-				func_only_name = name.substr(pos + 2);
-			}
-			builder.append(func_only_name);
-			builder.append('@');
-			
-			// For nested classes, reverse the order: "Outer::Inner" -> "Inner@Outer"
-			std::vector<std::string_view> class_parts;
-			std::string_view remaining = struct_name;
-			size_t class_pos;
-			while ((class_pos = remaining.find("::")) != std::string_view::npos) {
-				class_parts.push_back(remaining.substr(0, class_pos));
-				remaining = remaining.substr(class_pos + 2);
-			}
-			class_parts.push_back(remaining);  // Add last part
-			
-			// Append in reverse order with @ separators
-			for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
-				builder.append(*it);
-				if (std::next(it) != class_parts.rend()) {
-					builder.append('@');
-				}
-			}
-			
-			builder.append("@@QA");  // @@ + calling convention for member functions (Q = __thiscall-like)
-		} else if (!namespace_path.empty()) {
-			// Namespace-scoped free function: ?name@Namespace@@YA...
-			builder.append(name);
-			builder.append('@');
-			
-			// Append namespace parts in reverse order with @ separators
-			for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
-				builder.append(*it);
-				if (std::next(it) != namespace_path.rend()) {
-					builder.append('@');
-				}
-			}
-			
-			builder.append("@@YA");  // @@ + calling convention (__cdecl)
-		} else {
-			// Free function in global namespace: ?name@@YA...
-			builder.append(name);
-			builder.append("@@YA");  // @@ + calling convention (__cdecl)
-		}
-
-		// Add return type code
-		appendTypeCodeForMangling(builder, return_type);
-
-		// Add parameter type codes
-		for (const auto& param_type : param_types) {
-			appendTypeCodeForMangling(builder, param_type);
-		}
-
-		// End marker - different for variadic vs non-variadic
-		if (is_variadic) {
-			builder.append("ZZ");  // Variadic functions end with 'ZZ' in MSVC mangling
-		} else {
-			builder.append("@Z");  // Non-variadic functions end with '@Z'
-		}
-
-		return builder.commit();
+		return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_path).view();
 	}
 
 	// Overload that accepts parameter nodes directly to avoid creating a temporary vector
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
-		// Special case: main function is never mangled
-		if (name == "main") {
-			return "main";
-		}
-
-		StringBuilder builder;
-		builder.append('?');
-		
-		// Handle member functions vs free functions
-		if (!struct_name.empty()) {
-			// Member function: ?name@ClassName@@QA...
-			std::string_view func_only_name = name;
-			size_t pos = name.rfind("::");
-			if (pos != std::string_view::npos) {
-				func_only_name = name.substr(pos + 2);
-			}
-			builder.append(func_only_name);
-			builder.append('@');
-			
-			// For nested classes, reverse the order using rfind
-			std::string_view remaining = struct_name;
-			size_t sep_pos;
-			while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
-				builder.append(remaining.substr(sep_pos + 2));
-				builder.append('@');
-				remaining = remaining.substr(0, sep_pos);
-			}
-			builder.append(remaining);
-			
-			builder.append("@@QA");
-		} else if (!namespace_path.empty()) {
-			builder.append(name);
-			builder.append('@');
-			for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
-				builder.append(*it);
-				if (std::next(it) != namespace_path.rend()) {
-					builder.append('@');
-				}
-			}
-			builder.append("@@YA");
-		} else {
-			builder.append(name);
-			builder.append("@@YA");
-		}
-
-		// Add return type code
-		appendTypeCodeForMangling(builder, return_type);
-
-		// Add parameter type codes directly from param nodes
-		for (const auto& param : param_nodes) {
-			const DeclarationNode& param_decl = param.as<DeclarationNode>();
-			appendTypeCodeForMangling(builder, param_decl.type_node().as<TypeSpecifierNode>());
-		}
-
-		// End marker
-		if (is_variadic) {
-			builder.append("ZZ");
-		} else {
-			builder.append("@Z");
-		}
-
-		return builder.commit();
+		return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_path).view();
 	}
 
-	// Helper to append type code for mangling to StringBuilder
-	void appendTypeCodeForMangling(StringBuilder& builder, const TypeSpecifierNode& type_node) {
-		NameMangling::appendTypeCode(builder, type_node);
+	// Overload that accepts a FunctionDeclarationNode directly
+	// This extracts the function name, return type, parameters, and other info from the node
+	// If struct_name_override is provided, it takes precedence over node.parent_struct_name()
+	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override = "", const std::vector<std::string>& namespace_path = {}) {
+		const DeclarationNode& decl_node = func_node.decl_node();
+		const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+		std::string_view func_name = decl_node.identifier_token().value();
+		
+		std::string_view struct_name = !struct_name_override.empty() ? struct_name_override
+			: (func_node.is_member_function() ? func_node.parent_struct_name() : std::string_view{});
+		
+		return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
+			func_node.is_variadic(), struct_name, namespace_path).view();
 	}
 	
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
@@ -5705,35 +5573,19 @@ private:
 		// Find the matching overload by comparing the DeclarationNode address
 		// This works because the FunctionCallNode holds a reference to the specific
 		// DeclarationNode that was selected by overload resolution
-		std::vector<TypeSpecifierNode> param_types;  // Declare param_types here
-		bool found_overload = false;
+		const FunctionDeclarationNode* matched_func_decl = nullptr;
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
 				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
 				if (overload_decl == &decl_node) {
 					// Found the matching overload
-					const auto& func_decl = *overload_func_decl;
-
-					// Extract parameter types for mangling (including pointer information)
-					for (const auto& param_node : func_decl.parameter_nodes()) {
-						if (param_node.is<DeclarationNode>()) {
-							const auto& param_decl = param_node.as<DeclarationNode>();
-							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-							param_types.push_back(param_type);
-						}
-					}
-
-					// Get return type (including pointer information)
-					const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+					matched_func_decl = overload_func_decl;
 
 					// Generate the mangled name directly (unless C linkage)
-					// This ensures we call the correct overload
-					if (func_decl.linkage() != Linkage::C) {
-						std::string_view struct_name_for_call = func_decl.is_member_function() ? func_decl.parent_struct_name() : "";
-						function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic(), struct_name_for_call);
+					if (matched_func_decl->linkage() != Linkage::C) {
+						function_name = generateMangledNameForCall(*matched_func_decl);
 					}
-					found_overload = true;
 					break;
 				}
 			}
@@ -5741,82 +5593,42 @@ private:
 	
 		// Fallback: if pointer comparison failed (e.g., for template instantiations),
 		// try to find the function by checking if there's only one overload with this name
-		if (!found_overload && all_overloads.size() == 1 && all_overloads[0].is<FunctionDeclarationNode>()) {
-			const auto& func_decl = all_overloads[0].as<FunctionDeclarationNode>();
-		
-			// Extract parameter types
-			for (const auto& param_node : func_decl.parameter_nodes()) {
-				if (param_node.is<DeclarationNode>()) {
-					const auto& param_decl = param_node.as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					param_types.push_back(param_type);
-				}
-			}
-		
-			// Get return type
-			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		if (!matched_func_decl && all_overloads.size() == 1 && all_overloads[0].is<FunctionDeclarationNode>()) {
+			matched_func_decl = &all_overloads[0].as<FunctionDeclarationNode>();
 		
 			// Generate mangled name (include struct name for member functions)
-			if (func_decl.linkage() != Linkage::C) {
-				std::string_view struct_name_for_call = func_decl.is_member_function() ? func_decl.parent_struct_name() : "";
-				function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic(), struct_name_for_call);
+			if (matched_func_decl->linkage() != Linkage::C) {
+				function_name = generateMangledNameForCall(*matched_func_decl);
 			}
-			found_overload = true;
 		}
 
 		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
-		if (!found_overload && gSymbolTable_overloads.size() == 1 && gSymbolTable_overloads[0].is<FunctionDeclarationNode>()) {
-			const auto& func_decl = gSymbolTable_overloads[0].as<FunctionDeclarationNode>();
-		
-			// Extract parameter types
-			for (const auto& param_node : func_decl.parameter_nodes()) {
-				if (param_node.is<DeclarationNode>()) {
-					const auto& param_decl = param_node.as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					param_types.push_back(param_type);
-				}
-			}
-		
-			// Get return type
-			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		if (!matched_func_decl && gSymbolTable_overloads.size() == 1 && gSymbolTable_overloads[0].is<FunctionDeclarationNode>()) {
+			matched_func_decl = &gSymbolTable_overloads[0].as<FunctionDeclarationNode>();
 		
 			// Generate mangled name (include struct name for member functions)
-			if (func_decl.linkage() != Linkage::C) {
-				std::string_view struct_name_for_call = func_decl.is_member_function() ? func_decl.parent_struct_name() : "";
-				function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic(), struct_name_for_call);
+			if (matched_func_decl->linkage() != Linkage::C) {
+				function_name = generateMangledNameForCall(*matched_func_decl);
 			}
-			found_overload = true;
 		}
 
 		// Final fallback: if we're in a member function, check the current struct's member functions
-		if (!found_overload && !current_struct_name_.empty()) {
+		if (!matched_func_decl && !current_struct_name_.empty()) {
 			auto type_it = gTypesByName.find(std::string(current_struct_name_));
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					for (const auto& member_func : struct_info->member_functions) {
-						// Check if this member function matches the function we're trying to call
 						if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 							if (func_decl.decl_node().identifier_token().value() == func_name_view) {
 								// Found matching member function
-								// Extract parameter types
-								for (const auto& param_node : func_decl.parameter_nodes()) {
-									if (param_node.is<DeclarationNode>()) {
-										const auto& param_decl = param_node.as<DeclarationNode>();
-										const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-										param_types.push_back(param_type);
-									}
-								}
-								
-								// Get return type
-								const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+								matched_func_decl = &func_decl;
 								
 								// Generate mangled name for member function
-								if (func_decl.linkage() != Linkage::C) {
-									function_name = generateMangledNameForCall(function_name, return_type, param_types, func_decl.is_variadic(), current_struct_name_);
+								if (matched_func_decl->linkage() != Linkage::C) {
+									function_name = generateMangledNameForCall(*matched_func_decl, current_struct_name_);
 								}
-								found_overload = true;
 								break;
 							}
 						}
@@ -5832,11 +5644,15 @@ private:
 
 		// Process arguments - match them with parameter types
 		size_t arg_index = 0;
+		const auto& param_nodes = matched_func_decl ? matched_func_decl->parameter_nodes() : std::vector<ASTNode>{};
 		functionCallNode.arguments().visit([&](ASTNode argument) {
 			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 			
 			// Get the parameter type for this argument (if it exists)
-			const TypeSpecifierNode* param_type = (arg_index < param_types.size()) ? &param_types[arg_index] : nullptr;
+			const TypeSpecifierNode* param_type = nullptr;
+			if (arg_index < param_nodes.size() && param_nodes[arg_index].is<DeclarationNode>()) {
+				param_type = &param_nodes[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			}
 			arg_index++;
 			
 			// For variables, we need to check if the parameter expects a reference
@@ -6023,8 +5839,8 @@ private:
 			TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], group_size));
 			
 			// Check if this parameter is a reference type
-			if (arg_idx < param_types.size()) {
-				const TypeSpecifierNode& param_type = param_types[arg_idx];
+			if (matched_func_decl && arg_idx < param_nodes.size() && param_nodes[arg_idx].is<DeclarationNode>()) {
+				const TypeSpecifierNode& param_type = param_nodes[arg_idx].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 				if (param_type.is_reference() || param_type.is_rvalue_reference()) {
 					arg.is_reference = true;
 				}

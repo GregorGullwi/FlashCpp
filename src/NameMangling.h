@@ -298,6 +298,39 @@ inline MangledName generateMangledName(
 	return MangledName(builder.commit());
 }
 
+// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string>& namespace_path
+) {
+	std::vector<std::string_view> ns_views;
+	ns_views.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		ns_views.push_back(ns);
+	}
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views);
+}
+
+// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<ASTNode>& param_nodes,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string>& namespace_path
+) {
+	std::vector<std::string_view> ns_views;
+	ns_views.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		ns_views.push_back(ns);
+	}
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views);
+}
 // Generate mangled name from a FunctionDeclarationNode
 // This is the main entry point for generating mangled names during parsing
 // The function extracts all necessary information from the AST node
@@ -315,6 +348,20 @@ inline MangledName generateMangledNameFromNode(
 	// Use the overload that accepts parameter nodes directly
 	return generateMangledName(func_name, return_type, func_node.parameter_nodes(), 
 	                           func_node.is_variadic(), struct_name, namespace_path);
+}
+
+// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
+inline MangledName generateMangledNameFromNode(
+	const FunctionDeclarationNode& func_node,
+	const std::vector<std::string>& namespace_path
+) {
+	// Convert to string_view vector and delegate
+	std::vector<std::string_view> ns_views;
+	ns_views.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		ns_views.push_back(ns);
+	}
+	return generateMangledNameFromNode(func_node, ns_views);
 }
 
 // Generate mangled name for a constructor
