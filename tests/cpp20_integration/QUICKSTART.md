@@ -2,7 +2,7 @@
 
 ## Overview
 
-A comprehensive integration test for FlashCpp has been created in `tests/cpp20_integration/`. This test exercises **390 test points** across **9 major C++20 feature categories**, excluding coroutines, modules, and multithreading as requested.
+A comprehensive integration test for FlashCpp has been created in `tests/cpp20_integration/`. This test exercises **490 test points** across **9 major C++20 feature categories**, excluding coroutines, modules, and multithreading as requested.
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ cd tests/cpp20_integration
 
 This will:
 1. Compile the test with standard clang++
-2. Run all 390 test points
+2. Run all 490 test points
 3. Display a detailed breakdown of features tested
 4. Return 0 on complete success
 
@@ -24,7 +24,7 @@ This will:
 ```
 ✅ TEST RESULT: SUCCESS (Exit code: 0)
 
-All 390 test points passed! The integration test successfully covers:
+All 490 test points passed! The integration test successfully covers:
 
   [30 pts] Basic Types & Literals
   [50 pts] Operators
@@ -36,6 +36,7 @@ All 390 test points passed! The integration test successfully covers:
   [10 pts] Lambdas
   [60 pts] Modern C++ Features
   [100 pts] Advanced Features
+  [100 pts] Alternative Tokens and C++20 Extras
 ```
 
 ## What's Tested
@@ -110,13 +111,25 @@ All 390 test points passed! The integration test successfully covers:
 - Static variables
 - Global variables
 
+### 11. Alternative Tokens and C++20 Extras (100 points)
+- Alternative operator representations (`and`, `or`, `not`, `bitand`, `bitor`, `xor`, `compl`)
+- `sizeof` operator with various types
+- Comma operator
+- Advanced `nullptr` comparisons
+- Explicit type casts (`static_cast`)
+- Address-of (`&`) and dereference (`*`) operators
+- Array subscript operator
+- Octal literals
+- Binary literals (C++14)
+- Digit separators (C++14)
+
 ## File Organization
 
 ```
 tests/cpp20_integration/
 ├── README.md                          # Detailed documentation
 ├── bugs/README.md for known bugs                         # Test results and FlashCpp limitations
-├── cpp20_simple_integration_test.cpp  # Main test file (390 points)
+├── cpp20_simple_integration_test.cpp  # Main test file (490 points)
 ├── flashcpp_minimal_test.cpp          # Simplified version
 ├── cpp20_integration_test.cpp         # Advanced version
 └── run_integration_test.sh            # Test runner script
@@ -128,7 +141,7 @@ The integration test has been verified to:
 - ✅ Compile successfully with clang++ 18.0+
 - ✅ Compile successfully with g++ 13.0+  
 - ✅ Run correctly and return exit code 0
-- ✅ Cover 390 test points across 9 feature categories
+- ✅ Cover 490 test points across 9 feature categories
 - ✅ Exercise the majority of C++20 features
 
 ## What's NOT Tested
@@ -176,8 +189,8 @@ Add to your CI pipeline:
 
 ## Success Criteria
 
-- **Complete Success**: Exit code 0 (all 390 points)
-- **Partial Success**: Exit code = (390 - points_earned)
+- **Complete Success**: Exit code 0 (all 490 points)
+- **Partial Success**: Exit code = (490 - points_earned)
 - **Failure**: Exit code indicates number of missing points
 
 ## Documentation
@@ -199,7 +212,7 @@ When extending the test:
 ## Summary
 
 This integration test provides:
-- ✅ **Comprehensive C++20 coverage** (390 test points)
+- ✅ **Comprehensive C++20 coverage** (490 test points)
 - ✅ **Standards-compliant code** (compiles with clang++/g++)
 - ✅ **Self-verifying** (returns meaningful exit codes)
 - ✅ **Well-documented** (with detailed README files)

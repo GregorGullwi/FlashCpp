@@ -2,7 +2,7 @@
 
 ## Overview
 
-This directory contains comprehensive integration tests for the FlashCpp C++20 compiler. The test suite exercises **390 test points** across **9 major feature categories**, excluding coroutines, modules, and multithreading as requested.
+This directory contains comprehensive integration tests for the FlashCpp C++20 compiler. The test suite exercises **490 test points** across **9 major feature categories**, excluding coroutines, modules, and multithreading as requested.
 
 ## Quick Start
 
@@ -18,7 +18,7 @@ This will compile and run the integration test with clang++, displaying a detail
 ### Main Integration Test
 **`cpp20_simple_integration_test.cpp`** - Primary integration test (RECOMMENDED)
 - **Status**: ✅ Fully working with standard C++20 compilers (clang++, g++)
-- **Coverage**: 390 test points across 9 feature categories
+- **Coverage**: 490 test points across 9 feature categories
 - **Design**: Single-file, self-verifying (returns 0 on success)
 - **Standards**: Valid, standards-compliant C++20 code
 
@@ -29,7 +29,7 @@ This will compile and run the integration test with clang++, displaying a detail
 ### Bug Reproduction Files
 The `bugs/` directory contains minimal reproduction cases for FlashCpp compiler bugs discovered during testing. See [`bugs/README.md`](bugs/README.md) for details.
 
-## Feature Coverage (390 Points)
+## Feature Coverage (490 Points)
 
 ### 1. Basic Types & Literals (30 points)
 - Integer types: `char`, `short`, `int`, `long`, `unsigned` variants
@@ -101,13 +101,25 @@ The `bugs/` directory contains minimal reproduction cases for FlashCpp compiler 
 - Static variables
 - Global variables
 
+### 11. Alternative Tokens and C++20 Extras (100 points)
+- Alternative operator representations (`and`, `or`, `not`, `bitand`, `bitor`, `xor`, `compl`)
+- `sizeof` operator with various types
+- Comma operator
+- Advanced `nullptr` comparisons
+- Explicit type casts (`static_cast`)
+- Address-of (`&`) and dereference (`*`) operators
+- Array subscript operator
+- Octal literals
+- Binary literals (C++14)
+- Digit separators (C++14)
+
 ## Test Design
 
 - **Single file**: All tests in `cpp20_simple_integration_test.cpp`
 - **Modular**: Each feature category has its own test function
 - **Point-based**: Each test returns 0 or 10 points
 - **Self-verifying**: Returns 0 on complete success, failure count otherwise
-- **Total**: 390 points across all categories
+- **Total**: 490 points across all categories
 
 ## Usage
 
@@ -125,15 +137,15 @@ echo $?  # Should print 0 on success
 
 ### Expected Results
 
-- **Success**: Exit code 0 (all 390 points earned)
-- **Partial Success**: Exit code = (390 - points_earned)
+- **Success**: Exit code 0 (all 490 points earned)
+- **Partial Success**: Exit code = (490 - points_earned)
 - **Failure**: Exit code > 0 indicates number of points missed
 
 ## Verification Results
 
 | Test File | Clang++ 18 | GCC 13 | FlashCpp |
 |-----------|-----------|---------|----------|
-| cpp20_simple_integration_test.cpp | ✅ Pass (390/390) | ✅ Pass (390/390) | ⚠️ Has bugs |
+| cpp20_simple_integration_test.cpp | ✅ Pass (490/490) | ✅ Pass (490/490) | ⚠️ Has bugs |
 | flashcpp_minimal_test.cpp | ✅ Pass (150/150) | ✅ Pass (150/150) | ⚠️ Has bugs |
 
 ## Known FlashCpp Limitations
@@ -215,7 +227,7 @@ Planned improvements:
 ## Conclusion
 
 The integration tests successfully demonstrate:
-- ✅ Comprehensive C++20 feature coverage (390 test points)
+- ✅ Comprehensive C++20 feature coverage (490 test points)
 - ✅ Valid, standards-compliant code
 - ✅ Modular, maintainable test structure
 - ✅ Self-verifying test framework
