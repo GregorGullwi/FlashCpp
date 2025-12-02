@@ -32,7 +32,7 @@ echo ""
 # Build the compiler if not built
 if [ ! -f "x64/Debug/FlashCpp" ]; then
     echo "Building FlashCpp compiler..."
-    make main CXX=clang++ 2>&1 > /dev/null
+    make main CXX=clang++ > /dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo -e "${RED}Failed to build FlashCpp compiler${NC}"
         exit 1
