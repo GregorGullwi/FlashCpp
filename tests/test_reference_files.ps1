@@ -100,38 +100,40 @@ if ($libPath3) { Write-Host "  $libPath3" }
 Write-Host ""
 
 # Get all .cpp files from tests/
-$referenceFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
+$allTestFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
 
-# Filter to only files that have a main function
+# Filter to only files that have a main function and separate _fail files
 $filesWithMain = @()
-foreach ($file in $referenceFiles) {
+$failFiles = @()
+foreach ($file in $allTestFiles) {
     $sourceContent = Get-Content $file.FullName -Raw
     $hasMain = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
     if ($hasMain) {
-        $filesWithMain += $file
+        if ($file.Name -match "_fail\.cpp$") {
+            $failFiles += $file
+        } else {
+            $filesWithMain += $file
+        }
     }
 }
 
 $referenceFiles = $filesWithMain
 $totalFiles = $referenceFiles.Count
+$totalFailFiles = $failFiles.Count
 Write-Host "Found $totalFiles test files with main() in tests/"
+Write-Host "Found $totalFailFiles _fail test files (expected to fail compilation)"
 Write-Host ""
 
 # Expected compile failures - files that are intentionally designed to fail compilation
 # or use features not yet implemented in FlashCpp
+# NOTE: Files with _fail.cpp suffix are automatically tested separately
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
-    "test_constinit_fail.cpp",             # constinit validation test - intentionally invalid code
     "test_cstddef.cpp",                    # Standard library header not yet supported
     "test_cstdio_puts.cpp",                # Standard library header not yet supported
     "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
-    "test_mismatch_args.cpp",              # Type checking test - intentionally invalid code
-    "test_mismatch_return.cpp",            # Type checking test - intentionally invalid code
-    "test_pointer_const_mismatch.cpp",     # intentionally invalid code
     "test_recursive_macro.cpp",            # Recursive macro produces identifier (correct behavior per C standard)
-    "test_reference_const_mismatch.cpp",   # intentionally invalid code
-    "test_tuple_with_constructor_fail.cpp",     # Invalid C++
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
     "test_va_implementation.cpp",          # C-style variadic details issue
     "test_lambda_cpp20_comprehensive.cpp"  # Path-dependent parser bug - see PARSER_BUG_INVESTIGATION.md
@@ -255,6 +257,46 @@ foreach ($file in $referenceFiles) {
     Write-Host ""
 }
 
+# Test _fail files - these should fail compilation
+Write-Host ""
+Write-Host "=============================================="
+Write-Host "Testing _fail.cpp files (expected to fail)"
+Write-Host "=============================================="
+Write-Host ""
+
+# Results tracking for fail tests
+$failTestSuccess = @()
+$failTestFailed = @()
+
+$currentFile = 0
+foreach ($file in $failFiles) {
+    $currentFile++
+    $baseName = $file.BaseName
+    $objFile = "$baseName.obj"
+    
+    Write-Host "[$currentFile/$totalFailFiles] Testing: $($file.Name)"
+    
+    # Clean up previous artifacts
+    if (Test-Path $objFile) { Remove-Item $objFile -Force }
+    
+    # Compile with FlashCpp - we EXPECT this to fail
+    $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
+    
+    # Check if compilation succeeded (which is BAD for _fail tests)
+    if (Test-Path $objFile) {
+        Write-Host "  [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
+        $failTestFailed += $file.Name
+        # Clean up the object file
+        Remove-Item $objFile -Force
+    }
+    else {
+        Write-Host "  [FAILED AS EXPECTED]" -ForegroundColor Green
+        $failTestSuccess += $file.Name
+    }
+    
+    Write-Host ""
+}
+
 # Summary
 Write-Host ""
 Write-Host "=============================================="
@@ -263,13 +305,18 @@ Write-Host "=============================================="
 Write-Host ""
 Write-Host "Total files tested: $totalFiles"
 Write-Host ""
-Write-Host "Compilation:"
-Write-Host "  Success: $($compileSuccess.Count)" -ForegroundColor Green
-Write-Host "  Failed:  $($compileFailed.Count)" -ForegroundColor Red
+Write-Host "Regular Tests:"
+Write-Host "  Compilation:"
+Write-Host "    Success: $($compileSuccess.Count)" -ForegroundColor Green
+Write-Host "    Failed:  $($compileFailed.Count)" -ForegroundColor Red
 Write-Host ""
-Write-Host "Linking (of successfully compiled files):"
-Write-Host "  Success: $($linkSuccess.Count)" -ForegroundColor Green
-Write-Host "  Failed:  $($linkFailed.Count)" -ForegroundColor Red
+Write-Host "  Linking (of successfully compiled files):"
+Write-Host "    Success: $($linkSuccess.Count)" -ForegroundColor Green
+Write-Host "    Failed:  $($linkFailed.Count)" -ForegroundColor Red
+Write-Host ""
+Write-Host "_fail Tests (expected to fail compilation):"
+Write-Host "  Failed as expected: $($failTestSuccess.Count)" -ForegroundColor Green
+Write-Host "  Unexpectedly passed: $($failTestFailed.Count)" -ForegroundColor Red
 Write-Host ""
 
 if ($compileFailed.Count -gt 0) {
@@ -283,6 +330,15 @@ if ($compileFailed.Count -gt 0) {
 if ($linkFailed.Count -gt 0) {
     Write-Host "=== Files that failed to link ===" -ForegroundColor Red
     $linkFailed | Sort-Object | ForEach-Object {
+        Write-Host "  - $_"
+    }
+    Write-Host ""
+}
+
+if ($failTestFailed.Count -gt 0) {
+    Write-Host "=== _fail files that unexpectedly succeeded ===" -ForegroundColor Red
+    Write-Host "(These files should fail compilation but compiled successfully)" -ForegroundColor Red
+    $failTestFailed | Sort-Object | ForEach-Object {
         Write-Host "  - $_"
     }
     Write-Host ""
@@ -303,14 +359,20 @@ if ($expectedFailuresWithoutFail.Count -gt 0) {
     Write-Host ""
 }
 
-# Exit with error if any compilation or linking failed
+# Exit with error if any compilation or linking failed, or if any _fail test unexpectedly passed
 $exitCode = 0
-if ($compileFailed.Count -gt 0 -or $linkFailed.Count -gt 0) {
+if ($compileFailed.Count -gt 0 -or $linkFailed.Count -gt 0 -or $failTestFailed.Count -gt 0) {
     $exitCode = 1
-    Write-Host "RESULT: FAILED - Some files did not compile or link successfully" -ForegroundColor Red
+    if ($failTestFailed.Count -gt 0) {
+        Write-Host "RESULT: FAILED - Some _fail tests unexpectedly succeeded" -ForegroundColor Red
+    }
+    if ($compileFailed.Count -gt 0 -or $linkFailed.Count -gt 0) {
+        Write-Host "RESULT: FAILED - Some files did not compile or link successfully" -ForegroundColor Red
+    }
 }
 else {
     Write-Host "RESULT: SUCCESS - All files compiled and linked successfully!" -ForegroundColor Green
+    Write-Host "                  All _fail tests failed as expected!" -ForegroundColor Green
 }
 
 Write-Host ""

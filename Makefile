@@ -93,7 +93,7 @@ $(BENCHMARK_TARGET): $(SRCDIR)/benchmark.cpp
 	@echo "Built: $@"
 
 # Phony targets
-.PHONY: all clean test main release benchmark help
+.PHONY: all clean test main release benchmark help test-all
 
 # Build all targets
 all: main release test
@@ -106,6 +106,11 @@ release: $(RELEASE_TARGET)
 
 # Test target - build and optionally run
 test: $(TEST_TARGET)
+
+# Test-all target - build compiler and run all .cpp tests in tests/
+test-all: $(MAIN_TARGET)
+	@echo "Running comprehensive test suite..."
+	@bash $(TESTDIR)/run_all_tests.sh
 
 # Benchmark target
 benchmark: $(BENCHMARK_TARGET)
@@ -138,6 +143,7 @@ help:
 	@echo "  make main         - Build main executable in Debug mode"
 	@echo "  make release      - Build main executable in Release mode"
 	@echo "  make test         - Build test executable"
+	@echo "  make test-all     - Build compiler and run all .cpp tests (pass and _fail)"
 	@echo "  make benchmark    - Build benchmark executable"
 	@echo "  make all          - Build main, release, and test executables"
 	@echo "  make clean        - Remove all build artifacts"
@@ -152,4 +158,5 @@ help:
 	@echo "  make clean && make release            - Clean release build with clang++"
 	@echo "  make clean && make CXX=g++            - Clean build with g++"
 	@echo "  make test && $(TEST_DIR)/test$(EXE_EXT)  - Build and run tests"
+	@echo "  make test-all                         - Run all .cpp tests including _fail tests"
 	@echo "  $(MAIN_TARGET) file.cpp               - Compile a C++ file"
