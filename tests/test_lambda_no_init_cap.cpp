@@ -105,8 +105,7 @@ int test_capture_with_multiple_parameters() {
     return lambda(5, 0);  // Expected: 5
 }
 
-// Test 14: Nested lambda calls (not yet supported - causes compiler crash)
-/*
+// Test 14: Nested lambda calls
 int test_nested_lambda_calls() {
     int x = 5;
     auto outer = [x]() {
@@ -115,7 +114,6 @@ int test_nested_lambda_calls() {
     };
     return outer();  // Expected: 5
 }
-*/
 
 // Test 15: Capture and return
 int test_capture_and_return() {
@@ -173,15 +171,6 @@ int test_capture_reference_multiple_reads() {
     return lambda();  // Expected: 5
 }
 
-// Test 21: Capture with initializer (C++14 init-capture - not yet supported)
-/*
-int test_capture_with_initializer() {
-    int x = 2;
-    auto lambda = [x = x+3, y = 0]() { return x; };
-    return lambda();  // Expected: 5
-}
-*/
-
 int main() {
     return 
         test_capture_by_value() +
@@ -197,13 +186,12 @@ int main() {
         test_capture_all_by_reference_sees_changes() +
         test_capture_with_parameters() +
         test_capture_with_multiple_parameters() +
-        // test_nested_lambda_calls() - Nested lambdas not yet supported
+        test_nested_lambda_calls() +
         test_capture_and_return() +
         test_capture_all_with_explicit() +
         test_multiple_lambdas() +
         test_lambda_in_conditional() +
         test_lambda_arithmetic() +
-        test_capture_reference_multiple_reads();
-        // test_capture_with_initializer() - C++14 init-capture not yet supported
-        // Total: 19 tests * 5 = 95
+        test_capture_reference_multiple_reads() +
+        0;  // 20 tests * 5 = 100
 }
