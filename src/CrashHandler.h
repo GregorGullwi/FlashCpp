@@ -31,10 +31,15 @@ namespace CrashHandler {
 constexpr int kMaxStackFrames = 64;
 constexpr int kMaxPathLength = 512;
 constexpr int kTimestampBufferSize = 64;
+constexpr int kMaxSymbolBuffer = 8192;  // Buffer for formatted stack frame output
 
 // Preallocated static buffers - avoid memory allocation during crash
 static char s_filenameBuffer[kMaxPathLength];
 static char s_timestampBuffer[kTimestampBufferSize];
+static char s_frameBuffer[kMaxSymbolBuffer];  // Buffer for stack frame formatting
+
+// Guard to prevent multiple crash reports
+static volatile long s_crashHandled = 0;
 
 // Get the exception code as a human-readable string
 inline const char* getExceptionCodeString(DWORD code) {
@@ -79,8 +84,8 @@ inline void getReadableTimestamp(char* buffer, size_t bufferSize) {
     strftime(buffer, bufferSize, "%Y-%m-%d %H:%M:%S", &timeinfo);
 }
 
-// Write the stack trace to a file
-inline void writeStackTrace(FILE* file, CONTEXT* context) {
+// Write the stack trace to a file (and optionally stderr)
+inline void writeStackTrace(FILE* file, CONTEXT* context, bool alsoToStderr = false) {
     HANDLE process = GetCurrentProcess();
     HANDLE thread = GetCurrentThread();
 
@@ -126,6 +131,9 @@ inline void writeStackTrace(FILE* file, CONTEXT* context) {
 #endif
 
     fprintf(file, "\n=== Stack Trace ===\n\n");
+    if (alsoToStderr) {
+        fprintf(stderr, "\n=== Stack Trace ===\n\n");
+    }
 
     // Walk the stack
     int frameNum = 0;
@@ -150,38 +158,49 @@ inline void writeStackTrace(FILE* file, CONTEXT* context) {
         DWORD64 displacement64 = 0;
         DWORD displacement = 0;
 
-        fprintf(file, "[%2d] ", frameNum);
+        // Build the frame info into a buffer so we can write to both outputs
+        int pos = snprintf(s_frameBuffer, kMaxSymbolBuffer, "[%2d] ", frameNum);
 
         if (SymFromAddr(process, stackFrame.AddrPC.Offset, &displacement64, symbol)) {
-            fprintf(file, "%s", symbol->Name);
+            pos += snprintf(s_frameBuffer + pos, kMaxSymbolBuffer - pos, "%s", symbol->Name);
 
             // Try to get source file and line information
             IMAGEHLP_LINE64 line = {};
             line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
 
             if (SymGetLineFromAddr64(process, stackFrame.AddrPC.Offset, &displacement, &line)) {
-                fprintf(file, " (%s:%lu)", line.FileName, line.LineNumber);
+                pos += snprintf(s_frameBuffer + pos, kMaxSymbolBuffer - pos, " (%s:%lu)", line.FileName, line.LineNumber);
             }
 
-            fprintf(file, " + 0x%llx", displacement64);
+            pos += snprintf(s_frameBuffer + pos, kMaxSymbolBuffer - pos, " + 0x%llx", displacement64);
         } else {
             // No symbol found, just print the address
-            fprintf(file, "0x%016llx", stackFrame.AddrPC.Offset);
+            pos += snprintf(s_frameBuffer + pos, kMaxSymbolBuffer - pos, "0x%016llx", stackFrame.AddrPC.Offset);
         }
 
         // Get module information
         IMAGEHLP_MODULE64 moduleInfo = {};
         moduleInfo.SizeOfStruct = sizeof(IMAGEHLP_MODULE64);
         if (SymGetModuleInfo64(process, stackFrame.AddrPC.Offset, &moduleInfo)) {
-            fprintf(file, " [%s]", moduleInfo.ModuleName);
+            pos += snprintf(s_frameBuffer + pos, kMaxSymbolBuffer - pos, " [%s]", moduleInfo.ModuleName);
         }
 
-        fprintf(file, "\n");
+        // Write to file
+        fprintf(file, "%s\n", s_frameBuffer);
+        
+        // Also write to stderr if requested
+        if (alsoToStderr) {
+            fprintf(stderr, "%s\n", s_frameBuffer);
+        }
+
         frameNum++;
     }
 
     if (frameNum == 0) {
         fprintf(file, "No stack frames captured.\n");
+        if (alsoToStderr) {
+            fprintf(stderr, "No stack frames captured.\n");
+        }
     }
 
     SymCleanup(process);
@@ -189,6 +208,13 @@ inline void writeStackTrace(FILE* file, CONTEXT* context) {
 
 // The unhandled exception filter - called when the process crashes
 inline LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
+    // Prevent multiple crash reports using atomic compare-exchange
+    if (InterlockedCompareExchange(&s_crashHandled, 1, 0) != 0) {
+        // Already handled a crash - just terminate immediately
+        TerminateProcess(GetCurrentProcess(), 1);
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
     // Generate crash log filename with timestamp using preallocated buffers
     getTimestampString(s_timestampBuffer, kTimestampBufferSize);
     snprintf(s_filenameBuffer, kMaxPathLength, "flashcpp_crash_%s.log", s_timestampBuffer);
@@ -221,8 +247,8 @@ inline LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
                 operation, reinterpret_cast<void*>(record->ExceptionInformation[1]));
     }
 
-    // Write stack trace
-    writeStackTrace(file, exceptionInfo->ContextRecord);
+    // Write stack trace (always output to stderr for easier debugging)
+    writeStackTrace(file, exceptionInfo->ContextRecord, true);
 
     // Write system information
     fprintf(file, "\n=== System Information ===\n\n");
@@ -260,7 +286,9 @@ inline LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     fprintf(stderr, "Please report this issue with the crash log attached.\n");
     fprintf(stderr, "==========================================================\n");
 
-    return EXCEPTION_CONTINUE_SEARCH;
+    // Terminate immediately to prevent cascading crash reports
+    TerminateProcess(GetCurrentProcess(), 1);
+    return EXCEPTION_CONTINUE_SEARCH;  // Unreachable, but satisfies return type
 }
 
 // Vectored exception handler for even earlier crash detection
