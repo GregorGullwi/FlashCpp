@@ -8466,12 +8466,58 @@ private:
 					std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
 					const StructMember* member = struct_info->findMember(std::string(var_name));  // findMember needs std::string
 
-					if (member && capture_index < lambda_info.captured_var_decls.size()) {
+					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
 						// Check if this variable is a captured variable from an enclosing lambda
 						bool is_captured_from_enclosing = !current_lambda_closure_type_.empty() &&
 						                                   current_lambda_captures_.find(std::string(var_name)) != current_lambda_captures_.end();
 
-						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+						// Handle init-captures
+						if (capture.has_initializer()) {
+							// Init-capture: evaluate the initializer expression and store it
+							const ASTNode& init_node = *capture.initializer();
+							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							
+							if (init_operands.empty()) {
+								capture_index++;
+								continue;
+							}
+							
+							// The first operand is the result of the expression
+							// It should be a TempVar or a value
+							IrOperand init_value = init_operands[0];
+							
+							// Store the value in the closure member
+							// We need to convert IrOperand to IrValue
+							MemberStoreOp member_store;
+							member_store.value.type = member->type;
+							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+							
+							// Convert IrOperand to IrValue
+							// IrValue only supports: unsigned long long, double, TempVar, std::string_view
+							if (std::holds_alternative<TempVar>(init_value)) {
+								member_store.value.value = std::get<TempVar>(init_value);
+							} else if (std::holds_alternative<int>(init_value)) {
+								member_store.value.value = static_cast<unsigned long long>(std::get<int>(init_value));
+							} else if (std::holds_alternative<unsigned long long>(init_value)) {
+								member_store.value.value = std::get<unsigned long long>(init_value);
+							} else if (std::holds_alternative<double>(init_value)) {
+								member_store.value.value = std::get<double>(init_value);
+							} else if (std::holds_alternative<std::string_view>(init_value)) {
+								member_store.value.value = std::get<std::string_view>(init_value);
+							} else {
+								// For other types, skip this capture
+								capture_index++;
+								continue;
+							}
+							
+							member_store.object = closure_var_name;
+							member_store.member_name = std::string_view(member->name);
+							member_store.offset = static_cast<int>(member->offset);
+							member_store.is_reference = member->is_reference;
+							member_store.is_rvalue_reference = member->is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
+						} else if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 							// By-reference: store the address of the variable
 							// Get the original variable type from captured_var_decls
 							const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
