@@ -509,6 +509,135 @@ int test_designated_init() {
 }
 
 // ============================================================================
+// SECTION 10: ADVANCED FEATURES
+// ============================================================================
+
+// Test string literals
+int test_string_literals() {
+    const char* str1 = "Hello";
+    const char* str2 = "World";
+    
+    // Test that strings are stored correctly
+    char c1 = str1[0];
+    char c2 = str2[0];
+    
+    return (c1 == 'H') && (c2 == 'W') ? 10 : 0;
+}
+
+// Test multi-dimensional arrays
+int test_multidim_arrays() {
+    int matrix[2][3];
+    matrix[0][0] = 1;
+    matrix[0][1] = 2;
+    matrix[1][0] = 3;
+    matrix[1][1] = 4;
+    
+    int sum = matrix[0][0] + matrix[0][1] + matrix[1][0] + matrix[1][1];
+    
+    return sum == 10 ? 10 : 0;
+}
+
+// Test pointer to pointer
+int test_pointer_to_pointer() {
+    int value = 42;
+    int* ptr = &value;
+    int** pptr = &ptr;
+    
+    int result = **pptr;
+    
+    return result == 42 ? 10 : 0;
+}
+
+// Test struct with complex initialization
+struct ComplexStruct {
+    int a;
+    int b;
+    int c;
+};
+
+int test_struct_init() {
+    ComplexStruct s1 = {1, 2, 3};
+    ComplexStruct s2;
+    s2.a = 4;
+    s2.b = 5;
+    s2.c = 6;
+    
+    int sum = s1.a + s1.b + s1.c + s2.a + s2.b + s2.c;
+    
+    return sum == 21 ? 10 : 0;
+}
+
+// Test references
+int test_references() {
+    int x = 10;
+    int& ref = x;
+    
+    ref = 20;
+    
+    return x == 20 ? 10 : 0;
+}
+
+// Test const references
+int test_const_references() {
+    int x = 42;
+    const int& cref = x;
+    
+    int y = cref;
+    
+    return y == 42 ? 10 : 0;
+}
+
+// Test ternary operator
+int test_ternary() {
+    int a = 5;
+    int b = 10;
+    
+    int max = (a > b) ? a : b;
+    int min = (a < b) ? a : b;
+    
+    return (max == 10) && (min == 5) ? 10 : 0;
+}
+
+// Test nested structures
+struct Outer {
+    int x;
+    struct Inner {
+        int y;
+    };
+    Inner inner;
+};
+
+int test_nested_struct() {
+    Outer o;
+    o.x = 5;
+    o.inner.y = 7;
+    
+    int sum = o.x + o.inner.y;
+    
+    return sum == 12 ? 10 : 0;
+}
+
+// Test static variables
+int test_static_vars() {
+    static int counter = 0;
+    counter++;
+    counter++;
+    counter++;
+    
+    return counter == 3 ? 10 : 0;
+}
+
+// Test global variables
+int global_test_var = 100;
+
+int test_global_vars() {
+    int local = global_test_var;
+    global_test_var = 200;
+    
+    return (local == 100) && (global_test_var == 200) ? 10 : 0;
+}
+
+// ============================================================================
 // MAIN TEST RUNNER
 // ============================================================================
 
@@ -571,6 +700,19 @@ int main() {
     total += test_union();              // 10
     total += test_designated_init();    // 10
     expected += 60;
+    
+    // Section 10: Advanced Features (100 points)
+    total += test_string_literals();    // 10
+    total += test_multidim_arrays();    // 10
+    total += test_pointer_to_pointer(); // 10
+    total += test_struct_init();        // 10
+    total += test_references();         // 10
+    total += test_const_references();   // 10
+    total += test_ternary();            // 10
+    total += test_nested_struct();      // 10
+    total += test_static_vars();        // 10
+    total += test_global_vars();        // 10
+    expected += 100;
     
     // Return 0 if all tests pass, otherwise return number of missing points
     return expected - total;
