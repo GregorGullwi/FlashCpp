@@ -133,7 +133,6 @@ Write-Host ""
 #
 # Unimplemented features:
 $expectedCompileFailures = @(
-    "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
     "test_cstddef.cpp",                    # Standard library header not yet supported
     "test_cstdio_puts.cpp",                # Standard library header not yet supported
