@@ -329,17 +329,21 @@ struct TemplatePattern {
 		
 			// Find the template parameter name for this pattern arg
 			// Use the position to match with the corresponding template parameter
+			if (i >= template_params.size()) {
+				return false;  // More pattern args than template parameters - invalid pattern
+			}
+			
 			std::string param_name;
 			bool found_param = false;
 		
-			if (i < template_params.size() && template_params[i].is<TemplateParameterNode>()) {
+			if (template_params[i].is<TemplateParameterNode>()) {
 				const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
 				param_name = std::string(template_param.name());
 				found_param = true;
 			}
 		
 			if (!found_param) {
-				return false;  // No template parameter found for this position
+				return false;  // Template parameter at position i is not a TemplateParameterNode
 			}
 		
 			// Check if we've already seen this parameter
