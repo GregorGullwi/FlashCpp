@@ -127,6 +127,11 @@ Write-Host ""
 # Expected compile failures - files that are intentionally designed to fail compilation
 # or use features not yet implemented in FlashCpp
 # NOTE: Files with _fail.cpp suffix are automatically tested separately
+#
+# Intentionally invalid code (tests error detection):
+#   - concept_error_test.cpp - Tests constraint error messages
+#
+# Unimplemented features:
 $expectedCompileFailures = @(
     "concept_error_test.cpp",              # Tests constraint error messages - intentionally invalid code
     "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
@@ -361,14 +366,21 @@ if ($expectedFailuresWithoutFail.Count -gt 0) {
 
 # Exit with error if any compilation or linking failed, or if any _fail test unexpectedly passed
 $exitCode = 0
-if ($compileFailed.Count -gt 0 -or $linkFailed.Count -gt 0 -or $failTestFailed.Count -gt 0) {
+$failureReasons = @()
+
+if ($failTestFailed.Count -gt 0) {
+    $failureReasons += "Some _fail tests unexpectedly succeeded"
+}
+if ($compileFailed.Count -gt 0) {
+    $failureReasons += "Some files did not compile successfully"
+}
+if ($linkFailed.Count -gt 0) {
+    $failureReasons += "Some files did not link successfully"
+}
+
+if ($failureReasons.Count -gt 0) {
     $exitCode = 1
-    if ($failTestFailed.Count -gt 0) {
-        Write-Host "RESULT: FAILED - Some _fail tests unexpectedly succeeded" -ForegroundColor Red
-    }
-    if ($compileFailed.Count -gt 0 -or $linkFailed.Count -gt 0) {
-        Write-Host "RESULT: FAILED - Some files did not compile or link successfully" -ForegroundColor Red
-    }
+    Write-Host "RESULT: FAILED - $($failureReasons -join '; ')" -ForegroundColor Red
 }
 else {
     Write-Host "RESULT: SUCCESS - All files compiled and linked successfully!" -ForegroundColor Green
