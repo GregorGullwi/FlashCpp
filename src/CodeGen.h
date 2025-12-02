@@ -8419,6 +8419,11 @@ private:
 				// If we see one here, it means the parser didn't expand it (shouldn't happen)
 				continue;
 			}
+			
+			// Skip [this] captures as they don't have an identifier to look up
+			if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+				continue;
+			}
 
 			// Look up the captured variable in the current scope
 			std::string_view var_name = capture.identifier_name();
