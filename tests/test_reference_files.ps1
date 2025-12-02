@@ -134,7 +134,6 @@ $expectedCompileFailures = @(
     "test_tuple_with_constructor_fail.cpp",     # Invalid C++
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
     "test_va_implementation.cpp",          # C-style variadic details issue
-    "test_var_template_values.cpp",        # Variable template values issue
     "test_lambda_cpp20_comprehensive.cpp"  # Path-dependent parser bug - see PARSER_BUG_INVESTIGATION.md
 )
 
