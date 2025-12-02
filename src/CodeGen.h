@@ -3779,12 +3779,26 @@ private:
 		if (symbol->is<FunctionDeclarationNode>()) {
 			// This is a function name being used as a value (e.g., fp = add)
 			// Generate FunctionAddress IR instruction
+			const auto& func_decl = symbol->as<FunctionDeclarationNode>();
+			
+			// Compute mangled name from the function declaration
+			const auto& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			std::vector<TypeSpecifierNode> param_types;
+			for (const auto& param : func_decl.parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+				}
+			}
+			std::string_view mangled = generateMangledNameForCall(
+				identifierNode.name(), return_type, param_types, func_decl.is_variadic(), "");
+			
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
 			op.result.type = Type::FunctionPointer;
 			op.result.size_in_bits = 64;
 			op.result.value = func_addr_var;
 			op.function_name = identifierNode.name();
+			op.mangled_name = mangled;
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
