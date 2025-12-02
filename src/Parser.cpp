@@ -6798,9 +6798,9 @@ ParseResult Parser::parse_statement_or_declaration()
 	}
 	else if (current_token.type() == Token::Type::Operator) {
 		// Handle prefix operators as expression statements
-		// e.g., ++i; or --i; or *p = 42;
+		// e.g., ++i; or --i; or *p = 42; or +[](){}; or -x;
 		std::string_view op = current_token.value();
-		if (op == "++" || op == "--" || op == "*" || op == "&") {
+		if (op == "++" || op == "--" || op == "*" || op == "&" || op == "+" || op == "-" || op == "!" || op == "~") {
 			return parse_expression();
 		}
 		// Unknown operator - consume token to avoid infinite loop and return error
