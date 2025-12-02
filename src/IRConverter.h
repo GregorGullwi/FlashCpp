@@ -3347,7 +3347,9 @@ private:
 
 				// Extract function name from typed payload
 				const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
-				current_func_name = func_decl.function_name;
+				// Use mangled name if available (for member functions like lambda operator()),
+				// otherwise use function_name
+				current_func_name = func_decl.mangled_name.empty() ? func_decl.function_name : func_decl.mangled_name;
 				current_func_start = i + 1; // Instructions start after FunctionDecl
 			}
 		}
@@ -5808,7 +5810,11 @@ private:
 		// Use typed payload path
 		const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 		
-		std::string func_name_str = func_decl.function_name;
+		// Use mangled name if available (for member functions like lambda operator()),
+		// otherwise use function_name. This is important for nested lambdas where multiple
+		// operator() functions would otherwise have the same name.
+		std::string func_name_str = func_decl.mangled_name.empty() ? 
+			std::string(func_decl.function_name) : std::string(func_decl.mangled_name);
 		std::string struct_name_str = func_decl.struct_name;
 		
 		// Construct return type

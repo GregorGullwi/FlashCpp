@@ -11351,19 +11351,43 @@ ParseResult Parser::parse_lambda_expression() {
                 // Check if this is capture-all by reference or a specific reference capture
                 auto next_token = peek_token();
                 if (next_token.has_value() && next_token->type() == Token::Type::Identifier) {
-                    // Specific reference capture: [&x]
+                    // Could be [&x] or [&x = expr]
                     Token id_token = *next_token;
                     consume_token();
-                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByReference, id_token));
+                    
+                    // Check for init-capture: [&x = expr]
+                    if (peek_token().has_value() && peek_token()->value() == "=") {
+                        consume_token(); // consume '='
+                        auto init_expr = parse_expression();
+                        if (init_expr.is_error()) {
+                            return init_expr;
+                        }
+                        captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByReference, id_token, *init_expr.node()));
+                    } else {
+                        // Simple reference capture: [&x]
+                        captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByReference, id_token));
+                    }
                 } else {
                     // Capture-all by reference: [&]
                     captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::AllByReference));
                 }
             } else if (token->type() == Token::Type::Identifier) {
-                // Capture by value: [x]
+                // Could be [x] or [x = expr]
                 Token id_token = *token;
                 consume_token();
-                captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token));
+                
+                // Check for init-capture: [x = expr]
+                if (peek_token().has_value() && peek_token()->value() == "=") {
+                    consume_token(); // consume '='
+                    auto init_expr = parse_expression();
+                    if (init_expr.is_error()) {
+                        return init_expr;
+                    }
+                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token, *init_expr.node()));
+                } else {
+                    // Simple value capture: [x]
+                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::ByValue, id_token));
+                }
             } else {
                 return ParseResult::error("Expected capture specifier in lambda", *token);
             }
@@ -11544,20 +11568,60 @@ ParseResult Parser::parse_lambda_expression() {
                 continue;
             }
 
-            // Look up the captured variable in the current scope
             std::string_view var_name = capture.identifier_name();
-            std::optional<ASTNode> var_symbol = lookup_symbol(var_name);
-
-            if (!var_symbol.has_value()) {
-                continue;
+            TypeSpecifierNode var_type(Type::Int, TypeQualifier::None, 32);  // Default type
+            
+            if (capture.has_initializer()) {
+                // Init-capture: type is inferred from the initializer
+                // For now, use simple type inference based on the initializer
+                const auto& init_expr = *capture.initializer();
+                
+                // Try to infer type from the initializer expression
+                if (init_expr.is<NumericLiteralNode>()) {
+                    var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                } else if (init_expr.is<IdentifierNode>()) {
+                    // Look up the identifier's type
+                    std::string_view init_id = init_expr.as<IdentifierNode>().name();
+                    auto init_symbol = lookup_symbol(init_id);
+                    if (init_symbol.has_value()) {
+                        const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
+                        if (init_decl) {
+                            var_type = init_decl->type_node().as<TypeSpecifierNode>();
+                        }
+                    }
+                } else if (init_expr.is<ExpressionNode>()) {
+                    // For expressions, try to get the type from a binary operation or other expr
+                    const auto& expr_node = init_expr.as<ExpressionNode>();
+                    if (std::holds_alternative<BinaryOperatorNode>(expr_node)) {
+                        // For binary operations, assume int type for arithmetic
+                        var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                    } else if (std::holds_alternative<IdentifierNode>(expr_node)) {
+                        std::string_view init_id = std::get<IdentifierNode>(expr_node).name();
+                        auto init_symbol = lookup_symbol(init_id);
+                        if (init_symbol.has_value()) {
+                            const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
+                            if (init_decl) {
+                                var_type = init_decl->type_node().as<TypeSpecifierNode>();
+                            }
+                        }
+                    }
+                }
+                // For other expression types, we'll use the default int type
+            } else {
+                // Regular capture: look up the variable in the current scope
+                std::optional<ASTNode> var_symbol = lookup_symbol(var_name);
+                
+                if (!var_symbol.has_value()) {
+                    continue;
+                }
+                
+                const DeclarationNode* var_decl = get_decl_from_symbol(*var_symbol);
+                if (!var_decl) {
+                    continue;
+                }
+                
+                var_type = var_decl->type_node().as<TypeSpecifierNode>();
             }
-
-            const DeclarationNode* var_decl = get_decl_from_symbol(*var_symbol);
-            if (!var_decl) {
-                continue;
-            }
-
-            const auto& var_type = var_decl->type_node().as<TypeSpecifierNode>();
 
             // Determine size and alignment based on capture kind
             size_t member_size;

@@ -2311,8 +2311,8 @@ public:
 		AllByReference // [&]
 	};
 
-	explicit LambdaCaptureNode(CaptureKind kind, Token identifier = Token())
-		: kind_(kind), identifier_(identifier) {}
+	explicit LambdaCaptureNode(CaptureKind kind, Token identifier = Token(), std::optional<ASTNode> initializer = std::nullopt)
+		: kind_(kind), identifier_(identifier), initializer_(initializer) {}
 
 	CaptureKind kind() const { return kind_; }
 	std::string_view identifier_name() const { return identifier_.value(); }
@@ -2320,10 +2320,13 @@ public:
 	bool is_capture_all() const {
 		return kind_ == CaptureKind::AllByValue || kind_ == CaptureKind::AllByReference;
 	}
+	bool has_initializer() const { return initializer_.has_value(); }
+	const std::optional<ASTNode>& initializer() const { return initializer_; }
 
 private:
 	CaptureKind kind_;
 	Token identifier_;  // Empty for capture-all
+	std::optional<ASTNode> initializer_;  // For init-captures like [x = expr]
 };
 
 // Lambda expression node
