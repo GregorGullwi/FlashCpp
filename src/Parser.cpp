@@ -10504,26 +10504,41 @@ ParseResult Parser::parse_primary_expression()
 			ParseResult type_result = parse_type_specifier();
 
 			if (!type_result.is_error() && type_result.node().has_value()) {
+				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+				
+				// Parse pointer declarators: * (potentially with const/volatile)
+				// This handles C-style casts like (int*)value, (const char*)str, etc.
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*") {
+					consume_token(); // consume '*'
+					
+					// Check for cv-qualifiers after the pointer
+					CVQualifier ptr_cv = CVQualifier::None;
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+						std::string_view kw = peek_token()->value();
+						if (kw == "const") {
+							ptr_cv = static_cast<CVQualifier>(
+								static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+							consume_token();
+						} else if (kw == "volatile") {
+							ptr_cv = static_cast<CVQualifier>(
+								static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+							consume_token();
+						} else {
+							break;
+						}
+					}
+					
+					type_spec.add_pointer_level(ptr_cv);
+				}
+				
 				// Parse reference declarators: & or &&
 				// This handles C-style casts like (Widget&&)value
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
 					std::string_view op_value = peek_token()->value();
 					if (op_value == "&&" || op_value == "&") {
-						// Don't modify the original type node - create a copy with reference set
-						TypeSpecifierNode& old_type_spec = type_result.node()->as<TypeSpecifierNode>();
 						bool is_rvalue = (op_value == "&&");
 						consume_token();
-						
-						// Create new TypeSpecifierNode with same properties plus reference
-						TypeSpecifierNode new_type_spec(
-							old_type_spec.type(), old_type_spec.type_index(), old_type_spec.size_in_bits(),
-							old_type_spec.token(), old_type_spec.cv_qualifier());
-						new_type_spec.set_reference(is_rvalue);
-						new_type_spec.copy_pointer_levels_from(old_type_spec);
-						
-						// Replace the parse result with the new node (wrap in proper node type)
-						auto new_type_node = emplace_node<TypeSpecifierNode>(new_type_spec);
-						type_result = ParseResult::success(new_type_node);
+						type_spec.set_reference(is_rvalue);
 					}
 				}
 
