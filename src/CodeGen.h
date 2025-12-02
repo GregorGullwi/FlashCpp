@@ -8527,12 +8527,13 @@ private:
 					}
 
 					std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
-					const StructMember* member = struct_info->findMember(std::string(var_name));  // findMember needs std::string
+					std::string var_name_str(var_name);  // Single conversion for both uses below
+					const StructMember* member = struct_info->findMember(var_name_str);
 
 					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
 						// Check if this variable is a captured variable from an enclosing lambda
 						bool is_captured_from_enclosing = !current_lambda_closure_type_.empty() &&
-						                                   current_lambda_captures_.find(std::string(var_name)) != current_lambda_captures_.end();
+						                                   current_lambda_captures_.count(var_name_str) > 0;
 
 						// Handle init-captures
 						if (capture.has_initializer()) {

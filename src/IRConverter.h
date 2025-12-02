@@ -5813,9 +5813,9 @@ private:
 		// Use mangled name if available (for member functions like lambda operator()),
 		// otherwise use function_name. This is important for nested lambdas where multiple
 		// operator() functions would otherwise have the same name.
-		std::string func_name_str = func_decl.mangled_name.empty() ? 
-			std::string(func_decl.function_name) : std::string(func_decl.mangled_name);
-		std::string struct_name_str = func_decl.struct_name;
+		std::string_view func_name = func_decl.mangled_name.empty() ? 
+			func_decl.function_name : func_decl.mangled_name;
+		std::string_view struct_name = func_decl.struct_name;
 		
 		// Construct return type
 		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits));
@@ -5836,19 +5836,15 @@ private:
 		Linkage linkage = func_decl.linkage;
 		bool is_variadic = func_decl.is_variadic;
 		std::string_view mangled_name = func_decl.mangled_name;
-		
-		// Common processing
-		std::string_view func_name = func_name_str;
-		std::string_view struct_name = struct_name_str;
 
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
 		if (!struct_name.empty()) {
 			// Member function - include struct name
-			writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, std::string(struct_name), linkage, is_variadic, mangled_name);
+			writer.addFunctionSignature(func_name, return_type, parameter_types, struct_name, linkage, is_variadic, mangled_name);
 		} else {
 			// Regular function
-			writer.addFunctionSignature(std::string(func_name), return_type, parameter_types, linkage, is_variadic, mangled_name);
+			writer.addFunctionSignature(func_name, return_type, parameter_types, linkage, is_variadic, mangled_name);
 		}
 		
 		// Finalize previous function before starting new one
@@ -5953,6 +5949,8 @@ private:
 		}
 
 		// Function debug info is now added in add_function_symbol() with length 0
+		// Create std::string where needed for function calls that require it
+		std::string func_name_str(func_name);
 		StackVariableScope& var_scope = variable_scopes.emplace_back();
 		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope, param_count);
 		
@@ -5970,7 +5968,7 @@ private:
 		
 		// DEBUG: Check if we're skipping the prologue
 		if (total_stack_space == 0 && func_name_str.find("insert") != std::string::npos) {
-			FLASH_LOG(Codegen, Warning, "Function ", func_name_str, " has total_stack_space=0!");
+			FLASH_LOG(Codegen, Warning, "Function ", func_name, " has total_stack_space=0!");
 			FLASH_LOG(Codegen, Warning, "  named_vars_size=", func_stack_space.named_vars_size);
 			FLASH_LOG(Codegen, Warning, "  shadow_stack_space=", func_stack_space.shadow_stack_space);
 			FLASH_LOG(Codegen, Warning, "  temp_vars_size=", func_stack_space.temp_vars_size);
@@ -5981,7 +5979,7 @@ private:
 		functionSymbols[func_name] = func_offset;
 
 		// Track function for debug information
-		current_function_name_ = func_name_str;  // Use the std::string directly, not the string_view
+		current_function_name_ = func_name_str;
 		current_function_mangled_name_ = mangled_name;
 		current_function_offset_ = func_offset;
 
@@ -5996,7 +5994,7 @@ private:
 
 		// Set up debug information for this function
 		// For now, use file ID 0 (first source file)
-		writer.set_current_function_for_debug(func_name_str, 0);
+		writer.set_current_function_for_debug(std::string(func_name), 0);
 
 		// If this is a member function, check if we need to register vtable for this class
 		if (!struct_name.empty()) {
@@ -6055,7 +6053,7 @@ private:
 					// Check if this function is virtual and add it to the vtable
 					const StructMemberFunction* member_func = nullptr;
 					for (const auto& func : struct_info->member_functions) {
-						if (func.name == func_name_str) {
+						if (func.name == func_name) {
 							member_func = &func;
 							break;
 						}
@@ -6067,7 +6065,7 @@ private:
 							if (vt.vtable_symbol == vtable_symbol) {
 								if (member_func->vtable_index < static_cast<int>(vt.function_symbols.size())) {
 									vt.function_symbols[member_func->vtable_index] = mangled_name;
-									FLASH_LOG(Codegen, Debug, "  Added virtual function ", func_name_str, 
+									FLASH_LOG(Codegen, Debug, "  Added virtual function ", func_name, 
 									          " at vtable index ", member_func->vtable_index);
 								}
 								break;
