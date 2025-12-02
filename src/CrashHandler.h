@@ -20,6 +20,8 @@
 #include <dbghelp.h>
 #include <cstdio>
 #include <ctime>
+#include <csignal>
+#include <cstdlib>
 
 #pragma comment(lib, "dbghelp.lib")
 
@@ -261,9 +263,54 @@ inline LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Vectored exception handler for even earlier crash detection
+inline LONG WINAPI vectoredExceptionHandler(EXCEPTION_POINTERS* exceptionInfo) {
+    // Only handle unrecoverable exceptions
+    DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
+    if (code == EXCEPTION_ACCESS_VIOLATION ||
+        code == EXCEPTION_STACK_OVERFLOW ||
+        code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+        code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
+        code == EXCEPTION_PRIV_INSTRUCTION) {
+        unhandledExceptionFilter(exceptionInfo);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// Invalid parameter handler for CRT errors
+inline void invalidParameterHandler(const wchar_t* /*expression*/,
+                                     const wchar_t* /*function*/,
+                                     const wchar_t* /*file*/,
+                                     unsigned int /*line*/,
+                                     uintptr_t /*reserved*/) {
+    // Trigger an access violation to get a stack trace
+    RaiseException(EXCEPTION_NONCONTINUABLE_EXCEPTION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
+}
+
+// Pure virtual function call handler
+inline void purecallHandler() {
+    RaiseException(EXCEPTION_ILLEGAL_INSTRUCTION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
+}
+
+// SIGABRT handler
+inline void abortHandler(int /*signal*/) {
+    RaiseException(EXCEPTION_NONCONTINUABLE_EXCEPTION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
+}
+
 // Install the crash handler - call this at program startup
 inline void install() {
+    // Install vectored exception handler (highest priority)
+    AddVectoredExceptionHandler(1, vectoredExceptionHandler);
+    
+    // Install unhandled exception filter (fallback)
     SetUnhandledExceptionFilter(unhandledExceptionFilter);
+    
+    // Install CRT error handlers
+    _set_invalid_parameter_handler(invalidParameterHandler);
+    _set_purecall_handler(purecallHandler);
+    
+    // Install signal handler for abort
+    signal(SIGABRT, abortHandler);
 }
 
 } // namespace CrashHandler
