@@ -638,6 +638,133 @@ int test_global_vars() {
 }
 
 // ============================================================================
+// SECTION 11: ALTERNATIVE TOKENS AND C++20 EXTRAS
+// ============================================================================
+
+// Test alternative operator representations (ISO 646 keywords)
+int test_alternative_operators() {
+    int a = 12;  // 1100
+    int b = 10;  // 1010
+    
+    // Alternative keywords for bitwise operators
+    int and_result = a bitand b;   // Same as a & b = 8 (1000)
+    int or_result = a bitor b;     // Same as a | b = 14 (1110)
+    int xor_result = a xor b;      // Same as a ^ b = 6 (0110)
+    int compl_result = compl a;    // Same as ~a = -13
+    
+    // Alternative keywords for logical operators
+    bool x = true;
+    bool y = false;
+    bool and_logical = x and y;    // Same as x && y = false
+    bool or_logical = x or y;      // Same as x || y = true
+    bool not_logical = not y;      // Same as !y = true
+    
+    return (and_result == 8) and (or_result == 14) and (xor_result == 6) and 
+           (not_logical) and (or_logical) ? 10 : 0;
+}
+
+// Test sizeof with various types
+int test_sizeof_operator() {
+    int i = 42;
+    char c = 'A';
+    double d = 3.14;
+    
+    int size_int = sizeof(i);
+    int size_char = sizeof(c);
+    int size_double = sizeof(d);
+    int size_int_type = sizeof(int);
+    
+    return (size_int == 4) && (size_char == 1) && (size_double == 8) ? 10 : 0;
+}
+
+// Test comma operator
+int test_comma_operator() {
+    int a = 1;
+    int b = 2;
+    int c;
+    
+    c = (a = 5, b = 10, a + b);  // c = 15
+    
+    return c == 15 ? 10 : 0;
+}
+
+// Test nullptr comparisons
+int test_nullptr_advanced() {
+    int* p1 = nullptr;
+    int* p2 = nullptr;
+    int x = 42;
+    int* p3 = &x;
+    
+    bool both_null = (p1 == p2);
+    bool not_null = (p3 != nullptr);
+    
+    return (both_null && not_null) ? 10 : 0;
+}
+
+// Test explicit type conversions
+int test_explicit_casts() {
+    double d = 3.7;
+    int i = static_cast<int>(d);  // 3
+    
+    float f = 2.5f;
+    int j = static_cast<int>(f);  // 2
+    
+    bool b = static_cast<bool>(42);  // true
+    
+    return (i == 3) && (j == 2) && b ? 10 : 0;
+}
+
+// Test address-of and dereference operators
+int test_address_and_deref() {
+    int x = 42;
+    int* ptr = &x;
+    int value = *ptr;
+    
+    *ptr = 100;
+    
+    return (value == 42) && (x == 100) && (*ptr == 100) ? 10 : 0;
+}
+
+// Test array subscript operator
+int test_array_subscript() {
+    int arr[5] = {10, 20, 30, 40, 50};
+    
+    int first = arr[0];
+    int third = arr[2];
+    int last = arr[4];
+    
+    arr[1] = 25;
+    
+    return (first == 10) && (third == 30) && (arr[1] == 25) && (last == 50) ? 10 : 0;
+}
+
+// Test octal literals
+int test_octal_literals() {
+    int oct1 = 010;   // 8 in decimal
+    int oct2 = 077;   // 63 in decimal
+    int oct3 = 0100;  // 64 in decimal
+    
+    return (oct1 == 8) && (oct2 == 63) && (oct3 == 64) ? 10 : 0;
+}
+
+// Test binary literals (C++14 feature, but widely supported)
+int test_binary_literals() {
+    int bin1 = 0b1010;     // 10 in decimal
+    int bin2 = 0b11111111; // 255 in decimal
+    
+    return (bin1 == 10) && (bin2 == 255) ? 10 : 0;
+}
+
+// Test digit separators (C++14 feature)
+int test_digit_separators() {
+    int large = 1'000'000;        // 1 million
+    int hex = 0xFF'FF;            // 65535
+    long long big = 1'000'000'000; // 1 billion
+    
+    return (large == 1000000) && (hex == 65535) && (big == 1000000000) ? 10 : 0;
+}
+
+// ============================================================================
 // MAIN TEST RUNNER
 // ============================================================================
 
@@ -712,6 +839,19 @@ int main() {
     total += test_nested_struct();      // 10
     total += test_static_vars();        // 10
     total += test_global_vars();        // 10
+    expected += 100;
+    
+    // Section 11: Alternative Tokens and C++20 Extras (100 points)
+    total += test_alternative_operators(); // 10
+    total += test_sizeof_operator();       // 10
+    total += test_comma_operator();        // 10
+    total += test_nullptr_advanced();      // 10
+    total += test_explicit_casts();        // 10
+    total += test_address_and_deref();     // 10
+    total += test_array_subscript();       // 10
+    total += test_octal_literals();        // 10
+    total += test_binary_literals();       // 10
+    total += test_digit_separators();      // 10
     expected += 100;
     
     // Return 0 if all tests pass, otherwise return number of missing points
