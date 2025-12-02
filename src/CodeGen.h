@@ -3169,15 +3169,106 @@ private:
 				// Lambda expression initializer (direct)
 				// Generate the lambda functions (operator() and __invoke)
 				const auto& lambda = init_node.as<LambdaExpressionNode>();
-				generateLambdaExpressionIr(lambda);
-				// For now, lambda variables are just empty structs (1 byte)
-				// TODO: Store function pointer or closure data in the variable
+				auto lambda_operands = generateLambdaExpressionIr(lambda);
+				
+				// Check if target type is a function pointer - if so, store __invoke address
+				if (type_node.is_function_pointer() && lambda.captures().empty()) {
+					// For function pointer = lambda, we need to store the address of __invoke
+					std::string_view invoke_name = StringBuilder()
+						.append(lambda.generate_lambda_name())
+						.append("_invoke")
+						.commit();
+					
+					// Compute the mangled name for the __invoke function
+					// Lambda return type defaults to int if not specified
+					Type return_type = Type::Int;
+					int return_size = 32;
+					if (lambda.return_type().has_value()) {
+						const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
+						return_type = ret_type_node.type();
+						return_size = ret_type_node.size_in_bits();
+					}
+					TypeSpecifierNode return_type_node(return_type, 0, return_size, lambda.lambda_token());
+					
+					// Build parameter types
+					std::vector<TypeSpecifierNode> param_type_nodes;
+					for (const auto& param : lambda.parameters()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							param_type_nodes.push_back(param_type);
+						}
+					}
+					
+					// Generate mangled name
+					std::string_view mangled = generateMangledNameForCall(
+						invoke_name, return_type_node, param_type_nodes, false, "");
+					
+					// Generate FunctionAddress instruction to get the address
+					TempVar func_addr_var = var_counter.next();
+					FunctionAddressOp op;
+					op.result.type = Type::FunctionPointer;
+					op.result.size_in_bits = 64;
+					op.result.value = func_addr_var;
+					op.function_name = invoke_name;
+					op.mangled_name = mangled;
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
+					
+					// Add to operands so it gets stored in the variable
+					operands.emplace_back(Type::FunctionPointer);
+					operands.emplace_back(64);
+					operands.emplace_back(func_addr_var);
+				}
+				// For non-function-pointer targets, lambda variables are just empty structs (1 byte)
 			} else if (init_node.is<ExpressionNode>() && 
 			           std::holds_alternative<LambdaExpressionNode>(init_node.as<ExpressionNode>())) {
 				// Lambda expression wrapped in ExpressionNode
 				const auto& lambda = std::get<LambdaExpressionNode>(init_node.as<ExpressionNode>());
-				generateLambdaExpressionIr(lambda);
-				// For now, lambda variables are just empty structs (1 byte)
+				auto lambda_operands = generateLambdaExpressionIr(lambda);
+				
+				// Check if target type is a function pointer - if so, store __invoke address
+				if (type_node.is_function_pointer() && lambda.captures().empty()) {
+					std::string_view invoke_name = StringBuilder()
+						.append(lambda.generate_lambda_name())
+						.append("_invoke")
+						.commit();
+					
+					// Compute the mangled name for the __invoke function
+					Type return_type = Type::Int;
+					int return_size = 32;
+					if (lambda.return_type().has_value()) {
+						const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
+						return_type = ret_type_node.type();
+						return_size = ret_type_node.size_in_bits();
+					}
+					TypeSpecifierNode return_type_node(return_type, 0, return_size, lambda.lambda_token());
+					
+					std::vector<TypeSpecifierNode> param_type_nodes;
+					for (const auto& param : lambda.parameters()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							param_type_nodes.push_back(param_type);
+						}
+					}
+					
+					std::string_view mangled = generateMangledNameForCall(
+						invoke_name, return_type_node, param_type_nodes, false, "");
+					
+					// Generate FunctionAddress instruction to get the address
+					TempVar func_addr_var = var_counter.next();
+					FunctionAddressOp op;
+					op.result.type = Type::FunctionPointer;
+					op.result.size_in_bits = 64;
+					op.result.value = func_addr_var;
+					op.function_name = invoke_name;
+					op.mangled_name = mangled;
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
+					
+					operands.emplace_back(Type::FunctionPointer);
+					operands.emplace_back(64);
+					operands.emplace_back(func_addr_var);
+				}
 			} else {
 				// Regular expression initializer
 				// For struct types with copy constructors, check if it's an rvalue (function return)

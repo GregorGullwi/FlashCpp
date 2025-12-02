@@ -9743,7 +9743,15 @@ private:
 		textSectionData.push_back(0x00);
 
 		// Add REL32 relocation for the function address (RIP-relative)
-		std::string mangled_name = writer.getMangledName(std::string(func_name));
+		// Use pre-computed mangled_name if provided (for lambdas), otherwise look up
+		std::string_view mangled_name;
+		std::string looked_up_name;  // Storage for looked-up name if needed
+		if (!op.mangled_name.empty()) {
+			mangled_name = op.mangled_name;
+		} else {
+			looked_up_name = writer.getMangledName(std::string(func_name));
+			mangled_name = looked_up_name;
+		}
 		writer.add_relocation(reloc_position, mangled_name, IMAGE_REL_AMD64_REL32);
 
 		// Store RAX to result variable

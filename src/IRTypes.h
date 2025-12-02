@@ -809,6 +809,7 @@ struct GlobalLoadOp {
 struct FunctionAddressOp {
 	TypedValue result;           // Result with type, size, and temp var (function pointer)
 	std::string_view function_name;  // Function name
+	std::string_view mangled_name;   // Pre-computed mangled name (optional, for lambdas)
 };
 
 // Variable declaration (local)
