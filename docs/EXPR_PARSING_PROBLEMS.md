@@ -55,15 +55,15 @@ int main() {
    int sum<int, int>(int arg0, int arg1) { ... }  // Parses correctly
    ```
 
-### What Doesn't Work ❌
+### What Works Now (After Fix) ✅
 
-1. **Multi-argument template calls**
+1. **Multi-argument template calls with explicit specializations**
    ```cpp
-   int c = sum<int, int>(3, 7);  // FAILS - parser error
-   int d = sum<int, int, int>(1, 2, 4);  // FAILS - parser error
+   int c = sum<int, int>(3, 7);  // NOW WORKS - uses specialization lookup
+   int d = sum<int, int, int>(1, 2, 4);  // NOW WORKS
    ```
 
-## Root Cause Analysis
+## Root Cause Analysis (Historical)
 
 ### Parser Flow
 

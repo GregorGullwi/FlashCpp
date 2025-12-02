@@ -14451,6 +14451,10 @@ ParseResult Parser::parse_template_declaration() {
 			ASTNode func_node_copy = *func_result.node();
 			gTemplateRegistry.registerSpecialization(func_base_name, spec_template_args, func_node_copy);
 			
+			// Also add to symbol table so codegen can find it during overload resolution
+			// Use the base function name (without template args) so it can be looked up
+			gSymbolTable.insert(func_base_name, func_node_copy);
+			
 			// Also add to AST so it gets code-generated
 			return saved_position.success(func_node_copy);
 		}
@@ -15405,6 +15409,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 // Try to instantiate a template with explicit template arguments
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types) {
+	// FIRST: Check if we have an explicit specialization for these template arguments
+	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, explicit_types);
+	if (specialization_opt.has_value()) {
+		FLASH_LOG(Templates, Debug, "Found explicit specialization for ", template_name);
+		return *specialization_opt;
+	}
+
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 	if (!template_opt.has_value()) {
@@ -15420,9 +15432,38 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 
+	// Check if template has a variadic parameter pack
+	bool has_variadic_pack = false;
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			if (tparam.is_variadic()) {
+				has_variadic_pack = true;
+				break;
+			}
+		}
+	}
+
 	// Verify we have the right number of template arguments
-	if (explicit_types.size() != template_params.size()) {
-		return std::nullopt;  // Wrong number of template arguments
+	// For variadic templates, we allow any number of arguments >= number of non-pack parameters
+	if (!has_variadic_pack && explicit_types.size() != template_params.size()) {
+		return std::nullopt;  // Wrong number of template arguments for non-variadic template
+	}
+	
+	// For variadic templates, count non-pack parameters and verify we have at least that many
+	if (has_variadic_pack) {
+		size_t non_pack_params = 0;
+		for (const auto& param : template_params) {
+			if (param.is<TemplateParameterNode>()) {
+				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+				if (!tparam.is_variadic()) {
+					++non_pack_params;
+				}
+			}
+		}
+		if (explicit_types.size() < non_pack_params) {
+			return std::nullopt;  // Not enough template arguments
+		}
 	}
 
 	// Build template argument list
