@@ -111,6 +111,8 @@ public:
 		: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
 		// Generate static member declarations for template classes before processing AST
 		generateStaticMemberDeclarations();
+		// Generate trivial default constructors for structs that need them
+		generateTrivialDefaultConstructors();
 	}
 
 	void visit(const ASTNode& node) {
@@ -384,6 +386,100 @@ public:
 					}
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
+			}
+		}
+	}
+
+	// Generate trivial default constructors for structs that need them
+	// This handles template instantiations like Tuple<> that have no user-defined constructors
+	void generateTrivialDefaultConstructors() {
+		std::unordered_set<const TypeInfo*> processed;
+		
+		for (const auto& [type_name, type_info] : gTypesByName) {
+			if (!type_info->isStruct()) {
+				continue;
+			}
+			
+			// Skip pattern structs
+			if (type_name.find("_pattern_") != std::string::npos) {
+				continue;
+			}
+			
+			// Skip if already processed
+			if (processed.count(type_info) > 0) {
+				continue;
+			}
+			processed.insert(type_info);
+			
+			const StructTypeInfo* struct_info = type_info->getStructInfo();
+			if (!struct_info) {
+				continue;
+			}
+			
+			// Check if this struct needs a trivial default constructor
+			// It needs one if:
+			// 1. It has the needs_default_constructor flag set, OR
+			// 2. It has no constructors defined AND has base classes that need construction
+			bool has_constructor = false;
+			for (const auto& mem_func : struct_info->member_functions) {
+				if (mem_func.is_constructor) {
+					has_constructor = true;
+					break;
+				}
+			}
+			
+			bool needs_trivial_ctor = struct_info->needs_default_constructor || 
+			                          (!has_constructor && !struct_info->base_classes.empty());
+			
+			if (!needs_trivial_ctor && has_constructor) {
+				continue;
+			}
+			
+			// Generate trivial default constructor if no constructor exists
+			if (!has_constructor) {
+				FLASH_LOG(Codegen, Debug, "Generating trivial constructor for ", type_name);
+				
+				// Use the pattern from visitConstructorDeclarationNode
+				// Create function declaration for constructor
+				FunctionDeclOp ctor_decl_op;
+				ctor_decl_op.function_name = std::string(type_info->name_);
+				ctor_decl_op.struct_name = std::string(type_info->name_);
+				ctor_decl_op.return_type = Type::Void;
+				ctor_decl_op.return_size_in_bits = 0;
+				ctor_decl_op.return_pointer_depth = 0;
+				ctor_decl_op.linkage = Linkage::CPlusPlus;
+				ctor_decl_op.is_variadic = false;
+				
+				// Generate mangled name for default constructor
+				TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
+				std::vector<TypeSpecifierNode> empty_params;  // Explicit type to avoid ambiguity
+				ctor_decl_op.mangled_name = generateMangledNameForCall(
+					type_info->name_,
+					void_type,
+					empty_params,  // no parameters
+					false,  // not variadic
+					type_info->name_  // parent class name
+				);
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
+				
+				// Call base class constructors if any
+				for (const auto& base : struct_info->base_classes) {
+					auto base_type_it = gTypesByName.find(std::string(base.name));
+					if (base_type_it != gTypesByName.end()) {
+						ConstructorCallOp call_op;
+						call_op.struct_name = std::string(base_type_it->second->name_);
+						call_op.object = std::string_view("this");
+						// No arguments for default constructor
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
+					}
+				}
+				
+				// Emit return
+				ReturnOp ret_op;
+				// ReturnOp fields: return_value (optional), return_type (optional), return_size
+				// For void constructor, leave return_value as nullopt
+				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), Token()));
 			}
 		}
 	}

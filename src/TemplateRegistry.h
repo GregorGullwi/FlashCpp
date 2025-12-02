@@ -269,9 +269,35 @@ struct TemplatePattern {
 	bool matches(const std::vector<TemplateTypeArg>& concrete_args, 
 	             std::unordered_map<std::string, TemplateTypeArg>& param_substitutions) const
 	{
-		// Pattern and concrete args must have the same number of arguments
-		if (pattern_args.size() != concrete_args.size()) {
-			return false;
+		// Handle variadic templates: pattern may have fewer args if last template param is a pack
+		// Check if the last template parameter is variadic (a pack)
+		bool has_variadic_pack = false;
+		size_t pack_param_index = 0;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			if (template_params[i].is<TemplateParameterNode>()) {
+				const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+				if (param.is_variadic()) {
+					has_variadic_pack = true;
+					pack_param_index = i;
+					break;
+				}
+			}
+		}
+		
+		// For non-variadic patterns, sizes must match exactly
+		// For variadic patterns, concrete_args.size() >= pattern_args.size() - 1 
+		// (pack can be empty, matching 0 or more args)
+		if (!has_variadic_pack) {
+			if (pattern_args.size() != concrete_args.size()) {
+				return false;
+			}
+		} else {
+			// With variadic pack: need at least (pattern_args.size() - 1) concrete args
+			// Pattern <First, Rest...> has 2 pattern_args, but can match 1+ concrete args
+			// (Rest can be empty matching 0 args, or Rest can match 1+ args)
+			if (concrete_args.size() < pattern_args.size() - 1) {
+				return false;  // Not enough args for non-pack parameters
+			}
 		}
 	
 		param_substitutions.clear();
@@ -279,6 +305,23 @@ struct TemplatePattern {
 		// Check each pattern argument against the corresponding concrete argument
 		for (size_t i = 0; i < pattern_args.size(); ++i) {
 			const TemplateTypeArg& pattern_arg = pattern_args[i];
+			
+			// Handle variadic pack case: if i >= concrete_args.size(), 
+			// this pattern arg corresponds to a pack that matches 0 args (empty pack)
+			if (i >= concrete_args.size()) {
+				// This should only happen for the variadic pack parameter
+				// Check if this pattern position corresponds to a variadic pack
+				if (i < template_params.size() && template_params[i].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+					if (param.is_variadic()) {
+						// Empty pack is valid - continue without error
+						continue;
+					}
+				}
+				// Not a variadic pack but no concrete arg - pattern doesn't match
+				return false;
+			}
+			
 			const TemplateTypeArg& concrete_arg = concrete_args[i];
 		
 			// Find the template parameter name for this pattern position

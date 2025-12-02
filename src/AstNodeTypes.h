@@ -360,6 +360,7 @@ struct StructTypeInfo {
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
 	bool is_union = false;      // True if this is a union (all members at offset 0)
 	bool is_final = false;      // True if this class/struct is declared with 'final' keyword
+	bool needs_default_constructor = false;  // True if struct needs an implicit default constructor
 
 	// Virtual function support (Phase 2)
 	bool has_vtable = false;    // True if this struct has virtual functions
