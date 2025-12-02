@@ -980,6 +980,8 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	// LHS value
 	if (std::holds_alternative<unsigned long long>(op.lhs.value)) {
 		oss << std::get<unsigned long long>(op.lhs.value);
+	} else if (std::holds_alternative<double>(op.lhs.value)) {
+		oss << std::get<double>(op.lhs.value);
 	} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
 		oss << '%' << std::get<TempVar>(op.lhs.value).var_number;
 	} else if (std::holds_alternative<std::string_view>(op.lhs.value)) {
@@ -991,6 +993,8 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	// RHS value
 	if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
 		oss << std::get<unsigned long long>(op.rhs.value);
+	} else if (std::holds_alternative<double>(op.rhs.value)) {
+		oss << std::get<double>(op.rhs.value);
 	} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
 		oss << '%' << std::get<TempVar>(op.rhs.value).var_number;
 	} else if (std::holds_alternative<std::string_view>(op.rhs.value)) {
