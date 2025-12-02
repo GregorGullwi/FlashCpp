@@ -261,20 +261,62 @@ Implement full backtracking support in the parser:
    - Ensure existing functionality still works
    - Verify no performance degradation
 
-## Impact Assessment
+## Impact Assessment (Updated)
 
-### Files Currently Failing
+### Files Fixed
 
 1. **tests/test_variadic_func_template.cpp**
-   - Status: ⚠️ Partially working
-   - Issue: Multi-argument template calls fail
-   - Workaround: Use template argument deduction
+   - Status: ✅ FIXED
+   - Previously: Multi-argument template calls failed
+   - Now: Works correctly with explicit specialization lookup
 
 ### Files Fixed by Related Changes
 
 1. **tests/test_variadic_with_members.cpp**
    - Status: ✅ Fixed
    - Issue was in pattern matching, not expression parsing
+
+## Fix Applied (December 2025)
+
+The issue was resolved by making two key changes to `Parser.cpp`:
+
+### 1. Added Specialization Lookup in `try_instantiate_template_explicit`
+
+Before trying to instantiate a template from its generic definition, we now check if an explicit specialization exists:
+
+```cpp
+// FIRST: Check if we have an explicit specialization for these template arguments
+auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, explicit_types);
+if (specialization_opt.has_value()) {
+    return *specialization_opt;
+}
+```
+
+### 2. Added Symbol Table Registration for Specializations
+
+When parsing explicit specializations like `template<> int sum<int, int>(...)`, we now register them in the symbol table so the codegen can find them during overload resolution:
+
+```cpp
+gTemplateRegistry.registerSpecialization(func_base_name, spec_template_args, func_node_copy);
+// Also add to symbol table so codegen can find it during overload resolution
+gSymbolTable.insert(func_base_name, func_node_copy);
+```
+
+### 3. Added Variadic Pack Handling
+
+For templates with variadic packs like `template<typename... Args>`, we now properly validate argument counts:
+
+```cpp
+// Check if template has a variadic parameter pack
+bool has_variadic_pack = false;
+for (const auto& param : template_params) {
+    if (param.is<TemplateParameterNode>() && param.as<TemplateParameterNode>().is_variadic()) {
+        has_variadic_pack = true;
+        break;
+    }
+}
+// For variadic templates, we allow any number of arguments >= number of non-pack parameters
+```
 
 ## Related Issues
 
@@ -293,6 +335,13 @@ Implement full backtracking support in the parser:
 
 ## Conclusion
 
-The expression parsing issue with multi-argument template calls is a known limitation requiring careful enhancement of the lookahead mechanism. While this is the classic C++ parsing ambiguity, it can be resolved with targeted improvements to the parser's state management and disambiguation logic.
+The expression parsing issue with multi-argument template calls has been resolved. The fix takes a pragmatic approach: rather than implementing complex lookahead parsing to disambiguate template arguments from less-than comparisons at parse time, we:
 
-The recommended solution is to implement enhanced lookahead specifically for template argument lists, validating that parsed template arguments are followed by appropriate tokens (parentheses for function calls, double colon for qualified names) before committing to the template interpretation.
+1. Allow the existing parser to successfully parse template argument lists
+2. Look up explicit specializations first when resolving template calls
+3. Register specializations in both the template registry AND the symbol table for codegen to find
+
+This approach works because:
+- Template argument lists were already being parsed correctly by `parse_explicit_template_arguments()`
+- The issue was in finding and using the correct function specialization during code generation
+- By registering specializations in the symbol table, the codegen's overload resolution can match the correct function
