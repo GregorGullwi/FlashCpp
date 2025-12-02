@@ -6947,6 +6947,43 @@ private:
 
 				const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
 				std::string_view ptr_name = ptr_ident.name();
+				
+				// Special handling for 'this' in lambdas with [this] capture
+				if (ptr_name == "this" && !current_lambda_closure_type_.empty() && 
+				    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
+					// We're in a lambda that captured [this]
+					// Need to load the captured __this pointer from the closure
+					TempVar this_ptr = var_counter.next();
+					MemberLoadOp load_this;
+					load_this.result.value = this_ptr;
+					load_this.result.type = Type::Void;
+					load_this.result.size_in_bits = 64;
+					load_this.object = "this"sv;  // Lambda's this (the closure)
+					load_this.member_name = "__this"sv;
+					load_this.offset = -1;
+					load_this.is_reference = false;
+					load_this.is_rvalue_reference = false;
+					load_this.struct_type_info = nullptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
+					
+					// Use this loaded pointer as the base
+					// Try to determine the type_index from the closure's parent struct
+					// The lambda was defined in a member function, so we need to find what struct it belongs to
+					base_object = this_ptr;
+					base_type = Type::Struct;
+					
+					// Try to get the type_index from the lambda's closure struct name
+					// The closure struct should have metadata about the enclosing class
+					// For now, we'll search for the enclosing struct type
+					base_type_index = 0;
+					if (!current_struct_name_.empty()) {
+						auto type_it = gTypesByName.find(std::string(current_struct_name_));
+						if (type_it != gTypesByName.end()) {
+							base_type_index = type_it->second->type_index_;
+						}
+					}
+				} else {
+					// Normal pointer handling
 
 				// Look up the pointer in the symbol table
 				const std::optional<ASTNode> symbol = symbol_table.lookup(ptr_name);
@@ -6972,6 +7009,7 @@ private:
 				base_object = ptr_name;
 				base_type = ptr_type.type();
 				base_type_index = ptr_type.type_index();
+				}
 			}
 			else {
 				FLASH_LOG(Codegen, Error, "member access on unsupported expression type");
@@ -8462,6 +8500,27 @@ private:
 					if (capture.is_capture_all()) {
 						continue;
 					}
+					
+					// Handle [this] capture
+					if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+						const StructMember* member = struct_info->findMember("__this");
+						if (member) {
+							// Store the enclosing 'this' pointer in the closure
+							// In a member function, 'this' is TempVar(1)
+							MemberStoreOp store_this;
+							store_this.value.type = Type::Void;
+							store_this.value.size_in_bits = 64;
+							store_this.value.value = TempVar(1);
+							store_this.object = closure_var_name;
+							store_this.member_name = "__this"sv;
+							store_this.offset = static_cast<int>(member->offset);
+							store_this.is_reference = false;
+							store_this.is_rvalue_reference = false;
+							store_this.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_this), lambda.lambda_token()));
+						}
+						continue;
+					}
 
 					std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
 					const StructMember* member = struct_info->findMember(std::string(var_name));  // findMember needs std::string
@@ -8716,19 +8775,25 @@ private:
 		size_t capture_index = 0;
 		for (const auto& capture : lambda_info.captures) {
 			if (!capture.is_capture_all()) {
-				std::string var_name(capture.identifier_name());
-				current_lambda_captures_.insert(var_name);
-				current_lambda_capture_kinds_[var_name] = capture.kind();
+				if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+					// Mark that 'this' is captured
+					current_lambda_captures_.insert("this");
+					current_lambda_capture_kinds_["this"] = capture.kind();
+				} else {
+					std::string var_name(capture.identifier_name());
+					current_lambda_captures_.insert(var_name);
+					current_lambda_capture_kinds_[var_name] = capture.kind();
 
-				// Store the original type of the captured variable
-				if (capture_index < lambda_info.captured_var_decls.size()) {
-					const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
-					const DeclarationNode* decl = get_decl_from_symbol(var_decl);
-					if (decl) {
-						current_lambda_capture_types_[var_name] = decl->type_node().as<TypeSpecifierNode>();
+					// Store the original type of the captured variable
+					if (capture_index < lambda_info.captured_var_decls.size()) {
+						const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
+						const DeclarationNode* decl = get_decl_from_symbol(var_decl);
+						if (decl) {
+							current_lambda_capture_types_[var_name] = decl->type_node().as<TypeSpecifierNode>();
+						}
 					}
+					capture_index++;
 				}
-				capture_index++;
 			}
 		}
 
