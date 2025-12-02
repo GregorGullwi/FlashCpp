@@ -2596,6 +2596,11 @@ ParseResult Parser::parse_struct_declaration()
 									return arg_result;
 								}
 								if (auto arg_node = arg_result.node()) {
+									// Check for pack expansion: expr...
+									if (peek_token().has_value() && peek_token()->value() == "...") {
+										consume_token(); // consume '...'
+										// Mark this as a pack expansion - actual expansion happens at instantiation
+									}
 									init_args.push_back(*arg_node);
 								}
 							} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
@@ -12882,6 +12887,10 @@ ParseResult Parser::parse_template_declaration() {
 			// Create struct type info first so we can reference it
 			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 
+			// Create struct info for tracking members - required before parsing static members
+			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			struct_type_info.setStructInfo(std::move(struct_info));
+
 			// Parse class members (simplified - reuse struct parsing logic)
 			// For now, we'll parse a simple class body
 			AccessSpecifier current_access = struct_ref.default_access();
@@ -13059,6 +13068,17 @@ ParseResult Parser::parse_template_declaration() {
 								
 								std::string_view init_name = init_name_token->value();
 								
+								// Check for template arguments: Tuple<Rest...>(...)
+								if (peek_token().has_value() && peek_token()->value() == "<") {
+									// Parse and skip template arguments - they're part of the base class name
+									auto template_args_opt = parse_explicit_template_arguments();
+									if (!template_args_opt.has_value()) {
+										return ParseResult::error("Failed to parse template arguments in initializer", *peek_token());
+									}
+									// Modify init_name to include instantiated template name if needed
+									// For now, we just consume the template arguments and continue
+								}
+								
 								bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
 								bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
 								
@@ -13077,6 +13097,11 @@ ParseResult Parser::parse_template_declaration() {
 											return arg_result;
 										}
 										if (auto arg_node = arg_result.node()) {
+											// Check for pack expansion: expr...
+											if (peek_token().has_value() && peek_token()->value() == "...") {
+												consume_token(); // consume '...'
+												// Mark this as a pack expansion - actual expansion happens at instantiation
+											}
 											init_args.push_back(*arg_node);
 										}
 									} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
@@ -13343,9 +13368,9 @@ ParseResult Parser::parse_template_declaration() {
 				return ParseResult::error("Expected ';' after class declaration", *peek_token());
 			}
 
-			// struct_type_info was already created above
-			// Now create the StructTypeInfo with member information
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			// struct_type_info and struct_info were already created above
+			// Get pointer to the struct info to add member information
+			StructTypeInfo* struct_info_ptr = struct_type_info.getStructInfo();
 
 			// Add members to struct info
 			for (const auto& member_decl : struct_ref.members()) {
@@ -13379,7 +13404,7 @@ ParseResult Parser::parse_template_declaration() {
 					referenced_size_bits = referenced_size_bits ? referenced_size_bits : type_spec.size_in_bits();
 					member_alignment = sizeof(void*);
 				}
-				struct_info->addMember(
+				struct_info_ptr->addMember(
 					std::string(decl.identifier_token().value()),
 					type_spec.type(),
 					type_spec.type_index(),
@@ -13397,13 +13422,13 @@ ParseResult Parser::parse_template_declaration() {
 			for (const auto& member_func_decl : struct_ref.member_functions()) {
 				if (member_func_decl.is_constructor) {
 					// Add constructor to struct type info
-					struct_info->addConstructor(
+					struct_info_ptr->addConstructor(
 						member_func_decl.function_declaration,
 						member_func_decl.access
 					);
 				} else if (member_func_decl.is_destructor) {
 					// Add destructor to struct type info
-					struct_info->addDestructor(
+					struct_info_ptr->addDestructor(
 						member_func_decl.function_declaration,
 						member_func_decl.access,
 						member_func_decl.is_virtual
@@ -13412,7 +13437,7 @@ ParseResult Parser::parse_template_declaration() {
 					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& decl = func_decl.decl_node();
 
-					struct_info->addMemberFunction(
+					struct_info_ptr->addMemberFunction(
 						std::string(decl.identifier_token().value()),
 						member_func_decl.function_declaration,
 						member_func_decl.access,
@@ -13425,10 +13450,7 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			// Finalize the struct layout
-			struct_info->finalize();
-
-			// Store struct info in type info
-			struct_type_info.setStructInfo(std::move(struct_info));
+			struct_info_ptr->finalize();
 
 			// Parse delayed function bodies for specialization member functions
 			TokenPosition position_after_struct = save_token_position();
@@ -13711,6 +13733,67 @@ ParseResult Parser::parse_template_declaration() {
 						// They're registered in the global type system by parse_enum_declaration
 						// The semicolon is already consumed by parse_enum_declaration
 						continue;
+					} else if (peek_token()->value() == "static") {
+						// Handle static members: static const int size = 10;
+						consume_token(); // consume "static"
+						
+						// Handle optional const
+						bool is_const = false;
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword 
+							&& peek_token()->value() == "const") {
+							is_const = true;
+							consume_token();
+						}
+						
+						// Parse type and name
+						auto type_and_name = parse_type_and_name();
+						if (type_and_name.is_error()) {
+							return type_and_name;
+						}
+
+						// Optional initializer
+						std::optional<ASTNode> init_expr_opt;
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator
+							&& peek_token()->value() == "=") {
+							consume_token(); // consume "="
+
+							// Parse initializer expression
+							auto init_result = parse_expression();
+							if (init_result.is_error()) {
+								return init_result;
+							}
+							init_expr_opt = init_result.node();
+						}
+
+						// Consume semicolon
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after static member declaration", *peek_token());
+						}
+
+						// Get the declaration and type specifier
+						if (!type_and_name.node().has_value()) {
+							return ParseResult::error("Expected static member declaration", *peek_token());
+						}
+						const DeclarationNode& decl = type_and_name.node()->as<DeclarationNode>();
+						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+						// Register static member in struct info
+						// Calculate size and alignment for the static member
+						size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+
+						// Register the static member
+						struct_info->addStaticMember(
+							std::string(decl.identifier_token().value()),
+							type_spec.type(),
+							type_spec.type_index(),
+							member_size,
+							member_alignment,
+							current_access,
+							init_expr_opt,
+							is_const
+						);
+						continue;
 					}
 				}
 				
@@ -13765,6 +13848,17 @@ ParseResult Parser::parse_template_declaration() {
 								
 								std::string_view init_name = init_name_token->value();
 								
+								// Check for template arguments: Tuple<Rest...>(...)
+								if (peek_token().has_value() && peek_token()->value() == "<") {
+									// Parse and skip template arguments - they're part of the base class name
+									auto template_args_opt = parse_explicit_template_arguments();
+									if (!template_args_opt.has_value()) {
+										return ParseResult::error("Failed to parse template arguments in initializer", *peek_token());
+									}
+									// Modify init_name to include instantiated template name if needed
+									// For now, we just consume the template arguments and continue
+								}
+								
 								bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
 								bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
 								
@@ -13783,6 +13877,11 @@ ParseResult Parser::parse_template_declaration() {
 											return arg_result;
 										}
 										if (auto arg_node = arg_result.node()) {
+											// Check for pack expansion: expr...
+											if (peek_token().has_value() && peek_token()->value() == "...") {
+												consume_token(); // consume '...'
+												// Mark this as a pack expansion - actual expansion happens at instantiation
+											}
 											init_args.push_back(*arg_node);
 										}
 									} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
@@ -15373,8 +15472,17 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 		}
 
+		// Check for pack expansion (...)
+		bool is_pack_expansion = false;
+		if (peek_token().has_value() && peek_token()->value() == "...") {
+			consume_token(); // consume '...'
+			is_pack_expansion = true;
+		}
+
 		// Create TemplateTypeArg from the fully parsed type
-		template_args.push_back(TemplateTypeArg(type_node));
+		TemplateTypeArg arg(type_node);
+		arg.is_pack = is_pack_expansion;
+		template_args.push_back(arg);
 		if (out_type_nodes) {
 			out_type_nodes->push_back(*type_result.node());
 		}
@@ -16370,14 +16478,123 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	return instantiated_var_decl;
 }
 
+// Helper to instantiate a full template specialization (e.g., template<> struct Tuple<> {})
+std::optional<ASTNode> Parser::instantiate_full_specialization(
+	std::string_view template_name,
+	const std::vector<TemplateTypeArg>& template_args,
+	const ASTNode& spec_node
+) {
+	// Generate the instantiated class name
+	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+	
+	// Check if we already have this instantiation
+	auto existing_type = gTypesByName.find(instantiated_name);
+	if (existing_type != gTypesByName.end()) {
+		return std::nullopt;  // Already instantiated
+	}
+	
+	if (!spec_node.is<StructDeclarationNode>()) {
+		FLASH_LOG(Templates, Error, "Full specialization is not a StructDeclarationNode");
+		return std::nullopt;
+	}
+	
+	const StructDeclarationNode& spec_struct = spec_node.as<StructDeclarationNode>();
+	FLASH_LOG(Templates, Debug, "Instantiating full specialization: ", instantiated_name);
+	
+	// Create TypeInfo for the specialization
+	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+	auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), spec_struct.default_access());
+	
+	// Copy members from the specialization
+	for (const auto& member_decl : spec_struct.members()) {
+		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		
+		Type member_type = type_spec.type();
+		TypeIndex member_type_index = type_spec.type_index();
+		size_t ptr_depth = type_spec.pointer_depth();
+		
+		size_t member_size;
+		if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+			member_size = 8;
+		} else {
+			member_size = get_type_size_bits(member_type) / 8;
+		}
+		size_t member_alignment = get_type_alignment(member_type, member_size);
+		
+		struct_info->addMember(
+			std::string(decl.identifier_token().value()),
+			member_type,
+			member_type_index,
+			member_size,
+			member_alignment,
+			member_decl.access,
+			member_decl.default_initializer,
+			type_spec.is_reference(),
+			type_spec.is_rvalue_reference(),
+			(type_spec.is_reference() || type_spec.is_rvalue_reference()) ? get_type_size_bits(member_type) : 0
+		);
+	}
+	
+	// Copy static members
+	// Look up the specialization's StructTypeInfo to get static members
+	// (The specialization should have been parsed and its TypeInfo registered already)
+	std::string spec_name_lookup = std::string(spec_struct.name());
+	auto spec_type_it = gTypesByName.find(spec_name_lookup);
+	if (spec_type_it != gTypesByName.end()) {
+		const StructTypeInfo* spec_struct_info = spec_type_it->second->getStructInfo();
+		if (spec_struct_info) {
+			for (const auto& static_member : spec_struct_info->static_members) {
+				FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.name);
+				struct_info->static_members.push_back(static_member);
+			}
+		}
+	}
+	
+	// Check if there's an explicit constructor - if not, we need to generate a default one
+	bool has_constructor = false;
+	for (const auto& mem_func : spec_struct.member_functions()) {
+		if (mem_func.is_constructor) {
+			has_constructor = true;
+			// Add the constructor to struct_info
+			struct_info->addConstructor(mem_func.function_declaration, mem_func.access);
+		} else if (mem_func.is_destructor) {
+			struct_info->addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
+		} else {
+			const FunctionDeclarationNode& func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+			struct_info->addMemberFunction(
+				std::string(func.decl_node().identifier_token().value()),
+				mem_func.function_declaration,
+				mem_func.access,
+				mem_func.is_virtual,
+				mem_func.is_pure_virtual,
+				mem_func.is_override,
+				mem_func.is_final
+			);
+		}
+	}
+	
+	// If no constructor was defined, we should synthesize a default one
+	// For now, mark that we need one and it will be generated in codegen
+	struct_info->needs_default_constructor = !has_constructor;
+	FLASH_LOG(Templates, Debug, "Full spec has constructor: ", has_constructor ? "yes" : "no, needs default");
+	
+	struct_type_info.setStructInfo(std::move(struct_info));
+	
+	return std::nullopt;  // Return nullopt since we don't need to add anything to AST
+}
+
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
-	if (!template_args.empty()) {
+	// Note: This also handles empty template args (e.g., template<> struct Tuple<> {})
+	{
 		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
 		if (exact_spec.has_value()) {
-			return exact_spec;
+			FLASH_LOG(Templates, Debug, "Found exact specialization for ", template_name, " with ", template_args.size(), " args");
+			// Instantiate the exact specialization
+			return instantiate_full_specialization(template_name, template_args, *exact_spec);
 		}
 	}
 	
@@ -16393,8 +16610,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// First, check if there's an exact specialization match
 	// Try to match a specialization pattern and get the substitution mapping
 	std::unordered_map<std::string, TemplateTypeArg> param_substitutions;
+	FLASH_LOG(Templates, Debug, "Looking for pattern match for ", template_name, " with ", template_args.size(), " args");
 	auto pattern_match_opt = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
 	if (pattern_match_opt.has_value()) {
+		FLASH_LOG(Templates, Debug, "Found pattern match!");
 		// Found a matching pattern - we need to instantiate it with concrete types
 		const ASTNode& pattern_node = *pattern_match_opt;
 		
@@ -16404,15 +16623,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		const StructDeclarationNode& pattern_struct = pattern_node.as<StructDeclarationNode>();
+		FLASH_LOG(Templates, Debug, "Pattern struct name: ", pattern_struct.name());
 		
-		// Get template parameters from the primary template
-		auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-		if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
-			FLASH_LOG(Templates, Error, "Could not find primary template for pattern specialization");
-			return std::nullopt;
+		// Get template parameters from the pattern (partial specialization), NOT the primary template
+		// The pattern stores its own template parameters (e.g., <typename First, typename... Rest>)
+		std::vector<ASTNode> pattern_template_params;
+		auto patterns_it = gTemplateRegistry.specialization_patterns_.find(std::string(template_name));
+		if (patterns_it != gTemplateRegistry.specialization_patterns_.end()) {
+			// Find the matching pattern to get its template params
+			for (const auto& pattern : patterns_it->second) {
+				if (&pattern.specialized_node.as<StructDeclarationNode>() == &pattern_struct) {
+					pattern_template_params = pattern.template_params;
+					break;
+				}
+			}
 		}
-		const TemplateClassDeclarationNode& primary_template = template_opt->as<TemplateClassDeclarationNode>();
-		const std::vector<ASTNode>& template_params = primary_template.template_parameters();
+		
+		// Fall back to primary template params if pattern params not found
+		if (pattern_template_params.empty()) {
+			auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+				const TemplateClassDeclarationNode& primary_template = template_opt->as<TemplateClassDeclarationNode>();
+				pattern_template_params = std::vector<ASTNode>(primary_template.template_parameters().begin(),
+				                                               primary_template.template_parameters().end());
+			}
+		}
+		const std::vector<ASTNode>& template_params = pattern_template_params;
 		
 		// Create a new struct with the instantiated name
 		// Copy members from the pattern, substituting template parameters
@@ -16424,8 +16660,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Handle base classes from the pattern
 		// Base classes need to be instantiated with concrete template arguments
+		FLASH_LOG(Templates, Debug, "Pattern has ", pattern_struct.base_classes().size(), " base classes");
 		for (const auto& pattern_base : pattern_struct.base_classes()) {
 			std::string base_name_str(pattern_base.name);  // Convert to string to avoid string_view issues
+			FLASH_LOG(Templates, Debug, "Processing base class: ", base_name_str);
 			
 			// WORKAROUND: If the base class name ends with "_unknown", it was instantiated
 			// during pattern parsing with template parameters. We need to re-instantiate
@@ -16433,34 +16671,57 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (base_name_str.ends_with("_unknown")) {
 				// Extract the template name (before "_unknown")
 				size_t pos = base_name_str.find("_unknown");
-				std::string template_name = base_name_str.substr(0, pos);
+				std::string base_template_name = base_name_str.substr(0, pos);
 				
-				// For partial specialization Derived<T*, T> instantiated with <int*, int>,
-				// both base classes Base1<T> and Base2<T> should be instantiated with T=int
-				// We need to extract the concrete type from template_args
+				// For partial specialization like Tuple<First, Rest...> : Tuple<Rest...>
+				// The base class uses Rest... (the variadic pack), which corresponds to
+				// all template args EXCEPT the first one (First)
 				
-				// Assume single template parameter for now (T)
-				// The concrete type is the base type without modifiers
-				if (!template_args.empty()) {
-					// Get the base type from the first template argument (removing modifiers)
-					Type concrete_base_type = template_args[0].base_type;
-					
-					// Create template args for base class: just the base type without modifiers
-					std::vector<TemplateTypeArg> base_template_args;
-					TemplateTypeArg base_arg;
-					base_arg.base_type = concrete_base_type;
-					base_arg.is_reference = false;
-					base_arg.is_rvalue_reference = false;
-					base_arg.pointer_depth = 0;
-					base_arg.cv_qualifier = CVQualifier::None;
-					base_template_args.push_back(base_arg);
-					
-					// Instantiate the base template
-					try_instantiate_class_template(template_name, base_template_args);
-					
-					// Get the instantiated name
-					base_name_str = std::string(get_instantiated_class_name(template_name, base_template_args));
+				// Check if this pattern uses a variadic pack for the base
+				bool base_uses_variadic_pack = false;
+				size_t first_variadic_index = template_params.size();
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					if (template_params[i].is<TemplateParameterNode>() &&
+					    template_params[i].as<TemplateParameterNode>().is_variadic()) {
+						first_variadic_index = i;
+						base_uses_variadic_pack = true;
+						break;
+					}
 				}
+				
+				std::vector<TemplateTypeArg> base_template_args;
+				if (base_uses_variadic_pack && template_args.size() > first_variadic_index) {
+					// Skip the non-variadic parameters (First) and use Rest...
+					// For Tuple<int>: template_args = [int], first_variadic_index = 1
+					// So base_template_args = [] (empty)
+					// For Tuple<int, float>: template_args = [int, float], first_variadic_index = 1
+					// So base_template_args = [float]
+					for (size_t i = first_variadic_index; i < template_args.size(); ++i) {
+						base_template_args.push_back(template_args[i]);
+					}
+				} else if (base_uses_variadic_pack) {
+					// Empty variadic pack - base_template_args stays empty
+					// For Tuple<int>: template_args = [int], first_variadic_index = 1
+					// base_template_args = [] (Tuple<>)
+				} else {
+					// Fallback: assume single template parameter for non-variadic cases
+					if (!template_args.empty()) {
+						base_template_args.push_back(template_args[0]);
+					}
+				}
+				
+				FLASH_LOG(Templates, Debug, "Base class instantiation: ", base_template_name, " with ", base_template_args.size(), " args");
+				
+				// Instantiate the base template (may be empty specialization like Tuple<>)
+				auto base_instantiated = try_instantiate_class_template(base_template_name, base_template_args);
+				if (base_instantiated.has_value()) {
+					// Add the base class instantiation to the AST so its constructors get generated
+					ast_nodes_.push_back(*base_instantiated);
+				}
+				
+				// Get the instantiated name
+				base_name_str = std::string(get_instantiated_class_name(base_template_name, base_template_args));
+				FLASH_LOG(Templates, Debug, "Base class resolved to: ", base_name_str);
 			}
 			
 			std::string_view base_class_name = base_name_str;
@@ -16476,8 +16737,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Copy members from pattern
+		FLASH_LOG(Templates, Debug, "Pattern struct has ", pattern_struct.members().size(), " members");
 		for (const auto& member_decl : pattern_struct.members()) {
 			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+			FLASH_LOG(Templates, Debug, "Copying member: ", decl.identifier_token().value());
 			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 			
 			// For pattern specializations, member types need substitution!
@@ -16586,6 +16849,113 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Debug, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
 				for (const auto& static_member : pattern_struct_info->static_members) {
 					FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.name);
+					
+					// Check if initializer contains sizeof...(pack_name) and substitute with pack size
+					std::optional<ASTNode> substituted_initializer = static_member.initializer;
+					if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
+						const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
+						FLASH_LOG(Templates, Debug, "Static member initializer is an expression, checking for sizeof...");
+						
+						// Calculate pack size for substitution
+						auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
+							FLASH_LOG(Templates, Debug, "Looking for pack: ", pack_name);
+							for (size_t i = 0; i < template_params.size(); ++i) {
+								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+								FLASH_LOG(Templates, Debug, "  Checking param ", tparam.name(), " is_variadic=", tparam.is_variadic() ? "true" : "false");
+								if (tparam.name() == pack_name && tparam.is_variadic()) {
+									size_t non_variadic_count = 0;
+									for (const auto& param : template_params) {
+										if (!param.as<TemplateParameterNode>().is_variadic()) {
+											non_variadic_count++;
+										}
+									}
+									return template_args.size() - non_variadic_count;
+								}
+							}
+							return std::nullopt;
+						};
+						
+						// Helper to create a numeric literal from pack size
+						auto make_pack_size_literal = [&](size_t pack_size) -> ASTNode {
+							std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
+							Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
+							return emplace_node<ExpressionNode>(
+								NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+							);
+						};
+						
+						if (std::holds_alternative<SizeofPackNode>(expr)) {
+							// Direct sizeof... expression
+							const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+								substituted_initializer = make_pack_size_literal(*pack_size);
+							}
+						}
+						else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+							// Binary expression like "1 + sizeof...(Rest)" - need to substitute sizeof...
+							const BinaryOperatorNode& bin_expr = std::get<BinaryOperatorNode>(expr);
+							
+							// Check if RHS is sizeof...
+							if (bin_expr.get_rhs().is<ExpressionNode>()) {
+								const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
+								if (std::holds_alternative<SizeofPackNode>(rhs_expr)) {
+									const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(rhs_expr);
+									if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+										// Evaluate the expression at compile time if LHS is a numeric literal
+										if (bin_expr.get_lhs().is<ExpressionNode>()) {
+											const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
+											if (std::holds_alternative<NumericLiteralNode>(lhs_expr)) {
+												const NumericLiteralNode& lhs_num = std::get<NumericLiteralNode>(lhs_expr);
+												auto lhs_val = lhs_num.value();
+												unsigned long long lhs_value = std::holds_alternative<unsigned long long>(lhs_val) 
+													? std::get<unsigned long long>(lhs_val)
+													: static_cast<unsigned long long>(std::get<double>(lhs_val));
+												unsigned long long result = 0;
+												if (bin_expr.op() == "+") {
+													result = lhs_value + *pack_size;
+												} else if (bin_expr.op() == "-") {
+													result = lhs_value - *pack_size;
+												} else if (bin_expr.op() == "*") {
+													result = lhs_value * *pack_size;
+												}
+												substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+											}
+										}
+									}
+								}
+							}
+							// Check if LHS is sizeof...
+							if (bin_expr.get_lhs().is<ExpressionNode>()) {
+								const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
+								if (std::holds_alternative<SizeofPackNode>(lhs_expr)) {
+									const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(lhs_expr);
+									if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+										// Evaluate the expression at compile time if RHS is a numeric literal
+										if (bin_expr.get_rhs().is<ExpressionNode>()) {
+											const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
+											if (std::holds_alternative<NumericLiteralNode>(rhs_expr)) {
+												const NumericLiteralNode& rhs_num = std::get<NumericLiteralNode>(rhs_expr);
+												auto rhs_val = rhs_num.value();
+												unsigned long long rhs_value = std::holds_alternative<unsigned long long>(rhs_val)
+													? std::get<unsigned long long>(rhs_val)
+													: static_cast<unsigned long long>(std::get<double>(rhs_val));
+												unsigned long long result = 0;
+												if (bin_expr.op() == "+") {
+													result = *pack_size + rhs_value;
+												} else if (bin_expr.op() == "-") {
+													result = *pack_size - rhs_value;
+												} else if (bin_expr.op() == "*") {
+													result = *pack_size * rhs_value;
+												}
+												substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					
 					struct_info->addStaticMember(
 						static_member.name,
 						static_member.type,
@@ -16593,7 +16963,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.size,
 						static_member.alignment,
 						static_member.access,
-						static_member.initializer,
+						substituted_initializer,
 						static_member.is_const
 					);
 				}
@@ -17575,33 +17945,100 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::optional<ASTNode> substituted_initializer = static_member.initializer;
 				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
 					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
-					if (std::holds_alternative<SizeofPackNode>(expr)) {
-						const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
-						std::string_view pack_name = sizeof_pack.pack_name();
-						
-						// Find which template parameter is the pack
-						size_t pack_size = 0;
+					
+					// Calculate pack size for substitution
+					auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
 						for (size_t i = 0; i < template_params.size(); ++i) {
 							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 							if (tparam.name() == pack_name && tparam.is_variadic()) {
-								// Calculate pack size: total args - non-variadic params
 								size_t non_variadic_count = 0;
 								for (const auto& param : template_params) {
 									if (!param.as<TemplateParameterNode>().is_variadic()) {
 										non_variadic_count++;
 									}
 								}
-								pack_size = template_args_to_use.size() - non_variadic_count;
-								
-								// Create a constant expression with the pack size
-								// Use StringBuilder to create a persistent string_view
-								std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
-								Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
-								auto num_literal = emplace_node<ExpressionNode>(
-									NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
-								);
-								substituted_initializer = num_literal;
-								break;
+								return template_args_to_use.size() - non_variadic_count;
+							}
+						}
+						return std::nullopt;
+					};
+					
+					// Helper to create a numeric literal from pack size
+					auto make_pack_size_literal = [&](size_t pack_size) -> ASTNode {
+						std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
+						Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
+						return emplace_node<ExpressionNode>(
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+						);
+					};
+					
+					if (std::holds_alternative<SizeofPackNode>(expr)) {
+						// Direct sizeof... expression
+						const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+						if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+							substituted_initializer = make_pack_size_literal(*pack_size);
+						}
+					}
+					else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+						// Binary expression like "1 + sizeof...(Rest)" - need to substitute sizeof...
+						const BinaryOperatorNode& bin_expr = std::get<BinaryOperatorNode>(expr);
+						
+						// Check if RHS is sizeof...
+						if (bin_expr.get_rhs().is<ExpressionNode>()) {
+							const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
+							if (std::holds_alternative<SizeofPackNode>(rhs_expr)) {
+								const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(rhs_expr);
+								if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+									// Evaluate the expression at compile time if LHS is a numeric literal
+									if (bin_expr.get_lhs().is<ExpressionNode>()) {
+										const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
+										if (std::holds_alternative<NumericLiteralNode>(lhs_expr)) {
+											const NumericLiteralNode& lhs_num = std::get<NumericLiteralNode>(lhs_expr);
+											auto lhs_val = lhs_num.value();
+											unsigned long long lhs_value = std::holds_alternative<unsigned long long>(lhs_val) 
+												? std::get<unsigned long long>(lhs_val)
+												: static_cast<unsigned long long>(std::get<double>(lhs_val));
+											unsigned long long result = 0;
+											if (bin_expr.op() == "+") {
+												result = lhs_value + *pack_size;
+											} else if (bin_expr.op() == "-") {
+												result = lhs_value - *pack_size;
+											} else if (bin_expr.op() == "*") {
+												result = lhs_value * *pack_size;
+											}
+											substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+										}
+									}
+								}
+							}
+						}
+						// Check if LHS is sizeof...
+						if (bin_expr.get_lhs().is<ExpressionNode>()) {
+							const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
+							if (std::holds_alternative<SizeofPackNode>(lhs_expr)) {
+								const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(lhs_expr);
+								if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+									// Evaluate the expression at compile time if RHS is a numeric literal
+									if (bin_expr.get_rhs().is<ExpressionNode>()) {
+										const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
+										if (std::holds_alternative<NumericLiteralNode>(rhs_expr)) {
+											const NumericLiteralNode& rhs_num = std::get<NumericLiteralNode>(rhs_expr);
+											auto rhs_val = rhs_num.value();
+											unsigned long long rhs_value = std::holds_alternative<unsigned long long>(rhs_val)
+												? std::get<unsigned long long>(rhs_val)
+												: static_cast<unsigned long long>(std::get<double>(rhs_val));
+											unsigned long long result = 0;
+											if (bin_expr.op() == "+") {
+												result = *pack_size + rhs_value;
+											} else if (bin_expr.op() == "-") {
+												result = *pack_size - rhs_value;
+											} else if (bin_expr.op() == "*") {
+												result = *pack_size * rhs_value;
+											}
+											substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+										}
+									}
+								}
 							}
 						}
 					}

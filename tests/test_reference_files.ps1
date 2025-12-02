@@ -131,8 +131,7 @@ $expectedCompileFailures = @(
     "test_pointer_const_mismatch.cpp",     # intentionally invalid code
     "test_recursive_macro.cpp",            # Recursive macro produces identifier (correct behavior per C standard)
     "test_reference_const_mismatch.cpp",   # intentionally invalid code
-    "test_tuple_standard_way.cpp",         # Tuple support not yet implemented
-    "test_tuple_with_constructor.cpp",     # Tuple support not yet implemented
+    "test_tuple_with_constructor_fail.cpp",     # Invalid C++
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
     "test_va_implementation.cpp",          # C-style variadic details issue
     "test_var_template_values.cpp",        # Variable template values issue
