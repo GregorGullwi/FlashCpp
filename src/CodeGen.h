@@ -100,7 +100,7 @@ struct LambdaInfo {
 	std::vector<ASTNode> captured_var_decls;  // Declarations of captured variables (for symbol table)
 	size_t lambda_id;
 	Token lambda_token;
-	std::string enclosing_struct_name;  // Name of enclosing struct if lambda is in a member function
+	std::string_view enclosing_struct_name;  // Name of enclosing struct if lambda is in a member function
 	TypeIndex enclosing_struct_type_index = 0;  // Type index of enclosing struct for [this] capture
 };
 
