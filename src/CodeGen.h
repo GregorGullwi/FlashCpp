@@ -100,6 +100,8 @@ struct LambdaInfo {
 	std::vector<ASTNode> captured_var_decls;  // Declarations of captured variables (for symbol table)
 	size_t lambda_id;
 	Token lambda_token;
+	std::string enclosing_struct_name;  // Name of enclosing struct if lambda is in a member function
+	TypeIndex enclosing_struct_type_index = 0;  // Type index of enclosing struct for [this] capture
 };
 
 class AstToIr {
@@ -6967,21 +6969,9 @@ private:
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
 					
 					// Use this loaded pointer as the base
-					// Try to determine the type_index from the closure's parent struct
-					// The lambda was defined in a member function, so we need to find what struct it belongs to
 					base_object = this_ptr;
 					base_type = Type::Struct;
-					
-					// Try to get the type_index from the lambda's closure struct name
-					// The closure struct should have metadata about the enclosing class
-					// For now, we'll search for the enclosing struct type
-					base_type_index = 0;
-					if (!current_struct_name_.empty()) {
-						auto type_it = gTypesByName.find(std::string(current_struct_name_));
-						if (type_it != gTypesByName.end()) {
-							base_type_index = type_it->second->type_index_;
-						}
-					}
+					base_type_index = current_lambda_enclosing_struct_type_index_;
 				} else {
 					// Normal pointer handling
 
@@ -8408,6 +8398,15 @@ private:
 		info.conversion_op_name += "_conversion";
 
 		info.lambda_token = lambda.lambda_token();
+		
+		// Store enclosing struct info for [this] capture support
+		info.enclosing_struct_name = current_struct_name_;
+		if (!current_struct_name_.empty()) {
+			auto type_it = gTypesByName.find(current_struct_name_);
+			if (type_it != gTypesByName.end()) {
+				info.enclosing_struct_type_index = type_it->second->type_index_;
+			}
+		}
 
 		// Copy lambda body and captures (we need them later)
 		info.lambda_body = lambda.body();
@@ -8768,6 +8767,7 @@ private:
 
 		// Set lambda context for captured variable access
 		current_lambda_closure_type_ = lambda_info.closure_type_name;
+		current_lambda_enclosing_struct_type_index_ = lambda_info.enclosing_struct_type_index;
 		current_lambda_captures_.clear();
 		current_lambda_capture_kinds_.clear();
 		current_lambda_capture_types_.clear();
@@ -8822,6 +8822,7 @@ private:
 		current_lambda_captures_.clear();
 		current_lambda_capture_kinds_.clear();
 		current_lambda_capture_types_.clear();
+		current_lambda_enclosing_struct_type_index_ = 0;
 
 		symbol_table.exit_scope();
 	}
@@ -9005,6 +9006,7 @@ private:
 	std::unordered_set<std::string> current_lambda_captures_;
 	std::unordered_map<std::string, LambdaCaptureNode::CaptureKind> current_lambda_capture_kinds_;
 	std::unordered_map<std::string, TypeSpecifierNode> current_lambda_capture_types_;
+	TypeIndex current_lambda_enclosing_struct_type_index_ = 0;  // For [this] capture type resolution
 
 	// Generate just the function declaration for a template instantiation (without body)
 	// This is called immediately when a template call is detected, so the IR converter
