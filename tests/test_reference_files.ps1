@@ -138,9 +138,8 @@ $expectedCompileFailures = @(
     "test_va_implementation.cpp",          # C-style variadic details issue
     "test_var_template_values.cpp",        # Variable template values issue
     "test_variadic_func_template.cpp",     # Variadic function template issue
-    "test_variadic_with_members.cpp"       # Variadic templates with members issue
-    # Note: test_lambda_cpp20_comprehensive.cpp removed - file compiles when outside tests/ directory
-    # See tests/PARSER_BUG_INVESTIGATION.md for details on path-dependent parser bug
+    "test_variadic_with_members.cpp",      # Variadic templates with members issue
+    "test_lambda_cpp20_comprehensive.cpp"  # Path-dependent parser bug - see PARSER_BUG_INVESTIGATION.md
 )
 
 # Expected link failures - files that compile but have known link issues
