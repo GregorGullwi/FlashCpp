@@ -9,42 +9,62 @@ When compiling `test_lambda_cpp20_comprehensive.cpp`, the parser reports:
      ^
 ```
 
-## Findings
+## ROOT CAUSE DISCOVERED (2025-12-02)
+
+### The Bug is Environment/Path-Dependent!
+
+**Critical Finding**: The file compiles successfully when located OUTSIDE the `tests/` directory but fails when inside it!
+
+#### Test Results:
+- ✅ `/tmp/test_copy.cpp` - **WORKS**
+- ✅ `/tmp/mytest/test_lambda_cpp20_comprehensive.cpp` - **WORKS**  
+- ❌ `tests/test_lambda_cpp20_comprehensive.cpp` (from repo root CWD) - **FAILS**
+- ❌ `tests/Reference/test_lambda_cpp20_comprehensive.cpp` - **FAILS**
+- ✅ Same file with full path when CWD is `/tmp` - **WORKS**
+
+#### Key Observations:
+1. File content is identical (verified with diff and md5sum)
+2. The bug is 100% repeatable based on file location
+3. When running from different CWD (e.g., `/tmp`), even files in `tests/` compile
+4. The `tests/` directory contains 643 files
+
+#### Suspected Root Cause:
+In `src/main.cpp:201`, the code adds the parent directory of the input file as an implicit include directory:
+```cpp
+// Add the directory of the input source file as an implicit include directory
+std::filesystem::path inputDirPath = inputFilePath.parent_path();
+```
+
+When compiling `tests/test_lambda_cpp20_comprehensive.cpp` from the repo root:
+- CWD: `/home/runner/work/FlashCpp/FlashCpp`
+- Input: `tests/test_lambda_cpp20_comprehensive.cpp`
+- Parent added to includes: `tests/`
+
+**Hypothesis**: Something about having `tests/` as an include directory (which contains 643 files including many other lambda test files) causes parser state corruption or namespace collision. The parser may be:
+1. Accidentally loading/parsing other files from `tests/`
+2. Getting confused by similar filenames (e.g., `test_lambda_captures_comprehensive.cpp` vs `test_lambda_cpp20_comprehensive.cpp`)
+3. Having issues with the large number of files in the include directory
+
+## Original Findings (Before Root Cause Discovery)
 
 ### What Works
 1. ✅ First 8 test functions (lines 1-60) compile successfully when isolated
-2. ✅ First 100 lines compile successfully when isolated  
-3. ✅ First 150 lines compile successfully when isolated
-4. ✅ Each individual test function compiles when tested alone
-5. ✅ Test 7 (mixed captures) + Test 8 (init-capture) compile together
+2. ✅ First 194 lines compile successfully when isolated  
+3. ✅ Each individual test function compiles when tested alone
+4. ✅ Entire file compiles when located outside `tests/` directory
 
 ### What Fails
-- ❌ The complete file (229 lines, 24+ test functions) fails at line 46
-- The error message is misleading - line 46 is test 7's function declaration, but the error says "int test_init_capture()" which is test 8
+- ❌ The complete file when in `tests/` directory
+- Error: "Missing identifier: x" when parsing init-capture `[x = base + 2]`
 
-### Hypothesis
-The parser has a cumulative state corruption issue when processing multiple lambda-containing functions in sequence. The issue manifests somewhere between:
-- Line 60 (end of test 8) - works
-- Line 229 (end of file) - fails
+## Recommended Fix
+Investigate the implicit include directory logic in `src/main.cpp` around line 201. Consider:
+1. Not adding parent directory as include for source files (only for explicitly included headers)
+2. Adding file-specific context to prevent cross-contamination between compilation units
+3. Investigating if there's accidental file loading from include directories during parsing
 
-The error occurs when processing a certain combination or number of:
-- Lambda capture lists
-- Init-captures `[x = expr]`
-- Multiple lambda functions in the same translation unit
-
-### Workaround
-The file has been added to `expectedCompileFailures` list in `test_reference_files.ps1` with the comment:
-```
-"test_lambda_cpp20_comprehensive.cpp", # Parser bug with multiple lambda functions in same file
-```
-
-Each test function works correctly when compiled individually, validating that FlashCpp's lambda implementation is functionally correct.
-
-## Next Steps for Fixing
-1. Add detailed parser tracing around lambda capture list parsing
-2. Check for state that's not being reset between function declarations
-3. Look for buffer/memory issues when processing multiple lambdas
-4. Investigate if there's a limit or counter that's overflowing
+## Workaround
+Move test files to a directory other than `tests/` or compile from a different working directory.
 
 ## Date
-2025-12-02
+2025-12-02 (Updated with root cause)

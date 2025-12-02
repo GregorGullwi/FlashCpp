@@ -126,7 +126,6 @@ $expectedCompileFailures = @(
     "test_cstddef.cpp",                    # Standard library header not yet supported
     "test_cstdio_puts.cpp",                # Standard library header not yet supported
     "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
-    "test_lambda_cpp20_comprehensive.cpp", # Parser bug with multiple lambda functions in same file
     "test_mismatch_args.cpp",              # Type checking test - intentionally invalid code
     "test_mismatch_return.cpp",            # Type checking test - intentionally invalid code
     "test_pointer_const_mismatch.cpp",     # intentionally invalid code
@@ -140,6 +139,8 @@ $expectedCompileFailures = @(
     "test_var_template_values.cpp",        # Variable template values issue
     "test_variadic_func_template.cpp",     # Variadic function template issue
     "test_variadic_with_members.cpp"       # Variadic templates with members issue
+    # Note: test_lambda_cpp20_comprehensive.cpp removed - file compiles when outside tests/ directory
+    # See tests/PARSER_BUG_INVESTIGATION.md for details on path-dependent parser bug
 )
 
 # Expected link failures - files that compile but have known link issues
