@@ -126,7 +126,6 @@ $expectedCompileFailures = @(
     "test_cstddef.cpp",                    # Standard library header not yet supported
     "test_cstdio_puts.cpp",                # Standard library header not yet supported
     "test_ctad_struct_lifecycle.cpp",      # printf template lookup issue
-    "test_lambda_captures_comprehensive.cpp", # Lambda captures not yet supported
     "test_mismatch_args.cpp",              # Type checking test - intentionally invalid code
     "test_mismatch_return.cpp",            # Type checking test - intentionally invalid code
     "test_pointer_const_mismatch.cpp",     # intentionally invalid code
