@@ -2,14 +2,14 @@
 
 ## Overview
 
-A comprehensive integration test for FlashCpp has been created in `tests/integration/`. This test exercises **290 test points** across **9 major C++20 feature categories**, excluding coroutines, modules, and multithreading as requested.
+A comprehensive integration test for FlashCpp has been created in `tests/cpp20_integration/`. This test exercises **290 test points** across **9 major C++20 feature categories**, excluding coroutines, modules, and multithreading as requested.
 
 ## Quick Start
 
 ### Run the Integration Test
 
 ```bash
-cd tests/integration
+cd tests/cpp20_integration
 ./run_integration_test.sh
 ```
 
@@ -101,7 +101,7 @@ All 290 test points passed! The integration test successfully covers:
 ## File Organization
 
 ```
-tests/integration/
+tests/cpp20_integration/
 ├── README.md                          # Detailed documentation
 ├── SUMMARY.md                         # Test results and FlashCpp limitations
 ├── cpp20_simple_integration_test.cpp  # Main test file (290 points)
@@ -135,7 +135,7 @@ As requested in the problem statement:
 - `sizeof...` operator not fully implemented
 - Some template specializations cause parser errors
 
-See `tests/integration/SUMMARY.md` for detailed compatibility information.
+See `tests/cpp20_integration/SUMMARY.md` for detailed compatibility information.
 
 ## Usage
 
@@ -143,12 +143,12 @@ See `tests/integration/SUMMARY.md` for detailed compatibility information.
 
 ```bash
 # Compile and run with clang++
-clang++ -std=c++20 tests/integration/cpp20_simple_integration_test.cpp -o test
+clang++ -std=c++20 tests/cpp20_integration/cpp20_simple_integration_test.cpp -o test
 ./test
 echo $?  # Should print 0 on success
 
 # Or use the script
-cd tests/integration && ./run_integration_test.sh
+cd tests/cpp20_integration && ./run_integration_test.sh
 ```
 
 ### Integration with CI/CD
@@ -158,7 +158,7 @@ Add to your CI pipeline:
 ```yaml
 - name: Run C++20 Integration Test
   run: |
-    cd tests/integration
+    cd tests/cpp20_integration
     ./run_integration_test.sh
 ```
 
@@ -171,9 +171,9 @@ Add to your CI pipeline:
 ## Documentation
 
 For more details, see:
-- `tests/integration/README.md` - Comprehensive documentation
-- `tests/integration/SUMMARY.md` - Test results and analysis
-- `tests/integration/cpp20_simple_integration_test.cpp` - Annotated source code
+- `tests/cpp20_integration/README.md` - Comprehensive documentation
+- `tests/cpp20_integration/SUMMARY.md` - Test results and analysis
+- `tests/cpp20_integration/cpp20_simple_integration_test.cpp` - Annotated source code
 
 ## Contributing
 

@@ -79,7 +79,7 @@ The test is organized into 9 major sections, each testing a category of C++20 fe
 To verify the test is valid C++20 code:
 
 ```bash
-cd tests/integration
+cd tests/cpp20_integration
 clang++ -std=c++20 cpp20_simple_integration_test.cpp -o test.exe
 ./test.exe
 echo $?  # Should print 0 on success
@@ -88,7 +88,7 @@ echo $?  # Should print 0 on success
 ### Using the Test Script
 
 ```bash
-cd tests/integration
+cd tests/cpp20_integration
 ./run_integration_test.sh
 ```
 
