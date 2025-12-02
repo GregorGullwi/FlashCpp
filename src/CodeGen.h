@@ -5593,104 +5593,126 @@ private:
 			func_node.is_variadic(), struct_name, namespace_path).view();
 	}
 	
+	// Helper function to handle compiler intrinsics
+	// Returns true if the function is an intrinsic and has been handled, false otherwise
+	std::optional<std::vector<IrOperand>> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
+		// Check for __va_start intrinsic
+		// __va_start(va_list*, last_fixed_param) should set va_list to point to the first variadic argument
+		// On x64 Windows, this is the address right after the last fixed parameter on the stack
+		if (func_name == "__va_start") {
+			return generateVaStartIntrinsic(functionCallNode);
+		}
+		
+		// Add other intrinsics here in the future
+		// if (func_name == "__other_intrinsic") {
+		//     return generateOtherIntrinsic(functionCallNode);
+		// }
+		
+		return std::nullopt;  // Not an intrinsic
+	}
+	
+	// Generate IR for __va_start intrinsic
+	std::vector<IrOperand> generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
+		// __va_start takes 2 arguments: pointer to va_list, and last fixed parameter
+		if (functionCallNode.arguments().size() != 2) {
+			FLASH_LOG(Codegen, Error, "__va_start requires exactly 2 arguments");
+			return {Type::Void, 0, 0ULL, 0ULL};
+		}
+		
+		// Get the first argument (va_list pointer)
+		ASTNode arg0 = functionCallNode.arguments()[0];
+		auto arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
+		
+		// Get the second argument (last fixed parameter)
+		ASTNode arg1 = functionCallNode.arguments()[1];
+		auto arg1_ir = visitExpressionNode(arg1.as<ExpressionNode>());
+		
+		// The second argument should be an identifier (the parameter name)
+		std::string_view last_param_name;
+		if (std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
+			last_param_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
+		} else {
+			FLASH_LOG(Codegen, Error, "__va_start second argument must be a parameter name");
+			return {Type::Void, 0, 0ULL, 0ULL};
+		}
+		
+		// Compute the address of the first variadic argument
+		// This is: &last_param + 8 (parameters are 8-byte aligned on x64)
+		TempVar last_param_addr = var_counter.next();
+		
+		// Generate AddressOf IR for the last parameter
+		AddressOfOp addr_op;
+		addr_op.result = last_param_addr;
+		// Get the type of the last parameter from the symbol table
+		auto param_symbol = symbol_table.lookup(last_param_name);
+		if (!param_symbol.has_value()) {
+			FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __va_start");
+			return {Type::Void, 0, 0ULL, 0ULL};
+		}
+		const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
+		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		
+		addr_op.pointee_type = param_type.type();
+		addr_op.pointee_size_in_bits = static_cast<int>(param_type.size_in_bits());
+		addr_op.operand = last_param_name;
+		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
+		
+		// Add 8 bytes (64 bits) to get to the next parameter slot
+		// On x64, all parameters are aligned to 8-byte boundaries
+		TempVar va_start_addr = var_counter.next();
+		BinaryOp add_op;
+		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, last_param_addr};
+		add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+		add_op.result = va_start_addr;
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
+		
+		// Store the computed address into the va_list pointer (first argument)
+		// The first argument is a pointer to va_list (&args), we need to dereference it and assign
+		
+		// Get the va_list pointer value from arg0_ir[2]
+		// arg0_ir[2] is an IrOperand which could be a TempVar or std::string_view
+		std::variant<std::string_view, TempVar> va_list_ptr;
+		if (std::holds_alternative<TempVar>(arg0_ir[2])) {
+			va_list_ptr = std::get<TempVar>(arg0_ir[2]);
+		} else if (std::holds_alternative<std::string_view>(arg0_ir[2])) {
+			va_list_ptr = std::get<std::string_view>(arg0_ir[2]);
+		} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
+			va_list_ptr = std::string_view(std::get<std::string>(arg0_ir[2]));
+		} else {
+			FLASH_LOG(Codegen, Error, "__va_start first argument must be a variable or temp");
+			return {Type::Void, 0, 0ULL, 0ULL};
+		}
+		
+		// Create a dereference of the va_list pointer to get the actual va_list variable
+		TempVar va_list_deref = var_counter.next();
+		DereferenceOp deref_op;
+		deref_op.result = va_list_deref;
+		deref_op.pointee_type = Type::UnsignedLongLong;  // va_list is char* which is a pointer (64-bit)
+		deref_op.pointee_size_in_bits = 64;
+		deref_op.pointer = va_list_ptr;
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), functionCallNode.called_from()));
+		
+		// Assign the va_start_addr to the dereferenced va_list
+		AssignmentOp assign_op;
+		assign_op.result = var_counter.next();  // unused but required
+		assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_deref};
+		assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+		
+		// __va_start returns void
+		return {Type::Void, 0, 0ULL, 0ULL};
+	}
+	
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 
 		const auto& decl_node = functionCallNode.function_declaration();
 		std::string_view func_name_view = decl_node.identifier_token().value();
 
-		// Check for __va_start intrinsic
-		// __va_start(va_list*, last_fixed_param) should set va_list to point to the first variadic argument
-		// On x64 Windows, this is the address right after the last fixed parameter on the stack
-		if (func_name_view == "__va_start") {
-			// __va_start takes 2 arguments: pointer to va_list, and last fixed parameter
-			if (functionCallNode.arguments().size() != 2) {
-				FLASH_LOG(Codegen, Error, "__va_start requires exactly 2 arguments");
-				return {Type::Void, 0, 0ULL, 0ULL};
-			}
-			
-			// Get the first argument (va_list pointer)
-			ASTNode arg0 = functionCallNode.arguments()[0];
-			auto arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
-			
-			// Get the second argument (last fixed parameter)
-			ASTNode arg1 = functionCallNode.arguments()[1];
-			auto arg1_ir = visitExpressionNode(arg1.as<ExpressionNode>());
-			
-			// The second argument should be an identifier (the parameter name)
-			std::string_view last_param_name;
-			if (std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
-				last_param_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
-			} else {
-				FLASH_LOG(Codegen, Error, "__va_start second argument must be a parameter name");
-				return {Type::Void, 0, 0ULL, 0ULL};
-			}
-			
-			// Compute the address of the first variadic argument
-			// This is: &last_param + 8 (parameters are 8-byte aligned on x64)
-			TempVar last_param_addr = var_counter.next();
-			
-			// Generate AddressOf IR for the last parameter
-			AddressOfOp addr_op;
-			addr_op.result = last_param_addr;
-			// Get the type of the last parameter from the symbol table
-			auto param_symbol = symbol_table.lookup(last_param_name);
-			if (!param_symbol.has_value()) {
-				FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __va_start");
-				return {Type::Void, 0, 0ULL, 0ULL};
-			}
-			const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
-			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			
-			addr_op.pointee_type = param_type.type();
-			addr_op.pointee_size_in_bits = static_cast<int>(param_type.size_in_bits());
-			addr_op.operand = last_param_name;
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
-			
-			// Add 8 bytes (64 bits) to get to the next parameter slot
-			// On x64, all parameters are aligned to 8-byte boundaries
-			TempVar va_start_addr = var_counter.next();
-			BinaryOp add_op;
-			add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, last_param_addr};
-			add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
-			add_op.result = va_start_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
-			
-			// Store the computed address into the va_list pointer (first argument)
-			// The first argument is a pointer to va_list (&args), we need to dereference it and assign
-			
-			// Get the va_list pointer value from arg0_ir[2]
-			// arg0_ir[2] is an IrOperand which could be a TempVar or std::string_view
-			std::variant<std::string_view, TempVar> va_list_ptr;
-			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
-				va_list_ptr = std::get<TempVar>(arg0_ir[2]);
-			} else if (std::holds_alternative<std::string_view>(arg0_ir[2])) {
-				va_list_ptr = std::get<std::string_view>(arg0_ir[2]);
-			} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
-				va_list_ptr = std::string_view(std::get<std::string>(arg0_ir[2]));
-			} else {
-				FLASH_LOG(Codegen, Error, "__va_start first argument must be a variable or temp");
-				return {Type::Void, 0, 0ULL, 0ULL};
-			}
-			
-			// Create a dereference of the va_list pointer to get the actual va_list variable
-			TempVar va_list_deref = var_counter.next();
-			DereferenceOp deref_op;
-			deref_op.result = va_list_deref;
-			deref_op.pointee_type = Type::UnsignedLongLong;  // va_list is char* which is a pointer (64-bit)
-			deref_op.pointee_size_in_bits = 64;
-			deref_op.pointer = va_list_ptr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), functionCallNode.called_from()));
-			
-			// Assign the va_start_addr to the dereferenced va_list
-			AssignmentOp assign_op;
-			assign_op.result = var_counter.next();  // unused but required
-			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_deref};
-			assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
-			
-			// __va_start returns void
-			return {Type::Void, 0, 0ULL, 0ULL};
+		// Check for compiler intrinsics and handle them specially
+		auto intrinsic_result = tryGenerateIntrinsicIr(func_name_view, functionCallNode);
+		if (intrinsic_result.has_value()) {
+			return intrinsic_result.value();
 		}
 
 		// Check if this is a function pointer call
