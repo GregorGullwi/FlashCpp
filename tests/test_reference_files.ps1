@@ -131,14 +131,11 @@ $expectedCompileFailures = @(
     "test_pointer_const_mismatch.cpp",     # intentionally invalid code
     "test_recursive_macro.cpp",            # Recursive macro produces identifier (correct behavior per C standard)
     "test_reference_const_mismatch.cpp",   # intentionally invalid code
-    "test_simple_lambda.cpp",              # Lambda expressions not yet supported
     "test_tuple_standard_way.cpp",         # Tuple support not yet implemented
     "test_tuple_with_constructor.cpp",     # Tuple support not yet implemented
     "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported
     "test_va_implementation.cpp",          # C-style variadic details issue
     "test_var_template_values.cpp",        # Variable template values issue
-    "test_variadic_func_template.cpp",     # Variadic function template issue
-    "test_variadic_with_members.cpp",      # Variadic templates with members issue
     "test_lambda_cpp20_comprehensive.cpp"  # Path-dependent parser bug - see PARSER_BUG_INVESTIGATION.md
 )
 
