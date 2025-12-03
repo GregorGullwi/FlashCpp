@@ -3121,7 +3121,7 @@ private:
 				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 
 				// Add to symbol table first
-				if (!symbol_table.insert(decl.identifier_token().value(), node.declaration_node())) {
+				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
 					assert(false && "Expected identifier to be unique");
 				}
 
@@ -3403,7 +3403,7 @@ private:
 			}
 		}
 
-		if (!symbol_table.insert(decl.identifier_token().value(), node.declaration_node())) {
+		if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
 			assert(false && "Expected identifier to be unique");
 		}
 
