@@ -173,9 +173,9 @@ constexpr int conditionalSum() const {
 
 This is significantly more complex than simple member access.
 
-### ❌ Nested Member Access
+### ✅ Nested Member Access (NEW)
 
-Accessing members of nested objects is not supported:
+Accessing members of nested objects is now supported:
 
 ```cpp
 struct Inner {
@@ -189,14 +189,15 @@ struct Outer {
 };
 
 constexpr Outer obj(42);
-static_assert(obj.inner.value == 42);  // ❌ Error: Nested access not supported
+static_assert(obj.inner.value == 42);  // ✅ Works - nested access supported!
 ```
 
-**Reason:** The evaluator would need to recursively evaluate each level of member access.
+**Note:** Multi-level nesting (e.g., `a.b.c.d`) is supported. The evaluator recursively 
+evaluates each level of member access.
 
 ### ❌ Array and Pointer Member Access
 
-Array subscripting and pointer dereferencing are not supported:
+Array subscripting and pointer dereferencing have limited support:
 
 ```cpp
 struct Container {
@@ -205,7 +206,22 @@ struct Container {
 };
 
 constexpr Container c;
-static_assert(c.data[0] == 1);  // ❌ Error: Array subscript not supported
+static_assert(c.data[0] == 1);  // ❌ Error: Member array subscript limited
+```
+
+**Note:** Array subscript code has been implemented in `ConstExprEvaluator.h` but is 
+blocked by two parser limitations:
+
+1. **Inferred array size**: `int arr[] = {1,2,3}` syntax is not parsed correctly
+2. **Multi-statement functions**: Constexpr functions with local variables require 
+   statement-level evaluation which is not yet supported
+
+**Workaround for array access:** Use explicit array size and avoid local arrays:
+```cpp
+struct Data {
+    int arr[3] = {10, 20, 30};
+};
+// Direct member array access may work in simple cases
 ```
 
 ## Implementation Details
@@ -259,11 +275,12 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
 - ✅ Unary `-` and `+` operators
 - ✅ Constexpr member function calls (single expression body)
+- ✅ Nested member access (e.g., `obj.inner.value`) **NEW**
+- ✅ Array subscript evaluation (code complete, blocked by parser limitations) **NEW**
 
 ### Medium
-- ⚠️ Constexpr free function calls
-- ⚠️ Nested member access (e.g., `obj.inner.value`)
-- ⚠️ Array element access with constant indices
+- ⚠️ Constexpr free function calls (basic support exists)
+- ⚠️ Inferred array size parsing (`int arr[] = {1,2,3}`)
 
 ### Hard
 - ❌ Constructor body statement execution
