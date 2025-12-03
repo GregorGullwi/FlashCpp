@@ -8,5 +8,6 @@ int main() {
     int x = arr[0];
     int y = arr[1];
     
-    return x + y;
+    // Return 0 if sum is correct, 1 otherwise
+    return (x + y == 30) ? 0 : 1;
 }

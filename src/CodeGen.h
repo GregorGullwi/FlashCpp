@@ -784,7 +784,10 @@ private:
 		// Set current function return type and size for type checking in return statements
 		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
 		current_function_return_type_ = ret_type_spec.type();
-		current_function_return_size_ = static_cast<int>(ret_type_spec.size_in_bits());
+		// For pointer return types, use 64-bit size (pointer size on x64)
+		current_function_return_size_ = (ret_type_spec.pointer_depth() > 0) 
+			? 64 
+			: static_cast<int>(ret_type_spec.size_in_bits());
 
 		// Clear current_struct_name_ if this is not a member function
 		// This prevents struct context from leaking into free functions
@@ -3450,6 +3453,7 @@ private:
 					store_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
 					store_op.value = toTypedValue(init_operands);
 					store_op.member_offset = 0;
+					store_op.is_pointer_to_array = false;  // Local arrays are actual arrays, not pointers
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), 
 						node.declaration().identifier_token()));
@@ -4556,19 +4560,50 @@ private:
 		}
 		else if (unaryOperatorNode.op() == "*") {
 			// Dereference operator: *x
-			// When dereferencing a pointer, the result size is the pointed-to type size,
-			// not the pointer size (64). Use the Type enum to get the actual element size.
-			int element_size;
-			switch (operandType) {
-				case Type::Bool: element_size = 8; break;
-				case Type::Char: element_size = 8; break;
-				case Type::Short: element_size = 16; break;
-				case Type::Int: element_size = 32; break;
-				case Type::Long: element_size = 64; break;
-				case Type::Float: element_size = 32; break;
-				case Type::Double: element_size = 64; break;
-				default: element_size = 64; break;  // Fallback for unknown types
+			// When dereferencing a pointer, the result size depends on the pointer depth:
+			// - For single pointer (int*), result is the base type size (e.g., 32 for int)
+			// - For multi-level pointer (int**), result is still a pointer (64 bits)
+			
+			int element_size = 64; // Default to pointer size
+			int pointer_depth = 0;
+			
+			// Look up the pointer operand to determine its pointer depth
+			if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+				const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+					const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+					auto symbol = symbol_table.lookup(identifier.name());
+					if (symbol.has_value()) {
+						const TypeSpecifierNode* type_node = nullptr;
+						if (symbol->is<DeclarationNode>()) {
+							type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						} else if (symbol->is<VariableDeclarationNode>()) {
+							type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+						}
+						if (type_node) {
+							pointer_depth = type_node->pointer_depth();
+						}
+					}
+				}
 			}
+			
+			// After dereferencing, pointer_depth decreases by 1
+			// If still > 0, result is a pointer (64 bits)
+			// If == 0, result is the base type
+			if (pointer_depth <= 1) {
+				// Single-level pointer or less: result is base type size
+				switch (operandType) {
+					case Type::Bool: element_size = 8; break;
+					case Type::Char: element_size = 8; break;
+					case Type::Short: element_size = 16; break;
+					case Type::Int: element_size = 32; break;
+					case Type::Long: element_size = 64; break;
+					case Type::Float: element_size = 32; break;
+					case Type::Double: element_size = 64; break;
+					default: element_size = 64; break;  // Fallback for unknown types
+				}
+			}
+			// else: multi-level pointer, element_size stays 64 (pointer)
 		
 			// Create typed payload
 			DereferenceOp op;
@@ -4772,6 +4807,7 @@ private:
 												payload.element_size_in_bits = element_size;
 												payload.array = StringBuilder().append(object_name).append(".").append(member_name).commit();
 												payload.member_offset = static_cast<int64_t>(member->offset);
+												payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 												
 												// Set index as TypedValue
 												payload.index.type = std::get<Type>(indexIrOperands[0]);
@@ -4827,6 +4863,20 @@ private:
 				const IdentifierNode& array_ident = std::get<IdentifierNode>(array_expr);
 				std::string_view array_name = array_ident.name();
 
+				// Check if the array is a pointer type
+				bool is_pointer_to_array = false;
+				std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(array_name);
+				}
+				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+					const auto& decl_node = symbol->as<DeclarationNode>();
+					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					if (type_node.pointer_depth() > 0) {
+						is_pointer_to_array = true;
+					}
+				}
+
 				// Get index information
 				auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
 
@@ -4836,6 +4886,7 @@ private:
 				payload.element_size_in_bits = std::get<int>(arrayAccessIrOperands[1]);
 				payload.array = array_name;
 				payload.member_offset = 0;  // Not a member array
+				payload.is_pointer_to_array = is_pointer_to_array;
 				
 				// Set index as TypedValue
 				payload.index.type = std::get<Type>(indexIrOperands[0]);
@@ -6024,8 +6075,10 @@ private:
 					irOperands.emplace_back(deref_var);
 				} else {
 					// Regular variable - pass by value
+					// For pointer types, size is always 64 bits regardless of pointee type
+					int arg_size = (type_node.pointer_depth() > 0) ? 64 : static_cast<int>(type_node.size_in_bits());
 					irOperands.emplace_back(type_node.type());
-					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+					irOperands.emplace_back(arg_size);
 					irOperands.emplace_back(identifier.name());
 				}
 			}
@@ -6929,6 +6982,7 @@ private:
 										payload.element_size_in_bits = element_size_bits;
 										payload.array = StringBuilder().append(object_name).append(".").append(member_name).commit();
 										payload.member_offset = static_cast<int64_t>(member->offset);
+										payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 										
 										// Set index as TypedValue
 										payload.index.type = std::get<Type>(index_operands[0]);
@@ -6966,6 +7020,30 @@ private:
 		Type element_type = std::get<Type>(array_operands[0]);
 		int element_size_bits = std::get<int>(array_operands[1]);
 
+		// Check if this is a pointer type (e.g., int* arr)
+		// If so, we need to get the base type size, not the pointer size (64)
+		// Look up the identifier to get the actual type info
+		bool is_pointer_to_array = false;
+		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
+		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
+			const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
+			std::optional<ASTNode> symbol = symbol_table.lookup(arr_ident.name());
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(arr_ident.name());
+			}
+			if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+				const auto& decl_node = symbol->as<DeclarationNode>();
+				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+				
+				// If it's a pointer type, use the base type size (not 64)
+				if (type_node.pointer_depth() > 0) {
+					// Get the base type size (what the pointer points to)
+					element_size_bits = static_cast<int>(type_node.size_in_bits());
+					is_pointer_to_array = true;  // This is a pointer, not an actual array
+				}
+			}
+		}
+
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
@@ -6975,6 +7053,7 @@ private:
 		payload.element_type = element_type;
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
+		payload.is_pointer_to_array = is_pointer_to_array;
 		
 		// Set array (either variable name or temp)
 		if (std::holds_alternative<std::string_view>(array_operands[2])) {
