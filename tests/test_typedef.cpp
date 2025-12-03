@@ -37,7 +37,7 @@ int main() {
     // Test typedef chaining
     MyInt z = 30;
     // Test basic typedef
-    uintptr_t ptr = 42;
+    uintptr_t ptr_value = 42;
 
     // Test typedef struct (anonymous)
     Point p;

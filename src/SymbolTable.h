@@ -133,12 +133,18 @@ public:
 			auto& existing_nodes = it->second;
 
 			// For non-function symbols (variables, etc.), don't allow duplicates
-			if (!node.is<DeclarationNode>() && !node.is<FunctionDeclarationNode>()) {
+			if (!node.is<DeclarationNode>() && !node.is<FunctionDeclarationNode>() && !node.is<VariableDeclarationNode>()) {
 				// Check if any existing symbol has a different type
 				if (!existing_nodes.empty() && existing_nodes[0].type_name() != node.type_name()) {
 					return false;
 				}
 				// Don't allow duplicate non-function symbols
+				return false;
+			}
+			
+			// For VariableDeclarationNode, don't allow duplicates in the same scope
+			if (node.is<VariableDeclarationNode>()) {
+				// Duplicate variable in same scope - not allowed
 				return false;
 			}
 
