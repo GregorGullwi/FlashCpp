@@ -1409,29 +1409,23 @@ public:
 		return symbol_name;
 	}
 
-	// Add a global variable to .data or .bss section
-	void add_global_variable(std::string_view var_name, size_t size_in_bytes, bool is_initialized, unsigned long long init_value = 0) {
+	// Add a global variable with raw initialization data
+	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, 
+	                              bool is_initialized, const std::vector<char>& init_data) {
 		SectionType section_type = is_initialized ? SectionType::DATA : SectionType::BSS;
 		auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
 		uint32_t offset = static_cast<uint32_t>(section->get_data_size());
 
-		if (g_enable_debug_output) std::cerr << "DEBUG: add_global_variable - var_name=" << var_name << " is_initialized=" << is_initialized << " init_value=" << init_value << "\n";
-		if (g_enable_debug_output) std::cerr << "DEBUG: add_global_variable - section_type=" << (section_type == SectionType::DATA ? "DATA" : "BSS") << "\n";
-		if (g_enable_debug_output) std::cerr << "DEBUG: add_global_variable - section index=" << sectiontype_to_index[section_type] << " offset=" << offset << "\n";
+		if (g_enable_debug_output) std::cerr << "DEBUG: add_global_variable_data - var_name=" << var_name 
+			<< " size=" << size_in_bytes << " is_initialized=" << is_initialized << "\n";
 
-		if (is_initialized) {
+		if (is_initialized && !init_data.empty()) {
 			// Add initialized data to .data section
-			std::vector<char> data(size_in_bytes);
-			// Store init_value in little-endian format
-			for (size_t i = 0; i < size_in_bytes && i < 8; ++i) {
-				data[i] = static_cast<char>((init_value >> (i * 8)) & 0xFF);
-			}
-			add_data(data, SectionType::DATA);
+			add_data(init_data, SectionType::DATA);
 		} else {
-			// For .bss, we don't add actual data, just increase the section size
-			// BSS is uninitialized data that gets zero-initialized at load time
+			// For .bss or uninitialized, use zero-filled data
 			std::vector<char> zero_data(size_in_bytes, 0);
-			add_data(zero_data, SectionType::BSS);
+			add_data(zero_data, is_initialized ? SectionType::DATA : SectionType::BSS);
 		}
 
 		// Add a symbol for this global variable
