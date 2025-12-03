@@ -13182,18 +13182,24 @@ ParseResult Parser::parse_template_declaration() {
 						
 						// Parse constructor body if present
 						if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
-							// Parse the constructor body immediately rather than delaying
-							// This avoids pointer invalidation issues with delayed parsing
-							auto block_result = parse_block();
+							TokenPosition body_start = save_token_position();
+							
+							skip_balanced_braces();
 							gSymbolTable.exit_scope();
 							
-							if (block_result.is_error()) {
-								return block_result;
-							}
-							
-							if (auto block = block_result.node()) {
-								ctor_ref.set_definition(*block);
-							}
+							delayed_function_bodies_.push_back({
+								nullptr,
+								body_start,
+								{},
+								false,
+								instantiated_name,
+								struct_type_info.type_index_,
+								&struct_ref,
+								true,  // is_constructor
+								false,
+								&ctor_ref,
+								nullptr
+							});
 						} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
 							gSymbolTable.exit_scope();
 							return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", *peek_token());
