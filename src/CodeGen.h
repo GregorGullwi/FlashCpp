@@ -5910,9 +5910,19 @@ private:
 		// Check if this is a function pointer call
 		// Look up the identifier in the symbol table to see if it's a function pointer variable
 		const std::optional<ASTNode> func_symbol = symbol_table.lookup(func_name_view);
+		const DeclarationNode* func_ptr_decl = nullptr;
+		
+		// Check for DeclarationNode directly
 		if (func_symbol.has_value() && func_symbol->is<DeclarationNode>()) {
-			const auto& func_decl = func_symbol->as<DeclarationNode>();
-			const auto& func_type = func_decl.type_node().as<TypeSpecifierNode>();
+			func_ptr_decl = &func_symbol->as<DeclarationNode>();
+		}
+		// Also check for VariableDeclarationNode (from comma-separated declarations)
+		else if (func_symbol.has_value() && func_symbol->is<VariableDeclarationNode>()) {
+			func_ptr_decl = &func_symbol->as<VariableDeclarationNode>().declaration();
+		}
+		
+		if (func_ptr_decl) {
+			const auto& func_type = func_ptr_decl->type_node().as<TypeSpecifierNode>();
 
 			// Check if this is a function pointer
 			if (func_type.is_function_pointer()) {
