@@ -8526,12 +8526,23 @@ ParseResult Parser::parse_primary_expression()
 			OffsetofExprNode(*type_result.node(), member_name, offsetof_token));
 	}
 	// Check for type trait intrinsics: __is_void(T), __is_integral(T), __has_unique_object_representations(T), etc.
+	// Also support GCC/Clang __builtin_ prefix variants (e.g., __builtin_is_constant_evaluated)
 	else if (current_token_->type() == Token::Type::Identifier && 
-	         (current_token_->value().starts_with("__is_") || current_token_->value().starts_with("__has_"))) {
+	         (current_token_->value().starts_with("__is_") || 
+	          current_token_->value().starts_with("__has_") ||
+	          current_token_->value().starts_with("__builtin_"))) {
 		// Parse type trait intrinsics
 		std::string_view trait_name = current_token_->value();
 		Token trait_token = *current_token_;
 		consume_token(); // consume the trait name
+
+		// Normalize __builtin_ prefix to __ prefix for easier matching
+		// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
+		std::string normalized_name;
+		if (trait_name.starts_with("__builtin_")) {
+			normalized_name = "__" + std::string(trait_name.substr(10)); // Remove "builtin_" part
+			trait_name = normalized_name;
+		}
 
 		// Determine the trait kind and if it's a binary or variadic trait
 		TypeTraitKind kind;
@@ -8659,6 +8670,29 @@ ParseResult Parser::parse_primary_expression()
 				return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
 			}
 
+			// Parse pointer/reference modifiers after the base type
+			// e.g., int* or int&& in type trait arguments
+			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			
+			// Parse pointer depth (*)
+			while (peek_token().has_value() && peek_token()->value() == "*") {
+				consume_token();
+				type_spec.add_pointer_level();
+			}
+			
+			// Parse reference (&) or rvalue reference (&&)
+			// Note: The lexer tokenizes && as a single token, not two separate & tokens
+			if (peek_token().has_value()) {
+				std::string_view next_token = peek_token()->value();
+				if (next_token == "&&") {
+					consume_token();
+					type_spec.set_reference(true);  // true for rvalue reference
+				} else if (next_token == "&") {
+					consume_token();
+					type_spec.set_reference(false);  // false for lvalue reference
+				}
+			}
+
 			if (is_variadic_trait) {
 				// Variadic trait: parse comma-separated additional types
 				std::vector<ASTNode> additional_types;
@@ -8668,6 +8702,24 @@ ParseResult Parser::parse_primary_expression()
 					if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
 						return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
 					}
+					
+					// Parse pointer/reference modifiers for additional type arguments
+					TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
+					while (peek_token().has_value() && peek_token()->value() == "*") {
+						consume_token();
+						arg_type_spec.add_pointer_level();
+					}
+					if (peek_token().has_value()) {
+						std::string_view next_token = peek_token()->value();
+						if (next_token == "&&") {
+							consume_token();
+							arg_type_spec.set_reference(true);  // rvalue reference
+						} else if (next_token == "&") {
+							consume_token();
+							arg_type_spec.set_reference(false);  // lvalue reference
+						}
+					}
+					
 					additional_types.push_back(*arg_type_result.node());
 				}
 
@@ -8686,6 +8738,23 @@ ParseResult Parser::parse_primary_expression()
 				ParseResult second_type_result = parse_type_specifier();
 				if (second_type_result.is_error() || !second_type_result.node().has_value()) {
 					return ParseResult::error("Expected second type in binary type trait", *current_token_);
+				}
+
+				// Parse pointer/reference modifiers for second type
+				TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
+				while (peek_token().has_value() && peek_token()->value() == "*") {
+					consume_token();
+					second_type_spec.add_pointer_level();
+				}
+				if (peek_token().has_value()) {
+					std::string_view next_token = peek_token()->value();
+					if (next_token == "&&") {
+						consume_token();
+						second_type_spec.set_reference(true);  // rvalue reference
+					} else if (next_token == "&") {
+						consume_token();
+						second_type_spec.set_reference(false);  // lvalue reference
+					}
 				}
 
 				if (!consume_punctuator(")")) {
