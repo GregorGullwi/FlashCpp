@@ -19365,7 +19365,8 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 			
 			// Create an integer literal with the pack size
-			std::string pack_size_str = std::to_string(num_pack_elements);
+			StringBuilder pack_size_builder;
+			std::string_view pack_size_str = pack_size_builder.append(num_pack_elements).commit();
 			Token literal_token(Token::Type::Literal, pack_size_str, 
 			                   sizeof_pack.sizeof_token().line(), sizeof_pack.sizeof_token().column(), 
 			                   sizeof_pack.sizeof_token().file_index());
