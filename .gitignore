@@ -16,3 +16,4 @@ test_*.obj
 flashcpp_crash_*.log
 output/*.exe
 output/*.obj
+.backup
