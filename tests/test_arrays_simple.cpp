@@ -4,6 +4,6 @@ int main() {
     numbers[5] = 500;
     int first = numbers[0];
     int middle = numbers[5];
-    return first + middle;
+    // Return 0 if sum is correct, 1 otherwise
+    return (first + middle == 600) ? 0 : 1;
 }
-

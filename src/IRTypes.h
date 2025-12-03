@@ -648,6 +648,7 @@ struct ArrayAccessOp {
 	std::variant<std::string, std::string_view, TempVar> array;   // Array (owned string for member arrays, view for simple, or temp)
 	TypedValue index;                                // Index value (type + value)
 	int64_t member_offset;                           // Offset in bytes for member arrays (0 for non-member)
+	bool is_pointer_to_array;                        // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
 };
 
 // Array store (store value to array element)
@@ -658,6 +659,7 @@ struct ArrayStoreOp {
 	TypedValue index;                                // Index value (type + value)
 	TypedValue value;                                // Value to store
 	int64_t member_offset;                           // Offset in bytes for member arrays (0 for non-member)
+	bool is_pointer_to_array;                        // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
 };
 
 // Array element address (get address without loading)
