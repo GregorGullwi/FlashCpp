@@ -1939,14 +1939,21 @@ private:
 	// Regular if statement (runtime conditional)
 	// Generate unique labels for this if statement
 	static size_t if_counter = 0;
-	StringBuilder then_sb, else_sb, end_sb;
-	then_sb.append("if_then_").append(if_counter);
-	else_sb.append("if_else_").append(if_counter);
-	end_sb.append("if_end_").append(if_counter);
-	std::string_view then_label = then_sb.commit();
-	std::string_view else_label = else_sb.commit();
-	std::string_view end_label = end_sb.commit();
-	if_counter++;		// Handle C++20 if-with-initializer
+	size_t current_if = if_counter++;
+	
+	// Use a single StringBuilder and commit each label before starting the next
+	// to avoid buffer overwrites in the shared allocator
+	StringBuilder label_sb;
+	label_sb.append("if_then_").append(current_if);
+	std::string_view then_label = label_sb.commit();
+	
+	label_sb.append("if_else_").append(current_if);
+	std::string_view else_label = label_sb.commit();
+	
+	label_sb.append("if_end_").append(current_if);
+	std::string_view end_label = label_sb.commit();
+
+		// Handle C++20 if-with-initializer
 		if (node.has_init()) {
 			auto init_stmt = node.get_init_statement();
 			if (init_stmt.has_value()) {
@@ -3061,12 +3068,28 @@ private:
 		operands.emplace_back(decl.is_array());  // Add is_array flag
 
 		// For arrays, add the array size
+		size_t array_count = 0;
 		if (decl.is_array()) {
 			auto size_expr = decl.array_size();
 			if (size_expr.has_value()) {
 				auto size_operands = visitExpressionNode(size_expr->as<ExpressionNode>());
 				// Add array size as an operand
 				operands.insert(operands.end(), size_operands.begin(), size_operands.end());
+				// Try to extract the array count
+				if (!size_operands.empty() && std::holds_alternative<unsigned long long>(size_operands[0])) {
+					array_count = static_cast<size_t>(std::get<unsigned long long>(size_operands[0]));
+				}
+			} else if (decl.is_unsized_array() && node.initializer().has_value()) {
+				// Unsized array - get size from initializer list
+				const ASTNode& init_node = *node.initializer();
+				if (init_node.is<InitializerListNode>()) {
+					const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+					array_count = init_list.initializers().size();
+					// Add the inferred size as an operand
+					operands.emplace_back(type_node.type());  // element type
+					operands.emplace_back(size_in_bits);      // element size
+					operands.emplace_back(static_cast<unsigned long long>(array_count));
+				}
 			}
 		}
 
@@ -3391,6 +3414,33 @@ private:
 		bool has_rvalue_initializer = decl_op.initializer.has_value();
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
+
+		// Handle array initialization with initializer list
+		if (decl.is_array() && node.initializer().has_value()) {
+			const ASTNode& init_node = *node.initializer();
+			if (init_node.is<InitializerListNode>()) {
+				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+				const auto& initializers = init_list.initializers();
+				
+				// Generate store for each element
+				for (size_t i = 0; i < initializers.size(); i++) {
+					// Evaluate the initializer expression
+					auto init_operands = visitExpressionNode(initializers[i].as<ExpressionNode>());
+					
+					// Generate array element store: arr[i] = value
+					ArrayStoreOp store_op;
+					store_op.element_type = type_node.type();
+					store_op.element_size_in_bits = size_in_bits;
+					store_op.array = std::string_view(decl.identifier_token().value());
+					store_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
+					store_op.value = toTypedValue(init_operands);
+					store_op.member_offset = 0;
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), 
+						node.declaration().identifier_token()));
+				}
+			}
+		}
 
 		// If this is a struct type with a constructor, generate a constructor call
 		// IMPORTANT: Only for non-pointer struct types. Pointers are just addresses, no constructor needed.

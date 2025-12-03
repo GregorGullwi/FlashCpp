@@ -954,15 +954,19 @@ class DeclarationNode {
 public:
 	DeclarationNode() = default;
 	DeclarationNode(ASTNode type_node, Token identifier)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(std::nullopt), custom_alignment_(0), is_parameter_pack_(false) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(std::nullopt), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size), custom_alignment_(0), is_parameter_pack_(false) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 
 	ASTNode type_node() const { return type_node_; }
 	const Token& identifier_token() const { return identifier_; }
 	uint32_t line_number() const { return identifier_.line(); }
-	bool is_array() const { return array_size_.has_value(); }
+	bool is_array() const { return array_size_.has_value() || is_unsized_array_; }
 	const std::optional<ASTNode>& array_size() const { return array_size_; }
+
+	// Unsized array support (e.g., int arr[] = {1, 2, 3})
+	bool is_unsized_array() const { return is_unsized_array_; }
+	void set_unsized_array(bool unsized) { is_unsized_array_ = unsized; }
 
 	// Alignment support
 	size_t custom_alignment() const { return custom_alignment_; }
@@ -983,6 +987,7 @@ private:
 	std::optional<ASTNode> array_size_;  // For array declarations like int arr[10]
 	size_t custom_alignment_;            // Custom alignment from alignas(n), 0 = use natural alignment
 	bool is_parameter_pack_;             // True for parameter packs like Args... args
+	bool is_unsized_array_;              // True for unsized arrays like int arr[] = {1, 2, 3}
 	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
 };
 

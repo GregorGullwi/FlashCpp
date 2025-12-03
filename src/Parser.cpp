@@ -1084,16 +1084,24 @@ ParseResult Parser::parse_type_and_name() {
 
     // Check for array declaration: identifier[size]
     std::optional<ASTNode> array_size;
+    bool is_unsized_array = false;
     if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
         peek_token()->value() == "[") {
         consume_token(); // consume '['
 
-        // Parse the array size expression
-        ParseResult size_result = parse_expression();
-        if (size_result.is_error()) {
-            return size_result;
+        // Check for empty brackets (unsized array, size inferred from initializer)
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+            peek_token()->value() == "]") {
+            // Empty brackets - array size will be inferred from initializer
+            is_unsized_array = true;
+        } else {
+            // Parse the array size expression
+            ParseResult size_result = parse_expression();
+            if (size_result.is_error()) {
+                return size_result;
+            }
+            array_size = size_result.node();
         }
-        array_size = size_result.node();
 
         // Expect closing ']'
         if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
@@ -1108,6 +1116,10 @@ ParseResult Parser::parse_type_and_name() {
         ASTNode decl_node;
         if (array_size.has_value()) {
             decl_node = emplace_node<DeclarationNode>(*node, identifier_token, array_size);
+        } else if (is_unsized_array) {
+            // Mark as an unsized array - size will be inferred from initializer
+            decl_node = emplace_node<DeclarationNode>(*node, identifier_token);
+            decl_node.as<DeclarationNode>().set_unsized_array(true);
         } else {
             decl_node = emplace_node<DeclarationNode>(*node, identifier_token);
         }
@@ -7042,6 +7054,8 @@ ParseResult Parser::parse_variable_declaration()
 						array_size_val = static_cast<size_t>(eval_result.as_int());
 					}
 				}
+				// Note: for unsized arrays (int arr[] = {...}), array_size_val will remain empty
+				// and will be set after parsing the initializer list
 				type_specifier.set_array(true, array_size_val);
 			}
 
@@ -7051,6 +7065,14 @@ ParseResult Parser::parse_variable_declaration()
 				return init_list_result;
 			}
 			first_init_expr = init_list_result.node();
+
+			// For unsized arrays, infer the size from the initializer list
+			if (first_decl.is_unsized_array() && first_init_expr.has_value() && 
+			    first_init_expr->is<InitializerListNode>()) {
+				const InitializerListNode& init_list = first_init_expr->as<InitializerListNode>();
+				size_t inferred_size = init_list.initializers().size();
+				type_specifier.set_array(true, inferred_size);
+			}
 		} else {
 			// Regular expression initializer
 			ParseResult init_expr_result = parse_expression();

@@ -74,9 +74,10 @@ private:
 
 extern ChunkedStringAllocator gChunkedStringAllocator;
 
-#ifdef NDEBUG
-static class StringBuilder* gCurrentStringBuilder = nullptr;
-#endif // NDEBUG
+// Global to track which StringBuilder is currently active (for detecting overlapping usage)
+// Using 'inline' instead of 'static' to ensure a single definition across all translation units
+// (C++17 inline variables)
+inline class StringBuilder* gCurrentStringBuilder = nullptr;
 
 class StringBuilder {
 public:
@@ -87,10 +88,8 @@ public:
     }
 
     StringBuilder& append(std::string_view sv) {
-    #ifdef NDEBUG
         assert((gCurrentStringBuilder == nullptr || gCurrentStringBuilder == this) && "More than one StringBuilder in the same scope detected. Call .commit() or .reset() before you start with the next string!");
-        gChunkedStringAllocator = this;
-    #endif
+        gCurrentStringBuilder = this;
         ensure_capacity(sv.size());
         std::memcpy(write_ptr_, sv.data(), sv.size());
         write_ptr_ += sv.size();
@@ -98,10 +97,8 @@ public:
     }
 
     StringBuilder& append(char c) {
-    #ifdef NDEBUG
         assert((gCurrentStringBuilder == nullptr || gCurrentStringBuilder == this) && "More than one StringBuilder in the same scope detected. Call .commit() or .reset() before you start with the next string!");
-        gChunkedStringAllocator = this;
-    #endif
+        gCurrentStringBuilder = this;
         ensure_capacity(1);
         *write_ptr_++ = c;
         return *this;
@@ -142,14 +139,14 @@ public:
     }
 
     std::string_view commit() {
-    #ifdef NDEBUG
-        gChunkedStringAllocator = nullptr;
-    #endif
         size_t len = write_ptr_ - buf_start_;
-        append('\0');
+        // Add null terminator directly (don't use append() which would set gCurrentStringBuilder)
+        ensure_capacity(1);
+        *write_ptr_++ = '\0';
         chunk_->allocate(len + 1);
         std::string_view return_str(buf_start_, len);
         buf_start_ = write_ptr_ = chunk_->current_ptr();
+        gCurrentStringBuilder = nullptr;  // Reset AFTER all operations
         return return_str;
     }
 
@@ -159,9 +156,7 @@ public:
     }
 
     void reset() {
-    #ifdef NDEBUG
-        gChunkedStringAllocator = nullptr;
-    #endif
+        gCurrentStringBuilder = nullptr;
         buf_start_ = write_ptr_ = chunk_->current_ptr();
     }
 

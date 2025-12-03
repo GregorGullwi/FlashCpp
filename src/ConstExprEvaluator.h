@@ -22,6 +22,10 @@ struct EvalResult {
 		double                   // Floating-point constant
 	> value;
 	std::string error_message;
+	
+	// Array support for local arrays in constexpr functions
+	bool is_array = false;
+	std::vector<int64_t> array_values;
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
@@ -554,20 +558,35 @@ private:
 		const BlockNode& body = body_node.as<BlockNode>();
 		const auto& statements = body.get_statements();
 		
-		// For simple constexpr functions, we expect a single return statement
-		if (statements.size() != 1) {
-			context.current_depth--;
-			return EvalResult::error("Constexpr function must have a single return statement (complex statements not yet supported)");
+		// Evaluate all statements in the function body
+		// Local variable bindings are mutable - they can be added to as we process statements
+		std::unordered_map<std::string_view, EvalResult> local_bindings = param_bindings;
+		
+		for (size_t i = 0; i < statements.size(); i++) {
+			auto result = evaluate_statement_with_bindings(statements[i], local_bindings, context);
+			
+			// If this was a return statement, we're done
+			if (statements[i].is<ReturnStatementNode>()) {
+				context.current_depth--;
+				return result;
+			}
+			
+			// For other statements (like variable declarations), result contains the binding info
+			// The binding has already been added to local_bindings by evaluate_statement_with_bindings
+			if (!result.success && result.error_message != "Statement executed (not a return)") {
+				// An actual error occurred
+				context.current_depth--;
+				return result;
+			}
 		}
 		
-		auto result = evaluate_statement_with_bindings(statements[0], param_bindings, context);
 		context.current_depth--;
-		return result;
+		return EvalResult::error("Constexpr function did not return a value");
 	}
 
 	static EvalResult evaluate_statement_with_bindings(
 		const ASTNode& stmt_node,
-		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context) {
 		
 		// Check if it's a return statement
@@ -580,6 +599,58 @@ private:
 			}
 			
 			return evaluate_expression_with_bindings(return_expr.value(), bindings, context);
+		}
+		
+		// Handle variable declarations
+		if (stmt_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = stmt_node.as<VariableDeclarationNode>();
+			const DeclarationNode& decl = var_decl.declaration_node().as<DeclarationNode>();
+			std::string_view var_name = decl.identifier_token().value();
+			
+			// Evaluate the initializer if present
+			if (var_decl.initializer().has_value()) {
+				const ASTNode& init_expr = var_decl.initializer().value();
+				
+				// Handle array initialization with InitializerListNode
+				if (init_expr.is<InitializerListNode>()) {
+					const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+					const auto& initializers = init_list.initializers();
+					
+					// Create array value - evaluate each element
+					std::vector<int64_t> array_values;
+					for (size_t i = 0; i < initializers.size(); i++) {
+						auto elem_result = evaluate_expression_with_bindings(initializers[i], bindings, context);
+						if (!elem_result.success) {
+							return elem_result;
+						}
+						array_values.push_back(elem_result.as_int());
+					}
+					
+					// Store as an array binding
+					EvalResult array_result;
+					array_result.success = true;
+					array_result.is_array = true;
+					array_result.array_values = std::move(array_values);
+					bindings[var_name] = array_result;
+					
+					// Return a sentinel indicating statement executed successfully
+					return EvalResult::error("Statement executed (not a return)");
+				}
+				
+				// Regular expression initializer
+				auto init_result = evaluate_expression_with_bindings(init_expr, bindings, context);
+				if (!init_result.success) {
+					return init_result;
+				}
+				
+				// Add to bindings
+				bindings[var_name] = init_result;
+				return EvalResult::error("Statement executed (not a return)");
+			}
+			
+			// Uninitialized variable - set to 0
+			bindings[var_name] = EvalResult::from_int(0);
+			return EvalResult::error("Statement executed (not a return)");
 		}
 		
 		return EvalResult::error("Unsupported statement type in constexpr function");
