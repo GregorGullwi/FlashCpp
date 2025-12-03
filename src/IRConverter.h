@@ -9771,19 +9771,39 @@ private:
 		std::array<uint8_t, 3> testInst = { 0x48, 0x85, modrm }; // test condition_reg, condition_reg
 		textSectionData.insert(textSectionData.end(), testInst.begin(), testInst.end());
 
-		// Jump if ZERO (JZ/JE) to else_label - inverted logic for better code layout
-		textSectionData.push_back(0x0F); // Two-byte opcode prefix
-		textSectionData.push_back(0x84); // JZ/JE rel32
+		// Check if then_label is a backward reference (already defined)
+		// This happens in do-while loops where we jump back to the start when true
+		bool then_is_backward = label_positions_.find(then_label) != label_positions_.end();
+		
+		if (then_is_backward) {
+			// For do-while: then_label is backward (jump to loop start), else_label is forward (fall through to end)
+			// Use JNZ (jump if not zero) to then_label, fall through to else_label
+			textSectionData.push_back(0x0F); // Two-byte opcode prefix
+			textSectionData.push_back(0x85); // JNZ/JNE rel32
 
-		uint32_t else_patch_position = static_cast<uint32_t>(textSectionData.size());
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
+			uint32_t then_patch_position = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
 
-		pending_branches_.push_back({else_label, else_patch_position});
+			pending_branches_.push_back({then_label, then_patch_position});
+			// Fall through to else block (loop end)
+		} else {
+			// For while/if: then_label is forward (fall through to body), else_label is forward (jump to end)
+			// Use JZ (jump if zero) to else_label, fall through to then_label
+			textSectionData.push_back(0x0F); // Two-byte opcode prefix
+			textSectionData.push_back(0x84); // JZ/JE rel32
 
-		// Fall through to then block - then_label will be placed right after this
+			uint32_t else_patch_position = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+
+			pending_branches_.push_back({else_label, else_patch_position});
+			// Fall through to then block
+		}
 	}
 	
 	void handleFunctionAddress(const IrInstruction& instruction) {

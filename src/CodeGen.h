@@ -2014,16 +2014,23 @@ private:
 	void visitForStatementNode(const ForStatementNode& node) {
 		// Generate unique labels for this for loop
 		static size_t for_counter = 0;
-		StringBuilder start_sb, body_sb, inc_sb, end_sb;
-		start_sb.append("for_start_").append(for_counter);
-		body_sb.append("for_body_").append(for_counter);
-		inc_sb.append("for_increment_").append(for_counter);
-		end_sb.append("for_end_").append(for_counter);
-		std::string_view loop_start_label = start_sb.commit();
-		std::string_view loop_body_label = body_sb.commit();
-		std::string_view loop_increment_label = inc_sb.commit();
-		std::string_view loop_end_label = end_sb.commit();
-		for_counter++;		// Execute init statement (if present)
+		size_t current_for = for_counter++;
+		
+		// Use a single StringBuilder and commit each label before starting the next
+		StringBuilder label_sb;
+		label_sb.append("for_start_").append(current_for);
+		std::string_view loop_start_label = label_sb.commit();
+		
+		label_sb.append("for_body_").append(current_for);
+		std::string_view loop_body_label = label_sb.commit();
+		
+		label_sb.append("for_increment_").append(current_for);
+		std::string_view loop_increment_label = label_sb.commit();
+		
+		label_sb.append("for_end_").append(current_for);
+		std::string_view loop_end_label = label_sb.commit();
+
+		// Execute init statement (if present)
 		if (node.has_init()) {
 			auto init_stmt = node.get_init_statement();
 			if (init_stmt.has_value()) {
@@ -2087,14 +2094,18 @@ private:
 	void visitWhileStatementNode(const WhileStatementNode& node) {
 		// Generate unique labels for this while loop
 		static size_t while_counter = 0;
-		StringBuilder start_sb, body_sb, end_sb;
-		start_sb.append("while_start_").append(while_counter);
-		body_sb.append("while_body_").append(while_counter);
-		end_sb.append("while_end_").append(while_counter);
-		std::string_view loop_start_label = start_sb.commit();
-		std::string_view loop_body_label = body_sb.commit();
-		std::string_view loop_end_label = end_sb.commit();
-		while_counter++;
+		size_t current_while = while_counter++;
+		
+		// Use a single StringBuilder and commit each label before starting the next
+		StringBuilder label_sb;
+		label_sb.append("while_start_").append(current_while);
+		std::string_view loop_start_label = label_sb.commit();
+		
+		label_sb.append("while_body_").append(current_while);
+		std::string_view loop_body_label = label_sb.commit();
+		
+		label_sb.append("while_end_").append(current_while);
+		std::string_view loop_end_label = label_sb.commit();
 		
 		// Mark loop begin for break/continue support
 		// For while loops, continue jumps to loop_start (re-evaluate condition)
@@ -2147,14 +2158,18 @@ private:
 	void visitDoWhileStatementNode(const DoWhileStatementNode& node) {
 		// Generate unique labels for this do-while loop
 		static size_t do_while_counter = 0;
-		StringBuilder start_sb, condition_sb, end_sb;
-		start_sb.append("do_while_start_").append(do_while_counter);
-		condition_sb.append("do_while_condition_").append(do_while_counter);
-		end_sb.append("do_while_end_").append(do_while_counter);
-		std::string_view loop_start_label = start_sb.commit();
-		std::string_view loop_condition_label = condition_sb.commit();
-		std::string_view loop_end_label = end_sb.commit();
-		do_while_counter++;
+		size_t current_do_while = do_while_counter++;
+		
+		// Use a single StringBuilder and commit each label before starting the next
+		StringBuilder label_sb;
+		label_sb.append("do_while_start_").append(current_do_while);
+		std::string_view loop_start_label = label_sb.commit();
+		
+		label_sb.append("do_while_condition_").append(current_do_while);
+		std::string_view loop_condition_label = label_sb.commit();
+		
+		label_sb.append("do_while_end_").append(current_do_while);
+		std::string_view loop_end_label = label_sb.commit();
 		
 		// Mark loop begin for break/continue support
 		// For do-while loops, continue jumps to condition check (not body start)
