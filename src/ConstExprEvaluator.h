@@ -886,9 +886,180 @@ public:
 
 	// Evaluate member access (e.g., obj.member or struct_type::static_member)
 	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context) {
-		// For now, member access is not supported in constant expressions
-		// This would require evaluating the object and then accessing its member
-		return EvalResult::error("Member access not supported in constant expressions");
+		// Get the object expression (e.g., 'p1' in 'p1.x')
+		const ASTNode& object_expr = member_access.object();
+		std::string_view member_name = member_access.member_name();
+		
+		// For constexpr struct member access, we need to handle the case where:
+		// - The object is an identifier referencing a constexpr variable
+		// - The variable is initialized with a ConstructorCallNode
+		// - We need to find the constructor declaration and its member initializer list
+		// - Extract the member value from the initializer expression
+		
+		// The object might be wrapped in an ExpressionNode, so unwrap it
+		// Extract the identifier name
+		std::string_view var_name;
+		
+		if (object_expr.is<ExpressionNode>()) {
+			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+			// The ExpressionNode uses std::variant, check if it contains an IdentifierNode
+			if (!std::holds_alternative<IdentifierNode>(expr_node)) {
+				return EvalResult::error("Complex member access expressions not yet supported in constant expressions");
+			}
+			const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
+			var_name = id_node.name();
+		} else if (object_expr.is<IdentifierNode>()) {
+			const IdentifierNode& id_node = object_expr.as<IdentifierNode>();
+			var_name = id_node.name();
+		} else {
+			return EvalResult::error("Complex member access expressions not yet supported in constant expressions");
+		}
+		
+		// Look up the variable in the symbol table
+		if (!context.symbols) {
+			return EvalResult::error("Cannot evaluate member access: no symbol table provided");
+		}
+		
+		auto symbol_opt = context.symbols->lookup(var_name);
+		if (!symbol_opt.has_value()) {
+			return EvalResult::error("Undefined variable in member access: " + std::string(var_name));
+		}
+		
+		const ASTNode& symbol_node = symbol_opt.value();
+		
+		// Check if it's a VariableDeclarationNode
+		if (!symbol_node.is<VariableDeclarationNode>()) {
+			return EvalResult::error("Identifier in member access is not a variable: " + std::string(var_name));
+		}
+		
+		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+		
+		// Check if it's a constexpr variable
+		if (!var_decl.is_constexpr()) {
+			return EvalResult::error("Variable in member access must be constexpr: " + std::string(var_name));
+		}
+		
+		// Get the initializer
+		const auto& initializer = var_decl.initializer();
+		if (!initializer.has_value()) {
+			return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
+		}
+		
+		// Check if the initializer is a ConstructorCallNode
+		if (!initializer->is<ConstructorCallNode>()) {
+			return EvalResult::error("Member access on non-struct constexpr variable not supported");
+		}
+		
+		const ConstructorCallNode& ctor_call = initializer->as<ConstructorCallNode>();
+		
+		// Get the type being constructed
+		const ASTNode& type_node = ctor_call.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Constructor call without valid type specifier");
+		}
+		
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		
+		// Get the struct type info
+		if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+			return EvalResult::error("Member access requires a struct type");
+		}
+		
+		TypeIndex type_index = type_spec.type_index();
+		if (type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid type index in member access");
+		}
+		
+		const TypeInfo& struct_type_info = gTypeInfo[type_index];
+		const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+		if (!struct_info) {
+			return EvalResult::error("Type is not a struct in member access");
+		}
+		
+		// Get the constructor arguments from the call
+		const auto& ctor_args = ctor_call.arguments();
+		
+		// Find the matching constructor in the struct
+		// We need to find a constructor with the same number of parameters as arguments
+		const ConstructorDeclarationNode* matching_ctor = nullptr;
+		for (const auto& member_func : struct_info->member_functions) {
+			if (!member_func.is_constructor) {
+				continue;
+			}
+			if (!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+			const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+			if (ctor.parameter_nodes().size() == ctor_args.size()) {
+				// Found a constructor with matching parameter count
+				// For full correctness, we should check parameter types too, but for constexpr
+				// evaluation in simple cases, parameter count matching is sufficient
+				matching_ctor = &ctor;
+				break;
+			}
+		}
+		
+		if (!matching_ctor) {
+			return EvalResult::error("No matching constructor found for constexpr evaluation");
+		}
+		
+		// Look for the member in the constructor's member initializer list
+		const auto& member_inits = matching_ctor->member_initializers();
+		for (const auto& mem_init : member_inits) {
+			if (mem_init.member_name == member_name) {
+				// Found the member initializer
+				// Create a context with parameter bindings
+				// We need to substitute constructor parameters with the actual arguments
+				
+				// For now, implement a simple case: direct assignment from parameter
+				// e.g., Point(int x_val, int y_val) : x(x_val), y(y_val) {}
+				
+				const ASTNode& init_expr = mem_init.initializer_expr;
+				
+				// The initializer might be wrapped in an ExpressionNode
+				bool is_simple_identifier = false;
+				std::string_view param_name;
+				
+				if (init_expr.is<ExpressionNode>()) {
+					const ExpressionNode& expr_node = init_expr.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr_node)) {
+						const IdentifierNode& param_id = std::get<IdentifierNode>(expr_node);
+						param_name = param_id.name();
+						is_simple_identifier = true;
+					}
+				} else if (init_expr.is<IdentifierNode>()) {
+					const IdentifierNode& param_id = init_expr.as<IdentifierNode>();
+					param_name = param_id.name();
+					is_simple_identifier = true;
+				}
+				
+				if (is_simple_identifier) {
+					// Find which parameter this refers to
+					const auto& params = matching_ctor->parameter_nodes();
+					for (size_t i = 0; i < params.size(); ++i) {
+						if (params[i].is<DeclarationNode>()) {
+							const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+							if (param_decl.identifier_token().value() == param_name) {
+								// Found the parameter - evaluate the corresponding argument
+								if (i < ctor_args.size()) {
+									return evaluate(ctor_args[i], context);
+								}
+							}
+						}
+					}
+				}
+				
+				// For more complex initializer expressions, we would need to:
+				// 1. Build a parameter substitution map
+				// 2. Recursively evaluate the initializer with parameter substitution
+				// For now, return an error for complex cases
+				return EvalResult::error("Complex member initializer expressions not yet supported in constexpr evaluation");
+			}
+		}
+		
+		// Member not found in initializer list - it might have a default member initializer
+		// or be value-initialized (0 for integers, etc.)
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in constructor initializer list");
 	}
 };
 
