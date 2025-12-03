@@ -13268,6 +13268,14 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_ref.set_definition(definition_opt.value());
 					}
 
+					// Parse trailing specifiers (const, volatile, &, &&, noexcept, override, final)
+					FlashCpp::MemberQualifiers member_quals;
+					FlashCpp::FunctionSpecifiers func_specs;
+					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+					if (specs_result.is_error()) {
+						return specs_result;
+					}
+
 					// Check for function body and use delayed parsing
 					if (peek_token().has_value() && peek_token()->value() == "{") {
 						// Save position at start of body
