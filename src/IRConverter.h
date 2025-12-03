@@ -2172,9 +2172,8 @@ inline void emitAddRegs(std::vector<char>& textSectionData, X64Register dest_reg
 	bool dest_extended = static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8);
 	bool src_extended = static_cast<uint8_t>(src_reg) >= static_cast<uint8_t>(X64Register::R8);
 	
-	uint8_t rex = 0x48; // REX.W
-	if (src_extended) rex |= 0x04; // R bit
-	if (dest_extended) rex |= 0x01; // B bit
+	// REX.W with branchless R and B bits
+	uint8_t rex = 0x48 | (src_extended << 2) | dest_extended;
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x01); // ADD r/m64, r64
 	textSectionData.push_back(0xC0 | (src_bits << 3) | dest_bits); // ModR/M: mod=11, reg=src, r/m=dest
@@ -2193,18 +2192,19 @@ inline void emitAddImmToReg(std::vector<char>& textSectionData, X64Register reg,
 	uint8_t reg_bits = static_cast<uint8_t>(reg) & 0x07;
 	bool reg_extended = static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8);
 	
-	uint8_t rex = 0x48; // REX.W
-	if (reg_extended) rex |= 0x01; // B bit
+	// REX.W with branchless B bit
+	uint8_t rex = 0x48 | reg_extended;
 	textSectionData.push_back(rex);
 	
-	if (reg == X64Register::RAX) {
-		// Special encoding for RAX: ADD RAX, imm32
-		textSectionData.push_back(0x05);
-	} else {
-		// ADD r/m64, imm32
-		textSectionData.push_back(0x81);
-		textSectionData.push_back(0xC0 | reg_bits); // ModR/M: mod=11, reg=000 (ADD), r/m=reg
-	}
+	// Branchless opcode selection using array
+	// RAX: just 0x05 (1 byte), others: 0x81, 0xC0|reg_bits (2 bytes)
+	bool is_rax = (reg == X64Register::RAX);
+	// For RAX: opcodes = {0x05}, size=1
+	// For others: opcodes = {0x81, 0xC0|reg_bits}, size=2
+	char opcodes[2] = { static_cast<char>(0x81), static_cast<char>(0xC0 | reg_bits) };
+	opcodes[0] = is_rax ? 0x05 : static_cast<char>(0x81);
+	int opcode_size = 2 - is_rax; // 1 for RAX, 2 for others
+	textSectionData.insert(textSectionData.end(), opcodes, opcodes + opcode_size);
 	
 	uint32_t imm_u32 = static_cast<uint32_t>(imm);
 	textSectionData.push_back(imm_u32 & 0xFF);
@@ -2451,6 +2451,43 @@ inline void emitStoreToMemory(std::vector<char>& textSectionData, X64Register va
 		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
 		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
 		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+	}
+}
+
+/**
+ * @brief Emits MOV [RSP + offset], reg for storing a value to RSP-relative stack slot.
+ *
+ * RSP addressing requires a SIB byte. This is used for placing function call arguments
+ * beyond the first 4 on the stack per Windows x64 calling convention.
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param value_reg The source register containing the value to store
+ * @param offset The offset from RSP (e.g., 32 for 5th arg, 40 for 6th arg)
+ */
+inline void emitStoreToRSP(std::vector<char>& textSectionData, X64Register value_reg, int32_t offset) {
+	uint8_t reg_bits = static_cast<uint8_t>(value_reg) & 0x07;
+	bool reg_extended = static_cast<uint8_t>(value_reg) >= static_cast<uint8_t>(X64Register::R8);
+	
+	// REX.W prefix for 64-bit, REX.R if source register is R8-R15 (branchless)
+	uint8_t rex = 0x48 | (reg_extended << 2);
+	textSectionData.push_back(rex);
+	
+	textSectionData.push_back(0x89); // MOV r/m64, r64
+	
+	// Use branchless encoding with static arrays
+	bool use_disp8 = (offset >= -128 && offset <= 127);
+	
+	// ModR/M byte: 0x44 for disp8, 0x84 for disp32, both with r/m=100 (SIB follows)
+	uint8_t modrm = (0x44 + (!use_disp8 * 0x40)) | (reg_bits << 3);
+	textSectionData.push_back(modrm);
+	textSectionData.push_back(0x24); // SIB: scale=00, index=100 (none), base=100 (RSP)
+	
+	// Emit displacement bytes - always emit at least 1, emit 4 for disp32
+	uint32_t offset_u32 = static_cast<uint32_t>(offset);
+	static constexpr int disp_sizes[] = { 4, 1 }; // disp32=4 bytes, disp8=1 byte
+	int num_bytes = disp_sizes[use_disp8];
+	for (int i = 0; i < num_bytes; ++i) {
+		textSectionData.push_back((offset_u32 >> (i * 8)) & 0xFF);
 	}
 }
 
@@ -4469,180 +4506,143 @@ private:
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number);
 			variable_scopes.back().identifier_offset[call_op.result.name()] = result_offset;
 			
-			// Process arguments and assign to registers/stack
-			std::vector<TypedValue> stack_args;
+			// IMPORTANT: Process stack arguments (5+) FIRST, before loading register arguments.
+			// This prevents loadTypedValueIntoRegister from clobbering RCX/RDX/R8/R9 which
+			// will hold the first 4 arguments.
+			for (size_t i = 4; i < call_op.args.size(); ++i) {
+				const auto& arg = call_op.args[i];
+				
+				// Stack args go at RSP+32+(i-4)*8
+				// Windows x64 ABI: stack args placed at [RSP+32] and above
+				int stack_offset = 32 + static_cast<int>(i - 4) * 8;
+				
+				X64Register temp_reg = loadTypedValueIntoRegister(arg);
+				emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+				regAlloc.release(temp_reg);
+			}
 			
-			for (size_t i = 0; i < call_op.args.size(); ++i) {
+			// Now process register arguments (first 4)
+			size_t max_reg_args = std::min<size_t>(call_op.args.size(), 4);
+			for (size_t i = 0; i < max_reg_args; ++i) {
 				const auto& arg = call_op.args[i];
 				
 				// Determine if this is a floating-point argument
 				bool is_float_arg = is_floating_point_type(arg.type);
 				
-				if (i < 4) {
-					// First 4 args go in calling convention registers
-					// Use XMM registers for float args, INT registers for integer args
-					X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
-					
-					// Special handling for passing addresses (this pointer or large struct references)
-					// For member functions: first arg is always "this" pointer (pass address)
-					// For structs: small structs (≤8 bytes) are passed by VALUE, large structs by reference
-					// UNLESS the parameter is explicitly a reference type
-					bool should_pass_address = false;
-					if (call_op.is_member_function && i == 0) {
-						// First argument of member function is always "this" pointer
+				// First 4 args go in calling convention registers
+				// Use XMM registers for float args, INT registers for integer args
+				X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
+				
+				// Special handling for passing addresses (this pointer or large struct references)
+				// For member functions: first arg is always "this" pointer (pass address)
+				// For structs: small structs (≤8 bytes) are passed by VALUE, large structs by reference
+				// UNLESS the parameter is explicitly a reference type
+				bool should_pass_address = false;
+				if (call_op.is_member_function && i == 0) {
+					// First argument of member function is always "this" pointer
+					should_pass_address = true;
+				} else if (arg.is_reference) {
+					// Parameter is explicitly a reference - always pass by address
+					should_pass_address = true;
+				} else if (arg.type == Type::Struct && std::holds_alternative<std::string_view>(arg.value)) {
+					// Check struct size - only pass by address if larger than 8 bytes
+					// x64 Windows ABI: structs of 1, 2, 4, or 8 bytes are passed by value in registers
+					if (arg.size_in_bits > 64) {
+						// Large struct - pass by reference (address)
 						should_pass_address = true;
-					} else if (arg.is_reference) {
-						// Parameter is explicitly a reference - always pass by address
-						should_pass_address = true;
-					} else if (arg.type == Type::Struct && std::holds_alternative<std::string_view>(arg.value)) {
-						// Check struct size - only pass by address if larger than 8 bytes
-						// x64 Windows ABI: structs of 1, 2, 4, or 8 bytes are passed by value in registers
-						if (arg.size_in_bits > 64) {
-							// Large struct - pass by reference (address)
-							should_pass_address = true;
-						}
 					}
-					
-					if (should_pass_address && std::holds_alternative<std::string_view>(arg.value)) {
-						// Load ADDRESS of object using LEA instead of value
-						std::string_view object_name = std::get<std::string_view>(arg.value);
-						int object_offset = variable_scopes.back().identifier_offset[object_name];
-						
-						// LEA target_reg, [RBP + object_offset]
-						textSectionData.push_back(0x48); // REX.W prefix
-						if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-							textSectionData.back() |= 0x01; // REX.B
-						}
-						textSectionData.push_back(0x8D); // LEA opcode
-						uint8_t modrm = (static_cast<uint8_t>(target_reg) & 0x07) << 3; // reg field
-						if (object_offset >= -128 && object_offset <= 127) {
-							modrm |= 0x45; // [RBP + disp8]
-							textSectionData.push_back(modrm);
-							textSectionData.push_back(static_cast<uint8_t>(object_offset));
-						} else {
-							modrm |= 0x85; // [RBP + disp32]
-							textSectionData.push_back(modrm);
-							for (int j = 0; j < 4; ++j) {
-								textSectionData.push_back(static_cast<uint8_t>(object_offset & 0xFF));
-								object_offset >>= 8;
-							}
-						}
-						continue;
-					}
-					
-					// Handle floating-point immediate values (double literals)
-					if (is_float_arg && std::holds_alternative<double>(arg.value)) {
-						// Load floating-point literal into XMM register
-						double float_value = std::get<double>(arg.value);
-						
-						// For float (32-bit), we need to convert the double to float first
-						uint64_t bits;
-						if (arg.type == Type::Float) {
-							float float_val = static_cast<float>(float_value);
-							uint32_t float_bits;
-							std::memcpy(&float_bits, &float_val, sizeof(float_bits));
-							bits = float_bits; // Zero-extend to 64-bit
-						} else {
-							std::memcpy(&bits, &float_value, sizeof(bits));
-						}
-						
-						// Allocate a temporary GPR for the bit pattern
-						X64Register temp_gpr = allocateRegisterWithSpilling();
-						
-						// movabs temp_gpr, imm64 (load bit pattern)
-						uint8_t rex_mov = 0x48;
-						if (static_cast<uint8_t>(temp_gpr) >= static_cast<uint8_t>(X64Register::R8)) {
-							rex_mov |= 0x01; // REX.B
-						}
-						textSectionData.push_back(rex_mov);
-						textSectionData.push_back(0xB8 + (static_cast<uint8_t>(temp_gpr) & 0x07));
-						for (size_t j = 0; j < 8; ++j) {
-							textSectionData.push_back(static_cast<uint8_t>(bits & 0xFF));
-							bits >>= 8;
-						}
-						
-						// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
-						textSectionData.push_back(0x66);
-						uint8_t xmm_idx = xmm_modrm_bits(target_reg);
-						uint8_t rex_movq = 0x48;  // REX.W
-						if (xmm_idx >= 8) {
-							rex_movq |= 0x04; // REX.R for XMM8-XMM15 destination
-						}
-						if (static_cast<uint8_t>(temp_gpr) >= static_cast<uint8_t>(X64Register::R8)) {
-							rex_movq |= 0x01; // REX.B for source GPR
-						}
-						textSectionData.push_back(rex_movq);
-						textSectionData.push_back(0x0F);
-						textSectionData.push_back(0x6E);
-						uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
-						textSectionData.push_back(modrm_movq);
-						
-						// Release the temporary GPR
-						regAlloc.release(temp_gpr);
-						continue;
-					}
-					
-					// Load value into target register
-					if (std::holds_alternative<unsigned long long>(arg.value)) {
-						// Load immediate directly into target register
-						// MOV reg, imm64
-						unsigned long long value = std::get<unsigned long long>(arg.value);
-						uint8_t rex_prefix = 0x48; // REX.W
-						uint8_t reg_code = static_cast<uint8_t>(target_reg) & 0x07;
-						if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-							rex_prefix |= 0x01; // REX.B
-						}
-						textSectionData.push_back(rex_prefix);
-						textSectionData.push_back(0xB8 + reg_code);
-						for (size_t j = 0; j < 8; ++j) {
-							textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
-							value >>= 8;
-						}
-					} else if (std::holds_alternative<TempVar>(arg.value)) {
-						// Load from stack
-						const auto& temp_var = std::get<TempVar>(arg.value);
-						int var_offset = getStackOffsetFromTempVar(temp_var);
-						if (is_float_arg) {
-							// For floating-point, use movsd/movss into XMM register
-							bool is_float = (arg.type == Type::Float);
-							emitFloatMovFromFrame(target_reg, var_offset, is_float);
-						} else {
-							// Use size-aware load: source (stack slot) -> destination (register)
-							// Both sizes are explicit for clarity
-							emitMovFromFrameSized(
-								SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-								SizedStackSlot{var_offset, arg.size_in_bits, isSignedType(arg.type)}  // source: sized stack slot
-							);
-							regAlloc.flushSingleDirtyRegister(target_reg);
-						}
-					} else if (std::holds_alternative<std::string_view>(arg.value)) {
-						// Load variable
-						std::string_view var_name = std::get<std::string_view>(arg.value);
-						int var_offset = variable_scopes.back().identifier_offset[var_name];
-						if (is_float_arg) {
-							// For floating-point, use movsd/movss into XMM register
-							bool is_float = (arg.type == Type::Float);
-							emitFloatMovFromFrame(target_reg, var_offset, is_float);
-						} else {
-							// Use size-aware load: source (stack slot) -> destination (register)
-							emitMovFromFrameSized(
-								SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-								SizedStackSlot{var_offset, arg.size_in_bits, isSignedType(arg.type)}  // source: sized stack slot
-							);
-							regAlloc.flushSingleDirtyRegister(target_reg);
-						}
-					}
-				} else {
-					// Remaining args go on stack
-					stack_args.push_back(arg);
 				}
-			}
-			
-			// Push stack arguments in reverse order
-			for (auto it = stack_args.rbegin(); it != stack_args.rend(); ++it) {
-				X64Register temp_reg = loadTypedValueIntoRegister(*it);
-				textSectionData.push_back(0x50 + static_cast<uint8_t>(temp_reg)); // PUSH reg
-				regAlloc.release(temp_reg);
+				
+				if (should_pass_address && std::holds_alternative<std::string_view>(arg.value)) {
+					// Load ADDRESS of object using LEA instead of value
+					std::string_view object_name = std::get<std::string_view>(arg.value);
+					int object_offset = variable_scopes.back().identifier_offset[object_name];
+					emitLEAFromFrame(textSectionData, target_reg, object_offset);
+					continue;
+				}
+				
+				// Handle floating-point immediate values (double literals)
+				if (is_float_arg && std::holds_alternative<double>(arg.value)) {
+					// Load floating-point literal into XMM register
+					double float_value = std::get<double>(arg.value);
+					
+					// For float (32-bit), we need to convert the double to float first
+					uint64_t bits;
+					if (arg.type == Type::Float) {
+						float float_val = static_cast<float>(float_value);
+						uint32_t float_bits;
+						std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+						bits = float_bits; // Zero-extend to 64-bit
+					} else {
+						std::memcpy(&bits, &float_value, sizeof(bits));
+					}
+					
+					// Allocate a temporary GPR for the bit pattern
+					X64Register temp_gpr = allocateRegisterWithSpilling();
+					
+					// Load bit pattern into temp GPR
+					emitMovImm64(temp_gpr, bits);
+					
+					// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
+					textSectionData.push_back(0x66);
+					uint8_t xmm_idx = xmm_modrm_bits(target_reg);
+					uint8_t rex_movq = 0x48;  // REX.W
+					if (xmm_idx >= 8) {
+						rex_movq |= 0x04; // REX.R for XMM8-XMM15 destination
+					}
+					if (static_cast<uint8_t>(temp_gpr) >= static_cast<uint8_t>(X64Register::R8)) {
+						rex_movq |= 0x01; // REX.B for source GPR
+					}
+					textSectionData.push_back(rex_movq);
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x6E);
+					uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
+					textSectionData.push_back(modrm_movq);
+					
+					// Release the temporary GPR
+					regAlloc.release(temp_gpr);
+					continue;
+				}
+				
+				// Load value into target register
+				if (std::holds_alternative<unsigned long long>(arg.value)) {
+					// Load immediate directly into target register
+					unsigned long long value = std::get<unsigned long long>(arg.value);
+					emitMovImm64(target_reg, value);
+				} else if (std::holds_alternative<TempVar>(arg.value)) {
+					// Load from stack
+					const auto& temp_var = std::get<TempVar>(arg.value);
+					int var_offset = getStackOffsetFromTempVar(temp_var);
+					if (is_float_arg) {
+						// For floating-point, use movsd/movss into XMM register
+						bool is_float = (arg.type == Type::Float);
+						emitFloatMovFromFrame(target_reg, var_offset, is_float);
+					} else {
+						// Use size-aware load: source (stack slot) -> destination (register)
+						// Both sizes are explicit for clarity
+						emitMovFromFrameSized(
+							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
+							SizedStackSlot{var_offset, arg.size_in_bits, isSignedType(arg.type)}  // source: sized stack slot
+						);
+						regAlloc.flushSingleDirtyRegister(target_reg);
+					}
+				} else if (std::holds_alternative<std::string_view>(arg.value)) {
+					// Load variable
+					std::string_view var_name = std::get<std::string_view>(arg.value);
+					int var_offset = variable_scopes.back().identifier_offset[var_name];
+					if (is_float_arg) {
+						// For floating-point, use movsd/movss into XMM register
+						bool is_float = (arg.type == Type::Float);
+						emitFloatMovFromFrame(target_reg, var_offset, is_float);
+					} else {
+						// Use size-aware load: source (stack slot) -> destination (register)
+						emitMovFromFrameSized(
+							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
+							SizedStackSlot{var_offset, arg.size_in_bits, isSignedType(arg.type)}  // source: sized stack slot
+						);
+						regAlloc.flushSingleDirtyRegister(target_reg);
+					}
+				}
 			}
 			
 			// Generate call instruction
@@ -4670,25 +4670,7 @@ private:
 				}
 			}
 			
-			// Clean up stack arguments
-			if (!stack_args.empty()) {
-				int cleanup_size = static_cast<int>(stack_args.size()) * 8;
-				// ADD RSP, imm8/imm32
-				if (cleanup_size >= -128 && cleanup_size <= 127) {
-					textSectionData.push_back(0x48); // REX.W
-					textSectionData.push_back(0x83); // ADD r/m64, imm8
-					textSectionData.push_back(0xC4); // ModR/M for RSP
-					textSectionData.push_back(static_cast<uint8_t>(cleanup_size));
-				} else {
-					textSectionData.push_back(0x48); // REX.W
-					textSectionData.push_back(0x81); // ADD r/m64, imm32
-					textSectionData.push_back(0xC4); // ModR/M for RSP
-					for (int j = 0; j < 4; ++j) {
-						textSectionData.push_back(static_cast<uint8_t>(cleanup_size & 0xFF));
-						cleanup_size >>= 8;
-					}
-				}
-			}
+			// No stack cleanup needed - Windows x64 ABI uses pre-allocated space, not PUSH
 			
 			return;
 		}
