@@ -3196,6 +3196,15 @@ ParseResult Parser::parse_struct_declaration()
 				}
 			}
 
+			// Validate that parameter packs cannot be data members
+			// Only function and template parameters can be parameter packs
+			if (member_result.node()->is<DeclarationNode>()) {
+				const DeclarationNode& member_decl = member_result.node()->as<DeclarationNode>();
+				if (member_decl.is_parameter_pack()) {
+					return ParseResult::error("Only function and template parameters can be parameter packs", member_decl.identifier_token());
+				}
+			}
+
 			// Add the first member to struct with current access level and default initializer
 			struct_ref.add_member(*member_result.node(), current_access, default_initializer);
 
