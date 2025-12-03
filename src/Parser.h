@@ -497,6 +497,9 @@ public:  // Public methods for template instantiation
         Type deduce_type_from_expression(const ASTNode& expr) const;
         static unsigned char get_type_size_bits(Type type);
 
+        // Helper function for counting pack elements in template parameter packs
+        size_t count_pack_elements(std::string_view pack_name) const;
+
         // Minimum precedence to accept all operators (assignment has lowest precedence = 3)
         static constexpr int MIN_PRECEDENCE = 0;
         // Default precedence excludes comma operator (precedence 1) to prevent it from being
