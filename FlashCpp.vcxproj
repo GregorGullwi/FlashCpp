@@ -197,6 +197,7 @@
     <ClInclude Include="src\coffi\coffi_utils.hpp" />
     <ClInclude Include="src\CommandLineParser.h" />
     <ClInclude Include="src\ConstExprEvaluator.h" />
+    <ClInclude Include="src\CrashHandler.h" />
     <ClInclude Include="src\FileReader.h" />
     <ClInclude Include="src\FileTree.h" />
     <ClInclude Include="src\CompileContext.h" />
