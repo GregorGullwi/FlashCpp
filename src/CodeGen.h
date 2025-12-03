@@ -3719,6 +3719,20 @@ private:
 		if (!symbol.has_value() && global_symbol_table_) {
 			symbol = global_symbol_table_->lookup(identifierNode.name());
 			is_global = symbol.has_value();  // If found in global table, it's a global
+			
+			// If still not found, check using directives from local scope in the global symbol table
+			// This handles cases like: using namespace X; int y = X_var;
+			// where X_var is defined in namespace X
+			if (!symbol.has_value()) {
+				auto using_directives = symbol_table.get_current_using_directives();
+				for (const auto& ns_path : using_directives) {
+					symbol = global_symbol_table_->lookup_qualified(ns_path, identifierNode.name());
+					if (symbol.has_value()) {
+						is_global = true;
+						break;
+					}
+				}
+			}
 		}
 
 		// Only check if it's a member variable if NOT found in symbol tables

@@ -635,6 +635,17 @@ public:
 		return "";
 	}
 
+	// Get all using directives from the current scope and all enclosing scopes
+	std::vector<NamespacePath> get_current_using_directives() const {
+		std::vector<NamespacePath> result;
+		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			for (const auto& using_dir : stackIt->using_directives) {
+				result.push_back(using_dir);
+			}
+		}
+		return result;
+	}
+
 	// Lookup a nested class by qualified name (e.g., "Outer::Inner")
 	std::optional<ASTNode> lookup_nested_class(std::string_view outer_class, std::string_view inner_class) const {
 		// First find the outer class
