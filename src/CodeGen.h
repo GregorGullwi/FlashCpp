@@ -365,24 +365,19 @@ public:
 				if (op.is_initialized) {
 					// Evaluate the initializer expression
 					auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
-					// Add only the initializer value (init_operands[2] is the value)
+					// Convert to raw bytes
 					if (init_operands.size() >= 3) {
-						// Convert IrOperand to IrValue
+						unsigned long long value = 0;
 						if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-							op.init_value = std::get<unsigned long long>(init_operands[2]);
+							value = std::get<unsigned long long>(init_operands[2]);
 						} else if (std::holds_alternative<double>(init_operands[2])) {
-							op.init_value = std::get<double>(init_operands[2]);
-						} else if (std::holds_alternative<TempVar>(init_operands[2])) {
-							op.init_value = std::get<TempVar>(init_operands[2]);
-						} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-							op.init_value = std::get<std::string_view>(init_operands[2]);
-						} else {
-							// Fallback to zero if type not recognized
-							op.init_value = 0ULL;
+							double d = std::get<double>(init_operands[2]);
+							std::memcpy(&value, &d, sizeof(double));
 						}
-					} else {
-						// Fallback to zero if initializer evaluation failed
-						op.init_value = 0ULL;
+						size_t byte_count = op.size_in_bits / 8;
+						for (size_t i = 0; i < byte_count; ++i) {
+							op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+						}
 					}
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
@@ -1169,24 +1164,19 @@ private:
 							if (op.is_initialized) {
 								// Evaluate the initializer expression
 								auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
-								// Add only the initializer value (init_operands[2] is the value)
+								// Convert to raw bytes
 								if (init_operands.size() >= 3) {
-									// Convert IrOperand to IrValue
+									unsigned long long value = 0;
 									if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-										op.init_value = std::get<unsigned long long>(init_operands[2]);
+										value = std::get<unsigned long long>(init_operands[2]);
 									} else if (std::holds_alternative<double>(init_operands[2])) {
-										op.init_value = std::get<double>(init_operands[2]);
-									} else if (std::holds_alternative<TempVar>(init_operands[2])) {
-										op.init_value = std::get<TempVar>(init_operands[2]);
-									} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-										op.init_value = std::get<std::string_view>(init_operands[2]);
-									} else {
-										// Fallback to zero if type not recognized
-										op.init_value = 0ULL;
+										double d = std::get<double>(init_operands[2]);
+										std::memcpy(&value, &d, sizeof(double));
 									}
-								} else {
-									// Fallback to zero if initializer evaluation failed
-									op.init_value = 0ULL;
+									size_t byte_count = op.size_in_bits / 8;
+									for (size_t i = 0; i < byte_count; ++i) {
+										op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+									}
 								}
 							}
 							ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
@@ -3034,53 +3024,83 @@ private:
 			op.type = type_node.type();
 			op.size_in_bits = static_cast<int>(type_node.size_in_bits());
 			op.var_name = var_name;
+			op.element_count = 1;  // Default for scalars
+			
+			// Helper to append a value as raw bytes in little-endian format
+			auto appendValueAsBytes = [](std::vector<char>& data, unsigned long long value, size_t byte_count) {
+				for (size_t i = 0; i < byte_count; ++i) {
+					data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+				}
+			};
+			
+			// Helper to evaluate a constexpr and get the raw value
+			auto evalToValue = [&](const ASTNode& expr, Type target_type) -> unsigned long long {
+				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
+				
+				if (!eval_result.success) {
+					FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable");
+					return 0;
+				}
+				
+				if (target_type == Type::Float) {
+					float f = static_cast<float>(eval_result.as_double());
+					uint32_t f_bits;
+					std::memcpy(&f_bits, &f, sizeof(float));
+					return f_bits;
+				} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+					double d = eval_result.as_double();
+					unsigned long long bits;
+					std::memcpy(&bits, &d, sizeof(double));
+					return bits;
+				} else if (std::holds_alternative<double>(eval_result.value)) {
+					return static_cast<unsigned long long>(eval_result.as_int());
+				} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+					return std::get<unsigned long long>(eval_result.value);
+				} else if (std::holds_alternative<long long>(eval_result.value)) {
+					return static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+				} else if (std::holds_alternative<bool>(eval_result.value)) {
+					return std::get<bool>(eval_result.value) ? 1 : 0;
+				}
+				return 0;
+			};
+			
+			// Check if this is an array and get element count
+			if (decl.is_array() || type_node.is_array()) {
+				if (decl.array_size().has_value()) {
+					ConstExpr::EvaluationContext ctx(gSymbolTable);
+					auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
+					if (eval_result.success) {
+						op.element_count = static_cast<size_t>(eval_result.as_int());
+					}
+				} else if (type_node.array_size().has_value()) {
+					op.element_count = *type_node.array_size();
+				}
+			}
 
 			// Check if initialized
-			// Try to evaluate initializer as a constant expression using ConstExprEvaluator
+			size_t element_size = op.size_in_bits / 8;
 			if (node.initializer()) {
 				const ASTNode& init_node = *node.initializer();
 				
-				if (init_node.is<ExpressionNode>()) {
-					// Try to evaluate as constant expression
-					ConstExpr::EvaluationContext ctx(gSymbolTable);
-					auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
+				// Handle array initialization with InitializerListNode
+				if (init_node.is<InitializerListNode>()) {
+					const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+					const auto& initializers = init_list.initializers();
 					
-					if (eval_result.success) {
-						op.is_initialized = true;
-						
-						// Convert the evaluated result to the appropriate storage format
-						// based on the target type
-						unsigned long long init_value = 0;
-						
-						// Check the target type to determine how to store the value
-						Type target_type = type_node.type();
-						
-						if (target_type == Type::Float) {
-							// For float, convert to float then reinterpret as uint32
-							float f = static_cast<float>(eval_result.as_double());
-							uint32_t f_bits;
-							std::memcpy(&f_bits, &f, sizeof(float));
-							init_value = f_bits;
-						} else if (target_type == Type::Double || target_type == Type::LongDouble) {
-							// For double/long double, reinterpret double bits as uint64
-							double d = eval_result.as_double();
-							std::memcpy(&init_value, &d, sizeof(double));
-						} else if (std::holds_alternative<double>(eval_result.value)) {
-							// Floating-point result but target is integer type - convert
-							init_value = static_cast<unsigned long long>(eval_result.as_int());
-						} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-							init_value = std::get<unsigned long long>(eval_result.value);
-						} else if (std::holds_alternative<long long>(eval_result.value)) {
-							init_value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
-						} else if (std::holds_alternative<bool>(eval_result.value)) {
-							init_value = std::get<bool>(eval_result.value) ? 1 : 0;
-						}
-						
-						op.init_value = init_value;
-					} else {
-						// Constexpr evaluation failed - mark as uninitialized
-						op.is_initialized = false;
+					op.is_initialized = true;
+					op.element_count = initializers.size();
+					
+					// Build raw bytes for each element
+					for (const auto& elem_init : initializers) {
+						unsigned long long value = evalToValue(elem_init, type_node.type());
+						appendValueAsBytes(op.init_data, value, element_size);
 					}
+				} else if (init_node.is<ExpressionNode>()) {
+					// Single value initialization
+					unsigned long long value = evalToValue(init_node, type_node.type());
+					op.is_initialized = true;
+					appendValueAsBytes(op.init_data, value, element_size);
 				} else {
 					op.is_initialized = false;
 				}
@@ -3898,16 +3918,19 @@ private:
 			if (is_global) {
 				// Generate GlobalLoad IR instruction
 				TempVar result_temp = var_counter.next();
-				int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+				// For arrays, result is a pointer (64-bit address)
+				bool is_array_type = decl_node.is_array() || type_node.is_array();
+				int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
 				op.result.size_in_bits = size_bits;
 				op.result.value = result_temp;
 				op.global_name = identifierNode.name();
+				op.is_array = is_array_type;  // Arrays need LEA to get address
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Return the temp variable that will hold the loaded value
-				// For pointers, return 64 bits (pointer size)
+				// For pointers and arrays, return 64 bits (pointer size)
 				// Include type_index for struct types
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
 				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
@@ -3931,24 +3954,28 @@ private:
 			if (is_global) {
 				// This is a global variable - generate GlobalLoad
 				TempVar result_temp = var_counter.next();
+        // For arrays, result is a pointer (64-bit address)
+			  bool is_array_type = decl_node.is_array() || type_node.is_array();
+        int size_bits = is_array_type ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
-				op.result.size_in_bits = static_cast<int>(type_node.size_in_bits());
+				op.result.size_in_bits = size_bits;
 				op.result.value = result_temp;
 				op.global_name = identifierNode.name();
+        op.is_array = is_array_type;  // Arrays need LEA to get address
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Return the temp variable that will hold the loaded value
 				// Include type_index for struct types
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
+				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			} else {
 				// This is a local variable - return variable name
 				// For pointers, return 64 bits (pointer size)
 				int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 				// Include type_index for struct types
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), size_bits, identifierNode.name(), static_cast<unsigned long long>(type_index) };
+				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			}
 		}
 		
@@ -6029,8 +6056,13 @@ private:
 			}
 			arg_index++;
 			
-			// For variables, we need to check if the parameter expects a reference
-			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+			// Check if visitExpressionNode returned a TempVar - this means the value was computed
+			// (e.g., global load, expression result, etc.) and we should use the TempVar directly
+			bool use_computed_result = (argumentIrOperands.size() >= 3 && 
+			                            std::holds_alternative<TempVar>(argumentIrOperands[2]));
+			
+			// For identifiers that returned local variable references (string_view), handle specially
+			if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 				if (!symbol.has_value() && global_symbol_table_) {
@@ -7076,15 +7108,28 @@ private:
 			if (!symbol.has_value() && global_symbol_table_) {
 				symbol = global_symbol_table_->lookup(arr_ident.name());
 			}
-			if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-				const auto& decl_node = symbol->as<DeclarationNode>();
-				const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+			if (symbol.has_value()) {
+				const DeclarationNode* decl_ptr = nullptr;
+				if (symbol->is<DeclarationNode>()) {
+					decl_ptr = &symbol->as<DeclarationNode>();
+				} else if (symbol->is<VariableDeclarationNode>()) {
+					decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
+				}
 				
-				// If it's a pointer type, use the base type size (not 64)
-				if (type_node.pointer_depth() > 0) {
-					// Get the base type size (what the pointer points to)
-					element_size_bits = static_cast<int>(type_node.size_in_bits());
-					is_pointer_to_array = true;  // This is a pointer, not an actual array
+				if (decl_ptr) {
+					const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					
+					// If it's a pointer type, use the base type size (not 64)
+					if (type_node.pointer_depth() > 0) {
+						// Get the base type size (what the pointer points to)
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+						is_pointer_to_array = true;  // This is a pointer, not an actual array
+					}
+					// If it's an array type, use the element size (not 64 pointer size)
+					else if (decl_ptr->is_array() || type_node.is_array()) {
+						// Get the actual element type size
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+					}
 				}
 			}
 		}

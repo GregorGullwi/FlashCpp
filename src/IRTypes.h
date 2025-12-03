@@ -805,6 +805,7 @@ struct ConversionOp {
 struct GlobalLoadOp {
 	TypedValue result;           // Result with type, size, and temp var
 	std::string_view global_name;  // Name of global variable (from source token or StringBuilder)
+	bool is_array = false;       // If true, load address (LEA) instead of value (MOV)
 };
 
 // Function address (get address of a function)
@@ -834,10 +835,11 @@ struct VariableDeclOp {
 // Global variable declaration
 struct GlobalVariableDeclOp {
 	Type type = Type::Void;
-	int size_in_bits = 0;
+	int size_in_bits = 0;          // Size of one element in bits
 	std::string_view var_name;
 	bool is_initialized = false;
-	std::optional<IrValue> init_value;  // Only if is_initialized
+	size_t element_count = 1;       // Number of elements (1 for scalars, N for arrays)
+	std::vector<char> init_data;    // Raw bytes for initialized data
 };
 
 // Heap allocation (new operator)
@@ -1985,14 +1987,10 @@ public:
 			if (type_info != gNativeTypes.end())
 				oss << type_info->second->name_;
 			oss << op.size_in_bits << " @" << std::string(var_name);
-			oss << " " << (op.is_initialized ? "initialized" : "uninitialized");
-			if (op.is_initialized && op.init_value.has_value()) {
-				const auto& val = op.init_value.value();
-				if (std::holds_alternative<unsigned long long>(val))
-					oss << " = " << std::get<unsigned long long>(val);
-				else if (std::holds_alternative<double>(val))
-					oss << " = " << std::get<double>(val);
+			if (op.element_count > 1) {
+				oss << "[" << op.element_count << "]";
 			}
+			oss << " " << (op.is_initialized ? "initialized" : "uninitialized");
 		}
 		break;
 		

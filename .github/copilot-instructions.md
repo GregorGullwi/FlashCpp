@@ -13,7 +13,7 @@ FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit i
 - Use `make main CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, same as .\build_flashcpp.bat on a regular Windows terminal.
 
 ## Coding Style & Naming Conventions
-Target warning-clean builds under both MSVC and clang. Use tab indentation, same-line braces, and keep includes grouped `<system>` before quotes. Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase. Prefer `std::string_view` for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
+Target warning-clean builds under both MSVC and clang. Use tab indentation, same-line braces, and keep includes grouped `<system>` before quotes. Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase. Prefer `std::string_view` for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler. Call `emitMov` functions instead of `generateMov` or adding mov opcodes manually to `textSectionData` in `IRConverter.h`.
 
 ## Testing Guidelines
 The doctest runner lives in `tests/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp`. Add coverage with `TEST_CASE` blocks (e.g., `"Parser:IfWithInit"`). Run `link_and_run_test_debug.bat` for MSVC smoke tests, or `make test && ./x64/test` under WSL/Linux. Shared expectations belong in `tests/`; document intentional skips inline. Don't forget to add kernel32.lib to the link command line.
