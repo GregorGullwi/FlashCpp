@@ -1885,6 +1885,7 @@ private:
 
 	void visitBlockNode(const BlockNode& node) {
 		// Enter a new scope
+		symbol_table.enter_scope(ScopeType::Block);
 		enterScope();
 		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
 
@@ -1896,6 +1897,7 @@ private:
 		// Exit scope and call destructors
 		ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
 		exitScope();
+		symbol_table.exit_scope();
 	}
 
 	void visitIfStatementNode(const IfStatementNode& node) {
@@ -2015,6 +2017,10 @@ private:
 	}
 
 	void visitForStatementNode(const ForStatementNode& node) {
+		// Enter a new scope for the for loop (C++ standard: for-init-statement creates a scope)
+		symbol_table.enter_scope(ScopeType::Block);
+		enterScope();
+		
 		// Generate unique labels for this for loop
 		static size_t for_counter = 0;
 		size_t current_for = for_counter++;
@@ -2092,6 +2098,10 @@ private:
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
+		
+		// Exit the for loop scope
+		exitScope();
+		symbol_table.exit_scope();
 	}
 
 	void visitWhileStatementNode(const WhileStatementNode& node) {
@@ -6301,13 +6311,16 @@ private:
 
 						// Look up the pointer in the symbol table
 						const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-						if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-							object_decl = &symbol->as<DeclarationNode>();
-							// Get the pointer type and remove one level of indirection
-							TypeSpecifierNode ptr_type = object_decl->type_node().as<TypeSpecifierNode>();
-							if (ptr_type.pointer_levels().size() > 0) {
-								object_type = ptr_type;
-								object_type.remove_pointer_level();
+						if (symbol.has_value()) {
+							const DeclarationNode* ptr_decl = get_decl_from_symbol(*symbol);
+							if (ptr_decl) {
+								object_decl = ptr_decl;
+								// Get the pointer type and remove one level of indirection
+								TypeSpecifierNode ptr_type = ptr_decl->type_node().as<TypeSpecifierNode>();
+								if (ptr_type.pointer_levels().size() > 0) {
+									object_type = ptr_type;
+									object_type.remove_pointer_level();
+								}
 							}
 						}
 					}
@@ -6327,19 +6340,21 @@ private:
 					
 					// Look up the base object (e.g., "this")
 					const std::optional<ASTNode> symbol = symbol_table.lookup(base_name);
-					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-						const DeclarationNode& base_decl = symbol->as<DeclarationNode>();
-						TypeSpecifierNode base_type_spec = base_decl.type_node().as<TypeSpecifierNode>();
-						
-						// If this is a pointer (like "this"), dereference it
-						if (base_type_spec.pointer_levels().size() > 0) {
-							base_type_spec.remove_pointer_level();
-						}
-						
-						// Now base_type_spec should be the struct type
-						if (base_type_spec.type() == Type::Struct) {
-							object_type = base_type_spec;
-							object_name = base_name;  // Use the base name for the call
+					if (symbol.has_value()) {
+						const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
+						if (base_decl) {
+							TypeSpecifierNode base_type_spec = base_decl->type_node().as<TypeSpecifierNode>();
+							
+							// If this is a pointer (like "this"), dereference it
+							if (base_type_spec.pointer_levels().size() > 0) {
+								base_type_spec.remove_pointer_level();
+							}
+							
+							// Now base_type_spec should be the struct type
+							if (base_type_spec.type() == Type::Struct) {
+								object_type = base_type_spec;
+								object_name = base_name;  // Use the base name for the call
+							}
 						}
 					}
 				}
