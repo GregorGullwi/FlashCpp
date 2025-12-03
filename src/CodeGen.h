@@ -1884,20 +1884,40 @@ private:
 	}
 
 	void visitBlockNode(const BlockNode& node) {
-		// Enter a new scope
-		symbol_table.enter_scope(ScopeType::Block);
-		enterScope();
-		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+		// Check if this block contains only VariableDeclarationNodes
+		// If so, it's likely from comma-separated declarations and shouldn't create a new scope
+		bool only_var_decls = true;
+		bool has_statements = false;
+		node.get_statements().visit([&](const ASTNode& statement) {
+			has_statements = true;
+			if (!statement.is<VariableDeclarationNode>()) {
+				only_var_decls = false;
+			}
+		});
+		
+		// For blocks that only contain variable declarations, don't enter a new scope
+		// This handles comma-separated declarations like: int a = 1, b = 2;
+		// which the parser represents as a BlockNode containing multiple VariableDeclarationNodes
+		bool enter_scope = !only_var_decls || !has_statements;
+		
+		if (enter_scope) {
+			// Enter a new scope
+			symbol_table.enter_scope(ScopeType::Block);
+			enterScope();
+			ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+		}
 
 		// Visit all statements in the block
 		node.get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
 
-		// Exit scope and call destructors
-		ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
-		exitScope();
-		symbol_table.exit_scope();
+		if (enter_scope) {
+			// Exit scope and call destructors
+			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+			exitScope();
+			symbol_table.exit_scope();
+		}
 	}
 
 	void visitIfStatementNode(const IfStatementNode& node) {
@@ -3901,25 +3921,35 @@ private:
 			return { type_node.type(), size_bits, identifierNode.name(), static_cast<unsigned long long>(type_index) };
 		}
 
-		// Check if it's a VariableDeclarationNode (global variable)
+		// Check if it's a VariableDeclarationNode
 		if (symbol->is<VariableDeclarationNode>()) {
 			const auto& var_decl_node = symbol->as<VariableDeclarationNode>();
 			const auto& decl_node = var_decl_node.declaration();
 			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
-			// This is a global variable - generate GlobalLoad
-			TempVar result_temp = var_counter.next();
-			GlobalLoadOp op;
-			op.result.type = type_node.type();
-			op.result.size_in_bits = static_cast<int>(type_node.size_in_bits());
-			op.result.value = result_temp;
-			op.global_name = identifierNode.name();
-			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+			// Check if this is actually a global variable
+			if (is_global) {
+				// This is a global variable - generate GlobalLoad
+				TempVar result_temp = var_counter.next();
+				GlobalLoadOp op;
+				op.result.type = type_node.type();
+				op.result.size_in_bits = static_cast<int>(type_node.size_in_bits());
+				op.result.value = result_temp;
+				op.global_name = identifierNode.name();
+				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
-			// Return the temp variable that will hold the loaded value
-			// Include type_index for struct types
-			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-			return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
+				// Return the temp variable that will hold the loaded value
+				// Include type_index for struct types
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
+			} else {
+				// This is a local variable - return variable name
+				// For pointers, return 64 bits (pointer size)
+				int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+				// Include type_index for struct types
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+				return { type_node.type(), size_bits, identifierNode.name(), static_cast<unsigned long long>(type_index) };
+			}
 		}
 		
 		// Check if it's a FunctionDeclarationNode (function name used as value)
