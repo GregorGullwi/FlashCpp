@@ -3025,6 +3025,9 @@ ParseResult Parser::parse_struct_declaration()
 				member_func_ref.add_parameter_node(param);
 			}
 
+			// Mark as constexpr if the constexpr keyword was present
+			member_func_ref.set_is_constexpr(is_member_constexpr);
+
 			// Use unified trailing specifiers parsing (Phase 2)
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
 			FlashCpp::MemberQualifiers member_quals;
