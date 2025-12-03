@@ -12,8 +12,20 @@ int sum_array() {
 }
 
 int main() {
-    printf("arr[1] = %d (expected 20)\n", get_second());
-    printf("sum = %d (expected 600)\n", sum_array());
-    puts("Array tests completed - verify values above!");
+    int second = get_second();
+    int sum = sum_array();
+    
+    if (second == 20) {
+        puts("get_second: PASS (20)");
+    } else {
+        puts("get_second: FAIL");
+    }
+    
+    if (sum == 600) {
+        puts("sum_array: PASS (600)");
+    } else {
+        puts("sum_array: FAIL");
+    }
+    
     return 0;
 }
