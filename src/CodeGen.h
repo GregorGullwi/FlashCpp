@@ -5271,6 +5271,20 @@ private:
 			return { lhsType, 64, result_var, 0ULL };
 		}
 	
+		// Check for logical operations BEFORE type promotions
+		// Logical operations should preserve boolean types without promotion
+		if (op == "&&" || op == "||") {
+			TempVar result_var = var_counter.next();
+			BinaryOp bin_op{
+				.lhs = { Type::Bool, 8, toIrValue(lhsIrOperands[2]) },
+				.rhs = { Type::Bool, 8, toIrValue(rhsIrOperands[2]) },
+				.result = result_var,
+			};
+			IrOpcode opcode = (op == "&&") ? IrOpcode::LogicalAnd : IrOpcode::LogicalOr;
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
+			return { Type::Bool, 8, result_var, 0ULL };  // Logical operations return bool8
+		}
+
 		// Apply integer promotions and find common type
 		Type commonType = get_common_type(lhsType, rhsType);
 
@@ -5335,25 +5349,6 @@ private:
 			};
 			
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
-		}
-		// Logical operations (typed, always bool8 - bool is 8 bits in C++)
-		else if (op == "&&") {
-			BinaryOp bin_op{
-				.lhs = { Type::Bool, 8, toIrValue(lhsIrOperands[2]) },
-				.rhs = { Type::Bool, 8, toIrValue(rhsIrOperands[2]) },
-				.result = result_var,
-			};
-			ir_.addInstruction(IrInstruction(IrOpcode::LogicalAnd, std::move(bin_op), binaryOperatorNode.get_token()));
-			return { Type::Bool, 8, result_var, 0ULL };  // Logical operations return bool8
-		}
-		else if (op == "||") {
-			BinaryOp bin_op{
-				.lhs = { Type::Bool, 8, toIrValue(lhsIrOperands[2]) },
-				.rhs = { Type::Bool, 8, toIrValue(rhsIrOperands[2]) },
-				.result = result_var,
-			};
-			ir_.addInstruction(IrInstruction(IrOpcode::LogicalOr, std::move(bin_op), binaryOperatorNode.get_token()));
-			return { Type::Bool, 8, result_var, 0ULL };  // Logical operations return bool8
 		}
 		// Comparison operations (typed)
 		else if (op == "==" && !is_floating_point_op) {
