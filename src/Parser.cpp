@@ -1595,8 +1595,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	}
 
 	// First, try to parse as a function definition
+	// Save position before attempting function parse so we can backtrack if it's actually a variable
+	TokenPosition before_function_parse = save_token_position();
 	ParseResult function_definition_result = parse_function_declaration(decl_node, attr_info.calling_convention);
 	if (!function_definition_result.is_error()) {
+		// Successfully parsed as function - discard saved position
+		discard_saved_token(before_function_parse);
 		// It was successfully parsed as a function definition
 		// Apply attribute linkage if present (calling convention already set in parse_function_declaration)
 		if (auto func_node_ptr = function_definition_result.node()) {
@@ -1793,7 +1797,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return saved_position.success();
 		}
 	} else {
-		// Function parsing failed, the position is restored
+		// Function parsing failed - restore position to try variable declaration
+		restore_token_position(before_function_parse);
+		
 		// If the error is a semantic error (not a syntax error about expecting '('),
 		// return it directly instead of trying variable declaration parsing
 		std::string error_msg = function_definition_result.error_message();
@@ -1837,6 +1843,46 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return init_list_result;
 			}
 			initializer = init_list_result.node();
+		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+			// Constructor-style initialization: Type var(args)
+			// e.g., constexpr Point p1(10, 20);
+			Token identifier_token = decl_node.identifier_token();
+			Token paren_token = *peek_token(); // Save '(' token for called_from location
+			
+			// Parse the argument list
+			consume_token(); // consume '('
+			ChunkedVector<ASTNode> arguments;
+			
+			while (peek_token().has_value() && peek_token()->value() != ")") {
+				auto arg_result = parse_expression();
+				if (arg_result.is_error()) {
+					return arg_result;
+				}
+				if (auto arg_node = arg_result.node()) {
+					arguments.push_back(*arg_node);
+				}
+				
+				if (peek_token().has_value() && peek_token()->value() == ",") {
+					consume_token(); // consume ','
+				} else {
+					break;
+				}
+			}
+			
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+			}
+			
+			// Create a ConstructorCallNode representing the constructor call
+			// The type_node is the TypeSpecifierNode from the declaration
+			ASTNode type_node_copy = decl_node.type_node();
+			auto ctor_call_node = ASTNode::emplace_node<ConstructorCallNode>(
+				type_node_copy, 
+				std::move(arguments),
+				paren_token
+			);
+			
+			initializer = ctor_call_node;
 		}
 
 		if (!consume_punctuator(";")) {
