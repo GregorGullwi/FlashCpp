@@ -7435,8 +7435,64 @@ private:
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 			Type type = type_spec.type();
 
+			// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
+			// array variable, the parser may incorrectly parse it as a type.
+			// If size_in_bits is 0, try looking up the identifier in the symbol table.
+			if (type_spec.size_in_bits() == 0 && type_spec.token().type() == Token::Type::Identifier) {
+				std::string_view identifier = type_spec.token().value();
+				
+				// Look up the identifier in the symbol table
+				std::optional<ASTNode> symbol = symbol_table.lookup(identifier);
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(identifier);
+				}
+				
+				if (symbol.has_value()) {
+					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+					if (decl && decl->is_array()) {
+						// This is an array variable - calculate total size
+						const TypeSpecifierNode& actual_type_spec = decl->type_node().as<TypeSpecifierNode>();
+						size_t element_size = actual_type_spec.size_in_bits() / 8;
+						
+						// Get array size
+						size_t array_count = 0;
+						if (decl->array_size().has_value()) {
+							// Evaluate the array size expression using ConstExprEvaluator
+							const ASTNode& size_expr = *decl->array_size();
+							ConstExpr::EvaluationContext ctx(symbol_table);
+							auto eval_result = ConstExpr::Evaluator::evaluate(size_expr, ctx);
+							
+							if (eval_result.success) {
+								array_count = static_cast<size_t>(eval_result.as_int());
+							}
+						}
+						
+						if (array_count > 0) {
+							size_in_bytes = element_size * array_count;
+							// Return sizeof result
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+						}
+					}
+				}
+			}
+
+			// Handle array types: sizeof(int[10]) 
+			if (type_spec.is_array()) {
+				size_t element_size = type_spec.size_in_bits() / 8;
+				size_t array_count = 0;
+				
+				if (type_spec.array_size().has_value()) {
+					array_count = *type_spec.array_size();
+				}
+				
+				if (array_count > 0) {
+					size_in_bytes = element_size * array_count;
+				} else {
+					size_in_bytes = element_size; // Fallback: just element size
+				}
+			}
 			// Handle struct types
-			if (type == Type::Struct) {
+			else if (type == Type::Struct) {
 				size_t type_index = type_spec.type_index();
 				if (type_index >= gTypeInfo.size()) {
 					assert(false && "Invalid type index for struct");
@@ -7465,6 +7521,48 @@ private:
 				return {};
 			}
 
+			// Special handling for array identifiers: sizeof(arr) where arr is int[10]
+			// This path handles cases where the parser correctly identifies arr as an expression
+			const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr)) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+				
+				// Look up the identifier in the symbol table
+				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(id_node.name());
+				}
+				
+				if (symbol.has_value()) {
+					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+					if (decl && decl->is_array()) {
+						// This is an array - calculate total size as element_size * array_count
+						const TypeSpecifierNode& type_spec = decl->type_node().as<TypeSpecifierNode>();
+						size_t element_size = type_spec.size_in_bits() / 8;
+						
+						// Get array size
+						size_t array_count = 0;
+						if (decl->array_size().has_value()) {
+							// Evaluate the array size expression using ConstExprEvaluator
+							const ASTNode& size_expr = *decl->array_size();
+							ConstExpr::EvaluationContext ctx(symbol_table);
+							auto eval_result = ConstExpr::Evaluator::evaluate(size_expr, ctx);
+							
+							if (eval_result.success) {
+								array_count = static_cast<size_t>(eval_result.as_int());
+							}
+						}
+						
+						if (array_count > 0) {
+							size_in_bytes = element_size * array_count;
+							// Return sizeof result
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+						}
+					}
+				}
+			}
+
+			// Fall back to default expression handling
 			// Generate IR for the expression to get its type
 			auto expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
 			if (expr_operands.empty()) {
