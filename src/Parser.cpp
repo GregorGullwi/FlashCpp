@@ -12343,6 +12343,38 @@ Type Parser::deduce_type_from_expression(const ASTNode& expr) const {
 	return Type::Int;
 }
 
+// Helper function to count pack elements in template parameter packs
+// Counts by looking up pack_name_0, pack_name_1, etc. in the symbol table
+size_t Parser::count_pack_elements(std::string_view pack_name) const {
+	size_t num_pack_elements = 0;
+	StringBuilder param_name_builder;
+	
+	while (true) {
+		// Build the parameter name: pack_name + "_" + index
+		param_name_builder.append(pack_name);
+		param_name_builder.append('_');
+		param_name_builder.append(num_pack_elements);
+		std::string_view param_name = param_name_builder.preview();
+		
+		// Check if this parameter exists in the symbol table
+		auto lookup_result = gSymbolTable.lookup(param_name);
+		param_name_builder.reset();  // Reset for next iteration
+		
+		if (!lookup_result.has_value()) {
+			break;  // No more pack elements
+		}
+		num_pack_elements++;
+		
+		// Safety limit to prevent infinite loops
+		if (num_pack_elements > MAX_PACK_ELEMENTS) {
+			FLASH_LOG(Templates, Error, "Pack '", pack_name, "' expansion exceeded MAX_PACK_ELEMENTS (", MAX_PACK_ELEMENTS, ")");
+			break;
+		}
+	}
+	
+	return num_pack_elements;
+}
+
 // Parse extern "C" { ... } block
 ParseResult Parser::parse_extern_block(Linkage linkage) {
 	// Expect '{'
@@ -19237,33 +19269,8 @@ ASTNode Parser::substituteTemplateParameters(
 			// We need to expand it into individual parameter references (like "args_0", "args_1", "args_2")
 			std::vector<ASTNode> pack_values;
 		
-			// Count pack elements by looking up pack_name_0, pack_name_1, etc. in the symbol table
-			// This is more reliable than counting template args since non-pack function parameters
-			// don't affect the pack element count
-			size_t num_pack_elements = 0;
-			StringBuilder param_name_builder;
-			while (true) {
-				// Build the parameter name: pack_name + "_" + index
-				param_name_builder.append(fold.pack_name());
-				param_name_builder.append('_');
-				param_name_builder.append(num_pack_elements);
-				std::string_view param_name = param_name_builder.preview();
-				
-				// Check if this parameter exists in the symbol table
-				auto lookup_result = gSymbolTable.lookup(param_name);
-				param_name_builder.reset();  // Reset for next iteration
-				
-				if (!lookup_result.has_value()) {
-					break;  // No more pack elements
-				}
-				num_pack_elements++;
-				
-				// Safety limit to prevent infinite loops
-				if (num_pack_elements > MAX_PACK_ELEMENTS) {
-					FLASH_LOG(Templates, Error, "Fold expression pack '", fold.pack_name(), "' has too many elements (>", MAX_PACK_ELEMENTS, ")");
-					break;
-				}
-			}
+			// Count pack elements using the helper function
+			size_t num_pack_elements = count_pack_elements(fold.pack_name());
 			
 			FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
 		
@@ -19339,32 +19346,8 @@ ASTNode Parser::substituteTemplateParameters(
 			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
 			std::string_view pack_name = sizeof_pack.pack_name();
 			
-			// Count pack elements by looking up pack_name_0, pack_name_1, etc. in the symbol table
-			// This matches the approach used for fold expressions
-			size_t num_pack_elements = 0;
-			StringBuilder param_name_builder;
-			while (true) {
-				// Build the parameter name: pack_name + "_" + index
-				param_name_builder.append(pack_name);
-				param_name_builder.append('_');
-				param_name_builder.append(num_pack_elements);
-				std::string_view param_name = param_name_builder.preview();
-				
-				// Check if this parameter exists in the symbol table
-				auto lookup_result = gSymbolTable.lookup(param_name);
-				param_name_builder.reset();  // Reset for next iteration
-				
-				if (!lookup_result.has_value()) {
-					break;  // No more pack elements
-				}
-				num_pack_elements++;
-				
-				// Safety limit to prevent infinite loops
-				if (num_pack_elements > MAX_PACK_ELEMENTS) {
-					FLASH_LOG(Templates, Error, "Pack expansion exceeded MAX_PACK_ELEMENTS (", MAX_PACK_ELEMENTS, ")");
-					break;
-				}
-			}
+			// Count pack elements using the helper function
+			size_t num_pack_elements = count_pack_elements(pack_name);
 			
 			// Create an integer literal with the pack size
 			StringBuilder pack_size_builder;
