@@ -19332,6 +19332,46 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 			
 			return result_expr;
+		} else if (std::holds_alternative<SizeofPackNode>(expr)) {
+			// sizeof... operator - replace with the pack size as a constant
+			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+			std::string_view pack_name = sizeof_pack.pack_name();
+			
+			// Count pack elements by looking up pack_name_0, pack_name_1, etc. in the symbol table
+			// This matches the approach used for fold expressions
+			size_t num_pack_elements = 0;
+			StringBuilder param_name_builder;
+			while (true) {
+				// Build the parameter name: pack_name + "_" + index
+				param_name_builder.append(pack_name);
+				param_name_builder.append('_');
+				param_name_builder.append(num_pack_elements);
+				std::string_view param_name = param_name_builder.preview();
+				
+				// Check if this parameter exists in the symbol table
+				auto lookup_result = gSymbolTable.lookup(param_name);
+				param_name_builder.reset();  // Reset for next iteration
+				
+				if (!lookup_result.has_value()) {
+					break;  // No more pack elements
+				}
+				num_pack_elements++;
+				
+				// Safety limit to prevent infinite loops
+				if (num_pack_elements > MAX_PACK_ELEMENTS) {
+					FLASH_LOG(Templates, Error, "Pack expansion exceeded MAX_PACK_ELEMENTS (", MAX_PACK_ELEMENTS, ")");
+					break;
+				}
+			}
+			
+			// Create an integer literal with the pack size
+			std::string pack_size_str = std::to_string(num_pack_elements);
+			Token literal_token(Token::Type::Literal, pack_size_str, 
+			                   sizeof_pack.sizeof_token().line(), sizeof_pack.sizeof_token().column(), 
+			                   sizeof_pack.sizeof_token().file_index());
+			return emplace_node<ExpressionNode>(
+				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements), 
+				                  Type::Int, TypeQualifier::None, 32));
 		}
 
 		// For other expression types that don't contain subexpressions, return as-is
