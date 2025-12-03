@@ -6152,7 +6152,7 @@ private:
 		// Get return type information
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		call_op.return_type = return_type.type();
-		call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+		call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
 		call_op.is_member_function = false;
 		
 		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
@@ -6791,7 +6791,7 @@ private:
 			// Get return type information
 			const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
 			call_op.return_type = return_type.type();
-			call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+			call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
 			call_op.is_member_function = true;
 			
 			// Add the object as the first argument (this pointer)
