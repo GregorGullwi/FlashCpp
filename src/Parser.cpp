@@ -271,6 +271,9 @@ std::optional<Token> Parser::peek_token(size_t lookahead) {
     // Restore original position
     restore_lexer_position_only(saved_pos);
     
+    // Discard the saved position as we're done with it
+    discard_saved_token(saved_pos);
+    
     return result;
 }
 
@@ -853,6 +856,7 @@ ParseResult Parser::parse_type_and_name() {
                         inner_decl.set_custom_alignment(custom_alignment.value());
                     }
                 }
+                discard_saved_token(saved_pos);
                 return result;
             }
             // If parse_declarator fails, fall through to regular parsing
@@ -916,6 +920,7 @@ ParseResult Parser::parse_type_and_name() {
                                     decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
                                 }
                                 
+                                discard_saved_token(saved_pos);
                                 return ParseResult::success(decl_node);
                             }
                         }
