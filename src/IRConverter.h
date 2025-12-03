@@ -403,17 +403,6 @@ OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t off
 }
 
 /**
- * @brief Helper function to generate MOV from frame based on operand size.
- *
- * Selects between 32-bit and 64-bit MOV based on size_in_bits parameter.
- * Uses generateMovFromFrame32 for sizes <= 32 bits, otherwise generatePtrMovFromFrame.
- *
- * @param destinationRegister The destination register (RAX, RCX, RDX, etc.).
- * @param offset The signed offset from RBP.
- * @param size_in_bits The size of the value in bits.
- * @return OpCodeWithSize containing the generated opcodes and their size.
- */
-	/**
  * @brief Generates x86-64 binary opcodes for 'movzx r32, word ptr [rbp + offset]'.
  *
  * Load a 16-bit value from RBP-relative address and zero-extend to 32/64 bits.
@@ -698,7 +687,17 @@ OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, i
 	return result;
 }
 
-OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
+/**
+ * @brief Helper function to generate MOV from frame based on operand size.
+ *
+ * Selects between 8, 16, 32-bit and 64-bit MOV based on size_in_bits parameter.
+ *
+ * @param destinationRegister The destination register (RAX, RCX, RDX, etc.).
+ * @param offset The signed offset from RBP.
+ * @param size_in_bits The size of the value in bits.
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+ OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
 	if (size_in_bits == 8) {
 		return generateMovzxFromFrame8(destinationRegister, offset);
 	} else if (size_in_bits == 16) {
@@ -2032,6 +2031,34 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		textSectionData.push_back(0x8B); // MOV r64, r/m64
 		textSectionData.push_back(modrm);
 	}
+}
+
+/**
+ * @brief Emits floating-point load from address in a register.
+ * Loads from [addr_reg] into xmm_dest using MOVSD (double) or MOVSS (float).
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param xmm_dest The destination XMM register for the loaded value
+ * @param addr_reg The general-purpose register containing the memory address to load from
+ * @param is_float True for float (MOVSS), false for double (MOVSD)
+ */
+inline void emitFloatLoadFromAddressInReg(std::vector<char>& textSectionData, X64Register xmm_dest, X64Register addr_reg, bool is_float) {
+	uint8_t xmm_bits = static_cast<uint8_t>(xmm_dest) & 0x07;
+	uint8_t addr_bits = static_cast<uint8_t>(addr_reg) & 0x07;
+	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
+	
+	// MOVSD xmm, [addr_reg]: F2 0F 10 modrm
+	// MOVSS xmm, [addr_reg]: F3 0F 10 modrm
+	textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+	if (addr_extended) {
+		textSectionData.push_back(0x41); // REX.B for extended addr_reg
+	}
+	textSectionData.push_back(0x0F);
+	textSectionData.push_back(0x10); // MOVSD/MOVSS xmm, m (load variant)
+	
+	// ModR/M: mod=00 (indirect), reg=xmm_bits, r/m=addr_bits
+	uint8_t modrm = (xmm_bits << 3) | addr_bits;
+	textSectionData.push_back(modrm);
 }
 
 /**
@@ -4076,6 +4103,38 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to emit MOVQ from XMM to GPR (for varargs: float args must be in both XMM and INT regs)
+	// movq r64, xmm: 66 REX.W 0F 7E /r
+	void emitMovqXmmToGpr(X64Register xmm_src, X64Register gpr_dest) {
+		uint8_t xmm_val = static_cast<uint8_t>(xmm_src);
+		uint8_t gpr_val = static_cast<uint8_t>(gpr_dest);
+		// XMM registers are encoded as 16+ in our enum, so subtract 16 to get 0-15 range
+		uint8_t xmm_idx = (xmm_val >= 16) ? (xmm_val - 16) : xmm_val;
+		// Branchless REX: REX.W=1, REX.R from XMM high bit, REX.B from GPR high bit
+		uint8_t rex = 0x48 | ((xmm_idx >> 3) << 2) | (gpr_val >> 3);
+		uint8_t xmm_bits = xmm_idx & 0x07;
+		uint8_t gpr_bits = gpr_val & 0x07;
+		textSectionData.push_back(0x66);
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x7E);
+		// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
+		textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
+	}
+
+	// Helper to emit CVTSS2SD (convert float to double in XMM register)
+	// For varargs: floats are promoted to double before passing
+	// cvtss2sd xmm, xmm: F3 0F 5A /r
+	void emitCvtss2sd(X64Register xmm_dest, X64Register xmm_src) {
+		textSectionData.push_back(0xF3);
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x5A);
+		uint8_t dest_bits = static_cast<uint8_t>(xmm_dest) & 0x07;
+		uint8_t src_bits = static_cast<uint8_t>(xmm_src) & 0x07;
+		uint8_t modrm = 0xC0 | (dest_bits << 3) | src_bits;
+		textSectionData.push_back(modrm);
+	}
+
 	// Helper to generate and emit float MOV from frame (movss/movsd)
 	void emitFloatMovFromFrame(X64Register destinationRegister, int32_t offset, bool is_float) {
 		auto opcodes = generateFloatMovFromFrame(destinationRegister, offset, is_float);
@@ -4216,6 +4275,55 @@ private:
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
 		writer.add_relocation(relocation_offset, std::string(symbol_name));
+	}
+
+	// Helper to emit MOV reg, [RIP + disp32] for integer loads
+	// Returns the offset where the displacement placeholder starts (for relocation)
+	uint32_t emitMovRipRelative(X64Register dest, int size_in_bits) {
+		// For 64-bit: MOV RAX, [RIP + disp32] - 48 8B 05 [disp32]
+		// For 32-bit: MOV EAX, [RIP + disp32] - 8B 05 [disp32]
+		uint8_t dest_val = static_cast<uint8_t>(dest);
+		uint8_t dest_bits = dest_val & 0x07;
+		// Branchless: compute REX prefix (0x48 for 64-bit, 0x40 for 32-bit with high reg, 0 otherwise)
+		// REX.W bit is 0x08, so 0x48 = 0x40 | 0x08
+		uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
+		uint8_t needs_rex_b = (dest_val >> 3) & 0x01;
+		uint8_t rex = 0x40 | needs_rex_w | needs_rex_b;
+		// Only emit REX if any bits are set beyond base 0x40
+		uint8_t emit_rex = (needs_rex_w | needs_rex_b) != 0;
+		// Use reserve + direct writes for branchless emission
+		size_t base = textSectionData.size();
+		textSectionData.resize(base + 6 + emit_rex);
+		char* p = textSectionData.data() + base;
+		// Branchless write: if emit_rex, write rex and shift; else start at opcode
+		p[0] = emit_rex ? rex : 0x8B;
+		p[emit_rex] = 0x8B; // MOV r32/r64, r/m32/r/m64
+		p[1 + emit_rex] = 0x05 | (dest_bits << 3); // ModR/M: reg, [RIP + disp32]
+		// disp32 placeholder (4 bytes of zeros)
+		p[2 + emit_rex] = 0x00;
+		p[3 + emit_rex] = 0x00;
+		p[4 + emit_rex] = 0x00;
+		p[5 + emit_rex] = 0x00;
+		return static_cast<uint32_t>(base + 2 + emit_rex);
+	}
+
+	// Helper to emit MOVSD/MOVSS XMM, [RIP + disp32] for floating-point loads
+	// Returns the offset where the displacement placeholder starts (for relocation)
+	uint32_t emitFloatMovRipRelative(X64Register xmm_dest, bool is_float) {
+		// MOVSD XMM0, [RIP + disp32]: F2 0F 10 05 [disp32]
+		// MOVSS XMM0, [RIP + disp32]: F3 0F 10 05 [disp32]
+		textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x10); // MOVSD/MOVSS xmm, m (load variant)
+		uint8_t xmm_bits = static_cast<uint8_t>(xmm_dest) & 0x07;
+		textSectionData.push_back(0x05 | (xmm_bits << 3)); // ModR/M: XMMn, [RIP + disp32]
+		
+		uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		return reloc_offset;
 	}
 
 	// Additional emit helpers for dynamic_cast runtime generation
@@ -4599,6 +4707,9 @@ private:
 					uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
 					textSectionData.push_back(modrm_movq);
 					
+					// For varargs: also copy to corresponding INT register
+					emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
+					
 					// Release the temporary GPR
 					regAlloc.release(temp_gpr);
 					continue;
@@ -4617,6 +4728,12 @@ private:
 						// For floating-point, use movsd/movss into XMM register
 						bool is_float = (arg.type == Type::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
+						// For varargs: floats must be promoted to double (C standard)
+						if (is_float) {
+							emitCvtss2sd(target_reg, target_reg);
+						}
+						// For varargs: also copy to corresponding INT register
+						emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
 						// Both sizes are explicit for clarity
@@ -4634,6 +4751,12 @@ private:
 						// For floating-point, use movsd/movss into XMM register
 						bool is_float = (arg.type == Type::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
+						// For varargs: floats must be promoted to double (C standard)
+						if (is_float) {
+							emitCvtss2sd(target_reg, target_reg);
+						}
+						// For varargs: also copy to corresponding INT register
+						emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
 						emitMovFromFrameSized(
@@ -4748,7 +4871,12 @@ private:
 				// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 				std::array<uint8_t, 5> movqInst = { 0x66, 0x48, 0x0F, 0x6E, 0xC0 };
 				movqInst[4] = 0xC0 + (xmm_modrm_bits(target_reg) << 3) + static_cast<uint8_t>(temp_gpr);
-				textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());				// Release the temporary GPR
+				textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
+				
+				// For varargs: also copy to corresponding INT register
+				emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
+				
+				// Release the temporary GPR
 				regAlloc.release(temp_gpr);
 			} else if (std::holds_alternative<unsigned long long>(argValue)) {
 				// Construct the REX prefix based on target_reg for destination (Reg field).
@@ -4787,6 +4915,12 @@ private:
 					// or movss for float (F3 0F 10 /r)
 					bool is_float = (argType == Type::Float);
 					emitFloatMovFromFrame(target_reg, var_offset, is_float);
+					// For varargs: floats must be promoted to double (C standard)
+					if (is_float) {
+						emitCvtss2sd(target_reg, target_reg);
+					}
+					// For varargs: also copy to corresponding INT register
+					emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
 				} else {
 					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
 					    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
@@ -4818,6 +4952,12 @@ private:
 						// or movss for float (F3 0F 10 /r)
 						bool is_float = (argType == Type::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
+						// For varargs: floats must be promoted to double (C standard)
+						if (is_float) {
+							emitCvtss2sd(target_reg, target_reg);
+						}
+						// For varargs: also copy to corresponding INT register
+						emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
 					} else {
 						if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
 						    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
@@ -5803,24 +5943,15 @@ private:
 		const GlobalVariableDeclOp& op = std::any_cast<const GlobalVariableDeclOp&>(instruction.getTypedPayload());
 
 		// Store global variable info for later use
-		// We'll need to create .data or .bss sections and add symbols
-		// For now, just track the global variable
 		GlobalVariableInfo global_info;
 		global_info.name = op.var_name;
 		global_info.type = op.type;
-		global_info.size_in_bytes = op.size_in_bits / 8;
 		global_info.is_initialized = op.is_initialized;
-
-		if (op.is_initialized && op.init_value.has_value()) {
-			// Get the initialization value
-			const IrValue& init_val = op.init_value.value();
-			if (std::holds_alternative<unsigned long long>(init_val)) {
-				global_info.init_value = std::get<unsigned long long>(init_val);
-			} else if (std::holds_alternative<double>(init_val)) {
-				// Store double as bits
-				double d = std::get<double>(init_val);
-				global_info.init_value = *reinterpret_cast<unsigned long long*>(&d);
-			}
+		global_info.size_in_bytes = (op.size_in_bits / 8) * op.element_count;
+		
+		// Copy raw init data if present
+		if (op.is_initialized) {
+			global_info.init_data = op.init_data;
 		}
 
 		global_variables_.push_back(global_info);
@@ -5833,60 +5964,36 @@ private:
 		TempVar result_temp = std::get<TempVar>(op.result.value);
 		std::string global_name(op.global_name);
 		int size_in_bits = op.result.size_in_bits;
+		Type result_type = op.result.type;
+		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);
+		bool is_float = (result_type == Type::Float);
 
-		// Load global variable using RIP-relative addressing
-		// For 32-bit: MOV EAX, [RIP + displacement] - Opcode: 8B 05 [4-byte displacement]
-		// For 64-bit: MOV RAX, [RIP + displacement] - Opcode: 48 8B 05 [4-byte displacement]
-
-		if (size_in_bits == 64) {
-			textSectionData.push_back(0x48); // REX.W prefix for 64-bit
+		// Load the global value/address using RIP-relative addressing
+		uint32_t reloc_offset;
+		if (op.is_array) {
+			// For arrays: use LEA to get the address of the global
+			reloc_offset = emitLeaRipRelative(X64Register::RAX);
+		} else if (is_floating_point) {
+			// For floating-point scalars: use MOVSD/MOVSS to load into XMM0
+			reloc_offset = emitFloatMovRipRelative(X64Register::XMM0, is_float);
+		} else {
+			// For integer scalars: load the value using MOV
+			reloc_offset = emitMovRipRelative(X64Register::RAX, size_in_bits);
 		}
-		textSectionData.push_back(0x8B); // MOV r32/r64, r/m32/r/m64
-		textSectionData.push_back(0x05); // ModR/M: EAX/RAX, [RIP + disp32]
-
-		// Add a placeholder displacement (will be fixed by relocation)
-		uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
 
 		// Add a pending relocation for this global variable reference
-		// We can't add it now because the symbol doesn't exist yet
-		// It will be added in finalizeSections() after globals are emitted
 		pending_global_relocations_.push_back({reloc_offset, std::string(global_name), IMAGE_REL_AMD64_REL32});
 
-		// Store the loaded value to the stack with the correct size
-		// Use allocateStackSlotForTempVar to ensure scope_stack_space is extended if needed
+		// Store the loaded value/address to the stack
 		int result_offset = allocateStackSlotForTempVar(result_temp.var_number);
 		
-		if (size_in_bits == 64) {
-			// 64-bit store: MOV [RBP + disp], RAX
-			textSectionData.push_back(0x48); // REX.W prefix
-			textSectionData.push_back(0x89); // MOV r/m64, r64
-			if (result_offset >= -128 && result_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-				textSectionData.push_back(static_cast<uint8_t>(result_offset));
-			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-				for (int j = 0; j < 4; ++j) {
-					textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
-					result_offset >>= 8;
-				}
-			}
+		if (is_floating_point && !op.is_array) {
+			// For floating-point: use emitFloatMovToFrame
+			emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
 		} else {
-			// 32-bit store: MOV [RBP + disp], EAX
-			textSectionData.push_back(0x89); // MOV r/m32, r32
-			if (result_offset >= -128 && result_offset <= 127) {
-				textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], EAX
-				textSectionData.push_back(static_cast<uint8_t>(result_offset));
-			} else {
-				textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], EAX
-				for (int j = 0; j < 4; ++j) {
-					textSectionData.push_back(static_cast<uint8_t>(result_offset & 0xFF));
-					result_offset >>= 8;
-				}
-			}
+			// For integers/pointers: use emitMovToFrameBySize
+			int store_size = op.is_array ? 64 : size_in_bits;
+			emitMovToFrameBySize(X64Register::RAX, result_offset, store_size);
 		}
 	}
 
@@ -8939,9 +9046,12 @@ private:
 		TempVar result_var = op.result;
 		int element_size_bits = op.element_size_in_bits;
 		int element_size_bytes = element_size_bits / 8;
+		Type element_type = op.element_type;
+		bool is_floating_point = (element_type == Type::Float || element_type == Type::Double);
+		bool is_float = (element_type == Type::Float);
 		
-		// Allocate registers for array access via register allocator
-		// We need: base_reg (holds array address), and optionally index_reg (for variable index)
+		// For floating-point, we'll use XMM0 for the loaded value
+		// For integers, we allocate a general-purpose register
 		X64Register base_reg = allocateRegisterWithSpilling();
 		
 		// Get the array base address (from stack or register)
@@ -8998,17 +9108,25 @@ private:
 				int64_t offset_bytes = index_value * element_size_bytes;
 				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
 
-				// Load value from [base_reg] with size-appropriate instruction
-				emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				// Load value from [base_reg] with appropriate instruction
+				if (is_floating_point) {
+					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+				} else {
+					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				}
 			} else {
 				// Array is a regular variable - use direct stack offset
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 					
-				// Load from [RBP + offset] into base_reg with size-appropriate instruction
-				emitMovFromFrameSized(
-					SizedRegister{base_reg, 64, false},
-					SizedStackSlot{static_cast<int32_t>(element_offset), element_size_bits, isSignedType(op.element_type)}
-				);
+				// Load from [RBP + offset] with appropriate instruction
+				if (is_floating_point) {
+					emitFloatMovFromFrame(X64Register::XMM0, static_cast<int32_t>(element_offset), is_float);
+				} else {
+					emitMovFromFrameSized(
+						SizedRegister{base_reg, 64, false},
+						SizedStackSlot{static_cast<int32_t>(element_offset), element_size_bits, isSignedType(op.element_type)}
+					);
+				}
 			}
 		} else if (std::holds_alternative<TempVar>(op.index.value)) {
 			// Variable index - need to compute address at runtime
@@ -9027,7 +9145,11 @@ private:
 				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, 8); // Load 64-bit index
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 				emitAddRegs(textSectionData, base_reg, index_reg);
-				emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				if (is_floating_point) {
+					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+				} else {
+					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				}
 			} else {
 				// Array is a regular variable
 				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, 8); // Load 64-bit index
@@ -9036,7 +9158,11 @@ private:
 				int64_t combined_offset = array_base_offset + member_offset;
 				emitLEAFromFrame(textSectionData, base_reg, combined_offset);
 				emitAddRegs(textSectionData, base_reg, index_reg);
-				emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				if (is_floating_point) {
+					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+				} else {
+					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				}
 			}
 			
 			// Release the index register
@@ -9065,17 +9191,25 @@ private:
 				
 			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 			emitAddRegs(textSectionData, base_reg, index_reg);
-			emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+			if (is_floating_point) {
+				emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+			} else {
+				emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+			}
 			
 			// Release the index register
 			regAlloc.release(index_reg);
 		}
 			
-		// Store result in temp variable's stack location (64-bit for array result)
-		emitMovToFrameSized(
-			SizedRegister{base_reg, 64, false},  // source: 64-bit register
-			SizedStackSlot{static_cast<int32_t>(result_offset), 64, false}  // dest: 64-bit
-		);
+		// Store result in temp variable's stack location
+		if (is_floating_point) {
+			emitFloatMovToFrame(X64Register::XMM0, static_cast<int32_t>(result_offset), is_float);
+		} else {
+			emitMovToFrameSized(
+				SizedRegister{base_reg, 64, false},  // source: 64-bit register
+				SizedStackSlot{static_cast<int32_t>(result_offset), 64, false}  // dest: 64-bit
+			);
+		}
 		
 		// Release the base register
 		regAlloc.release(base_reg);
@@ -10413,7 +10547,8 @@ private:
 		// Emit global variables to .data or .bss sections FIRST
 		// This creates the symbols that relocations will reference
 		for (const auto& global : global_variables_) {
-			writer.add_global_variable(global.name, global.size_in_bytes, global.is_initialized, global.init_value);
+			writer.add_global_variable_data(global.name, global.size_in_bytes, 
+			                                global.is_initialized, global.init_data);
 		}
 
 		// Emit vtables to .rdata section
@@ -10782,7 +10917,7 @@ private:
 		Type type;
 		size_t size_in_bytes;
 		bool is_initialized;
-		unsigned long long init_value = 0;
+		std::vector<char> init_data;  // Raw bytes for initialized data
 	};
 	std::vector<GlobalVariableInfo> global_variables_;
 

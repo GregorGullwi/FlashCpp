@@ -1827,19 +1827,42 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		
 		// Get the type specifier for brace initializer parsing and constexpr checks
 		// This is always safe since decl_node is a DeclarationNode with a TypeSpecifierNode
-		const TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
 		
 		if (peek_token().has_value() && peek_token()->value() == "=") {
 			consume_token(); // consume '='
 			
 			// Check if this is a brace initializer (e.g., Point p = {10, 20})
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+				// If this is an array declaration, set the array info on type_specifier
+				// so parse_brace_initializer knows it's an array
+				if (decl_node.is_array()) {
+					std::optional<size_t> array_size_val;
+					if (decl_node.array_size().has_value()) {
+						// Try to evaluate the array size as a constant expression
+						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
+						if (eval_result.success) {
+							array_size_val = static_cast<size_t>(eval_result.as_int());
+						}
+					}
+					type_specifier.set_array(true, array_size_val);
+				}
+				
 				// Parse brace initializer list
 				ParseResult init_list_result = parse_brace_initializer(type_specifier);
 				if (init_list_result.is_error()) {
 					return init_list_result;
 				}
 				initializer = init_list_result.node();
+				
+				// For unsized arrays, infer the size from the initializer list
+				if (decl_node.is_unsized_array() && initializer.has_value() && 
+				    initializer->is<InitializerListNode>()) {
+					const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+					size_t inferred_size = init_list.initializers().size();
+					type_specifier.set_array(true, inferred_size);
+				}
 			} else {
 				// Regular expression initializer
 				auto init_expr = parse_expression();
