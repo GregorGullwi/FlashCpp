@@ -7421,6 +7421,48 @@ private:
 		}
 	}
 
+	// Helper function to calculate array size from a DeclarationNode
+	// Returns the total size in bytes, or 0 if the array size cannot be determined
+	std::optional<size_t> calculateArraySize(const DeclarationNode& decl) {
+		if (!decl.is_array()) {
+			return std::nullopt;
+		}
+
+		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		size_t element_size = type_spec.size_in_bits() / 8;
+		
+		// Get array size
+		if (!decl.array_size().has_value()) {
+			return std::nullopt;
+		}
+
+		// Evaluate the array size expression using ConstExprEvaluator
+		const ASTNode& size_expr = *decl.array_size();
+		ConstExpr::EvaluationContext ctx(symbol_table);
+		auto eval_result = ConstExpr::Evaluator::evaluate(size_expr, ctx);
+		
+		if (!eval_result.success) {
+			return std::nullopt;
+		}
+
+		long long array_count_signed = eval_result.as_int();
+		
+		// Check for negative or zero array size
+		if (array_count_signed <= 0) {
+			return std::nullopt;
+		}
+
+		size_t array_count = static_cast<size_t>(array_count_signed);
+		
+		// Check for potential overflow in multiplication
+		if (array_count > SIZE_MAX / element_size) {
+			FLASH_LOG(Codegen, Warning, "Array size calculation would overflow: ", array_count, " * ", element_size);
+			return std::nullopt;
+		}
+		
+		return element_size * array_count;
+	}
+
 	std::vector<IrOperand> generateSizeofIr(const SizeofExprNode& sizeofNode) {
 		size_t size_in_bytes = 0;
 
@@ -7449,28 +7491,11 @@ private:
 				
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-					if (decl && decl->is_array()) {
-						// This is an array variable - calculate total size
-						const TypeSpecifierNode& actual_type_spec = decl->type_node().as<TypeSpecifierNode>();
-						size_t element_size = actual_type_spec.size_in_bits() / 8;
-						
-						// Get array size
-						size_t array_count = 0;
-						if (decl->array_size().has_value()) {
-							// Evaluate the array size expression using ConstExprEvaluator
-							const ASTNode& size_expr = *decl->array_size();
-							ConstExpr::EvaluationContext ctx(symbol_table);
-							auto eval_result = ConstExpr::Evaluator::evaluate(size_expr, ctx);
-							
-							if (eval_result.success) {
-								array_count = static_cast<size_t>(eval_result.as_int());
-							}
-						}
-						
-						if (array_count > 0) {
-							size_in_bytes = element_size * array_count;
-							// Return sizeof result
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+					if (decl) {
+						auto array_size = calculateArraySize(*decl);
+						if (array_size.has_value()) {
+							// Return sizeof result for array
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
 						}
 					}
 				}
@@ -7535,28 +7560,11 @@ private:
 				
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-					if (decl && decl->is_array()) {
-						// This is an array - calculate total size as element_size * array_count
-						const TypeSpecifierNode& type_spec = decl->type_node().as<TypeSpecifierNode>();
-						size_t element_size = type_spec.size_in_bits() / 8;
-						
-						// Get array size
-						size_t array_count = 0;
-						if (decl->array_size().has_value()) {
-							// Evaluate the array size expression using ConstExprEvaluator
-							const ASTNode& size_expr = *decl->array_size();
-							ConstExpr::EvaluationContext ctx(symbol_table);
-							auto eval_result = ConstExpr::Evaluator::evaluate(size_expr, ctx);
-							
-							if (eval_result.success) {
-								array_count = static_cast<size_t>(eval_result.as_int());
-							}
-						}
-						
-						if (array_count > 0) {
-							size_in_bytes = element_size * array_count;
-							// Return sizeof result
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+					if (decl) {
+						auto array_size = calculateArraySize(*decl);
+						if (array_size.has_value()) {
+							// Return sizeof result for array
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
 						}
 					}
 				}
