@@ -2776,6 +2776,7 @@ private:
 		X64Register result_physical_reg;
 		X64Register rhs_physical_reg;
 		Type operand_type;  // Type of the operands (for comparisons, different from result_value.type)
+		int operand_size_in_bits;  // Size of the operands (for comparisons, different from result_value.size_in_bits)
 	};
 
 	// Setup and load operands for arithmetic operations - validates operands, extracts common data, and loads into registers
@@ -2940,8 +2941,9 @@ private:
 		                      opcode == IrOpcode::FloatLessThan || opcode == IrOpcode::FloatLessEqual ||
 		                      opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
 		
-		// Store the operand type for register allocation decisions
+		// Store the operand type and size for register allocation and loading decisions
 		Type operand_type = bin_op.lhs.type;
+		int operand_size = bin_op.lhs.size_in_bits;
 		
 		if (is_comparison) {
 			result_type = Type::Bool;
@@ -2953,7 +2955,8 @@ private:
 			.result_value = TypedValue{result_type, result_size, bin_op.result},
 			.result_physical_reg = X64Register::Count,
 			.rhs_physical_reg = X64Register::RCX,
-			.operand_type = operand_type
+			.operand_type = operand_type,
+			.operand_size_in_bits = operand_size
 		};
 
 		// Support integer, boolean, and floating-point operations
@@ -2981,7 +2984,7 @@ private:
 					} else {
 						// For integers, use regular MOV
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second, ctx.result_value.size_in_bits);
+						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second, ctx.operand_size_in_bits);
 						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 					}
 				}
@@ -3032,7 +3035,7 @@ private:
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_stack_var_addr, ctx.result_value.size_in_bits);
+						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_stack_var_addr, ctx.operand_size_in_bits);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 				}
@@ -3117,7 +3120,7 @@ private:
 					} else {
 						// For integers, use regular MOV
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second, ctx.result_value.size_in_bits);
+						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second, ctx.operand_size_in_bits);
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 					}
 				}
@@ -3167,7 +3170,7 @@ private:
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, ctx.result_value.size_in_bits);
+						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, ctx.operand_size_in_bits);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 				}
