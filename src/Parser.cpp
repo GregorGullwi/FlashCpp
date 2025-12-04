@@ -11617,6 +11617,17 @@ ParseResult Parser::parse_lambda_expression() {
                     // Capture-all by reference: [&]
                     captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::AllByReference));
                 }
+            } else if (token->type() == Token::Type::Operator && token->value() == "*") {
+                // Check for [*this] capture (C++17)
+                consume_token(); // consume '*'
+                auto next_token = peek_token();
+                if (next_token.has_value() && next_token->value() == "this") {
+                    Token this_token = *next_token;
+                    consume_token(); // consume 'this'
+                    captures.push_back(LambdaCaptureNode(LambdaCaptureNode::CaptureKind::CopyThis, this_token));
+                } else {
+                    return ParseResult::error("Expected 'this' after '*' in lambda capture", *current_token_);
+                }
             } else if (token->type() == Token::Type::Identifier || token->type() == Token::Type::Keyword) {
                 // Check for 'this' keyword first
                 if (token->value() == "this") {
@@ -11662,6 +11673,45 @@ ParseResult Parser::parse_lambda_expression() {
         return ParseResult::error("Expected ']' after lambda captures", *current_token_);
     }
 
+    // Parse optional template parameter list (C++20): []<typename T>(...) 
+    std::vector<std::string_view> template_param_names;
+    if (peek_token().has_value() && peek_token()->value() == "<") {
+        consume_token(); // consume '<'
+        
+        // Parse template parameters
+        while (true) {
+            // Expect 'typename' or 'class' keyword
+            if (!peek_token().has_value()) {
+                return ParseResult::error("Expected template parameter", *current_token_);
+            }
+            
+            auto keyword_token = peek_token();
+            if (keyword_token->value() != "typename" && keyword_token->value() != "class") {
+                return ParseResult::error("Expected 'typename' or 'class' in template parameter", *keyword_token);
+            }
+            consume_token(); // consume 'typename' or 'class'
+            
+            // Expect identifier (template parameter name)
+            if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+                return ParseResult::error("Expected template parameter name", *current_token_);
+            }
+            
+            Token param_name_token = *peek_token();
+            template_param_names.push_back(param_name_token.value());
+            consume_token(); // consume parameter name
+            
+            // Check for comma (more parameters) or closing '>'
+            if (peek_token().has_value() && peek_token()->value() == ",") {
+                consume_token(); // consume comma
+            } else if (peek_token().has_value() && peek_token()->value() == ">") {
+                consume_token(); // consume '>'
+                break;
+            } else {
+                return ParseResult::error("Expected ',' or '>' in template parameter list", *current_token_);
+            }
+        }
+    }
+
     // Parse parameter list (optional) using unified parse_parameter_list (Phase 1)
     std::vector<ASTNode> parameters;
     if (peek_token().has_value() && peek_token()->value() == "(") {
@@ -11702,8 +11752,9 @@ ParseResult Parser::parse_lambda_expression() {
     
     // Add captures to symbol table
     for (const auto& capture : captures) {
-        if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
-            // Skip 'this' captures for now - they're handled differently
+        if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+            capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+            // Skip 'this' and '*this' captures - they're handled differently
             continue;
         }
         if (capture.kind() == LambdaCaptureNode::CaptureKind::AllByValue ||
