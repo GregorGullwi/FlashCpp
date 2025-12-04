@@ -5940,7 +5940,37 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		}
 
 		if (auto node = type_and_name_result.node()) {
-			out_params.parameters.push_back(*node);
+			// Apply array-to-pointer decay for function parameters
+			// In C++, function parameters declared as T arr[N] are treated as T* arr
+			if (node->is<DeclarationNode>()) {
+				auto& decl = node->as<DeclarationNode>();
+				if (decl.array_size().has_value()) {
+					// This is an array parameter - convert to pointer
+					// Get the underlying type and add a pointer level
+					TypeSpecifierNode param_type = decl.type_node().as<TypeSpecifierNode>();
+					param_type.add_pointer_level();
+					
+					// Create new declaration without array size (now a pointer)
+					ASTNode new_decl = emplace_node<DeclarationNode>(
+						emplace_node<TypeSpecifierNode>(param_type),
+						decl.identifier_token()
+					);
+					
+					// Copy over any other attributes
+					if (decl.has_default_value()) {
+						new_decl.as<DeclarationNode>().set_default_value(decl.default_value());
+					}
+					if (decl.is_parameter_pack()) {
+						new_decl.as<DeclarationNode>().set_parameter_pack(true);
+					}
+					
+					out_params.parameters.push_back(new_decl);
+				} else {
+					out_params.parameters.push_back(*node);
+				}
+			} else {
+				out_params.parameters.push_back(*node);
+			}
 		}
 
 		// Parse default parameter value (if present)
