@@ -7107,8 +7107,13 @@ private:
 		}
 
 		// Return the result variable with its type and size
-		const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
-		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var, 0ULL };
+		// If we found the actual member function from the struct, use its return type
+		// Otherwise fall back to the placeholder function declaration
+		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) 
+			? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
+			: func_decl_node.type_node().as<TypeSpecifierNode>();
+		
+		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var, static_cast<unsigned long long>(return_type.type_index()) };
 	}
 
 	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode) {
