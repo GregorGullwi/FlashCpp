@@ -15965,6 +15965,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 		// Restore original position (lexer only - keep AST nodes we created)
 		restore_lexer_position_only(current_pos);
+		discard_saved_token(current_pos);
 		
 		// Restore parsing context
 		current_function_ = saved_current_function;
@@ -16453,6 +16454,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 		// Restore original position (lexer only - keep AST nodes we created)
 		restore_lexer_position_only(current_pos);
+		discard_saved_token(current_pos);
 		
 		// Restore parsing context
 		current_function_ = saved_current_function;
