@@ -5947,7 +5947,8 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				if (decl.array_size().has_value()) {
 					// This is an array parameter - convert to pointer
 					// Get the underlying type and add a pointer level
-					TypeSpecifierNode param_type = decl.type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& orig_type = decl.type_node().as<TypeSpecifierNode>();
+					TypeSpecifierNode param_type = orig_type;  // Copy needed since we modify
 					param_type.add_pointer_level();
 					
 					// Create new declaration without array size (now a pointer)
