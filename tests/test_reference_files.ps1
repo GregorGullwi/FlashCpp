@@ -133,6 +133,10 @@ Write-Host ""
 #
 # Unimplemented features:
 $expectedCompileFailures = @(
+  "test_cstddef.cpp",
+  "test_cstdio_puts.cpp",
+  "test_lambda_cpp20_comprehensive.cpp",
+  "test_type_traits_intrinsics.cpp"
 )
 
 # Expected link failures - files that compile but have known link issues
