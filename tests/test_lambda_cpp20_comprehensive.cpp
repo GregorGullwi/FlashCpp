@@ -208,11 +208,7 @@ int test_copy_this_capture() {
 }
 
 // Test 27: Recursive lambda using auto&& self parameter
-// NOTE: Temporarily disabled - causes timeout/infinite loop
-// ROOT CAUSE: auto&& forwarding references in lambda parameters combined with recursive
-//             self-calls create complex template instantiation scenarios not fully supported.
-// FIX NEEDED: Implement proper forwarding reference handling and recursive lambda semantics.
-/*
+// Fixed: auto&& parameters now treated as callable function pointers
 int test_recursive_lambda() {
     auto factorial = [](auto&& self, int n) -> int {
         if (n <= 1) return 1;
@@ -221,7 +217,6 @@ int test_recursive_lambda() {
     // Calculate factorial(5) / factorial(4) = 5
     return factorial(factorial, 5) / factorial(factorial, 4);  // 5
 }
-*/
 
 int main() {
     int result = 0;
@@ -258,8 +253,8 @@ int main() {
     result += test_init_capture_by_ref();             // 5
     result += test_lambda_returning_lambda();         // 5 (newly fixed!)
     result += test_copy_this_capture();               // 5 (newly fixed!)
-    // result += test_recursive_lambda();                // 5 (disabled - requires forwarding reference support)
+    result += test_recursive_lambda();                // 5 (newly fixed!)
     
-    // Total: 26 tests * 5 = 130 (1 test disabled due to compiler limitations)
+    // Total: 27 tests * 5 = 135 (all tests passing!)
     return result;
 }

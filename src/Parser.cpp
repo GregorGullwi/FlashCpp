@@ -10098,6 +10098,11 @@ ParseResult Parser::parse_primary_expression()
 							}
 						}
 					}
+					// Treat Type::Auto as a callable type (function pointer-like)
+					// This handles generic lambda parameters: [](auto&& func) { func(); }
+					else if (type_node.type() == Type::Auto) {
+						is_function_pointer = true;
+					}
 				}
 			}
 			// Check if this is a template parameter (for constructor calls like T(...))
