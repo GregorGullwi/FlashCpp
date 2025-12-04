@@ -8896,8 +8896,9 @@ private:
 				continue;
 			}
 			
-			// Skip [this] captures as they don't have an identifier to look up
-			if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+			// Skip [this] and [*this] captures as they don't have an identifier to look up
+			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+			    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 				continue;
 			}
 
@@ -8981,7 +8982,7 @@ private:
 						continue;
 					}
 					
-					// Handle [this] capture
+					// Handle [this] capture - stores pointer to enclosing object
 					if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
 						const StructMember* member = struct_info->findMember("__this");
 						if (member) {
@@ -8998,6 +8999,29 @@ private:
 							store_this.is_rvalue_reference = false;
 							store_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_this), lambda.lambda_token()));
+						}
+						continue;
+					}
+					
+					// Handle [*this] capture - stores copy of entire enclosing object
+					if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+						// For [*this], we need to copy the entire object into the closure
+						// The closure should have a member named "__copy_this" of the enclosing struct type
+						const StructMember* member = struct_info->findMember("__copy_this");
+						if (member && lambda_info.enclosing_struct_type_index > 0) {
+							// For now, store 'this' pointer similar to [this] capture
+							// TODO: Implement proper struct copy
+							MemberStoreOp store_copy_this;
+							store_copy_this.value.type = Type::Void;
+							store_copy_this.value.size_in_bits = 64;
+							store_copy_this.value.value = TempVar(1);  // 'this' pointer
+							store_copy_this.object = closure_var_name;
+							store_copy_this.member_name = "__copy_this"sv;
+							store_copy_this.offset = static_cast<int>(member->offset);
+							store_copy_this.is_reference = false;
+							store_copy_this.is_rvalue_reference = false;
+							store_copy_this.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
 						}
 						continue;
 					}
@@ -9261,6 +9285,10 @@ private:
 					// Mark that 'this' is captured
 					current_lambda_captures_.insert("this");
 					current_lambda_capture_kinds_["this"] = capture.kind();
+				} else if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+					// Mark that '*this' is captured (copy of the object)
+					current_lambda_captures_.insert("*this");
+					current_lambda_capture_kinds_["*this"] = capture.kind();
 				} else {
 					std::string var_name(capture.identifier_name());
 					current_lambda_captures_.insert(var_name);
