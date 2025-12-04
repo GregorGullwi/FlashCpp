@@ -3893,6 +3893,80 @@ private:
 				}
 			}
 		}
+		
+		// Check if we're in a lambda with [*this] capture and identifier is a member of the copied object
+		if (!symbol.has_value() && !current_lambda_closure_type_.empty() && 
+		    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
+			// Check if this is a CopyThis capture
+			auto capture_kind_it = current_lambda_capture_kinds_.find("this");
+			if (capture_kind_it != current_lambda_capture_kinds_.end() && 
+			    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis &&
+			    current_lambda_enclosing_struct_type_index_ > 0) {
+				// Get the enclosing struct type
+				const TypeInfo* enclosing_type_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == current_lambda_enclosing_struct_type_index_) {
+						enclosing_type_info = &ti;
+						break;
+					}
+				}
+				
+				if (enclosing_type_info && enclosing_type_info->getStructInfo()) {
+					const StructTypeInfo* enclosing_struct = enclosing_type_info->getStructInfo();
+					// Check if this identifier is a member of the enclosing struct
+					const StructMember* member = enclosing_struct->findMemberRecursive(var_name_str);
+					if (member) {
+						// This is an implicit member access through [*this] capture
+						// We need to access it via the __copy_this member of the closure
+						// First, get the closure struct type
+						auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
+						if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
+							const StructTypeInfo* closure_struct = closure_type_it->second->getStructInfo();
+							if (closure_struct) {
+								const StructMember* copy_this_member = closure_struct->findMember("__copy_this");
+								if (copy_this_member) {
+									// Generate access to __copy_this.member_name
+									// This is a two-step process:
+									// 1. Access __copy_this from the closure (this)
+									// 2. Access the member from __copy_this
+									
+									// Step 1: Load __copy_this from closure
+									TempVar copy_this_temp = var_counter.next();
+									MemberLoadOp load_copy_this;
+									load_copy_this.result.value = copy_this_temp;
+									load_copy_this.result.type = Type::Struct;
+									load_copy_this.result.size_in_bits = static_cast<int>(copy_this_member->size * 8);
+									load_copy_this.object = std::string_view("this");  // Lambda's this (the closure)
+									load_copy_this.member_name = std::string_view("__copy_this");
+									load_copy_this.offset = static_cast<int>(copy_this_member->offset);
+									load_copy_this.is_reference = false;
+									load_copy_this.is_rvalue_reference = false;
+									load_copy_this.struct_type_info = nullptr;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), Token()));
+									
+									// Step 2: Access the member from __copy_this
+									TempVar result_temp = var_counter.next();
+									MemberLoadOp member_load;
+									member_load.result.value = result_temp;
+									member_load.result.type = member->type;
+									member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+									member_load.object = copy_this_temp;  // The __copy_this object
+									member_load.member_name = std::string_view(member->name);
+									member_load.offset = static_cast<int>(member->offset);
+									member_load.is_reference = member->is_reference;
+									member_load.is_rvalue_reference = member->is_rvalue_reference;
+									member_load.struct_type_info = nullptr;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+									
+									TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+									return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 
 		if (!symbol.has_value()) {
 			FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
@@ -7211,40 +7285,83 @@ private:
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
 				std::string_view object_name = object_ident.name();
-
-				// Look up the object in the symbol table (local first, then global)
-				std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
 				
-				// If not found locally, try global symbol table (for global struct variables)
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(object_name);
+				bool handled = false;
+				
+				// Special handling for 'this' in lambdas with [*this] capture
+				if (object_name == "this" && !current_lambda_closure_type_.empty() &&
+				    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
+					auto capture_kind_it = current_lambda_capture_kinds_.find("this");
+					if (capture_kind_it != current_lambda_capture_kinds_.end() && 
+					    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
+						// [*this] capture: 'this' refers to the copied object in the closure
+						// We need to load __copy_this from the closure
+						auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
+						if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
+							const StructTypeInfo* closure_struct = closure_type_it->second->getStructInfo();
+							if (closure_struct) {
+								const StructMember* copy_this_member = closure_struct->findMember("__copy_this");
+								if (copy_this_member && current_lambda_enclosing_struct_type_index_ > 0) {
+									// Load __copy_this from the closure
+									TempVar copy_this_temp = var_counter.next();
+									MemberLoadOp load_copy_this;
+									load_copy_this.result.value = copy_this_temp;
+									load_copy_this.result.type = Type::Struct;
+									load_copy_this.result.size_in_bits = static_cast<int>(copy_this_member->size * 8);
+									load_copy_this.object = std::string_view("this");  // Lambda's this (the closure)
+									load_copy_this.member_name = std::string_view("__copy_this");
+									load_copy_this.offset = static_cast<int>(copy_this_member->offset);
+									load_copy_this.is_reference = false;
+									load_copy_this.is_rvalue_reference = false;
+									load_copy_this.struct_type_info = nullptr;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
+									
+									// Use the loaded copy_this as the base object
+									base_object = copy_this_temp;
+									base_type = Type::Struct;
+									base_type_index = current_lambda_enclosing_struct_type_index_;
+									handled = true;
+								}
+							}
+						}
+					}
 				}
 				
-				if (!symbol.has_value()) {
-					FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table");
-					return {};
-				}
+				if (!handled) {
+					// Look up the object in the symbol table (local first, then global)
+					std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+					
+					// If not found locally, try global symbol table (for global struct variables)
+					if (!symbol.has_value() && global_symbol_table_) {
+						symbol = global_symbol_table_->lookup(object_name);
+					}
+					
+					if (!symbol.has_value()) {
+						FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table");
+						return {};
+					}
 
-				// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
-				const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
-				if (!object_decl_ptr) {
-					FLASH_LOG(Codegen, Error, "object '", object_name, "' is not a declaration");
-					return {};
-				}
-				const DeclarationNode& object_decl = *object_decl_ptr;
-				const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
+					// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
+					const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
+					if (!object_decl_ptr) {
+						FLASH_LOG(Codegen, Error, "object '", object_name, "' is not a declaration");
+						return {};
+					}
+					const DeclarationNode& object_decl = *object_decl_ptr;
+					const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
 
-				// Verify this is a struct type (or a reference to a struct type)
-				// References are automatically dereferenced for member access
-				// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
-				if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
-					FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
-					return {};
-				}
+					// Verify this is a struct type (or a reference to a struct type)
+					// References are automatically dereferenced for member access
+					// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
+					if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
+						FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
+						return {};
+					}
 
-				base_object = object_name;
-				base_type = object_type.type();
-				base_type_index = object_type.type_index();
+					base_object = object_name;
+					base_type = object_type.type();
+					base_type_index = object_type.type_index();
+				}
 			}
 			// Case 2: Nested member access (e.g., obj.inner.member)
 			else if (std::holds_alternative<MemberAccessNode>(expr)) {
@@ -7392,38 +7509,81 @@ private:
 		else if (object_node.is<IdentifierNode>()) {
 			const IdentifierNode& object_ident = object_node.as<IdentifierNode>();
 			std::string_view object_name = object_ident.name();
-
-			// Look up the object in the symbol table (local first, then global)
-			std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
 			
-			// If not found locally, try global symbol table (for global struct variables)
-			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(object_name);
+			bool handled = false;
+			
+			// Special handling for 'this' in lambdas with [*this] capture
+			if (object_name == "this" && !current_lambda_closure_type_.empty() &&
+			    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
+				auto capture_kind_it = current_lambda_capture_kinds_.find("this");
+				if (capture_kind_it != current_lambda_capture_kinds_.end() && 
+				    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
+					// [*this] capture: 'this' refers to the copied object in the closure
+					// We need to load __copy_this from the closure
+					auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
+					if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
+						const StructTypeInfo* closure_struct = closure_type_it->second->getStructInfo();
+						if (closure_struct) {
+							const StructMember* copy_this_member = closure_struct->findMember("__copy_this");
+							if (copy_this_member && current_lambda_enclosing_struct_type_index_ > 0) {
+								// Load __copy_this from the closure
+								TempVar copy_this_temp = var_counter.next();
+								MemberLoadOp load_copy_this;
+								load_copy_this.result.value = copy_this_temp;
+								load_copy_this.result.type = Type::Struct;
+								load_copy_this.result.size_in_bits = static_cast<int>(copy_this_member->size * 8);
+								load_copy_this.object = std::string_view("this");  // Lambda's this (the closure)
+								load_copy_this.member_name = std::string_view("__copy_this");
+								load_copy_this.offset = static_cast<int>(copy_this_member->offset);
+								load_copy_this.is_reference = false;
+								load_copy_this.is_rvalue_reference = false;
+								load_copy_this.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
+								
+								// Use the loaded copy_this as the base object
+								base_object = copy_this_temp;
+								base_type = Type::Struct;
+								base_type_index = current_lambda_enclosing_struct_type_index_;
+								handled = true;
+							}
+						}
+					}
+				}
 			}
 			
-			if (!symbol.has_value()) {
-				std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
-				return {};
-			}
+			if (!handled) {
+				// Look up the object in the symbol table (local first, then global)
+				std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+				
+				// If not found locally, try global symbol table (for global struct variables)
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(object_name);
+				}
+				
+				if (!symbol.has_value()) {
+					std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
+					return {};
+				}
 
-			// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
-			const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
-			if (!object_decl_ptr) {
-				std::cerr << "error: object '" << object_name << "' is not a declaration\n";
-				return {};
-			}
-			const DeclarationNode& object_decl = *object_decl_ptr;
-			const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
+				// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
+				const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
+				if (!object_decl_ptr) {
+					std::cerr << "error: object '" << object_name << "' is not a declaration\n";
+					return {};
+				}
+				const DeclarationNode& object_decl = *object_decl_ptr;
+				const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
 
-			// Verify this is a struct type
-			if (object_type.type() != Type::Struct) {
-				std::cerr << "error: member access '.' on non-struct type '" << object_name << "'\n";
-				return {};
-			}
+				// Verify this is a struct type
+				if (object_type.type() != Type::Struct) {
+					std::cerr << "error: member access '.' on non-struct type '" << object_name << "'\n";
+					return {};
+				}
 
-			base_object = object_name;
-			base_type = object_type.type();
-			base_type_index = object_type.type_index();
+				base_object = object_name;
+				base_type = object_type.type();
+				base_type_index = object_type.type_index();
+			}
 		}
 		else {
 			std::cerr << "error: member access on unsupported object type\n";
@@ -9452,6 +9612,12 @@ private:
 			if (capture.is_capture_all()) {
 				// Capture-all ([=] or [&]) should have been expanded by the parser into explicit captures
 				// If we see one here, it means the parser didn't expand it (shouldn't happen)
+				continue;
+			}
+			
+			// Skip [this] and [*this] captures - they don't have variable declarations
+			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+			    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 				continue;
 			}
 
