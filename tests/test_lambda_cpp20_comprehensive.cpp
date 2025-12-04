@@ -95,14 +95,6 @@ int test_nested_lambdas() {
 }
 
 // Test 14: Lambda returning lambda
-// NOTE: Temporarily disabled - requires deeper type system fixes
-// ROOT CAUSE: The function's return type is 'auto', which returns a lambda closure struct.
-//             When the returned lambda is assigned to another 'auto' variable and then called,
-//             the type deduction system doesn't properly resolve the nested auto -> lambda -> auto chain.
-//             The variable's type remains as Type::Auto instead of the actual lambda closure struct type.
-// FIX NEEDED: Implement full auto type deduction that resolves function return types recursively,
-//             or update symbol table entries after type deduction during variable initialization.
-/*
 int test_lambda_returning_lambda() {
     auto maker = [](int offset) {
         return [offset](int base) { return base + offset; };
@@ -110,7 +102,6 @@ int test_lambda_returning_lambda() {
     auto add2 = maker(2);
     return add2(3);  // 5
 }
-*/
 
 // Test 15: Immediately invoked lambda
 int test_iife() {
@@ -274,9 +265,10 @@ int main() {
     
     result += test_multiple_params();                 // 5
     result += test_init_capture_by_ref();             // 5
+    result += test_lambda_returning_lambda();         // 5 (newly fixed!)
     // result += test_copy_this_capture();               // 5 (disabled)
     // result += test_recursive_lambda();                // 5 (disabled)
     
-    // Total: 23 tests * 5 = 115 (3 tests disabled due to compiler limitations)
+    // Total: 24 tests * 5 = 120 (2 tests disabled due to compiler limitations)
     return result;
 }

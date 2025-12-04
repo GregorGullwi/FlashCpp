@@ -11822,6 +11822,59 @@ ParseResult Parser::parse_lambda_expression() {
         return body_result;
     }
 
+    // Deduce lambda return type if not explicitly specified or if it's auto
+    if (!return_type.has_value() || 
+        (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto)) {
+        // Search lambda body for return statements to deduce return type
+        const BlockNode& body = body_result.node()->as<BlockNode>();
+        std::optional<TypeSpecifierNode> deduced_type;
+        
+        // Recursive lambda to search for return statements in lambda body
+        std::function<void(const ASTNode&)> find_return_in_lambda = [&](const ASTNode& node) {
+            if (node.is<ReturnStatementNode>()) {
+                const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
+                if (ret.expression().has_value()) {
+                    auto expr_type_opt = get_expression_type(*ret.expression());
+                    if (expr_type_opt.has_value() && !deduced_type.has_value()) {
+                        // Found the first return statement with a value
+                        deduced_type = *expr_type_opt;
+                    }
+                }
+            } else if (node.is<BlockNode>()) {
+                // Recursively search nested blocks
+                const BlockNode& block = node.as<BlockNode>();
+                const auto& stmts = block.get_statements();
+                for (size_t i = 0; i < stmts.size(); ++i) {
+                    find_return_in_lambda(stmts[i]);
+                    if (deduced_type.has_value()) break;  // Stop after finding first return
+                }
+            } else if (node.is<IfStatementNode>()) {
+                const IfStatementNode& if_stmt = node.as<IfStatementNode>();
+                find_return_in_lambda(if_stmt.get_then_statement());
+                if (!deduced_type.has_value() && if_stmt.has_else()) {
+                    find_return_in_lambda(*if_stmt.get_else_statement());
+                }
+            } else if (node.is<WhileStatementNode>()) {
+                const WhileStatementNode& while_stmt = node.as<WhileStatementNode>();
+                find_return_in_lambda(while_stmt.get_body_statement());
+            } else if (node.is<ForStatementNode>()) {
+                const ForStatementNode& for_stmt = node.as<ForStatementNode>();
+                find_return_in_lambda(for_stmt.get_body_statement());
+            }
+        };
+        
+        // Search the lambda body
+        find_return_in_lambda(*body_result.node());
+        
+        // If we found a deduced type, use it; otherwise default to void
+        if (deduced_type.has_value()) {
+            return_type = emplace_node<TypeSpecifierNode>(*deduced_type);
+        } else {
+            // No return statement found or return with no value - lambda returns void
+            return_type = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0);
+        }
+    }
+
     // Expand capture-all before creating the lambda node
     std::vector<LambdaCaptureNode> expanded_captures;
     std::vector<ASTNode> captured_var_decls_for_all;  // Store declarations for capture-all
@@ -12673,7 +12726,21 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// For function calls, get the return type
 		const auto& func_call = std::get<FunctionCallNode>(expr);
 		const auto& decl = func_call.function_declaration();
-		return decl.type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode return_type = decl.type_node().as<TypeSpecifierNode>();
+		
+		// If the return type is still auto, the function should have been deduced already
+		// during parsing. The TypeSpecifierNode in the declaration should have been updated.
+		// If it's still auto, it means deduction failed or wasn't performed.
+		return return_type;
+	}
+	else if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		// For member function calls (including lambda operator() calls), get the return type
+		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
+		const auto& decl = member_call.function_declaration();
+		TypeSpecifierNode return_type = decl.decl_node().type_node().as<TypeSpecifierNode>();
+		
+		// If the return type is still auto, it should have been deduced during parsing
+		return return_type;
 	}
 	else if (std::holds_alternative<LambdaExpressionNode>(expr)) {
 		// For lambda expressions, return the closure struct type
