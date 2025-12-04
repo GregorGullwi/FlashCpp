@@ -6582,6 +6582,8 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 			delayed.dtor_node->set_definition(*block_result.node());
 		} else if (delayed.func_node) {
 			delayed.func_node->set_definition(*block_result.node());
+			// Deduce auto return types from function body
+			deduce_and_update_auto_return_type(*delayed.func_node);
 		}
 	}
 	
@@ -12786,7 +12788,12 @@ Type Parser::deduce_type_from_expression(const ASTNode& expr) const {
 // Helper function to deduce and update auto return type from function body
 void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl) {
 	// Check if the return type is auto
-	TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	DeclarationNode& decl_node = func_decl.decl_node();
+	TypeSpecifierNode return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	
+	FLASH_LOG(Parser, Debug, "deduce_and_update_auto_return_type called for function: ", 
+			  decl_node.identifier_token().value(), " return_type=", (int)return_type.type());
+	
 	if (return_type.type() != Type::Auto) {
 		return;  // Not an auto return type, nothing to do
 	}
@@ -12794,6 +12801,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	// Get the function body
 	const std::optional<ASTNode>& body_opt = func_decl.get_definition();
 	if (!body_opt.has_value() || !body_opt->is<BlockNode>()) {
+		FLASH_LOG(Parser, Debug, "  No body or invalid body");
 		return;  // No body or invalid body
 	}
 	
@@ -12810,6 +12818,8 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 				if (expr_type_opt.has_value() && !deduced_type.has_value()) {
 					// Found the first return statement with a value
 					deduced_type = *expr_type_opt;
+					FLASH_LOG(Parser, Debug, "  Found return statement, deduced type: ", 
+							  (int)deduced_type->type(), " size: ", (int)deduced_type->size_in_bits());
 				}
 			}
 		} else if (node.is<BlockNode>()) {
@@ -12857,16 +12867,21 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	
 	// If we found a deduced type, update the function declaration's return type
 	if (deduced_type.has_value()) {
-		return_type = *deduced_type;
+		// Create a new ASTNode with the deduced type and update the declaration
+		auto [new_type_node, new_type_ref] = create_node_ref<TypeSpecifierNode>(std::move(*deduced_type));
+		decl_node.set_type_node(new_type_node);
 		
-		// Also update the symbol table entry
-		std::string_view func_name = func_decl.decl_node().identifier_token().value();
+		FLASH_LOG(Parser, Debug, "  Updated return type to: ", (int)new_type_ref.type(), 
+				  " size: ", (int)new_type_ref.size_in_bits());
+		
+		// Also update the symbol table entry if this function is in the symbol table
+		std::string_view func_name = decl_node.identifier_token().value();
 		auto symbol_opt = gSymbolTable.lookup(func_name);
 		if (symbol_opt.has_value() && symbol_opt->is<FunctionDeclarationNode>()) {
 			// The symbol table entry should point to the same node, so it's already updated
 			// But we can log it for debugging
 			FLASH_LOG(Parser, Debug, "Deduced auto return type for function '", func_name, 
-					  "': type=", (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
+					  "': type=", (int)new_type_ref.type(), " size=", (int)new_type_ref.size_in_bits());
 		}
 	}
 }
