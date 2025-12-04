@@ -1601,6 +1601,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				// func_scope automatically exits scope on return
 				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 			}
+			// Deduce auto return types from function body
+			deduce_and_update_auto_return_type(existing_func_ref);
 		}
 
 		member_function_context_stack_.pop_back();
@@ -1806,6 +1808,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					// Generate mangled name before finalizing (Phase 6 mangling)
 					compute_and_set_mangled_name(func_decl);
 					func_decl.set_definition(*block);
+					// Deduce auto return types from function body
+					deduce_and_update_auto_return_type(func_decl);
 					return saved_position.success(*node);
 				}
 			}
@@ -12710,6 +12714,94 @@ Type Parser::deduce_type_from_expression(const ASTNode& expr) const {
 
 	// Default to int if we can't determine the type
 	return Type::Int;
+}
+
+// Helper function to deduce and update auto return type from function body
+void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl) {
+	// Check if the return type is auto
+	TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	if (return_type.type() != Type::Auto) {
+		return;  // Not an auto return type, nothing to do
+	}
+	
+	// Get the function body
+	const std::optional<ASTNode>& body_opt = func_decl.get_definition();
+	if (!body_opt.has_value() || !body_opt->is<BlockNode>()) {
+		return;  // No body or invalid body
+	}
+	
+	// Walk through the function body to find return statements
+	const BlockNode& body = body_opt->as<BlockNode>();
+	std::optional<TypeSpecifierNode> deduced_type;
+	
+	// Recursive lambda to search for return statements
+	std::function<void(const ASTNode&)> find_return_statements = [&](const ASTNode& node) {
+		if (node.is<ReturnStatementNode>()) {
+			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
+			if (ret.expression().has_value()) {
+				auto expr_type_opt = get_expression_type(*ret.expression());
+				if (expr_type_opt.has_value() && !deduced_type.has_value()) {
+					// Found the first return statement with a value
+					deduced_type = *expr_type_opt;
+				}
+			}
+		} else if (node.is<BlockNode>()) {
+			// Recursively search nested blocks
+			const BlockNode& block = node.as<BlockNode>();
+			block.get_statements().visit([&](const ASTNode& stmt) {
+				find_return_statements(stmt);
+			});
+		} else if (node.is<IfStatementNode>()) {
+			const IfStatementNode& if_stmt = node.as<IfStatementNode>();
+			if (if_stmt.get_then_statement().has_value()) {
+				find_return_statements(if_stmt.get_then_statement());
+			}
+			if (if_stmt.get_else_statement().has_value()) {
+				find_return_statements(*if_stmt.get_else_statement());
+			}
+		} else if (node.is<ForStatementNode>()) {
+			const ForStatementNode& for_stmt = node.as<ForStatementNode>();
+			if (for_stmt.get_body_statement().has_value()) {
+				find_return_statements(for_stmt.get_body_statement());
+			}
+		} else if (node.is<WhileStatementNode>()) {
+			const WhileStatementNode& while_stmt = node.as<WhileStatementNode>();
+			if (while_stmt.get_body_statement().has_value()) {
+				find_return_statements(while_stmt.get_body_statement());
+			}
+		} else if (node.is<DoWhileStatementNode>()) {
+			const DoWhileStatementNode& do_while = node.as<DoWhileStatementNode>();
+			if (do_while.get_body_statement().has_value()) {
+				find_return_statements(do_while.get_body_statement());
+			}
+		} else if (node.is<SwitchStatementNode>()) {
+			const SwitchStatementNode& switch_stmt = node.as<SwitchStatementNode>();
+			if (switch_stmt.get_body().has_value()) {
+				find_return_statements(switch_stmt.get_body());
+			}
+		}
+		// Add more statement types as needed
+	};
+	
+	// Search the function body
+	body.get_statements().visit([&](const ASTNode& stmt) {
+		find_return_statements(stmt);
+	});
+	
+	// If we found a deduced type, update the function declaration's return type
+	if (deduced_type.has_value()) {
+		return_type = *deduced_type;
+		
+		// Also update the symbol table entry
+		std::string_view func_name = func_decl.decl_node().identifier_token().value();
+		auto symbol_opt = gSymbolTable.lookup(func_name);
+		if (symbol_opt.has_value() && symbol_opt->is<FunctionDeclarationNode>()) {
+			// The symbol table entry should point to the same node, so it's already updated
+			// But we can log it for debugging
+			FLASH_LOG(Parser, Debug, "Deduced auto return type for function '", func_name, 
+					  "': type=", (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
+		}
+	}
 }
 
 // Helper function to count pack elements in template parameter packs

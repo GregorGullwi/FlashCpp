@@ -1834,6 +1834,33 @@ private:
 				}
 			}
 			
+			// If the current function has auto return type, deduce it from the return expression
+			if (current_function_return_type_ == Type::Auto && !operands.empty() && operands.size() >= 2) {
+				Type expr_type = std::get<Type>(operands[0]);
+				int expr_size = std::get<int>(operands[1]);
+				
+				// Build a TypeSpecifierNode for the deduced type
+				TypeSpecifierNode deduced_type(expr_type, TypeQualifier::None, expr_size, node.return_token());
+				
+				// If we have type_index information (for structs), include it
+				if (operands.size() >= 4) {
+					if (std::holds_alternative<unsigned long long>(operands[3])) {
+						TypeIndex type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operands[3]));
+						deduced_type = TypeSpecifierNode(expr_type, TypeQualifier::None, expr_size, node.return_token());
+						deduced_type.set_type_index(type_index);
+					}
+				}
+				
+				// Store the deduced type for this function
+				if (!current_function_name_.empty()) {
+					deduced_auto_return_types_[current_function_name_] = deduced_type;
+				}
+				
+				// Update current function return type for subsequent return statements
+				current_function_return_type_ = expr_type;
+				current_function_return_size_ = expr_size;
+			}
+			
 			// Convert to the function's return type if necessary
 			if (!operands.empty() && operands.size() >= 2) {
 				Type expr_type = std::get<Type>(operands[0]);
@@ -9675,6 +9702,10 @@ private:
 	// Map from local static variable name to info
 	// Key: local variable name, Value: static local info
 	std::unordered_map<std::string, StaticLocalInfo> static_local_names_;
+
+	// Map from function name to deduced auto return type
+	// Key: function name (mangled), Value: deduced TypeSpecifierNode
+	std::unordered_map<std::string, TypeSpecifierNode> deduced_auto_return_types_;
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;

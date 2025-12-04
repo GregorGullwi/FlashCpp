@@ -498,6 +498,7 @@ public:  // Public methods for template instantiation
 
         // Helper functions for auto type deduction
         Type deduce_type_from_expression(const ASTNode& expr) const;
+        void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
         static unsigned char get_type_size_bits(Type type);
 
         // Helper function for counting pack elements in template parameter packs
