@@ -12789,7 +12789,7 @@ Type Parser::deduce_type_from_expression(const ASTNode& expr) const {
 void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl) {
 	// Check if the return type is auto
 	DeclarationNode& decl_node = func_decl.decl_node();
-	TypeSpecifierNode return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 	
 	FLASH_LOG(Parser, Debug, "deduce_and_update_auto_return_type called for function: ", 
 			  decl_node.identifier_token().value(), " return_type=", (int)return_type.type());
@@ -12874,15 +12874,9 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 		FLASH_LOG(Parser, Debug, "  Updated return type to: ", (int)new_type_ref.type(), 
 				  " size: ", (int)new_type_ref.size_in_bits());
 		
-		// Also update the symbol table entry if this function is in the symbol table
-		std::string_view func_name = decl_node.identifier_token().value();
-		auto symbol_opt = gSymbolTable.lookup(func_name);
-		if (symbol_opt.has_value() && symbol_opt->is<FunctionDeclarationNode>()) {
-			// The symbol table entry should point to the same node, so it's already updated
-			// But we can log it for debugging
-			FLASH_LOG(Parser, Debug, "Deduced auto return type for function '", func_name, 
-					  "': type=", (int)new_type_ref.type(), " size=", (int)new_type_ref.size_in_bits());
-		}
+		// Log deduction for debugging
+		FLASH_LOG(Parser, Debug, "Deduced auto return type for function '", decl_node.identifier_token().value(), 
+				  "': type=", (int)new_type_ref.type(), " size=", (int)new_type_ref.size_in_bits());
 	}
 }
 
