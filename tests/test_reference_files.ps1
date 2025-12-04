@@ -133,13 +133,6 @@ Write-Host ""
 #
 # Unimplemented features:
 $expectedCompileFailures = @(
-    "test_constexpr_structs.cpp",          # constexpr constructor parsing not yet supported
-    "test_cstddef.cpp",                    # Standard library header not yet supported
-    "test_cstdio_puts.cpp",                # Standard library header not yet supported
-    "test_recursive_macro.cpp",            # Recursive macro produces identifier (correct behavior per C standard)
-    "test_type_traits_intrinsics.cpp",     # Type traits intrinsics not yet supported (use test_type_traits_intrinsics_working.cpp)
-    "test_va_implementation.cpp",          # C-style variadic details issue
-    "test_lambda_cpp20_comprehensive.cpp"  # Path-dependent parser bug - see PARSER_BUG_INVESTIGATION.md
 )
 
 # Expected link failures - files that compile but have known link issues
