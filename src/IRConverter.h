@@ -1812,6 +1812,17 @@ struct RegisterAllocator
 		registers[static_cast<int>(reg)].isDirty = true;
 	}
 
+	// Clear all register associations for a specific stack offset
+	// Use this when storing to a stack slot to invalidate any cached register values
+	void clearStackVariableAssociations(int32_t stackVariableOffset) {
+		for (auto& r : registers) {
+			if (r.stackVariableOffset == stackVariableOffset) {
+				r.stackVariableOffset = INT_MIN;
+				r.isDirty = false;
+			}
+		}
+	}
+
 	OpCodeWithSize get_reg_reg_move_op_code(X64Register dst_reg, X64Register src_reg, size_t size_in_bytes) {
 		OpCodeWithSize result;
 		/*if (dst_reg == src_reg) {	// removed for now, since this is an optimization
@@ -8389,13 +8400,15 @@ private:
 			textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
 		} else if (toSize == 32) {
 			// mov r32, r32 (dword to dword) - implicitly zero-extends on x86-64
-			uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(result_reg) & 0x07) << 3) | (static_cast<uint8_t>(source_reg) & 0x07);
+			// For MOV r/m32, r32 (opcode 89): reg field is SOURCE, r/m field is DEST
+			// So we put source_reg in reg field and result_reg in r/m field
+			uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(source_reg) & 0x07) << 3) | (static_cast<uint8_t>(result_reg) & 0x07);
 			
 			// Check if we need REX prefix
 			if (static_cast<uint8_t>(result_reg) >= 8 || static_cast<uint8_t>(source_reg) >= 8) {
 				uint8_t rex = 0x40;
-				if (static_cast<uint8_t>(result_reg) >= 8) rex |= 0x04; // REX.R
-				if (static_cast<uint8_t>(source_reg) >= 8) rex |= 0x01; // REX.B
+				if (static_cast<uint8_t>(source_reg) >= 8) rex |= 0x04; // REX.R for source in reg field
+				if (static_cast<uint8_t>(result_reg) >= 8) rex |= 0x01; // REX.B for dest in r/m field
 				std::array<uint8_t, 3> mov = { rex, 0x89, modrm };
 				textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
 			} else {
@@ -8404,7 +8417,8 @@ private:
 			}
 		} else {
 			// 64-bit or fallback: just copy the whole register
-			auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
+			// For MOV r/m64, r64 (opcode 89): reg field is SOURCE, r/m field is DEST
+			auto encoding = encodeRegToRegInstruction(source_reg, result_reg);
 			std::array<uint8_t, 3> mov = { encoding.rex_prefix, 0x89, encoding.modrm_byte };
 			textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
 		}
@@ -8700,16 +8714,19 @@ private:
 				return;
 			}
 
-			// Get RHS source (function address)
+			// Get RHS source (function address or nullptr)
 			X64Register source_reg = X64Register::RAX;
 
 			if (std::holds_alternative<TempVar>(op.rhs.value)) {
 				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
-
 				// Load function address from RHS stack location into RAX
 				emitMovFromFrame(source_reg, rhs_offset);
+			} else if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
+				// RHS is an immediate value (e.g., nullptr = 0)
+				unsigned long long rhs_value = std::get<unsigned long long>(op.rhs.value);
+				emitMovImm64(source_reg, rhs_value);
 			}
 			
 			// Store RAX to LHS stack location (8 bytes for function pointer - always 64-bit)
@@ -8717,6 +8734,10 @@ private:
 				SizedRegister{source_reg, 64, false},  // source: 64-bit register
 				SizedStackSlot{lhs_offset, 64, false}  // dest: 64-bit for function pointer
 			);
+
+			// Clear any stale register associations for this stack offset
+			// This ensures subsequent loads will actually load from memory instead of using stale cached values
+			regAlloc.clearStackVariableAssociations(lhs_offset);
 
 			return;
 		}
@@ -8902,6 +8923,8 @@ private:
 				SizedRegister{source_reg, 64, false},  // source: 64-bit register
 				SizedStackSlot{lhs_offset, op.lhs.size_in_bits, isSignedType(lhs_type)}  // dest: sized stack slot
 			);
+			// Clear any stale register associations for this stack offset
+			regAlloc.clearStackVariableAssociations(lhs_offset);
 		}
 	}
 
