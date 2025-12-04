@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <charconv>
 #include <cstdlib>
@@ -339,6 +340,9 @@ private:
 
         // Track last failed template argument parse position to prevent infinite loops
         size_t last_failed_template_arg_parse_cursor_ = SIZE_MAX;
+
+        // Track functions currently undergoing auto return type deduction to prevent infinite recursion
+        std::unordered_set<const FunctionDeclarationNode*> functions_being_deduced_;
 
         // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
         std::vector<ASTNode> pending_struct_variables_;
