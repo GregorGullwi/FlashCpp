@@ -344,6 +344,18 @@ private:
         // Track functions currently undergoing auto return type deduction to prevent infinite recursion
         std::unordered_set<const FunctionDeclarationNode*> functions_being_deduced_;
 
+        // Deferred lambda return type deduction: store lambdas that need return type deduction
+        // after the enclosing scope completes to avoid circular dependencies
+        struct DeferredLambdaDeduction {
+            LambdaExpressionNode* lambda_node;
+            ASTNode* return_type_node;  // Pointer to the return type node to update
+            Token lambda_token;
+        };
+        std::vector<DeferredLambdaDeduction> deferred_lambda_deductions_;
+
+        // Track ASTNode addresses currently being processed in get_expression_type to prevent infinite recursion
+        mutable std::unordered_set<const void*> expression_type_resolution_stack_;
+
         // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
         std::vector<ASTNode> pending_struct_variables_;
 
@@ -503,6 +515,7 @@ public:  // Public methods for template instantiation
         // Helper functions for auto type deduction
         Type deduce_type_from_expression(const ASTNode& expr) const;
         void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
+        void process_deferred_lambda_deductions();  // Process deferred lambda return type deductions
         static unsigned char get_type_size_bits(Type type);
 
         // Helper function for counting pack elements in template parameter packs
