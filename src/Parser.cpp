@@ -10514,16 +10514,20 @@ ParseResult Parser::parse_primary_expression()
 			TokenPosition saved_pos = save_token_position();
 			ParseResult type_result = parse_type_specifier();
 
-			if (!type_result.is_error() && type_result.node().has_value()) {
-				// Successfully parsed as type
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after sizeof type", *current_token_);
-				}
+			// Check if this is really a type by seeing if ')' follows
+			// This disambiguates between "sizeof(int)" and "sizeof(x + 1)" where x might be
+			// incorrectly parsed as a user-defined type
+			bool looks_like_type = !type_result.is_error() && type_result.node().has_value() && 
+			                       peek_token().has_value() && peek_token()->value() == ")";
+			
+			if (looks_like_type) {
+				// Successfully parsed as type and ')' follows
+				consume_token(); // consume ')'
 				discard_saved_token(saved_pos);
 				result = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
 			}
 			else {
-				// Not a type, try parsing as expression
+				// Not a type (or doesn't look like one), try parsing as expression
 				restore_token_position(saved_pos);
 				ParseResult expr_result = parse_expression();
 				if (expr_result.is_error()) {
@@ -10553,16 +10557,20 @@ ParseResult Parser::parse_primary_expression()
 		TokenPosition saved_pos = save_token_position();
 		ParseResult type_result = parse_type_specifier();
 
-		if (!type_result.is_error() && type_result.node().has_value()) {
-			// Successfully parsed as type
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after typeid type", *current_token_);
-			}
+		// Check if this is really a type by seeing if ')' follows
+		// This disambiguates between "typeid(int)" and "typeid(x + 1)" where x might be
+		// incorrectly parsed as a user-defined type
+		bool looks_like_type = !type_result.is_error() && type_result.node().has_value() && 
+		                       peek_token().has_value() && peek_token()->value() == ")";
+		
+		if (looks_like_type) {
+			// Successfully parsed as type and ')' follows
+			consume_token(); // consume ')'
 			discard_saved_token(saved_pos);
 			result = emplace_node<ExpressionNode>(TypeidNode(*type_result.node(), true, typeid_token));
 		}
 		else {
-			// Not a type, try parsing as expression
+			// Not a type (or doesn't look like one), try parsing as expression
 			restore_token_position(saved_pos);
 			ParseResult expr_result = parse_expression();
 			if (expr_result.is_error()) {
