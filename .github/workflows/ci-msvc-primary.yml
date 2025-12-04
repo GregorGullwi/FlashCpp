@@ -3,9 +3,9 @@ name: CI - MSVC primary
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, pre-flight ]
   pull_request:
-    branches: [ main, opus-constexpr ]
+    branches: [ main, pre-flight ]
 
 jobs:
   windows-debug:
