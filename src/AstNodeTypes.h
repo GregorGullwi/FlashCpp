@@ -959,6 +959,7 @@ public:
 		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 
 	ASTNode type_node() const { return type_node_; }
+	void set_type_node(const ASTNode& type_node) { type_node_ = type_node; }
 	const Token& identifier_token() const { return identifier_; }
 	uint32_t line_number() const { return identifier_.line(); }
 	bool is_array() const { return array_size_.has_value() || is_unsized_array_; }
@@ -1169,6 +1170,9 @@ public:
 		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 
 	const DeclarationNode& decl_node() const {
+		return decl_node_;
+	}
+	DeclarationNode& decl_node() {
 		return decl_node_;
 	}
 	const std::vector<ASTNode>& parameter_nodes() const {
