@@ -11955,6 +11955,36 @@ ParseResult Parser::parse_lambda_expression() {
                 );
                 continue;  // Skip the rest of processing for this capture
             }
+            
+            // Handle [*this] capture (C++17)
+            if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+                // [*this] capture: store a copy of the entire enclosing object
+                // We need to determine the size of the enclosing struct
+                if (!member_function_context_stack_.empty()) {
+                    const auto& context = member_function_context_stack_.back();
+                    std::string_view struct_name = context.struct_name;
+                    auto type_it = gTypesByName.find(struct_name);
+                    if (type_it != gTypesByName.end()) {
+                        const TypeInfo* enclosing_type = type_it->second;
+                        const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
+                        if (enclosing_struct) {
+                            closure_struct_info->addMember(
+                                "__copy_this",                      // Special member name for copied this
+                                Type::Struct,                       // Struct type
+                                enclosing_type->type_index_,        // Type index of enclosing struct
+                                enclosing_struct->total_size,       // Size of the entire struct
+                                enclosing_struct->alignment,        // Alignment from enclosing struct
+                                AccessSpecifier::Public,
+                                std::nullopt,                       // No initializer
+                                false,                              // Not a reference
+                                false,                              // Not rvalue reference
+                                enclosing_struct->total_size * 8    // Size in bits
+                            );
+                        }
+                    }
+                }
+                continue;  // Skip the rest of processing for this capture
+            }
 
             std::string_view var_name = capture.identifier_name();
             TypeSpecifierNode var_type(Type::Int, TypeQualifier::None, 32);  // Default type
