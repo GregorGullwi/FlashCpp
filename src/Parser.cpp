@@ -15610,7 +15610,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	if (!peek_token().has_value() || peek_token()->value() != "<") {
 		return std::nullopt;
 	}
+	
+	// Prevent infinite loop: don't retry template argument parsing at the same position
+	if (saved_pos.cursor_ == last_failed_template_arg_parse_cursor_) {
+		return std::nullopt;
+	}
+	
 	consume_token(); // consume '<'
+	last_failed_template_arg_parse_cursor_ = SIZE_MAX;  // Clear failure marker - we're making progress
 
 	std::vector<TemplateTypeArg> template_args;
 
@@ -15647,12 +15654,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				} else {
 					FLASH_LOG(Parser, Error, "Unsupported numeric literal type");
 					restore_token_position(saved_pos);
+					last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
 					return std::nullopt;
 				}
 				
 				// Check for ',' or '>' after the numeric literal
 				if (!peek_token().has_value()) {
 					restore_token_position(saved_pos);
+					last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
 					return std::nullopt;
 				}
 
@@ -15670,6 +15679,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				FLASH_LOG(Parser, Error, "parse_explicit_template_arguments unexpected token after numeric literal: '", 
 				          peek_token()->value(), "'");
 				restore_token_position(saved_pos);
+				last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
 				return std::nullopt;
 			}
 
@@ -15683,6 +15693,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Neither type nor expression parsing worked
 			FLASH_LOG(Parser, Error, "parse_explicit_template_arguments failed to parse type or expression");
 			restore_token_position(saved_pos);
+			last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
 			return std::nullopt;
 		}
 
@@ -15731,6 +15742,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		if (!peek_token().has_value()) {
 			FLASH_LOG(Parser, Error, "parse_explicit_template_arguments unexpected end of tokens");
 			restore_token_position(saved_pos);
+			last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
 			return std::nullopt;
 		}
 
@@ -15747,11 +15759,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Unexpected token
 		FLASH_LOG(Parser, Error, "parse_explicit_template_arguments unexpected token: '", peek_token()->value(), "'");
 		restore_token_position(saved_pos);
+		last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
 		return std::nullopt;
 	}
 
 	// Success - discard saved position
 	discard_saved_token(saved_pos);
+	last_failed_template_arg_parse_cursor_ = SIZE_MAX;  // Clear failure marker on success
 	return template_args;
 }
 

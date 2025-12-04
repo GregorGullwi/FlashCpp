@@ -337,6 +337,9 @@ private:
         bool parsing_template_body_ = false;
         std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
 
+        // Track last failed template argument parse position to prevent infinite loops
+        size_t last_failed_template_arg_parse_cursor_ = SIZE_MAX;
+
         // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
         std::vector<ASTNode> pending_struct_variables_;
 
