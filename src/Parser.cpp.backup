@@ -6779,6 +6779,7 @@ ParseResult Parser::parse_block()
 
 ParseResult Parser::parse_statement_or_declaration()
 {
+	FLASH_LOG(Parser, Debug, "parse_statement_or_declaration: current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 	// Define a function pointer type for parsing functions
 	using ParsingFunction = ParseResult(Parser::*)();
 
@@ -7692,6 +7693,7 @@ ParseResult Parser::parse_return_statement()
 
 ParseResult Parser::parse_unary_expression()
 {
+	FLASH_LOG(Parser, Debug, "parse_unary_expression: current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 	// Check for 'static_cast' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "static_cast") {
 		Token cast_token = *current_token_;
@@ -8031,6 +8033,7 @@ ParseResult Parser::parse_unary_expression()
 
 ParseResult Parser::parse_expression(int precedence)
 {
+	FLASH_LOG(Parser, Debug, "parse_expression: current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 	ParseResult result = parse_unary_expression();
 	if (result.is_error()) {
 		return result;
@@ -8123,6 +8126,7 @@ ParseResult Parser::parse_expression(int precedence)
 		}
 	}
 
+	FLASH_LOG(Parser, Debug, "Returning from parse_expression, current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 	return result;
 }
 
@@ -8600,6 +8604,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 
 ParseResult Parser::parse_primary_expression()
 {
+	FLASH_LOG(Parser, Debug, "parse_primary_expression: current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 	std::optional<ASTNode> result;
 
 	// Check for requires expression: requires(params) { requirements; } or requires { requirements; }
@@ -10367,7 +10372,9 @@ ParseResult Parser::parse_primary_expression()
 			return ParseResult::error("Expected numeric literal", *current_token_);
 		}
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_, literal_type->value, literal_type->type, literal_type->typeQualifier, literal_type->sizeInBits));
+		FLASH_LOG(Parser, Debug, "Before consuming literal, current_token = ", current_token_->value());
 		consume_token();
+		FLASH_LOG(Parser, Debug, "After consuming literal, current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 	}
 	else if (current_token_->type() == Token::Type::StringLiteral) {
 		// Handle adjacent string literal concatenation
@@ -10824,6 +10831,7 @@ ParseResult Parser::parse_primary_expression()
 found_member_variable:  // Label for member variable detection - jump here to skip error checking
 	// Check for postfix operators (++, --, and array subscript [])
 	while (result.has_value() && peek_token().has_value()) {
+		FLASH_LOG(Parser, Debug, "Postfix loop: peek_token = ", peek_token()->value(), ", type = ", static_cast<int>(peek_token()->type()));
 		if (peek_token()->type() == Token::Type::Operator) {
 			std::string_view op = peek_token()->value();
 			if (op == "++" || op == "--") {
@@ -10942,10 +10950,12 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 
 		// Check for array subscript operator []
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "[") {
+			FLASH_LOG(Parser, Debug, "Found '[' for array subscript, current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 			Token bracket_token = *peek_token();
 			consume_token(); // consume '['
 
 			// Parse the index expression
+			FLASH_LOG(Parser, Debug, "Parsing array index, current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 			ParseResult index_result = parse_expression();
 			if (index_result.is_error()) {
 				return index_result;
@@ -10980,6 +10990,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 			result = emplace_node<ExpressionNode>(
 				UnaryOperatorNode(deref_token, *result, true));
 		} else {
+			FLASH_LOG(Parser, Debug, "Breaking from postfix loop, peek_token = ", peek_token().has_value() ? peek_token()->value() : "none");
 			break;  // No more postfix operators
 		}
 
@@ -11126,6 +11137,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 		continue;  // Check for more postfix operators (e.g., obj.member1.member2)
 	}
 
+	FLASH_LOG(Parser, Debug, "End of parse_primary_expression, result.has_value = ", result.has_value());
 	if (result.has_value())
 		return ParseResult::success(*result);
 
@@ -11626,12 +11638,16 @@ ParseResult Parser::parse_lambda_expression() {
                 } else if (token->type() == Token::Type::Identifier) {
                     // Could be [x] or [x = expr]
                     Token id_token = *token;
+                    FLASH_LOG(Parser, Debug, "Lambda capture: id_token = ", id_token.value());
                     consume_token();
                     
+                    FLASH_LOG(Parser, Debug, "After consuming id, current_token = ", current_token_.has_value() ? current_token_->value() : "none");
                     
                     // Check for init-capture: [x = expr]
                     if (peek_token().has_value() && peek_token()->value() == "=") {
+                        FLASH_LOG(Parser, Debug, "Found '=', parsing init-capture");
                         consume_token(); // consume '='
+                        FLASH_LOG(Parser, Debug, "After consuming '=', current_token = ", current_token_.has_value() ? current_token_->value() : "none");
                         auto init_expr = parse_expression();
                         if (init_expr.is_error()) {
                             return init_expr;
@@ -11652,12 +11668,14 @@ ParseResult Parser::parse_lambda_expression() {
             if (peek_token().has_value() && peek_token()->value() == ",") {
                 consume_token(); // consume comma
             } else {
+                FLASH_LOG(Parser, Debug, "Breaking from capture list loop");
                 break;
             }
         }
     }
 
     // Expect ']'
+    FLASH_LOG(Parser, Debug, "After capture list loop, expecting ']', current_token = ", current_token_.has_value() ? current_token_->value() : "none");
     if (!consume_punctuator("]")) {
         return ParseResult::error("Expected ']' after lambda captures", *current_token_);
     }
@@ -11666,11 +11684,13 @@ ParseResult Parser::parse_lambda_expression() {
     // Parse parameter list (optional) using unified parse_parameter_list (Phase 1)
     std::vector<ASTNode> parameters;
     if (peek_token().has_value() && peek_token()->value() == "(") {
+        FLASH_LOG(Parser, Debug, "Parsing lambda parameter list");
         FlashCpp::ParsedParameterList params;
         auto param_result = parse_parameter_list(params);
         if (param_result.is_error()) {
             return param_result;
         }
+        FLASH_LOG(Parser, Debug, "After parsing parameter list, current_token = ", current_token_.has_value() ? current_token_->value() : "none");
         parameters = std::move(params.parameters);
         // Note: params.is_variadic could be used for variadic lambdas (C++14+)
     }
@@ -11759,7 +11779,9 @@ ParseResult Parser::parse_lambda_expression() {
         }
     }
 
+    FLASH_LOG(Parser, Debug, "Before parse_block, current_token = ", current_token_.has_value() ? current_token_->value() : "none");
     ParseResult body_result = parse_block();
+    FLASH_LOG(Parser, Debug, "After parse_block, current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 
     // Remove parameters from symbol table after parsing body
     gSymbolTable.exit_scope();
