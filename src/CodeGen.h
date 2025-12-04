@@ -7309,28 +7309,52 @@ private:
 				const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
 				std::string_view ptr_name = ptr_ident.name();
 				
-				// Special handling for 'this' in lambdas with [this] capture
+				// Special handling for 'this' in lambdas with [this] or [*this] capture
 				if (ptr_name == "this" && !current_lambda_closure_type_.empty() && 
 				    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
-					// We're in a lambda that captured [this]
-					// Need to load the captured __this pointer from the closure
-					TempVar this_ptr = var_counter.next();
-					MemberLoadOp load_this;
-					load_this.result.value = this_ptr;
-					load_this.result.type = Type::Void;
-					load_this.result.size_in_bits = 64;
-					load_this.object = "this"sv;  // Lambda's this (the closure)
-					load_this.member_name = "__this"sv;
-					load_this.offset = -1;
-					load_this.is_reference = false;
-					load_this.is_rvalue_reference = false;
-					load_this.struct_type_info = nullptr;
-					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
-					
-					// Use this loaded pointer as the base
-					base_object = this_ptr;
-					base_type = Type::Struct;
-					base_type_index = current_lambda_enclosing_struct_type_index_;
+					// We're in a lambda that captured [this] or [*this]
+					// Check which kind of capture it is
+					auto capture_kind_it = current_lambda_capture_kinds_.find("this");
+					if (capture_kind_it != current_lambda_capture_kinds_.end() && 
+					    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
+						// [*this] capture: load from the copied object in __copy_this
+						TempVar copy_this_ref = var_counter.next();
+						MemberLoadOp load_copy_this;
+						load_copy_this.result.value = copy_this_ref;
+						load_copy_this.result.type = Type::Struct;
+						load_copy_this.result.size_in_bits = 64;  // Pointer size
+						load_copy_this.object = "this"sv;  // Lambda's this (the closure)
+						load_copy_this.member_name = "__copy_this"sv;
+						load_copy_this.offset = -1;
+						load_copy_this.is_reference = false;
+						load_copy_this.is_rvalue_reference = false;
+						load_copy_this.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
+						
+						// Use this as the base (it's a struct value, not a pointer)
+						base_object = copy_this_ref;
+						base_type = Type::Struct;
+						base_type_index = current_lambda_enclosing_struct_type_index_;
+					} else {
+						// [this] capture: load the pointer from __this
+						TempVar this_ptr = var_counter.next();
+						MemberLoadOp load_this;
+						load_this.result.value = this_ptr;
+						load_this.result.type = Type::Void;
+						load_this.result.size_in_bits = 64;
+						load_this.object = "this"sv;  // Lambda's this (the closure)
+						load_this.member_name = "__this"sv;
+						load_this.offset = -1;
+						load_this.is_reference = false;
+						load_this.is_rvalue_reference = false;
+						load_this.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
+						
+						// Use this loaded pointer as the base
+						base_object = this_ptr;
+						base_type = Type::Struct;
+						base_type_index = current_lambda_enclosing_struct_type_index_;
+					}
 				} else {
 					// Normal pointer handling
 
@@ -9287,8 +9311,9 @@ private:
 					current_lambda_capture_kinds_["this"] = capture.kind();
 				} else if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 					// Mark that '*this' is captured (copy of the object)
-					current_lambda_captures_.insert("*this");
-					current_lambda_capture_kinds_["*this"] = capture.kind();
+					// We still register it as "this" for member access to work
+					current_lambda_captures_.insert("this");
+					current_lambda_capture_kinds_["this"] = capture.kind();
 				} else {
 					std::string var_name(capture.identifier_name());
 					current_lambda_captures_.insert(var_name);
