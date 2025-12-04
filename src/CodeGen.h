@@ -6415,8 +6415,23 @@ private:
 
 			// Generate a direct function call to __invoke
 			TempVar ret_var = var_counter.next();
-			irOperands.emplace_back(ret_var);
-			irOperands.emplace_back(invoke_name);
+
+			// Create CallOp structure (matching the pattern in generateFunctionCallIr)
+			CallOp call_op;
+			call_op.result = ret_var;
+			call_op.function_name = invoke_name;
+			
+			// Get return type information from lambda
+			if (lambda.return_type().has_value()) {
+				const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
+				call_op.return_type = ret_type.type();
+				call_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
+			} else {
+				// Default to int if no explicit return type
+				call_op.return_type = Type::Int;
+				call_op.return_size_in_bits = 32;
+			}
+			call_op.is_member_function = false;
 
 			// Add arguments
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
@@ -6427,24 +6442,24 @@ private:
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 					const auto& decl_node = symbol->as<DeclarationNode>();
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-					irOperands.emplace_back(type_node.type());
-					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-					irOperands.emplace_back(identifier.name());
+					// Convert to TypedValue
+					TypedValue arg;
+					arg.type = type_node.type();
+					arg.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					arg.value = identifier.name();
+					call_op.args.push_back(arg);
 				} else {
-					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+					// Convert argumentIrOperands to TypedValue
+					TypedValue arg = toTypedValue(argumentIrOperands);
+					call_op.args.push_back(arg);
 				}
 			});
 
-			// Add the function call instruction
-			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(irOperands), memberFunctionCallNode.called_from()));
+			// Add the function call instruction with typed payload
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 
 			// Return the result with actual return type from lambda
-			if (lambda.return_type().has_value()) {
-				const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
-				return { ret_type.type(), static_cast<int>(ret_type.size_in_bits()), ret_var, 0ULL };
-			}
-			// Default to int if no explicit return type
-			return { Type::Int, 32, ret_var, 0ULL };
+			return { call_op.return_type, call_op.return_size_in_bits, ret_var, 0ULL };
 		}
 
 		// Regular member function call on an expression
