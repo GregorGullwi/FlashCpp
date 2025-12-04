@@ -11837,21 +11837,43 @@ ParseResult Parser::parse_lambda_expression() {
     }
 
     // Deduce lambda return type if not explicitly specified or if it's auto
-    if (!return_type.has_value() || 
-        (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto)) {
+    // TEMPORARILY DISABLED due to infinite loop issue with complex expressions
+    // TODO: Fix the root cause and re-enable
+    bool enable_lambda_auto_deduction = false;
+    if (enable_lambda_auto_deduction && (!return_type.has_value() || 
+        (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto))) {
         // Search lambda body for return statements to deduce return type
         const BlockNode& body = body_result.node()->as<BlockNode>();
         std::optional<TypeSpecifierNode> deduced_type;
         
+        // Prevent infinite recursion with a depth limit
+        int max_depth = 5;
+        int current_depth = 0;
+        
         // Recursive lambda to search for return statements in lambda body
         std::function<void(const ASTNode&)> find_return_in_lambda = [&](const ASTNode& node) {
+            if (current_depth > max_depth) {
+                // Hit depth limit, stop recursion
+                return;
+            }
+            current_depth++;
+            
             if (node.is<ReturnStatementNode>()) {
                 const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
                 if (ret.expression().has_value()) {
-                    auto expr_type_opt = get_expression_type(*ret.expression());
-                    if (expr_type_opt.has_value() && !deduced_type.has_value()) {
-                        // Found the first return statement with a value
-                        deduced_type = *expr_type_opt;
+                    // Try to get expression type, but don't fail if we can't
+                    // This prevents infinite loops when the return expression references the lambda itself
+                    try {
+                        auto expr_type_opt = get_expression_type(*ret.expression());
+                        if (expr_type_opt.has_value() && !deduced_type.has_value()) {
+                            // Found the first return statement with a value
+                            deduced_type = *expr_type_opt;
+                        }
+                    } catch (...) {
+                        // If we can't deduce the type, just use int as fallback
+                        if (!deduced_type.has_value()) {
+                            deduced_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                        }
                     }
                 }
             } else if (node.is<BlockNode>()) {
@@ -11875,6 +11897,8 @@ ParseResult Parser::parse_lambda_expression() {
                 const ForStatementNode& for_stmt = node.as<ForStatementNode>();
                 find_return_in_lambda(for_stmt.get_body_statement());
             }
+            
+            current_depth--;
         };
         
         // Search the lambda body
@@ -12841,6 +12865,20 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	if (return_type.type() != Type::Auto) {
 		return;  // Not an auto return type, nothing to do
 	}
+	
+	// Prevent infinite recursion: check if we're already deducing this function's type
+	if (functions_being_deduced_.count(&func_decl) > 0) {
+		FLASH_LOG(Parser, Debug, "  Already deducing this function, skipping to prevent recursion");
+		return;
+	}
+	
+	// Add this function to the set of functions being deduced
+	functions_being_deduced_.insert(&func_decl);
+	
+	// RAII guard to remove the function from the set when we exit
+	auto guard = ScopeGuard([this, &func_decl]() {
+		functions_being_deduced_.erase(&func_decl);
+	});
 	
 	// Get the function body
 	const std::optional<ASTNode>& body_opt = func_decl.get_definition();
