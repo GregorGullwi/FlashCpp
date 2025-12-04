@@ -6582,8 +6582,11 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 			delayed.dtor_node->set_definition(*block_result.node());
 		} else if (delayed.func_node) {
 			delayed.func_node->set_definition(*block_result.node());
-			// Deduce auto return types from function body
-			deduce_and_update_auto_return_type(*delayed.func_node);
+			// Deduce auto return types from function body (only if return type is auto)
+			TypeSpecifierNode return_type = delayed.func_node->decl_node().type_node().as<TypeSpecifierNode>();
+			if (return_type.type() == Type::Auto) {
+				deduce_and_update_auto_return_type(*delayed.func_node);
+			}
 		}
 	}
 	
@@ -12904,6 +12907,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	// If we found a deduced type, update the function declaration's return type
 	if (deduced_type.has_value()) {
 		// Create a new ASTNode with the deduced type and update the declaration
+		// Note: new_type_ref is a reference to the newly created node, not the moved-from deduced_type
 		auto [new_type_node, new_type_ref] = create_node_ref<TypeSpecifierNode>(std::move(*deduced_type));
 		decl_node.set_type_node(new_type_node);
 		
