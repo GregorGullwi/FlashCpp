@@ -7153,11 +7153,15 @@ ParseResult Parser::parse_variable_declaration()
 				if (deduced_type_spec_opt.has_value()) {
 					// Use the full deduced type specifier (preserves struct type index, etc.)
 					type_specifier = *deduced_type_spec_opt;
+					FLASH_LOG(Parser, Debug, "Deduced auto variable type from initializer: type=", 
+							  (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
 				} else {
 					// Fallback: deduce basic type
 					Type deduced_type = deduce_type_from_expression(*first_init_expr);
 					unsigned char deduced_size = get_type_size_bits(deduced_type);
 					type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, first_decl.identifier_token(), type_specifier.cv_qualifier());
+					FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=", 
+							  (int)type_specifier.type(), " size=", (int)deduced_size);
 				}
 			}
 		}
@@ -12740,6 +12744,38 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
 		const auto& decl = member_call.function_declaration();
 		TypeSpecifierNode return_type = decl.decl_node().type_node().as<TypeSpecifierNode>();
+		
+		// Try to get the actual function declaration from the struct info
+		// The placeholder function declaration may have wrong return type
+		const ASTNode& object_node = member_call.object();
+		if (object_node.is<ExpressionNode>()) {
+			auto object_type_opt = get_expression_type(object_node);
+			if (object_type_opt.has_value() && object_type_opt->type() == Type::Struct) {
+				size_t struct_type_index = object_type_opt->type_index();
+				if (struct_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[struct_type_index];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						// Look up the member function
+						std::string_view func_name = decl.decl_node().identifier_token().value();
+						for (const auto& member_func : struct_info->member_functions) {
+							if (member_func.name == func_name && 
+								member_func.function_decl.is<FunctionDeclarationNode>()) {
+								// Found the real function - use its return type
+								const FunctionDeclarationNode& real_func = 
+									member_func.function_decl.as<FunctionDeclarationNode>();
+								return_type = real_func.decl_node().type_node().as<TypeSpecifierNode>();
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		FLASH_LOG(Parser, Debug, "get_expression_type for member function call: ", 
+				  decl.decl_node().identifier_token().value(), 
+				  " return_type=", (int)return_type.type(), " size=", (int)return_type.size_in_bits());
 		
 		// If the return type is still auto, it should have been deduced during parsing
 		return return_type;
