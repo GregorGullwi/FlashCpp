@@ -12144,7 +12144,9 @@ ParseResult Parser::parse_lambda_expression() {
 
     closure_type.struct_info_ = std::move(closure_struct_info);
 
-    return ParseResult::success(lambda_node);
+    // Wrap the lambda in an ExpressionNode before returning
+    ExpressionNode expr_node = lambda_node.as<LambdaExpressionNode>();
+    return ParseResult::success(emplace_node<ExpressionNode>(std::move(expr_node)));
 }
 
 ParseResult Parser::parse_if_statement() {

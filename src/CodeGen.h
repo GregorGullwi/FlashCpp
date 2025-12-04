@@ -6449,6 +6449,15 @@ private:
 				object_decl = get_decl_from_symbol(*symbol);
 				if (object_decl) {
 					object_type = object_decl->type_node().as<TypeSpecifierNode>();
+					
+					// If the type is 'auto', we need to deduce the actual type from the initializer
+					// TODO: Implement full auto type deduction for variables initialized with function calls
+					// Currently disabled as it requires recursive type resolution through function return types
+					if (object_type.type() == Type::Auto) {
+						// For now, auto variables that are lambdas will fail at member function call
+						// This affects edge cases like: auto f = make_lambda(); f();
+						// Where make_lambda() returns a lambda with 'auto' return type
+					}
 				}
 			}
 		} else if (std::holds_alternative<UnaryOperatorNode>(object_expr)) {

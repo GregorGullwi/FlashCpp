@@ -95,8 +95,13 @@ int test_nested_lambdas() {
 }
 
 // Test 14: Lambda returning lambda
-// NOTE: Temporarily disabled - causes crash in code generation
-// Issue: Lambda return type not properly recognized as struct when calling returned lambda
+// NOTE: Temporarily disabled - requires deeper type system fixes
+// ROOT CAUSE: The function's return type is 'auto', which returns a lambda closure struct.
+//             When the returned lambda is assigned to another 'auto' variable and then called,
+//             the type deduction system doesn't properly resolve the nested auto -> lambda -> auto chain.
+//             The variable's type remains as Type::Auto instead of the actual lambda closure struct type.
+// FIX NEEDED: Implement full auto type deduction that resolves function return types recursively,
+//             or update symbol table entries after type deduction during variable initialization.
 /*
 int test_lambda_returning_lambda() {
     auto maker = [](int offset) {
@@ -196,8 +201,13 @@ int test_init_capture_by_ref() {
 }
 
 // Test 26: C++17 *this capture (copy all values from this)
-// NOTE: Temporarily disabled - causes crash when returning lambda from member function
-// Issue: Return type handling for lambdas returned from member functions
+// NOTE: Temporarily disabled - requires parser fix for lambda return from member functions
+// ROOT CAUSE: When a member function returns a lambda, the parser doesn't properly wrap
+//             the lambda in an ExpressionNode during the return statement processing.
+//             Fixed parse_lambda_expression to wrap in ExpressionNode, but member function
+//             return processing still has issues with lambda closure types.
+// FIX NEEDED: Update return statement processing in member functions to handle lambda returns,
+//             possibly by improving how TypeSpecifier nodes handle auto-deduced lambda types.
 /*
 struct TestCopyThis {
     int value = 5;
@@ -217,7 +227,9 @@ int test_copy_this_capture() {
 
 // Test 27: Recursive lambda using auto&& self parameter
 // NOTE: Temporarily disabled - causes timeout/infinite loop
-// Issue: auto&& forwarding reference and recursive calls not fully supported
+// ROOT CAUSE: auto&& forwarding references in lambda parameters combined with recursive
+//             self-calls create complex template instantiation scenarios not fully supported.
+// FIX NEEDED: Implement proper forwarding reference handling and recursive lambda semantics.
 /*
 int test_recursive_lambda() {
     auto factorial = [](auto&& self, int n) -> int {
