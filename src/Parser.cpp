@@ -10527,11 +10527,14 @@ ParseResult Parser::parse_primary_expression()
 				restore_token_position(saved_pos);
 				ParseResult expr_result = parse_expression();
 				if (expr_result.is_error()) {
+					discard_saved_token(saved_pos);
 					return ParseResult::error("Expected type or expression after 'sizeof('", *current_token_);
 				}
 				if (!consume_punctuator(")")) {
+					discard_saved_token(saved_pos);
 					return ParseResult::error("Expected ')' after sizeof expression", *current_token_);
 				}
+				discard_saved_token(saved_pos);
 				result = emplace_node<ExpressionNode>(
 					SizeofExprNode::from_expression(*expr_result.node(), sizeof_token));
 			}
@@ -10563,11 +10566,14 @@ ParseResult Parser::parse_primary_expression()
 			restore_token_position(saved_pos);
 			ParseResult expr_result = parse_expression();
 			if (expr_result.is_error()) {
+				discard_saved_token(saved_pos);
 				return ParseResult::error("Expected type or expression after 'typeid('", *current_token_);
 			}
 			if (!consume_punctuator(")")) {
+				discard_saved_token(saved_pos);
 				return ParseResult::error("Expected ')' after typeid expression", *current_token_);
 			}
+			discard_saved_token(saved_pos);
 			result = emplace_node<ExpressionNode>(TypeidNode(*expr_result.node(), false, typeid_token));
 		}
 	}
