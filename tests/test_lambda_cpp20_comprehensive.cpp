@@ -79,13 +79,10 @@ int test_explicit_return_type() {
 }
 
 // Test 12: C++14 Generic lambda with auto parameters
-// TODO: Implement generic lambda support (templates)
-/*
 int test_generic_lambda() {
     auto add = [](auto a, auto b) { return a + b; };
     return add(2, 3);  // 5
 }
-*/
 
 // Test 13: Nested lambdas
 int test_nested_lambdas() {
@@ -139,13 +136,10 @@ int test_lambda_in_conditional() {
 
 // Test 19: C++20 Template lambda (if supported)
 // Note: This is a C++20 feature that may not be fully supported yet
-// TODO: Implement template lambda syntax []<typename T>(T value)
-/*
 int test_template_lambda() {
     auto lambda = []<typename T>(T value) { return value; };
     return lambda(5);  // 5
 }
-*/
 
 // Test 20: Multiple captures with different types
 int test_multiple_different_captures() {
@@ -237,14 +231,14 @@ int main() {
     result += test_init_capture_modified();           // 5
     result += test_mutable_lambda();                  // 5
     result += test_explicit_return_type();            // 5
-    // result += test_generic_lambda();                  // 5 (C++14 generic lambda - commented until supported)
+    result += test_generic_lambda();                  // 5
     result += test_nested_lambdas();                  // 5
     result += test_lambda_returning_lambda();         // 5
     result += test_iife();                            // 5
     result += test_multiple_statements();             // 5
     result += test_const_capture();                   // 5
     result += test_lambda_in_conditional();           // 5
-    // result += test_template_lambda();                 // 5 (C++20 template lambda - commented until supported)
+    result += test_template_lambda();                 // 5
     result += test_multiple_different_captures();     // 5
     result += test_ref_capture_modify();              // 5
     

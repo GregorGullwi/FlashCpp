@@ -2315,7 +2315,8 @@ public:
 		ByReference,  // [&x]
 		AllByValue,   // [=]
 		AllByReference, // [&]
-		This          // [this]
+		This,         // [this]
+		CopyThis      // [*this] (C++17)
 	};
 
 	explicit LambdaCaptureNode(CaptureKind kind, Token identifier = Token(), std::optional<ASTNode> initializer = std::nullopt)
