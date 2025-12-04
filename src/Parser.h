@@ -516,6 +516,8 @@ public:  // Public methods for template instantiation
         Type deduce_type_from_expression(const ASTNode& expr) const;
         void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
         void process_deferred_lambda_deductions();  // Process deferred lambda return type deductions
+        bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;  // Check if two types are compatible
+        std::string type_to_string(const TypeSpecifierNode& type) const;  // Convert type to string for error messages
         static unsigned char get_type_size_bits(Type type);
 
         // Helper function for counting pack elements in template parameter packs

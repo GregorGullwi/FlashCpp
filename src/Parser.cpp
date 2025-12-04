@@ -11838,29 +11838,43 @@ ParseResult Parser::parse_lambda_expression() {
 
     // Deduce lambda return type if not explicitly specified or if it's auto
     // Now with proper guard against circular dependencies in get_expression_type
+    // AND validation that all return paths return the same type
     if (!return_type.has_value() || 
         (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto)) {
         // Search lambda body for return statements to deduce return type
         const BlockNode& body = body_result.node()->as<BlockNode>();
         std::optional<TypeSpecifierNode> deduced_type;
+        std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
         
         // Recursive lambda to search for return statements in lambda body
         std::function<void(const ASTNode&)> find_return_in_lambda = [&](const ASTNode& node) {
             if (node.is<ReturnStatementNode>()) {
                 const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
-                if (ret.expression().has_value() && !deduced_type.has_value()) {
+                if (ret.expression().has_value()) {
                     // Try to get the type using get_expression_type
                     // The guard in get_expression_type will prevent infinite recursion
                     auto expr_type_opt = get_expression_type(*ret.expression());
                     if (expr_type_opt.has_value()) {
-                        deduced_type = *expr_type_opt;
-                        FLASH_LOG(Parser, Debug, "Lambda return type deduced from expression: type=", 
-                                 (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
+                        // Store this return type for validation
+                        all_return_types.emplace_back(*expr_type_opt, lambda_token);
+                        
+                        FLASH_LOG(Parser, Debug, "Lambda found return statement #", all_return_types.size(), 
+                                 " with type=", (int)expr_type_opt->type(), " size=", (int)expr_type_opt->size_in_bits());
+                        
+                        // Set the deduced type from the first return statement
+                        if (!deduced_type.has_value()) {
+                            deduced_type = *expr_type_opt;
+                            FLASH_LOG(Parser, Debug, "Lambda return type deduced from expression: type=", 
+                                     (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
+                        }
                     } else {
                         // If we couldn't deduce (possibly due to circular dependency guard),
                         // default to int as a safe fallback
-                        deduced_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
-                        FLASH_LOG(Parser, Debug, "Lambda return type defaulted to int (type resolution failed)");
+                        if (!deduced_type.has_value()) {
+                            deduced_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                            all_return_types.emplace_back(*deduced_type, lambda_token);
+                            FLASH_LOG(Parser, Debug, "Lambda return type defaulted to int (type resolution failed)");
+                        }
                     }
                 }
             } else if (node.is<BlockNode>()) {
@@ -11869,12 +11883,11 @@ ParseResult Parser::parse_lambda_expression() {
                 const auto& stmts = block.get_statements();
                 for (size_t i = 0; i < stmts.size(); ++i) {
                     find_return_in_lambda(stmts[i]);
-                    if (deduced_type.has_value()) break;  // Stop after finding first return
                 }
             } else if (node.is<IfStatementNode>()) {
                 const IfStatementNode& if_stmt = node.as<IfStatementNode>();
                 find_return_in_lambda(if_stmt.get_then_statement());
-                if (!deduced_type.has_value() && if_stmt.has_else()) {
+                if (if_stmt.has_else()) {
                     find_return_in_lambda(*if_stmt.get_else_statement());
                 }
             } else if (node.is<WhileStatementNode>()) {
@@ -11883,11 +11896,41 @@ ParseResult Parser::parse_lambda_expression() {
             } else if (node.is<ForStatementNode>()) {
                 const ForStatementNode& for_stmt = node.as<ForStatementNode>();
                 find_return_in_lambda(for_stmt.get_body_statement());
+            } else if (node.is<DoWhileStatementNode>()) {
+                const DoWhileStatementNode& do_while = node.as<DoWhileStatementNode>();
+                if (do_while.get_body_statement().has_value()) {
+                    find_return_in_lambda(do_while.get_body_statement());
+                }
+            } else if (node.is<SwitchStatementNode>()) {
+                const SwitchStatementNode& switch_stmt = node.as<SwitchStatementNode>();
+                if (switch_stmt.get_body().has_value()) {
+                    find_return_in_lambda(switch_stmt.get_body());
+                }
             }
         };
         
         // Search the lambda body
         find_return_in_lambda(*body_result.node());
+        
+        // Validate that all return statements have compatible types
+        if (all_return_types.size() > 1) {
+            const TypeSpecifierNode& first_type = all_return_types[0].first;
+            for (size_t i = 1; i < all_return_types.size(); ++i) {
+                const TypeSpecifierNode& current_type = all_return_types[i].first;
+                if (!are_types_compatible(first_type, current_type)) {
+                    // Build error message showing the conflicting types
+                    std::string error_msg = "Lambda has inconsistent return types: ";
+                    error_msg += "first return has type '";
+                    error_msg += type_to_string(first_type);
+                    error_msg += "', but another return has type '";
+                    error_msg += type_to_string(current_type);
+                    error_msg += "'";
+                    
+                    FLASH_LOG(Parser, Error, error_msg);
+                    return ParseResult::error(error_msg, all_return_types[i].second);
+                }
+            }
+        }
         
         // If we found a deduced type, use it; otherwise default to void
         if (deduced_type.has_value()) {
@@ -12893,6 +12936,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	// Walk through the function body to find return statements
 	const BlockNode& body = body_opt->as<BlockNode>();
 	std::optional<TypeSpecifierNode> deduced_type;
+	std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
 	
 	// Recursive lambda to search for return statements
 	std::function<void(const ASTNode&)> find_return_statements = [&](const ASTNode& node) {
@@ -12900,11 +12944,16 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
 			if (ret.expression().has_value()) {
 				auto expr_type_opt = get_expression_type(*ret.expression());
-				if (expr_type_opt.has_value() && !deduced_type.has_value()) {
-					// Found the first return statement with a value
-					deduced_type = *expr_type_opt;
-					FLASH_LOG(Parser, Debug, "  Found return statement, deduced type: ", 
-							  (int)deduced_type->type(), " size: ", (int)deduced_type->size_in_bits());
+				if (expr_type_opt.has_value()) {
+					// Store this return type for validation
+					all_return_types.emplace_back(*expr_type_opt, decl_node.identifier_token());
+					
+					// Set deduced type from first return
+					if (!deduced_type.has_value()) {
+						deduced_type = *expr_type_opt;
+						FLASH_LOG(Parser, Debug, "  Found return statement, deduced type: ", 
+								  (int)deduced_type->type(), " size: ", (int)deduced_type->size_in_bits());
+					}
 				}
 			}
 		} else if (node.is<BlockNode>()) {
@@ -12949,6 +12998,22 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	body.get_statements().visit([&](const ASTNode& stmt) {
 		find_return_statements(stmt);
 	});
+	
+	// Validate that all return statements have compatible types
+	if (all_return_types.size() > 1) {
+		const TypeSpecifierNode& first_type = all_return_types[0].first;
+		for (size_t i = 1; i < all_return_types.size(); ++i) {
+			const TypeSpecifierNode& current_type = all_return_types[i].first;
+			if (!are_types_compatible(first_type, current_type)) {
+				// Log error but don't fail compilation (just log warning)
+				// We could make this a hard error, but for now just warn
+				FLASH_LOG(Parser, Warning, "Function '", decl_node.identifier_token().value(),
+						  "' has inconsistent return types: first return has type '",
+						  type_to_string(first_type), "', but another return has type '",
+						  type_to_string(current_type), "'");
+			}
+		}
+	}
 	
 	// If we found a deduced type, update the function declaration's return type
 	if (deduced_type.has_value()) {
@@ -13048,6 +13113,107 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 }
 
 // Helper function to get the size of a type in bits
+// Helper function to check if two types are compatible (same type, ignoring qualifiers)
+bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const {
+	// Check basic type
+	if (type1.type() != type2.type()) {
+		return false;
+	}
+	
+	// For user-defined types (Struct, Enum), check type index
+	if (type1.type() == Type::Struct || type1.type() == Type::Enum) {
+		if (type1.type_index() != type2.type_index()) {
+			return false;
+		}
+	}
+	
+	// Check pointer levels
+	if (type1.pointer_levels().size() != type2.pointer_levels().size()) {
+		return false;
+	}
+	
+	// Check if reference
+	if (type1.is_reference() != type2.is_reference()) {
+		return false;
+	}
+	
+	// Types are compatible (we ignore const/volatile qualifiers for this check)
+	return true;
+}
+
+// Helper function to convert a type to a string for error messages
+std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
+	std::string result;
+	
+	// Add const/volatile qualifiers
+	if (static_cast<uint8_t>(type.cv_qualifier()) & static_cast<uint8_t>(CVQualifier::Const)) {
+		result += "const ";
+	}
+	if (static_cast<uint8_t>(type.cv_qualifier()) & static_cast<uint8_t>(CVQualifier::Volatile)) {
+		result += "volatile ";
+	}
+	
+	// Add base type name
+	switch (type.type()) {
+		case Type::Void: result += "void"; break;
+		case Type::Bool: result += "bool"; break;
+		case Type::Char: result += "char"; break;
+		case Type::UnsignedChar: result += "unsigned char"; break;
+		case Type::Short: result += "short"; break;
+		case Type::UnsignedShort: result += "unsigned short"; break;
+		case Type::Int: result += "int"; break;
+		case Type::UnsignedInt: result += "unsigned int"; break;
+		case Type::Long: result += "long"; break;
+		case Type::UnsignedLong: result += "unsigned long"; break;
+		case Type::LongLong: result += "long long"; break;
+		case Type::UnsignedLongLong: result += "unsigned long long"; break;
+		case Type::Float: result += "float"; break;
+		case Type::Double: result += "double"; break;
+		case Type::LongDouble: result += "long double"; break;
+		case Type::Auto: result += "auto"; break;
+		case Type::Struct:
+			if (type.type_index() < gTypeInfo.size()) {
+				result += std::string(gTypeInfo[type.type_index()].name_);
+			} else {
+				result += "struct";
+			}
+			break;
+		case Type::Enum:
+			if (type.type_index() < gTypeInfo.size()) {
+				result += std::string(gTypeInfo[type.type_index()].name_);
+			} else {
+				result += "enum";
+			}
+			break;
+		case Type::Function: result += "function"; break;
+		case Type::FunctionPointer: result += "function pointer"; break;
+		case Type::MemberFunctionPointer: result += "member function pointer"; break;
+		case Type::MemberObjectPointer: result += "member object pointer"; break;
+		case Type::Nullptr: result += "nullptr_t"; break;
+		default: result += "unknown"; break;
+	}
+	
+	// Add pointer levels
+	for (size_t i = 0; i < type.pointer_levels().size(); ++i) {
+		result += "*";
+		const PointerLevel& ptr_level = type.pointer_levels()[i];
+		CVQualifier cv = ptr_level.cv_qualifier;
+		if (static_cast<uint8_t>(cv) & static_cast<uint8_t>(CVQualifier::Const)) {
+			result += " const";
+		}
+		if (static_cast<uint8_t>(cv) & static_cast<uint8_t>(CVQualifier::Volatile)) {
+			result += " volatile";
+		}
+	}
+	
+	// Add reference
+	if (type.is_reference()) {
+		result += type.is_rvalue_reference() ? "&&" : "&";
+	}
+	
+	return result;
+}
+
 unsigned char Parser::get_type_size_bits(Type type) {
 	switch (type) {
 		case Type::Void:
