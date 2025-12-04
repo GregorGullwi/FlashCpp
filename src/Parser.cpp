@@ -10517,12 +10517,14 @@ ParseResult Parser::parse_primary_expression()
 			// Check if this is really a type by seeing if ')' follows
 			// This disambiguates between "sizeof(int)" and "sizeof(x + 1)" where x might be
 			// incorrectly parsed as a user-defined type
-			bool looks_like_type = !type_result.is_error() && type_result.node().has_value() && 
-			                       peek_token().has_value() && peek_token()->value() == ")";
+			bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
+			                                 peek_token().has_value() && peek_token()->value() == ")";
 			
-			if (looks_like_type) {
+			if (is_type_followed_by_paren) {
 				// Successfully parsed as type and ')' follows
-				consume_token(); // consume ')'
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after sizeof type", *current_token_);
+				}
 				discard_saved_token(saved_pos);
 				result = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
 			}
@@ -10560,12 +10562,14 @@ ParseResult Parser::parse_primary_expression()
 		// Check if this is really a type by seeing if ')' follows
 		// This disambiguates between "typeid(int)" and "typeid(x + 1)" where x might be
 		// incorrectly parsed as a user-defined type
-		bool looks_like_type = !type_result.is_error() && type_result.node().has_value() && 
-		                       peek_token().has_value() && peek_token()->value() == ")";
+		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
+		                                 peek_token().has_value() && peek_token()->value() == ")";
 		
-		if (looks_like_type) {
+		if (is_type_followed_by_paren) {
 			// Successfully parsed as type and ')' follows
-			consume_token(); // consume ')'
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after typeid type", *current_token_);
+			}
 			discard_saved_token(saved_pos);
 			result = emplace_node<ExpressionNode>(TypeidNode(*type_result.node(), true, typeid_token));
 		}
