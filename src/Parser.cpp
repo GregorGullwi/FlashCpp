@@ -11661,7 +11661,6 @@ ParseResult Parser::parse_lambda_expression() {
     if (!consume_punctuator("]")) {
         return ParseResult::error("Expected ']' after lambda captures", *current_token_);
     }
-    FLASH_LOG(Parser, Debug, "After consuming ']', current_token = ", current_token_.has_value() ? current_token_->value() : "none");
 
     // Parse parameter list (optional) using unified parse_parameter_list (Phase 1)
     std::vector<ASTNode> parameters;
