@@ -11837,7 +11837,7 @@ ParseResult Parser::parse_lambda_expression() {
     }
 
     // Deduce lambda return type if not explicitly specified or if it's auto
-    // Use a safe approach that avoids circular dependencies during type deduction
+    // Now with proper guard against circular dependencies in get_expression_type
     if (!return_type.has_value() || 
         (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto)) {
         // Search lambda body for return statements to deduce return type
@@ -11845,39 +11845,22 @@ ParseResult Parser::parse_lambda_expression() {
         std::optional<TypeSpecifierNode> deduced_type;
         
         // Recursive lambda to search for return statements in lambda body
-        // This version DOES NOT call get_expression_type() to avoid circular dependencies
         std::function<void(const ASTNode&)> find_return_in_lambda = [&](const ASTNode& node) {
             if (node.is<ReturnStatementNode>()) {
                 const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
                 if (ret.expression().has_value() && !deduced_type.has_value()) {
-                    // Found a return statement with a value
-                    // We'll do a lightweight type extraction without calling get_expression_type()
-                    // to avoid circular dependency issues
-                    const ASTNode& ret_expr = *ret.expression();
-                    
-                    // Only deduce from simple expressions that won't cause circular lookups
-                    if (ret_expr.is<NumericLiteralNode>()) {
-                        const NumericLiteralNode& num_lit = ret_expr.as<NumericLiteralNode>();
-                        // Use the type from the literal itself
-                        deduced_type = TypeSpecifierNode(num_lit.type(), num_lit.qualifier(), num_lit.sizeInBits());
-                    } else if (ret_expr.is<StringLiteralNode>()) {
-                        // String literal returns pointer to char
-                        deduced_type = TypeSpecifierNode(Type::Char, TypeQualifier::None, 8);
-                    } else if (ret_expr.is<IdentifierNode>()) {
-                        // Look up identifier type from symbol table
-                        const IdentifierNode& id = ret_expr.as<IdentifierNode>();
-                        auto sym = gSymbolTable.lookup(id.name());
-                        if (sym.has_value() && sym->is<DeclarationNode>()) {
-                            const DeclarationNode& decl = sym->as<DeclarationNode>();
-                            deduced_type = decl.type_node().as<TypeSpecifierNode>();
-                        }
-                    }
-                    // For other complex expressions (including lambda calls), we default to int
-                    // This is a conservative approach - user can provide explicit return type if needed
-                    if (!deduced_type.has_value()) {
-                        // Default to int for unknown complex expressions
+                    // Try to get the type using get_expression_type
+                    // The guard in get_expression_type will prevent infinite recursion
+                    auto expr_type_opt = get_expression_type(*ret.expression());
+                    if (expr_type_opt.has_value()) {
+                        deduced_type = *expr_type_opt;
+                        FLASH_LOG(Parser, Debug, "Lambda return type deduced from expression: type=", 
+                                 (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
+                    } else {
+                        // If we couldn't deduce (possibly due to circular dependency guard),
+                        // default to int as a safe fallback
                         deduced_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
-                        FLASH_LOG(Parser, Debug, "Lambda return type defaulting to int for complex expression");
+                        FLASH_LOG(Parser, Debug, "Lambda return type defaulted to int (type resolution failed)");
                     }
                 }
             } else if (node.is<BlockNode>()) {
@@ -12666,6 +12649,22 @@ std::optional<ASTNode> Parser::lookup_symbol_with_template_check(std::string_vie
 
 // Helper to extract type from an expression for overload resolution
 std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) const {
+	// Guard against infinite recursion by tracking the call stack
+	// Use the address of the expr_node as a unique identifier
+	const void* expr_ptr = &expr_node;
+	
+	// Check if we're already resolving this expression's type
+	if (expression_type_resolution_stack_.count(expr_ptr) > 0) {
+		FLASH_LOG(Parser, Debug, "get_expression_type: Circular dependency detected, returning nullopt");
+		return std::nullopt;  // Prevent infinite recursion
+	}
+	
+	// Add to stack and use RAII to ensure removal
+	expression_type_resolution_stack_.insert(expr_ptr);
+	auto guard = ScopeGuard([this, expr_ptr]() {
+		expression_type_resolution_stack_.erase(expr_ptr);
+	});
+	
 	// Handle lambda expressions directly (not wrapped in ExpressionNode)
 	if (expr_node.is<LambdaExpressionNode>()) {
 		const auto& lambda = expr_node.as<LambdaExpressionNode>();
