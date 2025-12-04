@@ -108,6 +108,7 @@ bool is_integer_type(Type type) {
         case Type::UnsignedLong:
         case Type::LongLong:
         case Type::UnsignedLongLong:
+        case Type::Auto:  // Treat auto as integer type for now (generic lambdas)
             return true;
         default:
             return false;
