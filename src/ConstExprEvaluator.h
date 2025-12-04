@@ -221,6 +221,11 @@ public:
 			return evaluate_array_subscript(std::get<ArraySubscriptNode>(expr), context);
 		}
 
+		// For TypeTraitExprNode (e.g., __is_void(int), __is_constant_evaluated())
+		if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+			return evaluate_type_trait(std::get<TypeTraitExprNode>(expr));
+		}
+
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
 	}
@@ -1949,6 +1954,79 @@ public:
 		}
 		
 		return EvalResult::error("Array variable is not initialized with an array initializer");
+	}
+
+	// Evaluate type trait expressions (e.g., __is_void(int), __is_constant_evaluated())
+	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
+		// Handle __is_constant_evaluated() specially - it returns true during constexpr evaluation
+		if (trait_expr.kind() == TypeTraitKind::IsConstantEvaluated) {
+			// When evaluated in constexpr context, this always returns true
+			return EvalResult::from_bool(true);
+		}
+
+		// For other type traits, we need to evaluate them based on the type
+		// Most type traits can be evaluated at compile time
+		if (!trait_expr.has_type()) {
+			return EvalResult::error("Type trait requires a type argument");
+		}
+
+		const ASTNode& type_node = trait_expr.type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Type trait argument must be a type");
+		}
+
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		Type type = type_spec.type();
+		bool is_reference = type_spec.is_reference();
+		bool is_rvalue_reference = type_spec.is_rvalue_reference();
+		size_t pointer_depth = type_spec.pointer_depth();
+
+		bool result = false;
+
+		// Evaluate the type trait based on its kind
+		switch (trait_expr.kind()) {
+			case TypeTraitKind::IsVoid:
+				result = (type == Type::Void && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsIntegral:
+				result = (type == Type::Bool ||
+				         type == Type::Char ||
+				         type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				         type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
+				         type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+				         && !is_reference && pointer_depth == 0;
+				break;
+
+			case TypeTraitKind::IsFloatingPoint:
+				result = (type == Type::Float || type == Type::Double || type == Type::LongDouble)
+				         && !is_reference && pointer_depth == 0;
+				break;
+
+			case TypeTraitKind::IsPointer:
+				result = (pointer_depth > 0) && !is_reference;
+				break;
+
+			case TypeTraitKind::IsLvalueReference:
+				result = is_reference && !is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsRvalueReference:
+				result = is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsArray:
+				result = type_spec.is_array() && !is_reference && pointer_depth == 0;
+				break;
+
+			// Add more type traits as needed
+			// For now, other type traits return false during constexpr evaluation
+			default:
+				result = false;
+				break;
+		}
+
+		return EvalResult::from_bool(result);
 	}
 };
 
