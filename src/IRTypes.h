@@ -1948,10 +1948,21 @@ public:
 			else
 				oss << std::get<std::string>(op.var_name);
 			oss << " = alloc ";
-			auto type_info = gNativeTypes.find(op.type);
-			if (type_info != gNativeTypes.end())
-				oss << type_info->second->name_;
-			oss << op.size_in_bits;
+			
+			if (op.is_array && op.array_count.has_value()) {
+				// For arrays, print element type and count: int32[5]
+				auto type_info = gNativeTypes.find(op.type);
+				if (type_info != gNativeTypes.end())
+					oss << type_info->second->name_;
+				oss << op.size_in_bits << "[" << op.array_count.value() << "]";
+			} else {
+				// For scalars, print type and size: int32
+				auto type_info = gNativeTypes.find(op.type);
+				if (type_info != gNativeTypes.end())
+					oss << type_info->second->name_;
+				oss << op.size_in_bits;
+			}
+			
 			if (op.custom_alignment > 0) {
 				oss << " alignas(" << op.custom_alignment << ")";
 			}

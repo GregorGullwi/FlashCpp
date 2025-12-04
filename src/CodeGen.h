@@ -3140,13 +3140,21 @@ private:
 		if (decl.is_array()) {
 			auto size_expr = decl.array_size();
 			if (size_expr.has_value()) {
-				auto size_operands = visitExpressionNode(size_expr->as<ExpressionNode>());
-				// Add array size as an operand
-				operands.insert(operands.end(), size_operands.begin(), size_operands.end());
-				// Try to extract the array count
-				if (!size_operands.empty() && std::holds_alternative<unsigned long long>(size_operands[0])) {
-					array_count = static_cast<size_t>(std::get<unsigned long long>(size_operands[0]));
+				// Evaluate the array size expression using ConstExprEvaluator
+				ConstExpr::EvaluationContext ctx(symbol_table);
+				auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, ctx);
+				
+				if (eval_result.success) {
+					long long array_count_signed = eval_result.as_int();
+					if (array_count_signed > 0) {
+						array_count = static_cast<size_t>(array_count_signed);
+					}
 				}
+				
+				// Add element type, size, and count as operands (matching unsized array format)
+				operands.emplace_back(type_node.type());  // element type
+				operands.emplace_back(size_in_bits);      // element size
+				operands.emplace_back(static_cast<unsigned long long>(array_count));
 			} else if (decl.is_unsized_array() && node.initializer().has_value()) {
 				// Unsized array - get size from initializer list
 				const ASTNode& init_node = *node.initializer();
