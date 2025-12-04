@@ -11837,43 +11837,47 @@ ParseResult Parser::parse_lambda_expression() {
     }
 
     // Deduce lambda return type if not explicitly specified or if it's auto
-    // TEMPORARILY DISABLED due to infinite loop issue with complex expressions
-    // TODO: Fix the root cause and re-enable
-    bool enable_lambda_auto_deduction = false;
-    if (enable_lambda_auto_deduction && (!return_type.has_value() || 
-        (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto))) {
+    // Use a safe approach that avoids circular dependencies during type deduction
+    if (!return_type.has_value() || 
+        (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto)) {
         // Search lambda body for return statements to deduce return type
         const BlockNode& body = body_result.node()->as<BlockNode>();
         std::optional<TypeSpecifierNode> deduced_type;
         
-        // Prevent infinite recursion with a depth limit
-        int max_depth = 5;
-        int current_depth = 0;
-        
         // Recursive lambda to search for return statements in lambda body
+        // This version DOES NOT call get_expression_type() to avoid circular dependencies
         std::function<void(const ASTNode&)> find_return_in_lambda = [&](const ASTNode& node) {
-            if (current_depth > max_depth) {
-                // Hit depth limit, stop recursion
-                return;
-            }
-            current_depth++;
-            
             if (node.is<ReturnStatementNode>()) {
                 const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
-                if (ret.expression().has_value()) {
-                    // Try to get expression type, but don't fail if we can't
-                    // This prevents infinite loops when the return expression references the lambda itself
-                    try {
-                        auto expr_type_opt = get_expression_type(*ret.expression());
-                        if (expr_type_opt.has_value() && !deduced_type.has_value()) {
-                            // Found the first return statement with a value
-                            deduced_type = *expr_type_opt;
+                if (ret.expression().has_value() && !deduced_type.has_value()) {
+                    // Found a return statement with a value
+                    // We'll do a lightweight type extraction without calling get_expression_type()
+                    // to avoid circular dependency issues
+                    const ASTNode& ret_expr = *ret.expression();
+                    
+                    // Only deduce from simple expressions that won't cause circular lookups
+                    if (ret_expr.is<NumericLiteralNode>()) {
+                        const NumericLiteralNode& num_lit = ret_expr.as<NumericLiteralNode>();
+                        // Use the type from the literal itself
+                        deduced_type = TypeSpecifierNode(num_lit.type(), num_lit.qualifier(), num_lit.sizeInBits());
+                    } else if (ret_expr.is<StringLiteralNode>()) {
+                        // String literal returns pointer to char
+                        deduced_type = TypeSpecifierNode(Type::Char, TypeQualifier::None, 8);
+                    } else if (ret_expr.is<IdentifierNode>()) {
+                        // Look up identifier type from symbol table
+                        const IdentifierNode& id = ret_expr.as<IdentifierNode>();
+                        auto sym = gSymbolTable.lookup(id.name());
+                        if (sym.has_value() && sym->is<DeclarationNode>()) {
+                            const DeclarationNode& decl = sym->as<DeclarationNode>();
+                            deduced_type = decl.type_node().as<TypeSpecifierNode>();
                         }
-                    } catch (...) {
-                        // If we can't deduce the type, just use int as fallback
-                        if (!deduced_type.has_value()) {
-                            deduced_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
-                        }
+                    }
+                    // For other complex expressions (including lambda calls), we default to int
+                    // This is a conservative approach - user can provide explicit return type if needed
+                    if (!deduced_type.has_value()) {
+                        // Default to int for unknown complex expressions
+                        deduced_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                        FLASH_LOG(Parser, Debug, "Lambda return type defaulting to int for complex expression");
                     }
                 }
             } else if (node.is<BlockNode>()) {
@@ -11897,8 +11901,6 @@ ParseResult Parser::parse_lambda_expression() {
                 const ForStatementNode& for_stmt = node.as<ForStatementNode>();
                 find_return_in_lambda(for_stmt.get_body_statement());
             }
-            
-            current_depth--;
         };
         
         // Search the lambda body
@@ -11907,9 +11909,11 @@ ParseResult Parser::parse_lambda_expression() {
         // If we found a deduced type, use it; otherwise default to void
         if (deduced_type.has_value()) {
             return_type = emplace_node<TypeSpecifierNode>(*deduced_type);
+            FLASH_LOG(Parser, Debug, "Lambda auto return type deduced: type=", (int)deduced_type->type());
         } else {
             // No return statement found or return with no value - lambda returns void
             return_type = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0);
+            FLASH_LOG(Parser, Debug, "Lambda has no return or returns void");
         }
     }
 
