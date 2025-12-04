@@ -192,14 +192,6 @@ int test_init_capture_by_ref() {
 }
 
 // Test 26: C++17 *this capture (copy all values from this)
-// NOTE: Temporarily disabled - requires parser fix for lambda return from member functions
-// ROOT CAUSE: When a member function returns a lambda, the parser doesn't properly wrap
-//             the lambda in an ExpressionNode during the return statement processing.
-//             Fixed parse_lambda_expression to wrap in ExpressionNode, but member function
-//             return processing still has issues with lambda closure types.
-// FIX NEEDED: Update return statement processing in member functions to handle lambda returns,
-//             possibly by improving how TypeSpecifier nodes handle auto-deduced lambda types.
-/*
 struct TestCopyThis {
     int value = 5;
     
@@ -214,7 +206,6 @@ int test_copy_this_capture() {
     auto lambda = obj.get_lambda();
     return lambda();  // 5
 }
-*/
 
 // Test 27: Recursive lambda using auto&& self parameter
 // NOTE: Temporarily disabled - causes timeout/infinite loop
@@ -266,9 +257,9 @@ int main() {
     result += test_multiple_params();                 // 5
     result += test_init_capture_by_ref();             // 5
     result += test_lambda_returning_lambda();         // 5 (newly fixed!)
-    // result += test_copy_this_capture();               // 5 (disabled)
-    // result += test_recursive_lambda();                // 5 (disabled)
+    result += test_copy_this_capture();               // 5 (newly fixed!)
+    // result += test_recursive_lambda();                // 5 (disabled - requires forwarding reference support)
     
-    // Total: 24 tests * 5 = 120 (2 tests disabled due to compiler limitations)
+    // Total: 26 tests * 5 = 130 (1 test disabled due to compiler limitations)
     return result;
 }
