@@ -7763,6 +7763,27 @@ private:
 
 	std::vector<IrOperand> generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// Type traits evaluate to a compile-time boolean constant
+		bool result = false;
+
+		// Handle no-argument traits first (like __is_constant_evaluated)
+		if (traitNode.is_no_arg_trait()) {
+			switch (traitNode.kind()) {
+				case TypeTraitKind::IsConstantEvaluated:
+					// __is_constant_evaluated() - returns true if being evaluated at compile time
+					// In runtime code, this always returns false
+					// In constexpr context, this would return true
+					// For now, return false (runtime context)
+					result = false;
+					break;
+				default:
+					result = false;
+					break;
+			}
+			// Return result as a bool constant
+			return { Type::Bool, 8, static_cast<unsigned long long>(result ? 1 : 0) };
+		}
+
+		// For traits that require type arguments, extract the type information
 		const ASTNode& type_node = traitNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
 			assert(false && "Type trait argument must be TypeSpecifierNode");
@@ -7774,8 +7795,6 @@ private:
 		bool is_reference = type_spec.is_reference();
 		bool is_rvalue_reference = type_spec.is_rvalue_reference();
 		size_t pointer_depth = type_spec.pointer_depth();
-		
-		bool result = false;
 
 		switch (traitNode.kind()) {
 			case TypeTraitKind::IsVoid:
@@ -8367,14 +8386,6 @@ private:
 					return { Type::Int, 32, 0ULL };
 				}
 				// For non-enums, this is an error - return false/0
-				result = false;
-				break;
-
-			case TypeTraitKind::IsConstantEvaluated:
-				// __is_constant_evaluated() - returns true if being evaluated at compile time
-				// In runtime code, this always returns false
-				// In constexpr context, this would return true
-				// For now, return false (runtime context)
 				result = false;
 				break;
 
