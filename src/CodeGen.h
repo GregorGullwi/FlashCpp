@@ -9505,17 +9505,23 @@ private:
 		);
 		func_decl_op.mangled_name = mangled;
 
-		// Add parameters
-		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
-			FunctionParam func_param;
-			func_param.type = type;
-			func_param.size_in_bits = size;
-			func_param.pointer_depth = pointer_depth;
-			func_param.name = std::string(name);
-			func_param.is_reference = false;
-			func_param.is_rvalue_reference = false;
-			func_param.cv_qualifier = CVQualifier::None;
-			func_decl_op.parameters.push_back(func_param);
+		// Add parameters - use parameter_nodes to get complete type information including references
+		// This is critical for auto&& parameters which need reference semantics (e.g., recursive lambdas)
+		for (const auto& param_node : lambda_info.parameter_nodes) {
+			if (param_node.is<DeclarationNode>()) {
+				const auto& param_decl = param_node.as<DeclarationNode>();
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				
+				FunctionParam func_param;
+				func_param.type = param_type.type();
+				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+				func_param.name = std::string(param_decl.identifier_token().value());
+				func_param.is_reference = param_type.is_reference();
+				func_param.is_rvalue_reference = param_type.is_rvalue_reference();
+				func_param.cv_qualifier = param_type.cv_qualifier();
+				func_decl_op.parameters.push_back(func_param);
+			}
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
@@ -9641,17 +9647,23 @@ private:
 		);
 		func_decl_op.mangled_name = mangled;
 
-		// Add parameters
-		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
-			FunctionParam func_param;
-			func_param.type = type;
-			func_param.size_in_bits = size;
-			func_param.pointer_depth = pointer_depth;
-			func_param.name = std::string(name);
-			func_param.is_reference = false;
-			func_param.is_rvalue_reference = false;
-			func_param.cv_qualifier = CVQualifier::None;
-			func_decl_op.parameters.push_back(func_param);
+		// Add parameters - use parameter_nodes to get complete type information including references
+		// This is critical for auto&& parameters which need reference semantics (e.g., recursive lambdas)
+		for (const auto& param_node : lambda_info.parameter_nodes) {
+			if (param_node.is<DeclarationNode>()) {
+				const auto& param_decl = param_node.as<DeclarationNode>();
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				
+				FunctionParam func_param;
+				func_param.type = param_type.type();
+				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+				func_param.name = std::string(param_decl.identifier_token().value());
+				func_param.is_reference = param_type.is_reference();
+				func_param.is_rvalue_reference = param_type.is_rvalue_reference();
+				func_param.cv_qualifier = param_type.cv_qualifier();
+				func_decl_op.parameters.push_back(func_param);
+			}
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
