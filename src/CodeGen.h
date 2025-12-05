@@ -271,9 +271,17 @@ public:
 
 	// Generate all collected lambdas (must be called after visiting all nodes)
 	void generateCollectedLambdas() {
-		// Use index-based loop because nested lambdas may add new entries during iteration
-		for (size_t i = 0; i < collected_lambdas_.size(); ++i) {
-			const auto& lambda_info = collected_lambdas_[i];
+		// Generate lambdas in reverse order to handle nested lambdas correctly.
+		// Inner lambdas are collected AFTER outer lambdas during AST traversal,
+		// but they must be generated FIRST so their types exist when referenced.
+		// Example: auto maker = []() { return [](int x) { return x; }; };
+		//          Inner lambda [](int x) is collected after outer [](), but must be generated first.
+		if (collected_lambdas_.empty()) {
+			return;
+		}
+		
+		for (size_t i = collected_lambdas_.size(); i > 0; --i) {
+			const auto& lambda_info = collected_lambdas_[i - 1];
 			// Skip if this lambda has already been generated (prevents duplicate definitions)
 			if (generated_lambda_ids_.find(lambda_info.lambda_id) != generated_lambda_ids_.end()) {
 				continue;
