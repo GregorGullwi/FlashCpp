@@ -8339,6 +8339,17 @@ private:
 		int fromSize = conv_op.from.size_in_bits;
 		int toSize = conv_op.to_size;
 
+		// If source size is 0 (unknown/auto type) or equal to target size, this is a no-op.
+		// The value is already in the correct format, just ensure register tracking.
+		if (fromSize == 0 || fromSize == toSize) {
+			// Get source value's register (or load it if needed)
+			X64Register source_reg = loadTypedValueIntoRegister(conv_op.from);
+			// Associate it with the result TempVar - no code generation needed
+			int32_t result_offset = getStackOffsetFromTempVar(conv_op.result);
+			regAlloc.set_stack_variable_offset(source_reg, result_offset, toSize);
+			return;
+		}
+
 		// Get source value into a register
 		X64Register source_reg = loadTypedValueIntoRegister(conv_op.from);
 		
@@ -8586,24 +8597,31 @@ private:
 
 	void handleAddAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "add assignment");
-		std::array<uint8_t, 3> addInst = { 0x48, 0x01, 0xC0 };
-		addInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		
+		// Use encodeRegToRegInstruction to properly handle R8-R15 registers
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> addInst = { encoding.rex_prefix, 0x01, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
 		storeArithmeticResult(ctx);
 	}
 
 	void handleSubAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtract assignment");
-		std::array<uint8_t, 3> subInst = { 0x48, 0x29, 0xC0 };
-		subInst[2] = 0xC0 + (static_cast<uint8_t>(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(ctx.result_physical_reg);
+		
+		// Use encodeRegToRegInstruction to properly handle R8-R15 registers
+		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+		std::array<uint8_t, 3> subInst = { encoding.rex_prefix, 0x29, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
 		storeArithmeticResult(ctx);
 	}
 
 	void handleMulAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "multiply assignment");
-		std::array<uint8_t, 4> imulInst = { 0x48, 0x0F, 0xAF, 0xC0 };
-		imulInst[3] = 0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(ctx.rhs_physical_reg);
+		
+		// IMUL r64, r/m64: Use encodeRegToRegInstruction to properly handle R8-R15 registers
+		// Note: For IMUL, the reg field is the destination (result) and rm is the source (rhs)
+		auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg);
+		std::array<uint8_t, 4> imulInst = { encoding.rex_prefix, 0x0F, 0xAF, encoding.modrm_byte };
 		textSectionData.insert(textSectionData.end(), imulInst.begin(), imulInst.end());
 		storeArithmeticResult(ctx);
 	}
