@@ -103,6 +103,34 @@ struct LambdaInfo {
 	Token lambda_token;
 	std::string_view enclosing_struct_name;  // Name of enclosing struct if lambda is in a member function
 	TypeIndex enclosing_struct_type_index = 0;  // Type index of enclosing struct for [this] capture
+	
+	// Generic lambda support (lambdas with auto parameters)
+	bool is_generic = false;                     // True if lambda has any auto parameters
+	std::vector<size_t> auto_param_indices;      // Indices of parameters with auto type
+	// Deduced types from call site (param_index -> Type, size_in_bits)
+	mutable std::vector<std::pair<size_t, std::pair<Type, int>>> deduced_auto_types;
+	
+	// Get deduced type for a parameter at given index, returns nullopt if not deduced
+	std::optional<std::pair<Type, int>> getDeducedType(size_t param_index) const {
+		for (const auto& [idx, type_info] : deduced_auto_types) {
+			if (idx == param_index) {
+				return type_info;
+			}
+		}
+		return std::nullopt;
+	}
+	
+	// Set deduced type for a parameter at given index
+	void setDeducedType(size_t param_index, Type type, int size_in_bits) const {
+		// Check if already set
+		for (auto& [idx, type_info] : deduced_auto_types) {
+			if (idx == param_index) {
+				type_info = {type, size_in_bits};
+				return;
+			}
+		}
+		deduced_auto_types.push_back({param_index, {type, size_in_bits}});
+	}
 };
 
 class AstToIr {
@@ -6536,6 +6564,22 @@ private:
 			// Without this, the lambda is never added to collected_lambdas_ and
 			// its functions are never generated, causing linker errors.
 			generateLambdaExpressionIr(lambda);
+			
+			// Check if this is a generic lambda (has auto parameters)
+			bool is_generic = false;
+			std::vector<size_t> auto_param_indices;
+			size_t param_idx = 0;
+			for (const auto& param_node : lambda.parameters()) {
+				if (param_node.is<DeclarationNode>()) {
+					const auto& param_decl = param_node.as<DeclarationNode>();
+					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					if (param_type.type() == Type::Auto) {
+						is_generic = true;
+						auto_param_indices.push_back(param_idx);
+					}
+				}
+				param_idx++;
+			}
 
 			// For non-capturing lambdas, we can optimize by calling __invoke directly
 			// (a static function that doesn't need a 'this' pointer).
@@ -6566,8 +6610,98 @@ private:
 				}
 				
 				// Build TypeSpecifierNodes for parameters (needed for mangling)
+				// For generic lambdas, we need to deduce auto parameters from arguments
 				std::vector<TypeSpecifierNode> param_types;
-				if (!lambda.parameters().empty()) {
+				std::vector<TypeSpecifierNode> deduced_param_types;  // For generic lambdas
+				
+				if (is_generic) {
+					// First, collect argument types
+					std::vector<TypeSpecifierNode> arg_types;
+					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+							const auto& identifier = std::get<IdentifierNode>(arg_expr);
+							const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+							if (symbol.has_value()) {
+								const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+								if (decl) {
+									arg_types.push_back(decl->type_node().as<TypeSpecifierNode>());
+								} else {
+									// Default to int
+									arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+								}
+							} else {
+								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+							}
+						} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
+							const auto& literal = std::get<NumericLiteralNode>(arg_expr);
+							arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None, 
+								static_cast<unsigned char>(literal.sizeInBits())));
+						} else {
+							// For complex expressions, evaluate and get type
+							auto operands = visitExpressionNode(arg_expr);
+							Type type = std::get<Type>(operands[0]);
+							int size = std::get<int>(operands[1]);
+							arg_types.push_back(TypeSpecifierNode(type, TypeQualifier::None, static_cast<unsigned char>(size)));
+						}
+					});
+					
+					// Now build param_types with deduced types for auto parameters
+					size_t arg_idx = 0;
+					for (const auto& param_node : lambda.parameters()) {
+						if (param_node.is<DeclarationNode>()) {
+							const auto& param_decl = param_node.as<DeclarationNode>();
+							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							
+							if (param_type.type() == Type::Auto && arg_idx < arg_types.size()) {
+								// Deduce type from argument
+								deduced_param_types.push_back(arg_types[arg_idx]);
+								param_types.push_back(arg_types[arg_idx]);
+							} else {
+								param_types.push_back(param_type);
+							}
+						}
+						arg_idx++;
+					}
+					
+					// Build instantiation key and request instantiation
+					std::string instantiation_key = std::to_string(lambda.lambda_id());
+					for (const auto& deduced : deduced_param_types) {
+						instantiation_key += "_" + std::to_string(static_cast<int>(deduced.type())) + 
+						                     "_" + std::to_string(deduced.size_in_bits());
+					}
+					
+					// Check if we've already scheduled this instantiation
+					if (generated_generic_lambda_instantiations_.find(instantiation_key) == 
+					    generated_generic_lambda_instantiations_.end()) {
+						// Schedule this instantiation
+						GenericLambdaInstantiation inst;
+						inst.lambda_id = lambda.lambda_id();
+						inst.instantiation_key = instantiation_key;
+						for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
+							inst.deduced_types.push_back({auto_param_indices[i], deduced_param_types[i]});
+						}
+						pending_generic_lambda_instantiations_.push_back(std::move(inst));
+						generated_generic_lambda_instantiations_.insert(instantiation_key);
+						
+						// Also store deduced types in the LambdaInfo for generation
+						// Find the LambdaInfo for this lambda
+						for (auto& lambda_info : collected_lambdas_) {
+							if (lambda_info.lambda_id == lambda.lambda_id()) {
+								// Store deduced types
+								for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
+									lambda_info.setDeducedType(
+										auto_param_indices[i],
+										deduced_param_types[i].type(),
+										deduced_param_types[i].size_in_bits()
+									);
+								}
+								break;
+							}
+						}
+					}
+				} else {
+					// Non-generic: use parameter types directly
 					for (const auto& param_node : lambda.parameters()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
@@ -9408,11 +9542,19 @@ private:
 			info.return_type_index = ret_type_node.type_index();
 		}
 
-		// Collect parameters
+		// Collect parameters and detect generic lambda (auto parameters)
+		size_t param_index = 0;
 		for (const auto& param : lambda.parameters()) {
 			if (param.is<DeclarationNode>()) {
 				const auto& param_decl = param.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				
+				// Detect auto parameters (generic lambda)
+				if (param_type.type() == Type::Auto) {
+					info.is_generic = true;
+					info.auto_param_indices.push_back(param_index);
+				}
+				
 				info.parameters.emplace_back(
 					param_type.type(),
 					param_type.size_in_bits(),
@@ -9422,6 +9564,7 @@ private:
 				// Also store the actual parameter node for symbol table
 				info.parameter_nodes.push_back(param);
 			}
+			param_index++;
 		}
 
 		// Look up the closure type (registered during parsing) BEFORE moving info
@@ -9781,22 +9924,37 @@ private:
 		
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
+		size_t param_idx = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
-				// For 'auto' parameters (generic lambdas), substitute int for mangling
-				if (param_type.type() == Type::Auto && param_type.size_in_bits() == 0) {
-					// Create a TypeSpecifierNode for int
-					TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
-					param_types.push_back(int_type);
+				// For 'auto' parameters (generic lambdas), use deduced type from call site
+				if (param_type.type() == Type::Auto) {
+					auto deduced = lambda_info.getDeducedType(param_idx);
+					if (deduced.has_value()) {
+						// Use the deduced type from call site
+						TypeSpecifierNode deduced_type(deduced->first, 0, deduced->second, lambda_info.lambda_token);
+						// Copy reference flags from original auto parameter
+						if (param_type.is_rvalue_reference()) {
+							deduced_type.set_reference(true);  // rvalue reference
+						} else if (param_type.is_reference()) {
+							deduced_type.set_reference(false);  // lvalue reference
+						}
+						param_types.push_back(deduced_type);
+					} else {
+						// No deduced type available, fallback to int
+						TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
+						param_types.push_back(int_type);
+					}
 				} else {
 					// Use the parameter type as-is, preserving all reference flags
 					// This ensures mangled names are consistent between call sites and definitions
 					param_types.push_back(param_type);
 				}
 			}
+			param_idx++;
 		}
 		
 		// Generate mangled name using the same function as regular member functions
@@ -9810,23 +9968,30 @@ private:
 		func_decl_op.mangled_name = mangled;
 
 		// Add parameters - use parameter_nodes to get complete type information
+		param_idx = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
 				FunctionParam func_param;
-				func_param.type = param_type.type();
-				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
-				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				func_param.name = std::string(param_decl.identifier_token().value());
+				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				
-				// For 'auto' parameters (generic lambdas), default to int if size is 0
-				// This is a simplification - proper generic lambda support would require
-				// template-like instantiation at each call site with different types
-				if (func_param.type == Type::Auto && func_param.size_in_bits == 0) {
-					func_param.type = Type::Int;
-					func_param.size_in_bits = 32;
+				// For 'auto' parameters (generic lambdas), use deduced type from call site
+				if (param_type.type() == Type::Auto) {
+					auto deduced = lambda_info.getDeducedType(param_idx);
+					if (deduced.has_value()) {
+						func_param.type = deduced->first;
+						func_param.size_in_bits = deduced->second;
+					} else {
+						// No deduced type available, fallback to int
+						func_param.type = Type::Int;
+						func_param.size_in_bits = 32;
+					}
+				} else {
+					func_param.type = param_type.type();
+					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 				}
 				
 				// Preserve reference flags for all parameter types (including auto)
@@ -9836,6 +10001,7 @@ private:
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
 			}
+			param_idx++;
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
@@ -9944,20 +10110,33 @@ private:
 		
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
+		size_t param_idx = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
-				// For 'auto' parameters (generic lambdas), substitute int for mangling
-				if (param_type.type() == Type::Auto && param_type.size_in_bits() == 0) {
-					TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
-					param_types.push_back(int_type);
+				// For 'auto' parameters (generic lambdas), use deduced type from call site
+				if (param_type.type() == Type::Auto) {
+					auto deduced = lambda_info.getDeducedType(param_idx);
+					if (deduced.has_value()) {
+						TypeSpecifierNode deduced_type(deduced->first, 0, deduced->second, lambda_info.lambda_token);
+						if (param_type.is_rvalue_reference()) {
+							deduced_type.set_reference(true);  // rvalue reference
+						} else if (param_type.is_reference()) {
+							deduced_type.set_reference(false);  // lvalue reference
+						}
+						param_types.push_back(deduced_type);
+					} else {
+						TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
+						param_types.push_back(int_type);
+					}
 				} else {
 					// Use the parameter type as-is, preserving all reference flags
 					param_types.push_back(param_type);
 				}
 			}
+			param_idx++;
 		}
 		
 		// Generate mangled name for the __invoke function (free function, not member)
@@ -9971,21 +10150,29 @@ private:
 		func_decl_op.mangled_name = mangled;
 
 		// Add parameters - use parameter_nodes to get complete type information
+		param_idx = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
 				FunctionParam func_param;
-				func_param.type = param_type.type();
-				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
-				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				func_param.name = std::string(param_decl.identifier_token().value());
+				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				
-				// For 'auto' parameters (generic lambdas), default to int if size is 0
-				if (func_param.type == Type::Auto && func_param.size_in_bits == 0) {
-					func_param.type = Type::Int;
-					func_param.size_in_bits = 32;
+				// For 'auto' parameters (generic lambdas), use deduced type from call site
+				if (param_type.type() == Type::Auto) {
+					auto deduced = lambda_info.getDeducedType(param_idx);
+					if (deduced.has_value()) {
+						func_param.type = deduced->first;
+						func_param.size_in_bits = deduced->second;
+					} else {
+						func_param.type = Type::Int;
+						func_param.size_in_bits = 32;
+					}
+				} else {
+					func_param.type = param_type.type();
+					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 				}
 				
 				// Preserve reference flags for all parameter types (including auto)
@@ -9995,6 +10182,7 @@ private:
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
 			}
+			param_idx++;
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
@@ -10110,6 +10298,17 @@ private:
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
 	std::unordered_set<int> generated_lambda_ids_;  // Track which lambdas have been generated to prevent duplicates
+	
+	// Generic lambda instantiation tracking
+	// Key: lambda_id concatenated with deduced type signature (e.g., "0_int_double")
+	// Value: The deduced parameter types for that instantiation
+	struct GenericLambdaInstantiation {
+		size_t lambda_id;
+		std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_types;  // param_index -> deduced type
+		std::string instantiation_key;  // Unique key for this instantiation
+	};
+	std::vector<GenericLambdaInstantiation> pending_generic_lambda_instantiations_;
+	std::unordered_set<std::string> generated_generic_lambda_instantiations_;  // Track already generated ones
 	
 	// Structure to hold info for local struct member functions
 	struct LocalStructMemberInfo {
