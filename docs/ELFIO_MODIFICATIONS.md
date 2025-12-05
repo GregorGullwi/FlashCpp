@@ -38,9 +38,11 @@ bool get_symbol(Elf_Xword index,
 // Modern string_view interface for users
 std::string_view add_string_literal(std::string_view str_content);
 std::string_view getMangledName(std::string_view name) const;
-std::string_view generateMangledName(std::string_view name, const FunctionSignature& sig) const;
-std::string_view addFunctionSignature(std::string_view name, ...);
+std::string generateMangledName(std::string_view name, const FunctionSignature& sig) const;  // Returns std::string
+std::string addFunctionSignature(std::string_view name, ...);  // Returns std::string
 ```
+
+**Note:** `generateMangledName` and `addFunctionSignature` return `std::string` (not `string_view`) to avoid dangling references, since they may need to create new mangled names. For MVP without mangling, they return a copy of the input.
 
 ### Impact on ElfFileWriter
 
