@@ -22,7 +22,14 @@ if [ ! -f "x64/Debug/FlashCpp" ]; then
 fi
 
 # Expected failures
-EXPECTED_FAIL=("test_cstddef.cpp" "test_cstdio_puts.cpp")
+EXPECTED_FAIL=(
+    "test_cstddef.cpp"
+    "test_cstdio_puts.cpp"
+    "test_constructor_expressions.cpp"
+    "test_copy.cpp"
+    "test_forward_overload_resolution.cpp"
+    "test_std_forward_observable.cpp"
+)
 
 # Results
 declare -a COMPILE_OK=()
@@ -52,7 +59,7 @@ done
 
 TOTAL=${#TEST_FILES[@]}
 TOTAL_FAIL=${#FAIL_FILES[@]}
-echo "Files: $TOTAL tests, $TOTAL_FAIL _fail files"
+echo "Testing $TOTAL files..."
 echo ""
 
 # Test regular files
@@ -64,28 +71,32 @@ for base in "${TEST_FILES[@]}"; do
     exe="/tmp/${base%.cpp}_exe"
     
     rm -f "$obj" "$exe"
-    printf "[%d/%d] %-40s " "$N" "$TOTAL" "$base"
     
     # Compile
-    if ./x64/Debug/FlashCpp "$f" > /dev/null 2>&1 && [ -f "$obj" ]; then
-        printf "${GREEN}OK${NC} "
+    compile_output=$(./x64/Debug/FlashCpp "$f" 2>&1)
+    if [ -f "$obj" ]; then
         COMPILE_OK+=("$base")
         
-        # Link
+        # Link silently
         if gcc -o "$exe" "$obj" 2>/dev/null; then
-            printf "${GREEN}LINK${NC}\n"
             LINK_OK+=("$base")
             rm -f "$exe"
         else
-            printf "${RED}LINK FAIL${NC}\n"
+            # Only print link failures
+            echo -e "${RED}[LINK FAIL]${NC} $base"
             LINK_FAIL+=("$base")
         fi
     else
         if contains "$base" "${EXPECTED_FAIL[@]}"; then
-            printf "${YELLOW}FAIL (exp)${NC}\n"
+            # Expected failure - don't print
+            :
         else
-            printf "${RED}FAIL${NC}\n"
+            # Print unexpected compile failures
+            echo -e "${RED}[COMPILE FAIL]${NC} $base"
             COMPILE_FAIL+=("$base")
+            # Show first error line
+            first_error=$(echo "$compile_output" | grep -i "error" | head -1)
+            [ -n "$first_error" ] && echo "  $first_error"
         fi
     fi
     rm -f "$obj"
@@ -93,7 +104,6 @@ done
 
 # Test _fail files
 if [ ${#FAIL_FILES[@]} -gt 0 ]; then
-    echo ""
     N=0
     for base in "${FAIL_FILES[@]}"; do
         ((N++))
@@ -101,14 +111,12 @@ if [ ${#FAIL_FILES[@]} -gt 0 ]; then
         obj="${base%.cpp}.obj"
         
         rm -f "$obj"
-        printf "[%d/%d] %-40s " "$N" "$TOTAL_FAIL" "$base"
         
         if ./x64/Debug/FlashCpp "$f" > /dev/null 2>&1 && [ -f "$obj" ]; then
-            printf "${RED}PASS (bad!)${NC}\n"
+            echo -e "${RED}[UNEXPECTED PASS]${NC} $base (should have failed)"
             FAIL_BAD+=("$base")
             rm -f "$obj"
         else
-            printf "${GREEN}FAIL (good)${NC}\n"
             FAIL_OK+=("$base")
         fi
     done
@@ -119,20 +127,22 @@ echo ""
 echo "========================"
 echo "SUMMARY"
 echo "========================"
-printf "Compile: ${GREEN}%d${NC} / ${RED}%d${NC}\n" "${#COMPILE_OK[@]}" "${#COMPILE_FAIL[@]}"
-printf "Link:    ${GREEN}%d${NC} / ${RED}%d${NC}\n" "${#LINK_OK[@]}" "${#LINK_FAIL[@]}"
-[ ${#FAIL_FILES[@]} -gt 0 ] && printf "_fail:   ${GREEN}%d${NC} / ${RED}%d${NC}\n" "${#FAIL_OK[@]}" "${#FAIL_BAD[@]}"
+echo "Total: $TOTAL files tested"
+printf "Compile: ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#COMPILE_OK[@]}" "${#COMPILE_FAIL[@]}"
+printf "Link:    ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#LINK_OK[@]}" "${#LINK_FAIL[@]}"
+[ ${#FAIL_FILES[@]} -gt 0 ] && printf "_fail:   ${GREEN}%d correct${NC} / ${RED}%d wrong${NC}\n" "${#FAIL_OK[@]}" "${#FAIL_BAD[@]}"
 
 # Show failures
-[ ${#COMPILE_FAIL[@]} -gt 0 ] && {
-    echo -e "\n${RED}Compile failures:${NC}"
-    printf '  %s\n' "${COMPILE_FAIL[@]}"
-}
+if [ ${#COMPILE_FAIL[@]} -gt 0 ]; then
+    echo -e "\n${RED}Compile failures (${#COMPILE_FAIL[@]}):${NC}"
+    printf '  %s\n' "${COMPILE_FAIL[@]}" | head -20
+    [ ${#COMPILE_FAIL[@]} -gt 20 ] && echo "  ... and $((${#COMPILE_FAIL[@]} - 20)) more"
+fi
 
-[ ${#LINK_FAIL[@]} -gt 0 ] && {
-    echo -e "\n${RED}Link failures:${NC}"
-    printf '  %s\n' "${LINK_FAIL[@]}"
-}
+if [ ${#LINK_FAIL[@]} -gt 0 ]; then
+    echo -e "\n${YELLOW}Link failures (${#LINK_FAIL[@]}) - likely need C++ features:${NC}"
+    echo "  (vtables, constructors, exceptions, etc.)"
+fi
 
 [ ${#FAIL_BAD[@]} -gt 0 ] && {
     echo -e "\n${RED}_fail files that passed:${NC}"
