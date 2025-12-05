@@ -23,3 +23,7 @@ using namespace ELFIO;
 ## Maintainer Notes
 This is a minimal inclusion of ELFIO headers only (no examples, tests, or documentation).
 The full repository is not included to keep the FlashCpp codebase lean.
+
+**Modifications**: None - this is pristine upstream ELFIO (commit 6d93fa9).
+For discussion of potential future modifications (e.g., string_view support), see:
+- `docs/ELFIO_MODIFICATIONS.md` - Analysis and recommendations for ELFIO API improvements
