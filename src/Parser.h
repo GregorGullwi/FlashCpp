@@ -306,8 +306,8 @@ private:
         // Delayed function body parsing for inline member functions
         struct DelayedFunctionBody {
                 FunctionDeclarationNode* func_node;      // The function node to attach body to
-                TokenPosition body_start;                 // Position of the '{'
-                TokenPosition initializer_list_start;     // Position of ':' for constructor initializer list (optional)
+                SavedTokenPosition body_start;                 // Position of the '{'
+                SavedTokenPosition initializer_list_start;     // Position of ':' for constructor initializer list (optional)
                 bool has_initializer_list;                // True if constructor has an initializer list to re-parse
                 std::string_view struct_name;            // For member function context
                 size_t struct_type_index;                // For member function context
@@ -374,6 +374,13 @@ private:
                 return ASTNode::emplace_node<T>(std::forward<Args>(args)...);
         }
 
+        // Extended token position that includes a sequence number to avoid collisions
+        // when multiple saves happen at the same cursor position
+        struct SavedTokenPosition {
+                TokenPosition lexer_position_;
+                size_t sequence_;
+        };
+
         class ScopedTokenPosition {
         public:
                 explicit ScopedTokenPosition(class Parser& parser, 
@@ -391,7 +398,7 @@ private:
 
         private:
                 class Parser& parser_;
-                TokenPosition saved_position_;
+                SavedTokenPosition saved_position_;
                 bool discarded_ = false;
                 std::source_location location_;
         };
@@ -400,7 +407,26 @@ private:
                 std::optional<Token> current_token_;
                 size_t ast_nodes_size_ = 0;
         };
-        std::unordered_map<size_t, SavedToken> saved_tokens_;
+        
+        // Key for saved_tokens_ map
+        struct SavedTokenKey {
+                size_t cursor_;
+                size_t sequence_;
+                
+                bool operator==(const SavedTokenKey& other) const {
+                        return cursor_ == other.cursor_ && sequence_ == other.sequence_;
+                }
+        };
+        
+        struct SavedTokenKeyHash {
+                size_t operator()(const SavedTokenKey& key) const {
+                        // Combine cursor and sequence using a simple hash
+                        return key.cursor_ ^ (key.sequence_ << 1);
+                }
+        };
+        
+        std::unordered_map<SavedTokenKey, SavedToken, SavedTokenKeyHash> saved_tokens_;
+        size_t save_sequence_counter_ = 0;  // Counter for generating unique save sequence numbers
 
         std::optional<Token> consume_token();
 
@@ -480,7 +506,7 @@ private:
 public:  // Public methods for template instantiation
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
-		TokenPosition body_pos,
+		SavedTokenPosition body_pos,
 		const std::vector<std::string_view>& template_param_names,
 		const std::vector<Type>& concrete_types,
 		std::string_view struct_name = "",  // Optional: for member functions
@@ -607,10 +633,10 @@ public:  // Public methods for template instantiation
             return nullptr;
         }
 
-        TokenPosition save_token_position();
-        void restore_token_position(const TokenPosition& token_position, const std::source_location location = std::source_location::current());
-        void restore_lexer_position_only(const TokenPosition& token_position);  // Restore lexer without erasing AST nodes
-        void discard_saved_token(const TokenPosition& token_position);
+        SavedTokenPosition save_token_position();
+        void restore_token_position(const SavedTokenPosition& token_position, const std::source_location location = std::source_location::current());
+        void restore_lexer_position_only(const SavedTokenPosition& token_position);  // Restore lexer without erasing AST nodes
+        void discard_saved_token(const SavedTokenPosition& token_position);
 
         // Helper for delayed parsing
         void skip_balanced_braces();  // Skip over a balanced brace block
