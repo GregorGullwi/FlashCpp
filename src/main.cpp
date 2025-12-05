@@ -22,6 +22,8 @@
 #include "IRTypes.h"
 #include "CrashHandler.h"
 #include "Log.h"
+#include "ObjFileWriter.h"
+#include "ElfFileWriter.h"
 
 // Global debug flag
 bool g_enable_debug_output = false;
@@ -341,11 +343,29 @@ int main(int argc, char *argv[]) {
         FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
     }
 
-    IrToObjConverter irConverter;
+    // Platform detection: Use ELF on Linux/Unix, COFF on Windows
+    // This can be overridden with command-line flags in the future
+    bool useElfFormat = false;
+    #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+        useElfFormat = true;
+    #elif defined(_WIN32) || defined(_WIN64)
+        useElfFormat = false;
+    #endif
 
     try {
         PhaseTimer timer("Code Generation", false, &codegen_time);
-        irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
+        
+        if (useElfFormat) {
+            // Use ELF format (Linux/Unix)
+            FLASH_LOG(Codegen, Info, "Generating ELF object file (Linux/Unix target)");
+            IrToObjConverter<ElfFileWriter> irConverter;
+            irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
+        } else {
+            // Use COFF format (Windows)
+            FLASH_LOG(Codegen, Info, "Generating COFF object file (Windows target)");
+            IrToObjConverter<ObjectFileWriter> irConverter;
+            irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
+        }
     } catch (const std::exception& e) {
         FLASH_LOG(General, Error, "Code generation failed: ", e.what());
         printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
