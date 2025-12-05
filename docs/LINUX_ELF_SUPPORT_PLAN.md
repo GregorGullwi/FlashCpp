@@ -142,14 +142,13 @@ Map COFF relocation types to ELF for x86-64:
 #### 3.1 C++ Name Mangling
 - **Current**: MSVC-style mangling (e.g., `?func@@YAHHH@Z`)
 - **Linux**: Itanium ABI mangling (e.g., `_Z4funcii`)
+- **Architecture Decision**: Keep mangling in writer interface (see [NAME_MANGLING_ARCHITECTURE.md](NAME_MANGLING_ARCHITECTURE.md))
 - **Strategy**: 
-  - Keep MSVC mangling for Windows/COFF
-  - Add Itanium mangling for Linux/ELF
-  - Create `src/ItaniumMangling.h` parallel to `NameMangling.h`
-  - **Note**: This is a large task; for MVP we can:
-    - Option A: Use unmangled names (C linkage) for initial testing
-    - Option B: Implement basic Itanium mangling for simple cases
-    - Option C: Defer full C++ support to later phase
+  - Refactor `NameMangling.h` into `NameMangling::MSVC` namespace
+  - Create new `ItaniumMangling.h` with `NameMangling::Itanium` namespace
+  - ObjectFileWriter uses MSVC mangling
+  - ElfFileWriter uses Itanium mangling
+  - IRConverter remains platform-agnostic
 
 **Decision for MVP**: Use C linkage (unmangled names) for initial implementation. Full Itanium mangling will be added in a follow-up phase.
 
