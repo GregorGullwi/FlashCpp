@@ -4544,6 +4544,170 @@ private:
 
 		std::vector<IrOperand> operandIrOperands;
 		bool operandHandledAsIdentifier = false;
+		
+		// Helper lambda to generate member increment/decrement IR
+		// Returns the result operands, or empty if not applicable
+		auto generateMemberIncDec = [&](std::string_view object_name, std::string_view member_name, 
+		                                 const StructMember* member, bool is_reference_capture,
+		                                 const Token& token) -> std::vector<IrOperand> {
+			int member_size_bits = static_cast<int>(member->size * 8);
+			TempVar result_var = var_counter.next();
+			
+			if (is_reference_capture) {
+				// By-reference: load pointer, dereference, inc/dec, store back through pointer
+				TempVar ptr_temp = var_counter.next();
+				MemberLoadOp member_load;
+				member_load.result.value = ptr_temp;
+				member_load.result.type = member->type;
+				member_load.result.size_in_bits = 64;  // pointer
+				member_load.object = object_name;
+				member_load.member_name = member_name;
+				member_load.offset = static_cast<int>(member->offset);
+				member_load.is_reference = true;
+				member_load.is_rvalue_reference = false;
+				member_load.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
+				
+				// Load current value through pointer
+				TempVar current_val = var_counter.next();
+				DereferenceOp deref_op;
+				deref_op.result = current_val;
+				deref_op.pointee_type = member->type;
+				deref_op.pointee_size_in_bits = member_size_bits;
+				deref_op.pointer = ptr_temp;
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
+				
+				bool is_prefix = unaryOperatorNode.is_prefix();
+				BinaryOp add_op{
+					.lhs = { member->type, member_size_bits, current_val },
+					.rhs = { Type::Int, 32, 1ULL },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(
+					unaryOperatorNode.op() == "++" ? IrOpcode::Add : IrOpcode::Subtract, 
+					std::move(add_op), token));
+				
+				// Store back through pointer
+				DereferenceStoreOp store_op;
+				store_op.pointer = ptr_temp;
+				store_op.value = { member->type, member_size_bits, result_var };
+				store_op.pointee_type = member->type;
+				store_op.pointee_size_in_bits = member_size_bits;
+				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
+				
+				TempVar return_val = is_prefix ? result_var : current_val;
+				return { member->type, member_size_bits, return_val, 0ULL };
+			} else {
+				// By-value: load member, inc/dec, store back to member
+				TempVar current_val = var_counter.next();
+				MemberLoadOp member_load;
+				member_load.result.value = current_val;
+				member_load.result.type = member->type;
+				member_load.result.size_in_bits = member_size_bits;
+				member_load.object = object_name;
+				member_load.member_name = member_name;
+				member_load.offset = static_cast<int>(member->offset);
+				member_load.is_reference = false;
+				member_load.is_rvalue_reference = false;
+				member_load.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
+				
+				bool is_prefix = unaryOperatorNode.is_prefix();
+				BinaryOp add_op{
+					.lhs = { member->type, member_size_bits, current_val },
+					.rhs = { Type::Int, 32, 1ULL },
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(
+					unaryOperatorNode.op() == "++" ? IrOpcode::Add : IrOpcode::Subtract, 
+					std::move(add_op), token));
+				
+				// Store back to member
+				MemberStoreOp store_op;
+				store_op.object = object_name;
+				store_op.member_name = member_name;
+				store_op.offset = static_cast<int>(member->offset);
+				store_op.value = { member->type, member_size_bits, result_var };
+				store_op.is_reference = false;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), token));
+				
+				TempVar return_val = is_prefix ? result_var : current_val;
+				return { member->type, member_size_bits, return_val, 0ULL };
+			}
+		};
+		
+		// Check if this is an increment/decrement on a captured variable in a lambda
+		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && 
+		    !current_lambda_closure_type_.empty() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+				std::string var_name_str(identifier.name());
+				
+				// Check if this is a captured variable
+				if (current_lambda_captures_.find(var_name_str) != current_lambda_captures_.end()) {
+					// Look up the closure struct type
+					auto type_it = gTypesByName.find(current_lambda_closure_type_);
+					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+						const StructMember* member = struct_info->findMemberRecursive(var_name_str);
+						if (member) {
+							auto kind_it = current_lambda_capture_kinds_.find(var_name_str);
+							bool is_reference = (kind_it != current_lambda_capture_kinds_.end() &&
+							                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+							return generateMemberIncDec("this", member->name, member, is_reference, 
+							                            unaryOperatorNode.get_token());
+						}
+					}
+				}
+			}
+		}
+		
+		// Check if this is an increment/decrement on a struct member (e.g., ++inst.v)
+		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
+				const MemberAccessNode& member_access = std::get<MemberAccessNode>(operandExpr);
+				std::string_view member_name = member_access.member_name();
+				
+				// Get the object being accessed
+				ASTNode object_node = member_access.object();
+				if (object_node.is<ExpressionNode>()) {
+					const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+						const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
+						std::string_view object_name = object_ident.name();
+						
+						// Look up the struct in symbol table
+						std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+						if (!symbol.has_value() && global_symbol_table_) {
+							symbol = global_symbol_table_->lookup(object_name);
+						}
+						
+						if (symbol.has_value()) {
+							const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
+							if (object_decl) {
+								const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
+								if (object_type.type() == Type::Struct || object_type.type() == Type::UserDefined) {
+									TypeIndex type_index = object_type.type_index();
+									if (type_index < gTypeInfo.size()) {
+										const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+										if (struct_info) {
+											const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+											if (member) {
+												return generateMemberIncDec(object_name, member_name, member, false,
+												                            member_access.member_token());
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
