@@ -152,6 +152,8 @@ $linkFailed = @()
 $runSuccess = @()
 $runFailed = @()
 $missingExpected = @()
+# Detailed error tracking
+$linkErrorDetails = @{}
 
 $currentFile = 0
 foreach ($file in $referenceFiles) {
@@ -217,10 +219,30 @@ foreach ($file in $referenceFiles) {
                 else {
                     Write-Host "  [LINK FAILED]" -ForegroundColor Red
                     $linkFailed += $file.Name
-                    # Extract first error from link output
-                    $firstError = ($linkOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -First 1)
-                    if ($firstError) {
-                        Write-Host "    Error: $firstError" -ForegroundColor Yellow
+                    
+                    # Extract all errors from link output
+                    $errors = ($linkOutput -split "`n" | Where-Object { $_ -match "error" })
+                    $unresolved = ($linkOutput -split "`n" | Where-Object { $_ -match "unresolved external symbol" })
+                    
+                    # Store detailed error info for later display
+                    $linkErrorDetails[$file.Name] = @{
+                        Errors = $errors
+                        Unresolved = $unresolved
+                        FullOutput = $linkOutput
+                    }
+                    
+                    if ($errors) {
+                        Write-Host "    Link errors:" -ForegroundColor Yellow
+                        foreach ($err in $errors) {
+                            Write-Host "      $err" -ForegroundColor Yellow
+                        }
+                    }
+                    # Also show unresolved external symbols
+                    if ($unresolved) {
+                        Write-Host "    Unresolved symbols:" -ForegroundColor Yellow
+                        foreach ($sym in $unresolved) {
+                            Write-Host "      $sym" -ForegroundColor Yellow
+                        }
                     }
                 }
             }
@@ -332,7 +354,49 @@ if ($linkFailed.Count -gt 0) {
         Write-Host "  - $_"
     }
     Write-Host ""
+    
+    # Show detailed link errors at the end for easy debugging
+    Write-Host "=============================================="
+    Write-Host "DETAILED LINK ERRORS (for easy debugging)"
+    Write-Host "=============================================="
+    Write-Host ""
+    
+    foreach ($fileName in ($linkFailed | Sort-Object)) {
+        $errorInfo = $linkErrorDetails[$fileName]
+        if ($errorInfo) {
+            Write-Host "=== $fileName ===" -ForegroundColor Red
+            
+            if ($errorInfo.Errors.Count -gt 0) {
+                Write-Host ""
+                Write-Host "Link Errors:" -ForegroundColor Yellow
+                foreach ($err in $errorInfo.Errors) {
+                    Write-Host "  $err"
+                }
+            }
+            
+            if ($errorInfo.Unresolved.Count -gt 0) {
+                Write-Host ""
+                Write-Host "Unresolved External Symbols:" -ForegroundColor Yellow
+                foreach ($sym in $errorInfo.Unresolved) {
+                    Write-Host "  $sym"
+                }
+            }
+            
+            # Show a snippet of the full output if there are errors
+            if ($errorInfo.Errors.Count -eq 0 -and $errorInfo.Unresolved.Count -eq 0) {
+                Write-Host ""
+                Write-Host "Full linker output:" -ForegroundColor Yellow
+                $outputLines = $errorInfo.FullOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 10
+                foreach ($line in $outputLines) {
+                    Write-Host "  $line"
+                }
+            }
+            
+            Write-Host ""
+        }
+    }
 }
+
 
 if ($failTestFailed.Count -gt 0) {
     Write-Host "=== _fail files that unexpectedly succeeded ===" -ForegroundColor Red
