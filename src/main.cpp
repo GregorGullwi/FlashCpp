@@ -359,12 +359,15 @@ int main(int argc, char *argv[]) {
     try {
         PhaseTimer timer("Code Generation", false, &codegen_time);
         
+        #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
         if (useElfFormat) {
             // Use ELF format (Linux/Unix)
             FLASH_LOG(Codegen, Info, "Generating ELF object file (Linux/Unix target)");
             IrToObjConverter<ElfFileWriter> irConverter;
             irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
-        } else {
+        } else
+        #endif
+        {
             // Use COFF format (Windows)
             FLASH_LOG(Codegen, Info, "Generating COFF object file (Windows target)");
             IrToObjConverter<ObjectFileWriter> irConverter;
