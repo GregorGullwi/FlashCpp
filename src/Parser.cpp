@@ -13356,9 +13356,7 @@ ParseResult Parser::parse_template_declaration() {
 			template_param_names.push_back(tparam.name());  // string_view from Token
 			
 			// Check if this is a parameter pack
-			if (tparam.is_variadic()) {
-				has_packs = true;
-			}
+			has_packs |= tparam.is_variadic();
 			
 			// Type parameters and Template template parameters need TypeInfo registration
 			// This allows them to be recognized during type parsing (e.g., Container<T>)
