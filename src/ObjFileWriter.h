@@ -8,6 +8,7 @@
 
 #include "CodeViewDebug.h"
 #include "AstNodeTypes.h"
+#include "ObjectFileCommon.h"
 #include "NameMangling.h"
 #include <string>
 #include <string_view>
@@ -60,53 +61,12 @@ public:
 	// Constants for RTTI and exception handling
 	static constexpr size_t POINTER_SIZE = 8;  // 64-bit pointers on x64
 	
-	enum EFunctionCallingConv : unsigned char
-	{
-		cc_cdecl,
-		cc_stdcall,
-		cc_fastcall,
-	};
-	// Function signature information for mangling
-	struct FunctionSignature {
-		TypeSpecifierNode return_type;
-		std::vector<TypeSpecifierNode> parameter_types;
-		bool is_const = false;
-		bool is_static = false;
-		bool is_variadic = false;  // True if function has ... ellipsis parameter
-		EFunctionCallingConv calling_convention = EFunctionCallingConv::cc_cdecl;
-		std::string namespace_name;
-		std::string class_name;
-		Linkage linkage = Linkage::None;  // C vs C++ linkage
-
-		FunctionSignature() = default;
-		FunctionSignature(const TypeSpecifierNode& ret_type, std::vector<TypeSpecifierNode> params)
-			: return_type(ret_type), parameter_types(std::move(params)) {}
-	};
-
-	// Exception handling information for a catch handler
-	struct CatchHandlerInfo {
-		uint32_t type_index;      // Type to catch (0 for catch-all)
-		uint32_t handler_offset;  // Code offset of catch handler relative to function start
-		bool is_catch_all;        // True for catch(...)
-		std::string type_name;    // Name of the caught type (empty for catch-all or when type_index is 0)
-		bool is_const;            // True if caught by const
-		bool is_reference;        // True if caught by lvalue reference
-		bool is_rvalue_reference; // True if caught by rvalue reference
-		int32_t catch_obj_offset; // Frame offset where caught exception object is stored (negative RBP offset)
-	};
-
-	// Unwind map entry for destructor calls during exception unwinding
-	struct UnwindMapEntryInfo {
-		int to_state;             // State to transition to after unwinding (-1 = no more unwinding)
-		std::string action;       // Name of destructor/cleanup function to call (empty = no action)
-	};
-
-	// Exception handling information for a try block
-	struct TryBlockInfo {
-		uint32_t try_start_offset;  // Code offset where try block starts
-		uint32_t try_end_offset;    // Code offset where try block ends
-		std::vector<CatchHandlerInfo> catch_handlers;
-	};
+	// Use shared structures from ObjectFileCommon
+	using FunctionSignature = ObjectFileCommon::FunctionSignature;
+	using CatchHandlerInfo = ObjectFileCommon::CatchHandlerInfo;
+	using UnwindMapEntryInfo = ObjectFileCommon::UnwindMapEntryInfo;
+	using TryBlockInfo = ObjectFileCommon::TryBlockInfo;
+	using BaseClassDescriptorInfo = ObjectFileCommon::BaseClassDescriptorInfo;
 
 	ObjectFileWriter() {
 		if (g_enable_debug_output) std::cerr << "Creating simplified ObjectFileWriter for debugging..." << std::endl;
@@ -1438,14 +1398,6 @@ public:
 		if (g_enable_debug_output) std::cerr << "Added global variable '" << var_name << "' at offset " << offset
 		          << " in " << (is_initialized ? ".data" : ".bss") << " section (size: " << size_in_bytes << " bytes)" << std::endl;
 	}
-
-	// Base class descriptor info for RTTI emission
-	struct BaseClassDescriptorInfo {
-		std::string name;            // Base class name
-		uint32_t num_contained_bases; // Number of bases this base has
-		uint32_t offset;             // Offset of base in derived class (mdisp)
-		bool is_virtual;             // Whether this is a virtual base
-	};
 
 	// Add a vtable to .rdata section with RTTI support
 	// vtable_symbol: mangled vtable symbol name (e.g., "??_7Base@@6B@")

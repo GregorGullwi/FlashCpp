@@ -10,13 +10,6 @@
 
 namespace ObjectFileCommon {
 
-	// Function calling convention
-	enum EFunctionCallingConv : unsigned char {
-		cc_cdecl,
-		cc_stdcall,
-		cc_fastcall,
-	};
-
 	// Function signature information for mangling
 	struct FunctionSignature {
 		TypeSpecifierNode return_type;
@@ -24,7 +17,7 @@ namespace ObjectFileCommon {
 		bool is_const = false;
 		bool is_static = false;
 		bool is_variadic = false;  // True if function has ... ellipsis parameter
-		EFunctionCallingConv calling_convention = EFunctionCallingConv::cc_cdecl;
+		CallingConvention calling_convention = CallingConvention::Default;
 		std::string namespace_name;
 		std::string class_name;
 		Linkage linkage = Linkage::None;  // C vs C++ linkage
