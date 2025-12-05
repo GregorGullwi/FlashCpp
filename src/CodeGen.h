@@ -6435,11 +6435,12 @@ private:
 			// Create CallOp structure (matching the pattern in generateFunctionCallIr)
 			CallOp call_op;
 			call_op.result = ret_var;
-			call_op.function_name = invoke_name;
 			
-			// Get return type information from lambda
+			// Build TypeSpecifierNode for return type (needed for mangling)
+			TypeSpecifierNode return_type_node(Type::Int, 0, 32, memberFunctionCallNode.called_from());
 			if (lambda.return_type().has_value()) {
 				const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
+				return_type_node = ret_type;
 				call_op.return_type = ret_type.type();
 				call_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
 			} else {
@@ -6447,6 +6448,29 @@ private:
 				call_op.return_type = Type::Int;
 				call_op.return_size_in_bits = 32;
 			}
+			
+			// Build TypeSpecifierNodes for parameters (needed for mangling)
+			std::vector<TypeSpecifierNode> param_types;
+			if (lambda.parameters().has_value()) {
+				lambda.parameters()->visit([&](const ASTNode& param_node) {
+					if (param_node.is<DeclarationNode>()) {
+						const auto& param_decl = param_node.as<DeclarationNode>();
+						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+						param_types.push_back(param_type);
+					}
+				});
+			}
+			
+			// Generate mangled name for __invoke (matching how it's defined in generateLambdaInvokeFunction)
+			std::string_view mangled = generateMangledNameForCall(
+				invoke_name,
+				return_type_node,
+				param_types,
+				false,  // not variadic
+				""  // not a member function
+			);
+			
+			call_op.function_name = std::string(mangled);
 			call_op.is_member_function = false;
 
 			// Add arguments
