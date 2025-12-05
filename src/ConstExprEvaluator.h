@@ -449,6 +449,125 @@ private:
 		}
 	}
 
+	// Helper to extract a LambdaExpressionNode from a variable's initializer
+	// Returns nullptr if the initializer is not a lambda
+	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer) {
+		if (!initializer.has_value()) {
+			return nullptr;
+		}
+		
+		// Check for lambda expression (direct)
+		if (initializer->is<LambdaExpressionNode>()) {
+			return &initializer->as<LambdaExpressionNode>();
+		}
+		
+		// Check for lambda expression (wrapped in ExpressionNode)
+		if (initializer->is<ExpressionNode>()) {
+			const ExpressionNode& expr = initializer->as<ExpressionNode>();
+			if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+				return &std::get<LambdaExpressionNode>(expr);
+			}
+		}
+		
+		return nullptr;
+	}
+
+	// Evaluate a callable object (lambda or user-defined functor with operator())
+	static EvalResult evaluate_callable_object(
+		const VariableDeclarationNode& var_decl,
+		const ChunkedVector<ASTNode>& arguments,
+		EvaluationContext& context) {
+		
+		// Check for lambda
+		const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
+		if (lambda) {
+			return evaluate_lambda_call(*lambda, arguments, context);
+		}
+		
+		// Check for ConstructorCallNode (user-defined functor)
+		const auto& initializer = var_decl.initializer();
+		if (initializer.has_value() && initializer->is<ConstructorCallNode>()) {
+			// TODO: Look up operator() in the struct and call it
+			return EvalResult::error("User-defined functor constexpr calls not yet implemented");
+		}
+		
+		return EvalResult::error("Object is not callable in constant expression");
+	}
+
+	// Evaluate a lambda call
+	static EvalResult evaluate_lambda_call(
+		const LambdaExpressionNode& lambda,
+		const ChunkedVector<ASTNode>& arguments,
+		EvaluationContext& context) {
+		
+		// Check recursion depth
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded in lambda call");
+		}
+		
+		// Get lambda parameters
+		const auto& parameters = lambda.parameters();
+		
+		if (arguments.size() != parameters.size()) {
+			return EvalResult::error("Lambda argument count mismatch in constant expression");
+		}
+		
+		// Build parameter bindings
+		std::unordered_map<std::string_view, EvalResult> bindings;
+		
+		for (size_t i = 0; i < arguments.size(); ++i) {
+			const ASTNode& param_node = parameters[i];
+			if (!param_node.is<DeclarationNode>()) {
+				return EvalResult::error("Invalid parameter node in constexpr lambda");
+			}
+			const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+			std::string_view param_name = param_decl.identifier_token().value();
+			
+			// Evaluate argument
+			auto arg_result = evaluate(arguments[i], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			bindings[param_name] = arg_result;
+		}
+		
+		// Handle captures - for now, only support captureless lambdas
+		// TODO: Extract captured variable values and add to bindings
+		const auto& captures = lambda.captures();
+		if (!captures.empty()) {
+			return EvalResult::error("Constexpr lambdas with captures not yet supported");
+		}
+		
+		// Increase recursion depth
+		context.current_depth++;
+		
+		// Evaluate the lambda body
+		const ASTNode& body_node = lambda.body();
+		
+		EvalResult result;
+		if (body_node.is<BlockNode>()) {
+			// Block body - look for return statement
+			const BlockNode& body = body_node.as<BlockNode>();
+			const auto& statements = body.get_statements();
+			
+			if (statements.size() != 1) {
+				context.current_depth--;
+				return EvalResult::error("Constexpr lambda must have a single return statement (complex statements not yet supported)");
+			}
+			
+			result = evaluate_statement_with_bindings(statements[0], bindings, context);
+		} else if (body_node.is<ExpressionNode>()) {
+			// Expression body (implicit return)
+			result = evaluate_expression_with_bindings(body_node, bindings, context);
+		} else {
+			context.current_depth--;
+			return EvalResult::error("Invalid lambda body in constant expression");
+		}
+		
+		context.current_depth--;
+		return result;
+	}
+
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context) {
 		// Check recursion depth
 		if (context.current_depth >= context.max_recursion_depth) {
@@ -471,35 +590,41 @@ private:
 
 		const ASTNode& symbol_node = symbol_opt.value();
 		
-		// Check if it's a FunctionDeclarationNode
-		if (!symbol_node.is<FunctionDeclarationNode>()) {
-			return EvalResult::error("Identifier is not a function: " + std::string(func_name));
-		}
+		// Check if it's a FunctionDeclarationNode (regular function)
+		if (symbol_node.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
+			
+			// Check if it's a constexpr function
+			if (!func_decl.is_constexpr()) {
+				return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+			}
 
-		const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
+			// Get the function body
+			const auto& definition = func_decl.get_definition();
+			if (!definition.has_value()) {
+				return EvalResult::error("Constexpr function has no body: " + std::string(func_name));
+			}
+
+			// Evaluate arguments
+			const auto& arguments = func_call.arguments();
+			const auto& parameters = func_decl.parameter_nodes();
+			
+			if (arguments.size() != parameters.size()) {
+				return EvalResult::error("Function argument count mismatch in constant expression");
+			}
+
+			// Pass empty bindings for top-level function calls
+			std::unordered_map<std::string_view, EvalResult> empty_bindings;
+			return evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+		}
 		
-		// Check if it's a constexpr function
-		if (!func_decl.is_constexpr()) {
-			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+		// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
+		if (symbol_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+			return evaluate_callable_object(var_decl, func_call.arguments(), context);
 		}
-
-		// Get the function body
-		const auto& definition = func_decl.get_definition();
-		if (!definition.has_value()) {
-			return EvalResult::error("Constexpr function has no body: " + std::string(func_name));
-		}
-
-		// Evaluate arguments
-		const auto& arguments = func_call.arguments();
-		const auto& parameters = func_decl.parameter_nodes();
 		
-		if (arguments.size() != parameters.size()) {
-			return EvalResult::error("Function argument count mismatch in constant expression");
-		}
-
-		// Pass empty bindings for top-level function calls
-		std::unordered_map<std::string_view, EvalResult> empty_bindings;
-		return evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+		return EvalResult::error("Identifier is not a function or callable object: " + std::string(func_name));
 	}
 
 	static EvalResult evaluate_function_call_with_bindings(
@@ -1470,6 +1595,9 @@ public:
 		const FunctionDeclarationNode& placeholder_func = member_func_call.function_declaration();
 		std::string_view func_name = placeholder_func.decl_node().identifier_token().value();
 		
+		// For lambda calls (operator()), we need special handling
+		const bool is_operator_call = (func_name == "operator()");
+		
 		// First, we need to get the struct type from the object to look up the actual function
 		std::string_view var_name;
 		
@@ -1512,6 +1640,14 @@ public:
 		const auto& initializer = var_decl.initializer();
 		if (!initializer.has_value()) {
 			return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
+		}
+		
+		// Check if this is a lambda call (operator() on a lambda object)
+		if (is_operator_call) {
+			const LambdaExpressionNode* lambda = extract_lambda_from_initializer(initializer);
+			if (lambda) {
+				return evaluate_lambda_call(*lambda, member_func_call.arguments(), context);
+			}
 		}
 		
 		if (!initializer->is<ConstructorCallNode>()) {
