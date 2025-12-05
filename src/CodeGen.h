@@ -273,7 +273,13 @@ public:
 	void generateCollectedLambdas() {
 		// Use index-based loop because nested lambdas may add new entries during iteration
 		for (size_t i = 0; i < collected_lambdas_.size(); ++i) {
-			generateLambdaFunctions(collected_lambdas_[i]);
+			const auto& lambda_info = collected_lambdas_[i];
+			// Skip if this lambda has already been generated (prevents duplicate definitions)
+			if (generated_lambda_ids_.find(lambda_info.lambda_id) != generated_lambda_ids_.end()) {
+				continue;
+			}
+			generated_lambda_ids_.insert(lambda_info.lambda_id);
+			generateLambdaFunctions(lambda_info);
 		}
 	}
 	
@@ -9548,11 +9554,12 @@ private:
 			}
 		}
 
-		// Add lambda parameters to symbol table
+		// Add lambda parameters to symbol table as function parameters (operator() context)
+		// This ensures they're recognized as local parameters, not external symbols
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				symbol_table.insert(param_decl.identifier_token().value(), param_node);
+				symbol_table.insert_parameter(param_decl.identifier_token().value(), param_node);
 			}
 		}
 
@@ -9646,11 +9653,12 @@ private:
 		// so TempVar() starts at 1 which is the first available slot.
 		var_counter = TempVar();
 
-		// Add lambda parameters to symbol table
+		// Add lambda parameters to symbol table as function parameters (__invoke context)
+		// This ensures they're recognized as local parameters, not external symbols
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				symbol_table.insert(param_decl.identifier_token().value(), param_node);
+				symbol_table.insert_parameter(param_decl.identifier_token().value(), param_node);
 			}
 		}
 
@@ -9749,6 +9757,7 @@ private:
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
+	std::unordered_set<int> generated_lambda_ids_;  // Track which lambdas have been generated to prevent duplicates
 	
 	// Structure to hold info for local struct member functions
 	struct LocalStructMemberInfo {
