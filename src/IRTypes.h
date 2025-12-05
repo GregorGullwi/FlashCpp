@@ -105,6 +105,7 @@ enum class IrOpcode : int_fast16_t {
 	// Pointer operations
 	AddressOf,
 	Dereference,
+	DereferenceStore,    // Store through a pointer: *ptr = value
 	// Struct operations
 	MemberAccess,
 	MemberStore,
@@ -685,6 +686,14 @@ struct DereferenceOp {
 	Type pointee_type;                               // Type being dereferenced to
 	int pointee_size_in_bits;                        // Size of dereferenced value
 	std::variant<std::string_view, TempVar> pointer; // Pointer to dereference
+};
+
+// Dereference store operator (*ptr = value)
+struct DereferenceStoreOp {
+	TypedValue value;                                // Value to store
+	Type pointee_type;                               // Type being stored to
+	int pointee_size_in_bits;                        // Size of value
+	std::variant<std::string_view, TempVar> pointer; // Pointer to store through
 };
 
 // Constructor call (invoke constructor on object)
@@ -1548,6 +1557,29 @@ public:
 				oss << '%' << std::get<std::string_view>(op.pointer);
 			else if (std::holds_alternative<TempVar>(op.pointer))
 				oss << '%' << std::get<TempVar>(op.pointer).var_number;
+		}
+		break;
+
+		case IrOpcode::DereferenceStore:
+		{
+			assert(hasTypedPayload() && "DereferenceStore instruction must use typed payload");
+			const auto& op = getTypedPayload<DereferenceStoreOp>();
+			oss << "store_through_ptr [" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
+		
+			if (std::holds_alternative<std::string_view>(op.pointer))
+				oss << "%" << std::get<std::string_view>(op.pointer);
+			else if (std::holds_alternative<TempVar>(op.pointer))
+				oss << "%" << std::get<TempVar>(op.pointer).var_number;
+			
+			oss << ", ";
+			
+			// Value being stored
+			if (std::holds_alternative<unsigned long long>(op.value.value))
+				oss << std::get<unsigned long long>(op.value.value);
+			else if (std::holds_alternative<TempVar>(op.value.value))
+				oss << "%" << std::get<TempVar>(op.value.value).var_number;
+			else if (std::holds_alternative<std::string_view>(op.value.value))
+				oss << "%" << std::get<std::string_view>(op.value.value);
 		}
 		break;
 		
