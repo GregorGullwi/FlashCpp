@@ -6,15 +6,15 @@ ELFIO is a third-party header-only library for ELF file manipulation. The librar
 
 ## Current Interface Limitations
 
-ELFIO's interface uses `std::string` and `const char*` in several places where `std::string_view` would be more efficient:
+ELFIO's interface uses `std::string` and `const char*` in several places where `std::string_view` would be more efficient. However, **ElfFileWriter now uses `std::string_view` in its public interface** to provide a modern API while internally converting to ELFIO's requirements.
 
 ### Symbol Operations
 
-**Current ELFIO API:**
+**ELFIO API (internal):**
 ```cpp
 // Adding symbols - uses const char*
 Elf_Word add_symbol(string_section_accessor& pStrWriter,
-                    const char* str,  // ← Could be string_view
+                    const char* str,  // ← ELFIO uses const char*
                     Elf64_Addr value,
                     Elf_Xword size,
                     unsigned char bind,
@@ -33,20 +33,46 @@ bool get_symbol(Elf_Xword index,
                 unsigned char& other) const;
 ```
 
+**ElfFileWriter API (public - uses string_view):**
+```cpp
+// Modern string_view interface for users
+std::string_view add_string_literal(std::string_view str_content);
+std::string_view getMangledName(std::string_view name) const;
+std::string_view generateMangledName(std::string_view name, const FunctionSignature& sig) const;
+std::string_view addFunctionSignature(std::string_view name, ...);
+```
+
 ### Impact on ElfFileWriter
 
-Our ElfFileWriter currently works around this by:
-1. Converting `string_view` to `const char*` using `.data()` when adding symbols
-2. Using temporary `std::string` variables when reading symbols
+Our ElfFileWriter provides a **string_view-based public interface** while handling ELFIO's requirements internally:
+
+1. **Public interface uses `std::string_view`** - modern, efficient API for callers
+2. **Internal conversions to ELFIO format**:
+   - Convert `string_view` to `const char*` using `.data()` when adding symbols
+   - Use temporary `std::string` variables when reading symbols (ELFIO requirement)
+   - Use `StringBuilder` for generating symbol names, returning `string_view`
 
 **Example from ElfFileWriter.h:**
 ```cpp
-// Line 179: Adding a symbol - convert string_view to const char*
-accessor->add_symbol(*string_accessor_, mangled_name.data(), value, size, bind, type, other, section_index);
+// Line ~260: add_string_literal uses StringBuilder and returns string_view
+std::string_view add_string_literal(std::string_view str_content) {
+    StringBuilder builder;
+    builder.append(".L.str.");
+    builder.append(static_cast<uint64_t>(string_literal_counter_++));
+    std::string_view symbol_name = builder.commit();
+    // ... use symbol_name.data() when calling ELFIO
+    getOrCreateSymbol(symbol_name, ...);  // Internally converts to const char*
+    return symbol_name;
+}
 
-// Line 621: Reading symbols - need std::string for output parameter
+// Line ~352: getMangledName returns string_view directly
+std::string_view getMangledName(std::string_view name) const {
+    return name;  // For MVP, no mangling needed
+}
+
+// Line ~600: Reading symbols - need std::string for ELFIO output parameter
 std::string sym_name;
-accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
+accessor->get_symbol(i, sym_name, sym_value, ...);
 ```
 
 ## Potential ELFIO Modifications
