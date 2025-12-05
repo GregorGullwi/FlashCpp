@@ -2692,6 +2692,7 @@ public:
 			#if ENABLE_DETAILED_PROFILING
 			auto instr_start = std::chrono::high_resolution_clock::now();
 			#endif
+			
 			// Add line mapping for debug information if line number is available
 			if (instruction.getOpcode() != IrOpcode::FunctionDecl && instruction.getOpcode() != IrOpcode::Return && instruction.getLineNumber() > 0) {
 				addLineMapping(instruction.getLineNumber());
@@ -3894,6 +3895,25 @@ private:
 							temp_var_sizes[addr_op->result.name()] = 64; // Pointer is always 64-bit
 							handled_by_typed_payload = true;
 						}
+						// Try DereferenceOp (for dereferencing pointers/references)
+						else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
+							temp_var_sizes[deref_op->result.name()] = deref_op->pointee_size_in_bits;
+							handled_by_typed_payload = true;
+						}
+						// Try AssignmentOp (for materializing literals to temporaries)
+						else if (const AssignmentOp* assign_op = std::any_cast<AssignmentOp>(&instruction.getTypedPayload())) {
+							// Track the LHS TempVar if it's a TempVar
+							if (std::holds_alternative<TempVar>(assign_op->lhs.value)) {
+								auto temp_var = std::get<TempVar>(assign_op->lhs.value);
+								temp_var_sizes[temp_var.name()] = assign_op->lhs.size_in_bits;
+								handled_by_typed_payload = true;
+							}
+						}
+						// Try AddressOfOp (for taking address of temporaries)
+						else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
+							temp_var_sizes[addr_of_op->result.name()] = 64; // Pointer is always 64-bit
+							handled_by_typed_payload = true;
+						}
 						// Add more payload types here as they produce TempVars
 					} catch (const std::exception& e) {
 						FLASH_LOG(Codegen, Warning, "[calculateFunctionStackSpace]: Exception while processing typed payload for opcode ", 
@@ -3942,12 +3962,19 @@ private:
 
 			// Allocate space for the variable
 			stack_offset = aligned_offset - (local_var.size_in_bits / 8);
+
 			var_scope.identifier_offset.insert_or_assign(local_var.var_name, stack_offset);
 		}
 
-		// Calculate total stack space needed (all variables are now allocated)
-		func_stack_space.temp_vars_size = -stack_offset;  // Total space (stack_offset is most negative value)
-		func_stack_space.named_vars_size = -stack_offset; // Same as temp_vars_size since they're combined now
+		// Calculate space needed for TempVars
+		// Each TempVar uses 8 bytes (64-bit alignment)
+		int temp_var_space = static_cast<int>(temp_var_sizes.size()) * 8;
+
+		// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
+
+		// Calculate total stack space needed
+		func_stack_space.temp_vars_size = temp_var_space;  // TempVar space (added to total separately)
+		func_stack_space.named_vars_size = -stack_offset;  // Just named variables space
 		
 		// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
 		//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
@@ -3966,11 +3993,10 @@ private:
 	}
 
 	// Get stack offset for a TempVar using formula-based allocation.
-	// TempVars are allocated dynamically after named variables using formula:
-	// TempVar(N) is at [rbp - (named_vars_base + (N-1) * 8)]
+	// TempVars are allocated within the pre-allocated temp_vars space.
+	// The space starts after named_vars + shadow_space.
 	// 
 	// This function also:
-	// - Extends scope_stack_space if the offset exceeds current tracked allocation
 	// - Registers the TempVar in identifier_offset for consistent subsequent lookups
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
@@ -3980,21 +4006,17 @@ private:
 				return it->second;  // Use pre-allocated offset
 			}
 		}
-		// Use formula-based allocation for dynamic TempVars
-		// base_offset is already negative (e.g., -64 for 32 bytes param + 32 bytes named vars)
-		int32_t base_offset = variable_scopes.back().scope_stack_space;
-		// TempVar(1) should be first at base_offset - 0, TempVar(2) at base_offset - 8, etc.
-		int32_t offset = base_offset - ((tempVar.var_number - 1) * 8);
+		// Allocate TempVars sequentially after named_vars + shadow space
+		// Use next_temp_var_offset_ to track the next available slot
+		// Each TempVar gets 8 bytes (conservative sizing for x64)
+		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+		next_temp_var_offset_ += 8;
+		
+
 		
 		// Track the maximum TempVar index for stack size calculation
 		if (tempVar.var_number > max_temp_var_index_) {
 			max_temp_var_index_ = tempVar.var_number;
-		}
-		
-		// Extend scope_stack_space if the computed offset exceeds current allocation
-		// This ensures assertions checking scope_stack_space <= offset remain valid
-		if (offset < variable_scopes.back().scope_stack_space) {
-			variable_scopes.back().scope_stack_space = offset;
 		}
 		
 		// Register the TempVar's offset in identifier_offset map so subsequent lookups
@@ -6411,6 +6433,7 @@ private:
 			
 			// Reset for new function
 			max_temp_var_index_ = 0;
+			next_temp_var_offset_ = 8;  // Reset TempVar allocation offset
 			current_function_try_blocks_.clear();  // Clear exception tracking for next function
 			current_try_block_ = nullptr;
 			current_function_local_objects_.clear();  // Clear local object tracking
@@ -6438,8 +6461,9 @@ private:
 		StackVariableScope& var_scope = variable_scopes.emplace_back();
 		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope, param_count);
 		
-		// TempVars are allocated dynamically via formula, so don't include temp_vars_size here
-		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space;
+		// TempVars are now pre-counted in calculateFunctionStackSpace, include them in total
+		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space + func_stack_space.temp_vars_size;
+
 		
 		// Even if parameters stay in registers, we need space to spill them if needed
 		// Member functions have implicit 'this' pointer as first parameter
@@ -6591,10 +6615,12 @@ private:
 			FLASH_LOG(Codegen, Error, "FATAL: variable_scopes is EMPTY!");
 			std::abort();
 		}
+		// Set scope_stack_space to include ALL pre-allocated space (named + shadow + temp_vars)
+		// TempVars are allocated within this space, not extending beyond it
 		variable_scopes.back().scope_stack_space = -total_stack_space;
 		
-		// Store for later patching
-		current_function_named_vars_size_ = total_stack_space;
+		// Store named_vars + shadow for patching (temp_vars are pre-calculated, not dynamic)
+		current_function_named_vars_size_ = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space;
 
 		// Handle parameters
 		struct ParameterInfo {
@@ -11070,6 +11096,7 @@ private:
 	// Prologue patching for stack allocation
 	uint32_t current_function_prologue_offset_ = 0;  // Offset of SUB RSP instruction for patching
 	int max_temp_var_index_ = 0;  // Highest TempVar number used (for stack size calculation)
+	int next_temp_var_offset_ = 8;  // Next available offset for TempVar allocation (starts at 8, increments by 8)
 	uint32_t current_function_named_vars_size_ = 0;  // Size of named vars + shadow space for current function
 
 	// Exception handling tracking

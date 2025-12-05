@@ -768,6 +768,7 @@ struct FunctionDeclOp {
 	bool is_variadic = false;
 	std::string_view mangled_name;
 	std::vector<FunctionParam> parameters;
+	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)
 };
 
 // Unary operations (Negate, LogicalNot, BitwiseNot)
