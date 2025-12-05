@@ -3997,6 +3997,7 @@ private:
 	// The space starts after named_vars + shadow_space.
 	// 
 	// This function also:
+	// - Extends scope_stack_space if the offset exceeds current tracked allocation
 	// - Registers the TempVar in identifier_offset for consistent subsequent lookups
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
@@ -4017,6 +4018,12 @@ private:
 		// Track the maximum TempVar index for stack size calculation
 		if (tempVar.var_number > max_temp_var_index_) {
 			max_temp_var_index_ = tempVar.var_number;
+		}
+
+		// Extend scope_stack_space if the computed offset exceeds current allocation
+		// This ensures assertions checking scope_stack_space <= offset remain valid
+		if (offset < variable_scopes.back().scope_stack_space) {
+			variable_scopes.back().scope_stack_space = offset;
 		}
 		
 		// Register the TempVar's offset in identifier_offset map so subsequent lookups
