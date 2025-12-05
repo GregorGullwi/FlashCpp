@@ -4,6 +4,7 @@
 #include "ObjectFileCommon.h"
 #include "NameMangling.h"
 #include "ChunkedString.h"
+#include "CodeViewDebug.h"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -16,21 +17,8 @@
 
 extern bool g_enable_debug_output;
 
-// SectionType enum (shared with ObjFileWriter for consistency)
-// We'll map COFF section types to appropriate ELF equivalents
-enum class SectionType : unsigned char {
-	TEXT,
-	DATA,
-	BSS,
-	RDATA,
-	DRECTVE,   // Not used in ELF
-	XDATA,     // Not used in ELF
-	PDATA,     // Not used in ELF
-	DEBUG_S,   // Will map to DWARF sections
-	DEBUG_T,   // Will map to DWARF sections
-	LLVM_ADDRSIG,  // Not used in ELF
-	Count
-};
+// SectionType is defined in ObjFileWriter.h
+// We use the same enum for consistency between COFF and ELF
 
 /**
  * @brief ELF object file writer for Linux target
@@ -205,14 +193,14 @@ public:
 
 	/**
 	 * @brief Add a string literal to .rodata section
-	 * @return Symbol name for the string literal (as string_view)
+	 * @return Symbol name for the string literal (as std::string for compatibility)
 	 */
-	std::string_view add_string_literal(std::string_view str_content) {
+	std::string add_string_literal(std::string_view str_content) {
 		// Generate unique symbol name using StringBuilder
 		StringBuilder builder;
 		builder.append(".L.str.");
 		builder.append(static_cast<uint64_t>(string_literal_counter_++));
-		std::string_view symbol_name = builder.commit();
+		std::string_view symbol_name_sv = builder.commit();
 
 		// Get current offset in .rodata
 		auto* rodata = getSectionByName(".rodata");
@@ -229,15 +217,15 @@ public:
 		rodata->append_data(str_data.data(), str_data.size());
 
 		// Add symbol - need to use symbol_name.data() for ELFIO's const char* interface
-		auto symbol_index = getOrCreateSymbol(symbol_name, ELFIO::STT_OBJECT, ELFIO::STB_LOCAL, 
+		auto symbol_index = getOrCreateSymbol(symbol_name_sv, ELFIO::STT_OBJECT, ELFIO::STB_LOCAL, 
 		                                      rodata->get_index(), offset, processed_str.size());
 
 		if (g_enable_debug_output) {
 			std::cerr << "Added string literal '" << processed_str << "' with symbol " 
-			          << symbol_name << std::endl;
+			          << symbol_name_sv << std::endl;
 		}
 
-		return symbol_name;
+		return std::string(symbol_name_sv);
 	}
 
 	/**
@@ -307,12 +295,12 @@ public:
 	/**
 	 * @brief Get mangled name (for now, return as-is - Itanium mangling deferred)
 	 */
-	std::string_view getMangledName(std::string_view name) const {
+	std::string getMangledName(std::string_view name) const {
 		// MVP: Use C linkage (unmangled names)
-		// For MVP, the name passed in should already be stable (from the caller)
+		// For MVP, return a copy since IRConverter expects std::string
 		// When we implement Itanium mangling, we'll use StringBuilder and store in function_signatures_
 		// TODO: Implement Itanium name mangling in future milestone
-		return name;
+		return std::string(name);
 	}
 
 	/**
@@ -340,6 +328,17 @@ public:
 		return mangled;
 	}
 
+	// Overload that accepts pre-computed mangled name (without class_name)
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
+	                          const std::vector<TypeSpecifierNode>& parameter_types,
+	                          Linkage linkage, bool is_variadic,
+	                          std::string_view mangled_name) {
+		FunctionSignature sig(return_type, parameter_types);
+		sig.linkage = linkage;
+		sig.is_variadic = is_variadic;
+		function_signatures_[std::string(mangled_name)] = sig;
+	}
+
 	// Overloads for member functions (compatibility with ObjectFileWriter)
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
 	                                const std::vector<TypeSpecifierNode>& parameter_types,
@@ -352,6 +351,18 @@ public:
 		std::string mangled = generateMangledName(name, sig);
 		function_signatures_[mangled] = sig;
 		return mangled;
+	}
+
+	// Overload that accepts pre-computed mangled name (for function definitions from IR)
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
+	                          const std::vector<TypeSpecifierNode>& parameter_types,
+	                          std::string_view class_name, Linkage linkage, bool is_variadic,
+	                          std::string_view mangled_name) {
+		FunctionSignature sig(return_type, parameter_types);
+		sig.class_name = class_name;
+		sig.linkage = linkage;
+		sig.is_variadic = is_variadic;
+		function_signatures_[std::string(mangled_name)] = sig;
 	}
 
 	// Debug info methods (placeholders - DWARF support deferred)
@@ -368,8 +379,8 @@ public:
 	}
 
 	void add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags,
-	                       const std::vector<void*>& locations) {
-		// Placeholder - needs proper type
+	                       const std::vector<CodeView::VariableLocation>& locations) {
+		// Placeholder - DWARF debug info implementation deferred
 	}
 
 	void add_function_parameter(const std::string& name, uint32_t type_index, int32_t stack_offset) {

@@ -41,6 +41,7 @@ CXXFLAGS := -std=c++20
 SRCDIR := src
 BINDIR := x64
 TESTDIR := tests
+INCLUDES := -I $(SRCDIR)
 TESTINCLUDES := -I $(TESTDIR)/external/doctest/ -I $(SRCDIR) -I external
 
 # Build configuration subdirectories (matching MSVC structure)
@@ -68,14 +69,14 @@ BENCHMARK_TARGET := $(BENCHMARK_DIR)/benchmark$(EXE_EXT)
 $(MAIN_TARGET): $(MAIN_SOURCES)
 	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
-	$(CXX) $(CXXFLAGS) -g -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $^
 	@echo "Built: $@"
 
 # Build release executable
 $(RELEASE_TARGET): $(MAIN_SOURCES)
 	@echo "Building main executable (Release) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(RELEASE_DIR) 2>nul || $(MKDIR) $(RELEASE_DIR) || true
-	$(CXX) $(CXXFLAGS) -O2 -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -O2 -o $@ $^
 	@echo "Built: $@"
 
 # Build test executable
