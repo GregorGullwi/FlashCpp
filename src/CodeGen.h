@@ -5364,13 +5364,19 @@ private:
 
 						// Look up the object in the symbol table
 						const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-						if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
+						if (!symbol.has_value()) {
 							// Error: variable not found
 							return { Type::Int, 32, TempVar{0} };
 						}
 
-						const auto& decl_node = symbol->as<DeclarationNode>();
-						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+						// Get declaration from symbol (could be DeclarationNode or VariableDeclarationNode)
+						const DeclarationNode* decl_ptr = get_decl_from_symbol(*symbol);
+						if (!decl_ptr) {
+							// Error: not a declaration
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
 
 						if (type_node.type() != Type::Struct && type_node.type() != Type::UserDefined) {
 							// Error: not a struct type
