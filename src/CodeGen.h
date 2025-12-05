@@ -107,29 +107,29 @@ struct LambdaInfo {
 	// Generic lambda support (lambdas with auto parameters)
 	bool is_generic = false;                     // True if lambda has any auto parameters
 	std::vector<size_t> auto_param_indices;      // Indices of parameters with auto type
-	// Deduced types from call site (param_index -> Type, size_in_bits)
-	mutable std::vector<std::pair<size_t, std::pair<Type, int>>> deduced_auto_types;
+	// Deduced types from call site - store full TypeSpecifierNode to preserve struct type_index and reference flags
+	mutable std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_auto_types;
 	
 	// Get deduced type for a parameter at given index, returns nullopt if not deduced
-	std::optional<std::pair<Type, int>> getDeducedType(size_t param_index) const {
-		for (const auto& [idx, type_info] : deduced_auto_types) {
+	std::optional<TypeSpecifierNode> getDeducedType(size_t param_index) const {
+		for (const auto& [idx, type_node] : deduced_auto_types) {
 			if (idx == param_index) {
-				return type_info;
+				return type_node;
 			}
 		}
 		return std::nullopt;
 	}
 	
 	// Set deduced type for a parameter at given index
-	void setDeducedType(size_t param_index, Type type, int size_in_bits) const {
+	void setDeducedType(size_t param_index, const TypeSpecifierNode& type_node) const {
 		// Check if already set
-		for (auto& [idx, type_info] : deduced_auto_types) {
+		for (auto& [idx, stored_type] : deduced_auto_types) {
 			if (idx == param_index) {
-				type_info = {type, size_in_bits};
+				stored_type = type_node;
 				return;
 			}
 		}
-		deduced_auto_types.push_back({param_index, {type, size_in_bits}});
+		deduced_auto_types.push_back({param_index, type_node});
 	}
 };
 
@@ -313,7 +313,10 @@ public:
 			// Process from the end (newly added lambdas) backwards
 			size_t current_size = collected_lambdas_.size();
 			for (size_t i = current_size; i > processed_count; --i) {
-				const auto& lambda_info = collected_lambdas_[i - 1];
+				// CRITICAL: Copy the LambdaInfo before calling generateLambdaFunctions
+				// because that function may push new lambdas which can reallocate the vector
+				// and invalidate any references
+				LambdaInfo lambda_info = collected_lambdas_[i - 1];
 				// Skip if this lambda has already been generated (prevents duplicate definitions)
 				if (generated_lambda_ids_.find(lambda_info.lambda_id) != generated_lambda_ids_.end()) {
 					continue;
@@ -6789,7 +6792,39 @@ private:
 							if (symbol.has_value()) {
 								const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 								if (decl) {
-									arg_types.push_back(decl->type_node().as<TypeSpecifierNode>());
+									TypeSpecifierNode type_node = decl->type_node().as<TypeSpecifierNode>();
+									// Resolve auto type from initializer if available
+									if (type_node.type() == Type::Auto && symbol->is<VariableDeclarationNode>()) {
+										const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
+										const std::optional<ASTNode>& init_opt = var_decl.initializer();
+										if (init_opt.has_value()) {
+											const LambdaExpressionNode* lambda_ptr = nullptr;
+											if (init_opt->is<LambdaExpressionNode>()) {
+												lambda_ptr = &init_opt->as<LambdaExpressionNode>();
+											} else if (init_opt->is<ExpressionNode>()) {
+												const ExpressionNode& expr = init_opt->as<ExpressionNode>();
+												if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+													lambda_ptr = &std::get<LambdaExpressionNode>(expr);
+												}
+											}
+											if (lambda_ptr) {
+												// Get the lambda's closure type
+												std::string closure_type_name = lambda_ptr->generate_lambda_name();
+												auto type_it = gTypesByName.find(closure_type_name);
+												if (type_it != gTypesByName.end()) {
+													const TypeInfo* closure_type = type_it->second;
+													int closure_size = closure_type->getStructInfo() ? closure_type->getStructInfo()->total_size * 8 : 64;
+													type_node = TypeSpecifierNode(
+														Type::Struct,
+														closure_type->type_index_,
+														closure_size,
+														decl->identifier_token()
+													);
+												}
+											}
+										}
+									}
+									arg_types.push_back(type_node);
 								} else {
 									// Default to int
 									arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
@@ -6818,9 +6853,16 @@ private:
 							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 							
 							if (param_type.type() == Type::Auto && arg_idx < arg_types.size()) {
-								// Deduce type from argument
-								deduced_param_types.push_back(arg_types[arg_idx]);
-								param_types.push_back(arg_types[arg_idx]);
+								// Deduce type from argument, preserving reference flags from auto&& parameter
+								TypeSpecifierNode deduced_type = arg_types[arg_idx];
+								// Copy reference flags from auto parameter (e.g., auto&& -> T&&)
+								if (param_type.is_rvalue_reference()) {
+									deduced_type.set_reference(true);  // rvalue reference (&&)
+								} else if (param_type.is_reference()) {
+									deduced_type.set_reference(false);  // lvalue reference (&)
+								}
+								deduced_param_types.push_back(deduced_type);
+								param_types.push_back(deduced_type);
 							} else {
 								param_types.push_back(param_type);
 							}
@@ -6852,12 +6894,11 @@ private:
 						// Find the LambdaInfo for this lambda
 						for (auto& lambda_info : collected_lambdas_) {
 							if (lambda_info.lambda_id == lambda.lambda_id()) {
-								// Store deduced types
+								// Store deduced types (full TypeSpecifierNode to preserve struct info and reference flags)
 								for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
 									lambda_info.setDeducedType(
 										auto_param_indices[i],
-										deduced_param_types[i].type(),
-										deduced_param_types[i].size_in_bits()
+										deduced_param_types[i]
 									);
 								}
 								break;
@@ -7410,6 +7451,9 @@ private:
 		} else {
 			// Generate regular (non-virtual) member function call using CallOp typed payload
 			
+			// Vector to hold deduced parameter types (populated for generic lambdas)
+			std::vector<TypeSpecifierNode> param_types;
+			
 			// Check if this is an instantiated template function
 			std::string function_name;
 			std::string_view func_name = func_decl_node.identifier_token().value();
@@ -7468,12 +7512,102 @@ private:
 					
 					// Get return type and parameter types from the function declaration
 					const auto& return_type_node = func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
-					std::vector<TypeSpecifierNode> param_types;
-					for (const auto& param_node : func_for_mangling->parameter_nodes()) {
-						if (param_node.is<DeclarationNode>()) {
-							const auto& param_decl = param_node.as<DeclarationNode>();
-							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-							param_types.push_back(param_type);
+					
+					// Check if this is a generic lambda call (lambda with auto parameters)
+					bool is_generic_lambda = struct_name.substr(0, 9) == "__lambda_";
+					if (is_generic_lambda) {
+						// For generic lambdas, we need to deduce auto parameter types from arguments
+						// Collect argument types first
+						std::vector<TypeSpecifierNode> arg_types;
+						memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+							const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
+							if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+								const auto& identifier = std::get<IdentifierNode>(arg_expr);
+								const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+								if (symbol.has_value()) {
+									const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+									if (decl) {
+										TypeSpecifierNode type_node = decl->type_node().as<TypeSpecifierNode>();
+										// Resolve auto type from lambda initializer if available
+										if (type_node.type() == Type::Auto && symbol->is<VariableDeclarationNode>()) {
+											const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
+											const std::optional<ASTNode>& init_opt = var_decl.initializer();
+											if (init_opt.has_value()) {
+												const LambdaExpressionNode* lambda_ptr = nullptr;
+												if (init_opt->is<LambdaExpressionNode>()) {
+													lambda_ptr = &init_opt->as<LambdaExpressionNode>();
+												} else if (init_opt->is<ExpressionNode>()) {
+													const ExpressionNode& expr = init_opt->as<ExpressionNode>();
+													if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+														lambda_ptr = &std::get<LambdaExpressionNode>(expr);
+													}
+												}
+												if (lambda_ptr) {
+													std::string closure_name = lambda_ptr->generate_lambda_name();
+													auto type_it = gTypesByName.find(closure_name);
+													if (type_it != gTypesByName.end()) {
+														const TypeInfo* closure_type = type_it->second;
+														int closure_size = closure_type->getStructInfo() ? closure_type->getStructInfo()->total_size * 8 : 64;
+														type_node = TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size, decl->identifier_token());
+													}
+												}
+											}
+										}
+										arg_types.push_back(type_node);
+									} else {
+										arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+									}
+								} else {
+									arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+								}
+							} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
+								const auto& literal = std::get<NumericLiteralNode>(arg_expr);
+								arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None, 
+									static_cast<unsigned char>(literal.sizeInBits())));
+							} else {
+								// Default to int for complex expressions
+								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+							}
+						});
+						
+						// Now build param_types with deduced types for auto parameters
+						size_t arg_idx = 0;
+						for (const auto& param_node : func_for_mangling->parameter_nodes()) {
+							if (param_node.is<DeclarationNode>()) {
+								const auto& param_decl = param_node.as<DeclarationNode>();
+								const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+								
+								if (param_type.type() == Type::Auto && arg_idx < arg_types.size()) {
+									// Deduce type from argument, preserving reference flags from auto&& parameter
+									TypeSpecifierNode deduced_type = arg_types[arg_idx];
+									if (param_type.is_rvalue_reference()) {
+										deduced_type.set_reference(true);  // rvalue reference (&&)
+									} else if (param_type.is_reference()) {
+										deduced_type.set_reference(false);  // lvalue reference (&)
+									}
+									param_types.push_back(deduced_type);
+									
+									// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction
+									for (auto& lambda_info : collected_lambdas_) {
+										if (std::string(lambda_info.closure_type_name) == std::string(struct_name)) {
+											lambda_info.setDeducedType(arg_idx, deduced_type);
+											break;
+										}
+									}
+								} else {
+									param_types.push_back(param_type);
+								}
+							}
+							arg_idx++;
+						}
+					} else {
+						// Non-lambda: use parameter types directly from declaration
+						for (const auto& param_node : func_for_mangling->parameter_nodes()) {
+							if (param_node.is<DeclarationNode>()) {
+								const auto& param_decl = param_node.as<DeclarationNode>();
+								const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+								param_types.push_back(param_type);
+							}
 						}
 					}
 					
@@ -7525,8 +7659,14 @@ private:
 				auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 			
 				// Get the parameter type from the function declaration to check if it's a reference
+				// For generic lambdas, use the deduced types from param_types instead of the original auto types
 				const TypeSpecifierNode* param_type = nullptr;
-				if (arg_index < actual_func_decl->parameter_nodes().size()) {
+				std::optional<TypeSpecifierNode> deduced_param_type;
+				if (arg_index < param_types.size()) {
+					// Use deduced type from param_types (handles generic lambdas correctly)
+					deduced_param_type = param_types[arg_index];
+					param_type = &(*deduced_param_type);
+				} else if (arg_index < actual_func_decl->parameter_nodes().size()) {
 					const ASTNode& param_node = actual_func_decl->parameter_nodes()[arg_index];
 					if (param_node.is<DeclarationNode>()) {
 						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
@@ -7643,8 +7783,89 @@ private:
 					}
 				}
 				else {
-					// Use toTypedValue helper to convert from operand vector
-					call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+					// Not an identifier - could be a literal, expression result, etc.
+					// Check if parameter expects a reference and argument is a literal
+					if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+						// Parameter expects a reference, but argument is not an identifier
+						// We need to materialize the value into a temporary and pass its address
+						
+						// Check if this is a literal value (has unsigned long long or double in operand[2])
+						bool is_literal = (argumentIrOperands.size() >= 3 && 
+						                  (std::holds_alternative<unsigned long long>(argumentIrOperands[2]) ||
+						                   std::holds_alternative<double>(argumentIrOperands[2])));
+						
+						if (is_literal) {
+							// Materialize the literal into a temporary variable
+							Type literal_type = std::get<Type>(argumentIrOperands[0]);
+							int literal_size = std::get<int>(argumentIrOperands[1]);
+							
+							// Create a temporary variable to hold the literal value
+							TempVar temp_var = var_counter.next();
+							
+							// Generate an assignment IR to store the literal using typed payload
+							AssignmentOp assign_op;
+							assign_op.result = temp_var;  // unused but required
+							
+							// Convert IrOperand to IrValue for the literal
+							IrValue rhs_value;
+							if (std::holds_alternative<unsigned long long>(argumentIrOperands[2])) {
+								rhs_value = std::get<unsigned long long>(argumentIrOperands[2]);
+							} else if (std::holds_alternative<double>(argumentIrOperands[2])) {
+								rhs_value = std::get<double>(argumentIrOperands[2]);
+							}
+							
+							// Create TypedValue for lhs and rhs
+							assign_op.lhs = TypedValue{literal_type, literal_size, temp_var};
+							assign_op.rhs = TypedValue{literal_type, literal_size, rhs_value};
+							
+							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+							
+							// Now take the address of the temporary
+							TempVar addr_var = var_counter.next();
+							AddressOfOp addr_op;
+							addr_op.result = addr_var;
+							addr_op.pointee_type = literal_type;
+							addr_op.pointee_size_in_bits = literal_size;
+							addr_op.operand = temp_var;
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+							
+							// Pass the address
+							call_op.args.push_back(TypedValue{
+								.type = literal_type,
+								.size_in_bits = 64,  // Pointer size
+								.value = IrValue(addr_var),
+								.is_reference = true
+							});
+						} else {
+							// Not a literal (expression result in a TempVar) - take its address
+							if (argumentIrOperands.size() >= 3 && std::holds_alternative<TempVar>(argumentIrOperands[2])) {
+								Type expr_type = std::get<Type>(argumentIrOperands[0]);
+								int expr_size = std::get<int>(argumentIrOperands[1]);
+								TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
+								
+								TempVar addr_var = var_counter.next();
+								AddressOfOp addr_op;
+								addr_op.result = addr_var;
+								addr_op.pointee_type = expr_type;
+								addr_op.pointee_size_in_bits = expr_size;
+								addr_op.operand = expr_var;
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								
+								call_op.args.push_back(TypedValue{
+									.type = expr_type,
+									.size_in_bits = 64,  // Pointer size
+									.value = IrValue(addr_var),
+									.is_reference = true
+								});
+							} else {
+								// Fallback - just pass through
+								call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+							}
+						}
+					} else {
+						// Parameter doesn't expect a reference - pass through as-is
+						call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
+					}
 				}
 			
 				arg_index++;
@@ -9683,6 +9904,11 @@ private:
 				continue;
 			}
 
+			// Skip init-captures: [x = expr] defines a new variable, doesn't capture existing one
+			if (capture.has_initializer()) {
+				continue;
+			}
+
 			// Look up the captured variable in the current scope
 			std::string_view var_name = capture.identifier_name();
 			std::optional<ASTNode> var_symbol = symbol_table.lookup(var_name);
@@ -9852,14 +10078,14 @@ private:
 							const ASTNode& init_node = *capture.initializer();
 							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							
-							if (init_operands.empty()) {
+							if (init_operands.size() < 3) {
 								capture_index++;
 								continue;
 							}
 							
-							// The first operand is the result of the expression
-							// It should be a TempVar or a value
-							IrOperand init_value = init_operands[0];
+							// visitExpressionNode returns {type, size, value, ...}
+							// The actual value is at index 2
+							IrOperand init_value = init_operands[2];
 							
 							// Store the value in the closure member
 							// We need to convert IrOperand to IrValue
@@ -9922,7 +10148,20 @@ private:
 									member_load.result.size_in_bits = 64;  // Pointer size
 									member_load.object = std::string_view("this");  // "this" is a string literal
 									member_load.member_name = var_name;  // Already a persistent string_view from AST
-									member_load.offset = -1;  // Let IR converter find it
+									
+									// Look up the offset from the enclosing lambda's struct
+									int enclosing_offset = -1;
+									auto enclosing_type_it = gTypesByName.find(current_lambda_closure_type_);
+									if (enclosing_type_it != gTypesByName.end()) {
+										const TypeInfo* enclosing_type = enclosing_type_it->second;
+										if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
+											const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
+											if (enclosing_member) {
+												enclosing_offset = static_cast<int>(enclosing_member->offset);
+											}
+										}
+									}
+									member_load.offset = enclosing_offset;
 									member_load.struct_type_info = nullptr;
 									member_load.is_reference = true;  // Mark as reference
 									member_load.is_rvalue_reference = false;
@@ -9975,7 +10214,20 @@ private:
 							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 							member_load.object = std::string_view("this");  // "this" is a string literal
 							member_load.member_name = var_name;  // Already a persistent string_view from AST
-							member_load.offset = -1;  // Let IR converter find it
+							
+							// Look up the offset from the enclosing lambda's struct
+							int enclosing_offset = -1;
+							auto enclosing_type_it = gTypesByName.find(current_lambda_closure_type_);
+							if (enclosing_type_it != gTypesByName.end()) {
+								const TypeInfo* enclosing_type = enclosing_type_it->second;
+								if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
+									const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
+									if (enclosing_member) {
+										enclosing_offset = static_cast<int>(enclosing_member->offset);
+									}
+								}
+							}
+							member_load.offset = enclosing_offset;
 							member_load.struct_type_info = nullptr;
 							member_load.is_reference = false;
 							member_load.is_rvalue_reference = false;
@@ -10026,6 +10278,9 @@ private:
 		// CRITICAL FIX: Add operator() to the closure struct's member_functions list
 		// This allows member function calls to find the correct declaration for mangling
 		// Without this, lambda calls generate incorrect mangled names
+		if (lambda_info.closure_type_name.empty()) {
+			return;  // No closure type, can't add member functions
+		}
 		auto type_it = gTypesByName.find(lambda_info.closure_type_name);
 		if (type_it != gTypesByName.end()) {
 			TypeInfo* closure_type = const_cast<TypeInfo*>(type_it->second);
@@ -10098,15 +10353,8 @@ private:
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
-						// Use the deduced type from call site
-						TypeSpecifierNode deduced_type(deduced->first, 0, deduced->second, lambda_info.lambda_token);
-						// Copy reference flags from original auto parameter
-						if (param_type.is_rvalue_reference()) {
-							deduced_type.set_reference(true);  // rvalue reference
-						} else if (param_type.is_reference()) {
-							deduced_type.set_reference(false);  // lvalue reference
-						}
-						param_types.push_back(deduced_type);
+						// Use the deduced type from call site (already has reference flags)
+						param_types.push_back(*deduced);
 					} else {
 						// No deduced type available, fallback to int
 						TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
@@ -10146,22 +10394,24 @@ private:
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
-						func_param.type = deduced->first;
-						func_param.size_in_bits = deduced->second;
+						func_param.type = deduced->type();
+						func_param.size_in_bits = deduced->size_in_bits();
+						// Use reference flags from the deduced type (set at call site)
+						func_param.is_reference = deduced->is_reference();
+						func_param.is_rvalue_reference = deduced->is_rvalue_reference();
 					} else {
 						// No deduced type available, fallback to int
 						func_param.type = Type::Int;
 						func_param.size_in_bits = 32;
+						func_param.is_reference = param_type.is_reference();
+						func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 					}
 				} else {
 					func_param.type = param_type.type();
 					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+					func_param.is_reference = param_type.is_reference();
+					func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 				}
-				
-				// Preserve reference flags for all parameter types (including auto)
-				// This ensures mangled names are consistent between call sites and definitions
-				func_param.is_reference = param_type.is_reference();
-				func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
 			}
@@ -10284,13 +10534,8 @@ private:
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
-						TypeSpecifierNode deduced_type(deduced->first, 0, deduced->second, lambda_info.lambda_token);
-						if (param_type.is_rvalue_reference()) {
-							deduced_type.set_reference(true);  // rvalue reference
-						} else if (param_type.is_reference()) {
-							deduced_type.set_reference(false);  // lvalue reference
-						}
-						param_types.push_back(deduced_type);
+						// Use the deduced type from call site (already has reference flags)
+						param_types.push_back(*deduced);
 					} else {
 						TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
 						param_types.push_back(int_type);
@@ -10328,21 +10573,23 @@ private:
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
-						func_param.type = deduced->first;
-						func_param.size_in_bits = deduced->second;
+						func_param.type = deduced->type();
+						func_param.size_in_bits = deduced->size_in_bits();
+						// Use reference flags from the deduced type (set at call site)
+						func_param.is_reference = deduced->is_reference();
+						func_param.is_rvalue_reference = deduced->is_rvalue_reference();
 					} else {
 						func_param.type = Type::Int;
 						func_param.size_in_bits = 32;
+						func_param.is_reference = param_type.is_reference();
+						func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 					}
 				} else {
 					func_param.type = param_type.type();
 					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+					func_param.is_reference = param_type.is_reference();
+					func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 				}
-				
-				// Preserve reference flags for all parameter types (including auto)
-				// This ensures mangled names are consistent between call sites and definitions
-				func_param.is_reference = param_type.is_reference();
-				func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
 			}
@@ -10406,6 +10653,12 @@ private:
 			// Skip [this] and [*this] captures - they don't have variable declarations
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
 			    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+				continue;
+			}
+
+			// Skip init-captures: [x = expr] defines a new variable, doesn't capture existing one
+			// These are handled separately by reading from the closure member
+			if (capture.has_initializer()) {
 				continue;
 			}
 
