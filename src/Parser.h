@@ -337,6 +337,9 @@ private:
         // Track if we're parsing a template body (for template parameter reference recognition)
         bool parsing_template_body_ = false;
         std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
+        
+        // Track if current scope has parameter packs (enables fold expression parsing)
+        bool has_parameter_packs_ = false;
 
         // Track last failed template argument parse position to prevent infinite loops
         size_t last_failed_template_arg_parse_cursor_ = SIZE_MAX;
@@ -374,6 +377,10 @@ private:
                 return ASTNode::emplace_node<T>(std::forward<Args>(args)...);
         }
 
+        // Handle-based save/restore to avoid cursor position collisions
+        // Each save gets a unique handle from a static incrementing counter
+        using SaveHandle = size_t;
+
         class ScopedTokenPosition {
         public:
                 explicit ScopedTokenPosition(class Parser& parser, 
@@ -391,7 +398,7 @@ private:
 
         private:
                 class Parser& parser_;
-                TokenPosition saved_position_;
+                SaveHandle saved_handle_;
                 bool discarded_ = false;
                 std::source_location location_;
         };
@@ -399,31 +406,11 @@ private:
         struct SavedToken {
                 std::optional<Token> current_token_;
                 size_t ast_nodes_size_ = 0;
+                TokenPosition lexer_position_;  // Store the lexer position with each save
         };
         
-        // Composite key for saved_tokens_ map to avoid collisions when multiple saves
-        // happen at the same cursor position (e.g., after restore in fold expression parsing)
-        struct SavedTokenKey {
-                size_t cursor_;
-                size_t sequence_;
-                
-                bool operator==(const SavedTokenKey& other) const {
-                        return cursor_ == other.cursor_ && sequence_ == other.sequence_;
-                }
-        };
-        
-        struct SavedTokenKeyHash {
-                size_t operator()(const SavedTokenKey& key) const {
-                        return key.cursor_ ^ (key.sequence_ << 1);
-                }
-        };
-        
-        std::unordered_map<SavedTokenKey, SavedToken, SavedTokenKeyHash> saved_tokens_;
-        
-        // Stack of sequence numbers for each cursor position
-        // This allows multiple saves at the same cursor (e.g., after restore in fold expression parsing)
-        std::unordered_map<size_t, std::vector<size_t>> cursor_to_sequence_stack_;
-        size_t save_sequence_counter_ = 0;  // Auto-incrementing counter for unique save operations
+        std::unordered_map<SaveHandle, SavedToken> saved_tokens_;
+        size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
 
         std::optional<Token> consume_token();
 
@@ -630,10 +617,10 @@ public:  // Public methods for template instantiation
             return nullptr;
         }
 
-        TokenPosition save_token_position();
-        void restore_token_position(const TokenPosition& token_position, const std::source_location location = std::source_location::current());
-        void restore_lexer_position_only(const TokenPosition& token_position);  // Restore lexer without erasing AST nodes
-        void discard_saved_token(const TokenPosition& token_position);
+        SaveHandle save_token_position();
+        void restore_token_position(SaveHandle handle, const std::source_location location = std::source_location::current());
+        void restore_lexer_position_only(SaveHandle handle);  // Restore lexer without erasing AST nodes
+        void discard_saved_token(SaveHandle handle);
 
         // Helper for delayed parsing
         void skip_balanced_braces();  // Skip over a balanced brace block
