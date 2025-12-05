@@ -303,11 +303,15 @@ private:
         };
         std::vector<StructParsingContext> struct_parsing_context_stack_;
 
+        // Handle-based save/restore to avoid cursor position collisions
+        // Each save gets a unique handle from a static incrementing counter
+        using SaveHandle = size_t;
+
         // Delayed function body parsing for inline member functions
         struct DelayedFunctionBody {
                 FunctionDeclarationNode* func_node;      // The function node to attach body to
-                TokenPosition body_start;                 // Position of the '{'
-                TokenPosition initializer_list_start;     // Position of ':' for constructor initializer list (optional)
+                SaveHandle body_start;                    // Handle to saved position at '{'
+                SaveHandle initializer_list_start;       // Handle to saved position at ':' for constructor initializer list
                 bool has_initializer_list;                // True if constructor has an initializer list to re-parse
                 std::string_view struct_name;            // For member function context
                 size_t struct_type_index;                // For member function context
@@ -323,7 +327,7 @@ private:
         // Template member function body for delayed instantiation
         // This stores the token position and template parameter info for re-parsing
         struct TemplateMemberFunctionBody {
-                TokenPosition body_start;                           // Position of the '{'
+                SaveHandle body_start;                           // Handle to saved position at '{'
                 std::vector<std::string_view> template_param_names; // Names of template parameters (e.g., "T", "U") - from Token storage
                 FunctionDeclarationNode* template_func_node;        // The original template function node
         };
@@ -341,8 +345,8 @@ private:
         // Track if current scope has parameter packs (enables fold expression parsing)
         bool has_parameter_packs_ = false;
 
-        // Track last failed template argument parse position to prevent infinite loops
-        size_t last_failed_template_arg_parse_cursor_ = SIZE_MAX;
+        // Track last failed template argument parse handle to prevent infinite loops
+        SaveHandle last_failed_template_arg_parse_handle_ = SIZE_MAX;
 
         // Track functions currently undergoing auto return type deduction to prevent infinite recursion
         std::unordered_set<const FunctionDeclarationNode*> functions_being_deduced_;
@@ -376,10 +380,6 @@ private:
         template <typename T, typename... Args> ASTNode emplace_node(Args&&... args) {
                 return ASTNode::emplace_node<T>(std::forward<Args>(args)...);
         }
-
-        // Handle-based save/restore to avoid cursor position collisions
-        // Each save gets a unique handle from a static incrementing counter
-        using SaveHandle = size_t;
 
         class ScopedTokenPosition {
         public:
@@ -490,7 +490,7 @@ private:
 public:  // Public methods for template instantiation
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
-		TokenPosition body_pos,
+		SaveHandle body_pos,
 		const std::vector<std::string_view>& template_param_names,
 		const std::vector<Type>& concrete_types,
 		std::string_view struct_name = "",  // Optional: for member functions
