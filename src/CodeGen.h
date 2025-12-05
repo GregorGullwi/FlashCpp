@@ -93,6 +93,7 @@ struct LambdaInfo {
 	std::string conversion_op_name;     // e.g., "__lambda_0_conversion"
 	Type return_type;
 	int return_size;
+	TypeIndex return_type_index = 0;    // Type index for struct/enum return types
 	std::vector<std::tuple<Type, int, int, std::string>> parameters;  // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
 	ASTNode lambda_body;                // Copy of the lambda body
@@ -9172,10 +9173,12 @@ private:
 		// Determine return type
 		info.return_type = Type::Int;  // Default to int
 		info.return_size = 32;
+		info.return_type_index = 0;
 		if (lambda.return_type().has_value()) {
 			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
 			info.return_type = ret_type_node.type();
 			info.return_size = ret_type_node.size_in_bits();
+			info.return_type_index = ret_type_node.type_index();
 		}
 
 		// Collect parameters
@@ -9480,19 +9483,33 @@ private:
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
 
-		// Generate proper mangled name for operator()
-		// Build TypeSpecifierNode for return type
-		TypeSpecifierNode return_type_node(lambda_info.return_type, 0, lambda_info.return_size, lambda_info.lambda_token);
+		// Build TypeSpecifierNode for return type (with proper type_index if struct)
+		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
 		
-		// Build TypeSpecifierNodes for parameters
+		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
-		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
-			TypeSpecifierNode param_type_node(type, 0, size, lambda_info.lambda_token);
-			// Add pointer levels if needed
-			for (int i = 0; i < pointer_depth; ++i) {
-				param_type_node.add_pointer_level();
+		for (const auto& param_node : lambda_info.parameter_nodes) {
+			if (param_node.is<DeclarationNode>()) {
+				const auto& param_decl = param_node.as<DeclarationNode>();
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				
+				// Create a copy of the TypeSpecifierNode
+				// For auto parameters, we've already decided to treat them as value types (Type::Auto -> Type::Int in our case)
+				// But for mangling, we need the type as declared
+				TypeSpecifierNode param_type_copy = param_type;
+				
+				// For auto parameters, clear reference flags for mangling (matching function signature)
+				if (param_type.type() == Type::Auto) {
+					// Create new node without reference flags
+					param_type_copy = TypeSpecifierNode(param_type.type(), param_type.type_index(), param_type.size_in_bits(), param_type.token());
+					// Copy pointer depth
+					for (size_t i = 0; i < param_type.pointer_depth(); ++i) {
+						param_type_copy.add_pointer_level();
+					}
+				}
+				
+				param_types.push_back(param_type_copy);
 			}
-			param_types.push_back(param_type_node);
 		}
 		
 		// Generate mangled name using the same function as regular member functions
@@ -9630,19 +9647,31 @@ private:
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
 
-		// Generate proper mangled name for __invoke
-		// Build TypeSpecifierNode for return type
-		TypeSpecifierNode return_type_node(lambda_info.return_type, 0, lambda_info.return_size, lambda_info.lambda_token);
+		// Build TypeSpecifierNode for return type (with proper type_index if struct)
+		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
 		
-		// Build TypeSpecifierNodes for parameters
+		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
-		for (const auto& [type, size, pointer_depth, name] : lambda_info.parameters) {
-			TypeSpecifierNode param_type_node(type, 0, size, lambda_info.lambda_token);
-			// Add pointer levels if needed
-			for (int i = 0; i < pointer_depth; ++i) {
-				param_type_node.add_pointer_level();
+		for (const auto& param_node : lambda_info.parameter_nodes) {
+			if (param_node.is<DeclarationNode>()) {
+				const auto& param_decl = param_node.as<DeclarationNode>();
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				
+				// Create a copy of the TypeSpecifierNode
+				TypeSpecifierNode param_type_copy = param_type;
+				
+				// For auto parameters, clear reference flags for mangling (matching function signature)
+				if (param_type.type() == Type::Auto) {
+					// Create new node without reference flags
+					param_type_copy = TypeSpecifierNode(param_type.type(), param_type.type_index(), param_type.size_in_bits(), param_type.token());
+					// Copy pointer depth
+					for (size_t i = 0; i < param_type.pointer_depth(); ++i) {
+						param_type_copy.add_pointer_level();
+					}
+				}
+				
+				param_types.push_back(param_type_copy);
 			}
-			param_types.push_back(param_type_node);
 		}
 		
 		// Generate mangled name for the __invoke function (free function, not member)
