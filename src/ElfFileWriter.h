@@ -235,9 +235,15 @@ public:
 		// Add relocation entry
 		// For RELA format: offset, symbol, type, addend
 		ELFIO::Elf64_Addr rel_offset = offset;
-		// Use the macro properly - it's defined as a function-like macro
-		ELFIO::Elf_Xword rel_info = (((std::int64_t)(symbol_index)) << 32) + ((relocation_type) & 0xffffffffL);
-		ELFIO::Elf_Sxword addend = -4;  // Standard addend for PC-relative
+		
+		// Construct r_info field for x86-64 ELF relocation
+		// Format: r_info = (symbol_index << 32) | (relocation_type & 0xffffffff)
+		// This matches the ELF64_R_INFO macro but we inline it to avoid macro namespace issues
+		// Upper 32 bits: symbol table index
+		// Lower 32 bits: relocation type (e.g., R_X86_64_PC32 = 2)
+		ELFIO::Elf_Xword rel_info = (static_cast<ELFIO::Elf_Xword>(symbol_index) << 32) | 
+		                             (static_cast<ELFIO::Elf_Xword>(relocation_type) & 0xffffffffUL);
+		ELFIO::Elf_Sxword addend = -4;  // Standard addend for PC-relative (compensate for instruction size)
 
 		rela_accessor->add_entry(rel_offset, rel_info, addend);
 	}
