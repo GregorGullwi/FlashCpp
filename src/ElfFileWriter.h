@@ -48,7 +48,6 @@ public:
 	static constexpr size_t POINTER_SIZE = 8;
 
 	// Use shared structures from ObjectFileCommon
-	using EFunctionCallingConv = ObjectFileCommon::EFunctionCallingConv;
 	using FunctionSignature = ObjectFileCommon::FunctionSignature;
 	using CatchHandlerInfo = ObjectFileCommon::CatchHandlerInfo;
 	using UnwindMapEntryInfo = ObjectFileCommon::UnwindMapEntryInfo;
