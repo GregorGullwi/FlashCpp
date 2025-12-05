@@ -224,13 +224,15 @@ Map COFF relocation types to ELF for x86-64:
 
 ## Implementation Order (Prioritized)
 
-### Milestone 1: Basic Infrastructure (This PR)
+### Milestone 1: Basic Infrastructure (This PR) ✅
 1. ✅ **Create this planning document**
-2. Add ELFIO library to `src/elfio/`
-3. Create skeletal `ElfFileWriter` class with basic structure
-4. Implement platform detection in build/main
-5. Add basic .text, .data, .rodata sections
-6. Implement minimal symbol table
+2. ✅ **Add ELFIO library to `src/elfio/`** - Header-only library added with LICENSE
+3. ✅ **Create skeletal `ElfFileWriter` class with basic structure**
+4. ✅ **Basic .text, .data, .rodata sections working**
+5. ✅ **Minimal symbol table implemented**
+6. ⏳ Implement platform detection in build/main
+7. ⏳ Test simple programs (return constant, global variables)
+8. ⏳ Verify ELF files are valid and can be inspected with readelf/objdump
 
 ### Milestone 2: Linking Support (Next PR)
 7. Implement relocations (PC32, 64-bit absolute)

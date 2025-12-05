@@ -513,6 +513,7 @@ private:
 		symtab_section_ = elf_writer_.sections.add(".symtab");
 		symtab_section_->set_type(ELFIO::SHT_SYMTAB);
 		symtab_section_->set_addr_align(8);
+		symtab_section_->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_SYMTAB));
 
 		// .strtab - string table
 		strtab_section_ = elf_writer_.sections.add(".strtab");
@@ -670,7 +671,35 @@ private:
 	 */
 	void finalizeSections() {
 		// Update section sizes and offsets
-		// ELFIO handles most of this automatically, but we can add custom logic here
+		// ELFIO handles most of this automatically, but we need to set sh_info for .symtab
+		
+		// For .symtab, sh_info should point to the first non-local symbol
+		// We need to count local symbols
+		auto* accessor = getSymbolAccessor();
+		if (accessor) {
+			ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
+			ELFIO::Elf_Xword first_global = 0;
+			
+			for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
+				std::string sym_name;
+				ELFIO::Elf64_Addr sym_value;
+				ELFIO::Elf_Xword sym_size;
+				unsigned char sym_bind, sym_type;
+				ELFIO::Elf_Half sym_section;
+				unsigned char sym_other;
+
+				accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
+				
+				// Check if this is a local symbol (bind == STB_LOCAL)
+				if (sym_bind != ELFIO::STB_LOCAL) {
+					first_global = i;
+					break;
+				}
+			}
+			
+			// Set sh_info to index of first global symbol
+			symtab_section_->set_info(first_global);
+		}
 		
 		if (g_enable_debug_output) {
 			std::cerr << "Finalizing sections:" << std::endl;
