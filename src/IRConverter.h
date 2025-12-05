@@ -2479,8 +2479,10 @@ inline void emitStoreToMemory(std::vector<char>& textSectionData, X64Register va
 		textSectionData.push_back(0x00 + (value_reg_bits << 3) + base_reg_bits);
 	} else if (offset >= -128 && offset <= 127) {
 		// [base_reg + disp8]
-		textSectionData.push_back(0x40 + (value_reg_bits << 3) + base_reg_bits);
-		textSectionData.push_back(static_cast<uint8_t>(offset));
+		uint8_t modrm = 0x40 + (value_reg_bits << 3) + base_reg_bits;
+		uint8_t disp = static_cast<uint8_t>(offset);
+		textSectionData.push_back(modrm);
+		textSectionData.push_back(disp);
 	} else {
 		// [base_reg + disp32]
 		textSectionData.push_back(0x80 + (value_reg_bits << 3) + base_reg_bits);
@@ -2929,6 +2931,9 @@ public:
 				break;
 			case IrOpcode::Dereference:
 				handleDereference(instruction);
+				break;
+			case IrOpcode::DereferenceStore:
+				handleDereferenceStore(instruction);
 				break;
 			case IrOpcode::MemberAccess:
 				handleMemberAccess(instruction);
@@ -4159,10 +4164,15 @@ private:
 
 	// Helper to generate and emit MOV reg, imm64
 	void emitMovImm64(X64Register destinationRegister, uint64_t immediate_value) {
-		// REX.W prefix for 64-bit operation
-		textSectionData.push_back(0x48);
-		// MOV r64, imm64 opcode (0xB8 + register encoding)
-		textSectionData.push_back(0xB8 + static_cast<uint8_t>(destinationRegister));
+		// REX prefix: REX.W for 64-bit operation, REX.B if destination is R8-R15
+		uint8_t rex_prefix = 0x48; // REX.W
+		uint8_t reg_encoding = static_cast<uint8_t>(destinationRegister);
+		if (reg_encoding >= 8) {
+			rex_prefix |= 0x01; // REX.B for R8-R15
+		}
+		textSectionData.push_back(rex_prefix);
+		// MOV r64, imm64 opcode (0xB8 + lower 3 bits of register encoding)
+		textSectionData.push_back(0xB8 + (reg_encoding & 0x07));
 		// Encode the 64-bit immediate value (little-endian)
 		for (int j = 0; j < 8; ++j) {
 			textSectionData.push_back(static_cast<uint8_t>((immediate_value >> (j * 8)) & 0xFF));
@@ -9797,10 +9807,11 @@ private:
 					pointer_loaded = true;
 				}
 			} else if (!is_literal) {
-				// TempVar - load its address
+				// TempVar - load its value (which is already a pointer from addressof)
 				auto value_var = std::get<TempVar>(op.value.value);
 				int32_t value_offset = getStackOffsetFromTempVar(value_var);
-				emitLeaFromFrame(value_reg, value_offset);
+				// The TempVar contains an address, so we MOV (load value) not LEA (load address of)
+				emitMovFromFrame(value_reg, value_offset);
 				pointer_loaded = true;
 			}
 			if (!pointer_loaded) {
@@ -10131,6 +10142,61 @@ private:
 		auto result_store = generateMovToFrameBySize(value_reg, result_offset, value_size);
 		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
 		                       result_store.op_codes.begin() + result_store.size_in_bytes);
+	}
+
+	void handleDereferenceStore(const IrInstruction& instruction) {
+		// DereferenceStore: *ptr = value
+		// Store a value through a pointer
+		assert(instruction.hasTypedPayload() && "DereferenceStore instruction must use typed payload");
+		const auto& op = instruction.getTypedPayload<DereferenceStoreOp>();
+		
+		int value_size = op.pointee_size_in_bits;
+		int value_size_bytes = value_size / 8;
+		
+		// Allocate registers through the register allocator to avoid conflicts
+		X64Register ptr_reg = allocateRegisterWithSpilling();
+		const StackVariableScope& current_scope = variable_scopes.back();
+		
+		if (std::holds_alternative<TempVar>(op.pointer)) {
+			TempVar temp = std::get<TempVar>(op.pointer);
+			int32_t temp_offset = getStackOffsetFromTempVar(temp);
+			emitMovFromFrame(ptr_reg, temp_offset);
+		} else {
+			std::string_view var_name = std::get<std::string_view>(op.pointer);
+			auto it = current_scope.identifier_offset.find(var_name);
+			if (it == current_scope.identifier_offset.end()) {
+				assert(false && "Pointer variable not found in DereferenceStore");
+				return;
+			}
+			emitMovFromFrame(ptr_reg, it->second);
+		}
+		
+		// Allocate a second register for the value - must be different from ptr_reg
+		X64Register value_reg = allocateRegisterWithSpilling();
+		
+		if (std::holds_alternative<unsigned long long>(op.value.value)) {
+			uint64_t imm_value = std::get<unsigned long long>(op.value.value);
+			emitMovImm64(value_reg, imm_value);
+		} else if (std::holds_alternative<TempVar>(op.value.value)) {
+			TempVar value_temp = std::get<TempVar>(op.value.value);
+			int32_t value_offset = getStackOffsetFromTempVar(value_temp);
+			emitMovFromFrameSized(
+				SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
+				SizedStackSlot{value_offset, value_size, isSignedType(op.value.type)}
+			);
+		} else if (std::holds_alternative<std::string_view>(op.value.value)) {
+			std::string_view var_name = std::get<std::string_view>(op.value.value);
+			auto it = current_scope.identifier_offset.find(var_name);
+			if (it != current_scope.identifier_offset.end()) {
+				emitMovFromFrameSized(
+					SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
+					SizedStackSlot{static_cast<int32_t>(it->second), value_size, isSignedType(op.value.type)}
+				);
+			}
+		}
+		
+		// Store value_reg to [ptr_reg] with appropriate size
+		emitStoreToMemory(textSectionData, value_reg, ptr_reg, 0, value_size_bytes);
 	}
 
 	void handleConditionalBranch(const IrInstruction& instruction) {

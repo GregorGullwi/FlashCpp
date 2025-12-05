@@ -12717,11 +12717,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto type_it = gTypesByName.find(closure_name);
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* closure_type = type_it->second;
-			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, 8, lambda.lambda_token());
+			// Get closure size in bits from struct info
+			int closure_size_bits = 64; // Default to pointer size
+			if (closure_type->getStructInfo()) {
+				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
+			}
+			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token());
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, 0, 8, lambda.lambda_token());
+		return TypeSpecifierNode(Type::Struct, 0, 64, lambda.lambda_token());
 	}
 
 	if (!expr_node.is<ExpressionNode>()) {
@@ -12867,11 +12872,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto type_it = gTypesByName.find(closure_name);
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* closure_type = type_it->second;
-			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, 8, lambda.lambda_token());
+			// Get closure size in bits from struct info
+			int closure_size_bits = 64; // Default to pointer size
+			if (closure_type->getStructInfo()) {
+				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
+			}
+			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token());
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, 0, 8, lambda.lambda_token());
+		return TypeSpecifierNode(Type::Struct, 0, 64, lambda.lambda_token());
 	}
 	else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For constructor calls like Widget(42), return the type being constructed

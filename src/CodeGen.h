@@ -87,10 +87,10 @@ struct RTTIInfo {
 
 // Structure to hold lambda information for deferred generation
 struct LambdaInfo {
-	std::string closure_type_name;      // e.g., "__lambda_0"
-	std::string operator_call_name;     // e.g., "__lambda_0_operator_call"
-	std::string invoke_name;            // e.g., "__lambda_0_invoke"
-	std::string conversion_op_name;     // e.g., "__lambda_0_conversion"
+	std::string_view closure_type_name;      // e.g., "__lambda_0" (persistent via StringBuilder)
+	std::string_view operator_call_name;     // e.g., "__lambda_0_operator_call" (persistent via StringBuilder)
+	std::string_view invoke_name;            // e.g., "__lambda_0_invoke" (persistent via StringBuilder)
+	std::string_view conversion_op_name;     // e.g., "__lambda_0_conversion" (persistent via StringBuilder)
 	Type return_type;
 	int return_size;
 	TypeIndex return_type_index = 0;    // Type index for struct/enum return types
@@ -272,23 +272,28 @@ public:
 
 	// Generate all collected lambdas (must be called after visiting all nodes)
 	void generateCollectedLambdas() {
-		// Generate lambdas in reverse order to handle nested lambdas correctly.
-		// Inner lambdas are collected AFTER outer lambdas during AST traversal,
-		// but they must be generated FIRST so their types exist when referenced.
+		// Generate lambdas, processing newly added ones as they appear.
+		// Nested lambdas are collected during body generation and will be processed
+		// in subsequent iterations of this loop.
 		// Example: auto maker = []() { return [](int x) { return x; }; };
-		//          Inner lambda [](int x) is collected after outer [](), but must be generated first.
-		if (collected_lambdas_.empty()) {
-			return;
-		}
+		//          When generating maker's body, the inner lambda is collected
+		//          and will be processed in the next iteration.
 		
-		for (size_t i = collected_lambdas_.size(); i > 0; --i) {
-			const auto& lambda_info = collected_lambdas_[i - 1];
-			// Skip if this lambda has already been generated (prevents duplicate definitions)
-			if (generated_lambda_ids_.find(lambda_info.lambda_id) != generated_lambda_ids_.end()) {
-				continue;
+		// Process until no new lambdas are added
+		size_t processed_count = 0;
+		while (processed_count < collected_lambdas_.size()) {
+			// Process from the end (newly added lambdas) backwards
+			size_t current_size = collected_lambdas_.size();
+			for (size_t i = current_size; i > processed_count; --i) {
+				const auto& lambda_info = collected_lambdas_[i - 1];
+				// Skip if this lambda has already been generated (prevents duplicate definitions)
+				if (generated_lambda_ids_.find(lambda_info.lambda_id) != generated_lambda_ids_.end()) {
+					continue;
+				}
+				generated_lambda_ids_.insert(lambda_info.lambda_id);
+				generateLambdaFunctions(lambda_info);
 			}
-			generated_lambda_ids_.insert(lambda_info.lambda_id);
-			generateLambdaFunctions(lambda_info);
+			processed_count = current_size;
 		}
 	}
 	
@@ -3441,7 +3446,9 @@ private:
 			} else if (init_node.is<LambdaExpressionNode>()) {
 				// Lambda expression initializer (direct)
 				const auto& lambda = init_node.as<LambdaExpressionNode>();
-				generateLambdaExpressionIr(lambda);
+				// Pass the target variable name so captures are stored in the right variable
+				std::string_view var_name = decl.identifier_token().value();
+				generateLambdaExpressionIr(lambda, var_name);
 				
 				// Check if target type is a function pointer - if so, store __invoke address
 				if (type_node.is_function_pointer() && lambda.captures().empty()) {
@@ -3450,12 +3457,18 @@ private:
 					operands.emplace_back(64);
 					operands.emplace_back(func_addr_var);
 				}
-				// For non-function-pointer targets, lambda variables are just empty structs (1 byte)
+				// Lambda expression already emitted VariableDecl, so return early
+				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
+					assert(false && "Expected identifier to be unique");
+				}
+				return;
 			} else if (init_node.is<ExpressionNode>() && 
 			           std::holds_alternative<LambdaExpressionNode>(init_node.as<ExpressionNode>())) {
 				// Lambda expression wrapped in ExpressionNode
 				const auto& lambda = std::get<LambdaExpressionNode>(init_node.as<ExpressionNode>());
-				generateLambdaExpressionIr(lambda);
+				// Pass the target variable name so captures are stored in the right variable
+				std::string_view var_name = decl.identifier_token().value();
+				generateLambdaExpressionIr(lambda, var_name);
 				
 				// Check if target type is a function pointer - if so, store __invoke address
 				if (type_node.is_function_pointer() && lambda.captures().empty()) {
@@ -3464,6 +3477,11 @@ private:
 					operands.emplace_back(64);
 					operands.emplace_back(func_addr_var);
 				}
+				// Lambda expression already emitted VariableDecl, so return early
+				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
+					assert(false && "Expected identifier to be unique");
+				}
+				return;
 			} else {
 				// Regular expression initializer
 				// For struct types with copy constructors, check if it's an rvalue (function return)
@@ -4060,6 +4078,31 @@ private:
 				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			}
 
+			// Check if this is a reference parameter - if so, we need to dereference it
+			// Reference parameters hold an address, and we need to load the value from that address
+			if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+				TempVar result_temp = var_counter.next();
+				DereferenceOp deref_op;
+				deref_op.result = result_temp;
+				
+				// For auto types, default to int (32 bits) since the mangling also defaults to int
+				// This matches the behavior in NameMangling.h which falls through to 'H' (int)
+				Type pointee_type = type_node.type();
+				int pointee_size = static_cast<int>(type_node.size_in_bits());
+				if (pointee_type == Type::Auto || pointee_size == 0) {
+					pointee_type = Type::Int;
+					pointee_size = 32;
+				}
+				
+				deref_op.pointee_type = pointee_type;
+				deref_op.pointee_size_in_bits = pointee_size;
+				deref_op.pointer = identifierNode.name();  // The reference parameter holds the address
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+				
+				TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+				return { pointee_type, pointee_size, result_temp, static_cast<unsigned long long>(type_index) };
+			}
+			
 			// Regular local variable
 			// For pointers, return 64 bits (pointer size)
 			int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
@@ -5315,6 +5358,69 @@ private:
 			}
 		}
 
+		// Special handling for assignment to captured-by-reference variable inside lambda
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && !current_lambda_closure_type_.empty()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
+				std::string_view lhs_name = lhs_ident.name();
+				std::string lhs_name_str(lhs_name);
+
+				// Check if this is a captured-by-reference variable
+				auto capture_it = current_lambda_captures_.find(lhs_name_str);
+				if (capture_it != current_lambda_captures_.end()) {
+					auto kind_it = current_lambda_capture_kinds_.find(lhs_name_str);
+					if (kind_it != current_lambda_capture_kinds_.end() &&
+					    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference) {
+						// This is assignment to a captured-by-reference variable
+						// We need to store through the pointer in the closure
+
+						// Generate IR for the RHS value
+						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+						// Get the original type from capture types
+						auto type_it = current_lambda_capture_types_.find(lhs_name_str);
+						if (type_it != current_lambda_capture_types_.end()) {
+							const TypeSpecifierNode& orig_type = type_it->second;
+
+							// Look up the closure struct to find the member
+							auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
+							if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
+								const StructTypeInfo* struct_info = closure_type_it->second->getStructInfo();
+								const StructMember* member = struct_info->findMemberRecursive(lhs_name_str);
+								if (member) {
+									// First, load the pointer from the closure member
+									TempVar ptr_temp = var_counter.next();
+									MemberLoadOp member_load;
+									member_load.result.value = ptr_temp;
+									member_load.result.type = member->type;
+									member_load.result.size_in_bits = 64;  // pointer size
+									member_load.object = std::string_view("this");
+									member_load.member_name = std::string_view(member->name);
+									member_load.offset = static_cast<int>(member->offset);
+									member_load.is_reference = member->is_reference;
+									member_load.is_rvalue_reference = member->is_rvalue_reference;
+									member_load.struct_type_info = nullptr;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), binaryOperatorNode.get_token()));
+
+									// Store through the pointer using DereferenceStore
+									DereferenceStoreOp store_op;
+									store_op.pointer = ptr_temp;
+									store_op.value = toTypedValue(rhsIrOperands);
+									store_op.pointee_type = orig_type.type();
+									store_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
+									ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), binaryOperatorNode.get_token()));
+
+									// Return the RHS value (assignment expression returns the assigned value)
+									return rhsIrOperands;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Special handling for function pointer assignment
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
@@ -6425,81 +6531,94 @@ private:
 		if (lambda_ptr) {
 			const LambdaExpressionNode& lambda = *lambda_ptr;
 
-			// Get the lambda info
-			std::string closure_type_name = lambda.generate_lambda_name();
-			std::string invoke_name = closure_type_name + "_invoke";
+			// CRITICAL: First, collect the lambda for generation!
+			// This ensures operator() and __invoke functions will be generated.
+			// Without this, the lambda is never added to collected_lambdas_ and
+			// its functions are never generated, causing linker errors.
+			generateLambdaExpressionIr(lambda);
 
-			// Generate a direct function call to __invoke
-			TempVar ret_var = var_counter.next();
+			// For non-capturing lambdas, we can optimize by calling __invoke directly
+			// (a static function that doesn't need a 'this' pointer).
+			// For capturing lambdas, we must call operator() with the closure object.
+			if (lambda.captures().empty()) {
+				// Non-capturing lambda: call __invoke directly
+				std::string closure_type_name = lambda.generate_lambda_name();
+				std::string invoke_name = closure_type_name + "_invoke";
 
-			// Create CallOp structure (matching the pattern in generateFunctionCallIr)
-			CallOp call_op;
-			call_op.result = ret_var;
-			
-			// Build TypeSpecifierNode for return type (needed for mangling)
-			TypeSpecifierNode return_type_node(Type::Int, 0, 32, memberFunctionCallNode.called_from());
-			if (lambda.return_type().has_value()) {
-				const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
-				return_type_node = ret_type;
-				call_op.return_type = ret_type.type();
-				call_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
-			} else {
-				// Default to int if no explicit return type
-				call_op.return_type = Type::Int;
-				call_op.return_size_in_bits = 32;
-			}
-			
-			// Build TypeSpecifierNodes for parameters (needed for mangling)
-			std::vector<TypeSpecifierNode> param_types;
-			if (lambda.parameters().has_value()) {
-				lambda.parameters()->visit([&](const ASTNode& param_node) {
-					if (param_node.is<DeclarationNode>()) {
-						const auto& param_decl = param_node.as<DeclarationNode>();
-						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-						param_types.push_back(param_type);
+				// Generate a direct function call to __invoke
+				TempVar ret_var = var_counter.next();
+
+				// Create CallOp structure (matching the pattern in generateFunctionCallIr)
+				CallOp call_op;
+				call_op.result = ret_var;
+				
+				// Build TypeSpecifierNode for return type (needed for mangling)
+				TypeSpecifierNode return_type_node(Type::Int, 0, 32, memberFunctionCallNode.called_from());
+				if (lambda.return_type().has_value()) {
+					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
+					return_type_node = ret_type;
+					call_op.return_type = ret_type.type();
+					call_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
+				} else {
+					// Default to int if no explicit return type
+					call_op.return_type = Type::Int;
+					call_op.return_size_in_bits = 32;
+				}
+				
+				// Build TypeSpecifierNodes for parameters (needed for mangling)
+				std::vector<TypeSpecifierNode> param_types;
+				if (!lambda.parameters().empty()) {
+					for (const auto& param_node : lambda.parameters()) {
+						if (param_node.is<DeclarationNode>()) {
+							const auto& param_decl = param_node.as<DeclarationNode>();
+							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							param_types.push_back(param_type);
+						}
+					}
+				}
+				
+				// Generate mangled name for __invoke (matching how it's defined in generateLambdaInvokeFunction)
+				std::string_view mangled = generateMangledNameForCall(
+					invoke_name,
+					return_type_node,
+					param_types,
+					false,  // not variadic
+					""  // not a member function
+				);
+				
+				call_op.function_name = std::string(mangled);
+				call_op.is_member_function = false;
+
+				// Add arguments
+				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
+					auto argumentIrOperands = visitExpressionNode(arg_expr);
+					if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+						const auto& identifier = std::get<IdentifierNode>(arg_expr);
+						const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+						const auto& decl_node = symbol->as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+						// Convert to TypedValue
+						TypedValue arg;
+						arg.type = type_node.type();
+						arg.size_in_bits = static_cast<int>(type_node.size_in_bits());
+						arg.value = identifier.name();
+						call_op.args.push_back(arg);
+					} else {
+						// Convert argumentIrOperands to TypedValue
+						TypedValue arg = toTypedValue(argumentIrOperands);
+						call_op.args.push_back(arg);
 					}
 				});
+
+				// Add the function call instruction with typed payload
+				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
+
+				// Return the result with actual return type from lambda
+				return { call_op.return_type, call_op.return_size_in_bits, ret_var, 0ULL };
 			}
-			
-			// Generate mangled name for __invoke (matching how it's defined in generateLambdaInvokeFunction)
-			std::string_view mangled = generateMangledNameForCall(
-				invoke_name,
-				return_type_node,
-				param_types,
-				false,  // not variadic
-				""  // not a member function
-			);
-			
-			call_op.function_name = std::string(mangled);
-			call_op.is_member_function = false;
-
-			// Add arguments
-			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-				const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
-				auto argumentIrOperands = visitExpressionNode(arg_expr);
-				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-					const auto& identifier = std::get<IdentifierNode>(arg_expr);
-					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-					// Convert to TypedValue
-					TypedValue arg;
-					arg.type = type_node.type();
-					arg.size_in_bits = static_cast<int>(type_node.size_in_bits());
-					arg.value = identifier.name();
-					call_op.args.push_back(arg);
-				} else {
-					// Convert argumentIrOperands to TypedValue
-					TypedValue arg = toTypedValue(argumentIrOperands);
-					call_op.args.push_back(arg);
-				}
-			});
-
-			// Add the function call instruction with typed payload
-			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
-
-			// Return the result with actual return type from lambda
-			return { call_op.return_type, call_op.return_size_in_bits, ret_var, 0ULL };
+			// For capturing lambdas, fall through to the regular member function call path
+			// The closure object was already created by generateLambdaExpressionIr
 		}
 
 		// Regular member function call on an expression
@@ -6533,12 +6652,44 @@ private:
 					object_type = object_decl->type_node().as<TypeSpecifierNode>();
 					
 					// If the type is 'auto', we need to deduce the actual type from the initializer
-					// TODO: Implement full auto type deduction for variables initialized with function calls
-					// Currently disabled as it requires recursive type resolution through function return types
+					// Handle 'auto' type deduction for lambda variables
+					// When we have `auto lambda = [...]() { ... }`, the declared type is 'auto'
+					// but we need the actual closure struct type for the member function call
 					if (object_type.type() == Type::Auto) {
-						// For now, auto variables that are lambdas will fail at member function call
-						// This affects edge cases like: auto f = make_lambda(); f();
-						// Where make_lambda() returns a lambda with 'auto' return type
+						// Check if the symbol is a VariableDeclarationNode with an initializer
+						if (symbol->is<VariableDeclarationNode>()) {
+							const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
+							const std::optional<ASTNode>& init_opt = var_decl.initializer();
+							if (init_opt.has_value()) {
+								const ASTNode& init = init_opt.value();
+								const LambdaExpressionNode* lambda_ptr = nullptr;
+								if (init.is<LambdaExpressionNode>()) {
+									lambda_ptr = &init.as<LambdaExpressionNode>();
+								} else if (init.is<ExpressionNode>()) {
+									const ExpressionNode& expr = init.as<ExpressionNode>();
+									if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+										lambda_ptr = &std::get<LambdaExpressionNode>(expr);
+									}
+								}
+								
+								if (lambda_ptr) {
+									// Get the lambda's closure type
+									std::string closure_type_name = lambda_ptr->generate_lambda_name();
+									auto type_it = gTypesByName.find(closure_type_name);
+									if (type_it != gTypesByName.end()) {
+										const TypeInfo* closure_type = type_it->second;
+										int closure_size = closure_type->getStructInfo() ? closure_type->getStructInfo()->total_size * 8 : 64;
+										// Create a proper TypeSpecifierNode for the closure struct
+										object_type = TypeSpecifierNode(
+											Type::Struct,
+											closure_type->type_index_,
+											closure_size,
+											object_decl->identifier_token()
+										);
+									}
+								}
+							}
+						}
 					}
 				}
 			}
@@ -7104,6 +7255,50 @@ private:
 						});
 					} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+				
+						// Check if parameter expects a reference
+						if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+							// Parameter expects a reference - pass the address of the argument
+							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+								// Argument is already a reference - just pass it through
+								call_op.args.push_back(TypedValue{
+									.type = type_node.type(),
+									.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+									.value = IrValue(identifier.name()),
+									.is_reference = true
+								});
+							} else {
+								// Argument is a value - take its address
+								TempVar addr_var = var_counter.next();
+						
+								AddressOfOp addr_op;
+								addr_op.result = addr_var;
+								addr_op.pointee_type = type_node.type();
+								addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+								addr_op.operand = identifier.name();
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+						
+								// Pass the address with pointer size
+								call_op.args.push_back(TypedValue{
+									.type = type_node.type(),
+									.size_in_bits = 64,  // Pointer size
+									.value = IrValue(addr_var),
+									.is_reference = true
+								});
+							}
+						} else {
+							// Regular pass by value
+							call_op.args.push_back(TypedValue{
+								.type = type_node.type(),
+								.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+								.value = IrValue(identifier.name())
+							});
+						}
+					} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
+						// Handle VariableDeclarationNode (local variables)
+						const auto& var_decl = symbol->as<VariableDeclarationNode>();
+						const auto& decl_node = var_decl.declaration();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 				
 						// Check if parameter expects a reference
@@ -9127,31 +9322,39 @@ private:
 		}
 	}
 
-	std::vector<IrOperand> generateLambdaExpressionIr(const LambdaExpressionNode& lambda) {
+	std::vector<IrOperand> generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name = "") {
 		// Collect lambda information for deferred generation
 		// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
+		// If target_var_name is provided, use it as the closure variable name (for variable declarations)
+		// Otherwise, create a temporary __closure_N variable
 
 		LambdaInfo info;
 		info.lambda_id = lambda.lambda_id();
-		info.closure_type_name = lambda.generate_lambda_name();
-
-		// Build derived names with reserve to avoid reallocations
-		size_t base_len = info.closure_type_name.size();
+		
+		// Use StringBuilder to create persistent string_views for lambda names
+		// This ensures the names remain valid after LambdaInfo is moved
+		info.closure_type_name = StringBuilder()
+			.append("__lambda_")
+			.append(static_cast<int64_t>(lambda.lambda_id()))
+			.commit();
 
 		// Build operator_call_name: closure_type_name + "_operator_call"
-		info.operator_call_name.reserve(base_len + 14);
-		info.operator_call_name = info.closure_type_name;
-		info.operator_call_name += "_operator_call";
+		info.operator_call_name = StringBuilder()
+			.append(info.closure_type_name)
+			.append("_operator_call")
+			.commit();
 
 		// Build invoke_name: closure_type_name + "_invoke"
-		info.invoke_name.reserve(base_len + 7);
-		info.invoke_name = info.closure_type_name;
-		info.invoke_name += "_invoke";
+		info.invoke_name = StringBuilder()
+			.append(info.closure_type_name)
+			.append("_invoke")
+			.commit();
 
 		// Build conversion_op_name: closure_type_name + "_conversion"
-		info.conversion_op_name.reserve(base_len + 11);
-		info.conversion_op_name = info.closure_type_name;
-		info.conversion_op_name += "_conversion";
+		info.conversion_op_name = StringBuilder()
+			.append(info.closure_type_name)
+			.append("_conversion")
+			.commit();
 
 		info.lambda_token = lambda.lambda_token();
 		
@@ -9235,22 +9438,41 @@ private:
 		collected_lambdas_.push_back(std::move(info));
 		const LambdaInfo& lambda_info = collected_lambdas_.back();
 
-		// Create a closure variable name using StringBuilder for persistent string_view
-		std::string_view closure_var_name = StringBuilder()
-			.append("__closure_")
-			.append(static_cast<int64_t>(lambda_info.lambda_id))
-			.commit();
+		// Use target variable name if provided, otherwise create a temporary closure variable
+		std::string_view closure_var_name;
+		if (!target_var_name.empty()) {
+			// Use the target variable name directly
+			// We MUST emit VariableDecl here before any MemberStore operations
+			closure_var_name = target_var_name;
+			
+			// Declare the closure variable with the target name
+			VariableDeclOp lambda_decl_op;
+			lambda_decl_op.type = Type::Struct;
+			lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
+			lambda_decl_op.var_name = closure_var_name;
+			lambda_decl_op.custom_alignment = 0;
+			lambda_decl_op.is_reference = false;
+			lambda_decl_op.is_rvalue_reference = false;
+			lambda_decl_op.is_array = false;
+			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
+		} else {
+			// Create a temporary closure variable name
+			closure_var_name = StringBuilder()
+				.append("__closure_")
+				.append(static_cast<int64_t>(lambda_info.lambda_id))
+				.commit();
 
-		// Declare the closure variable
-		VariableDeclOp lambda_decl_op;
-		lambda_decl_op.type = Type::Struct;
-		lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-		lambda_decl_op.var_name = closure_var_name;
-		lambda_decl_op.custom_alignment = 0;
-		lambda_decl_op.is_reference = false;
-		lambda_decl_op.is_rvalue_reference = false;
-		lambda_decl_op.is_array = false;
-		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
+			// Declare the closure variable
+			VariableDeclOp lambda_decl_op;
+			lambda_decl_op.type = Type::Struct;
+			lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
+			lambda_decl_op.var_name = closure_var_name;
+			lambda_decl_op.custom_alignment = 0;
+			lambda_decl_op.is_reference = false;
+			lambda_decl_op.is_rvalue_reference = false;
+			lambda_decl_op.is_array = false;
+			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
+		}
 
 		// Now initialize captured members
 		// The key insight: we need to generate the initialization code that will be
@@ -9499,33 +9721,38 @@ private:
 		// Without this, lambda calls generate incorrect mangled names
 		auto type_it = gTypesByName.find(lambda_info.closure_type_name);
 		if (type_it != gTypesByName.end()) {
-			TypeInfo* closure_type = type_it->second;
+			TypeInfo* closure_type = const_cast<TypeInfo*>(type_it->second);
 			StructTypeInfo* struct_info = closure_type->getStructInfo();
 			if (struct_info) {
 				// Create a FunctionDeclarationNode for operator()
 				// We need this so member function calls can generate the correct mangled name
 				TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, 
 					lambda_info.return_size, lambda_info.lambda_token);
-				auto return_type_ast = create_node<TypeSpecifierNode>(return_type_node);
+				ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
 				
 				Token operator_token = lambda_info.lambda_token;  // Use lambda token as placeholder
-				DeclarationNode decl_node(return_type_ast, operator_token);
+				DeclarationNode& decl_node = gChunkedAnyStorage.emplace_back<DeclarationNode>(return_type_ast, operator_token);
 				
-				auto decl_ast = create_node<DeclarationNode>(std::move(decl_node));
-				FunctionDeclarationNode func_decl(decl_ast, false);  // not variadic
+				FunctionDeclarationNode& func_decl = gChunkedAnyStorage.emplace_back<FunctionDeclarationNode>(decl_node);
 				
 				// Add parameters to the function declaration
 				for (const auto& param_node : lambda_info.parameter_nodes) {
-					func_decl.add_parameter(param_node);
+					func_decl.add_parameter_node(param_node);
 				}
 				
+				ASTNode func_decl_ast(&func_decl);
+				
 				// Create StructMemberFunction and add to struct
-				StructMemberFunction member_func;
-				member_func.name = "operator()";
-				member_func.function_decl = create_node<FunctionDeclarationNode>(std::move(func_decl));
-				member_func.access = AccessSpecifier::Public;
+				StructMemberFunction member_func(
+					"operator()",
+					func_decl_ast,
+					AccessSpecifier::Public,
+					false,  // is_constructor
+					false,  // is_destructor
+					false,  // is_operator_overload
+					""     // operator_symbol
+				);
 				member_func.is_const = false;  // Mutable lambdas have non-const operator()
-				member_func.is_static = false;
 				member_func.is_virtual = false;
 				member_func.is_pure_virtual = false;
 				member_func.is_override = false;
@@ -9559,22 +9786,9 @@ private:
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
-				// Create a copy of the TypeSpecifierNode
-				// For auto parameters, we've already decided to treat them as value types (Type::Auto -> Type::Int in our case)
-				// But for mangling, we need the type as declared
-				TypeSpecifierNode param_type_copy = param_type;
-				
-				// For auto parameters, clear reference flags for mangling (matching function signature)
-				if (param_type.type() == Type::Auto) {
-					// Create new node without reference flags
-					param_type_copy = TypeSpecifierNode(param_type.type(), param_type.type_index(), param_type.size_in_bits(), param_type.token());
-					// Copy pointer depth
-					for (size_t i = 0; i < param_type.pointer_depth(); ++i) {
-						param_type_copy.add_pointer_level();
-					}
-				}
-				
-				param_types.push_back(param_type_copy);
+				// Use the parameter type as-is, preserving all reference flags
+				// This ensures mangled names are consistent between call sites and definitions
+				param_types.push_back(param_type);
 			}
 		}
 		
@@ -9600,16 +9814,10 @@ private:
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				func_param.name = std::string(param_decl.identifier_token().value());
 				
-				// For auto parameters, don't preserve reference flags
-				// We treat auto parameters as value types since we don't do template instantiation
-				// auto&& is a forwarding reference that needs template support to work properly
-				if (param_type.type() == Type::Auto) {
-					func_param.is_reference = false;
-					func_param.is_rvalue_reference = false;
-				} else {
-					func_param.is_reference = param_type.is_reference();
-					func_param.is_rvalue_reference = param_type.is_rvalue_reference();
-				}
+				// Preserve reference flags for all parameter types (including auto)
+				// This ensures mangled names are consistent between call sites and definitions
+				func_param.is_reference = param_type.is_reference();
+				func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
 			}
@@ -9699,6 +9907,9 @@ private:
 		current_lambda_enclosing_struct_type_index_ = 0;
 
 		symbol_table.exit_scope();
+		
+		// Note: Nested lambdas collected during body generation will be processed
+		// by the main generateCollectedLambdas() loop - no recursive call needed here
 	}
 
 	// Generate the __invoke static function for a lambda
@@ -9723,20 +9934,9 @@ private:
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
-				// Create a copy of the TypeSpecifierNode
-				TypeSpecifierNode param_type_copy = param_type;
-				
-				// For auto parameters, clear reference flags for mangling (matching function signature)
-				if (param_type.type() == Type::Auto) {
-					// Create new node without reference flags
-					param_type_copy = TypeSpecifierNode(param_type.type(), param_type.type_index(), param_type.size_in_bits(), param_type.token());
-					// Copy pointer depth
-					for (size_t i = 0; i < param_type.pointer_depth(); ++i) {
-						param_type_copy.add_pointer_level();
-					}
-				}
-				
-				param_types.push_back(param_type_copy);
+				// Use the parameter type as-is, preserving all reference flags
+				// This ensures mangled names are consistent between call sites and definitions
+				param_types.push_back(param_type);
 			}
 		}
 		
@@ -9762,16 +9962,10 @@ private:
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				func_param.name = std::string(param_decl.identifier_token().value());
 				
-				// For auto parameters, don't preserve reference flags
-				// We treat auto parameters as value types since we don't do template instantiation
-				// auto&& is a forwarding reference that needs template support to work properly
-				if (param_type.type() == Type::Auto) {
-					func_param.is_reference = false;
-					func_param.is_rvalue_reference = false;
-				} else {
-					func_param.is_reference = param_type.is_reference();
-					func_param.is_rvalue_reference = param_type.is_rvalue_reference();
-				}
+				// Preserve reference flags for all parameter types (including auto)
+				// This ensures mangled names are consistent between call sites and definitions
+				func_param.is_reference = param_type.is_reference();
+				func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
 			}
