@@ -3665,6 +3665,18 @@ private:
 			variable_scopes.back().identifier_offset[temp_var.name()] = stack_offset;
 			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
 			if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
+				// IMPORTANT: Before reassigning this register to the result TempVar's offset,
+				// we must flush its current value to the OLD offset if it was dirty.
+				// This happens when the LHS operand was in a register that we're reusing for the result.
+				// Without flushing, the LHS value would be lost (crucial for post-increment).
+				auto& reg_info = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)];
+				if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN && 
+				    reg_info.stackVariableOffset != stack_offset) {
+					emitMovToFrameSized(
+						SizedRegister{ctx.result_physical_reg, 64, false},
+						SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits, false}
+					);
+				}
 				regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset, ctx.result_value.size_in_bits);
 			}
 		}
@@ -3729,6 +3741,9 @@ private:
 			}
 			else {
 				// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
+				// NOTE: The flushing of old register values is now handled in setupAndLoadArithmeticOperation
+				// before the register is reassigned to the result TempVar's offset.
+				
 				// Tell the register allocator that this register now holds this temp variable
 				assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
 				regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits);
