@@ -6039,8 +6039,9 @@ private:
 		if (func_ptr_decl) {
 			const auto& func_type = func_ptr_decl->type_node().as<TypeSpecifierNode>();
 
-			// Check if this is a function pointer
-			if (func_type.is_function_pointer()) {
+			// Check if this is a function pointer or auto type (which could be a callable)
+			// auto&& parameters in recursive lambdas need to be treated as callables
+			if (func_type.is_function_pointer() || func_type.type() == Type::Auto) {
 				// This is an indirect call through a function pointer
 				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 				TempVar ret_var = var_counter.next();
@@ -6077,7 +6078,7 @@ private:
 					const auto& sig = func_type.function_signature();
 					return { sig.return_type, 64, ret_var, 0ULL };  // 64 bits for return value
 				} else {
-					// Fallback to int if no signature
+					// For auto types or missing signature, default to int
 					return { Type::Int, 32, ret_var, 0ULL };
 				}
 			}
