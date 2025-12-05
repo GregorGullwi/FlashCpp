@@ -1,7 +1,9 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "ObjectFileCommon.h"
 #include "NameMangling.h"
+#include "ChunkedString.h"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -45,59 +47,13 @@ public:
 	// Pointer size for 64-bit ELF
 	static constexpr size_t POINTER_SIZE = 8;
 
-	// Function calling convention (currently only support cdecl/default)
-	enum EFunctionCallingConv : unsigned char {
-		cc_cdecl,
-		cc_stdcall,
-		cc_fastcall,
-	};
-
-	// Function signature information (compatible with ObjectFileWriter)
-	struct FunctionSignature {
-		TypeSpecifierNode return_type;
-		std::vector<TypeSpecifierNode> parameter_types;
-		bool is_const = false;
-		bool is_static = false;
-		bool is_variadic = false;
-		EFunctionCallingConv calling_convention = EFunctionCallingConv::cc_cdecl;
-		std::string namespace_name;
-		std::string class_name;
-		Linkage linkage = Linkage::None;
-
-		FunctionSignature() = default;
-		FunctionSignature(const TypeSpecifierNode& ret_type, std::vector<TypeSpecifierNode> params)
-			: return_type(ret_type), parameter_types(std::move(params)) {}
-	};
-
-	// Exception handling structures (placeholders - not implemented for Linux MVP)
-	struct CatchHandlerInfo {
-		uint32_t type_index;
-		uint32_t handler_offset;
-		bool is_catch_all;
-		std::string type_name;
-		bool is_const;
-		bool is_reference;
-		bool is_rvalue_reference;
-		int32_t catch_obj_offset;
-	};
-
-	struct UnwindMapEntryInfo {
-		int to_state;
-		std::string action;
-	};
-
-	struct TryBlockInfo {
-		uint32_t try_start_offset;
-		uint32_t try_end_offset;
-		std::vector<CatchHandlerInfo> catch_handlers;
-	};
-
-	struct BaseClassDescriptorInfo {
-		std::string name;
-		uint32_t num_contained_bases;
-		uint32_t offset;
-		bool is_virtual;
-	};
+	// Use shared structures from ObjectFileCommon
+	using EFunctionCallingConv = ObjectFileCommon::EFunctionCallingConv;
+	using FunctionSignature = ObjectFileCommon::FunctionSignature;
+	using CatchHandlerInfo = ObjectFileCommon::CatchHandlerInfo;
+	using UnwindMapEntryInfo = ObjectFileCommon::UnwindMapEntryInfo;
+	using TryBlockInfo = ObjectFileCommon::TryBlockInfo;
+	using BaseClassDescriptorInfo = ObjectFileCommon::BaseClassDescriptorInfo;
 
 	/**
 	 * @brief Constructor - initializes ELF file structure
@@ -250,11 +206,14 @@ public:
 
 	/**
 	 * @brief Add a string literal to .rodata section
-	 * @return Symbol name for the string literal
+	 * @return Symbol name for the string literal (as string_view)
 	 */
-	std::string add_string_literal(const std::string& str_content) {
-		// Generate unique symbol name
-		std::string symbol_name = ".L.str." + std::to_string(string_literal_counter_++);
+	std::string_view add_string_literal(std::string_view str_content) {
+		// Generate unique symbol name using StringBuilder
+		StringBuilder builder;
+		builder.append(".L.str.");
+		builder.append(static_cast<uint64_t>(string_literal_counter_++));
+		std::string_view symbol_name = builder.commit();
 
 		// Get current offset in .rodata
 		auto* rodata = getSectionByName(".rodata");
@@ -270,7 +229,7 @@ public:
 		std::vector<char> str_data(processed_str.begin(), processed_str.end());
 		rodata->append_data(str_data.data(), str_data.size());
 
-		// Add symbol
+		// Add symbol - need to use symbol_name.data() for ELFIO's const char* interface
 		auto symbol_index = getOrCreateSymbol(symbol_name, ELFIO::STT_OBJECT, ELFIO::STB_LOCAL, 
 		                                      rodata->get_index(), offset, processed_str.size());
 
@@ -349,26 +308,27 @@ public:
 	/**
 	 * @brief Get mangled name (for now, return as-is - Itanium mangling deferred)
 	 */
-	std::string getMangledName(std::string_view name) const {
+	std::string_view getMangledName(std::string_view name) const {
 		// MVP: Use C linkage (unmangled names)
+		// For MVP, the name passed in should already be stable (from the caller)
+		// When we implement Itanium mangling, we'll use StringBuilder and store in function_signatures_
 		// TODO: Implement Itanium name mangling in future milestone
-		return std::string(name);
+		return name;
 	}
 
 	/**
 	 * @brief Generate mangled name (placeholder)
+	 * Returns the mangled name as a string (not string_view) since we may need to create it
 	 */
 	std::string generateMangledName(std::string_view name, const FunctionSignature& sig) const {
-		// MVP: Use C linkage for simplicity
-		if (sig.linkage == Linkage::C || name == "main") {
-			return std::string(name);
-		}
-		// TODO: Implement Itanium mangling for C++
+		// MVP: Use C linkage for simplicity - just return a copy
+		// TODO: Implement Itanium mangling for C++ which will generate new strings
 		return std::string(name);
 	}
 
 	/**
 	 * @brief Add function signature (for future name mangling)
+	 * Returns std::string (not string_view) to ensure stable storage
 	 */
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
 	                                const std::vector<TypeSpecifierNode>& parameter_types,
@@ -640,7 +600,7 @@ private:
 	/**
 	 * @brief Process string literal (remove quotes, handle escapes)
 	 */
-	std::string processStringLiteral(const std::string& str_content) {
+	std::string processStringLiteral(std::string_view str_content) {
 		std::string result;
 		
 		if (str_content.size() >= 2 && str_content.front() == '"' && str_content.back() == '"') {
@@ -664,7 +624,7 @@ private:
 				}
 			}
 		} else {
-			result = str_content;
+			result = std::string(str_content);
 		}
 		
 		// Add null terminator
