@@ -9559,7 +9559,7 @@ private:
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				symbol_table.insert_parameter(param_decl.identifier_token().value(), param_node);
+				symbol_table.insert(param_decl.identifier_token().value(), param_node);
 			}
 		}
 
@@ -9658,7 +9658,7 @@ private:
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				symbol_table.insert_parameter(param_decl.identifier_token().value(), param_node);
+				symbol_table.insert(param_decl.identifier_token().value(), param_node);
 			}
 		}
 
