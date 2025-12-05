@@ -17,6 +17,10 @@
 #include "StackString.h"
 #include "Lexer.h"
 
+// SaveHandle type for parser save/restore operations
+// Matches Parser::SaveHandle typedef in Parser.h
+using SaveHandle = size_t;
+
 // Forward declarations
 struct TemplateTypeArg;
 
@@ -1209,13 +1213,13 @@ public:
 	CallingConvention calling_convention() const { return calling_convention_; }
 
 	// Template body position support (for delayed parsing of template bodies)
-	// Uses size_t as handle (opaque ID from Parser's save_token_position())
-	void set_template_body_position(size_t handle) {
+	// Uses SaveHandle as handle (opaque ID from Parser's save_token_position())
+	void set_template_body_position(SaveHandle handle) {
 		has_template_body_ = true;
 		template_body_position_handle_ = handle;
 	}
 	bool has_template_body_position() const { return has_template_body_; }
-	size_t template_body_position() const { return template_body_position_handle_; }
+	SaveHandle template_body_position() const { return template_body_position_handle_; }
 
 	// Variadic function support (functions with ... ellipsis parameter)
 	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
@@ -1255,7 +1259,7 @@ private:
 	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
 	CallingConvention calling_convention_ = CallingConvention::Default;  // Calling convention (__cdecl, __stdcall, etc.)
-	size_t template_body_position_handle_;  // Handle to saved position for template body (from Parser::save_token_position())
+	SaveHandle template_body_position_handle_;  // Handle to saved position for template body (from Parser::save_token_position())
 	bool is_constexpr_;
 	bool is_constinit_;
 	bool is_consteval_;

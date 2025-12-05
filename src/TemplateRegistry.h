@@ -10,6 +10,10 @@
 #include <optional>
 #include <algorithm>
 
+// SaveHandle type for parser save/restore operations
+// Matches Parser::SaveHandle typedef in Parser.h
+using SaveHandle = size_t;
+
 // Transparent string hash for heterogeneous lookup (C++20)
 // Allows unordered_map<string, T, TransparentStringHash, equal_to<>> to lookup with string_view
 struct TransparentStringHash {
@@ -253,7 +257,7 @@ struct TemplateArgument {
 struct OutOfLineMemberFunction {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., <typename T>)
 	ASTNode function_node;                  // FunctionDeclarationNode
-	size_t body_start;                      // Handle to saved position of function body for re-parsing
+	SaveHandle body_start;                  // Handle to saved position of function body for re-parsing
 	std::vector<std::string_view> template_param_names;  // Names of template parameters
 };
 

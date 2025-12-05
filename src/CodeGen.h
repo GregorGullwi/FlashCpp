@@ -10814,7 +10814,7 @@ private:
 		std::string mangled_name;  // e.g., "insert_int"
 		std::string struct_name;   // e.g., "Container"
 		std::vector<Type> template_args;  // Concrete types
-		size_t body_position;  // Handle to saved position where the template body starts
+		SaveHandle body_position;  // Handle to saved position where the template body starts
 		std::vector<std::string_view> template_param_names;  // e.g., ["U"]
 		const TemplateFunctionDeclarationNode* template_node_ptr;  // Pointer to the template
 	};
