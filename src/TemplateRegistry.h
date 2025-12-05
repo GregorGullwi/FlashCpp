@@ -253,7 +253,7 @@ struct TemplateArgument {
 struct OutOfLineMemberFunction {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., <typename T>)
 	ASTNode function_node;                  // FunctionDeclarationNode
-	TokenPosition body_start;               // Position of function body for re-parsing
+	size_t body_start;                      // Handle to saved position of function body for re-parsing
 	std::vector<std::string_view> template_param_names;  // Names of template parameters
 };
 

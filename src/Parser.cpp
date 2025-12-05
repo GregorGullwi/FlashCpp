@@ -277,7 +277,7 @@ std::optional<Token> Parser::peek_token(size_t lookahead) {
     return result;
 }
 
-SaveHandle Parser::save_token_position() {
+Parser::SaveHandle Parser::save_token_position() {
     // Generate unique handle using static incrementing counter
     // This prevents collisions even when multiple saves happen at the same cursor position
     SaveHandle handle = next_save_handle_++;
@@ -316,9 +316,9 @@ void Parser::restore_token_position(SaveHandle handle, const std::source_locatio
     size_t new_size = saved_token.ast_nodes_size_;
     auto ast_it = ast_nodes_.begin() + new_size;
     while (ast_it != ast_nodes_.end()) {
-        if (ast_it->is<FunctionDeclarationNode>()) {
-            // Keep function declarations - they may be template instantiations
-            // that are already registered in the template cache
+        if (ast_it->is<FunctionDeclarationNode>() || ast_it->is<StructDeclarationNode>()) {
+            // Keep function and struct declarations - they may be template instantiations
+            // or struct definitions that are already registered in the symbol table
             ++ast_it;
         } else {
             ast_it = ast_nodes_.erase(ast_it);
@@ -326,7 +326,7 @@ void Parser::restore_token_position(SaveHandle handle, const std::source_locatio
     }
 }
 
-void Parser::restore_lexer_position_only(SaveHandle handle) {
+void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
     // Restore lexer position and current token, but keep AST nodes
     auto it = saved_tokens_.find(handle);
     if (it == saved_tokens_.end()) {
@@ -16260,12 +16260,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	}
 	
 	// Prevent infinite loop: don't retry template argument parsing at the same position
-	if (saved_pos.cursor_ == last_failed_template_arg_parse_cursor_) {
+	if (saved_pos == last_failed_template_arg_parse_handle_) {
 		return std::nullopt;
 	}
 	
 	consume_token(); // consume '<'
-	last_failed_template_arg_parse_cursor_ = SIZE_MAX;  // Clear failure marker - we're making progress
+	last_failed_template_arg_parse_handle_ = SIZE_MAX;  // Clear failure marker - we're making progress
 
 	std::vector<TemplateTypeArg> template_args;
 
@@ -16302,14 +16302,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				} else {
 					FLASH_LOG(Parser, Error, "Unsupported numeric literal type");
 					restore_token_position(saved_pos);
-					last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
+					last_failed_template_arg_parse_handle_ = saved_pos;
 					return std::nullopt;
 				}
 				
 				// Check for ',' or '>' after the numeric literal
 				if (!peek_token().has_value()) {
 					restore_token_position(saved_pos);
-					last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
+					last_failed_template_arg_parse_handle_ = saved_pos;
 					return std::nullopt;
 				}
 
@@ -16327,7 +16327,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				FLASH_LOG(Parser, Error, "parse_explicit_template_arguments unexpected token after numeric literal: '", 
 				          peek_token()->value(), "'");
 				restore_token_position(saved_pos);
-				last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
+				last_failed_template_arg_parse_handle_ = saved_pos;
 				return std::nullopt;
 			}
 
@@ -16341,7 +16341,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Neither type nor expression parsing worked
 			FLASH_LOG(Parser, Error, "parse_explicit_template_arguments failed to parse type or expression");
 			restore_token_position(saved_pos);
-			last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
+			last_failed_template_arg_parse_handle_ = saved_pos;
 			return std::nullopt;
 		}
 
@@ -16390,7 +16390,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		if (!peek_token().has_value()) {
 			FLASH_LOG(Parser, Error, "parse_explicit_template_arguments unexpected end of tokens");
 			restore_token_position(saved_pos);
-			last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
+			last_failed_template_arg_parse_handle_ = saved_pos;
 			return std::nullopt;
 		}
 
@@ -16407,13 +16407,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Unexpected token
 		FLASH_LOG(Parser, Error, "parse_explicit_template_arguments unexpected token: '", peek_token()->value(), "'");
 		restore_token_position(saved_pos);
-		last_failed_template_arg_parse_cursor_ = saved_pos.cursor_;
+		last_failed_template_arg_parse_handle_ = saved_pos;
 		return std::nullopt;
 	}
 
 	// Success - discard saved position
 	discard_saved_token(saved_pos);
-	last_failed_template_arg_parse_cursor_ = SIZE_MAX;  // Clear failure marker on success
+	last_failed_template_arg_parse_handle_ = SIZE_MAX;  // Clear failure marker on success
 	return template_args;
 }
 
@@ -19872,7 +19872,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 // Parse a template function body with concrete type bindings
 // This is called during code generation to instantiate member function templates
 std::optional<ASTNode> Parser::parseTemplateBody(
-	TokenPosition body_pos,
+	SaveHandle body_pos,
 	const std::vector<std::string_view>& template_param_names,
 	const std::vector<Type>& concrete_types,
 	std::string_view struct_name,
