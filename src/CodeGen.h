@@ -9469,6 +9469,48 @@ private:
 		if (lambda_info.captures.empty()) {
 			generateLambdaInvokeFunction(lambda_info);
 		}
+		
+		// CRITICAL FIX: Add operator() to the closure struct's member_functions list
+		// This allows member function calls to find the correct declaration for mangling
+		// Without this, lambda calls generate incorrect mangled names
+		auto type_it = gTypesByName.find(lambda_info.closure_type_name);
+		if (type_it != gTypesByName.end()) {
+			TypeInfo* closure_type = type_it->second;
+			StructTypeInfo* struct_info = closure_type->getStructInfo();
+			if (struct_info) {
+				// Create a FunctionDeclarationNode for operator()
+				// We need this so member function calls can generate the correct mangled name
+				TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, 
+					lambda_info.return_size, lambda_info.lambda_token);
+				auto return_type_ast = create_node<TypeSpecifierNode>(return_type_node);
+				
+				Token operator_token = lambda_info.lambda_token;  // Use lambda token as placeholder
+				DeclarationNode decl_node(return_type_ast, operator_token);
+				
+				auto decl_ast = create_node<DeclarationNode>(std::move(decl_node));
+				FunctionDeclarationNode func_decl(decl_ast, false);  // not variadic
+				
+				// Add parameters to the function declaration
+				for (const auto& param_node : lambda_info.parameter_nodes) {
+					func_decl.add_parameter(param_node);
+				}
+				
+				// Create StructMemberFunction and add to struct
+				StructMemberFunction member_func;
+				member_func.name = "operator()";
+				member_func.function_decl = create_node<FunctionDeclarationNode>(std::move(func_decl));
+				member_func.access = AccessSpecifier::Public;
+				member_func.is_const = false;  // Mutable lambdas have non-const operator()
+				member_func.is_static = false;
+				member_func.is_virtual = false;
+				member_func.is_pure_virtual = false;
+				member_func.is_override = false;
+				member_func.is_final = false;
+				member_func.vtable_index = 0;
+				
+				struct_info->member_functions.push_back(std::move(member_func));
+			}
+		}
 	}
 
 	// Generate the operator() member function for a lambda
