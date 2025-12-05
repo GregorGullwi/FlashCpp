@@ -209,23 +209,23 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
 }
 
 Parser::ScopedTokenPosition::ScopedTokenPosition(class Parser& parser, const std::source_location location)
-    : parser_(parser), saved_position_(parser.save_token_position()), location_(location) {}
+    : parser_(parser), saved_handle_(parser.save_token_position()), location_(location) {}
 
 Parser::ScopedTokenPosition::~ScopedTokenPosition() {
     if (!discarded_) {
-        parser_.restore_token_position(saved_position_);
+        parser_.restore_token_position(saved_handle_);
     }
 }
 
 ParseResult Parser::ScopedTokenPosition::success(ASTNode node) {
     discarded_ = true;
-    parser_.discard_saved_token(saved_position_);
+    parser_.discard_saved_token(saved_handle_);
     return ParseResult::success(node);
 }
 
 ParseResult Parser::ScopedTokenPosition::error(std::string_view error_message) {
     discarded_ = true;
-    parser_.discard_saved_token(saved_position_);
+    parser_.discard_saved_token(saved_handle_);
     return ParseResult::error(std::string(error_message),
         *parser_.peek_token());
 }
@@ -234,7 +234,7 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
     // Sub-parser already handled position restoration (if needed)
     // Just discard our saved position and forward the result
     discarded_ = true;
-    parser_.discard_saved_token(saved_position_);
+    parser_.discard_saved_token(saved_handle_);
     return std::move(result);
 }
 
@@ -257,7 +257,7 @@ std::optional<Token> Parser::peek_token(size_t lookahead) {
     }
     
     // Save current position
-    TokenPosition saved_pos = save_token_position();
+    SaveHandle saved_handle = save_token_position();
     
     // Consume tokens to reach the lookahead position
     std::optional<Token> result;
@@ -269,42 +269,35 @@ std::optional<Token> Parser::peek_token(size_t lookahead) {
     result = peek_token();
     
     // Restore original position
-    restore_lexer_position_only(saved_pos);
+    restore_lexer_position_only(saved_handle);
     
     // Discard the saved position as we're done with it
-    discard_saved_token(saved_pos);
+    discard_saved_token(saved_handle);
     
     return result;
 }
 
-TokenPosition Parser::save_token_position() {
-    TokenPosition cur_pos = lexer_.save_token_position();
+SaveHandle Parser::save_token_position() {
+    // Generate unique handle using static incrementing counter
+    // This prevents collisions even when multiple saves happen at the same cursor position
+    SaveHandle handle = next_save_handle_++;
     
-    // Generate unique sequence number for this save operation
-    size_t sequence = save_sequence_counter_++;
+    // Save current parser state
+    TokenPosition lexer_pos = lexer_.save_token_position();
+    saved_tokens_[handle] = { current_token_, ast_nodes_.size(), lexer_pos };
     
-    // Push the sequence number onto the stack for this cursor position
-    cursor_to_sequence_stack_[cur_pos.cursor_].push_back(sequence);
-    
-    // Use composite key (cursor + sequence) to avoid collisions
-    SavedTokenKey key{cur_pos.cursor_, sequence};
-    saved_tokens_[key] = { current_token_, ast_nodes_.size() };
-    
-    // Debug logging
-    // FLASH_LOG(Parser, Debug, "save_token_position: cursor=", cur_pos.cursor_, " sequence=", sequence, " ast_size=", ast_nodes_.size());
-    
-    return cur_pos;
+    return handle;
 }
 
-void Parser::restore_token_position(const TokenPosition& saved_token_pos, const std::source_location location) {
-    lexer_.restore_token_position(saved_token_pos);
+void Parser::restore_token_position(SaveHandle handle, const std::source_location location) {
+    auto it = saved_tokens_.find(handle);
+    if (it == saved_tokens_.end()) {
+        // Handle not found - this shouldn't happen in correct usage
+        return;
+    }
     
-    // Get the current (top) sequence number for this cursor position
-    auto& seq_stack = cursor_to_sequence_stack_.at(saved_token_pos.cursor_);
-    size_t sequence = seq_stack.back();
-    
-    SavedTokenKey key{saved_token_pos.cursor_, sequence};
-    SavedToken saved_token = saved_tokens_.at(key);
+    const SavedToken& saved_token = it->second;
+    lexer_.restore_token_position(saved_token.lexer_position_);
     current_token_ = saved_token.current_token_;
 	
     // Erase AST nodes that were added after the saved position,
@@ -321,50 +314,33 @@ void Parser::restore_token_position(const TokenPosition& saved_token_pos, const 
     // 3. Parser finds it's not a fold expression, restores position
     // 4. Without this fix, the instantiation would be erased but remain in cache
     size_t new_size = saved_token.ast_nodes_size_;
-    auto it = ast_nodes_.begin() + new_size;
-    while (it != ast_nodes_.end()) {
-        if (it->is<FunctionDeclarationNode>()) {
+    auto ast_it = ast_nodes_.begin() + new_size;
+    while (ast_it != ast_nodes_.end()) {
+        if (ast_it->is<FunctionDeclarationNode>()) {
             // Keep function declarations - they may be template instantiations
             // that are already registered in the template cache
-            ++it;
+            ++ast_it;
         } else {
-            it = ast_nodes_.erase(it);
+            ast_it = ast_nodes_.erase(ast_it);
         }
     }
-    // Note: We don't erase from saved_tokens_ here because multiple restores
-    // may use the same saved position (e.g., in fold expression parsing)
 }
 
-void Parser::restore_lexer_position_only(const TokenPosition& saved_token_pos) {
+void Parser::restore_lexer_position_only(SaveHandle handle) {
     // Restore lexer position and current token, but keep AST nodes
-    lexer_.restore_token_position(saved_token_pos);
+    auto it = saved_tokens_.find(handle);
+    if (it == saved_tokens_.end()) {
+        return;
+    }
     
-    // Get the current (top) sequence number for this cursor position
-    auto& seq_stack = cursor_to_sequence_stack_.at(saved_token_pos.cursor_);
-    size_t sequence = seq_stack.back();
-    
-    SavedTokenKey key{saved_token_pos.cursor_, sequence};
-    SavedToken saved_token = saved_tokens_.at(key);
+    const SavedToken& saved_token = it->second;
+    lexer_.restore_token_position(saved_token.lexer_position_);
     current_token_ = saved_token.current_token_;
     // Don't erase AST nodes - they were intentionally created during re-parsing
 }
 
-void Parser::discard_saved_token(const TokenPosition& saved_token_pos) {
-    // Pop the sequence number from the stack
-    auto stack_it = cursor_to_sequence_stack_.find(saved_token_pos.cursor_);
-    if (stack_it != cursor_to_sequence_stack_.end() && !stack_it->second.empty()) {
-        size_t sequence = stack_it->second.back();
-        stack_it->second.pop_back();
-        
-        // Clean up empty stacks
-        if (stack_it->second.empty()) {
-            cursor_to_sequence_stack_.erase(stack_it);
-        }
-        
-        // Erase from saved_tokens_
-        SavedTokenKey key{saved_token_pos.cursor_, sequence};
-        saved_tokens_.erase(key);
-    }
+void Parser::discard_saved_token(SaveHandle handle) {
+    saved_tokens_.erase(handle);
 }
 
 void Parser::skip_balanced_braces() {
@@ -755,7 +731,7 @@ ParseResult Parser::parse_top_level_node()
 	// Check for extern "C" linkage specification
 	if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "extern") {
 		// Save position in case this is just a regular extern declaration
-		TokenPosition extern_saved_pos = save_token_position();
+		SaveHandle extern_saved_pos = save_token_position();
 		consume_token(); // consume 'extern'
 
 		// Check if this is extern "C" or extern "C++"
@@ -874,7 +850,7 @@ ParseResult Parser::parse_type_and_name() {
     // We need to check for '(' followed by '*' to detect this
     if (peek_token().has_value() && peek_token()->value() == "(") {
         // Save position in case this isn't a function pointer or reference declarator
-        TokenPosition saved_pos = save_token_position();
+        SaveHandle saved_pos = save_token_position();
         consume_token(); // consume '('
 
         // Check if next token is '*' (function pointer pattern) or '&' (reference to array pattern)
@@ -1655,7 +1631,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	// First, try to parse as a function definition
 	// Save position before attempting function parse so we can backtrack if it's actually a variable
-	TokenPosition before_function_parse = save_token_position();
+	SaveHandle before_function_parse = save_token_position();
 	ParseResult function_definition_result = parse_function_declaration(decl_node, attr_info.calling_convention);
 	if (!function_definition_result.is_error()) {
 		// Successfully parsed as function - discard saved position
@@ -1783,7 +1759,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				// underlying node inside TemplateFunctionDeclarationNode - this is consistent
 				// with how regular template functions store their body position
 				if (peek_token().has_value() && peek_token()->value() == "{") {
-					TokenPosition body_start = save_token_position();
+					SaveHandle body_start = save_token_position();
 					func_decl.set_template_body_position(body_start);
 					skip_balanced_braces();
 				}
@@ -2482,7 +2458,7 @@ ParseResult Parser::parse_struct_declaration()
 					// Parse function body if present
 					if (peek_token().has_value() && peek_token()->value() == "{") {
 						// DELAYED PARSING: Save the current position (start of '{')
-						TokenPosition body_start = save_token_position();
+						SaveHandle body_start = save_token_position();
 
 						// Look up the struct type
 						auto type_it = gTypesByName.find(struct_name);
@@ -2641,7 +2617,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Check for constructor (identifier matching struct name followed by '(')
 		// Save position BEFORE checking to allow restoration if not a constructor
-		TokenPosition saved_pos = save_token_position();
+		SaveHandle saved_pos = save_token_position();
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
 		    peek_token()->value() == struct_name) {
 			// Look ahead to see if this is a constructor (next token is '(')
@@ -2835,7 +2811,7 @@ ParseResult Parser::parse_struct_declaration()
 				// Parse constructor body if present (and not defaulted/deleted)
 				if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
 					// DELAYED PARSING: Save the current position (start of '{')
-					TokenPosition body_start = save_token_position();
+					SaveHandle body_start = save_token_position();
 
 					// Look up the struct type
 					auto type_it = gTypesByName.find(struct_name);
@@ -2981,7 +2957,7 @@ ParseResult Parser::parse_struct_declaration()
 			// Parse destructor body if present (and not defaulted/deleted)
 			if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
 				// DELAYED PARSING: Save the current position (start of '{')
-				TokenPosition body_start = save_token_position();
+				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type
 				auto type_it = gTypesByName.find(struct_name);
@@ -3166,7 +3142,7 @@ ParseResult Parser::parse_struct_declaration()
 			// Parse function body if present (and not defaulted/deleted)
 			if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
 				// DELAYED PARSING: Save the current position (start of '{')
-				TokenPosition body_start = save_token_position();
+				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type to get its type index
 				auto type_it = gTypesByName.find(struct_name);
@@ -3260,7 +3236,7 @@ ParseResult Parser::parse_struct_declaration()
 				// Check if this is a type name followed by brace initializer: B b = B{ .a = 2 }
 				else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 					// Save position in case this isn't a type name
-					TokenPosition saved_pos = save_token_position();
+					SaveHandle saved_pos = save_token_position();
 
 					// Try to parse as type specifier
 					ParseResult type_result = parse_type_specifier();
@@ -4039,7 +4015,7 @@ ParseResult Parser::parse_struct_declaration()
 	// with the template for later instantiation with parameter substitution
 	if (parsing_template_class_) {
 		// Save the current token position (right after the struct definition)
-		TokenPosition position_after_struct = save_token_position();
+		SaveHandle position_after_struct = save_token_position();
 
 		// Parse all delayed function bodies using unified helper (Phase 5)
 		for (auto& delayed : delayed_function_bodies_) {
@@ -4072,7 +4048,7 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Save the current token position (right after the struct definition)
 	// We'll restore this after parsing all delayed bodies
-	TokenPosition position_after_struct = save_token_position();
+	SaveHandle position_after_struct = save_token_position();
 
 	// Parse all delayed function bodies using unified helper (Phase 5)
 	for (auto& delayed : delayed_function_bodies_) {
@@ -5023,7 +4999,7 @@ ParseResult Parser::parse_namespace() {
 		// Check if it's an extern declaration (extern "C" or extern "C++")
 		else if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "extern") {
 			// Save position in case this is just a regular extern declaration
-			TokenPosition extern_saved_pos = save_token_position();
+			SaveHandle extern_saved_pos = save_token_position();
 			consume_token(); // consume 'extern'
 
 			// Check if this is extern "C" or extern "C++"
@@ -5112,7 +5088,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 	// Check if this is a type alias or namespace alias: using identifier = ...;
 	// We need to look ahead to see if there's an '=' after the first identifier
-	TokenPosition lookahead_pos = save_token_position();
+	SaveHandle lookahead_pos = save_token_position();
 	auto first_token = peek_token();
 	if (first_token.has_value() && first_token->type() == Token::Type::Identifier) {
 		consume_token(); // consume identifier
@@ -6915,7 +6891,7 @@ ParseResult Parser::parse_statement_or_declaration()
 	else if (current_token.type() == Token::Type::Identifier) {
 		// Check if this is a label (identifier followed by ':')
 		// We need to look ahead to see if there's a colon
-		TokenPosition saved_pos = save_token_position();
+		SaveHandle saved_pos = save_token_position();
 		consume_token(); // consume the identifier
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
 		    peek_token()->value() == ":") {
@@ -8606,7 +8582,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 	}
 
 	// Save position in case parsing fails
-	TokenPosition saved_pos = save_token_position();
+	SaveHandle saved_pos = save_token_position();
 
 	consume_token(); // consume "alignas"
 
@@ -10569,7 +10545,7 @@ ParseResult Parser::parse_primary_expression()
 		}
 		else {
 			// Try to parse as a type first
-			TokenPosition saved_pos = save_token_position();
+			SaveHandle saved_pos = save_token_position();
 			ParseResult type_result = parse_type_specifier();
 
 			// Check if this is really a type by seeing if ')' follows
@@ -10614,7 +10590,7 @@ ParseResult Parser::parse_primary_expression()
 		}
 
 		// Try to parse as a type first
-		TokenPosition saved_pos = save_token_position();
+		SaveHandle saved_pos = save_token_position();
 		ParseResult type_result = parse_type_specifier();
 
 		// Check if this is really a type by seeing if ')' follows
@@ -10654,7 +10630,7 @@ ParseResult Parser::parse_primary_expression()
 		// 3. C++17 Fold expression: (...op pack), (pack op...), (init op...op pack), (pack op...op init)
 		
 		// Check for fold expression patterns
-		TokenPosition fold_check_pos = save_token_position();
+		SaveHandle fold_check_pos = save_token_position();
 		bool is_fold = false;
 		
 		// Pattern 1: Unary left fold: (... op pack)
@@ -10739,7 +10715,7 @@ ParseResult Parser::parse_primary_expression()
 			restore_token_position(fold_check_pos);
 			
 			// Try to parse as a simple expression
-			TokenPosition init_pos = save_token_position();
+			SaveHandle init_pos = save_token_position();
 			ParseResult init_result = parse_primary_expression();
 			
 			if (!init_result.is_error() && init_result.node().has_value()) {
@@ -10784,7 +10760,7 @@ ParseResult Parser::parse_primary_expression()
 			restore_token_position(fold_check_pos);
 		
 			// Try to parse as type first
-			TokenPosition saved_pos = save_token_position();
+			SaveHandle saved_pos = save_token_position();
 			ParseResult type_result = parse_type_specifier();
 
 			if (!type_result.is_error() && type_result.node().has_value()) {
@@ -13371,12 +13347,18 @@ ParseResult Parser::parse_template_declaration() {
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
 	std::vector<std::string_view> template_param_names;  // string_view from Token storage
+	bool has_packs = false;  // Track if any parameter is a pack
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			// Add ALL template parameters to the name list (Type, NonType, and Template)
 			// This allows them to be recognized when referenced in the template body
 			template_param_names.push_back(tparam.name());  // string_view from Token
+			
+			// Check if this is a parameter pack
+			if (tparam.is_variadic()) {
+				has_packs = true;
+			}
 			
 			// Type parameters and Template template parameters need TypeInfo registration
 			// This allows them to be recognized during type parsing (e.g., Container<T>)
@@ -13389,6 +13371,10 @@ ParseResult Parser::parse_template_declaration() {
 			}
 		}
 	}
+	
+	// Set the flag to enable fold expression parsing if we have parameter packs
+	bool saved_has_packs = has_parameter_packs_;
+	has_parameter_packs_ = has_packs;
 
 	// Check if it's a concept template: template<typename T> concept Name = ...;
 	bool is_concept_template = peek_token().has_value() &&
@@ -13906,7 +13892,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Check for constructor (identifier matching template name followed by '(')
 				// In full specializations, the constructor uses the base template name (e.g., "Calculator"),
 				// not the instantiated name (e.g., "Calculator_int")
-				TokenPosition saved_pos = save_token_position();
+				SaveHandle saved_pos = save_token_position();
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
 				    peek_token()->value() == template_name) {
 					// Look ahead to see if this is a constructor
@@ -14144,7 +14130,7 @@ ParseResult Parser::parse_template_declaration() {
 					// Check for function body and use delayed parsing
 					if (peek_token().has_value() && peek_token()->value() == "{") {
 						// Save position at start of body
-						TokenPosition body_start = save_token_position();
+						SaveHandle body_start = save_token_position();
 
 						// Skip over the function body by counting braces
 						skip_balanced_braces();
@@ -14355,7 +14341,7 @@ ParseResult Parser::parse_template_declaration() {
 			struct_info_ptr->finalize();
 
 			// Parse delayed function bodies for specialization member functions
-			TokenPosition position_after_struct = save_token_position();
+			SaveHandle position_after_struct = save_token_position();
 			for (auto& delayed : delayed_function_bodies_) {
 				// Restore token position to the start of the function body
 				restore_token_position(delayed.body_start);
@@ -14702,7 +14688,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Check for constructor (identifier matching template name followed by '(')
 				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),
 				// not the instantiated pattern name (e.g., "Calculator_pattern_P")
-				TokenPosition saved_pos = save_token_position();
+				SaveHandle saved_pos = save_token_position();
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
 				    peek_token()->value() == template_name) {
 					// Look ahead to see if this is a constructor (next token is '(')
@@ -14849,7 +14835,7 @@ ParseResult Parser::parse_template_declaration() {
 						
 						// Parse constructor body if present
 						if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
-							TokenPosition body_start = save_token_position();
+							SaveHandle body_start = save_token_position();
 							
 							auto type_it = gTypesByName.find(instantiated_name);
 							size_t struct_type_index = 0;
@@ -14935,7 +14921,7 @@ ParseResult Parser::parse_template_declaration() {
 					// Check for function body and use delayed parsing
 					if (peek_token().has_value() && peek_token()->value() == "{") {
 						// Save position at start of body
-						TokenPosition body_start = save_token_position();
+						SaveHandle body_start = save_token_position();
 						
 						// Skip over the function body by counting braces
 						skip_balanced_braces();
@@ -15101,7 +15087,7 @@ ParseResult Parser::parse_template_declaration() {
 			struct_type_info.setStructInfo(std::move(struct_info));
 			
 			// Parse delayed function bodies for partial specialization member functions
-			TokenPosition position_after_struct = save_token_position();
+			SaveHandle position_after_struct = save_token_position();
 			for (auto& delayed : delayed_function_bodies_) {
 				// Restore token position to the start of the function body
 				restore_token_position(delayed.body_start);
@@ -16182,7 +16168,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		consume_token();
 	} else if (peek_token().has_value() && peek_token()->value() == "{") {
 		// Has a body - save position at the '{'
-		TokenPosition body_start = save_token_position();
+		SaveHandle body_start = save_token_position();
 		
 		// Store the body position in the function declaration so we can re-parse it later
 		func_decl.set_template_body_position(body_start);
@@ -16294,7 +16280,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	// Parse template arguments
 	while (true) {
 		// Save position in case type parsing fails
-		TokenPosition arg_saved_pos = save_token_position();
+		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
 		auto expr_result = parse_primary_expression();
@@ -16590,7 +16576,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 
 		// Save current position
-		TokenPosition current_pos = save_token_position();
+		SaveHandle current_pos = save_token_position();
 		
 		// Save current parsing context (will be overwritten during template body parsing)
 		const FunctionDeclarationNode* saved_current_function = current_function_;
@@ -17080,7 +17066,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		}
 
 		// Save current position
-		TokenPosition current_pos = save_token_position();
+		SaveHandle current_pos = save_token_position();
 		
 		// Save current parsing context (will be overwritten during template body parsing)
 		const FunctionDeclarationNode* saved_current_function = current_function_;
@@ -18829,7 +18815,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Check if function names match
 				if (inst_decl.identifier_token().value() == decl.identifier_token().value()) {
 					// Save current position
-					TokenPosition saved_pos = save_token_position();
+					SaveHandle saved_pos = save_token_position();
 					
 					// Add function parameters to scope so they're available during body parsing
 					gSymbolTable.enter_scope(ScopeType::Block);
@@ -19253,7 +19239,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	// Save current position
-	TokenPosition current_pos = save_token_position();
+	SaveHandle current_pos = save_token_position();
 
 	// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
 	restore_lexer_position_only(func_decl.template_body_position());
@@ -19353,10 +19339,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	// Update the saved position to include this new node so it doesn't get erased
 	// when we restore position in the caller
-	auto& seq_stack = cursor_to_sequence_stack_.at(current_pos.cursor_);
-	size_t sequence = seq_stack.back();
-	SavedTokenKey key_update{current_pos.cursor_, sequence};
-	saved_tokens_[key_update].ast_nodes_size_ = ast_nodes_.size();
+	// Update the saved position to include this new node (current_pos is already a SaveKey)
+	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
 
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
@@ -19406,7 +19390,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				}
 				
 				// Save the current position
-				TokenPosition saved_pos = save_token_position();
+				SaveHandle saved_pos = save_token_position();
 				
 				// Enter a function scope
 				gSymbolTable.enter_scope(ScopeType::Function);
@@ -19622,7 +19606,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 
 	// Save current position
-	TokenPosition current_pos = save_token_position();
+	SaveHandle current_pos = save_token_position();
 
 	// Restore to the function body start (lexer only - keep AST nodes from previous instantiations)
 	restore_lexer_position_only(func_decl.template_body_position());
@@ -19702,10 +19686,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 	// Update the saved position to include this new node so it doesn't get erased
 	// when we restore position in the caller
-	auto& seq_stack = cursor_to_sequence_stack_.at(current_pos.cursor_);
-	size_t sequence = seq_stack.back();
-	SavedTokenKey key_update{current_pos.cursor_, sequence};
-	saved_tokens_[key_update].ast_nodes_size_ = ast_nodes_.size();
+	// Update the saved position to include this new node (current_pos is already a SaveKey)
+	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
 
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
@@ -19721,7 +19703,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	const std::vector<std::string_view>& template_param_names) {
 
 	// Save position in case this isn't an out-of-line definition
-	TokenPosition saved_pos = save_token_position();
+	SaveHandle saved_pos = save_token_position();
 
 	// Try to parse return type
 	auto return_type_result = parse_type_specifier();
@@ -19848,7 +19830,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 
 	// Save the position of the function body for delayed parsing
-	TokenPosition body_start = save_token_position();
+	SaveHandle body_start = save_token_position();
 
 	// Skip the function body for now (we'll re-parse it during instantiation or first use)
 	if (peek_token().has_value() && peek_token()->value() == "{") {
@@ -19897,7 +19879,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	TypeIndex struct_type_index
 ) {
 	// Save current parser state using save_token_position so we can restore properly
-	TokenPosition saved_cursor = save_token_position();
+	SaveHandle saved_cursor = save_token_position();
 
 	// Bind template parameters to concrete types using RAII scope guard (Phase 6)
 	FlashCpp::TemplateParameterScope template_scope;
