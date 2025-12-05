@@ -9561,11 +9561,21 @@ private:
 		addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
 
 		// Generate the lambda body
+		bool has_return_statement = false;
 		if (lambda_info.lambda_body.is<BlockNode>()) {
 			const auto& body = lambda_info.lambda_body.as<BlockNode>();
 			body.get_statements().visit([&](const ASTNode& stmt) {
 				visit(stmt);
+				if (stmt.is<ReturnStatementNode>()) {
+					has_return_statement = true;
+				}
 			});
+		}
+
+		// Add implicit return for void lambdas (matching regular function behavior)
+		if (!has_return_statement && lambda_info.return_type == Type::Void) {
+			ReturnOp ret_op;  // No return value for void
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 		}
 
 		// Clear lambda context
@@ -9648,11 +9658,21 @@ private:
 		addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
 
 		// Generate the lambda body
+		bool has_return_statement = false;
 		if (lambda_info.lambda_body.is<BlockNode>()) {
 			const auto& body = lambda_info.lambda_body.as<BlockNode>();
 			body.get_statements().visit([&](const ASTNode& stmt) {
 				visit(stmt);
+				if (stmt.is<ReturnStatementNode>()) {
+					has_return_statement = true;
+				}
 			});
+		}
+
+		// Add implicit return for void lambdas (matching regular function behavior)
+		if (!has_return_statement && lambda_info.return_type == Type::Void) {
+			ReturnOp ret_op;  // No return value for void
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 		}
 
 		symbol_table.exit_scope();
