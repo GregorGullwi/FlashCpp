@@ -9786,9 +9786,16 @@ private:
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
-				// Use the parameter type as-is, preserving all reference flags
-				// This ensures mangled names are consistent between call sites and definitions
-				param_types.push_back(param_type);
+				// For 'auto' parameters (generic lambdas), substitute int for mangling
+				if (param_type.type() == Type::Auto && param_type.size_in_bits() == 0) {
+					// Create a TypeSpecifierNode for int
+					TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
+					param_types.push_back(int_type);
+				} else {
+					// Use the parameter type as-is, preserving all reference flags
+					// This ensures mangled names are consistent between call sites and definitions
+					param_types.push_back(param_type);
+				}
 			}
 		}
 		
@@ -9813,6 +9820,14 @@ private:
 				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				func_param.name = std::string(param_decl.identifier_token().value());
+				
+				// For 'auto' parameters (generic lambdas), default to int if size is 0
+				// This is a simplification - proper generic lambda support would require
+				// template-like instantiation at each call site with different types
+				if (func_param.type == Type::Auto && func_param.size_in_bits == 0) {
+					func_param.type = Type::Int;
+					func_param.size_in_bits = 32;
+				}
 				
 				// Preserve reference flags for all parameter types (including auto)
 				// This ensures mangled names are consistent between call sites and definitions
@@ -9934,9 +9949,14 @@ private:
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
-				// Use the parameter type as-is, preserving all reference flags
-				// This ensures mangled names are consistent between call sites and definitions
-				param_types.push_back(param_type);
+				// For 'auto' parameters (generic lambdas), substitute int for mangling
+				if (param_type.type() == Type::Auto && param_type.size_in_bits() == 0) {
+					TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
+					param_types.push_back(int_type);
+				} else {
+					// Use the parameter type as-is, preserving all reference flags
+					param_types.push_back(param_type);
+				}
 			}
 		}
 		
@@ -9961,6 +9981,12 @@ private:
 				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				func_param.name = std::string(param_decl.identifier_token().value());
+				
+				// For 'auto' parameters (generic lambdas), default to int if size is 0
+				if (func_param.type == Type::Auto && func_param.size_in_bits == 0) {
+					func_param.type = Type::Int;
+					func_param.size_in_bits = 32;
+				}
 				
 				// Preserve reference flags for all parameter types (including auto)
 				// This ensures mangled names are consistent between call sites and definitions
