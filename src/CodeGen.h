@@ -10252,9 +10252,14 @@ private:
 			}
 		}
 
-		// Return a temp var representing the lambda closure
-		TempVar lambda_var = var_counter.next();
-		return {Type::Struct, 8, closure_type->type_index_, lambda_var};
+		// Return the closure variable representing the lambda
+		// Format: {type, size, value, type_index}
+		// - type: Type::Struct (the closure is a struct)
+		// - size: size of the closure in bits
+		// - value: closure_var_name (the allocated closure variable)
+		// - type_index: the type index for the closure struct
+		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
+		return {Type::Struct, closure_size_bits, closure_var_name, static_cast<unsigned long long>(closure_type->type_index_)};
 	}
 
 
@@ -10425,6 +10430,11 @@ private:
 		// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
 		// TempVar(1) is reserved for 'this', so we start at TempVar(2).
 		var_counter = TempVar(2);
+
+		// Set current function return type and size for type checking in return statements
+		// This is critical for lambdas returning other lambdas or structs
+		current_function_return_type_ = lambda_info.return_type;
+		current_function_return_size_ = lambda_info.return_size;
 
 		// Set lambda context for captured variable access
 		current_lambda_closure_type_ = lambda_info.closure_type_name;
@@ -10603,6 +10613,11 @@ private:
 		// TempVar is 1-based. For static functions (like __invoke), no 'this' pointer,
 		// so TempVar() starts at 1 which is the first available slot.
 		var_counter = TempVar();
+
+		// Set current function return type and size for type checking in return statements
+		// This is critical for lambdas returning other lambdas or structs
+		current_function_return_type_ = lambda_info.return_type;
+		current_function_return_size_ = lambda_info.return_size;
 
 		// Add lambda parameters to symbol table as function parameters (__invoke context)
 		// This ensures they're recognized as local parameters, not external symbols
