@@ -472,6 +472,91 @@ private:
 		return nullptr;
 	}
 
+	// Evaluate lambda captures and add their values to bindings
+	static EvalResult evaluate_lambda_captures(
+		const std::vector<LambdaCaptureNode>& captures,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		for (const auto& capture : captures) {
+			using CaptureKind = LambdaCaptureNode::CaptureKind;
+			
+			switch (capture.kind()) {
+				case CaptureKind::ByValue:
+				case CaptureKind::ByReference: {
+					// Named capture: [x] or [&x]
+					std::string_view var_name = capture.identifier_name();
+					
+					// Check for init-capture: [x = expr]
+					if (capture.has_initializer()) {
+						auto init_result = evaluate(capture.initializer().value(), context);
+						if (!init_result.success) {
+							return EvalResult::error("Failed to evaluate init-capture '" + 
+								std::string(var_name) + "': " + init_result.error_message);
+						}
+						bindings[var_name] = init_result;
+					} else {
+						// Look up the variable in the symbol table
+						if (!context.symbols) {
+							return EvalResult::error("Cannot evaluate capture: no symbol table provided");
+						}
+						
+						auto symbol_opt = context.symbols->lookup(var_name);
+						if (!symbol_opt.has_value()) {
+							return EvalResult::error("Captured variable not found: " + std::string(var_name));
+						}
+						
+						const ASTNode& symbol_node = symbol_opt.value();
+						if (!symbol_node.is<VariableDeclarationNode>()) {
+							return EvalResult::error("Captured identifier is not a variable: " + std::string(var_name));
+						}
+						
+						const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
+						
+						// For constexpr evaluation, the captured variable must be constexpr
+						if (!var_decl.is_constexpr()) {
+							return EvalResult::error("Captured variable must be constexpr in constant expression: " + 
+								std::string(var_name));
+						}
+						
+						// Evaluate the variable's initializer
+						if (!var_decl.initializer().has_value()) {
+							return EvalResult::error("Captured constexpr variable has no initializer: " + 
+								std::string(var_name));
+						}
+						
+						auto var_result = evaluate(var_decl.initializer().value(), context);
+						if (!var_result.success) {
+							return EvalResult::error("Failed to evaluate captured variable '" + 
+								std::string(var_name) + "': " + var_result.error_message);
+						}
+						bindings[var_name] = var_result;
+					}
+					break;
+				}
+				
+				case CaptureKind::AllByValue:
+				case CaptureKind::AllByReference:
+					// [=] or [&] - implicit capture
+					// In constexpr context, we don't know which variables are used without analyzing the body
+					// For now, this is a limitation - we'd need body analysis to support this
+					return EvalResult::error("Implicit capture [=] or [&] not supported in constexpr lambdas - use explicit captures");
+				
+				case CaptureKind::This:
+				case CaptureKind::CopyThis:
+					// [this] or [*this] - capturing this pointer
+					// This would require being in a member function context
+					return EvalResult::error("Capture of 'this' not supported in constexpr lambdas");
+			}
+		}
+		
+		// Success - all captures evaluated
+		EvalResult success;
+		success.success = true;
+		success.value = 0LL;  // Dummy value, not used
+		return success;
+	}
+
 	// Evaluate a callable object (lambda or user-defined functor with operator())
 	static EvalResult evaluate_callable_object(
 		const VariableDeclarationNode& var_decl,
@@ -531,11 +616,11 @@ private:
 			bindings[param_name] = arg_result;
 		}
 		
-		// Handle captures - for now, only support captureless lambdas
-		// TODO: Extract captured variable values and add to bindings
+		// Handle captures - evaluate each captured variable and add to bindings
 		const auto& captures = lambda.captures();
-		if (!captures.empty()) {
-			return EvalResult::error("Constexpr lambdas with captures not yet supported");
+		auto capture_result = evaluate_lambda_captures(captures, bindings, context);
+		if (!capture_result.success) {
+			return capture_result;
 		}
 		
 		// Increase recursion depth
