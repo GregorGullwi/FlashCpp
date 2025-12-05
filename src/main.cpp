@@ -23,7 +23,11 @@
 #include "CrashHandler.h"
 #include "Log.h"
 #include "ObjFileWriter.h"
+
+// Only include ELF writer on non-Windows platforms
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
 #include "ElfFileWriter.h"
+#endif
 
 // Global debug flag
 bool g_enable_debug_output = false;
