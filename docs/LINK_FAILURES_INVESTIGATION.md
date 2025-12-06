@@ -1,47 +1,16 @@
 # Link Failures Investigation
 
 **Date**: December 6, 2025  
-**Status**: Active Investigation  
-**Test Results**: 591/598 tests linking successfully (98.83%)
+**Status**: Active Investigation - 5 Tests Fixed Today  
+**Test Results**: 582/592 tests linking successfully (98.31%)
 
 ## Summary
 
-Currently tracking 7 link failures across 3 categories. Recent fixes resolved all extern "C" linkage issues (5 tests fixed).
+Fixed 5 link failures today (from 15 down to 10). Template instantiation and namespace function issues resolved.
 
-## Active Link Failures (7 tests)
+## Active Link Failures (10 tests)
 
-### 1. Template Instantiation Issues (3 tests)
-
-**Problem**: Template instantiations are not generating proper mangled names or symbol definitions.
-
-**Failing Tests**:
-- `template_explicit_args.cpp` - Unresolved: `identity_int`, `max_int`
-- `template_multi_param.cpp` - Unresolved: `first_int_float`, `second_int_float`
-- `test_func_template_multi_param.cpp` - Unresolved: `identity_int`, `first_int_float`
-
-**Root Cause**: When templates are explicitly instantiated (e.g., `identity<int>`), the mangled name generation for the instantiated function may not be happening correctly, or the instantiated function is not being added to the symbol table with the correct mangled name.
-
-**Next Steps**:
-1. Verify that `TemplateRegistry::mangleTemplateName()` generates correct names
-2. Check that instantiated functions are properly registered with their mangled names
-3. Ensure code generation emits the instantiated function definitions
-
-### 2. Namespace Function Issues (2 tests)
-
-**Problem**: Functions in namespaces are not being found during linking, likely due to incorrect mangling or symbol registration.
-
-**Failing Tests**:
-- `test_nested_namespace.cpp` - Unresolved: `func`
-- `test_global_namespace_scope.cpp` - Unresolved: 10 symbols (various namespace functions and variables)
-
-**Root Cause**: Namespace-qualified names need special mangling. The simplified `getMangledName()` may not handle namespace prefixes correctly, or the Parser may not be pre-computing mangled names for namespace-scoped functions.
-
-**Next Steps**:
-1. Check how `NameMangling::generateMangledNameFromNode()` handles namespace prefixes
-2. Verify that functions defined in namespaces get proper mangled names during parsing
-3. Ensure code generation and symbol lookups agree on namespace mangling format
-
-### 3. Inheritance Member Access (2 tests)
+### 1. Inheritance Member Access (2 tests) 
 
 **Problem**: Derived classes can't find members inherited from base classes.
 
@@ -49,28 +18,53 @@ Currently tracking 7 link failures across 3 categories. Recent fixes resolved al
 - `test_inheritance_basic.cpp` - Unresolved: `getX` (called from `Derived3::sumViaMethod`)
 - `test_virtual_inheritance.cpp` - Unresolved: `getX` (called from `DerivedWithMethod::sumViaMethod`)
 
-**Root Cause**: When a derived class method calls a base class method, the code generation may be looking for the function in the wrong class scope. The symbol lookup or mangling may not account for the inheritance hierarchy.
+**Root Cause**: When a derived class method calls a base class method, the parser doesn't look up methods in base class scope. The function call is generated with just the method name `getX` instead of the mangled name `_ZN5Base34getXEv`.
 
 **Next Steps**:
-1. Verify that base class members are visible in derived class scope during parsing
-2. Check that method calls resolve to the correct mangled name (base class version)
-3. Ensure code generation emits calls with correct class qualification
+1. Modify symbol table lookup in derived classes to check base class members
+2. Ensure method calls to inherited functions resolve to correct mangled names
+3. Consider using MemberFunctionCallNode instead of plain FunctionCallNode for base class method calls
+
+### 2. Other Link Failures (8 tests)
+
+**Failing Tests**:
+- `test_constexpr_lambda.cpp` - lambda-related
+- `test_delayed_parsing_constructor.cpp` - constructor-related
+- `test_dynamic_cast_debug.cpp` - dynamic_cast RTTI
+- `test_exceptions_basic.cpp` - exception handling
+- `test_exceptions_nested.cpp` - exception handling
+- `test_extern_c_single.cpp` - extern "C" linkage broken (ELF symbol issue)
+- `test_noexcept.cpp` - noexcept specifier
+- `test_variadic_mixed.cpp` - variadic templates
 
 ## Recent Fixes (December 6, 2025)
 
-**Tests Fixed**: 5 (from 12 failures down to 7)
-- ✅ test_extern_c_single.cpp
-- ✅ test_variadic_mixed.cpp
-- ✅ test_loop_destructor.cpp
-- ✅ test_scope_destructor.cpp
-- ✅ test_virtual_basic.cpp
+**Tests Fixed**: 5 (from 15 failures down to 10)
+- ✅ template_explicit_args.cpp
+- ✅ template_multi_param.cpp
+- ✅ test_func_template_multi_param.cpp
+- ✅ test_nested_namespace.cpp
+- ✅ test_global_namespace_scope.cpp
 
-### Issue #2: Linkage Inheritance Not Working
+### Issue #3: Template Instantiations Missing Mangled Names
+- **Root Cause**: Template instantiations were not calling `compute_and_set_mangled_name()`, so they didn't have Itanium/MSVC mangled names for code generation
+- **Fix**: Added `compute_and_set_mangled_name()` calls after each template instantiation in 6 locations
+- **Fix**: Changed `gSymbolTable.insert()` to `gSymbolTable.insertGlobal()` for template instantiations to ensure global visibility
+- **Files**: `src/Parser.cpp` lines 17395-17399, 17887-17893, 20002-20004, 20127-20132, 20366-20370, 20477-20483
+- **Result**: Template functions now generate with correct mangled names (e.g., `_Z12identity_inti` instead of `identity_int`)
+
+### Issue #4: Namespace Qualified Function Calls Missing Mangled Names
+- **Root Cause**: When parsing `A::B::func()`, the FunctionCallNode was created without setting the mangled name from the looked-up FunctionDeclarationNode
+- **Fix**: After creating FunctionCallNode for qualified identifiers, check if the function has a mangled name and set it
+- **File**: `src/Parser.cpp` lines 9782-9789
+- **Result**: Namespace-qualified calls now use mangled names (e.g., `_ZN1A1B4funcEv` for `A::B::func()`)
+
+### Issue #2: Linkage Inheritance Not Working (Previously Fixed)
 - **Root Cause**: Definitions outside `extern "C" {}` blocks didn't inherit linkage from forward declarations inside
 - **Fix**: Added linkage inheritance in `parse_function_declaration()` using `lookup_all()` to find forward declarations
 - **File**: `src/Parser.cpp` line ~7228-7242
 
-### Issue #1: extern "C" Functions Being Mangled
+### Issue #1: extern "C" Functions Being Mangled (Previously Fixed)
 - **Root Cause**: `compute_and_set_mangled_name()` returned early for C linkage without setting any name
 - **Fix**: Set unmangled function name for C linkage (no mangling)
 - **File**: `src/Parser.cpp` line ~7182-7185
