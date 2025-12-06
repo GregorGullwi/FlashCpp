@@ -3335,7 +3335,48 @@ private:
 					op.is_initialized = false;
 				}
 			} else {
-				op.is_initialized = false;
+				// No explicit initializer provided
+				// Check if this is a struct with default member initializers
+				if (type_node.type_index() != 0) {
+					// This is a user-defined type (struct/class)
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->members.empty()) {
+						// Check if any members have default initializers
+						bool has_default_inits = false;
+						for (const auto& member : struct_info->members) {
+							if (member.default_initializer.has_value()) {
+								has_default_inits = true;
+								break;
+							}
+						}
+						
+						if (has_default_inits) {
+							// Build initial data from default member initializers
+							op.is_initialized = true;
+							op.init_data.resize(struct_info->total_size, 0);  // Start with zeros
+							
+							for (const auto& member : struct_info->members) {
+								if (member.default_initializer.has_value()) {
+									// Evaluate the default initializer
+									unsigned long long value = evalToValue(*member.default_initializer, member.type);
+									
+									// Write the value at the member's offset
+									size_t member_size = member.size;
+									for (size_t i = 0; i < member_size && (member.offset + i) < op.init_data.size(); ++i) {
+										op.init_data[member.offset + i] = static_cast<char>((value >> (i * 8)) & 0xFF);
+									}
+								}
+							}
+						} else {
+							op.is_initialized = false;
+						}
+					} else {
+						op.is_initialized = false;
+					}
+				} else {
+					op.is_initialized = false;
+				}
 			}
 
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), decl.identifier_token()));
