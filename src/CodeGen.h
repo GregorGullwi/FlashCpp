@@ -5926,6 +5926,60 @@ private:
 			}
 		}
 
+		// Special handling for global variable assignment
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
+				std::string_view lhs_name = lhs_ident.name();
+
+				// Check if this is a global variable (not found in local symbol table, but found in global)
+				const std::optional<ASTNode> local_symbol = symbol_table.lookup(lhs_name);
+				bool is_global = false;
+				
+				if (!local_symbol.has_value() && global_symbol_table_) {
+					// Not found locally - check global symbol table
+					const std::optional<ASTNode> global_symbol = global_symbol_table_->lookup(lhs_name);
+					if (global_symbol.has_value() && global_symbol->is<VariableDeclarationNode>()) {
+						is_global = true;
+					}
+				}
+				
+				if (is_global) {
+					// This is a global variable assignment - generate GlobalStore instruction
+					// Generate IR for the RHS
+					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+					// Generate GlobalStore IR: global_store @global_name, %value
+					std::vector<IrOperand> store_operands;
+					store_operands.emplace_back(lhs_name);  // global name
+					
+					// Extract the value from RHS (rhsIrOperands[2])
+					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+						store_operands.emplace_back(std::get<TempVar>(rhsIrOperands[2]));
+					} else if (std::holds_alternative<unsigned long long>(rhsIrOperands[2]) || std::holds_alternative<double>(rhsIrOperands[2])) {
+						// For constant values, we need to create a temp var and assign to it first
+						TempVar temp = var_counter.next();
+						AssignmentOp assign_op;
+						assign_op.result = temp;
+						assign_op.lhs.type = std::get<Type>(rhsIrOperands[0]);
+						assign_op.lhs.size_in_bits = std::get<int>(rhsIrOperands[1]);
+						assign_op.lhs.value = temp;
+						assign_op.rhs = toTypedValue(rhsIrOperands);
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+						store_operands.emplace_back(temp);
+					} else {
+						store_operands.emplace_back(std::get<TempVar>(rhsIrOperands[2]));
+					}
+
+					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
+
+					// Return the RHS value as the result (assignment expression returns the assigned value)
+					return rhsIrOperands;
+				}
+			}
+		}
+
 		// Generate IR for the left-hand side and right-hand side of the operation
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
