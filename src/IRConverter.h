@@ -9744,53 +9744,20 @@ private:
 
 
 	void handleStringLiteral(const IrInstruction& instruction) {
-		// Extract typed payload - all StringLiteral instructions use typed payloads
 		const StringLiteralOp& op = instruction.getTypedPayload<StringLiteralOp>();
-		
-		// Get result variable - should always be TempVar
 		TempVar result_var = std::get<TempVar>(op.result);
-		auto string_content = op.content;
 
-		// Add the string literal to the .rdata section and get its symbol name
-		std::string symbol_name = writer.add_string_literal(std::string(string_content));
-
-		// Calculate stack offset for the result variable (pointer to string)
+		// Add string literal to .rdata and get symbol
+		std::string_view symbol_name = writer.add_string_literal(op.content);
 		int64_t stack_offset = getStackOffsetFromTempVar(result_var);
 		variable_scopes.back().identifier_offset[std::string(result_var.name())] = stack_offset;
 
-		// LEA RAX, [RIP + symbol]
-		// This requires a relocation entry
-		textSectionData.push_back(0x48); // REX.W
-		textSectionData.push_back(0x8D); // LEA
-		textSectionData.push_back(0x05); // ModR/M: [RIP + disp32], RAX
+		// LEA RAX, [RIP + symbol] with relocation
+		uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+		writer.add_relocation(reloc_offset, symbol_name);
 
-		// Add placeholder for the displacement (will be filled by relocation)
-		uint32_t relocation_offset = static_cast<uint32_t>(textSectionData.size());
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-
-		// Add a relocation for the string literal symbol
-		writer.add_relocation(relocation_offset, symbol_name);
-
-		// Store the address to the stack
-		// MOV [RBP + offset], RAX
-		if (stack_offset >= -128 && stack_offset <= 127) {
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x89); // MOV r/m64, r64
-			textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-			textSectionData.push_back(static_cast<uint8_t>(stack_offset));
-		} else {
-			textSectionData.push_back(0x48); // REX.W
-			textSectionData.push_back(0x89); // MOV r/m64, r64
-			textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-			uint32_t offset_u32 = static_cast<uint32_t>(stack_offset);
-			textSectionData.push_back(offset_u32 & 0xFF);
-			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-		}
+		// Store address to stack
+		emitMovToFrame(X64Register::RAX, stack_offset);
 	}
 
 	void handleMemberAccess(const IrInstruction& instruction) {
@@ -9876,51 +9843,26 @@ private:
 		X64Register temp_reg = allocateRegisterWithSpilling();
 
 		if (is_global_access) {
-			// For global struct variables: load address of global using LEA with RIP-relative addressing
-			// LEA RAX, [RIP + global_name]
-			// Then load from [RAX + member_offset]
-			
-			// Step 1: LEA temp_reg, [RIP + global]
-			// 48 8D 05 xx xx xx xx  ; LEA RAX, [RIP+disp32]
-			textSectionData.push_back(0x48);  // REX.W prefix
-			textSectionData.push_back(0x8D);  // LEA opcode
-			// ModR/M: 00 (mod) | reg (temp_reg) | 101 (RIP+disp32)
-			uint8_t modrm = 0x05 | ((static_cast<uint8_t>(temp_reg) & 0x7) << 3);
-			textSectionData.push_back(modrm);
-			
-			// Add relocation for the global variable
-			uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
-			textSectionData.push_back(0x00);
+			// LEA temp_reg, [RIP + global] with relocation
+			uint32_t reloc_offset = emitLeaRipRelative(temp_reg);
 			pending_global_relocations_.push_back({reloc_offset, std::string(global_object_name), IMAGE_REL_AMD64_REL32});
 			
-			// Step 2: Load member from [temp_reg + offset]
-			// Check if this is a floating-point type
+			// Load member from [temp_reg + offset]
 			bool is_float_type = (op.result.type == Type::Float || op.result.type == Type::Double);
 			
 			if (is_float_type) {
-				// For floating-point: load into XMM register
+				// For floating-point: load into XMM and store to stack
 				X64Register xmm_reg = X64Register::XMM0;
 				bool is_float = (op.result.type == Type::Float);
-				
-				// MOVSD/MOVSS XMM0, [temp_reg + offset]
 				emitFloatLoadFromAddressWithOffset(textSectionData, xmm_reg, temp_reg, op.offset, is_float);
 				
-				// Store directly to stack using MOVSD/MOVSS (don't convert to GPR)
-				// Calculate stack offset for result
 				int32_t result_offset = allocateStackSlotForTempVar(result_var.var_number);
 				auto store_opcodes = generateFloatMovToFrame(xmm_reg, result_offset, is_float);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-				
-				// Release the temp register (we're done with the address)
 				regAlloc.release(temp_reg);
-				
-				// Add the TempVar to identifier_offset
 				variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
-				return;  // Early return - we've handled everything
+				return;
 			} else {
 				// For integers: use standard integer load
 				OpCodeWithSize load_opcodes;
@@ -9940,12 +9882,10 @@ private:
 				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			}
 		} else if (is_pointer_access) {
-			// For 'this' pointer: load pointer into RCX, then load from [RCX + member_offset]
-			auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RCX, object_base_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-			                       load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
-
-			// Now load from [RCX + member_offset] into temp_reg using size-appropriate function
+			// Load 'this' pointer into RCX, then load from [RCX + offset]
+			emitMovFromFrame(X64Register::RCX, object_base_offset);
+			
+			// Load from [RCX + offset] into temp_reg
 			OpCodeWithSize load_opcodes;
 			if (member_size_bytes == 8) {
 				load_opcodes = generateMovFromMemory(temp_reg, X64Register::RCX, op.offset);
@@ -9962,28 +9902,12 @@ private:
 			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		} else {
-			// For regular struct variables on the stack, use size-appropriate load
-			OpCodeWithSize load_opcodes;
-			if (member_size_bytes == 8) {
-				load_opcodes = generatePtrMovFromFrame(temp_reg, member_stack_offset);
-			} else if (member_size_bytes == 4) {
-				load_opcodes = generateMovFromFrame32(temp_reg, member_stack_offset);
-			} else if (member_size_bytes == 2) {
-				load_opcodes = generateMovzxFromFrame16(temp_reg, member_stack_offset);
-			} else if (member_size_bytes == 1) {
-				load_opcodes = generateMovzxFromFrame8(temp_reg, member_stack_offset);
-			} else {
-				assert(false && "Unsupported member size");
-				return;
-			}
-			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			// For regular struct variables on the stack, load from computed offset
+			emitLoadFromFrame(textSectionData, temp_reg, member_stack_offset, member_size_bytes);
 		}
 
 		if (op.is_reference) {
-			auto store_ptr = generatePtrMovToFrame(temp_reg, result_offset);
-			textSectionData.insert(textSectionData.end(), store_ptr.op_codes.begin(),
-				               store_ptr.op_codes.begin() + store_ptr.size_in_bytes);
+			emitMovToFrame(temp_reg, result_offset);
 			regAlloc.release(temp_reg);
 			reference_stack_info_[result_offset] = ReferenceInfo{
 				.value_type = op.result.type,
