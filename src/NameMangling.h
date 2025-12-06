@@ -149,6 +149,182 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	}
 }
 
+// ============================================================================
+// Itanium C++ ABI Name Mangling Helpers
+// ============================================================================
+
+// Append Itanium-style type encoding for basic types
+// Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
+template<typename OutputType>
+inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
+	// Handle CV-qualifiers (restrict, volatile, const)
+	// r = restrict, V = volatile, K = const
+	if (type_node.cv_qualifier() == CVQualifier::Const) {
+		output += 'K';
+	} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
+		output += 'V';
+	} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
+		output += 'V';
+		output += 'K';
+	}
+	
+	// Handle pointers
+	for (size_t i = 0; i < type_node.pointer_levels().size(); ++i) {
+		output += 'P';
+		const auto& ptr_level = type_node.pointer_levels()[i];
+		if (ptr_level.cv_qualifier == CVQualifier::Const) {
+			output += 'K';
+		} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
+			output += 'V';
+		} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
+			output += 'V';
+			output += 'K';
+		}
+	}
+	
+	// Handle references
+	if (type_node.is_lvalue_reference()) {
+		output += 'R';
+	} else if (type_node.is_rvalue_reference()) {
+		output += 'O';  // rvalue reference
+	}
+	
+	// Basic type codes (Itanium ABI section 5.1.5)
+	switch (type_node.type()) {
+		case Type::Void:       output += 'v'; break;
+		case Type::Bool:       output += 'b'; break;
+		case Type::Char:
+			// Char can be signed or unsigned depending on qualifier
+			if (type_node.qualifier() == TypeQualifier::Unsigned) {
+				output += 'h';  // unsigned char
+			} else if (type_node.qualifier() == TypeQualifier::Signed) {
+				output += 'a';  // signed char
+			} else {
+				output += 'c';  // plain char (implementation-defined signedness)
+			}
+			break;
+		case Type::UnsignedChar: output += 'h'; break;
+		case Type::Short:      output += 's'; break;
+		case Type::UnsignedShort: output += 't'; break;
+		case Type::Int:        output += 'i'; break;
+		case Type::UnsignedInt: output += 'j'; break;
+		case Type::Long:       output += 'l'; break;
+		case Type::UnsignedLong: output += 'm'; break;
+		case Type::LongLong:   output += 'x'; break;
+		case Type::UnsignedLongLong: output += 'y'; break;
+		case Type::Float:      output += 'f'; break;
+		case Type::Double:     output += 'd'; break;
+		case Type::LongDouble: output += 'e'; break;
+		case Type::Struct:
+		case Type::UserDefined: {
+			// For structs/classes, use the struct name
+			// Format: <length><name>
+			if (type_node.type_index() < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+				auto struct_name = type_info.name_;
+				output += std::to_string(struct_name.size());
+				output += struct_name;
+			} else {
+				// Unknown struct type, use 'v' for void as fallback
+				output += 'v';
+			}
+			break;
+		}
+		default:
+			// Unknown type, use 'i' for int as fallback
+			output += 'i';
+			break;
+	}
+}
+
+// Generate Itanium C++ ABI mangled name
+// Format: _Z<function-name><parameter-types>
+// For namespaced functions: _ZN<namespace-parts><function-name>E<parameter-types>
+// For member functions: _ZN<class-name><function-name>E<parameter-types>
+template<typename OutputType>
+inline void generateItaniumMangledName(
+	OutputType& output,
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path
+) {
+	// Start with _Z prefix
+	output += "_Z";
+	
+	// Check if we have namespaces or struct (needs nested-name encoding)
+	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
+	
+	if (has_nested_name) {
+		// Use nested-name encoding: _ZN...E
+		output += 'N';
+		
+		// Add namespace parts first (in order)
+		for (const auto& ns : namespace_path) {
+			output += std::to_string(ns.size());
+			output += ns;
+		}
+		
+		// Add struct/class name if present
+		if (!struct_name.empty()) {
+			output += std::to_string(struct_name.size());
+			output += struct_name;
+		}
+		
+		// Add function name
+		output += std::to_string(func_name.size());
+		output += func_name;
+		
+		// End nested-name
+		output += 'E';
+	} else {
+		// Simple function name: <length><name>
+		output += std::to_string(func_name.size());
+		output += func_name;
+	}
+	
+	// Add parameter types
+	if (param_types.empty() && !is_variadic) {
+		// No parameters - use 'v' for void parameter list
+		output += 'v';
+	} else {
+		for (const auto& param : param_types) {
+			appendItaniumTypeCode(output, param);
+		}
+		
+		// Handle variadic parameters
+		if (is_variadic) {
+			output += 'z';  // ellipsis
+		}
+	}
+}
+
+// Overload for param_nodes (extracts types from DeclarationNodes)
+template<typename OutputType>
+inline void generateItaniumMangledName(
+	OutputType& output,
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<ASTNode>& param_nodes,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path
+) {
+	// Extract parameter types from param_nodes
+	std::vector<TypeSpecifierNode> param_types;
+	param_types.reserve(param_nodes.size());
+	for (const auto& param : param_nodes) {
+		const DeclarationNode& param_decl = param.as<DeclarationNode>();
+		param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+	}
+	
+	// Use the main implementation
+	generateItaniumMangledName(output, func_name, return_type, param_types, 
+	                           is_variadic, struct_name, namespace_path);
+}
+
 // Generate MSVC mangled name for a function
 // Uses StringBuilder for efficient string construction and returns a committed string_view
 // Parameters:
@@ -175,12 +351,11 @@ inline MangledName generateMangledName(
 		return MangledName(builder.commit());
 	}
 
-	// Check mangling style - if Itanium is selected but not yet implemented,
-	// use C linkage (no mangling) for now
+	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
-		// TODO: Implement Itanium C++ ABI name mangling (Milestone 4)
-		// For now, return unmangled name (C linkage)
-		builder.append(func_name);
+		// Use Itanium C++ ABI name mangling
+		generateItaniumMangledName(builder, func_name, return_type, param_types, 
+		                           is_variadic, struct_name, namespace_path);
 		return MangledName(builder.commit());
 	}
 
@@ -266,12 +441,11 @@ inline MangledName generateMangledName(
 		return MangledName(builder.commit());
 	}
 
-	// Check mangling style - if Itanium is selected but not yet implemented,
-	// use C linkage (no mangling) for now
+	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
-		// TODO: Implement Itanium C++ ABI name mangling (Milestone 4)
-		// For now, return unmangled name (C linkage)
-		builder.append(func_name);
+		// Use Itanium C++ ABI name mangling
+		generateItaniumMangledName(builder, func_name, return_type, param_nodes, 
+		                           is_variadic, struct_name, namespace_path);
 		return MangledName(builder.commit());
 	}
 
