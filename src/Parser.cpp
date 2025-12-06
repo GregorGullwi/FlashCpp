@@ -9779,6 +9779,14 @@ ParseResult Parser::parse_primary_expression()
 				// Create function call node with the qualified identifier
 				result = emplace_node<ExpressionNode>(
 					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), qual_id.identifier_token()));
+				
+				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+				if (identifierType->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+					if (func_decl.has_mangled_name()) {
+						std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+					}
+				}
 			} else {
 				// Just a qualified identifier reference
 				result = emplace_node<ExpressionNode>(qual_id);
