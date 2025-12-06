@@ -1,16 +1,14 @@
 # Link Failures Investigation
 
 **Date**: December 6, 2025  
-**Status**: Nearly Complete - 6 Remaining (5 Platform-Specific, 1 Compiler Bug)
-**Test Results**: 582/595 tests linking successfully (97.8%)
+**Status**: Complete - All Fixable Issues Resolved!
+**Test Results**: 583/595 tests linking successfully (98.0%)
 
 ## Summary
 
-Fixed 9 of 15 Linux link failures. The remaining 6 failures are either platform-specific runtime dependencies or a compiler bug unrelated to linking.
+Fixed 10 of 15 Linux link failures. The remaining 5 failures all require Windows-specific runtime features.
 
-## Remaining Issues
-
-### Platform-Specific Runtime Dependencies (5 tests)
+## Remaining Platform-Specific Issues (5 tests)
 
 These tests rely on Windows-specific runtime features. Platform-specific code has been documented in `src/PlatformInternals.h`.
 
@@ -29,20 +27,12 @@ These tests rely on Windows-specific runtime features. Platform-specific code ha
 - Windows implementations reference existing MSVC runtime
 - Linux implementations documented but not yet implemented (require Itanium C++ ABI support)
 
-### Compiler Bug (1 test)
-
-**Failing Test**:
-- `test_delayed_parsing_constructor.cpp` - Constructor initializer calls member function declared later in class
-  - **Issue**: Constructor initializer list is parsed immediately, before all member declarations are visible
-  - **Root Cause**: C++ requires member function bodies to be parsed in "complete-class context" (after all member declarations), but constructor initializer lists are currently parsed eagerly
-  - **Fix Required**: Delay parsing of constructor initializer lists until all class members are declared
-  - **Workaround**: Declare member functions before constructors that call them in initializers
-
 ## Recent Fixes (December 6, 2025)
 
-**Tests Fixed**: 9 (from 15 failures down to 6)
+**Tests Fixed**: 10 (from 15 failures down to 5)
 - ✅ template_explicit_args.cpp
 - ✅ template_multi_param.cpp  
+- ✅ test_delayed_parsing_constructor.cpp (Delayed parsing fix)
 - ✅ test_extern_c_single.cpp
 - ✅ test_func_template_multi_param.cpp
 - ✅ test_global_namespace_scope.cpp
@@ -50,6 +40,16 @@ These tests rely on Windows-specific runtime features. Platform-specific code ha
 - ✅ test_nested_namespace.cpp
 - ✅ test_variadic_mixed.cpp
 - ✅ test_virtual_inheritance.cpp
+
+### Issue #6: Constructor Initializer Calls Later-Declared Member Functions (FIXED)
+- **Root Cause**: Constructor initializer lists were parsed eagerly before all class members were visible. When a constructor initializer called a member function declared later in the class, the parser couldn't find it and generated incorrect code (global_load instead of member function call).
+- **Fix**: Extended delayed parsing to constructor initializer lists. The parser now:
+  1. Saves the position of the initializer list during first pass
+  2. Skips over initializer list expressions without parsing them
+  3. Re-parses initializer list in delayed parsing phase after all class members are visible
+  4. Member functions are now accessible during initializer parsing
+- **Files Modified**: `src/Parser.cpp`, `src/Parser.h`
+- **Result**: test_delayed_parsing_constructor.cpp now compiles and links successfully
 
 ### Issue #0: ELF Symbol Names Not Null-Terminated (FIXED)
 - **Root Cause**: `ElfFileWriter` was passing `string_view.data()` directly to ELFIO's C API which expects null-terminated strings. This caused the library to read past the string's end, including source code in symbol names.
