@@ -684,7 +684,7 @@ public:
 		if (g_enable_debug_output) std::cerr << "Function symbol added successfully" << std::endl;
 	}
 
-	void add_data(const std::vector<char>& data, SectionType section_type) {
+	void add_data(std::span<const char> data, SectionType section_type) {
 		int section_index = sectiontype_to_index[section_type];
 		if (g_enable_debug_output) std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type) << " (index=" << section_index << ")";
 		auto section = coffi_.get_sections()[section_index];
@@ -1315,16 +1315,19 @@ public:
 	}
 
 	// Add a string literal to the .rdata section and return its symbol name
-	std::string add_string_literal(const std::string& str_content) {
+	std::string_view add_string_literal(std::string_view str_content) {
 		// Generate a unique symbol name for this string literal
-		std::string symbol_name = ".str." + std::to_string(string_literal_counter_++);
+		std::string_view symbol_name = StringBuilder().append(".str."sv).append(string_literal_counter_++).commit();
 
 		// Get current offset in .rdata section
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 		uint32_t offset = rdata_section->get_data_size();
 
 		// Process the string: remove quotes and handle escape sequences
-		std::string processed_str;
+		// Reuse buffer and clear it (capacity is retained)
+		string_literal_buffer_.clear();
+		string_literal_buffer_.reserve(str_content.size() + 1);
+		
 		if (str_content.size() >= 2 && str_content.front() == '"' && str_content.back() == '"') {
 			// Remove quotes
 			std::string_view content(str_content.data() + 1, str_content.size() - 2);
@@ -1333,28 +1336,28 @@ public:
 			for (size_t i = 0; i < content.size(); ++i) {
 				if (content[i] == '\\' && i + 1 < content.size()) {
 					switch (content[i + 1]) {
-						case 'n': processed_str += '\n'; ++i; break;
-						case 't': processed_str += '\t'; ++i; break;
-						case 'r': processed_str += '\r'; ++i; break;
-						case '\\': processed_str += '\\'; ++i; break;
-						case '"': processed_str += '"'; ++i; break;
-						case '0': processed_str += '\0'; ++i; break;
-						default: processed_str += content[i]; break;
+						case 'n': string_literal_buffer_ += '\n'; ++i; break;
+						case 't': string_literal_buffer_ += '\t'; ++i; break;
+						case 'r': string_literal_buffer_ += '\r'; ++i; break;
+						case '\\': string_literal_buffer_ += '\\'; ++i; break;
+						case '"': string_literal_buffer_ += '"'; ++i; break;
+						case '0': string_literal_buffer_ += '\0'; ++i; break;
+						default: string_literal_buffer_ += content[i]; break;
 					}
 				} else {
-					processed_str += content[i];
+					string_literal_buffer_ += content[i];
 				}
 			}
 		} else {
-			processed_str = str_content;
+			// Copy the raw string content
+			string_literal_buffer_.append(str_content);
 		}
 
 		// Add null terminator
-		processed_str += '\0';
+		string_literal_buffer_ += '\0';
 
-		// Add the string data to .rdata section
-		std::vector<char> str_data(processed_str.begin(), processed_str.end());
-		add_data(str_data, SectionType::RDATA);
+		// Add the string data to .rdata section (span constructed from string)
+		add_data(std::span(string_literal_buffer_), SectionType::RDATA);
 
 		// Add a symbol for this string literal
 		auto symbol = coffi_.add_symbol(symbol_name);
@@ -1363,7 +1366,7 @@ public:
 		symbol->set_section_number(rdata_section->get_index() + 1);
 		symbol->set_value(offset);
 
-		if (g_enable_debug_output) std::cerr << "Added string literal '" << processed_str.substr(0, processed_str.size() - 1)
+		if (g_enable_debug_output) std::cerr << "Added string literal '" << string_literal_buffer_.substr(0, string_literal_buffer_.size() - 1)
 		          << "' at offset " << offset << " with symbol " << symbol_name << std::endl;
 
 		return symbol_name;
@@ -1763,5 +1766,8 @@ protected:
 	std::vector<std::string> added_exception_functions_;
 
 	// Counter for generating unique string literal symbols
-	uint32_t string_literal_counter_ = 0;
+	uint64_t string_literal_counter_ = 0;
+	
+	// Thread-local reusable buffer for string literal processing to avoid repeated allocations
+	inline static thread_local std::string string_literal_buffer_;
 };
