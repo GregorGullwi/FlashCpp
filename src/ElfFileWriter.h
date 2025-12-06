@@ -216,8 +216,9 @@ public:
 		std::vector<char> str_data(processed_str.begin(), processed_str.end());
 		rodata->append_data(str_data.data(), str_data.size());
 
-		// Add symbol - need to use symbol_name.data() for ELFIO's const char* interface
-		auto symbol_index = getOrCreateSymbol(symbol_name_sv, ELFIO::STT_OBJECT, ELFIO::STB_LOCAL, 
+		// Add symbol - string literals should be GLOBAL to avoid symbol ordering issues
+		// (ELF requires all LOCAL symbols before GLOBAL symbols)
+		auto symbol_index = getOrCreateSymbol(symbol_name_sv, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
 		                                      rodata->get_index(), offset, processed_str.size());
 
 		if (g_enable_debug_output) {
