@@ -14,7 +14,7 @@ enum class ManglingStyle {
 	Itanium    // Itanium C++ ABI name mangling (Linux/Unix default)
 };
 
-// Global mangling style - can be overridden via command-line
+// Global mangling style - managed via CompileContext::setManglingStyle()
 // Default is platform-dependent but changeable for cross-compilation
 inline ManglingStyle g_mangling_style = 
 #if defined(_WIN32) || defined(_WIN64)
