@@ -120,7 +120,9 @@ public:
 		unsigned char other = ELFIO::STV_DEFAULT;  // Default visibility
 		ELFIO::Elf_Half section_index = text_section_->get_index();
 
-		accessor->add_symbol(*string_accessor_, mangled_name.data(), value, size, bind, type, other, section_index);
+		// Convert string_view to std::string to ensure null-termination for C API
+		std::string mangled_name_str(mangled_name);
+		accessor->add_symbol(*string_accessor_, mangled_name_str.c_str(), value, size, bind, type, other, section_index);
 
 		if (g_enable_debug_output) {
 			std::cerr << "Function symbol added successfully" << std::endl;
@@ -784,7 +786,9 @@ private:
 		}
 
 		// Symbol doesn't exist, create it
-		return accessor->add_symbol(*string_accessor_, name.data(), value, size, bind, type, ELFIO::STV_DEFAULT, section_index);
+		// Convert string_view to std::string to ensure null-termination for C API
+		std::string name_str(name);
+		return accessor->add_symbol(*string_accessor_, name_str.c_str(), value, size, bind, type, ELFIO::STV_DEFAULT, section_index);
 	}
 
 	/**
