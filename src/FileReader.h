@@ -249,11 +249,13 @@ static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) 
 static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
     std::vector<std::string_view> args;
 
+    auto is_whitespace = [](char c) { return c == ' ' || c == '\t'; };
+
     size_t n = argsStr.size();
     size_t i = 0;
 
     // Skip leading whitespace
-    while (i < n && (argsStr[i] == ' ' || argsStr[i] == '\t')) i++;
+    while (i < n && is_whitespace(argsStr[i])) i++;
 
     size_t arg_start = i;
     int paren_depth = 0;
@@ -278,24 +280,28 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
             size_t end = i;
 
             // Trim trailing whitespace
-            while (end > arg_start && (argsStr[end - 1] == ' ' || argsStr[end - 1] == '\t'))
+            while (end > arg_start && is_whitespace(argsStr[end - 1]))
                 end--;
 
             args.emplace_back(argsStr.substr(arg_start, end - arg_start));
 
-            // Move to next argument
-            i = argsStr.find_first_not_of(" \t", i + 1);
-            if (i == std::string_view::npos)
+            // Move to next argument (skip the comma and any whitespace)
+            i++;
+            while (i < n && is_whitespace(argsStr[i]))
+                i++;
+
+            if (i >= n)
                 return args;
 
             arg_start = i;
+            i--; // Decrement because the for loop will increment it
         }
     }
 
     // Final argument (if any)
     if (arg_start < n) {
         size_t end = i;
-        while (end > arg_start && (argsStr[end - 1] == ' ' || argsStr[end - 1] == '\t'))
+        while (end > arg_start && is_whitespace(argsStr[end - 1]))
             end--;
         args.emplace_back(argsStr.substr(arg_start, end - arg_start));
     }
@@ -305,10 +311,25 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
 
 
 static void replaceAll(std::string& str, const std::string_view from, const std::string_view to) {
+	// Helper to check if a character is a separator (not part of an identifier)
+	auto is_separator = [](char c) {
+		return !std::isalnum(static_cast<unsigned char>(c)) && c != '_';
+	};
+
 	size_t pos = 0;
 	while ((pos = str.find(from, pos)) != std::string::npos) {
-		str.replace(pos, from.length(), to);
-		pos += to.length();
+		// Check if this is a complete identifier match (not part of a larger word)
+		bool start_ok = (pos == 0) || is_separator(str[pos - 1]);
+		bool end_ok = (pos + from.length() >= str.length()) || is_separator(str[pos + from.length()]);
+		
+		if (start_ok && end_ok) {
+			// This is a complete identifier, replace it
+			str.replace(pos, from.length(), to);
+			pos += to.length();
+		} else {
+			// This is part of a larger identifier, skip it
+			pos++;
+		}
 	}
 }
 
@@ -1796,6 +1817,27 @@ private:
 		defines_["__amd64"] = DefineDirective{ "1", {} };
 		defines_["_M_X64"] = DefineDirective{ "100", {} };  // MSVC-style
 		defines_["_M_AMD64"] = DefineDirective{ "100", {} };
+
+		// C++ feature test macros (SD-6)
+		// These indicate which C++ language features are supported
+		defines_["__cpp_exceptions"] = DefineDirective{ "199711L", {} };  // Exception handling
+		defines_["__cpp_rtti"] = DefineDirective{ "199711L", {} };  // RTTI (typeid, dynamic_cast)
+		defines_["__cpp_static_assert"] = DefineDirective{ "201411L", {} };  // C++17 static_assert with message
+		defines_["__cpp_decltype"] = DefineDirective{ "200707L", {} };  // decltype
+		defines_["__cpp_auto_type"] = DefineDirective{ "200606L", {} };  // auto type deduction
+		defines_["__cpp_nullptr"] = DefineDirective{ "200704L", {} };  // nullptr keyword
+		defines_["__cpp_lambdas"] = DefineDirective{ "200907L", {} };  // Lambda expressions
+		defines_["__cpp_range_based_for"] = DefineDirective{ "200907L", {} };  // Range-based for loops
+		defines_["__cpp_variadic_templates"] = DefineDirective{ "200704L", {} };  // Variadic templates
+		defines_["__cpp_initializer_lists"] = DefineDirective{ "200806L", {} };  // Initializer lists
+		defines_["__cpp_delegating_constructors"] = DefineDirective{ "200604L", {} };  // Delegating constructors
+		defines_["__cpp_constexpr"] = DefineDirective{ "201603L", {} };  // C++17 constexpr (relaxed)
+		defines_["__cpp_if_constexpr"] = DefineDirective{ "201606L", {} };  // C++17 if constexpr
+		defines_["__cpp_inline_variables"] = DefineDirective{ "201606L", {} };  // C++17 inline variables
+		defines_["__cpp_structured_bindings"] = DefineDirective{ "201606L", {} };  // C++17 structured bindings
+		defines_["__cpp_noexcept_function_type"] = DefineDirective{ "201510L", {} };  // C++17 noexcept in type
+		defines_["__cpp_concepts"] = DefineDirective{ "202002L", {} };  // C++20 concepts
+		defines_["__cpp_aggregate_bases"] = DefineDirective{ "201603L", {} };  // C++17 aggregate base classes
 
 		// Compiler builtin type macros - values depend on compiler mode
 		// MSVC (default): Windows x64 types
