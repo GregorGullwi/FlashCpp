@@ -5669,25 +5669,29 @@ private:
 						const StructTypeInfo* struct_info = type_info->getStructInfo();
 						bool found_member = false;
 						int member_offset = 0;
-						
+						const StructMember* member_info = nullptr;
+					
 						for (const auto& member : struct_info->members) {
 							if (member.name == final_member_name) {
 								member_offset = static_cast<int>(member.offset);  // Already in bytes
+								member_info = &member;
 								found_member = true;
 								break;
 							}
 						}
-						
+					
 						if (!found_member) {
 							FLASH_LOG(Codegen, Error, "Member '", final_member_name, "' not found in struct type");
 							throw std::runtime_error(std::string("Member not found: ") + std::string(final_member_name));
 						}
-						
+					
 						// Create MemberStore operation using the nested object's temp var
 						MemberStoreOp member_store;
 						member_store.object = nested_object_temp;
 						member_store.member_name = final_member_name;
 						member_store.offset = member_offset;
+						member_store.is_reference = member_info->is_reference;
+						member_store.is_rvalue_reference = member_info->is_rvalue_reference;
 						
 						// Set value as TypedValue
 						member_store.value.type = std::get<Type>(rhsIrOperands[0]);

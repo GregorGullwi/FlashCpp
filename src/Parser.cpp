@@ -18208,6 +18208,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				// Pointers and references are always 8 bytes (64-bit)
 				member_size = 8;
+			} else if (member_type == Type::Struct && member_type_index != 0) {
+				// For struct types, look up the actual size in gTypeInfo
+				const TypeInfo* member_struct_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == member_type_index) {
+						member_struct_info = &ti;
+						break;
+					}
+				}
+				if (member_struct_info && member_struct_info->getStructInfo()) {
+					member_size = member_struct_info->getStructInfo()->total_size;
+				} else {
+					member_size = get_type_size_bits(member_type) / 8;
+				}
 			} else {
 				member_size = get_type_size_bits(member_type) / 8;
 			}
@@ -18737,6 +18751,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				member_size = 8;  // Pointers and references are 64-bit on x64
+			} else if (member_type == Type::Struct && member_type_index != 0) {
+				// For struct types, look up the actual size in gTypeInfo
+				const TypeInfo* member_struct_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == member_type_index) {
+						member_struct_info = &ti;
+						break;
+					}
+				}
+				if (member_struct_info && member_struct_info->getStructInfo()) {
+					member_size = member_struct_info->getStructInfo()->total_size;
+				} else {
+					member_size = get_type_size_bits(member_type) / 8;
+				}
 			} else {
 				member_size = get_type_size_bits(member_type) / 8;
 			}
