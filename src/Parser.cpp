@@ -6805,6 +6805,19 @@ ParseResult Parser::create_function_from_header(
 		func_ref.set_linkage(header.storage.linkage);
 	} else if (current_linkage_ != Linkage::None) {
 		func_ref.set_linkage(current_linkage_);
+	} else {
+		// Check if there's a forward declaration with linkage and inherit it
+		// Use lookup_all to check all overloads in case there are multiple
+		auto all_overloads = gSymbolTable.lookup_all(header.name_token.value());
+		for (const auto& overload : all_overloads) {
+			if (overload.is<FunctionDeclarationNode>()) {
+				const auto& forward_decl = overload.as<FunctionDeclarationNode>();
+				if (forward_decl.linkage() != Linkage::None) {
+					func_ref.set_linkage(forward_decl.linkage());
+					break;  // Found a forward declaration with linkage, use it
+				}
+			}
+		}
 	}
 
 	// Add parameters
@@ -7168,8 +7181,11 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 		return;
 	}
 	
-	// Skip C linkage functions - they don't get mangled
+	// C linkage functions don't get mangled - just use the function name as-is
 	if (func_node.linkage() == Linkage::C) {
+		const DeclarationNode& decl_node = func_node.decl_node();
+		std::string_view func_name = decl_node.identifier_token().value();
+		func_node.set_mangled_name(func_name);
 		return;
 	}
 	
@@ -7215,6 +7231,21 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		func_ref.add_parameter_node(param);
 	}
 	func_ref.set_is_variadic(params.is_variadic);
+
+	// If linkage wasn't set from current context, check if there's a forward declaration with linkage
+	if (func_ref.linkage() == Linkage::None) {
+		// Use lookup_all to check all overloads in case there are multiple
+		auto all_overloads = gSymbolTable.lookup_all(declaration_node.identifier_token().value());
+		for (const auto& overload : all_overloads) {
+			if (overload.is<FunctionDeclarationNode>()) {
+				const auto& forward_decl = overload.as<FunctionDeclarationNode>();
+				if (forward_decl.linkage() != Linkage::None) {
+					func_ref.set_linkage(forward_decl.linkage());
+					break;  // Found a forward declaration with linkage, use it
+				}
+			}
+		}
+	}
 
 	// Note: Trailing specifiers (const, volatile, &, &&, noexcept, override, final, 
 	// = 0, = default, = delete, __attribute__) are NOT handled here.

@@ -388,131 +388,9 @@ public:
 		}
 	}
 
-	// C++20 compatible name mangling system
-	std::string getMangledName(std::string_view name) const {
-		// Check if the name is already a mangled name (starts with '?')
-		if (!name.empty() && name[0] == '?') {
-			// Already mangled, return as-is
-			return std::string(name);
-		}
-
-		// Check if this is a member function call (ClassName::FunctionName format)
-		// For nested classes, use the LAST :: to split (e.g., "Outer::Inner::get" -> class="Outer::Inner", func="get")
-		size_t scope_pos = name.rfind("::");
-		if (scope_pos != std::string_view::npos) {
-			// Split into class name and function name using string_view (no allocation)
-			std::string_view class_name = name.substr(0, scope_pos);
-			std::string_view func_name = name.substr(scope_pos + 2);
-
-			// Convert class_name to mangled format for nested classes
-			// "Outer::Inner" -> "Inner@Outer" (reverse order with @ separators)
-			std::string mangled_class;
-			{
-				std::vector<std::string_view> class_parts;
-				std::string_view remaining = class_name;
-				size_t pos;
-				
-				while ((pos = remaining.find("::")) != std::string_view::npos) {
-					class_parts.push_back(remaining.substr(0, pos));
-					remaining = remaining.substr(pos + 2);
-				}
-				class_parts.push_back(remaining);
-				
-				// Reverse and append with @ separators
-				for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
-					if (!mangled_class.empty()) mangled_class += '@';
-					mangled_class += *it;
-				}
-			}
-
-			// Search for a mangled name that matches this member function
-			// The function name in the mangled name might include the class prefix (e.g., "Container::Container")
-			// So we need to search for both patterns:
-			// 1. ?FunctionName@MangledClassName@@... (func_name without class prefix)
-			// 2. ?ClassName::FunctionName@MangledClassName@@... (func_name with class prefix, for constructors)
-			for (const auto& [mangled, sig] : function_signatures_) {
-				if (mangled[0] != '?') continue;
-				
-				// Pattern 1: ?FunctionName@MangledClassName@@...
-				// Check: mangled starts with "?<func_name>@<mangled_class>@@"
-				size_t expected_class_start = 1 + func_name.size() + 1;  // '?' + func_name + '@'
-				size_t expected_separator = expected_class_start + mangled_class.size();
-				if (mangled.size() > expected_separator + 1 &&
-				    mangled.substr(1, func_name.size()) == func_name &&
-				    mangled[1 + func_name.size()] == '@' &&
-				    mangled.substr(expected_class_start, mangled_class.size()) == mangled_class &&
-				    mangled.substr(expected_separator, 2) == "@@") {  // Ensure class name ends with @@
-					if (g_enable_debug_output) std::cerr << "DEBUG: getMangledName found match (pattern 1) for " << name << " -> " << mangled << "\n";
-					return mangled;
-				}
-				
-				// Pattern 2: ?ClassName::FunctionName@MangledClassName@@... (for constructors/destructors)
-				std::string full_func_name = std::string(class_name) + "::" + std::string(func_name);
-				expected_class_start = 1 + full_func_name.size() + 1;
-				expected_separator = expected_class_start + mangled_class.size();
-				if (mangled.size() > expected_separator + 1 &&
-				    mangled.substr(1, full_func_name.size()) == full_func_name &&
-				    mangled[1 + full_func_name.size()] == '@' &&
-				    mangled.substr(expected_class_start, mangled_class.size()) == mangled_class &&
-				    mangled.substr(expected_separator, 2) == "@@") {  // Ensure class name ends with @@
-					if (g_enable_debug_output) std::cerr << "DEBUG: getMangledName found match (pattern 2) for " << name << " -> " << mangled << "\n";
-					return mangled;
-				}
-			}
-
-			// If not found in function_signatures_, generate a basic mangled name
-			if (g_enable_debug_output) std::cerr << "DEBUG: getMangledName fallback for " << name << " (func=" << func_name << " class=" << class_name << ")\n";
-			if (g_enable_debug_output) std::cerr << "DEBUG: function_signatures_ has " << function_signatures_.size() << " entries:\n";
-			for (const auto& [mangled, sig] : function_signatures_) {
-				if (g_enable_debug_output) std::cerr << "  " << mangled << "\n";
-			}
-
-			// If not found in function_signatures_, generate a basic mangled name
-			// This handles forward references to functions that haven't been processed yet
-			// Format: ?FunctionName@MangledClassName@@QAH@Z (member function, int return, no params)
-			// For constructors (FunctionName == ClassName), use QAX (void return)
-			// Q indicates __thiscall (member function with implicit this pointer)
-			// This is a simplified mangling - the actual signature will be added later
-			// Reserve space to avoid reallocations
-			std::string mangled;
-			mangled.reserve(1 + func_name.size() + 1 + mangled_class.size() + 7);
-			mangled += '?';
-			mangled += func_name;
-			mangled += '@';
-			mangled += mangled_class;
-			
-			// Check if this is a constructor (function name == innermost class name)
-			std::string_view innermost_class = class_name;
-			size_t last_colon = class_name.rfind("::");
-			if (last_colon != std::string_view::npos) {
-				innermost_class = class_name.substr(last_colon + 2);
-			}
-			if (func_name == innermost_class) {
-				mangled += "@@QAX@Z";  // __thiscall void return, no params
-			} else {
-				mangled += "@@QAH@Z";  // __thiscall int return, no params (default for member functions)
-			}
-			return mangled;
-		}
-
-		// For overloaded functions, we can't determine which overload to use
-		// without signature information. The caller should pass the mangled name directly.
-		// For now, we'll search for any mangled name that starts with the function name.
-		// This is a temporary solution - ideally the IR should include the mangled name.
-		for (const auto& [mangled, sig] : function_signatures_) {
-			// Check if this mangled name corresponds to the function name
-			// Mangled names start with '?' followed by the function name
-			if (mangled.size() > name.size() + 1 &&
-			    mangled[0] == '?' &&
-			    mangled.substr(1, name.size()) == name) {
-				// Found a match - return this mangled name
-				// Note: This returns the LAST added overload, which should be the current one
-				return mangled;
-			}
-		}
-
-		return std::string(name);  // Default: no mangling
-	}
+	// Note: Mangled names are pre-computed by the Parser.
+	// Functions with C linkage use their plain names.
+	// All names are passed through as-is to the symbol table.
 
 private:
 	// Map from mangled name to function signature
@@ -713,9 +591,9 @@ public:
 	}
 
 	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type) {
-		// Get the function symbol using mangled name
-		std::string mangled_name = getMangledName(symbol_name);
-		auto* symbol = coffi_.get_symbol(mangled_name);
+		// Get the function symbol (name already mangled by Parser)
+		std::string symbol_str(symbol_name);
+		auto* symbol = coffi_.get_symbol(symbol_str);
 		if (!symbol) {
 			// Symbol not found - add it as an external symbol (for C library functions like puts, printf, etc.)
 
@@ -724,7 +602,7 @@ public:
 			// - storage class IMAGE_SYM_CLASS_EXTERNAL
 			// - value 0
 			// - type 0x20 (function)
-			symbol = coffi_.add_symbol(mangled_name);
+			symbol = coffi_.add_symbol(symbol_str);
 			symbol->set_value(0);
 			symbol->set_section_number(0);  // 0 = undefined/external symbol
 			symbol->set_type(0x20);  // 0x20 = function type
@@ -745,10 +623,8 @@ public:
 		// Look up the symbol (could be a global variable, function, etc.)
 		auto* symbol = coffi_.get_symbol(symbol_name);
 		if (!symbol) {
-			// Try mangled name
-			std::string mangled_name = getMangledName(symbol_name);
-			symbol = coffi_.get_symbol(mangled_name);
-			if (!symbol) {
+			// Symbol not found
+			if (true) {
 				if (g_enable_debug_output) std::cerr << "Warning: Symbol not found for relocation: " << symbol_name << std::endl;
 				return;
 			}
@@ -867,11 +743,9 @@ public:
 		// Get the symbol (could be function symbol or section symbol)
 		auto* symbol = coffi_.get_symbol(symbol_name);
 		if (!symbol) {
-			// Try mangled name for function symbols
-			std::string mangled_name = getMangledName(symbol_name);
-			symbol = coffi_.get_symbol(mangled_name);
-			if (!symbol) {
-				throw std::runtime_error("Debug symbol not found: " + symbol_name + " (mangled: " + mangled_name + ")");
+			// Symbol not found
+			if (true) {
+				throw std::runtime_error("Debug symbol not found: " + symbol_name);
 			}
 		}
 

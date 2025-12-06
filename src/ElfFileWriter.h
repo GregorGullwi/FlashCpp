@@ -365,14 +365,8 @@ public:
 		}
 	}
 
-	/**
-	 * @brief Get mangled name - returns string_view to stable storage in function_signatures_
-	 */
-	std::string_view getMangledName(std::string_view name) const {
-		// For simple names without signature info, just return as-is
-		// The caller should use StringBuilder if they need to store the result
-		return name;
-	}
+	// Note: Mangled names are pre-computed by the Parser.
+	// All names are passed through as-is.
 
 	/**
 	 * @brief Generate mangled name using platform-appropriate mangling

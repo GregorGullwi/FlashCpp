@@ -5388,15 +5388,8 @@ private:
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
-		// Get the mangled name for the function (handles both regular and member functions)
-		// If the function name is already mangled (starts with '?'), use it directly
-		std::string mangled_name;
-		if (!function_name.empty() && function_name[0] == '?') {
-			mangled_name = function_name;  // Already mangled
-		} else {
-			mangled_name = writer.getMangledName(function_name);  // Need to mangle
-		}
-		writer.add_relocation(textSectionData.size() - 4, mangled_name);
+		// Function name is already mangled by the Parser (or plain for C linkage)
+		writer.add_relocation(textSectionData.size() - 4, function_name);
 
 		// Invalidate caller-saved registers (function calls clobber them)
 		regAlloc.invalidateCallerSavedRegisters();
@@ -5408,8 +5401,12 @@ private:
 		// Store the return value from RAX to the result variable's stack location
 		// This is critical - without this, the return value in RAX gets overwritten
 		// by subsequent operations before it's ever saved
-		// Skip storing return value for void functions (mangled name contains @@QAX for member or @@YAX for global)
-		bool is_void_function = (mangled_name.find("@@QAX") != std::string::npos) || (mangled_name.find("@@YAX") != std::string::npos);
+		// Skip storing return value for void functions:
+		// - MSVC: @@QAX (member) or @@YAX (global)
+		// - Itanium/ELF: _Z...v (ends with 'v' for void return)
+		bool is_void_function = (function_name.find("@@QAX") != std::string::npos) || 
+		                        (function_name.find("@@YAX") != std::string::npos) ||
+		                        (function_name.starts_with("_Z") && function_name.ends_with("v"));
 		if (!is_void_function) {
 			// Get size from result variable (stored at offset-4)
 			int result_size_bits = 64;  // Default to 64 bits for now
@@ -11442,7 +11439,8 @@ private:
 			snprintf(buf, sizeof(buf), "%02X ", bytes[i]);
 			hex_bytes += buf;
 		}
-		FLASH_LOG(Codegen, Debug, std::format("[ASM] {}: {}", context, hex_bytes));
+		std::string msg = std::string("[ASM] ") + context + ": " + hex_bytes;
+		FLASH_LOG(Codegen, Debug, msg);
 	}
 
 	TWriterClass writer;
