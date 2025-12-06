@@ -1417,6 +1417,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	bool is_consteval = false;
 	bool is_inline = false;
 	bool is_static = false;
+	bool is_extern = false;
 
 	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 		std::string_view kw = peek_token()->value();
@@ -1434,6 +1435,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			consume_token();
 		} else if (kw == "static") {
 			is_static = true;
+			consume_token();
+		} else if (kw == "extern") {
+			is_extern = true;
 			consume_token();
 		} else {
 			break;
