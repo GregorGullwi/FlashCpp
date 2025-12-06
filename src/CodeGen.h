@@ -5623,6 +5623,88 @@ private:
 						// Return the RHS value as the result
 						return rhsIrOperands;
 					}
+					else if (std::holds_alternative<MemberAccessNode>(expr)) {
+						// Nested member access: obj.member1.member2 = value
+						// Call generateMemberAccessIr to recursively evaluate the nested object
+						const MemberAccessNode& nested_object = std::get<MemberAccessNode>(expr);
+						auto objectIrOperands = generateMemberAccessIr(nested_object);
+						
+						if (objectIrOperands.empty() || objectIrOperands.size() < 3) {
+							FLASH_LOG(Codegen, Error, "Failed to generate IR for nested member access in assignment");
+							throw std::runtime_error("Nested member access IR generation failed");
+						}
+						
+						// objectIrOperands contains [type, size, temp_var] (and possibly type_index)
+						// The temp_var holds the result of the nested member access
+						if (!std::holds_alternative<TempVar>(objectIrOperands[2])) {
+							FLASH_LOG(Codegen, Error, "Nested member access object did not evaluate to a temporary variable");
+							throw std::runtime_error("Expected TempVar for nested member access object");
+						}
+						
+						TempVar nested_object_temp = std::get<TempVar>(objectIrOperands[2]);
+						
+						// Get the type index if available (for proper member lookup)
+						unsigned long long type_index = 0;
+						if (objectIrOperands.size() >= 4) {
+							type_index = std::get<unsigned long long>(objectIrOperands[3]);
+						}
+						
+						// Now find the member info for the final member in the outer MemberAccessNode
+						std::string_view final_member_name = member_access.member_name();
+						
+						// Find the TypeInfo for the nested object's type
+						const TypeInfo* type_info = nullptr;
+						for (const auto& ti : gTypeInfo) {
+							if (ti.type_index_ == type_index) {
+								type_info = &ti;
+								break;
+							}
+						}
+						
+						if (!type_info || !type_info->getStructInfo()) {
+							FLASH_LOG(Codegen, Error, "Type info not found for nested member access object with type_index: ", type_index);
+							throw std::runtime_error("Type info not found for nested member access");
+						}
+						
+						const StructTypeInfo* struct_info = type_info->getStructInfo();
+						bool found_member = false;
+						int member_offset = 0;
+						
+						for (const auto& member : struct_info->members) {
+							if (member.name == final_member_name) {
+								member_offset = static_cast<int>(member.offset);  // Already in bytes
+								found_member = true;
+								break;
+							}
+						}
+						
+						if (!found_member) {
+							FLASH_LOG(Codegen, Error, "Member '", final_member_name, "' not found in struct type");
+							throw std::runtime_error(std::string("Member not found: ") + std::string(final_member_name));
+						}
+						
+						// Create MemberStore operation using the nested object's temp var
+						MemberStoreOp member_store;
+						member_store.object = nested_object_temp;
+						member_store.member_name = final_member_name;
+						member_store.offset = member_offset;
+						
+						// Set value as TypedValue
+						member_store.value.type = std::get<Type>(rhsIrOperands[0]);
+						member_store.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
+						if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<TempVar>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<std::string_view>(rhsIrOperands[2]);
+						}
+						
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
+						
+						// Return the RHS value as the result
+						return rhsIrOperands;
+					}
 				}
 				else if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 					// Check if this is a struct assignment that needs operator=
