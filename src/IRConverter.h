@@ -5621,7 +5621,7 @@ private:
 		sig.class_name = class_name;
 
 		// Generate the correct mangled name for this specific constructor overload
-		std::string mangled_name = writer.generateMangledName(function_name, sig);
+		std::string_view mangled_name = writer.generateMangledName(function_name, sig);
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 		
 		// Invalidate caller-saved registers (function calls clobber them)
@@ -5658,7 +5658,7 @@ private:
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		// Get the mangled name for the destructor (handles name mangling)
-		std::string mangled_name = writer.getMangledName(function_name);
+		std::string_view mangled_name = writer.getMangledName(function_name);
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 		
 		// Invalidate caller-saved registers (function calls clobber them)
@@ -10992,8 +10992,21 @@ private:
 
 		// Emit vtables to .rdata section
 		for (const auto& vtable : vtables_) {
-			writer.add_vtable(vtable.vtable_symbol, vtable.function_symbols, vtable.class_name, 
-			                  vtable.base_class_names, vtable.base_class_info);
+			// Convert vector<string> to vector<string_view> for passing as span
+			std::vector<std::string_view> func_symbols_sv;
+			func_symbols_sv.reserve(vtable.function_symbols.size());
+			for (const auto& sym : vtable.function_symbols) {
+				func_symbols_sv.push_back(sym);
+			}
+			
+			std::vector<std::string_view> base_class_names_sv;
+			base_class_names_sv.reserve(vtable.base_class_names.size());
+			for (const auto& name : vtable.base_class_names) {
+				base_class_names_sv.push_back(name);
+			}
+			
+			writer.add_vtable(vtable.vtable_symbol, func_symbols_sv, vtable.class_name, 
+			                  base_class_names_sv, vtable.base_class_info);
 		}
 
 		// Now add pending global variable relocations (after symbols are created)
