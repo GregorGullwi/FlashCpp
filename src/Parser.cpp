@@ -17406,8 +17406,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
-	// Add to symbol table at GLOBAL scope (using the simple template name for lookups)
+	// Add to symbol table at GLOBAL scope using the simple template name (e.g., identity_int)
 	// Template instantiations should be globally visible, not scoped to where they're called
+	// The simple name is used for template-specific lookups, while the computed mangled name
+	// (from compute_and_set_mangled_name above) is used for code generation and linking
 	gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
 
 	// Add to top-level AST so it gets visited by the code generator
@@ -20007,7 +20009,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	// Check if the template has a body position stored
 	if (!func_decl.has_template_body_position()) {
-		// No body to parse - compute mangled name and return function without definition
+		// No body to parse - compute mangled name for proper linking and symbol resolution
+		// Even without a body, the mangled name is needed for code generation and linking
 		compute_and_set_mangled_name(new_func_ref);
 		ast_nodes_.push_back(new_func_node);
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
@@ -20377,7 +20380,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 	// Check if the template has a body position stored
 	if (!func_decl.has_template_body_position()) {
-		// No body to parse - compute mangled name and return function without definition
+		// No body to parse - compute mangled name for proper linking and symbol resolution
+		// Even without a body, the mangled name is needed for code generation and linking
 		compute_and_set_mangled_name(new_func_ref);
 		ast_nodes_.push_back(new_func_node);
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
