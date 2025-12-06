@@ -1984,6 +1984,7 @@ private:
 	void visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
 		// Namespace declarations themselves don't generate IR - they just provide scope
 		// Track the current namespace for proper name mangling
+		// For anonymous namespaces, push empty string which will be handled specially by mangling
 		current_namespace_stack_.push_back(std::string(node.name()));
 		
 		// Visit all declarations within the namespace
@@ -3240,14 +3241,51 @@ private:
 			} else {
 				// For global variables, include namespace path for proper mangling
 				if (!current_namespace_stack_.empty()) {
-					// Build namespace-qualified name: Namespace1::Namespace2::varname
+					// Check if we're in an anonymous namespace
+					bool in_anonymous_ns = false;
 					for (const auto& ns : current_namespace_stack_) {
-						sb.append(ns).append("::");
+						if (ns.empty()) {
+							in_anonymous_ns = true;
+							break;
+						}
 					}
+					
+					// For variables in anonymous namespaces with Itanium mangling,
+					// we need to generate a unique mangled name
+					if (in_anonymous_ns && NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
+						// Generate proper Itanium mangling for anonymous namespace variable
+						sb.append("_ZN");  // Start nested name
+						for (const auto& ns : current_namespace_stack_) {
+							if (ns.empty()) {
+								// Anonymous namespace: use _GLOBAL__N_1
+								sb.append("12_GLOBAL__N_1");
+							} else {
+								sb.append(std::to_string(ns.size())).append(ns);
+							}
+						}
+						// Add variable name
+						std::string_view var_id = decl.identifier_token().value();
+						sb.append(std::to_string(var_id.size())).append(var_id);
+						sb.append("E");  // End nested name
+					} else {
+						// For MSVC or named namespaces, use namespace::variable format
+						for (const auto& ns : current_namespace_stack_) {
+							sb.append(ns).append("::");
+						}
+						sb.append(decl.identifier_token().value());
+					}
+				} else {
+					sb.append(decl.identifier_token().value());
 				}
-				sb.append(decl.identifier_token().value());
 			}
 			std::string_view var_name = sb.commit();
+
+			// Store mapping from simple name to mangled name for later lookups
+			// This is needed for anonymous namespace variables
+			std::string simple_name(decl.identifier_token().value());
+			if (var_name != simple_name) {
+				global_variable_names_[simple_name] = std::string(var_name);
+			}
 
 			// Create GlobalVariableDeclOp
 			GlobalVariableDeclOp op;
@@ -4321,7 +4359,16 @@ private:
 				op.result.type = type_node.type();
 				op.result.size_in_bits = size_bits;
 				op.result.value = result_temp;
-				op.global_name = identifierNode.name();
+				
+				// Check if this global has a mangled name (e.g., anonymous namespace variable)
+				std::string simple_name(identifierNode.name());
+				auto it = global_variable_names_.find(simple_name);
+				if (it != global_variable_names_.end()) {
+					op.global_name = it->second;  // Use mangled name
+				} else {
+					op.global_name = identifierNode.name();  // Use simple name
+				}
+				
 				op.is_array = is_array_type;  // Arrays need LEA to get address
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
@@ -4382,7 +4429,16 @@ private:
 				op.result.type = type_node.type();
 				op.result.size_in_bits = size_bits;
 				op.result.value = result_temp;
-				op.global_name = identifierNode.name();
+				
+				// Check if this global has a mangled name (e.g., anonymous namespace variable)
+				std::string simple_name(identifierNode.name());
+				auto it = global_variable_names_.find(simple_name);
+				if (it != global_variable_names_.end()) {
+					op.global_name = it->second;  // Use mangled name
+				} else {
+					op.global_name = identifierNode.name();  // Use simple name
+				}
+				
 				op.is_array = is_array_type;  // Arrays need LEA to get address
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
@@ -10878,6 +10934,11 @@ private:
 	// Map from local static variable name to info
 	// Key: local variable name, Value: static local info
 	std::unordered_map<std::string, StaticLocalInfo> static_local_names_;
+
+	// Map from simple global variable name to mangled name
+	// Key: simple identifier (e.g., "value"), Value: mangled name (e.g., "_ZN12_GLOBAL__N_15valueE")
+	// This is needed because anonymous namespace variables need special mangling
+	std::unordered_map<std::string, std::string> global_variable_names_;
 
 	// Map from function name to deduced auto return type
 	// Key: function name (mangled), Value: deduced TypeSpecifierNode

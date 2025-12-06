@@ -264,8 +264,13 @@ inline void generateItaniumMangledName(
 		
 		// Add namespace parts first (in order)
 		for (const auto& ns : namespace_path) {
-			output += std::to_string(ns.size());
-			output += ns;
+			// Anonymous namespaces are encoded as "_GLOBAL__N_1" per Itanium C++ ABI
+			if (ns.empty()) {
+				output += "12_GLOBAL__N_1";
+			} else {
+				output += std::to_string(ns.size());
+				output += ns;
+			}
 		}
 		
 		// Add struct/class name if present
