@@ -743,7 +743,46 @@ private:
 			accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
 			
 			if (sym_name == name) {
-				return i;  // Symbol already exists
+				// Symbol exists - check if we need to update it
+				// If the existing symbol is undefined (SHN_UNDEF) and we're providing a definition,
+				// we need to update it
+				if (sym_section == ELFIO::SHN_UNDEF && section_index != ELFIO::SHN_UNDEF) {
+					// Update the existing undefined symbol with the definition
+					// ELFIO doesn't provide a direct update method, so we need to work around it
+					// by modifying the symbol table data directly
+					ELFIO::section* symtab_sec = getSectionByName(".symtab");
+					if (symtab_sec) {
+						// Calculate offset to this symbol's entry
+						size_t entry_size = symtab_sec->get_entry_size();
+						size_t offset = i * entry_size;
+						
+						// Get mutable access to symbol table data
+						char* data = const_cast<char*>(symtab_sec->get_data());
+						
+						// Symbol table entry layout (64-bit):
+						// Offset | Size | Field
+						// -------|------|-------
+						// 0      | 4    | st_name (string table index)
+						// 4      | 1    | st_info (bind << 4 | type)
+						// 5      | 1    | st_other
+						// 6      | 2    | st_shndx (section index)
+						// 8      | 8    | st_value
+						// 16     | 8    | st_size
+						
+						// Update st_info (bind and type)
+						data[offset + 4] = (bind << 4) | (type & 0x0F);
+						
+						// Update st_shndx (section index)
+						*reinterpret_cast<ELFIO::Elf_Half*>(&data[offset + 6]) = section_index;
+						
+						// Update st_value
+						*reinterpret_cast<ELFIO::Elf64_Addr*>(&data[offset + 8]) = value;
+						
+						// Update st_size
+						*reinterpret_cast<ELFIO::Elf_Xword*>(&data[offset + 16]) = size;
+					}
+				}
+				return i;  // Return existing symbol index
 			}
 		}
 
