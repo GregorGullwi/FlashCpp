@@ -157,36 +157,37 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
 template<typename OutputType>
 inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
-	// Handle CV-qualifiers (restrict, volatile, const)
-	// r = restrict, V = volatile, K = const
-	if (type_node.cv_qualifier() == CVQualifier::Const) {
-		output += 'K';
-	} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
-		output += 'V';
-	} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
-		output += 'V';
-		output += 'K';
-	}
-	
-	// Handle pointers
+	// Handle pointers first (they modify what comes after)
 	for (size_t i = 0; i < type_node.pointer_levels().size(); ++i) {
 		output += 'P';
 		const auto& ptr_level = type_node.pointer_levels()[i];
+		// CV-qualifiers on the pointer itself
 		if (ptr_level.cv_qualifier == CVQualifier::Const) {
 			output += 'K';
 		} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
 			output += 'V';
 		} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
-			output += 'V';
-			output += 'K';
+			output += 'K';  // const first
+			output += 'V';  // then volatile
 		}
 	}
 	
-	// Handle references
+	// Handle references (also modify what comes after)
 	if (type_node.is_lvalue_reference()) {
 		output += 'R';
 	} else if (type_node.is_rvalue_reference()) {
 		output += 'O';  // rvalue reference
+	}
+	
+	// CV-qualifiers on the base type (come after pointer/reference)
+	// According to Itanium ABI: K = const, V = volatile
+	if (type_node.cv_qualifier() == CVQualifier::Const) {
+		output += 'K';
+	} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
+		output += 'V';
+	} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
+		output += 'K';  // const first
+		output += 'V';  // then volatile
 	}
 	
 	// Basic type codes (Itanium ABI section 5.1.5)
