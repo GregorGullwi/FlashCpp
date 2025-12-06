@@ -506,7 +506,7 @@ struct StructTypeInfo {
 	}
 
 	// Find member recursively through base classes
-	const StructMember* findMemberRecursive(const std::string& member_name) const;
+	const StructMember* findMemberRecursive(std::string_view member_name) const;
 
 	void set_custom_alignment(size_t align) {
 		custom_alignment = align;
@@ -547,7 +547,7 @@ struct StructTypeInfo {
 		friend_member_functions_.emplace_back(class_name, func_name);
 	}
 
-	bool isFriendFunction(const std::string& func_name) const {
+	bool isFriendFunction(std::string_view func_name) const {
 		return std::find(friend_functions_.begin(), friend_functions_.end(), func_name) != friend_functions_.end();
 	}
 

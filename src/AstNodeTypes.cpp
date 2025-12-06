@@ -778,7 +778,7 @@ void StructTypeInfo::updateAbstractFlag() {
 }
 
 // Find member recursively through base classes
-const StructMember* StructTypeInfo::findMemberRecursive(const std::string& member_name) const {
+const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_name) const {
     // First, check own members
     for (const auto& member : members) {
         if (member.name == member_name) {

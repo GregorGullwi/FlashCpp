@@ -534,7 +534,7 @@ private:
 	                       const StructTypeInfo* member_owner_struct,
 	                       const StructTypeInfo* accessing_struct,
 	                       const BaseClassSpecifier* inheritance_path = nullptr,
-	                       const std::string& accessing_function = "") const {
+	                       const std::string_view& accessing_function = "") const {
 		if (!member || !member_owner_struct) {
 			return false;
 		}
@@ -671,7 +671,7 @@ private:
 	}
 
 	// Get the current function name
-	std::string getCurrentFunctionName() const {
+	std::string_view getCurrentFunctionName() const {
 		return current_function_name_;
 	}
 
@@ -679,7 +679,7 @@ private:
 	bool checkMemberFunctionAccess(const StructMemberFunction* member_func,
 	                                const StructTypeInfo* member_owner_struct,
 	                                const StructTypeInfo* accessing_struct,
-	                                const std::string& accessing_function = "") const {
+	                                std::string_view accessing_function = "") const {
 		if (!member_func || !member_owner_struct) {
 			return false;
 		}
@@ -7604,9 +7604,9 @@ private:
 		// Check access control for member function calls
 		if (called_member_func && struct_info) {
 			const StructTypeInfo* current_context = getCurrentStructContext();
-			std::string current_function = getCurrentFunctionName();
+			std::string_view current_function = getCurrentFunctionName();
 			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context, current_function)) {
-				std::string access_str = (called_member_func->access == AccessSpecifier::Private) ? "private" : "protected";
+				std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
 				std::string context_str = current_context ? (std::string(" from '") + current_context->name + "'") : "";
 				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->name, 
 				          "' of '", struct_info->name, "'", context_str);
@@ -8589,7 +8589,7 @@ private:
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
 		// Use recursive lookup to find members in base classes as well
-		const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+		const StructMember* member = struct_info->findMemberRecursive(member_name);
 
 		if (!member) {
 			std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name_ << "'\n";
@@ -8602,7 +8602,7 @@ private:
 
 		// Check access control
 		const StructTypeInfo* current_context = getCurrentStructContext();
-		std::string current_function = getCurrentFunctionName();
+		std::string_view current_function = getCurrentFunctionName();
 		if (!checkMemberAccess(member, struct_info, current_context, nullptr, current_function)) {
 			std::cerr << "Error: Cannot access ";
 			if (member->access == AccessSpecifier::Private) {
@@ -8634,7 +8634,7 @@ private:
 			member_load.object = std::get<TempVar>(base_object);
 		}
 
-		member_load.member_name = std::string_view(member_name);
+		member_load.member_name = member_name;
 		member_load.offset = static_cast<int>(member->offset);
 	
 		// Add reference metadata (required for proper handling of reference members)
