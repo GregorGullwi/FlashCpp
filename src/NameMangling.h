@@ -4,9 +4,24 @@
 #include "IRTypes.h"
 #include "ChunkedString.h"
 
-// Shared MSVC name mangling utilities used by both CodeGen and ObjectFileWriter
+// Shared name mangling utilities used by both CodeGen and ObjectFileWriter
 
 namespace NameMangling {
+
+// Mangling style enum for cross-platform support
+enum class ManglingStyle {
+	MSVC,      // Microsoft Visual C++ name mangling (Windows default)
+	Itanium    // Itanium C++ ABI name mangling (Linux/Unix default)
+};
+
+// Global mangling style - can be overridden via command-line
+// Default is platform-dependent but changeable for cross-compilation
+inline ManglingStyle g_mangling_style = 
+#if defined(_WIN32) || defined(_WIN64)
+	ManglingStyle::MSVC;
+#else
+	ManglingStyle::Itanium;
+#endif
 
 // A mangled name stored as a string_view pointing to stable storage
 // (typically from StringBuilder::commit() which uses ChunkedStringAllocator)
@@ -160,6 +175,16 @@ inline MangledName generateMangledName(
 		return MangledName(builder.commit());
 	}
 
+	// Check mangling style - if Itanium is selected but not yet implemented,
+	// use C linkage (no mangling) for now
+	if (g_mangling_style == ManglingStyle::Itanium) {
+		// TODO: Implement Itanium C++ ABI name mangling (Milestone 4)
+		// For now, return unmangled name (C linkage)
+		builder.append(func_name);
+		return MangledName(builder.commit());
+	}
+
+	// MSVC-style mangling
 	builder.append('?');
 	
 	// Handle member functions vs free functions
@@ -241,6 +266,16 @@ inline MangledName generateMangledName(
 		return MangledName(builder.commit());
 	}
 
+	// Check mangling style - if Itanium is selected but not yet implemented,
+	// use C linkage (no mangling) for now
+	if (g_mangling_style == ManglingStyle::Itanium) {
+		// TODO: Implement Itanium C++ ABI name mangling (Milestone 4)
+		// For now, return unmangled name (C linkage)
+		builder.append(func_name);
+		return MangledName(builder.commit());
+	}
+
+	// MSVC-style mangling
 	builder.append('?');
 	
 	// Handle member functions vs free functions
