@@ -96,6 +96,29 @@ public:
 		return compilerMode_ == CompilerMode::GCC;
 	}
 
+	// Name mangling style - controls which ABI to use for name mangling
+	// Can be set independently from output format for cross-compilation
+	enum class ManglingStyle {
+		MSVC,      // Microsoft Visual C++ name mangling
+		Itanium    // Itanium C++ ABI name mangling (Linux/Unix)
+	};
+
+	ManglingStyle getManglingStyle() const {
+		return manglingStyle_;
+	}
+
+	void setManglingStyle(ManglingStyle style) {
+		manglingStyle_ = style;
+	}
+
+	bool isMsvcMangling() const {
+		return manglingStyle_ == ManglingStyle::MSVC;
+	}
+
+	bool isItaniumMangling() const {
+		return manglingStyle_ == ManglingStyle::Itanium;
+	}
+
 	// #pragma pack state management
 	// Returns the current pack alignment value (0 = no packing, use natural alignment)
 	size_t getCurrentPackAlignment() const {
@@ -194,6 +217,12 @@ private:
 	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
 	bool disableAccessControl_ = false; // Disable access control checking (for debugging)
 	CompilerMode compilerMode_ = CompilerMode::MSVC;  // Default to MSVC mode
+	ManglingStyle manglingStyle_ = 
+#if defined(_WIN32) || defined(_WIN64)
+		ManglingStyle::MSVC;  // Windows default
+#else
+		ManglingStyle::Itanium;  // Linux/Unix default
+#endif
 	std::vector<std::string> dependencies_;
 
 	// #pragma pack state
