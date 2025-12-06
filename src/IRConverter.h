@@ -5684,12 +5684,31 @@ private:
 		emitLeaFromFrame(X64Register::RCX, object_offset);
 
 		// Generate the call instruction
-		std::string function_name = std::string(struct_name) + "::~" + std::string(struct_name);
+		// For nested classes, split "Outer::Inner" into class="Outer" and function="~Inner"
+		std::string function_name;
+		std::string class_name;
+		size_t last_colon_pos = struct_name.rfind("::");
+		if (last_colon_pos != std::string::npos) {
+			// Nested class: "Outer::Inner" -> class="Outer", function="~Inner"
+			class_name = struct_name.substr(0, last_colon_pos);
+			function_name = "~" + struct_name.substr(last_colon_pos + 2);
+		} else {
+			// Regular class: function_name = "~ClassName", class_name = struct_name
+			function_name = "~" + struct_name;
+			class_name = struct_name;
+		}
+		
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
-		// Get the mangled name for the destructor (handles name mangling)
-		auto mangled_name = writer.getMangledName(function_name);
+		// Build FunctionSignature for destructor (destructors take no parameters and return void)
+		std::vector<TypeSpecifierNode> empty_params;  // Destructors have no parameters
+		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
+		sig.class_name = class_name;
+
+		// Generate the correct mangled name for the destructor
+		auto mangled_name = writer.generateMangledName(function_name, sig);
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 		
 		// Invalidate caller-saved registers (function calls clobber them)
