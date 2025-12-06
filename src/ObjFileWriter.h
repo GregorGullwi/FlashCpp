@@ -12,6 +12,7 @@
 #include "NameMangling.h"
 #include <string>
 #include <string_view>
+#include <span>
 #include <array>
 #include <chrono>
 #include <optional>
@@ -1374,7 +1375,7 @@ public:
 
 	// Add a global variable with raw initialization data
 	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, 
-	                              bool is_initialized, const std::vector<char>& init_data) {
+	                              bool is_initialized, std::span<const char> init_data) {
 		SectionType section_type = is_initialized ? SectionType::DATA : SectionType::BSS;
 		auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
 		uint32_t offset = static_cast<uint32_t>(section->get_data_size());
@@ -1404,13 +1405,13 @@ public:
 
 	// Add a vtable to .rdata section with RTTI support
 	// vtable_symbol: mangled vtable symbol name (e.g., "??_7Base@@6B@")
-	// function_symbols: vector of mangled function names in vtable order
+	// function_symbols: span of mangled function names in vtable order
 	// class_name: name of the class for RTTI
-	// base_class_names: vector of base class names for RTTI (legacy)
+	// base_class_names: span of base class names for RTTI (legacy)
 	// base_class_info: detailed base class information for proper RTTI
-	void add_vtable(const std::string& vtable_symbol, const std::vector<std::string>& function_symbols,
-	                const std::string& class_name, const std::vector<std::string>& base_class_names,
-	                const std::vector<BaseClassDescriptorInfo>& base_class_info) {
+	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols,
+	                std::string_view class_name, std::span<const std::string_view> base_class_names,
+	                std::span<const BaseClassDescriptorInfo> base_class_info) {
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 		
 		if (g_enable_debug_output) std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
@@ -1429,7 +1430,7 @@ public:
 		// MSVC class name mangling: .?AV<name>@@
 		// Note: This is a simplified mangling for classes. Full MSVC mangling would handle
 		// templates, namespaces, and other complex types. For basic classes, this format works.
-		std::string mangled_class_name = ".?AV" + class_name + "@@";
+		std::string mangled_class_name = std::string(".?AV") + std::string(class_name) + "@@";
 		
 		// ??_R0 - Type Descriptor (16 bytes header + mangled name)
 		uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
