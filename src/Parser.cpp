@@ -5399,19 +5399,15 @@ ParseResult Parser::parse_namespace() {
 	auto [namespace_node, namespace_ref] = emplace_node_ref<NamespaceDeclarationNode>(is_anonymous ? "" : namespace_name);
 
 	// Enter namespace scope
-	// For anonymous namespaces, we still need to enter a scope, but we use a generated unique name
-	// This ensures symbols are properly scoped but accessible from the parent scope
-	if (is_anonymous) {
-		// Generate a unique name for internal use
-		static size_t anon_counter = 0;
-		std::string anon_name = "__anon_ns_" + std::to_string(anon_counter++);
-		// For now, just enter the global scope again (symbols will be global)
-		// TODO: Implement proper anonymous namespace semantics
-		// Anonymous namespace symbols should be accessible without qualification
-		// but have internal linkage
-	} else {
+	// For anonymous namespaces, we DON'T enter a new scope in the symbol table
+	// Instead, symbols are added to the current scope but tracked separately for mangling
+	// This allows them to be accessed without qualification (per C++ standard)
+	// while still getting unique linkage names
+	if (!is_anonymous) {
 		gSymbolTable.enter_namespace(namespace_name);
 	}
+	// For anonymous namespaces, track the namespace in the AST but not in symbol lookup
+	// Symbols will be added to current scope during declaration parsing
 
 	// Parse declarations within the namespace
 	while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -5524,7 +5520,7 @@ ParseResult Parser::parse_namespace() {
 		return ParseResult::error("Expected '}' after namespace body", *peek_token());
 	}
 
-	// Exit namespace scope (only if not anonymous)
+	// Exit namespace scope (only for named namespaces, not anonymous)
 	if (!is_anonymous) {
 		gSymbolTable.exit_scope();
 	}
