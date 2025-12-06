@@ -370,6 +370,33 @@ void Parser::skip_balanced_braces() {
 	}
 }
 
+void Parser::skip_balanced_parens() {
+	// Expect the current token to be '('
+	if (!peek_token().has_value() || peek_token()->value() != "(") {
+		return;
+	}
+	
+	int paren_depth = 0;
+	size_t token_count = 0;
+	const size_t MAX_TOKENS = 10000;  // Safety limit to prevent infinite loops
+
+	while (peek_token().has_value() && token_count < MAX_TOKENS) {
+		auto token = peek_token();
+		if (token->value() == "(") {
+			paren_depth++;
+		} else if (token->value() == ")") {
+			paren_depth--;
+			if (paren_depth == 0) {
+				// Consume the closing ')' and exit
+				consume_token();
+				break;
+			}
+		}
+		consume_token();
+		token_count++;
+	}
+}
+
 // Helper function to parse the contents of pack(...) after the opening '('
 // Returns success and consumes the closing ')' on success
 ParseResult Parser::parse_pragma_pack_inner()
@@ -3123,89 +3150,37 @@ ParseResult Parser::parse_struct_declaration()
 					}
 				}
 
-				// Parse member initializer list if present (: Base(args), member(value), ...)
+				// Check for member initializer list (: Base(args), member(value), ...)
+				// For delayed parsing, save the position and skip it
+				SaveHandle initializer_list_start;
+				bool has_initializer_list = false;
 				if (peek_token().has_value() && peek_token()->value() == ":") {
+					// Save position before consuming ':'
+					initializer_list_start = save_token_position();
+					has_initializer_list = true;
+					
 					consume_token();  // consume ':'
 
-					// Parse initializers until we hit '{' or ';'
+					// Skip initializers until we hit '{' or ';' by counting parentheses/braces
 					while (peek_token().has_value() &&
 					       peek_token()->value() != "{" &&
 					       peek_token()->value() != ";") {
-						// Parse initializer name (could be base class or member)
-						auto init_name_token = consume_token();
-						if (!init_name_token.has_value() || init_name_token->type() != Token::Type::Identifier) {
-							return ParseResult::error("Expected member or base class name in initializer list", init_name_token.value_or(Token()));
-						}
-
-						std::string_view init_name = init_name_token->value();
-
+						// Skip initializer name
+						consume_token();
+						
 						// Expect '(' or '{'
-						bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
-						bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
-
-						if (!is_paren && !is_brace) {
+						if (peek_token().has_value() && peek_token()->value() == "(") {
+							skip_balanced_parens();
+						} else if (peek_token().has_value() && peek_token()->value() == "{") {
+							skip_balanced_braces();
+						} else {
 							return ParseResult::error("Expected '(' or '{' after initializer name", *peek_token());
 						}
-
-						consume_token();  // consume '(' or '{'
-						std::string_view close_delim = is_paren ? ")" : "}";
-
-						// Parse initializer arguments
-						std::vector<ASTNode> init_args;
-						if (!peek_token().has_value() || peek_token()->value() != close_delim) {
-							do {
-								ParseResult arg_result = parse_expression();
-								if (arg_result.is_error()) {
-									return arg_result;
-								}
-								if (auto arg_node = arg_result.node()) {
-									// Check for pack expansion: expr...
-									if (peek_token().has_value() && peek_token()->value() == "...") {
-										consume_token(); // consume '...'
-										// Mark this as a pack expansion - actual expansion happens at instantiation
-									}
-									init_args.push_back(*arg_node);
-								}
-							} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
-						}
-
-						// Expect closing delimiter
-						if (!consume_punctuator(close_delim)) {
-							return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
-							                         "' after initializer arguments", *peek_token());
-						}
-
-						// Determine if this is a delegating, base class, or member initializer
-						bool is_delegating = (init_name == struct_ref.name());
-						bool is_base_init = false;
 						
-						if (is_delegating) {
-							// Delegating constructor: Point() : Point(0, 0) {}
-							// In C++11, if a constructor delegates, it CANNOT have other initializers
-							if (!ctor_ref.member_initializers().empty() || !ctor_ref.base_initializers().empty()) {
-								return ParseResult::error("Delegating constructor cannot have other member or base initializers", *init_name_token);
-							}
-							ctor_ref.set_delegating_initializer(std::move(init_args));
-						} else {
-							for (const auto& base : struct_ref.base_classes()) {
-								if (base.name == init_name) {
-									is_base_init = true;
-									ctor_ref.add_base_initializer(std::string(init_name), std::move(init_args));
-									break;
-								}
-							}
-
-							if (!is_base_init) {
-								// It's a member initializer
-								// For simplicity, we'll use the first argument as the initializer expression
-								if (!init_args.empty()) {
-									ctor_ref.add_member_initializer(init_name, init_args[0]);
-								}
-							}
-						}
-
 						// Check for comma (more initializers) or '{'/';' (end of initializer list)
-						if (!consume_punctuator(",")) {
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token();  // consume ','
+						} else {
 							// No comma, so we expect '{' or ';' next
 							break;
 						}
@@ -3288,8 +3263,8 @@ ParseResult Parser::parse_struct_declaration()
 					delayed_function_bodies_.push_back({
 						nullptr,  // func_node (not used for constructors)
 						body_start,
-						{},       // initializer_list_start (not used - already parsed)
-						false,    // has_initializer_list
+						initializer_list_start,  // Save position of initializer list
+						has_initializer_list,     // Flag if initializer list exists
 						struct_name,
 						struct_type_index,
 						&struct_ref,
@@ -7043,6 +7018,127 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	// Register parameters in symbol table
 	if (params) {
 		register_parameters_in_scope(*params);
+	}
+	
+	// Parse constructor initializer list if present (for constructors with delayed parsing)
+	if (delayed.is_constructor && delayed.has_initializer_list && delayed.ctor_node) {
+		// Restore to the position of the initializer list (':')
+		restore_token_position(delayed.initializer_list_start);
+		
+		// Parse the initializer list now that all class members are visible
+		if (peek_token().has_value() && peek_token()->value() == ":") {
+			consume_token();  // consume ':'
+
+			// Parse initializers until we hit '{' or ';'
+			while (peek_token().has_value() &&
+			       peek_token()->value() != "{" &&
+			       peek_token()->value() != ";") {
+				// Parse initializer name (could be base class or member)
+				auto init_name_token = consume_token();
+				if (!init_name_token.has_value() || init_name_token->type() != Token::Type::Identifier) {
+					// Clean up
+					current_function_ = nullptr;
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					return ParseResult::error("Expected member or base class name in initializer list", init_name_token.value_or(Token()));
+				}
+
+				std::string_view init_name = init_name_token->value();
+
+				// Expect '(' or '{'
+				bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
+				bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
+
+				if (!is_paren && !is_brace) {
+					// Clean up
+					current_function_ = nullptr;
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					return ParseResult::error("Expected '(' or '{' after initializer name", *peek_token());
+				}
+
+				consume_token();  // consume '(' or '{'
+				std::string_view close_delim = is_paren ? ")" : "}";
+
+				// Parse initializer arguments
+				std::vector<ASTNode> init_args;
+				if (!peek_token().has_value() || peek_token()->value() != close_delim) {
+					do {
+						ParseResult arg_result = parse_expression();
+						if (arg_result.is_error()) {
+							// Clean up
+							current_function_ = nullptr;
+							member_function_context_stack_.pop_back();
+							gSymbolTable.exit_scope();
+							return arg_result;
+						}
+						if (auto arg_node = arg_result.node()) {
+							// Check for pack expansion: expr...
+							if (peek_token().has_value() && peek_token()->value() == "...") {
+								consume_token(); // consume '...'
+								// Mark this as a pack expansion - actual expansion happens at instantiation
+							}
+							init_args.push_back(*arg_node);
+						}
+					} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+				}
+
+				// Expect closing delimiter
+				if (!consume_punctuator(close_delim)) {
+					// Clean up
+					current_function_ = nullptr;
+					member_function_context_stack_.pop_back();
+					gSymbolTable.exit_scope();
+					return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
+					                         "' after initializer arguments", *peek_token());
+				}
+
+				// Determine if this is a delegating, base class, or member initializer
+				bool is_delegating = (init_name == delayed.struct_name);
+				bool is_base_init = false;
+				
+				if (is_delegating) {
+					// Delegating constructor: Point() : Point(0, 0) {}
+					// In C++11, if a constructor delegates, it CANNOT have other initializers
+					if (!delayed.ctor_node->member_initializers().empty() || !delayed.ctor_node->base_initializers().empty()) {
+						// Clean up
+						current_function_ = nullptr;
+						member_function_context_stack_.pop_back();
+						gSymbolTable.exit_scope();
+						return ParseResult::error("Delegating constructor cannot have other member or base initializers", *init_name_token);
+					}
+					delayed.ctor_node->set_delegating_initializer(std::move(init_args));
+				} else {
+					// Check if it's a base class initializer
+					if (delayed.struct_node) {
+						for (const auto& base : delayed.struct_node->base_classes()) {
+							if (base.name == init_name) {
+								is_base_init = true;
+								delayed.ctor_node->add_base_initializer(std::string(init_name), std::move(init_args));
+								break;
+							}
+						}
+					}
+
+					if (!is_base_init) {
+						// It's a member initializer
+						// For simplicity, we'll use the first argument as the initializer expression
+						if (!init_args.empty()) {
+							delayed.ctor_node->add_member_initializer(init_name, init_args[0]);
+						}
+					}
+				}
+
+				// Check for comma (more initializers) or '{'/';' (end of initializer list)
+				if (!consume_punctuator(",")) {
+					// No comma, so we expect '{' or ';' next
+					break;
+				}
+			}
+		}
+		
+		// After parsing initializer list, restore to the body position
+		restore_token_position(delayed.body_start);
 	}
 	
 	// Parse the function body

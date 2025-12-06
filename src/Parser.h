@@ -625,6 +625,7 @@ public:  // Public methods for template instantiation
 
         // Helper for delayed parsing
         void skip_balanced_braces();  // Skip over a balanced brace block
+        void skip_balanced_parens();  // Skip over a balanced parentheses block
 };
 
 struct TypedNumeric {
