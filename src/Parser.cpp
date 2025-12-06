@@ -17392,11 +17392,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 	}
 
+	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
+	compute_and_set_mangled_name(new_func_ref);
+	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
-	// Add to symbol table
-	gSymbolTable.insert(mangled_token.value(), new_func_node);
+	// Add to symbol table at GLOBAL scope (using the simple template name for lookups)
+	// Template instantiations should be globally visible, not scoped to where they're called
+	gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
 
 	// Add to top-level AST so it gets visited by the code generator
 	ast_nodes_.push_back(new_func_node);
@@ -17881,6 +17885,9 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		}
 	}
 
+	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
+	compute_and_set_mangled_name(new_func_ref);
+	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
@@ -19992,7 +19999,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	// Check if the template has a body position stored
 	if (!func_decl.has_template_body_position()) {
-		// No body to parse - return function without definition
+		// No body to parse - compute mangled name and return function without definition
+		compute_and_set_mangled_name(new_func_ref);
 		ast_nodes_.push_back(new_func_node);
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
 		return new_func_node;
@@ -20121,6 +20129,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// Update the saved position to include this new node (current_pos is already a SaveKey)
 	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
 
+	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
+	compute_and_set_mangled_name(new_func_ref);
+	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
@@ -20358,7 +20369,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 	// Check if the template has a body position stored
 	if (!func_decl.has_template_body_position()) {
-		// No body to parse - return function without definition
+		// No body to parse - compute mangled name and return function without definition
+		compute_and_set_mangled_name(new_func_ref);
 		ast_nodes_.push_back(new_func_node);
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
 		return new_func_node;
@@ -20468,6 +20480,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// Update the saved position to include this new node (current_pos is already a SaveKey)
 	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();
 
+	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
+	compute_and_set_mangled_name(new_func_ref);
+	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
