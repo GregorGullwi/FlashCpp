@@ -1,5 +1,6 @@
 #include "AstNodeTypes.h"
 #include "ChunkedString.h"
+#include "NameMangling.h"
 #include <sstream>
 #include <set>
 #include <functional>
@@ -757,9 +758,22 @@ void StructTypeInfo::buildVTable() {
     // Generate vtable symbol name if this struct has a vtable
     if (has_vtable) {
         StringBuilder vtable_sb;
-        vtable_sb.append("??_7");
-        vtable_sb.append(name);
-        vtable_sb.append("@@6B@");
+        
+        // Use platform-appropriate vtable mangling
+        if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
+            // Itanium C++ ABI: _ZTV + length + name
+            // e.g., class "Base" -> "_ZTV4Base"
+            vtable_sb.append("_ZTV");
+            vtable_sb.append(static_cast<uint64_t>(name.size()));
+            vtable_sb.append(name);
+        } else {
+            // MSVC: ??_7 + name + @@6B@
+            // e.g., class "Base" -> "??_7Base@@6B@"
+            vtable_sb.append("??_7");
+            vtable_sb.append(name);
+            vtable_sb.append("@@6B@");
+        }
+        
         vtable_symbol = vtable_sb.commit();
     }
 }
