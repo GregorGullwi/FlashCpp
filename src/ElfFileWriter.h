@@ -146,10 +146,13 @@ public:
 	}
 
 	/**
-	 * @brief Add a relocation entry (default: PC-relative 32-bit)
+	 * @brief Add a relocation entry (default: PLT32 for function calls)
+	 * 
+	 * Uses R_X86_64_PLT32 by default, which works for both external and internal
+	 * function calls and is required for PIE (Position Independent Executable) linking.
 	 */
 	void add_relocation(uint64_t offset, std::string_view symbol_name) {
-		add_relocation(offset, symbol_name, ELFIO::R_X86_64_PC32);
+		add_relocation(offset, symbol_name, ELFIO::R_X86_64_PLT32);
 	}
 
 	/**
