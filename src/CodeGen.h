@@ -6741,6 +6741,12 @@ private:
 
 		// Get the function declaration to extract parameter types for mangling
 		std::string function_name = std::string(func_name_view);
+		
+		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
+		if (functionCallNode.has_mangled_name()) {
+			function_name = std::string(functionCallNode.mangled_name());
+			FLASH_LOG(Codegen, Debug, "Using pre-computed mangled name from FunctionCallNode: {}", function_name);
+		}
 
 		// Look up the function in the global symbol table to get all overloads
 		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
@@ -6756,17 +6762,25 @@ private:
 		// This works because the FunctionCallNode holds a reference to the specific
 		// DeclarationNode that was selected by overload resolution
 		const FunctionDeclarationNode* matched_func_decl = nullptr;
+		FLASH_LOG(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
+			func_name_view, all_overloads.size(), gSymbolTable_overloads.size());
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
 				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+				FLASH_LOG(Codegen, Debug, "  Checking overload at {}, looking for {}", 
+					(void*)overload_decl, (void*)&decl_node);
 				if (overload_decl == &decl_node) {
 					// Found the matching overload
 					matched_func_decl = overload_func_decl;
 
-					// Generate the mangled name directly (unless C linkage)
-					if (matched_func_decl->linkage() != Linkage::C) {
+					// Use pre-computed mangled name if available, otherwise generate it
+					if (matched_func_decl->has_mangled_name()) {
+						function_name = matched_func_decl->mangled_name();
+						FLASH_LOG(Codegen, Debug, "Using pre-computed mangled name: {}", function_name);
+					} else if (matched_func_decl->linkage() != Linkage::C) {
 						function_name = generateMangledNameForCall(*matched_func_decl);
+						FLASH_LOG(Codegen, Debug, "Generated mangled name (no pre-computed): {}", function_name);
 					}
 					break;
 				}
@@ -6778,8 +6792,10 @@ private:
 		if (!matched_func_decl && all_overloads.size() == 1 && all_overloads[0].is<FunctionDeclarationNode>()) {
 			matched_func_decl = &all_overloads[0].as<FunctionDeclarationNode>();
 		
-			// Generate mangled name (include struct name for member functions)
-			if (matched_func_decl->linkage() != Linkage::C) {
+			// Use pre-computed mangled name if available, otherwise generate it
+			if (matched_func_decl->has_mangled_name()) {
+				function_name = matched_func_decl->mangled_name();
+			} else if (matched_func_decl->linkage() != Linkage::C) {
 				function_name = generateMangledNameForCall(*matched_func_decl);
 			}
 		}
@@ -6788,8 +6804,10 @@ private:
 		if (!matched_func_decl && gSymbolTable_overloads.size() == 1 && gSymbolTable_overloads[0].is<FunctionDeclarationNode>()) {
 			matched_func_decl = &gSymbolTable_overloads[0].as<FunctionDeclarationNode>();
 		
-			// Generate mangled name (include struct name for member functions)
-			if (matched_func_decl->linkage() != Linkage::C) {
+			// Use pre-computed mangled name if available, otherwise generate it
+			if (matched_func_decl->has_mangled_name()) {
+				function_name = matched_func_decl->mangled_name();
+			} else if (matched_func_decl->linkage() != Linkage::C) {
 				function_name = generateMangledNameForCall(*matched_func_decl);
 			}
 		}
@@ -6807,8 +6825,10 @@ private:
 								// Found matching member function
 								matched_func_decl = &func_decl;
 								
-								// Generate mangled name for member function
-								if (matched_func_decl->linkage() != Linkage::C) {
+								// Use pre-computed mangled name if available, otherwise generate it
+								if (matched_func_decl->has_mangled_name()) {
+									function_name = matched_func_decl->mangled_name();
+								} else if (matched_func_decl->linkage() != Linkage::C) {
 									function_name = generateMangledNameForCall(*matched_func_decl, current_struct_name_);
 								}
 								break;
