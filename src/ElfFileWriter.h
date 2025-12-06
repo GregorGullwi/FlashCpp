@@ -283,16 +283,81 @@ public:
 	}
 
 	/**
-	 * @brief Add vtable for C++ class (placeholder for future implementation)
+	 * @brief Add vtable for C++ class
+	 * Itanium C++ ABI vtable format: array of function pointers
 	 */
 	void add_vtable(const std::string& vtable_symbol, 
 	               const std::vector<std::string>& function_symbols,
 	               const std::string& class_name,
 	               const std::vector<std::string>& base_class_names,
 	               const std::vector<BaseClassDescriptorInfo>& base_class_info) {
-		// Placeholder - vtable support deferred to future milestone
+		
 		if (g_enable_debug_output) {
-			std::cerr << "WARNING: add_vtable not yet implemented for ELF" << std::endl;
+			std::cerr << "Adding vtable '" << vtable_symbol << "' for class " << class_name
+			          << " with " << function_symbols.size() << " virtual functions" << std::endl;
+		}
+		
+		// Get .rodata section (vtables go in read-only data)
+		auto* rodata = getSectionByName(".rodata");
+		if (!rodata) {
+			throw std::runtime_error(".rodata section not found");
+		}
+		
+		uint32_t vtable_offset = rodata->get_size();
+		
+		// Itanium C++ ABI vtable structure:
+		// - Offset to top (8 bytes) - always 0 for simple cases
+		// - RTTI pointer (8 bytes) - null for now (RTTI deferred to future milestone)
+		// - Function pointers (8 bytes each)
+		
+		std::vector<char> vtable_data;
+		
+		// Offset to top (8 bytes, value = 0)
+		for (int i = 0; i < 8; ++i) {
+			vtable_data.push_back(0);
+		}
+		
+		// RTTI pointer (8 bytes, null for now)
+		for (int i = 0; i < 8; ++i) {
+			vtable_data.push_back(0);
+		}
+		
+		// Function pointers (8 bytes each, will be filled by relocations)
+		for (size_t i = 0; i < function_symbols.size(); ++i) {
+			for (int j = 0; j < 8; ++j) {
+				vtable_data.push_back(0);
+			}
+		}
+		
+		// Add vtable data to .rodata
+		rodata->append_data(vtable_data.data(), vtable_data.size());
+		
+		// Add vtable symbol pointing to the function pointer array (skip offset-to-top and RTTI)
+		uint32_t symbol_offset = vtable_offset + 16;  // Skip offset-to-top (8) and RTTI (8)
+		getOrCreateSymbol(vtable_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
+		                  rodata->get_index(), symbol_offset, vtable_data.size() - 16);
+		
+		// Add relocations for each function pointer
+		auto* rela_rodata = getOrCreateRelocationSection(".rodata");
+		auto* rela_accessor = getRelocationAccessor(".rela.rodata");
+		
+		for (size_t i = 0; i < function_symbols.size(); ++i) {
+			// Get or create symbol for the function
+			auto func_symbol_idx = getOrCreateSymbol(function_symbols[i], ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+			
+			// Add relocation for this function pointer
+			uint32_t reloc_offset = vtable_offset + 16 + (i * 8);  // Skip header + i*8 for function pointer
+			rela_accessor->add_entry(reloc_offset, func_symbol_idx, ELFIO::R_X86_64_64, 0);
+			
+			if (g_enable_debug_output) {
+				std::cerr << "  Added relocation for function " << function_symbols[i] 
+				          << " at offset " << reloc_offset << std::endl;
+			}
+		}
+		
+		if (g_enable_debug_output) {
+			std::cerr << "Vtable '" << vtable_symbol << "' added at offset " << symbol_offset 
+			          << " with " << function_symbols.size() << " function pointers" << std::endl;
 		}
 	}
 
@@ -568,6 +633,44 @@ private:
 	 */
 	ELFIO::symbol_section_accessor* getSymbolAccessor() {
 		return symbol_accessor_.get();
+	}
+
+	/**
+	 * @brief Get or create relocation section for a data section
+	 */
+	ELFIO::section* getOrCreateRelocationSection(const std::string& section_name) {
+		std::string rela_name = ".rela" + section_name;
+		
+		// Check if it already exists
+		auto* existing = getSectionByName(rela_name);
+		if (existing) {
+			return existing;
+		}
+		
+		// Get the target section
+		auto* target_section = getSectionByName(section_name);
+		if (!target_section) {
+			throw std::runtime_error("Target section " + section_name + " not found");
+		}
+		
+		// Create new relocation section
+		auto* rela_section = elf_writer_.sections.add(rela_name);
+		rela_section->set_type(ELFIO::SHT_RELA);
+		rela_section->set_info(target_section->get_index());
+		rela_section->set_link(symtab_section_->get_index());
+		rela_section->set_addr_align(8);
+		rela_section->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+		
+		// Create relocation accessor
+		rela_accessors_[rela_name] = std::make_unique<ELFIO::relocation_section_accessor>(
+			elf_writer_, rela_section
+		);
+		
+		if (g_enable_debug_output) {
+			std::cerr << "Created relocation section " << rela_name << std::endl;
+		}
+		
+		return rela_section;
 	}
 
 	/**
