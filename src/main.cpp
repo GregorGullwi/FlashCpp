@@ -93,6 +93,13 @@ void printTimingSummary(double preprocessing_time, double parsing_time, double i
     FLASH_LOG(General, Info, "\n");
 }
 
+// Helper function to set mangling style in both CompileContext and NameMangling namespace
+static void setManglingStyle(CompileContext& context, CompileContext::ManglingStyle style) {
+    context.setManglingStyle(style);
+    // Sync with NameMangling global (enum values match by design)
+    NameMangling::g_mangling_style = static_cast<NameMangling::ManglingStyle>(static_cast<int>(style));
+}
+
 int main(int argc, char *argv[]) {
     // Install crash handler for automatic crash logging with stack traces
     CrashHandler::install();
@@ -183,11 +190,9 @@ int main(int argc, char *argv[]) {
             std::string_view mangling_str = std::get<std::string_view>(mangling_opt);
             FLASH_LOG(General, Info, "Using name mangling style: ", mangling_str);
             if (mangling_str == "msvc") {
-                context.setManglingStyle(CompileContext::ManglingStyle::MSVC);
-                NameMangling::g_mangling_style = NameMangling::ManglingStyle::MSVC;
+                setManglingStyle(context, CompileContext::ManglingStyle::MSVC);
             } else if (mangling_str == "itanium") {
-                context.setManglingStyle(CompileContext::ManglingStyle::Itanium);
-                NameMangling::g_mangling_style = NameMangling::ManglingStyle::Itanium;
+                setManglingStyle(context, CompileContext::ManglingStyle::Itanium);
             } else {
                 FLASH_LOG(General, Warning, "Unknown mangling style: ", mangling_str, " (use 'msvc' or 'itanium')");
             }
@@ -195,12 +200,10 @@ int main(int argc, char *argv[]) {
     } else {
         // Auto-detect based on platform if not specified
         #if defined(_WIN32) || defined(_WIN64)
-            context.setManglingStyle(CompileContext::ManglingStyle::MSVC);
-            NameMangling::g_mangling_style = NameMangling::ManglingStyle::MSVC;
+            setManglingStyle(context, CompileContext::ManglingStyle::MSVC);
             FLASH_LOG(General, Debug, "Auto-detected name mangling style: MSVC (Windows)");
         #else
-            context.setManglingStyle(CompileContext::ManglingStyle::Itanium);
-            NameMangling::g_mangling_style = NameMangling::ManglingStyle::Itanium;
+            setManglingStyle(context, CompileContext::ManglingStyle::Itanium);
             FLASH_LOG(General, Debug, "Auto-detected name mangling style: Itanium (Linux/Unix)");
         #endif
     }
