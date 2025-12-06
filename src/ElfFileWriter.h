@@ -7,6 +7,7 @@
 #include "CodeViewDebug.h"
 #include <string>
 #include <string_view>
+#include <span>
 #include <vector>
 #include <unordered_map>
 #include <iostream>
@@ -193,9 +194,9 @@ public:
 
 	/**
 	 * @brief Add a string literal to .rodata section
-	 * @return Symbol name for the string literal (as std::string for compatibility)
+	 * @return Symbol name for the string literal (as string_view to stable storage)
 	 */
-	std::string add_string_literal(std::string_view str_content) {
+	std::string_view add_string_literal(std::string_view str_content) {
 		// Generate unique symbol name using StringBuilder
 		StringBuilder builder;
 		builder.append(".L.str.");
@@ -229,14 +230,14 @@ public:
 			          << symbol_name_sv << std::endl;
 		}
 
-		return std::string(symbol_name_sv);
+		return symbol_name_sv;  // Return string_view to stable storage in ChunkedStringAllocator
 	}
 
 	/**
 	 * @brief Add a global variable
 	 */
 	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
-	                              bool is_initialized, const std::vector<char>& init_data) {
+	                              bool is_initialized, std::span<const char> init_data) {
 		if (g_enable_debug_output) {
 			std::cerr << "Adding global variable: " << var_name 
 			          << " size=" << size_in_bytes 
@@ -286,11 +287,11 @@ public:
 	 * @brief Add vtable for C++ class
 	 * Itanium C++ ABI vtable format: array of function pointers
 	 */
-	void add_vtable(const std::string& vtable_symbol, 
-	               const std::vector<std::string>& function_symbols,
-	               const std::string& class_name,
-	               const std::vector<std::string>& base_class_names,
-	               const std::vector<BaseClassDescriptorInfo>& base_class_info) {
+	void add_vtable(std::string_view vtable_symbol, 
+	               std::span<const std::string_view> function_symbols,
+	               std::string_view class_name,
+	               std::span<const std::string_view> base_class_names,
+	               std::span<const BaseClassDescriptorInfo> base_class_info) {
 		
 		if (g_enable_debug_output) {
 			std::cerr << "Adding vtable '" << vtable_symbol << "' for class " << class_name
@@ -362,24 +363,30 @@ public:
 	}
 
 	/**
-	 * @brief Get mangled name (for now, return as-is - Itanium mangling deferred)
+	 * @brief Get mangled name - returns string_view to stable storage in function_signatures_
 	 */
-	std::string getMangledName(std::string_view name) const {
-		// MVP: Use C linkage (unmangled names)
-		// For MVP, return a copy since IRConverter expects std::string
-		// When we implement Itanium mangling, we'll use StringBuilder and store in function_signatures_
-		// TODO: Implement Itanium name mangling in future milestone
-		return std::string(name);
+	std::string_view getMangledName(std::string_view name) const {
+		// For simple names without signature info, just return as-is
+		// The caller should use StringBuilder if they need to store the result
+		return name;
 	}
 
 	/**
 	 * @brief Generate mangled name using platform-appropriate mangling
-	 * Returns the mangled name as a string (not string_view) since we create it
+	 * Returns string_view to stable storage in function_signatures_ map
 	 */
-	std::string generateMangledName(std::string_view name, const FunctionSignature& sig) const {
+	std::string_view generateMangledName(std::string_view name, const FunctionSignature& sig) {
 		// Check linkage first - extern "C" always uses C linkage (unmangled)
 		if (sig.linkage == Linkage::C) {
-			return std::string(name);
+			// For C linkage, store the name in function_signatures_ to ensure stability
+			std::string key(name);
+			auto it = function_signatures_.find(key);
+			if (it != function_signatures_.end()) {
+				return std::string_view(it->first);  // Return view to key in map
+			}
+			// Store it
+			function_signatures_[key] = sig;
+			return std::string_view(function_signatures_.find(key)->first);
 		}
 		
 		// Split namespace_name into components for mangling functions
@@ -408,22 +415,25 @@ public:
 			namespace_path
 		);
 		
-		return std::string(mangled.view());
+		// Store in function_signatures_ map to ensure stable storage
+		std::string key(mangled.view());
+		function_signatures_[key] = sig;
+		
+		// Return string_view to the key in the map (stable storage)
+		return std::string_view(function_signatures_.find(key)->first);
 	}
 
 	/**
 	 * @brief Add function signature (for future name mangling)
-	 * Returns std::string (not string_view) to ensure stable storage
+	 * Returns std::string_view to stable storage in function_signatures_ map
 	 */
-	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
+	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
 	                                const std::vector<TypeSpecifierNode>& parameter_types,
 	                                Linkage linkage = Linkage::None, bool is_variadic = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
-		std::string mangled = generateMangledName(name, sig);
-		function_signatures_[mangled] = sig;
-		return mangled;
+		return generateMangledName(name, sig);  // generateMangledName now returns string_view to stable storage
 	}
 
 	// Overload that accepts pre-computed mangled name (without class_name)
@@ -438,7 +448,7 @@ public:
 	}
 
 	// Overloads for member functions (compatibility with ObjectFileWriter)
-	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
+	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
 	                                const std::vector<TypeSpecifierNode>& parameter_types,
 	                                std::string_view class_name, Linkage linkage = Linkage::None,
 	                                bool is_variadic = false) {
@@ -446,9 +456,7 @@ public:
 		sig.class_name = class_name;
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
-		std::string mangled = generateMangledName(name, sig);
-		function_signatures_[mangled] = sig;
-		return mangled;
+		return generateMangledName(name, sig);  // generateMangledName now returns string_view to stable storage
 	}
 
 	// Overload that accepts pre-computed mangled name (for function definitions from IR)
