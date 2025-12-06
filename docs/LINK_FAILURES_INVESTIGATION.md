@@ -1,32 +1,42 @@
 # Link Failures Investigation
 
 **Date**: December 6, 2025  
-**Status**: Major Progress - Only 6 Remaining Failures  
+**Status**: Nearly Complete - 6 Remaining (5 Platform-Specific, 1 Compiler Bug)
 **Test Results**: 582/595 tests linking successfully (97.8%)
 
 ## Summary
 
-Fixed 9 link failures today (from 15 down to 6). The ELF symbol name bug and template/namespace/inheritance issues are now resolved.
+Fixed 9 of 15 Linux link failures. The remaining 6 failures are either platform-specific runtime dependencies or a compiler bug unrelated to linking.
 
-## Remaining Link Failures (6 tests)
+## Remaining Issues
 
-### Windows Runtime Dependencies (5 tests - Expected to Fail on Linux)
+### Platform-Specific Runtime Dependencies (5 tests)
 
-These tests rely on Windows-specific runtime features that don't exist on Linux/ELF:
-
-**Failing Tests**:
-- `test_constexpr_lambda.cpp` - References `ExitProcess` (Windows API)
-- `test_dynamic_cast_debug.cpp` - References RTTI symbols (`??_R4`) (Windows RTTI format)
-- `test_exceptions_basic.cpp` - References `_CxxThrowException` (Windows exception handling)
-- `test_exceptions_nested.cpp` - References `_CxxThrowException` (Windows exception handling)
-- `test_noexcept.cpp` - References `_CxxThrowException` (Windows exception handling)
-
-**Note**: These tests pass on Windows but will fail on Linux until the compiler implements Linux-specific exception handling and RTTI.
-
-### Genuine Bugs (1 test)
+These tests rely on Windows-specific runtime features. Platform-specific code has been documented in `src/PlatformInternals.h`.
 
 **Failing Tests**:
-- `test_delayed_parsing_constructor.cpp` - Codegen bug: Constructor calls member function `getValue()` but treats it as global variable instead of member function call
+- `test_constexpr_lambda.cpp` - Uses `ExitProcess` (Windows API for process termination)
+  - Linux equivalent: `exit()` from libc
+- `test_dynamic_cast_debug.cpp` - Uses Windows RTTI format (`??_R4` symbols)
+  - Linux needs: Itanium C++ ABI typeinfo structures
+- `test_exceptions_basic.cpp` - Uses `_CxxThrowException` (MSVC exception handling)
+  - Linux needs: `__cxa_throw`, `__cxa_allocate_exception`, `__cxa_begin_catch`, `__cxa_end_catch`
+- `test_exceptions_nested.cpp` - Uses `_CxxThrowException` (MSVC exception handling)
+- `test_noexcept.cpp` - Uses `_CxxThrowException` (MSVC exception handling)
+
+**Implementation Status**:
+- Created `src/PlatformInternals.h` to document platform-specific runtime requirements
+- Windows implementations reference existing MSVC runtime
+- Linux implementations documented but not yet implemented (require Itanium C++ ABI support)
+
+### Compiler Bug (1 test)
+
+**Failing Test**:
+- `test_delayed_parsing_constructor.cpp` - Constructor initializer calls member function declared later in class
+  - **Issue**: Constructor initializer list is parsed immediately, before all member declarations are visible
+  - **Root Cause**: C++ requires member function bodies to be parsed in "complete-class context" (after all member declarations), but constructor initializer lists are currently parsed eagerly
+  - **Fix Required**: Delay parsing of constructor initializer lists until all class members are declared
+  - **Workaround**: Declare member functions before constructors that call them in initializers
 
 ## Recent Fixes (December 6, 2025)
 
