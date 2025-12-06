@@ -23,6 +23,7 @@
 #include "CrashHandler.h"
 #include "Log.h"
 #include "ObjFileWriter.h"
+#include "NameMangling.h"
 
 // Only include ELF writer on non-Windows platforms
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
@@ -172,6 +173,36 @@ int main(int argc, char *argv[]) {
     // Enables compiler-specific builtin macros like __SIZE_TYPE__, __PTRDIFF_TYPE__, etc.
     if (argsparser.hasFlag("fgcc-compat") || argsparser.hasFlag("fclang-compat")) {
         context.setCompilerMode(CompileContext::CompilerMode::GCC);
+    }
+
+    // Name mangling style - auto-detected by platform but can be overridden
+    // for cross-compilation support
+    if (argsparser.hasOption("fmangling")) {
+        auto mangling_opt = argsparser.optionValue("fmangling");
+        if (std::holds_alternative<std::string_view>(mangling_opt)) {
+            std::string_view mangling_str = std::get<std::string_view>(mangling_opt);
+            FLASH_LOG(General, Info, "Using name mangling style: ", mangling_str);
+            if (mangling_str == "msvc") {
+                context.setManglingStyle(CompileContext::ManglingStyle::MSVC);
+                NameMangling::g_mangling_style = NameMangling::ManglingStyle::MSVC;
+            } else if (mangling_str == "itanium") {
+                context.setManglingStyle(CompileContext::ManglingStyle::Itanium);
+                NameMangling::g_mangling_style = NameMangling::ManglingStyle::Itanium;
+            } else {
+                FLASH_LOG(General, Warning, "Unknown mangling style: ", mangling_str, " (use 'msvc' or 'itanium')");
+            }
+        }
+    } else {
+        // Auto-detect based on platform if not specified
+        #if defined(_WIN32) || defined(_WIN64)
+            context.setManglingStyle(CompileContext::ManglingStyle::MSVC);
+            NameMangling::g_mangling_style = NameMangling::ManglingStyle::MSVC;
+            FLASH_LOG(General, Debug, "Auto-detected name mangling style: MSVC (Windows)");
+        #else
+            context.setManglingStyle(CompileContext::ManglingStyle::Itanium);
+            NameMangling::g_mangling_style = NameMangling::ManglingStyle::Itanium;
+            FLASH_LOG(General, Debug, "Auto-detected name mangling style: Itanium (Linux/Unix)");
+        #endif
     }
 
     bool show_debug = argsparser.hasFlag("d") || argsparser.hasFlag("debug");
