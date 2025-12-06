@@ -289,8 +289,20 @@ inline void generateItaniumMangledName(
 		}
 		
 		// Add function name
-		output += std::to_string(func_name.size());
-		output += func_name;
+		// Check for special constructors and destructors
+		if (func_name.size() > 0 && func_name[0] == '~') {
+			// Destructor: use D1 for complete destructor per Itanium C++ ABI
+			// D0 = deleting, D1 = complete, D2 = base
+			output += "D1";
+		} else if (!struct_name.empty() && func_name == struct_name) {
+			// Constructor: use C1 for complete constructor per Itanium C++ ABI
+			// C1 = complete, C2 = base, C3 = allocating
+			output += "C1";
+		} else {
+			// Regular function: <length><name>
+			output += std::to_string(func_name.size());
+			output += func_name;
+		}
 		
 		// End nested-name
 		output += 'E';
