@@ -6927,6 +6927,48 @@ private:
 						}
 					}
 				}
+				
+				// If not found in current struct, check base classes
+				if (!matched_func_decl && struct_info) {
+					// Search through base classes recursively
+					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
+						for (const auto& base_spec : current_struct->base_classes) {
+							// Look up base class in gTypeInfo
+							if (base_spec.type_index < gTypeInfo.size()) {
+								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+								if (base_type_info.isStruct()) {
+									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+									if (base_struct_info) {
+										// Check member functions in base class
+										for (const auto& member_func : base_struct_info->member_functions) {
+											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+												const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+												if (func_decl.decl_node().identifier_token().value() == func_name_view) {
+													// Found matching member function in base class
+													matched_func_decl = &func_decl;
+													
+													// Use pre-computed mangled name if available
+													if (matched_func_decl->has_mangled_name()) {
+														function_name = matched_func_decl->mangled_name();
+													} else if (matched_func_decl->linkage() != Linkage::C) {
+														// Generate mangled name with base class name
+														function_name = generateMangledNameForCall(*matched_func_decl, base_struct_info->name);
+													}
+													return; // Stop searching once found
+												}
+											}
+										}
+										// Recursively search base classes of this base class
+										if (!matched_func_decl) {
+											searchBaseClasses(base_struct_info);
+										}
+									}
+								}
+							}
+						}
+					};
+					searchBaseClasses(struct_info);
+				}
 			}
 		}
 	} // End of symbol table lookup (only if no pre-computed mangled name)
