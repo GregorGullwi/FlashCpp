@@ -6827,29 +6827,34 @@ private:
 
 		// Get the function declaration to extract parameter types for mangling
 		std::string function_name = std::string(func_name_view);
+		const FunctionDeclarationNode* matched_func_decl = nullptr;
 		
 		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
+		// If so, use it directly and skip the lookup logic
 		if (functionCallNode.has_mangled_name()) {
 			function_name = std::string(functionCallNode.mangled_name());
 			FLASH_LOG(Codegen, Debug, "Using pre-computed mangled name from FunctionCallNode: {}", function_name);
+			// We don't need to find matched_func_decl since we already have the mangled name
+			// The mangled name is sufficient for generating the call instruction
 		}
 
-		// Look up the function in the global symbol table to get all overloads
-		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
-		auto all_overloads = global_symbol_table_
-			? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
-			: symbol_table.lookup_all(decl_node.identifier_token().value());
+		// Only do symbol table lookup if we don't have a pre-computed mangled name
+		if (!functionCallNode.has_mangled_name()) {
+			// Look up the function in the global symbol table to get all overloads
+			// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
+			auto all_overloads = global_symbol_table_
+				? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
+				: symbol_table.lookup_all(decl_node.identifier_token().value());
 
-		// Also try looking up in gSymbolTable directly for comparison
-		extern SymbolTable gSymbolTable;
-		auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
+			// Also try looking up in gSymbolTable directly for comparison
+			extern SymbolTable gSymbolTable;
+			auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
 
-		// Find the matching overload by comparing the DeclarationNode address
-		// This works because the FunctionCallNode holds a reference to the specific
-		// DeclarationNode that was selected by overload resolution
-		const FunctionDeclarationNode* matched_func_decl = nullptr;
-		FLASH_LOG(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
-			func_name_view, all_overloads.size(), gSymbolTable_overloads.size());
+			// Find the matching overload by comparing the DeclarationNode address
+			// This works because the FunctionCallNode holds a reference to the specific
+			// DeclarationNode that was selected by overload resolution
+			FLASH_LOG(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
+				func_name_view, all_overloads.size(), gSymbolTable_overloads.size());
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
@@ -6924,6 +6929,7 @@ private:
 				}
 			}
 		}
+	} // End of symbol table lookup (only if no pre-computed mangled name)
 	
 		// Always add the return variable and function name (mangled for overload resolution)
 		TempVar ret_var = var_counter.next();
