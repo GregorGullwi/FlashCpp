@@ -470,9 +470,9 @@ echo $?  # Should be 3
 
 ## Current Status (December 2024)
 
-### ✅ Milestones 1-4: COMPLETE
+### ✅ Milestones 1-4: COMPLETE + PIE Fix
 
-FlashCpp now has comprehensive Linux ELF support with **90.7% link success rate**!
+FlashCpp now has comprehensive Linux ELF support with **89.8% link success rate**!
 
 **What's Working:**
 - ELF object file generation with all standard sections
@@ -483,25 +483,37 @@ FlashCpp now has comprehensive Linux ELF support with **90.7% link success rate*
 - Function overloading with type-safe linking
 - Cross-compilation support via `--fmangling` flag
 - String literals and global variables
-- Proper relocations (R_X86_64_PC32, R_X86_64_PLT32, R_X86_64_64)
+- **PIE-compatible relocations** (R_X86_64_PLT32 for function calls) ✨
+- Proper relocations for all code patterns
 
-**Test Results:**
-- 590/600 files compile (98.3%)
-- 535/590 files link (90.7%)
-- All 370 unit tests pass
-- 141 additional files link compared to initial implementation
+**Test Results (Latest):**
+- **537/677 files compile** (79.3% - full test suite)
+- **482/537 files link** (**89.8%** link success) ✨
+- All 370 unit tests pass (100%)
+- PIE linking errors eliminated
+
+**Recent Improvements:**
+- Fixed PIE (Position Independent Executable) linking issue
+- Changed function call relocations from R_X86_64_PC32 to R_X86_64_PLT32
+- Eliminates "can not be used when making a PIE object" linker errors
+- Compatible with modern Linux security requirements
 
 **Next Steps (Milestone 5):**
 - DWARF debug information for GDB support
 - Exception handling (.eh_frame sections)
 - Complex inheritance scenarios (multiple/virtual inheritance)
 - Advanced template features
+- Windows-specific API compatibility layer for cross-platform tests
 
 ### Known Limitations
 - String literals use GLOBAL binding (pragmatic workaround for ELFIO limitations)
 - RTTI not yet implemented (vtables have null RTTI pointers)
 - Exception handling not implemented
-- 55 remaining link failures involve advanced C++ features
+- 55 remaining link failures (10.2%) involve:
+  - Windows-specific APIs (ExitProcess, etc.)
+  - RTTI/type_info features
+  - Exception handling
+  - Complex template edge cases
 
 ## Technical Achievements
 
