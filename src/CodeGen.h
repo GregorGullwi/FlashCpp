@@ -5544,8 +5544,13 @@ private:
 						const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
 						std::string_view object_name = object_ident.name();
 
-						// Look up the object in the symbol table
-						const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+						// Look up the object in the symbol table (local first, then global)
+						std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+						if (!symbol.has_value() && global_symbol_table_) {
+							// Not found locally - try global symbol table
+							symbol = global_symbol_table_->lookup(object_name);
+						}
+						
 						if (!symbol.has_value()) {
 							// Error: variable not found
 							return { Type::Int, 32, TempVar{0} };

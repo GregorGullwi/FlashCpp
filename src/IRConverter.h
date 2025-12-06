@@ -2073,6 +2073,124 @@ inline void emitFloatLoadFromAddressInReg(std::vector<char>& textSectionData, X6
 }
 
 /**
+ * @brief Emits floating-point load from address in register with displacement.
+ * Loads from [addr_reg + offset] into xmm_dest using MOVSD (double) or MOVSS (float).
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param xmm_dest The destination XMM register for the loaded value
+ * @param addr_reg The general-purpose register containing the base memory address
+ * @param offset The displacement to add to the base address
+ * @param is_float True for float (MOVSS), false for double (MOVSD)
+ */
+inline void emitFloatLoadFromAddressWithOffset(std::vector<char>& textSectionData, X64Register xmm_dest, X64Register addr_reg, int32_t offset, bool is_float) {
+	uint8_t xmm_bits = static_cast<uint8_t>(xmm_dest) & 0x07;
+	uint8_t addr_bits = static_cast<uint8_t>(addr_reg) & 0x07;
+	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
+	
+	// MOVSD xmm, [addr_reg + disp]: F2 0F 10 modrm [disp]
+	// MOVSS xmm, [addr_reg + disp]: F3 0F 10 modrm [disp]
+	textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+	if (addr_extended) {
+		textSectionData.push_back(0x41); // REX.B for extended addr_reg
+	}
+	textSectionData.push_back(0x0F);
+	textSectionData.push_back(0x10); // MOVSD/MOVSS xmm, m (load variant)
+	
+	// ModR/M and displacement
+	if (offset >= -128 && offset <= 127) {
+		// Use disp8: mod=01
+		uint8_t modrm = 0x40 | (xmm_bits << 3) | addr_bits;
+		textSectionData.push_back(modrm);
+		textSectionData.push_back(static_cast<uint8_t>(offset));
+	} else {
+		// Use disp32: mod=10
+		uint8_t modrm = 0x80 | (xmm_bits << 3) | addr_bits;
+		textSectionData.push_back(modrm);
+		textSectionData.push_back((offset >> 0) & 0xFF);
+		textSectionData.push_back((offset >> 8) & 0xFF);
+		textSectionData.push_back((offset >> 16) & 0xFF);
+		textSectionData.push_back((offset >> 24) & 0xFF);
+	}
+}
+
+/**
+ * @brief Emits floating-point store to address in register with displacement.
+ * Stores from xmm_src to [addr_reg + offset] using MOVSD (double) or MOVSS (float).
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param xmm_src The source XMM register containing the value to store
+ * @param addr_reg The general-purpose register containing the base memory address
+ * @param offset The displacement to add to the base address
+ * @param is_float True for float (MOVSS), false for double (MOVSD)
+ */
+inline void emitFloatStoreToAddressWithOffset(std::vector<char>& textSectionData, X64Register xmm_src, X64Register addr_reg, int32_t offset, bool is_float) {
+	uint8_t xmm_bits = static_cast<uint8_t>(xmm_src) & 0x07;
+	uint8_t addr_bits = static_cast<uint8_t>(addr_reg) & 0x07;
+	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
+	
+	// MOVSD [addr_reg + disp], xmm: F2 0F 11 modrm [disp]
+	// MOVSS [addr_reg + disp], xmm: F3 0F 11 modrm [disp]
+	textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+	if (addr_extended) {
+		textSectionData.push_back(0x41); // REX.B for extended addr_reg
+	}
+	textSectionData.push_back(0x0F);
+	textSectionData.push_back(0x11); // MOVSD/MOVSS m, xmm (store variant)
+	
+	// ModR/M and displacement
+	if (offset >= -128 && offset <= 127) {
+		// Use disp8: mod=01
+		uint8_t modrm = 0x40 | (xmm_bits << 3) | addr_bits;
+		textSectionData.push_back(modrm);
+		textSectionData.push_back(static_cast<uint8_t>(offset));
+	} else {
+		// Use disp32: mod=10
+		uint8_t modrm = 0x80 | (xmm_bits << 3) | addr_bits;
+		textSectionData.push_back(modrm);
+		textSectionData.push_back((offset >> 0) & 0xFF);
+		textSectionData.push_back((offset >> 8) & 0xFF);
+		textSectionData.push_back((offset >> 16) & 0xFF);
+		textSectionData.push_back((offset >> 24) & 0xFF);
+	}
+}
+
+/**
+ * @brief Emits MOVQ to transfer data from XMM register to general-purpose register.
+ * MOVQ gpr, xmm: 66 48 0F 7E /r
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param xmm_src The source XMM register
+ * @param gpr_dest The destination general-purpose register
+ */
+inline void emitMovqXmmToGpr(std::vector<char>& textSectionData, X64Register xmm_src, X64Register gpr_dest) {
+	textSectionData.push_back(0x66);
+	textSectionData.push_back(0x48);
+	textSectionData.push_back(0x0F);
+	textSectionData.push_back(0x7E);
+	uint8_t xmm_bits = static_cast<uint8_t>(xmm_src) & 0x07;
+	uint8_t gpr_bits = static_cast<uint8_t>(gpr_dest) & 0x07;
+	textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
+}
+
+/**
+ * @brief Emits MOVQ to transfer data from general-purpose register to XMM register.
+ * MOVQ xmm, gpr: 66 48 0F 6E /r
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param gpr_src The source general-purpose register
+ * @param xmm_dest The destination XMM register
+ */
+inline void emitMovqGprToXmm(std::vector<char>& textSectionData, X64Register gpr_src, X64Register xmm_dest) {
+	textSectionData.push_back(0x66);
+	textSectionData.push_back(0x48);
+	textSectionData.push_back(0x0F);
+	textSectionData.push_back(0x6E);
+	uint8_t xmm_bits = static_cast<uint8_t>(xmm_dest) & 0x07;
+	uint8_t gpr_bits = static_cast<uint8_t>(gpr_src) & 0x07;
+	textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
+}
+
+/**
  * @brief Emits x64 opcodes to multiply RCX by element_size_bytes.
  *
  * Optimizes for power-of-2 sizes using SHL (bit shift left):
@@ -4178,6 +4296,25 @@ private:
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0x7E);
+		// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
+		textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
+	}
+
+	// Helper to emit MOVQ from GPR to XMM (for moving float bits to XMM register)
+	// movq xmm, r64: 66 REX.W 0F 6E /r
+	void emitMovqGprToXmm(X64Register gpr_src, X64Register xmm_dest) {
+		uint8_t gpr_val = static_cast<uint8_t>(gpr_src);
+		uint8_t xmm_val = static_cast<uint8_t>(xmm_dest);
+		// XMM registers are encoded as 16+ in our enum, so subtract 16 to get 0-15 range
+		uint8_t xmm_idx = (xmm_val >= 16) ? (xmm_val - 16) : xmm_val;
+		// Branchless REX: REX.W=1, REX.R from XMM high bit, REX.B from GPR high bit
+		uint8_t rex = 0x48 | ((xmm_idx >> 3) << 2) | (gpr_val >> 3);
+		uint8_t xmm_bits = xmm_idx & 0x07;
+		uint8_t gpr_bits = gpr_val & 0x07;
+		textSectionData.push_back(0x66);
+		textSectionData.push_back(rex);
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x6E);
 		// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
 		textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
 	}
@@ -9760,21 +9897,48 @@ private:
 			pending_global_relocations_.push_back({reloc_offset, std::string(global_object_name), IMAGE_REL_AMD64_REL32});
 			
 			// Step 2: Load member from [temp_reg + offset]
-			OpCodeWithSize load_opcodes;
-			if (member_size_bytes == 8) {
-				load_opcodes = generateMovFromMemory(temp_reg, temp_reg, op.offset);
-			} else if (member_size_bytes == 4) {
-				load_opcodes = generateMovFromMemory32(temp_reg, temp_reg, op.offset);
-			} else if (member_size_bytes == 2) {
-				load_opcodes = generateMovFromMemory16(temp_reg, temp_reg, op.offset);
-			} else if (member_size_bytes == 1) {
-				load_opcodes = generateMovFromMemory8(temp_reg, temp_reg, op.offset);
+			// Check if this is a floating-point type
+			bool is_float_type = (op.result.type == Type::Float || op.result.type == Type::Double);
+			
+			if (is_float_type) {
+				// For floating-point: load into XMM register
+				X64Register xmm_reg = X64Register::XMM0;
+				bool is_float = (op.result.type == Type::Float);
+				
+				// MOVSD/MOVSS XMM0, [temp_reg + offset]
+				emitFloatLoadFromAddressWithOffset(textSectionData, xmm_reg, temp_reg, op.offset, is_float);
+				
+				// Store directly to stack using MOVSD/MOVSS (don't convert to GPR)
+				// Calculate stack offset for result
+				int32_t result_offset = allocateStackSlotForTempVar(result_var.var_number);
+				auto store_opcodes = generateFloatMovToFrame(xmm_reg, result_offset, is_float);
+				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				
+				// Release the temp register (we're done with the address)
+				regAlloc.release(temp_reg);
+				
+				// Add the TempVar to identifier_offset
+				variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
+				return;  // Early return - we've handled everything
 			} else {
-				assert(false && "Unsupported member size");
-				return;
+				// For integers: use standard integer load
+				OpCodeWithSize load_opcodes;
+				if (member_size_bytes == 8) {
+					load_opcodes = generateMovFromMemory(temp_reg, temp_reg, op.offset);
+				} else if (member_size_bytes == 4) {
+					load_opcodes = generateMovFromMemory32(temp_reg, temp_reg, op.offset);
+				} else if (member_size_bytes == 2) {
+					load_opcodes = generateMovFromMemory16(temp_reg, temp_reg, op.offset);
+				} else if (member_size_bytes == 1) {
+					load_opcodes = generateMovFromMemory8(temp_reg, temp_reg, op.offset);
+				} else {
+					assert(false && "Unsupported member size");
+					return;
+				}
+				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
+				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			}
-			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		} else if (is_pointer_access) {
 			// For 'this' pointer: load pointer into RCX, then load from [RCX + member_offset]
 			auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RCX, object_base_offset);
@@ -9909,6 +10073,122 @@ private:
 
 		if (std::holds_alternative<std::string_view>(op.object)) {
 			std::string_view object_name = std::get<std::string_view>(op.object);
+			
+			// First check if this is a global variable
+			bool is_global_variable = false;
+			for (const auto& global : global_variables_) {
+				if (global.name == object_name) {
+					is_global_variable = true;
+					break;
+				}
+			}
+			
+			if (is_global_variable) {
+				// Handle global struct member assignment using RIP-relative addressing
+				// Load the value into a register first
+				X64Register value_reg = allocateRegisterWithSpilling();
+				
+				if (is_literal) {
+					if (is_double_literal) {
+						uint64_t bits;
+						std::memcpy(&bits, &literal_double_value, sizeof(bits));
+						textSectionData.push_back(0x48);
+						textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
+						for (int i = 0; i < 8; i++) {
+							textSectionData.push_back((bits >> (i * 8)) & 0xFF);
+						}
+					} else {
+						textSectionData.push_back(0x48);
+						textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
+						uint64_t imm64 = static_cast<uint64_t>(literal_value);
+						for (int i = 0; i < 8; i++) {
+							textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
+						}
+					}
+				} else if (is_variable) {
+					const StackVariableScope& current_scope = variable_scopes.back();
+					auto it = current_scope.identifier_offset.find(variable_name);
+					if (it == current_scope.identifier_offset.end()) {
+						assert(false && "Variable not found in scope");
+						return;
+					}
+					int32_t value_offset = it->second;
+					emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
+				} else {
+					auto value_var = std::get<TempVar>(op.value.value);
+					int32_t value_offset = getStackOffsetFromTempVar(value_var);
+					emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
+				}
+				
+				// Now store to the global struct member using RIP-relative addressing with offset
+				// For doubles: MOVSD [RIP + disp32 + offset], XMM
+				// For integers: MOV [RIP + disp32 + offset], reg
+				bool is_floating_point = (op.value.type == Type::Float || op.value.type == Type::Double);
+				bool is_float = (op.value.type == Type::Float);
+				
+				if (is_floating_point) {
+					// Move to XMM register for floating-point stores
+					X64Register xmm_reg = X64Register::XMM0;
+					// MOVQ XMM0, value_reg (reinterpret bits)
+					emitMovqGprToXmm(value_reg, xmm_reg);
+					
+					// MOVSD/MOVSS [RIP + disp32], XMM0
+					textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x11);
+					uint8_t xmm_bits = static_cast<uint8_t>(xmm_reg) & 0x07;
+					textSectionData.push_back(0x05 | (xmm_bits << 3));
+					
+					// Placeholder for displacement - will be patched by relocation
+					uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+					// The actual displacement should account for the member offset
+					int32_t disp_with_offset = op.offset;
+					textSectionData.push_back((disp_with_offset >> 0) & 0xFF);
+					textSectionData.push_back((disp_with_offset >> 8) & 0xFF);
+					textSectionData.push_back((disp_with_offset >> 16) & 0xFF);
+					textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
+					
+					// Add relocation for the global variable (with offset already included in displacement)
+					pending_global_relocations_.push_back({reloc_offset, std::string(object_name), IMAGE_REL_AMD64_REL32});
+				} else {
+					// Integer store: MOV [RIP + disp32], reg
+					int size_in_bits = op.value.size_in_bits;
+					uint8_t src_val = static_cast<uint8_t>(value_reg);
+					uint8_t src_bits = src_val & 0x07;
+					uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
+					uint8_t needs_rex_b = (src_val >> 3) & 0x01;
+					uint8_t rex = 0x40 | needs_rex_w | needs_rex_b;
+					uint8_t emit_rex = (needs_rex_w | needs_rex_b) != 0;
+					
+					if (emit_rex) {
+						textSectionData.push_back(rex);
+					}
+					
+					if (size_in_bits == 8) {
+						textSectionData.push_back(0x88); // MOV r/m8, r8
+					} else {
+						textSectionData.push_back(0x89); // MOV r/m32/r/m64, r32/r64
+					}
+					
+					textSectionData.push_back(0x05 | (src_bits << 3));
+					
+					// Placeholder for displacement with member offset
+					uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+					int32_t disp_with_offset = op.offset;
+					textSectionData.push_back((disp_with_offset >> 0) & 0xFF);
+					textSectionData.push_back((disp_with_offset >> 8) & 0xFF);
+					textSectionData.push_back((disp_with_offset >> 16) & 0xFF);
+					textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
+					
+					// Add relocation
+					pending_global_relocations_.push_back({reloc_offset, std::string(object_name), IMAGE_REL_AMD64_REL32});
+				}
+				
+				regAlloc.release(value_reg);
+				return;  // Done with global member store
+			}
+			
+			// Not a global - look in local scope
 			auto it = current_scope.identifier_offset.find(object_name);
 			if (it == current_scope.identifier_offset.end()) {
 				assert(false && "Struct object not found in scope");
