@@ -25,10 +25,6 @@ fi
 EXPECTED_FAIL=(
     "test_cstddef.cpp"
     "test_cstdio_puts.cpp"
-    "test_constructor_expressions.cpp"
-    "test_copy.cpp"
-    "test_forward_overload_resolution.cpp"
-    "test_std_forward_observable.cpp"
 )
 
 # Results
