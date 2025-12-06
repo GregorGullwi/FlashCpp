@@ -9311,9 +9311,12 @@ ParseResult Parser::parse_primary_expression()
 		
 		FLASH_LOG(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
 		
-		// If identifier not found AND followed by ::, it might be a namespace-qualified identifier
-		if (!identifierType.has_value() && peek_token().has_value() && peek_token()->value() == "::") {
-			FLASH_LOG(Parser, Debug, "Identifier '{}' not found but followed by '::', parsing as qualified identifier", idenfifier_token.value());
+		// If identifier is followed by ::, it might be a namespace-qualified identifier
+		// This handles both: 
+		// 1. Identifier not found (might be namespace name)
+		// 2. Identifier found but followed by :: (namespace or class scope resolution)
+		if (peek_token().has_value() && peek_token()->value() == "::") {
+			FLASH_LOG(Parser, Warning, "@@@ QUALIFIED ID DETECTED: Identifier '{}' followed by '::', identifierType found: {}", idenfifier_token.value(), identifierType.has_value());
 			// Parse as qualified identifier: Namespace::identifier
 			// Even if we don't know if it's a namespace, try parsing it as a qualified identifier
 			std::vector<StringType<32>> namespaces;
@@ -10973,6 +10976,8 @@ ParseResult Parser::parse_primary_expression()
 found_member_variable:  // Label for member variable detection - jump here to skip error checking
 	// Check for postfix operators (++, --, and array subscript [])
 	while (result.has_value() && peek_token().has_value()) {
+		FLASH_LOG(Parser, Warning, "@@@ POSTFIX LOOP: peek token type={}, value='{}'", 
+			static_cast<int>(peek_token()->type()), peek_token()->value());
 		if (peek_token()->type() == Token::Type::Operator) {
 			std::string_view op = peek_token()->value();
 			if (op == "++" || op == "--") {
@@ -11117,8 +11122,134 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 			}
 		}
 
+		// Check for scope resolution operator :: (namespace/class member access)
+		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "::"sv) {
+			FLASH_LOG(Parser, Warning, "@@@ POSTFIX :: OPERATOR DETECTED");
+			// Handle namespace::member or class::static_member syntax
+			// We have an identifier (in result), now parse :: and the member name
+			consume_token(); // consume '::'
+			
+			// Expect an identifier after ::
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after '::'", *current_token_);
+			}
+			
+			// Get the namespace/class name from the current result
+			std::string_view namespace_name;
+			if (result->is<ExpressionNode>()) {
+				const ExpressionNode& expr = result->as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					namespace_name = std::get<IdentifierNode>(expr).name();
+				} else {
+					return ParseResult::error("Invalid left operand for '::'", *current_token_);
+				}
+			} else {
+				return ParseResult::error("Expected identifier before '::'", *current_token_);
+			}
+			
+			// Now parse the rest as a qualified identifier
+			std::vector<StringType<32>> namespaces;
+			namespaces.emplace_back(StringType<32>(namespace_name));
+			
+			Token final_identifier = *peek_token();
+			consume_token(); // consume the identifier after ::
+			
+			// Check if there are more :: following (e.g., A::B::C)
+			while (peek_token().has_value() && peek_token()->value() == "::"sv) {
+				namespaces.emplace_back(StringType<32>(final_identifier.value()));
+				consume_token(); // consume ::
+				
+				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after '::'", *current_token_);
+				}
+				final_identifier = *peek_token();
+				consume_token(); // consume identifier
+			}
+			
+			// Look up the qualified identifier
+			auto qualified_symbol = gSymbolTable.lookup_qualified(namespaces, final_identifier.value());
+			
+			// Check if this is a function call
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token(); // consume '('
+				
+				// Parse function arguments
+				ChunkedVector<ASTNode> args;
+				if (current_token_.has_value() && current_token_->value() != ")") {
+					while (true) {
+						auto arg_result = parse_expression();
+						if (arg_result.is_error()) {
+							return arg_result;
+						}
+						
+						if (auto arg = arg_result.node()) {
+							args.push_back(*arg);
+						}
+						
+						if (!peek_token().has_value()) {
+							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+						}
+						
+						if (peek_token()->value() == ")") {
+							break;
+						}
+						
+						if (!consume_punctuator(",")) {
+							return ParseResult::error("Expected ',' between function arguments", *current_token_);
+						}
+					}
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				}
+				
+				// Get the DeclarationNode
+				auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
+					if (node.is<DeclarationNode>()) {
+						return &node.as<DeclarationNode>();
+					} else if (node.is<FunctionDeclarationNode>()) {
+						return &node.as<FunctionDeclarationNode>().decl_node();
+					} else if (node.is<VariableDeclarationNode>()) {
+						return &node.as<VariableDeclarationNode>().declaration();
+					}
+					return nullptr;
+				};
+				
+				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
+				if (!decl_ptr) {
+					// Create forward declaration
+					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, final_identifier);
+					auto forward_decl = emplace_node<DeclarationNode>(type_node, final_identifier);
+					decl_ptr = &forward_decl.as<DeclarationNode>();
+				}
+				
+				// Create function call node
+				auto function_call_node = emplace_node<ExpressionNode>(
+					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), final_identifier));
+				
+				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
+					if (func_decl.has_mangled_name()) {
+						std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						FLASH_LOG(Parser, Debug, "@@@ Set mangled name on qualified FunctionCallNode (postfix path): {}", func_decl.mangled_name());
+					}
+				}
+				
+				result = function_call_node;
+				continue; // Check for more postfix operators
+			} else if (qualified_symbol.has_value()) {
+				// Just a qualified identifier reference (e.g., Namespace::globalValue)
+				auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+				result = emplace_node<ExpressionNode>(qualified_node_ast.as<QualifiedIdentifierNode>());
+				continue; // Check for more postfix operators
+			} else {
+				return ParseResult::error("Undefined qualified identifier", final_identifier);
+			}
+		}
 		// Check for member access operator . or ->
-		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
+		else if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
 			consume_token(); // consume '.'
 		} else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
 			Token arrow_token = *peek_token();
