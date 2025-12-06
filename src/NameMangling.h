@@ -156,7 +156,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 // Append Itanium-style type encoding for basic types
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
 template<typename OutputType>
-inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
+inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter = false) {
 	// Handle pointers first (they modify what comes after)
 	for (size_t i = 0; i < type_node.pointer_levels().size(); ++i) {
 		output += 'P';
@@ -181,13 +181,22 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	
 	// CV-qualifiers on the base type (come after pointer/reference)
 	// According to Itanium ABI: K = const, V = volatile
-	if (type_node.cv_qualifier() == CVQualifier::Const) {
-		output += 'K';
-	} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
-		output += 'V';
-	} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
-		output += 'K';  // const first
-		output += 'V';  // then volatile
+	// NOTE: For function parameters passed by value (not pointer/reference),
+	// top-level const is ignored per C++ standard [dcl.fct]p5
+	bool is_by_value = type_node.pointer_levels().empty() && 
+	                   !type_node.is_lvalue_reference() && 
+	                   !type_node.is_rvalue_reference();
+	bool skip_cv = is_function_parameter && is_by_value;
+	
+	if (!skip_cv) {
+		if (type_node.cv_qualifier() == CVQualifier::Const) {
+			output += 'K';
+		} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
+			output += 'V';
+		} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
+			output += 'K';  // const first
+			output += 'V';  // then volatile
+		}
 	}
 	
 	// Basic type codes (Itanium ABI section 5.1.5)
@@ -297,7 +306,7 @@ inline void generateItaniumMangledName(
 		output += 'v';
 	} else {
 		for (const auto& param : param_types) {
-			appendItaniumTypeCode(output, param);
+			appendItaniumTypeCode(output, param, true);  // true = is function parameter
 		}
 		
 		// Handle variadic parameters
