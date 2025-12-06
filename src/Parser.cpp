@@ -9309,6 +9309,105 @@ ParseResult Parser::parse_primary_expression()
 			identifierType = lookup_symbol(idenfifier_token.value());
 		}
 		
+		FLASH_LOG(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
+		
+		// If identifier not found AND followed by ::, it might be a namespace-qualified identifier
+		if (!identifierType.has_value() && peek_token().has_value() && peek_token()->value() == "::") {
+			FLASH_LOG(Parser, Debug, "Identifier '{}' not found but followed by '::', parsing as qualified identifier", idenfifier_token.value());
+			// Parse as qualified identifier: Namespace::identifier
+			// Even if we don't know if it's a namespace, try parsing it as a qualified identifier
+			std::vector<StringType<32>> namespaces;
+			Token final_identifier = idenfifier_token;
+			
+			// Collect the qualified path
+			while (peek_token().has_value() && peek_token()->value() == "::") {
+				namespaces.emplace_back(StringType<32>(final_identifier.value()));
+				consume_token(); // consume ::
+				
+				// Get next identifier
+				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
+				}
+				final_identifier = *peek_token();
+				consume_token(); // consume the identifier
+			}
+			
+			FLASH_LOG(Parser, Debug, "Qualified identifier: final name = '{}'", final_identifier.value());
+			
+			// Create a QualifiedIdentifierNode
+			auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+			const auto& qual_id = qualified_node_ast.as<QualifiedIdentifierNode>();
+			
+			// Look up the qualified identifier
+			identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.identifier_token().value());
+			
+			FLASH_LOG(Parser, Debug, "Qualified lookup result: {}", identifierType.has_value() ? "found" : "not found");
+			
+			// Check if this is a function call
+			if (identifierType.has_value() && peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token(); // consume '('
+				
+				// Parse function arguments
+				ChunkedVector<ASTNode> args;
+				if (current_token_.has_value() && current_token_->value() != ")") {
+					while (true) {
+						auto arg_result = parse_expression();
+						if (arg_result.is_error()) {
+							return arg_result;
+						}
+						
+						if (auto arg = arg_result.node()) {
+							args.push_back(*arg);
+						}
+						
+						if (!peek_token().has_value()) {
+							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+						}
+						
+						if (peek_token()->value() == ")") {
+							break;
+						}
+						
+						if (!consume_punctuator(",")) {
+							return ParseResult::error("Expected ',' between function arguments", *current_token_);
+						}
+					}
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				}
+				
+				// Get the DeclarationNode
+				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+				if (!decl_ptr) {
+					return ParseResult::error("Invalid function declaration", final_identifier);
+				}
+				
+				// Create function call node with the qualified identifier
+				auto function_call_node = emplace_node<ExpressionNode>(
+					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), final_identifier));
+				
+				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+				if (identifierType->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+					FLASH_LOG(Parser, Debug, "Namespace-qualified function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
+					if (func_decl.has_mangled_name()) {
+						std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						FLASH_LOG(Parser, Debug, "Set mangled name on namespace-qualified FunctionCallNode: {}", func_decl.mangled_name());
+					}
+				}
+				
+				result = function_call_node;
+				return ParseResult::success(*result);
+			} else if (identifierType.has_value()) {
+				// Just a qualified identifier reference (e.g., Namespace::globalValue)
+				result = emplace_node<ExpressionNode>(qual_id);
+				return ParseResult::success(*result);
+			}
+			// If identifierType is still not found, fall through to error handling below
+		}
+		
 		// If identifier not found in symbol table, check if it's a class/struct type name
 		// This handles constructor calls like Widget(42)
 		if (!identifierType.has_value()) {
