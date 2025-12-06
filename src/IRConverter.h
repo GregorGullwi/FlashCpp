@@ -4391,6 +4391,55 @@ private:
 		return reloc_offset;
 	}
 
+	// Helper to emit MOV [RIP + disp32], reg for integer stores
+	// Returns the offset where the displacement placeholder starts (for relocation)
+	uint32_t emitMovRipRelativeStore(X64Register src, int size_in_bits) {
+		// For 64-bit: MOV [RIP + disp32], RAX - 48 89 05 [disp32]
+		// For 32-bit: MOV [RIP + disp32], EAX - 89 05 [disp32]
+		uint8_t src_val = static_cast<uint8_t>(src);
+		uint8_t src_bits = src_val & 0x07;
+		// Branchless: compute REX prefix (0x48 for 64-bit, 0x40 for 32-bit with high reg, 0 otherwise)
+		// REX.W bit is 0x08, so 0x48 = 0x40 | 0x08
+		uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
+		uint8_t needs_rex_b = (src_val >> 3) & 0x01;
+		uint8_t rex = 0x40 | needs_rex_w | needs_rex_b;
+		// Only emit REX if any bits are set beyond base 0x40
+		uint8_t emit_rex = (needs_rex_w | needs_rex_b) != 0;
+		// Use reserve + direct writes for branchless emission
+		size_t base = textSectionData.size();
+		textSectionData.resize(base + 6 + emit_rex);
+		char* p = textSectionData.data() + base;
+		// Branchless write: if emit_rex, write rex and shift; else start at opcode
+		p[0] = emit_rex ? rex : 0x89;
+		p[emit_rex] = 0x89; // MOV r/m32/r/m64, r32/r64 (store variant)
+		p[1 + emit_rex] = 0x05 | (src_bits << 3); // ModR/M: reg, [RIP + disp32]
+		// disp32 placeholder (4 bytes of zeros)
+		p[2 + emit_rex] = 0x00;
+		p[3 + emit_rex] = 0x00;
+		p[4 + emit_rex] = 0x00;
+		p[5 + emit_rex] = 0x00;
+		return static_cast<uint32_t>(base + 2 + emit_rex);
+	}
+
+	// Helper to emit MOVSD/MOVSS [RIP + disp32], XMM for floating-point stores
+	// Returns the offset where the displacement placeholder starts (for relocation)
+	uint32_t emitFloatMovRipRelativeStore(X64Register xmm_src, bool is_float) {
+		// MOVSD [RIP + disp32], XMM0: F2 0F 11 05 [disp32]
+		// MOVSS [RIP + disp32], XMM0: F3 0F 11 05 [disp32]
+		textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x11); // MOVSD/MOVSS m, xmm (store variant)
+		uint8_t xmm_bits = static_cast<uint8_t>(xmm_src) & 0x07;
+		textSectionData.push_back(0x05 | (xmm_bits << 3)); // ModR/M: XMMn, [RIP + disp32]
+		
+		uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		return reloc_offset;
+	}
+
 	// Additional emit helpers for dynamic_cast runtime generation
 	
 	void emitCmpRegReg(X64Register r1, X64Register r2) {
@@ -6069,12 +6118,43 @@ private:
 		std::string_view global_name = instruction.getOperandAs<std::string_view>(0);
 		TempVar source_temp = instruction.getOperandAs<TempVar>(1);
 
-		// Store to global variable using RIP-relative addressing
-		// MOV [RIP + offset_to_global], RAX
-		// We'll need to add a relocation for this
+		// Determine the size and type of the global variable
+		// We need to look it up in the global variables vector
+		const GlobalVariableInfo* global_info = nullptr;
+		for (const auto& global : global_variables_) {
+			if (global.name == global_name) {
+				global_info = &global;
+				break;
+			}
+		}
+		
+		if (!global_info) {
+			FLASH_LOG(Codegen, Error, "Global variable not found: ", global_name);
+			assert(false && "Global variable not found during GlobalStore");
+			return;
+		}
 
-		// For now, this is a placeholder
-		// TODO: Implement RIP-relative addressing and relocations
+		int size_in_bits = static_cast<int>(global_info->size_in_bytes * 8);
+		Type var_type = global_info->type;
+		bool is_floating_point = (var_type == Type::Float || var_type == Type::Double);
+		bool is_float = (var_type == Type::Float);
+
+		// Load the source value from stack into a register
+		int source_offset = getStackOffsetFromTempVar(source_temp);
+		
+		if (is_floating_point) {
+			// Load floating-point value into XMM0
+			emitFloatMovFromFrame(X64Register::XMM0, source_offset, is_float);
+			// Store to global using RIP-relative addressing
+			uint32_t reloc_offset = emitFloatMovRipRelativeStore(X64Register::XMM0, is_float);
+			pending_global_relocations_.push_back({reloc_offset, std::string(global_name), IMAGE_REL_AMD64_REL32});
+		} else {
+			// Load integer value into RAX
+			emitMovFromFrameBySize(X64Register::RAX, source_offset, size_in_bits);
+			// Store to global using RIP-relative addressing
+			uint32_t reloc_offset = emitMovRipRelativeStore(X64Register::RAX, size_in_bits);
+			pending_global_relocations_.push_back({reloc_offset, std::string(global_name), IMAGE_REL_AMD64_REL32});
+		}
 	}
 
 	void handleVariableDecl(const IrInstruction& instruction) {
