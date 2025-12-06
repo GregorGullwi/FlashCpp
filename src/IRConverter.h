@@ -1381,6 +1381,37 @@ OpCodeWithSize generateMovToFrameBySize(X64Register sourceRegister, int32_t offs
 	}
 }
 
+/**
+ * @brief Emits ADD reg, imm32 instruction (64-bit register with 32-bit immediate) directly to textSectionData.
+ *
+ * Emits: REX.W + 81 /0 id (ADD r64, imm32)
+ *
+ * @param textSectionData The output buffer for opcodes.
+ * @param reg The register to add to.
+ * @param immediate The 32-bit signed immediate value.
+ */
+inline void emitAddRegImm32(std::vector<char>& textSectionData, X64Register reg, int32_t immediate) {
+	// REX.W prefix, with REX.B if register is R8-R15
+	uint8_t rex = 0x48; // REX.W
+	if (static_cast<uint8_t>(reg) >= 8) {
+		rex |= 0x01; // REX.B
+	}
+	textSectionData.push_back(rex);
+	
+	// Opcode: 81 /0 (ADD r/m64, imm32)
+	textSectionData.push_back(0x81);
+	
+	// ModR/M: 11 (mod=direct register) | 000 (opcode extension /0) | reg (r/m)
+	uint8_t modrm = 0xC0 | (static_cast<uint8_t>(reg) & 0x7);
+	textSectionData.push_back(modrm);
+	
+	// 32-bit immediate (little-endian)
+	textSectionData.push_back(static_cast<uint8_t>(immediate & 0xFF));
+	textSectionData.push_back(static_cast<uint8_t>((immediate >> 8) & 0xFF));
+	textSectionData.push_back(static_cast<uint8_t>((immediate >> 16) & 0xFF));
+	textSectionData.push_back(static_cast<uint8_t>((immediate >> 24) & 0xFF));
+}
+
 // CLANG COMPATIBILITY: Generate MOV [rsp+offset], reg instruction for RSP-relative addressing
 OpCodeWithSize generateMovToRsp(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
@@ -9620,6 +9651,11 @@ private:
 			// Nested case: object is the result of a previous member access
 			auto object_temp = std::get<TempVar>(op.object);
 			object_base_offset = getStackOffsetFromTempVar(object_temp);
+			
+			// Check if this temp var holds a pointer/address (from large member access)
+			if (reference_stack_info_.count(object_base_offset) > 0) {
+				is_pointer_access = true;
+			}
 		}
 
 		// Calculate the member's actual stack offset
@@ -9631,7 +9667,13 @@ private:
 			member_stack_offset = object_base_offset + op.offset;
 		}
 
-		// Get the result variable's stack offset
+		// Calculate member size in bytes
+		int member_size_bytes = op.result.size_in_bits / 8;
+
+		// Flush all dirty registers to ensure values are saved before allocating
+		flushAllDirtyRegisters();
+
+		// Get the result variable's stack offset (needed for both paths)
 		auto result_var = std::get<TempVar>(op.result.value);
 		int32_t result_offset;
 		auto it = current_scope.identifier_offset.find(result_var.name());
@@ -9642,16 +9684,66 @@ private:
 			result_offset = allocateStackSlotForTempVar(result_var.var_number);
 		}
 
-		// Calculate member size in bytes
-		int member_size_bytes = op.result.size_in_bits / 8;
-
-		// Flush all dirty registers to ensure values are saved before allocating
-		flushAllDirtyRegisters();
-
-		// For large members (> 8 bytes), we can't load them into a register
-		// Skip them for now - they should be handled via memcpy in constructors
+		// For large members (> 8 bytes), we can't load the value into a register
+		// Instead, we compute and store the ADDRESS for later nested member access
 		if (member_size_bytes > 8) {
-			// Just skip the operation - large members aren't supported yet
+			// Allocate a register to compute the address
+			X64Register addr_reg = allocateRegisterWithSpilling();
+			
+			if (is_global_access) {
+				// LEA addr_reg, [RIP + global_name]
+				// REX.W + 8D /r for LEA r64, m
+				uint8_t rex = 0x48; // REX.W
+				if (static_cast<uint8_t>(addr_reg) >= 8) {
+					rex |= 0x04; // REX.R
+				}
+				textSectionData.push_back(rex);
+				textSectionData.push_back(0x8D);  // LEA opcode
+				
+				// ModR/M: mod=00 (RIP-relative), reg=addr_reg, r/m=101 (RIP+disp32)
+				uint8_t modrm = 0x05 | ((static_cast<uint8_t>(addr_reg) & 0x7) << 3);
+				textSectionData.push_back(modrm);
+				
+				// Placeholder for relocation (disp32)
+				uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				pending_global_relocations_.push_back({reloc_offset, std::string(global_object_name), IMAGE_REL_AMD64_REL32});
+				
+				// If offset != 0, add it to addr_reg
+				if (op.offset != 0) {
+					emitAddRegImm32(textSectionData, addr_reg, op.offset);
+				}
+			} else if (is_pointer_access) {
+				// Load pointer into addr_reg, then add offset if needed
+				auto load_ptr = generatePtrMovFromFrame(addr_reg, object_base_offset);
+				textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
+				                       load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+				if (op.offset != 0) {
+					emitAddRegImm32(textSectionData, addr_reg, op.offset);
+				}
+			} else {
+				// LEA addr_reg, [RBP + member_stack_offset]
+				int32_t effective_offset = object_base_offset + op.offset;
+				auto lea_opcodes = generateLeaFromFrame(addr_reg, effective_offset);
+				textSectionData.insert(textSectionData.end(), lea_opcodes.op_codes.begin(),
+				                       lea_opcodes.op_codes.begin() + lea_opcodes.size_in_bytes);
+			}
+			
+			// Store the address to result_offset
+			auto store_addr = generatePtrMovToFrame(addr_reg, result_offset);
+			textSectionData.insert(textSectionData.end(), store_addr.op_codes.begin(),
+			                       store_addr.op_codes.begin() + store_addr.size_in_bytes);
+			regAlloc.release(addr_reg);
+			
+			// Mark this temp var as containing a pointer/address
+			reference_stack_info_[result_offset] = ReferenceInfo{
+				.value_type = op.result.type,
+				.value_size_bits = op.result.size_in_bits,
+				.is_rvalue_reference = false
+			};
 			return;
 		}
 
@@ -9844,6 +9936,11 @@ private:
 			// Nested case: object is the result of a previous member access
 			auto object_temp = std::get<TempVar>(op.object);
 			object_base_offset = getStackOffsetFromTempVar(object_temp);
+			
+			// Check if this temp var holds a pointer/address (from large member access)
+			if (reference_stack_info_.count(object_base_offset) > 0) {
+				is_pointer_access = true;
+			}
 		}
 
 		// Calculate the member's actual stack offset
