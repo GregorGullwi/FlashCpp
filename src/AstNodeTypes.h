@@ -753,7 +753,7 @@ struct TypeInfo
 	// For typedef, store the size in bits (for primitive types)
 	unsigned char type_size_ = 0;
 
-	const char* name() { return name_.c_str(); };
+	std::string_view name() { return name_; };
 
 	// Helper methods for struct types
 	bool isStruct() const { return type_ == Type::Struct; }

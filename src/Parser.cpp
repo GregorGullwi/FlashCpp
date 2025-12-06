@@ -2029,6 +2029,487 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	return ParseResult::error("Unexpected parsing state", *current_token_);
 }
 
+// Helper function to parse and register a type alias (typedef or using) inside a struct/template
+// Handles both "typedef Type Alias;" and "using Alias = Type;" syntax
+// Also handles inline definitions: "typedef struct { ... } Alias;"
+// Returns ParseResult with no node on success, error on failure
+ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access)
+{
+	consume_token(); // consume 'typedef' or 'using'
+	
+	// For 'using', always simple syntax: using Alias = Type;
+	if (keyword == "using") {
+		auto alias_token = peek_token();
+		if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected alias name after 'using'", peek_token().value_or(Token()));
+		}
+		
+		std::string_view alias_name = alias_token->value();
+		consume_token(); // consume alias name
+		
+		// Check for '='
+		if (!peek_token().has_value() || peek_token()->value() != "=") {
+			return ParseResult::error("Expected '=' after alias name", *current_token_);
+		}
+		consume_token(); // consume '='
+		
+		// Parse the type
+		auto type_result = parse_type_specifier();
+		if (type_result.is_error()) {
+			return type_result;
+		}
+		
+		if (!type_result.node().has_value()) {
+			return ParseResult::error("Expected type after '=' in type alias", *current_token_);
+		}
+		
+		// Consume semicolon
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after type alias", *current_token_);
+		}
+		
+		// Store the alias in the struct (if struct_ref provided)
+		if (struct_ref) {
+			struct_ref->add_type_alias(alias_name, *type_result.node(), current_access);
+		}
+		
+		// Also register it globally
+		const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+		alias_type_info.type_index_ = type_spec.type_index();
+		alias_type_info.type_size_ = type_spec.size_in_bits();
+		gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+		
+		return ParseResult::success();
+	}
+	
+	// For 'typedef', check if this is an inline struct/enum definition
+	// Pattern: typedef struct { ... } Alias;
+	// Pattern: typedef enum { ... } Alias;
+	if (peek_token().has_value() && 
+	    (peek_token()->value() == "struct" || peek_token()->value() == "class" || peek_token()->value() == "enum")) {
+		// This is potentially an inline definition - use the full parse_typedef_declaration logic
+		// We already consumed 'typedef', so we need to restore it
+		// Actually, we can't restore easily, so let's handle it inline here
+		
+		bool is_enum = peek_token()->value() == "enum";
+		bool is_struct = peek_token()->value() == "struct" || peek_token()->value() == "class";
+		
+		// Look ahead to check if it's really an inline definition
+		auto saved_pos = save_token_position();
+		consume_token(); // consume struct/class/enum
+		
+		bool is_inline_definition = false;
+		if (peek_token().has_value()) {
+			// If next token is '{', it's definitely inline: typedef struct { ... } Alias;
+			if (peek_token()->value() == "{") {
+				is_inline_definition = true;
+			} else if (peek_token()->type() == Token::Type::Identifier) {
+				// Could be: typedef struct Name { ... } Alias; (inline)
+				// or:       typedef struct Name Alias; (forward reference)
+				consume_token(); // consume name
+				if (peek_token().has_value() && (peek_token()->value() == "{" || peek_token()->value() == ":")) {
+					is_inline_definition = true;
+				}
+			}
+		}
+		
+		restore_token_position(saved_pos);
+		
+		if (is_inline_definition && is_struct) {
+			// Parse inline struct: typedef struct { ... } Alias; or typedef struct Name { ... } Alias;
+			bool is_class = peek_token()->value() == "class";
+			consume_token(); // consume 'struct' or 'class'
+			
+			// Check if there's a struct name or if it's anonymous
+			std::string_view struct_name;
+			
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+				struct_name = peek_token()->value();
+				consume_token(); // consume struct name
+			} else {
+				// Anonymous struct - generate a unique name using StringBuilder for persistent storage
+				struct_name = StringBuilder()
+					.append("__anonymous_typedef_struct_")
+					.append(ast_nodes_.size())
+					.commit();
+			}
+			
+			// Register the struct type early
+			TypeInfo& struct_type_info = add_struct_type(std::string(struct_name));
+			TypeIndex struct_type_index = struct_type_info.type_index_;
+			
+			// Create struct declaration node
+			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
+			
+			// Create StructTypeInfo
+			auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), is_class ? AccessSpecifier::Private : AccessSpecifier::Public);
+			
+			// Expect opening brace
+			if (!consume_punctuator("{")) {
+				return ParseResult::error("Expected '{' in struct definition", *peek_token());
+			}
+			
+			// Parse struct members (simplified - just type and name)
+			AccessSpecifier member_access = struct_info->default_access;
+			size_t member_count = 0;
+			const size_t MAX_MEMBERS = 10000; // Safety limit
+			
+			while (peek_token().has_value() && peek_token()->value() != "}" && member_count < MAX_MEMBERS) {
+				member_count++;
+				
+				// Parse member type
+				auto member_type_result = parse_type_specifier();
+				if (member_type_result.is_error()) {
+					return member_type_result;
+				}
+				
+				if (!member_type_result.node().has_value()) {
+					return ParseResult::error("Expected type specifier in struct member", *current_token_);
+				}
+				
+				// Parse member name
+				auto member_name_token = consume_token();
+				if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected member name in struct", member_name_token.value_or(Token()));
+				}
+				
+				// Create member declaration
+				auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
+				struct_ref_inner.add_member(member_decl_node, member_access, std::nullopt);
+				
+				// Handle comma-separated declarations
+				const TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
+				while (peek_token().has_value() && peek_token()->value() == ",") {
+					consume_token(); // consume ','
+					auto next_name = consume_token();
+					if (!next_name.has_value() || next_name->type() != Token::Type::Identifier) {
+						return ParseResult::error("Expected member name after comma", *current_token_);
+					}
+					auto next_decl = emplace_node<DeclarationNode>(
+						emplace_node<TypeSpecifierNode>(member_type_spec),
+						*next_name
+					);
+					struct_ref_inner.add_member(next_decl, member_access, std::nullopt);
+				}
+				
+				// Expect semicolon
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after struct member", *current_token_);
+				}
+			}
+			
+			if (member_count >= MAX_MEMBERS) {
+				return ParseResult::error("Struct has too many members (possible infinite loop detected)", *current_token_);
+			}
+			
+			// Expect closing brace
+			if (!consume_punctuator("}")) {
+				return ParseResult::error("Expected '}' after struct members", *peek_token());
+			}
+			
+			// Calculate struct layout
+			for (const auto& member_decl : struct_ref_inner.members()) {
+				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+				const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				
+				size_t member_size_in_bits = get_type_size_bits(member_type_spec.type()) / 8;
+				size_t member_alignment = get_type_alignment(member_type_spec.type(), member_size_in_bits);
+				size_t referenced_size_bits = 0;
+				
+				// For struct types, get the actual size from TypeInfo
+				if (member_type_spec.type() == Type::Struct) {
+					TypeInfo* member_type_info = nullptr;
+					for (auto& ti : gTypeInfo) {
+						if (ti.type_index_ == member_type_spec.type_index()) {
+							member_type_info = &ti;
+							break;
+						}
+					}
+					if (member_type_info && member_type_info->getStructInfo()) {
+						member_size_in_bits = member_type_info->getStructInfo()->total_size;
+						referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+						member_alignment = member_type_info->getStructInfo()->alignment;
+					}
+				}
+				
+				struct_info->addMember(
+					std::string(decl.identifier_token().value()),
+					member_type_spec.type(),
+					member_type_spec.type_index(),
+					member_size_in_bits,
+					member_alignment,
+					member_access,
+					std::nullopt,
+					member_type_spec.is_reference(),
+					member_type_spec.is_rvalue_reference(),
+					member_type_spec.size_in_bits()
+				);
+			}
+			
+			// Finalize struct layout
+			struct_info->finalize();
+			
+			// Store struct info
+			struct_type_info.setStructInfo(std::move(struct_info));
+			
+			// Parse the typedef alias name
+			auto alias_token = consume_token();
+			if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected alias name after struct definition", *current_token_);
+			}
+			std::string_view alias_name = alias_token->value();
+			
+			// Consume semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after typedef", *current_token_);
+			}
+			
+			// Create type specifier for the typedef
+			TypeSpecifierNode type_spec(
+				Type::Struct,
+				struct_type_index,
+				static_cast<unsigned char>(struct_type_info.getStructInfo()->total_size * 8),
+				*alias_token
+			);
+			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
+			
+			// Store the alias in the struct (if struct_ref provided)
+			if (struct_ref) {
+				struct_ref->add_type_alias(alias_name, type_node, current_access);
+			}
+			
+			// Register the alias globally
+			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+			alias_type_info.type_index_ = type_spec.type_index();
+			alias_type_info.type_size_ = type_spec.size_in_bits();
+			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			
+			return ParseResult::success();
+		}
+		
+		if (is_inline_definition && is_enum) {
+			// Parse inline enum: typedef enum { ... } Alias;
+			consume_token(); // consume 'enum'
+			
+			// Check if there's an enum name or if it's anonymous
+			std::string_view enum_name;
+			
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+				enum_name = peek_token()->value();
+				consume_token(); // consume enum name
+			} else {
+				// Anonymous enum - generate a unique name using StringBuilder for persistent storage
+				enum_name = StringBuilder()
+					.append("__anonymous_typedef_enum_")
+					.append(std::to_string(ast_nodes_.size()))
+					.commit();
+			}
+			
+			// Register the enum type early
+			TypeInfo& enum_type_info = add_enum_type(std::string(enum_name));
+			TypeIndex enum_type_index = enum_type_info.type_index_;
+			
+			// Create enum declaration node
+			bool is_scoped = false;
+			auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
+			
+			// Check for underlying type specification (: type)
+			if (peek_token().has_value() && peek_token()->value() == ":") {
+				consume_token(); // consume ':'
+				auto underlying_type_result = parse_type_specifier();
+				if (underlying_type_result.is_error()) {
+					return underlying_type_result;
+				}
+				if (auto underlying_type_node = underlying_type_result.node()) {
+					enum_ref.set_underlying_type(*underlying_type_node);
+				}
+			}
+			
+			// Expect opening brace
+			if (!consume_punctuator("{")) {
+				return ParseResult::error("Expected '{' in enum definition", *peek_token());
+			}
+			
+			// Create enum type info
+			auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name), is_scoped);
+			
+			// Determine underlying type
+			Type underlying_type = Type::Int;
+			unsigned char underlying_size = 32;
+			if (enum_ref.has_underlying_type()) {
+				const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+				underlying_type = type_spec_node.type();
+				underlying_size = type_spec_node.size_in_bits();
+			}
+			
+			// Parse enumerators
+			int64_t next_value = 0;
+			size_t enumerator_count = 0;
+			const size_t MAX_ENUMERATORS = 10000; // Safety limit
+			
+			while (peek_token().has_value() && peek_token()->value() != "}" && enumerator_count < MAX_ENUMERATORS) {
+				enumerator_count++;
+				
+				auto enumerator_name_token = consume_token();
+				if (!enumerator_name_token.has_value() || enumerator_name_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected enumerator name in enum", enumerator_name_token.value_or(Token()));
+				}
+				
+				int64_t value = next_value;
+				std::optional<ASTNode> enumerator_value;
+				
+				if (peek_token().has_value() && peek_token()->value() == "=") {
+					consume_token(); // consume '='
+					auto value_expr_result = parse_expression();
+					if (value_expr_result.is_error()) {
+						return value_expr_result;
+					}
+					if (auto value_node = value_expr_result.node()) {
+						enumerator_value = *value_node;
+						// Extract numeric value if possible
+						if (value_node->is<ExpressionNode>()) {
+							const auto& expr = value_node->as<ExpressionNode>();
+							if (std::holds_alternative<NumericLiteralNode>(expr)) {
+								const auto& lit = std::get<NumericLiteralNode>(expr);
+								const auto& val = lit.value();
+								if (std::holds_alternative<unsigned long long>(val)) {
+									value = static_cast<int64_t>(std::get<unsigned long long>(val));
+								}
+							}
+						}
+					}
+				}
+				
+				auto enumerator_node = emplace_node<EnumeratorNode>(*enumerator_name_token, enumerator_value);
+				enum_ref.add_enumerator(enumerator_node);
+				enum_info->addEnumerator(std::string(enumerator_name_token->value()), value);
+				
+				// For unscoped enums, add to current scope
+				if (!is_scoped) {
+					auto enum_type_node = emplace_node<TypeSpecifierNode>(
+						Type::Enum, enum_type_index, underlying_size, *enumerator_name_token);
+					auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, *enumerator_name_token);
+					gSymbolTable.insert(enumerator_name_token->value(), enumerator_decl);
+				}
+				
+				next_value = value + 1;
+				
+				if (peek_token().has_value() && peek_token()->value() == ",") {
+					consume_token();
+					if (peek_token().has_value() && peek_token()->value() == "}") {
+						break;
+					}
+				} else {
+					break;
+				}
+			}
+			
+			if (enumerator_count >= MAX_ENUMERATORS) {
+				return ParseResult::error("Enum has too many enumerators (possible infinite loop detected)", *current_token_);
+			}
+			
+			// Expect closing brace
+			if (!consume_punctuator("}")) {
+				return ParseResult::error("Expected '}' after enum enumerators", *peek_token());
+			}
+			
+			// Store enum info
+			enum_type_info.setEnumInfo(std::move(enum_info));
+			
+			// Parse the typedef alias name
+			auto alias_token = consume_token();
+			if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected alias name after enum definition", *current_token_);
+			}
+			std::string_view alias_name = alias_token->value();
+			
+			// Consume semicolon
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after typedef", *current_token_);
+			}
+			
+			// Create type specifier for the typedef
+			TypeSpecifierNode type_spec(Type::Enum, TypeQualifier::None, underlying_size, *alias_token);
+			type_spec.set_type_index(enum_type_index);
+			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
+			
+			// Store the alias in the struct (if struct_ref provided)
+			if (struct_ref) {
+				struct_ref->add_type_alias(alias_name, type_node, current_access);
+			}
+			
+			// Register the alias globally
+			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+			alias_type_info.type_index_ = type_spec.type_index();
+			alias_type_info.type_size_ = type_spec.size_in_bits();
+			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			
+			return ParseResult::success();
+		}
+	}
+	
+	// Simple typedef: typedef Type Alias;
+	// Parse the type
+	auto type_result = parse_type_specifier();
+	if (type_result.is_error()) {
+		return type_result;
+	}
+	
+	if (!type_result.node().has_value()) {
+		return ParseResult::error("Expected type after 'typedef'", *current_token_);
+	}
+	
+	ASTNode type_node = *type_result.node();
+	TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
+	
+	// Handle pointer declarators (e.g., typedef T* pointer;)
+	while (peek_token().has_value() && peek_token()->value() == "*") {
+		consume_token(); // consume '*'
+		type_spec.add_pointer_level();
+		
+		// Skip const/volatile after *
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view kw = peek_token()->value();
+			if (kw == "const" || kw == "volatile") {
+				consume_token();
+			} else {
+				break;
+			}
+		}
+	}
+	
+	// Parse the alias name
+	auto alias_token = peek_token();
+	if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected alias name in typedef", peek_token().value_or(Token()));
+	}
+	
+	std::string_view alias_name = alias_token->value();
+	consume_token(); // consume alias name
+	
+	// Consume semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after typedef", *current_token_);
+	}
+	
+	// Update type_node with modified type_spec (with pointers)
+	type_node = emplace_node<TypeSpecifierNode>(type_spec);
+	
+	// Store the alias in the struct (if struct_ref provided)
+	if (struct_ref) {
+		struct_ref->add_type_alias(alias_name, type_node, current_access);
+	}
+	
+	// Also register it globally
+	auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+	alias_type_info.type_index_ = type_spec.type_index();
+	alias_type_info.type_size_ = type_spec.size_in_bits();
+	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+	
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_struct_declaration()
 {
 	ScopedTokenPosition saved_position(*this);
@@ -2342,47 +2823,19 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Check for 'using' keyword - type alias
 			if (keyword == "using") {
-				consume_token(); // consume 'using'
-				
-				auto alias_token = peek_token();
-				if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected alias name after 'using'", peek_token().value_or(Token()));
+				auto alias_result = parse_member_type_alias("using", &struct_ref, current_access);
+				if (alias_result.is_error()) {
+					return alias_result;
 				}
-				
-				std::string_view alias_name = alias_token->value();
-				consume_token(); // consume alias name
-				
-				// Check for '='
-				if (!peek_token().has_value() || peek_token()->value() != "=") {
-					return ParseResult::error("Expected '=' after alias name", *current_token_);
+				continue;
+			}
+
+			// Check for 'typedef' keyword - type alias (C-style)
+			if (keyword == "typedef") {
+				auto alias_result = parse_member_type_alias("typedef", &struct_ref, current_access);
+				if (alias_result.is_error()) {
+					return alias_result;
 				}
-				consume_token(); // consume '='
-				
-				// Parse the type
-				auto type_result = parse_type_specifier();
-				if (type_result.is_error()) {
-					return type_result;
-				}
-				
-				if (!type_result.node().has_value()) {
-					return ParseResult::error("Expected type after '=' in type alias", *current_token_);
-				}
-				
-				// Consume semicolon
-				if (!consume_punctuator(";")) {
-					return ParseResult::error("Expected ';' after type alias", *current_token_);
-				}
-				
-				// Store the alias in the struct
-				struct_ref.add_type_alias(alias_name, *type_result.node(), current_access);
-				
-				// Also register it globally (for non-template or immediate use)
-				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
-				alias_type_info.type_index_ = type_spec.type_index();
-				alias_type_info.type_size_ = type_spec.size_in_bits();
-				gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
-				
 				continue;
 			}
 
@@ -13819,12 +14272,17 @@ ParseResult Parser::parse_template_declaration() {
 						continue;
 					} else if (peek_token()->value() == "using") {
 						// Handle type alias inside class body: using value_type = T;
-						auto using_result = parse_using_directive_or_declaration();
-						if (using_result.is_error()) {
-							return using_result;
+						auto alias_result = parse_member_type_alias("using", nullptr, AccessSpecifier::Public);
+						if (alias_result.is_error()) {
+							return alias_result;
 						}
-						// Type aliases are registered during parsing
-						// For template specializations, they're already in gTypesByName
+						continue;
+					} else if (peek_token()->value() == "typedef") {
+						// Handle typedef inside class body: typedef T _Type;
+						auto alias_result = parse_member_type_alias("typedef", nullptr, AccessSpecifier::Public);
+						if (alias_result.is_error()) {
+							return alias_result;
+						}
 						continue;
 					} else if (peek_token()->value() == "static") {
 						// Handle static members: static const int size = 10;
@@ -14684,10 +15142,24 @@ ParseResult Parser::parse_template_declaration() {
 							is_const
 						);
 						continue;
+					} else if (peek_token()->value() == "using") {
+						// Handle type alias inside partial specialization: using _Type = T;
+						auto alias_result = parse_member_type_alias("using", nullptr, current_access);
+						if (alias_result.is_error()) {
+							return alias_result;
+						}
+						continue;
+					} else if (peek_token()->value() == "typedef") {
+						// Handle typedef inside partial specialization: typedef T _Type;
+						auto alias_result = parse_member_type_alias("typedef", nullptr, current_access);
+						if (alias_result.is_error()) {
+							return alias_result;
+						}
+						continue;
 					}
 				}
 				
-				// Check for constructor (identifier matching template name followed by '(')
+				// Check for constructor (identifier matching template name followed by '('
 				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),
 				// not the instantiated pattern name (e.g., "Calculator_pattern_P")
 				SaveHandle saved_pos = save_token_position();
