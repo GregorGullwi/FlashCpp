@@ -5621,7 +5621,7 @@ private:
 		sig.class_name = class_name;
 
 		// Generate the correct mangled name for this specific constructor overload
-		std::string_view mangled_name = writer.generateMangledName(function_name, sig);
+		auto mangled_name = writer.generateMangledName(function_name, sig);
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 		
 		// Invalidate caller-saved registers (function calls clobber them)
@@ -5658,7 +5658,7 @@ private:
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		// Get the mangled name for the destructor (handles name mangling)
-		std::string_view mangled_name = writer.getMangledName(function_name);
+		auto mangled_name = writer.getMangledName(function_name);
 		writer.add_relocation(textSectionData.size() - 4, mangled_name);
 		
 		// Invalidate caller-saved registers (function calls clobber them)
@@ -6784,8 +6784,10 @@ private:
 					
 					// Check if this function is virtual and add it to the vtable
 					const StructMemberFunction* member_func = nullptr;
+					// Use the unmangled function name for lookup (member_functions store unmangled names)
+					std::string_view unmangled_func_name = func_decl.function_name;
 					for (const auto& func : struct_info->member_functions) {
-						if (func.name == func_name) {
+						if (func.name == unmangled_func_name) {
 							member_func = &func;
 							break;
 						}
