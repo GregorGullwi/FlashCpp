@@ -520,6 +520,14 @@ private:
 			elf_writer_, rela_text_section_
 		);
 
+		// .note.GNU-stack - marks stack as non-executable (security feature)
+		// This section is empty but must be present to avoid linker warnings
+		ELFIO::section* gnu_stack_section = elf_writer_.sections.add(".note.GNU-stack");
+		gnu_stack_section->set_type(ELFIO::SHT_PROGBITS);
+		gnu_stack_section->set_flags(0);  // No flags = non-executable stack
+		gnu_stack_section->set_addr_align(1);
+		gnu_stack_section->set_size(0);  // Empty section
+
 		if (g_enable_debug_output) {
 			std::cerr << "Created standard ELF sections" << std::endl;
 		}
