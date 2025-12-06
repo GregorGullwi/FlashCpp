@@ -187,10 +187,10 @@ public:
 		// Format: r_info = (symbol_index << 32) | (relocation_type & 0xffffffff)
 		// This matches the ELF64_R_INFO macro but we inline it to avoid macro namespace issues
 		// Upper 32 bits: symbol table index
-		// Lower 32 bits: relocation type (e.g., R_X86_64_PC32 = 2)
+		// Lower 32 bits: relocation type (e.g., R_X86_64_PLT32 = 4, R_X86_64_PC32 = 2)
 		ELFIO::Elf_Xword rel_info = (static_cast<ELFIO::Elf_Xword>(symbol_index) << 32) | 
 		                             (static_cast<ELFIO::Elf_Xword>(relocation_type) & 0xffffffffUL);
-		ELFIO::Elf_Sxword addend = -4;  // Standard addend for PC-relative (compensate for instruction size)
+		ELFIO::Elf_Sxword addend = -4;  // Standard addend for PC-relative and PLT relocations (compensate for instruction size)
 
 		rela_accessor->add_entry(rel_offset, rel_info, addend);
 	}
