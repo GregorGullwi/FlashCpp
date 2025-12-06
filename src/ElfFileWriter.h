@@ -373,13 +373,42 @@ public:
 	}
 
 	/**
-	 * @brief Generate mangled name (placeholder)
-	 * Returns the mangled name as a string (not string_view) since we may need to create it
+	 * @brief Generate mangled name using platform-appropriate mangling
+	 * Returns the mangled name as a string (not string_view) since we create it
 	 */
 	std::string generateMangledName(std::string_view name, const FunctionSignature& sig) const {
-		// MVP: Use C linkage for simplicity - just return a copy
-		// TODO: Implement Itanium mangling for C++ which will generate new strings
-		return std::string(name);
+		// Check linkage first - extern "C" always uses C linkage (unmangled)
+		if (sig.linkage == Linkage::C) {
+			return std::string(name);
+		}
+		
+		// Split namespace_name into components for mangling functions
+		std::vector<std::string_view> namespace_path;
+		if (!sig.namespace_name.empty()) {
+			// Split by "::" delimiter
+			size_t start = 0;
+			size_t end = sig.namespace_name.find("::");
+			while (end != std::string::npos) {
+				namespace_path.push_back(std::string_view(sig.namespace_name.c_str() + start, end - start));
+				start = end + 2;
+				end = sig.namespace_name.find("::", start);
+			}
+			if (start < sig.namespace_name.size()) {
+				namespace_path.push_back(std::string_view(sig.namespace_name.c_str() + start));
+			}
+		}
+		
+		// Use NameMangling::generateMangledName which handles both MSVC and Itanium
+		NameMangling::MangledName mangled = NameMangling::generateMangledName(
+			name,
+			sig.return_type,
+			sig.parameter_types,
+			sig.is_variadic,
+			sig.class_name,
+			namespace_path
+		);
+		
+		return std::string(mangled.view());
 	}
 
 	/**
