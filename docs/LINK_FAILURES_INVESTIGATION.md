@@ -1,31 +1,16 @@
 # Link Failures Investigation
 
 **Date**: December 6, 2025  
-**Status**: Active Investigation - 5 Tests Fixed Today  
-**Test Results**: 582/592 tests linking successfully (98.31%)
+**Status**: Active Investigation - 7 Tests Fixed Today  
+**Test Results**: 584/592 tests linking successfully (98.65%)
 
 ## Summary
 
-Fixed 5 link failures today (from 15 down to 10). Template instantiation and namespace function issues resolved.
+Fixed 7 link failures today (from 15 down to 8). Template instantiation, namespace function, and inheritance member access issues resolved.
 
-## Active Link Failures (10 tests)
+## Active Link Failures (8 tests)
 
-### 1. Inheritance Member Access (2 tests) 
-
-**Problem**: Derived classes can't find members inherited from base classes.
-
-**Failing Tests**:
-- `test_inheritance_basic.cpp` - Unresolved: `getX` (called from `Derived3::sumViaMethod`)
-- `test_virtual_inheritance.cpp` - Unresolved: `getX` (called from `DerivedWithMethod::sumViaMethod`)
-
-**Root Cause**: When a derived class method calls a base class method, the parser doesn't look up methods in base class scope. The function call is generated with just the method name `getX` instead of the mangled name `_ZN5Base34getXEv`.
-
-**Next Steps**:
-1. Modify symbol table lookup in derived classes to check base class members
-2. Ensure method calls to inherited functions resolve to correct mangled names
-3. Consider using MemberFunctionCallNode instead of plain FunctionCallNode for base class method calls
-
-### 2. Other Link Failures (8 tests)
+### 1. Other Link Failures (8 tests)
 
 **Failing Tests**:
 - `test_constexpr_lambda.cpp` - lambda-related
@@ -39,12 +24,20 @@ Fixed 5 link failures today (from 15 down to 10). Template instantiation and nam
 
 ## Recent Fixes (December 6, 2025)
 
-**Tests Fixed**: 5 (from 15 failures down to 10)
+**Tests Fixed**: 7 (from 15 failures down to 8)
 - ✅ template_explicit_args.cpp
 - ✅ template_multi_param.cpp
 - ✅ test_func_template_multi_param.cpp
 - ✅ test_nested_namespace.cpp
 - ✅ test_global_namespace_scope.cpp
+- ✅ test_inheritance_basic.cpp
+- ✅ test_virtual_inheritance.cpp
+
+### Issue #5: Inherited Member Function Calls Missing Mangled Names
+- **Root Cause**: When a derived class method calls a base class method (e.g., `getX()` in `Derived3::sumViaMethod()`), the code generator only checked the current struct's member functions, not base class member functions
+- **Fix**: Added recursive base class search in code generator's function lookup (lines 6932-6969 in CodeGen.h)
+- **File**: `src/CodeGen.h` 
+- **Result**: Calls to inherited methods now use correct mangled names (e.g., `_ZN5Base34getXEv` instead of `getX`)
 
 ### Issue #3: Template Instantiations Missing Mangled Names
 - **Root Cause**: Template instantiations were not calling `compute_and_set_mangled_name()`, so they didn't have Itanium/MSVC mangled names for code generation
