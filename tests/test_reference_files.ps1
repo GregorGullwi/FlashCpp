@@ -162,12 +162,14 @@ foreach ($file in $referenceFiles) {
     # FlashCpp writes .obj to current directory (repo root), not source directory
     $objFile = "$baseName.obj"
     $exeFile = "$baseName.exe"
+    $ilkFile = "$baseName.ilk"
     
     Write-Host "[$currentFile/$totalFiles] Testing: $($file.Name)"
     
     # Clean up previous artifacts
     if (Test-Path $objFile) { Remove-Item $objFile -Force }
     if (Test-Path $exeFile) { Remove-Item $exeFile -Force }
+    if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
     
     # Compile with FlashCpp
     $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
@@ -208,6 +210,9 @@ foreach ($file in $referenceFiles) {
             if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
                 Write-Host "  [LINK OK]" -ForegroundColor Green
                 $linkSuccess += $file.Name
+                # Clean up after successful link
+                Remove-Item $exeFile -Force -ErrorAction SilentlyContinue
+                Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue
             }
             else {
                 # Check if this is an expected failure
@@ -275,6 +280,9 @@ foreach ($file in $referenceFiles) {
         }
     }
     
+    # Clean up obj file after each test (like the shell script does)
+    if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
+    
     Write-Host ""
 }
 
@@ -294,26 +302,31 @@ foreach ($file in $failFiles) {
     $currentFile++
     $baseName = $file.BaseName
     $objFile = "$baseName.obj"
+    $ilkFile = "$baseName.ilk"
     
     Write-Host "[$currentFile/$totalFailFiles] Testing: $($file.Name)"
     
     # Clean up previous artifacts
     if (Test-Path $objFile) { Remove-Item $objFile -Force }
+    if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
     
     # Compile with FlashCpp - we EXPECT this to fail
-    $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
-    
     # Check if compilation succeeded (which is BAD for _fail tests)
     if (Test-Path $objFile) {
         Write-Host "  [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
         $failTestFailed += $file.Name
         # Clean up the object file
-        Remove-Item $objFile -Force
+        Remove-Item $objFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue
     }
     else {
         Write-Host "  [FAILED AS EXPECTED]" -ForegroundColor Green
         $failTestSuccess += $file.Name
     }
+    
+    # Clean up any artifacts
+    if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
     
     Write-Host ""
 }
