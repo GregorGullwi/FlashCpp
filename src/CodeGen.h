@@ -6550,8 +6550,9 @@ private:
 		std::string_view struct_name = !struct_name_override.empty() ? struct_name_override
 			: (func_node.is_member_function() ? func_node.parent_struct_name() : std::string_view{});
 		
+		// Pass linkage from the function node to ensure extern "C" functions aren't mangled
 		return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
-			func_node.is_variadic(), struct_name, namespace_path).view();
+			func_node.is_variadic(), struct_name, namespace_path, func_node.linkage()).view();
 	}
 	
 	// Helper function to handle compiler intrinsics

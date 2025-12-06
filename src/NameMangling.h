@@ -368,13 +368,20 @@ inline MangledName generateMangledName(
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic = false,
 	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {}
+	const std::vector<std::string_view>& namespace_path = {},
+	Linkage linkage = Linkage::CPlusPlus
 ) {
 	StringBuilder builder;
 	
 	// Special case: main function is never mangled
 	if (func_name == "main") {
 		builder.append("main");
+		return MangledName(builder.commit());
+	}
+
+	// extern "C" linkage: no mangling, use the function name as-is
+	if (linkage == Linkage::C) {
+		builder.append(func_name);
 		return MangledName(builder.commit());
 	}
 
@@ -458,13 +465,20 @@ inline MangledName generateMangledName(
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic = false,
 	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {}
+	const std::vector<std::string_view>& namespace_path = {},
+	Linkage linkage = Linkage::CPlusPlus
 ) {
 	StringBuilder builder;
 	
 	// Special case: main function is never mangled
 	if (func_name == "main") {
 		builder.append("main");
+		return MangledName(builder.commit());
+	}
+
+	// extern "C" linkage: no mangling, use the function name as-is
+	if (linkage == Linkage::C) {
+		builder.append(func_name);
 		return MangledName(builder.commit());
 	}
 
@@ -541,14 +555,15 @@ inline MangledName generateMangledName(
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path
+	const std::vector<std::string>& namespace_path,
+	Linkage linkage = Linkage::CPlusPlus
 ) {
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views);
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views, linkage);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -558,14 +573,15 @@ inline MangledName generateMangledName(
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path
+	const std::vector<std::string>& namespace_path,
+	Linkage linkage = Linkage::CPlusPlus
 ) {
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views);
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views, linkage);
 }
 // Generate mangled name from a FunctionDeclarationNode
 // This is the main entry point for generating mangled names during parsing
@@ -582,8 +598,9 @@ inline MangledName generateMangledNameFromNode(
 	std::string_view struct_name = func_node.is_member_function() ? func_node.parent_struct_name() : "";
 	
 	// Use the overload that accepts parameter nodes directly
+	// Pass linkage from the function node
 	return generateMangledName(func_name, return_type, func_node.parameter_nodes(), 
-	                           func_node.is_variadic(), struct_name, namespace_path);
+	                           func_node.is_variadic(), struct_name, namespace_path, func_node.linkage());
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
