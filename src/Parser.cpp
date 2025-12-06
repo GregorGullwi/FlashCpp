@@ -9492,8 +9492,18 @@ ParseResult Parser::parse_primary_expression()
 			}
 
 			// Create function call node with the qualified identifier
-			result = emplace_node<ExpressionNode>(
+			auto function_call_node = emplace_node<ExpressionNode>(
 				FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), qual_id.identifier_token()));
+			// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+			if (identifierType->is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+				FLASH_LOG(Parser, Debug, "Qualified function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
+				if (func_decl.has_mangled_name()) {
+					std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+					FLASH_LOG(Parser, Debug, "Set mangled name on qualified FunctionCallNode: {}", func_decl.mangled_name());
+				}
+			}
+			result = function_call_node;
 		} else {
 			// Just a qualified identifier reference (e.g., ::globalValue)
 			result = emplace_node<ExpressionNode>(qual_id);
@@ -10374,7 +10384,17 @@ ParseResult Parser::parse_primary_expression()
 					result = emplace_node<ExpressionNode>(
 						MemberFunctionCallNode(this_node, func_decl, std::move(args), idenfifier_token));
 				} else {
-					result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+					auto function_call_node = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+					// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+					if (identifierType->is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+						FLASH_LOG(Parser, Debug, "Function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
+						if (func_decl.has_mangled_name()) {
+							std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+							FLASH_LOG(Parser, Debug, "Set mangled name on FunctionCallNode: {}", func_decl.mangled_name());
+						}
+					}
+					result = function_call_node;
 				}
 			}
 			else {
