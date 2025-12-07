@@ -3,9 +3,21 @@
 // 
 // Note: These are MINIMAL stubs for testing only. For production use,
 // link with libstdc++ or libc++abi which provide full implementations.
+//
+// WARNING: This file will only work on Linux/Unix systems where fprintf, malloc, etc.
+// are available from the C runtime. It is intended for linking with FlashCpp-generated
+// ELF object files on Linux, NOT for Windows compilation.
 
-#include <cstdlib>
-#include <cstdio>
+// Forward declarations to avoid including headers
+extern "C" {
+    void* malloc(unsigned long size);
+    void free(void* ptr);
+    int fprintf(void* stream, const char* format, ...);
+    void abort();
+    
+    // stderr is typically at a known location, but we'll just use a null check
+    extern void* stderr;
+}
 
 extern "C" {
 
@@ -13,14 +25,14 @@ extern "C" {
 static void* current_exception = nullptr;
 static void* current_exception_type = nullptr;
 
-void* __cxa_allocate_exception(size_t thrown_size) {
+void* __cxa_allocate_exception(unsigned long thrown_size) {
     // Allocate memory for the exception object
     void* exception_obj = malloc(thrown_size);
     if (!exception_obj) {
-        fprintf(stderr, "STUB: __cxa_allocate_exception failed to allocate %zu bytes\n", thrown_size);
+        fprintf(stderr, "STUB: __cxa_allocate_exception failed to allocate %lu bytes\n", thrown_size);
         abort();
     }
-    fprintf(stderr, "STUB: __cxa_allocate_exception(%zu) -> %p\n", thrown_size, exception_obj);
+    fprintf(stderr, "STUB: __cxa_allocate_exception(%lu) -> %p\n", thrown_size, exception_obj);
     return exception_obj;
 }
 

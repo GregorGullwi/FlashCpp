@@ -296,9 +296,7 @@ public:
 	 * @param typeinfo_size Size of the typeinfo structure in bytes
 	 */
 	void add_typeinfo(std::string_view typeinfo_symbol, const void* typeinfo_data, size_t typeinfo_size) {
-		if (g_enable_debug_output) {
-			std::cerr << "Adding typeinfo '" << typeinfo_symbol << "' of size " << typeinfo_size << std::endl;
-		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "Adding typeinfo '{}' of size {}", typeinfo_symbol, typeinfo_size);
 		
 		// Get .rodata section (typeinfo goes in read-only data)
 		auto* rodata = getSectionByName(".rodata");
@@ -314,10 +312,6 @@ public:
 		// Add typeinfo symbol
 		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
 		                  rodata->get_index(), typeinfo_offset, typeinfo_size);
-		
-		if (g_enable_debug_output) {
-			std::cerr << "Typeinfo '" << typeinfo_symbol << "' added at offset " << typeinfo_offset << std::endl;
-		}
 	}
 
 	/**
@@ -327,7 +321,7 @@ public:
 	 */
 	std::string get_or_create_builtin_typeinfo(Type type) {
 		// Map types to Itanium C++ ABI mangled type codes
-		std::string type_code;
+		std::string_view type_code;
 		switch (type) {
 			case Type::Void: type_code = "v"; break;
 			case Type::Bool: type_code = "b"; break;
@@ -350,7 +344,10 @@ public:
 		}
 		
 		// Type info symbol: _ZTI + type_code (e.g., _ZTIi for int)
-		std::string typeinfo_symbol = "_ZTI" + type_code;
+		char typeinfo_symbol_buf[8]; // "_ZTI" + single char + null = max 6 bytes
+		std::snprintf(typeinfo_symbol_buf, sizeof(typeinfo_symbol_buf), "_ZTI%.*s", 
+		              static_cast<int>(type_code.length()), type_code.data());
+		std::string typeinfo_symbol(typeinfo_symbol_buf);
 		
 		// Check if we've already created this symbol
 		static std::set<std::string> created_typeinfos;
@@ -367,7 +364,7 @@ public:
 		
 		// We'll emit a reference to an external vtable symbol
 		// The actual vtable will be provided by the C++ runtime library
-		std::string vtable_symbol = "_ZTVN10__cxxabiv123__fundamental_type_infoE";
+		static constexpr std::string_view vtable_symbol = "_ZTVN10__cxxabiv123__fundamental_type_infoE";
 		
 		// For now, we'll create a placeholder that references the external vtable
 		// In a full implementation, we'd emit proper type_info data
@@ -391,9 +388,8 @@ public:
 		
 		created_typeinfos.insert(typeinfo_symbol);
 		
-		if (g_enable_debug_output) {
-			std::cerr << "Created built-in typeinfo '" << typeinfo_symbol << "' for type code '" << type_code << "'" << std::endl;
-		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "Created built-in typeinfo '{}' for type code '{}'", 
+		                 typeinfo_symbol, type_code);
 		
 		return typeinfo_symbol;
 	}
@@ -406,7 +402,9 @@ public:
 	std::string get_or_create_class_typeinfo(std::string_view class_name) {
 		// Itanium C++ ABI class type_info: _ZTI + length + name
 		// Example: class "Foo" -> "_ZTI3Foo"
-		std::string typeinfo_symbol = "_ZTI" + std::to_string(class_name.length()) + std::string(class_name);
+		StringBuilder builder;
+		builder.append("_ZTI").append(class_name.length()).append(class_name);
+		std::string typeinfo_symbol(builder.commit());
 		
 		// Check if we've already created this symbol
 		static std::set<std::string> created_class_typeinfos;
@@ -416,7 +414,7 @@ public:
 		
 		// For class types, create a minimal __class_type_info structure
 		// This is just vtable pointer + name pointer (16 bytes total)
-		std::vector<char> typeinfo_data(16, 0);
+		char typeinfo_data_buf[16] = {0};
 		
 		// Add typeinfo data to .rodata
 		auto* rodata = getSectionByName(".rodata");
@@ -425,17 +423,16 @@ public:
 		}
 		
 		uint32_t typeinfo_offset = rodata->get_size();
-		rodata->append_data(typeinfo_data.data(), typeinfo_data.size());
+		rodata->append_data(typeinfo_data_buf, sizeof(typeinfo_data_buf));
 		
 		// Add typeinfo symbol as weak (may be provided by other translation units)
 		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
-		                  rodata->get_index(), typeinfo_offset, typeinfo_data.size());
+		                  rodata->get_index(), typeinfo_offset, sizeof(typeinfo_data_buf));
 		
 		created_class_typeinfos.insert(typeinfo_symbol);
 		
-		if (g_enable_debug_output) {
-			std::cerr << "Created class typeinfo '" << typeinfo_symbol << "' for class '" << class_name << "'" << std::endl;
-		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "Created class typeinfo '{}' for class '{}'", 
+		                 typeinfo_symbol, class_name);
 		
 		return typeinfo_symbol;
 	}
@@ -451,10 +448,8 @@ public:
 	               std::span<const BaseClassDescriptorInfo> base_class_info,
 	               const RTTITypeInfo* rtti_info = nullptr) {
 		
-		if (g_enable_debug_output) {
-			std::cerr << "Adding vtable '" << vtable_symbol << "' for class " << class_name
-			          << " with " << function_symbols.size() << " virtual functions" << std::endl;
-		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "Adding vtable '{}' for class {} with {} virtual functions",
+		                 vtable_symbol, class_name, function_symbols.size());
 		
 		// Get .rodata section (vtables go in read-only data)
 		auto* rodata = getSectionByName(".rodata");
@@ -470,11 +465,13 @@ public:
 		// - Function pointers (8 bytes each)
 		
 		// First, emit typeinfo if available
+		StringBuilder typeinfo_builder;
 		std::string typeinfo_symbol;
 		if (rtti_info && rtti_info->itanium_type_info) {
 			// Generate typeinfo symbol name: _ZTI + mangled class name
 			// For now, use the class name length-prefixed
-			typeinfo_symbol = "_ZTI" + std::to_string(class_name.length()) + std::string(class_name);
+			typeinfo_builder.append("_ZTI").append(class_name.length()).append(class_name);
+			typeinfo_symbol = std::string(typeinfo_builder.commit());
 			
 			// Determine which typeinfo structure to emit based on kind
 			if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::ClassTypeInfo) {
@@ -493,32 +490,38 @@ public:
 			}
 		}
 		
-		std::vector<char> vtable_data;
+		char vtable_data_buf[8192]; // Stack-based buffer for vtable (reasonable max size)
+		size_t vtable_data_size = 0;
+		
+		auto append_bytes = [&](const void* data, size_t size) {
+			if (vtable_data_size + size > sizeof(vtable_data_buf)) {
+				throw std::runtime_error("Vtable too large for stack buffer");
+			}
+			std::memcpy(vtable_data_buf + vtable_data_size, data, size);
+			vtable_data_size += size;
+		};
 		
 		// Offset to top (8 bytes, value = 0)
-		for (int i = 0; i < 8; ++i) {
-			vtable_data.push_back(0);
-		}
+		uint64_t offset_to_top = 0;
+		append_bytes(&offset_to_top, 8);
 		
 		// RTTI pointer (8 bytes, null for now)
-		for (int i = 0; i < 8; ++i) {
-			vtable_data.push_back(0);
-		}
+		uint64_t rtti_ptr = 0;
+		append_bytes(&rtti_ptr, 8);
 		
 		// Function pointers (8 bytes each, will be filled by relocations)
+		uint64_t func_ptr = 0;
 		for (size_t i = 0; i < function_symbols.size(); ++i) {
-			for (int j = 0; j < 8; ++j) {
-				vtable_data.push_back(0);
-			}
+			append_bytes(&func_ptr, 8);
 		}
 		
 		// Add vtable data to .rodata
-		rodata->append_data(vtable_data.data(), vtable_data.size());
+		rodata->append_data(vtable_data_buf, vtable_data_size);
 		
 		// Add vtable symbol pointing to the function pointer array (skip offset-to-top and RTTI)
 		uint32_t symbol_offset = vtable_offset + 16;  // Skip offset-to-top (8) and RTTI (8)
 		getOrCreateSymbol(vtable_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
-		                  rodata->get_index(), symbol_offset, vtable_data.size() - 16);
+		                  rodata->get_index(), symbol_offset, vtable_data_size - 16);
 		
 		// Add relocations for each function pointer
 		auto* rela_rodata = getOrCreateRelocationSection(".rodata");
@@ -530,10 +533,8 @@ public:
 			uint32_t rtti_reloc_offset = vtable_offset + 8;  // Offset to top is first 8 bytes
 			rela_accessor->add_entry(rtti_reloc_offset, typeinfo_symbol_idx, ELFIO::R_X86_64_64, 0);
 			
-			if (g_enable_debug_output) {
-				std::cerr << "  Added relocation for typeinfo " << typeinfo_symbol 
-				          << " at offset " << rtti_reloc_offset << std::endl;
-			}
+			FLASH_LOG_FORMAT(Codegen, Debug, "  Added relocation for typeinfo {} at offset {}", 
+			                 typeinfo_symbol, rtti_reloc_offset);
 		}
 		
 		for (size_t i = 0; i < function_symbols.size(); ++i) {
@@ -544,16 +545,12 @@ public:
 			uint32_t reloc_offset = vtable_offset + 16 + (i * 8);  // Skip header + i*8 for function pointer
 			rela_accessor->add_entry(reloc_offset, func_symbol_idx, ELFIO::R_X86_64_64, 0);
 			
-			if (g_enable_debug_output) {
-				std::cerr << "  Added relocation for function " << function_symbols[i] 
-				          << " at offset " << reloc_offset << std::endl;
-			}
+			FLASH_LOG_FORMAT(Codegen, Debug, "  Added relocation for function {} at offset {}", 
+			                 function_symbols[i], reloc_offset);
 		}
 		
-		if (g_enable_debug_output) {
-			std::cerr << "Vtable '" << vtable_symbol << "' added at offset " << symbol_offset 
-			          << " with " << function_symbols.size() << " function pointers" << std::endl;
-		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "Vtable '{}' added at offset {} with {} bytes",
+		                 vtable_symbol, symbol_offset, vtable_data_size);
 	}
 
 	// Note: Mangled names are pre-computed by the Parser.

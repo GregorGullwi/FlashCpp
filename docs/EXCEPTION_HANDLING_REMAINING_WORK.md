@@ -10,6 +10,61 @@ Exception throwing infrastructure, RTTI structures, type_info generation, landin
 
 ---
 
+## Testing Stubs for Incremental Development
+
+Located in `tests/linux_exception_stubs.cpp`, these provide minimal stub implementations of Itanium C++ ABI exception handling functions. They allow FlashCpp-compiled code to link and run for basic testing, even though full exception handling (with .eh_frame and .gcc_except_table) is not yet implemented.
+
+### Purpose
+
+- **Testing**: Verify that exception throwing code is correctly generated
+- **Debugging**: See diagnostic messages showing exception flow
+- **Development**: Work on exception-related features without full unwinding support
+
+### What Works with Stubs
+
+- ✅ Exception allocation (`__cxa_allocate_exception`)
+- ✅ Exception throwing starts (`__cxa_throw`)
+- ✅ Type_info is passed correctly
+- ✅ Diagnostic messages explain what's missing
+
+### What Doesn't Work
+
+- ❌ Stack unwinding (requires .eh_frame section)
+- ❌ Finding catch handlers (requires .gcc_except_table section)
+- ❌ Landing pad execution (no personality routine integration)
+- ❌ Actual exception catching
+
+### Usage Example
+
+Compile and link with your FlashCpp-generated object file:
+
+```bash
+# Compile your test
+./x64/Debug/FlashCpp tests/test_exceptions_basic.cpp
+
+# Compile the stubs
+g++ -c tests/linux_exception_stubs.cpp -o linux_exception_stubs.o
+
+# Link together
+gcc -o test_program test_exceptions_basic.obj linux_exception_stubs.o
+
+# Run (will abort with diagnostic message)
+./test_program
+```
+
+**Output Example:**
+```
+STUB: __cxa_allocate_exception(8) -> 0x55d5f9f2e2a0
+STUB: __cxa_throw(0x55d5f9f2e2a0, 0x55d5f1a20, (nil))
+STUB: Exception thrown but no exception tables present!
+STUB: Cannot find catch handlers without .eh_frame and .gcc_except_table
+Aborted
+```
+
+**For production**: Link with the full C++ runtime library instead (`-lstdc++`), though this will also fail at runtime without exception tables.
+
+---
+
 ## Remaining Work (Priority Order)
 
 This section details the ~14-23 days of work needed to complete exception handling.
