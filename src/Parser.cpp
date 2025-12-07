@@ -1093,6 +1093,17 @@ ParseResult Parser::parse_type_and_name() {
                 {"->*", "operator->*"},
                 {"[]", "operator[]"},
                 {",", "operator,"},
+                // Compound assignment operators
+                {"+=", "operator+="},
+                {"-=", "operator-="},
+                {"*=", "operator*="},
+                {"/=", "operator/="},
+                {"%=", "operator%="},
+                {"&=", "operator&="},
+                {"|=", "operator|="},
+                {"^=", "operator^="},
+                {"<<=", "operator<<="},
+                {">>=", "operator>>="},
             };
             
             auto it = operator_names.find(operator_symbol);
@@ -17122,6 +17133,11 @@ ParseResult Parser::parse_template_function_declaration_body(
 	}
 
 	FunctionDeclarationNode& func_decl = *func_decl_ptr;
+
+	// Skip trailing function specifiers (const, volatile, &, &&, noexcept, etc.)
+	// These appear after the parameter list but before the function body
+	// For namespace-scope template functions, we skip them (member functions handle them differently)
+	skip_function_trailing_specifiers();
 
 	// Check for trailing requires clause: template<typename T> T func(T x) requires constraint
 	std::optional<ASTNode> trailing_requires_clause;
