@@ -80,7 +80,7 @@ enum class CVQualifier : uint8_t {
 	ConstVolatile = Const | Volatile
 };
 
-// Reference qualifiers - stored as a bitmask for efficient comparison
+// Reference qualifiers - mutually exclusive enum (not a bitmask)
 enum class ReferenceQualifier : uint8_t {
 	None = 0,
 	LValueReference = 1 << 0,  // &
@@ -1027,7 +1027,7 @@ private:
 	Token token_;
 	TypeIndex type_index_;      // Index into gTypeInfo for user-defined types (structs, etc.)
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
-	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;  // Reference qualifier bitmask
+	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;  // Reference qualifier (None, LValue, or RValue)
 	bool is_array_ = false;      // True if this is an array type (T[N] or T[])
 	std::optional<size_t> array_size_;  // Array size if known (e.g., int[10] -> 10)
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
