@@ -397,6 +397,48 @@ public:
 	}
 
 	/**
+	 * @brief Get or create type_info symbol for a class type
+	 * @param class_name The name of the class
+	 * @return Symbol name for the type_info (e.g., "_ZTI7MyClass")
+	 */
+	std::string get_or_create_class_typeinfo(std::string_view class_name) {
+		// Itanium C++ ABI class type_info: _ZTI + length + name
+		// Example: class "Foo" -> "_ZTI3Foo"
+		std::string typeinfo_symbol = "_ZTI" + std::to_string(class_name.length()) + std::string(class_name);
+		
+		// Check if we've already created this symbol
+		static std::set<std::string> created_class_typeinfos;
+		if (created_class_typeinfos.find(typeinfo_symbol) != created_class_typeinfos.end()) {
+			return typeinfo_symbol;
+		}
+		
+		// For class types, create a minimal __class_type_info structure
+		// This is just vtable pointer + name pointer (16 bytes total)
+		std::vector<char> typeinfo_data(16, 0);
+		
+		// Add typeinfo data to .rodata
+		auto* rodata = getSectionByName(".rodata");
+		if (!rodata) {
+			throw std::runtime_error(".rodata section not found");
+		}
+		
+		uint32_t typeinfo_offset = rodata->get_size();
+		rodata->append_data(typeinfo_data.data(), typeinfo_data.size());
+		
+		// Add typeinfo symbol as weak (may be provided by other translation units)
+		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+		                  rodata->get_index(), typeinfo_offset, typeinfo_data.size());
+		
+		created_class_typeinfos.insert(typeinfo_symbol);
+		
+		if (g_enable_debug_output) {
+			std::cerr << "Created class typeinfo '" << typeinfo_symbol << "' for class '" << class_name << "'" << std::endl;
+		}
+		
+		return typeinfo_symbol;
+	}
+
+	/**
 	 * @brief Add vtable for C++ class
 	 * Itanium C++ ABI vtable format: array of function pointers
 	 */
