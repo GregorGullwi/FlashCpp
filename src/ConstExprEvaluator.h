@@ -304,10 +304,51 @@ private:
 				
 				// Handle identifier - get type from its declaration
 				if (std::holds_alternative<IdentifierNode>(expr)) {
-					// For identifiers, we need the Parser to look up the type
-					// Since we don't have access to the Parser here, return error for now
-					// This will cause the codegen path to be used instead
-					return EvalResult::error("sizeof with identifier requires type lookup");
+					const auto& id_node = std::get<IdentifierNode>(expr);
+					
+					// Look up the identifier in the symbol table
+					if (context.symbols) {
+						auto symbol = context.symbols->lookup(id_node.name());
+						if (symbol.has_value()) {
+							// Get the declaration and extract the type
+							const DeclarationNode* decl = nullptr;
+							if (symbol->is<DeclarationNode>()) {
+								decl = &symbol->as<DeclarationNode>();
+							} else if (symbol->is<VariableDeclarationNode>()) {
+								decl = &symbol->as<VariableDeclarationNode>().declaration();
+							}
+							
+							if (decl) {
+								const auto& type_node = decl->type_node();
+								if (type_node.is<TypeSpecifierNode>()) {
+									const auto& type_spec = type_node.as<TypeSpecifierNode>();
+									
+									// Handle struct types
+									if (type_spec.type() == Type::Struct) {
+										size_t type_index = type_spec.type_index();
+										if (type_index < gTypeInfo.size()) {
+											const TypeInfo& type_info = gTypeInfo[type_index];
+											const StructTypeInfo* struct_info = type_info.getStructInfo();
+											if (struct_info) {
+												return EvalResult::from_int(static_cast<long long>(struct_info->total_size));
+											}
+										}
+									}
+									
+									// For primitive types
+									unsigned long long size_in_bytes = type_spec.size_in_bits() / 8;
+									// Fallback if size not set
+									if (size_in_bytes == 0) {
+										size_in_bytes = get_type_size_bits(type_spec.type()) / 8;
+									}
+									return EvalResult::from_int(static_cast<long long>(size_in_bytes));
+								}
+							}
+						}
+					}
+					
+					// If we couldn't look up the identifier, return error
+					return EvalResult::error("sizeof: identifier not found in symbol table");
 				}
 				
 				// For numeric literals, we can determine the size from the literal itself
@@ -365,8 +406,70 @@ private:
 			}
 		}
 		else {
-			// alignof(expression) - requires type lookup, fall back to codegen
-			return EvalResult::error("alignof with expression requires type lookup");
+			// alignof(expression) - determine the alignment from the expression's type
+			const auto& expr_node = alignof_expr.type_or_expr();
+			if (expr_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+				
+				// Handle identifier - get type from its declaration
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					const auto& id_node = std::get<IdentifierNode>(expr);
+					
+					// Look up the identifier in the symbol table
+					if (context.symbols) {
+						auto symbol = context.symbols->lookup(id_node.name());
+						if (symbol.has_value()) {
+							// Get the declaration and extract the type
+							const DeclarationNode* decl = nullptr;
+							if (symbol->is<DeclarationNode>()) {
+								decl = &symbol->as<DeclarationNode>();
+							} else if (symbol->is<VariableDeclarationNode>()) {
+								decl = &symbol->as<VariableDeclarationNode>().declaration();
+							}
+							
+							if (decl) {
+								const auto& type_node = decl->type_node();
+								if (type_node.is<TypeSpecifierNode>()) {
+									const auto& type_spec = type_node.as<TypeSpecifierNode>();
+									
+									// Handle struct types
+									if (type_spec.type() == Type::Struct) {
+										size_t type_index = type_spec.type_index();
+										if (type_index < gTypeInfo.size()) {
+											const TypeInfo& type_info = gTypeInfo[type_index];
+											const StructTypeInfo* struct_info = type_info.getStructInfo();
+											if (struct_info) {
+												return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
+											}
+										}
+									}
+									
+									// For primitive types
+									int size_bits = type_spec.size_in_bits();
+									if (size_bits == 0) {
+										size_bits = get_type_size_bits(type_spec.type());
+									}
+									size_t size_in_bytes = size_bits / 8;
+									size_t alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
+									
+									// Special case for long double
+									if (type_spec.type() == Type::LongDouble) {
+										alignment = 16;
+									}
+									
+									return EvalResult::from_int(static_cast<long long>(alignment));
+								}
+							}
+						}
+					}
+					
+					// If we couldn't look up the identifier, return error
+					return EvalResult::error("alignof: identifier not found in symbol table");
+				}
+				
+				// For other expressions, return error
+				return EvalResult::error("alignof with complex expression not yet supported in constexpr");
+			}
 		}
 		
 		return EvalResult::error("Invalid alignof operand");
