@@ -8867,6 +8867,176 @@ ParseResult Parser::parse_unary_expression()
 		}
 	}
 
+	// Check for 'sizeof' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "sizeof"sv) {
+		// Handle sizeof operator: sizeof(type) or sizeof(expression)
+		// Also handle sizeof... operator: sizeof...(pack_name)
+		Token sizeof_token = *current_token_;
+		consume_token(); // consume 'sizeof'
+
+		// Check for ellipsis to determine if this is sizeof... (parameter pack)
+		bool is_sizeof_pack = false;
+		if (peek_token().has_value() && 
+		    (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
+		    peek_token()->value() == "...") {
+			consume_token(); // consume '...'
+			is_sizeof_pack = true;
+		}
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after 'sizeof'", *current_token_);
+		}
+
+		if (is_sizeof_pack) {
+			// Parse sizeof...(pack_name)
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected parameter pack name after 'sizeof...('", *current_token_);
+			}
+			
+			Token pack_name_token = *peek_token();
+			std::string_view pack_name = pack_name_token.value();
+			consume_token(); // consume pack name
+			
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after sizeof... pack name", *current_token_);
+			}
+			
+			auto sizeof_pack_expr = emplace_node<ExpressionNode>(SizeofPackNode(pack_name, sizeof_token));
+			return ParseResult::success(sizeof_pack_expr);
+		}
+		else {
+			// Try to parse as a type first
+			SaveHandle saved_pos = save_token_position();
+			ParseResult type_result = parse_type_specifier();
+
+			// Check if this is really a type by seeing if ')' follows
+			// This disambiguates between "sizeof(int)" and "sizeof(x + 1)" where x might be
+			// incorrectly parsed as a user-defined type
+			bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
+			                                 peek_token().has_value() && peek_token()->value() == ")";
+			
+			if (is_type_followed_by_paren) {
+				// Successfully parsed as type and ')' follows
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after sizeof type", *current_token_);
+				}
+				discard_saved_token(saved_pos);
+				auto sizeof_expr = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
+				return ParseResult::success(sizeof_expr);
+			}
+			else {
+				// Not a type (or doesn't look like one), try parsing as expression
+				restore_token_position(saved_pos);
+				ParseResult expr_result = parse_expression();
+				if (expr_result.is_error()) {
+					discard_saved_token(saved_pos);
+					return ParseResult::error("Expected type or expression after 'sizeof('", *current_token_);
+				}
+				if (!consume_punctuator(")")) {
+					discard_saved_token(saved_pos);
+					return ParseResult::error("Expected ')' after sizeof expression", *current_token_);
+				}
+				discard_saved_token(saved_pos);
+				auto sizeof_expr = emplace_node<ExpressionNode>(
+					SizeofExprNode::from_expression(*expr_result.node(), sizeof_token));
+				return ParseResult::success(sizeof_expr);
+			}
+		}
+	}
+
+	// Check for 'alignof' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "alignof"sv) {
+		// Handle alignof operator: alignof(type) or alignof(expression)
+		Token alignof_token = *current_token_;
+		consume_token(); // consume 'alignof'
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after 'alignof'", *current_token_);
+		}
+
+		// Try to parse as a type first
+		SaveHandle saved_pos = save_token_position();
+		ParseResult type_result = parse_type_specifier();
+
+		// Check if this is really a type by seeing if ')' follows
+		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
+		                                 peek_token().has_value() && peek_token()->value() == ")";
+		
+		if (is_type_followed_by_paren) {
+			// Successfully parsed as type and ')' follows
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after alignof type", *current_token_);
+			}
+			discard_saved_token(saved_pos);
+			auto alignof_expr = emplace_node<ExpressionNode>(AlignofExprNode(*type_result.node(), alignof_token));
+			return ParseResult::success(alignof_expr);
+		}
+		else {
+			// Not a type (or doesn't look like one), try parsing as expression
+			restore_token_position(saved_pos);
+			ParseResult expr_result = parse_expression();
+			if (expr_result.is_error()) {
+				discard_saved_token(saved_pos);
+				return ParseResult::error("Expected type or expression after 'alignof('", *current_token_);
+			}
+			if (!consume_punctuator(")")) {
+				discard_saved_token(saved_pos);
+				return ParseResult::error("Expected ')' after alignof expression", *current_token_);
+			}
+			discard_saved_token(saved_pos);
+			auto alignof_expr = emplace_node<ExpressionNode>(
+				AlignofExprNode::from_expression(*expr_result.node(), alignof_token));
+			return ParseResult::success(alignof_expr);
+		}
+	}
+
+	// Check for 'typeid' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "typeid"sv) {
+		// Handle typeid operator: typeid(type) or typeid(expression)
+		Token typeid_token = *current_token_;
+		consume_token(); // consume 'typeid'
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after 'typeid'", *current_token_);
+		}
+
+		// Try to parse as a type first
+		SaveHandle saved_pos = save_token_position();
+		ParseResult type_result = parse_type_specifier();
+
+		// Check if this is really a type by seeing if ')' follows
+		// This disambiguates between "typeid(int)" and "typeid(x + 1)" where x might be
+		// incorrectly parsed as a user-defined type
+		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
+		                                 peek_token().has_value() && peek_token()->value() == ")";
+		
+		if (is_type_followed_by_paren) {
+			// Successfully parsed as type and ')' follows
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after typeid type", *current_token_);
+			}
+			discard_saved_token(saved_pos);
+			auto typeid_expr = emplace_node<ExpressionNode>(TypeidNode(*type_result.node(), true, typeid_token));
+			return ParseResult::success(typeid_expr);
+		}
+		else {
+			// Not a type (or doesn't look like one), try parsing as expression
+			restore_token_position(saved_pos);
+			ParseResult expr_result = parse_expression();
+			if (expr_result.is_error()) {
+				discard_saved_token(saved_pos);
+				return ParseResult::error("Expected type or expression after 'typeid('", *current_token_);
+			}
+			if (!consume_punctuator(")")) {
+				discard_saved_token(saved_pos);
+				return ParseResult::error("Expected ')' after typeid expression", *current_token_);
+			}
+			discard_saved_token(saved_pos);
+			auto typeid_expr = emplace_node<ExpressionNode>(TypeidNode(*expr_result.node(), false, typeid_token));
+			return ParseResult::success(typeid_expr);
+		}
+	}
+
 	// Check if the current token is a unary operator
 	if (current_token_->type() == Token::Type::Operator) {
 		std::string_view op = current_token_->value();
@@ -11495,121 +11665,6 @@ ParseResult Parser::parse_primary_expression()
 
 		// Create an identifier node for 'this'
 		result = emplace_node<ExpressionNode>(IdentifierNode(this_token));
-	}
-	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "sizeof"sv) {
-		// Handle sizeof operator: sizeof(type) or sizeof(expression)
-		// Also handle sizeof... operator: sizeof...(pack_name)
-		Token sizeof_token = *current_token_;
-		consume_token(); // consume 'sizeof'
-
-		// Check for ellipsis to determine if this is sizeof... (parameter pack)
-		bool is_sizeof_pack = false;
-		if (peek_token().has_value() && 
-		    (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
-		    peek_token()->value() == "...") {
-			consume_token(); // consume '...'
-			is_sizeof_pack = true;
-		}
-
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after 'sizeof'", *current_token_);
-		}
-
-		if (is_sizeof_pack) {
-			// Parse sizeof...(pack_name)
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected parameter pack name after 'sizeof...('", *current_token_);
-			}
-			
-			Token pack_name_token = *peek_token();
-			std::string_view pack_name = pack_name_token.value();
-			consume_token(); // consume pack name
-			
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after sizeof... pack name", *current_token_);
-			}
-			
-			result = emplace_node<ExpressionNode>(SizeofPackNode(pack_name, sizeof_token));
-		}
-		else {
-			// Try to parse as a type first
-			SaveHandle saved_pos = save_token_position();
-			ParseResult type_result = parse_type_specifier();
-
-			// Check if this is really a type by seeing if ')' follows
-			// This disambiguates between "sizeof(int)" and "sizeof(x + 1)" where x might be
-			// incorrectly parsed as a user-defined type
-			bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
-			                                 peek_token().has_value() && peek_token()->value() == ")";
-			
-			if (is_type_followed_by_paren) {
-				// Successfully parsed as type and ')' follows
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after sizeof type", *current_token_);
-				}
-				discard_saved_token(saved_pos);
-				result = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
-			}
-			else {
-				// Not a type (or doesn't look like one), try parsing as expression
-				restore_token_position(saved_pos);
-				ParseResult expr_result = parse_expression();
-				if (expr_result.is_error()) {
-					discard_saved_token(saved_pos);
-					return ParseResult::error("Expected type or expression after 'sizeof('", *current_token_);
-				}
-				if (!consume_punctuator(")")) {
-					discard_saved_token(saved_pos);
-					return ParseResult::error("Expected ')' after sizeof expression", *current_token_);
-				}
-				discard_saved_token(saved_pos);
-				result = emplace_node<ExpressionNode>(
-					SizeofExprNode::from_expression(*expr_result.node(), sizeof_token));
-			}
-		}
-	}
-	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "typeid"sv) {
-		// Handle typeid operator: typeid(type) or typeid(expression)
-		Token typeid_token = *current_token_;
-		consume_token(); // consume 'typeid'
-
-		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after 'typeid'", *current_token_);
-		}
-
-		// Try to parse as a type first
-		SaveHandle saved_pos = save_token_position();
-		ParseResult type_result = parse_type_specifier();
-
-		// Check if this is really a type by seeing if ')' follows
-		// This disambiguates between "typeid(int)" and "typeid(x + 1)" where x might be
-		// incorrectly parsed as a user-defined type
-		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
-		                                 peek_token().has_value() && peek_token()->value() == ")";
-		
-		if (is_type_followed_by_paren) {
-			// Successfully parsed as type and ')' follows
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after typeid type", *current_token_);
-			}
-			discard_saved_token(saved_pos);
-			result = emplace_node<ExpressionNode>(TypeidNode(*type_result.node(), true, typeid_token));
-		}
-		else {
-			// Not a type (or doesn't look like one), try parsing as expression
-			restore_token_position(saved_pos);
-			ParseResult expr_result = parse_expression();
-			if (expr_result.is_error()) {
-				discard_saved_token(saved_pos);
-				return ParseResult::error("Expected type or expression after 'typeid('", *current_token_);
-			}
-			if (!consume_punctuator(")")) {
-				discard_saved_token(saved_pos);
-				return ParseResult::error("Expected ')' after typeid expression", *current_token_);
-			}
-			discard_saved_token(saved_pos);
-			result = emplace_node<ExpressionNode>(TypeidNode(*expr_result.node(), false, typeid_token));
-		}
 	}
 	else if (consume_punctuator("(")) {
 		// Could be either:
