@@ -1,13 +1,9 @@
-class Widget { 
-    int v; 
-public: 
-    Widget(int x) : v(x) {} 
-};
-
-void f(Widget&& w) {}
+int f(int&& rvalue) { return rvalue+ 1; }
+int f(int& lvalue) { return lvalue + 1; }
 
 int main() {
-    Widget w1(10);
-    f((Widget&&)w1);
-    return 0;
+    int v(10);
+    v = f((int&&)v);
+    v = f((int&)v);
+    return v;
 }
