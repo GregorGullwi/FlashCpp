@@ -719,9 +719,11 @@ public:
 		symbol_table_stack_.clear();
 		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
 		namespace_symbols_.clear();
-		interned_strings_.clear();
-		// Note: We don't clear string_allocator_ as it may have live string_views referenced elsewhere
-		// The allocator will be reused for new strings
+		// Note: We intentionally do NOT clear interned_strings_ or string_allocator_
+		// because they maintain persistent string storage. Clearing would cause
+		// inconsistent state where allocated strings exist but aren't tracked.
+		// This is safe because the symbol table is typically used for a single
+		// compilation unit and then discarded entirely (not cleared and reused).
 	}
 
 private:
@@ -733,7 +735,7 @@ private:
 	
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table
-	ChunkedStringAllocator string_allocator_{1024 * 1024};  // 1 MB chunks for symbol names
+	ChunkedStringAllocator string_allocator_{64 * 1024};  // 64 KB chunks for symbol names
 	
 	// Set to track all interned strings for fast O(1) deduplication
 	std::unordered_set<std::string_view> interned_strings_;
