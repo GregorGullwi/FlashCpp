@@ -112,11 +112,38 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				return TypeConversionResult::no_match();
 			} else {
 				// 'from' is not a reference, 'to' is a reference
-				// TODO: Handle more complex cases:
-				// - Rvalue refs can bind to temporaries (prvalues)
-				// - Const lvalue refs can bind to both lvalues and rvalues
-				// For now, conservatively reject to avoid incorrect matches
-				return TypeConversionResult::no_match();
+				// Handle binding of non-references to reference parameters
+				
+				bool to_is_rvalue = to.is_rvalue_reference();
+				bool to_is_const = to.is_const();
+				
+				// Check if base types are compatible
+				bool types_match = (from.type() == to.type());
+				if (!types_match) {
+					// Allow conversions for const lvalue refs only
+					auto conversion = can_convert_type(from.type(), to.type());
+					if (!to_is_rvalue && to_is_const && conversion.is_valid) {
+						// Const lvalue ref can bind to values that can be converted
+						return conversion;
+					}
+					return TypeConversionResult::no_match();
+				}
+				
+				if (to_is_rvalue) {
+					// Rvalue reference can bind to temporaries (prvalues)
+					// Non-reference values are treated as rvalues when passed
+					return TypeConversionResult::exact_match();
+				} else {
+					// Lvalue reference
+					if (to_is_const) {
+						// Const lvalue ref can bind to both lvalues and rvalues
+						return TypeConversionResult::exact_match();
+					} else {
+						// Non-const lvalue ref can only bind to lvalues
+						// Non-reference values are rvalues, so this doesn't match
+						return TypeConversionResult::no_match();
+					}
+				}
 			}
 		} else {
 			// 'from' is a reference, 'to' is not
