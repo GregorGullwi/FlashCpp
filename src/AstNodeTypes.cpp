@@ -959,4 +959,116 @@ void StructTypeInfo::buildRTTI() {
     col.hierarchy = rtti_info->chd;
     col_storage.push_back(col);
     rtti_info->col = &col_storage.back();
+
+    // ========== Build Itanium C++ ABI RTTI structures ==========
+    // These are used for Linux/Unix targets (ELF format)
+    
+    // Storage for Itanium structures
+    static std::vector<ItaniumClassTypeInfo> itanium_class_storage;
+    static std::vector<ItaniumSIClassTypeInfo> itanium_si_storage;
+    static std::vector<char*> itanium_vmi_storage;  // Variable-sized, use malloc
+    static std::vector<char*> itanium_name_storage;
+    
+    // Create Itanium-style mangled name
+    // Itanium uses length-prefixed names: "3Foo" for class Foo
+    std::string itanium_mangled = std::to_string(name.length()) + name;
+    
+    // Allocate permanent storage for the name string
+    char* itanium_name = (char*)malloc(itanium_mangled.length() + 1);
+    if (!itanium_name) {
+        // Allocation failed - Itanium RTTI won't be available
+        return;
+    }
+    strcpy(itanium_name, itanium_mangled.c_str());
+    itanium_name_storage.push_back(itanium_name);
+    
+    if (base_classes.empty()) {
+        // __class_type_info - No base classes
+        ItaniumClassTypeInfo class_ti;
+        class_ti.vtable = nullptr;  // Will be set to vtable for __class_type_info at link time
+        class_ti.name = itanium_name;
+        itanium_class_storage.push_back(class_ti);
+        rtti_info->itanium_type_info = &itanium_class_storage.back();
+        rtti_info->itanium_kind = RTTITypeInfo::ItaniumTypeInfoKind::ClassTypeInfo;
+    } else if (base_classes.size() == 1 && !base_classes[0].is_virtual) {
+        // __si_class_type_info - Single, non-virtual base class
+        ItaniumSIClassTypeInfo si_ti;
+        si_ti.vtable = nullptr;  // Will be set to vtable for __si_class_type_info at link time
+        si_ti.name = itanium_name;
+        
+        // Get base class type info
+        if (base_classes[0].type_index < gTypeInfo.size()) {
+            const TypeInfo& base_type = gTypeInfo[base_classes[0].type_index];
+            const StructTypeInfo* base_info = base_type.getStructInfo();
+            if (base_info && base_info->rtti_info && base_info->rtti_info->itanium_type_info) {
+                si_ti.base_type = base_info->rtti_info->itanium_type_info;
+            } else {
+                si_ti.base_type = nullptr;
+            }
+        } else {
+            si_ti.base_type = nullptr;
+        }
+        
+        itanium_si_storage.push_back(si_ti);
+        rtti_info->itanium_type_info = &itanium_si_storage.back();
+        rtti_info->itanium_kind = RTTITypeInfo::ItaniumTypeInfoKind::SIClassTypeInfo;
+    } else {
+        // __vmi_class_type_info - Multiple or virtual base classes
+        size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo) + 
+                         (base_classes.size() - 1) * sizeof(ItaniumBaseClassTypeInfo);
+        ItaniumVMIClassTypeInfo* vmi_ti = (ItaniumVMIClassTypeInfo*)malloc(vmi_size);
+        if (!vmi_ti) {
+            // Allocation failed
+            return;
+        }
+        
+        vmi_ti->vtable = nullptr;  // Will be set to vtable for __vmi_class_type_info at link time
+        vmi_ti->name = itanium_name;
+        vmi_ti->base_count = static_cast<uint32_t>(base_classes.size());
+        
+        // Calculate flags
+        vmi_ti->flags = 0;
+        bool has_virtual_bases = false;
+        for (const auto& base : base_classes) {
+            if (base.is_virtual) {
+                has_virtual_bases = true;
+                break;
+            }
+        }
+        // Set diamond flag if multiple inheritance (conservative approach)
+        if (base_classes.size() > 1) {
+            vmi_ti->flags |= 0x2;  // __diamond_shaped_mask
+        }
+        
+        // Fill base class info
+        for (size_t i = 0; i < base_classes.size(); ++i) {
+            const auto& base = base_classes[i];
+            
+            // Get base class type info
+            void* base_type_info = nullptr;
+            if (base.type_index < gTypeInfo.size()) {
+                const TypeInfo& base_type = gTypeInfo[base.type_index];
+                const StructTypeInfo* base_info = base_type.getStructInfo();
+                if (base_info && base_info->rtti_info) {
+                    base_type_info = base_info->rtti_info->itanium_type_info;
+                }
+            }
+            
+            vmi_ti->base_info[i].base_type = base_type_info;
+            
+            // Encode offset and flags
+            int64_t offset_flags = static_cast<int64_t>(base.offset) << 8;
+            if (base.is_virtual) {
+                offset_flags |= 0x1;  // __virtual_mask
+            }
+            // Assume public inheritance (set bit 1)
+            offset_flags |= 0x2;  // __public_mask
+            
+            vmi_ti->base_info[i].offset_flags = offset_flags;
+        }
+        
+        itanium_vmi_storage.push_back((char*)vmi_ti);
+        rtti_info->itanium_type_info = vmi_ti;
+        rtti_info->itanium_kind = RTTITypeInfo::ItaniumTypeInfoKind::VMIClassTypeInfo;
+    }
 }
