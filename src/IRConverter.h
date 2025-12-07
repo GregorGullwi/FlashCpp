@@ -11103,18 +11103,28 @@ private:
 			emitMovRegReg(X64Register::RDI, X64Register::R15);
 			
 			// RSI = type_info* - generate type_info for the thrown type
+			std::string typeinfo_symbol;
 			if (throw_op.type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[throw_op.type_index];
 				Type exception_type = type_info.type_;
 				
-				// Create type_info symbol for this type
-				std::string typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
+				// Check if it's a built-in type or user-defined type
+				if (exception_type == Type::Struct) {
+					// User-defined class type
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						typeinfo_symbol = writer.get_or_create_class_typeinfo(struct_info->name);
+					}
+				} else {
+					// Built-in type
+					typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
+				}
 				
 				if (!typeinfo_symbol.empty()) {
 					// Load address of type_info into RSI using RIP-relative LEA
 					emitLeaRipRelativeWithRelocation(X64Register::RSI, typeinfo_symbol);
 				} else {
-					// For non-builtin types (not yet supported), use NULL
+					// Unknown type, use NULL
 					emitXorRegReg(X64Register::RSI);
 				}
 			} else {
