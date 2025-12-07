@@ -72,8 +72,9 @@ public:
         // Handle edge cases
         if (!ptr || sv.empty()) return false;
         
-        // Check for potential overflow when calculating end pointer
-        if (sv.size() > SIZE_MAX - reinterpret_cast<uintptr_t>(ptr)) {
+        // Avoid potential overflow: reject unreasonably large strings
+        // (practical chunk sizes are much smaller than SIZE_MAX/2)
+        if (sv.size() > SIZE_MAX / 2) {
             return false;
         }
         

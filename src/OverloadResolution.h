@@ -91,6 +91,11 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 }
 
 // Check if one type can be implicitly converted to another (considering pointers and references)
+// 
+// IMPORTANT: For proper overload resolution with lvalue vs rvalue references, the caller must:
+// - Set is_lvalue_reference(true) on 'from' TypeSpecifierNode for lvalue expressions (named variables, etc.)
+// - Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
+// This distinction is critical for matching lvalue refs vs rvalue refs in overloaded functions.
 inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	// Check reference compatibility
 	if (from.is_reference() || to.is_reference()) {
