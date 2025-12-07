@@ -1063,13 +1063,44 @@ ParseResult Parser::parse_type_and_name() {
             std::string_view operator_symbol = operator_symbol_token.value();
             consume_token(); // consume operator symbol
 
-            // For now, we support operator=, operator<=>, and operator()
-            if (operator_symbol != "=" && operator_symbol != "<=>") {
-                return ParseResult::error("Only operator=, operator<=>, and operator() are currently supported", operator_symbol_token);
+            // Build operator name like "operator=" or "operator<<"
+            static std::unordered_map<std::string_view, std::string> operator_names = {
+                {"=", "operator="},
+                {"<=>", "operator<=>"},
+                {"<<", "operator<<"},
+                {">>", "operator>>"},
+                {"+", "operator+"},
+                {"-", "operator-"},
+                {"*", "operator*"},
+                {"/", "operator/"},
+                {"%", "operator%"},
+                {"&", "operator&"},
+                {"|", "operator|"},
+                {"^", "operator^"},
+                {"~", "operator~"},
+                {"!", "operator!"},
+                {"<", "operator<"},
+                {">", "operator>"},
+                {"<=", "operator<="},
+                {">=", "operator>="},
+                {"==", "operator=="},
+                {"!=", "operator!="},
+                {"&&", "operator&&"},
+                {"||", "operator||"},
+                {"++", "operator++"},
+                {"--", "operator--"},
+                {"->", "operator->"},
+                {"->*", "operator->*"},
+                {"[]", "operator[]"},
+                {",", "operator,"},
+            };
+            
+            auto it = operator_names.find(operator_symbol);
+            if (it != operator_names.end()) {
+                operator_name = it->second;
+            } else {
+                return ParseResult::error("Unsupported operator overload: operator" + std::string(operator_symbol), operator_symbol_token);
             }
-            static const std::string operator_eq_name = "operator=";
-            static const std::string operator_spaceship_name = "operator<=>";
-            operator_name = (operator_symbol == "=") ? operator_eq_name : operator_spaceship_name;
         }
         else {
             // Try to parse conversion operator: operator type()
