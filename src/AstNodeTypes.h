@@ -301,24 +301,74 @@ struct MSVCCompleteObjectLocator {
 	const MSVCClassHierarchyDescriptor* hierarchy;    // Pointer to class hierarchy (??_R3)
 };
 
+// Itanium C++ ABI RTTI structures - standard format for Linux/Unix systems
+// These structures match the Itanium C++ ABI specification for RTTI
+
+// Base class info structure for __vmi_class_type_info
+struct ItaniumBaseClassTypeInfo {
+	const void* base_type;      // Pointer to base class type_info (__class_type_info*)
+	int64_t offset_flags;       // Combined offset and flags
+	
+	// Flags in offset_flags:
+	// bit 0: __virtual_mask (0x1) - base class is virtual
+	// bit 1: __public_mask (0x2) - base class is public
+	// bits 8+: offset of base class in derived class (signed)
+};
+
+// __class_type_info - Type info for classes without base classes
+struct ItaniumClassTypeInfo {
+	const void* vtable;         // Pointer to vtable for __class_type_info
+	const char* name;           // Mangled type name (e.g., "3Foo" for class Foo)
+};
+
+// __si_class_type_info - Type info for classes with single, public, non-virtual base
+struct ItaniumSIClassTypeInfo {
+	const void* vtable;         // Pointer to vtable for __si_class_type_info
+	const char* name;           // Mangled type name
+	const void* base_type;      // Pointer to base class type_info (__class_type_info*)
+};
+
+// __vmi_class_type_info - Type info for classes with multiple or virtual bases
+struct ItaniumVMIClassTypeInfo {
+	const void* vtable;         // Pointer to vtable for __vmi_class_type_info
+	const char* name;           // Mangled type name
+	uint32_t flags;             // Inheritance flags
+	uint32_t base_count;        // Number of direct base classes
+	ItaniumBaseClassTypeInfo base_info[1];  // Variable-length array of base class info
+	
+	// Flags:
+	// __non_diamond_repeat_mask = 0x1 - has repeated bases (but not diamond)
+	// __diamond_shaped_mask = 0x2     - has diamond-shaped inheritance
+};
+
 // Legacy RTTITypeInfo for compatibility with existing code
-// This will hold references to the MSVC structures
+// This will hold references to both MSVC and Itanium structures
 struct RTTITypeInfo {
 	const char* type_name;           // Mangled type name
 	const char* demangled_name;      // Human-readable type name
 	size_t num_bases;                // Number of base classes
 	const RTTITypeInfo** base_types; // Array of pointers to base class type_info
 
-	// MSVC RTTI structures (new)
+	// MSVC RTTI structures
 	MSVCCompleteObjectLocator* col;         // ??_R4 - Complete Object Locator
 	MSVCClassHierarchyDescriptor* chd;      // ??_R3 - Class Hierarchy Descriptor
 	MSVCBaseClassArray* bca;                // ??_R2 - Base Class Array
 	std::vector<MSVCBaseClassDescriptor*> base_descriptors;  // ??_R1 - Base Class Descriptors
 	MSVCTypeDescriptor* type_descriptor;    // ??_R0 - Type Descriptor
 
+	// Itanium C++ ABI RTTI structures
+	void* itanium_type_info;        // Pointer to __class_type_info, __si_class_type_info, or __vmi_class_type_info
+	enum class ItaniumTypeInfoKind {
+		None,
+		ClassTypeInfo,      // __class_type_info (no bases)
+		SIClassTypeInfo,    // __si_class_type_info (single inheritance)
+		VMIClassTypeInfo    // __vmi_class_type_info (multiple/virtual inheritance)
+	} itanium_kind;
+
 	RTTITypeInfo(const char* mangled, const char* demangled, size_t num_base = 0)
 		: type_name(mangled), demangled_name(demangled), num_bases(num_base), base_types(nullptr),
-		  col(nullptr), chd(nullptr), bca(nullptr), type_descriptor(nullptr) {}
+		  col(nullptr), chd(nullptr), bca(nullptr), type_descriptor(nullptr),
+		  itanium_type_info(nullptr), itanium_kind(ItaniumTypeInfoKind::None) {}
 
 	// Check if this type is derived from another type (for dynamic_cast)
 	bool isDerivedFrom(const RTTITypeInfo* base) const {
