@@ -719,6 +719,9 @@ public:
 		symbol_table_stack_.clear();
 		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
 		namespace_symbols_.clear();
+		interned_strings_.clear();
+		// Note: We don't clear string_allocator_ as it may have live string_views referenced elsewhere
+		// The allocator will be reused for new strings
 	}
 
 private:
@@ -732,31 +735,23 @@ private:
 	// Ensures string_view keys remain valid for the lifetime of the symbol table
 	ChunkedStringAllocator string_allocator_{1024 * 1024};  // 1 MB chunks for symbol names
 	
-	// Intern a string_view by checking if it already exists in maps, or allocate it
+	// Set to track all interned strings for fast O(1) deduplication
+	std::unordered_set<std::string_view> interned_strings_;
+	
+	// Intern a string_view by checking if it already exists, or allocate it
 	// Returns a string_view that is guaranteed to remain valid
 	std::string_view intern_string(std::string_view str) {
-		// First, check if this string already exists as a key in any of our maps
-		// This avoids duplicate allocations for the same identifier
-		for (const auto& scope : symbol_table_stack_) {
-			auto it = scope.symbols.find(str);
-			if (it != scope.symbols.end()) {
-				return it->first;  // Return existing key
-			}
-			
-			auto using_it = scope.using_declarations.find(str);
-			if (using_it != scope.using_declarations.end()) {
-				return using_it->first;  // Return existing key
-			}
-			
-			auto alias_it = scope.namespace_aliases.find(str);
-			if (alias_it != scope.namespace_aliases.end()) {
-				return alias_it->first;  // Return existing key
-			}
+		// Check if this string has already been interned (O(1) lookup)
+		auto it = interned_strings_.find(str);
+		if (it != interned_strings_.end()) {
+			return *it;  // Return existing interned string
 		}
 		
-		// String not found in existing maps, allocate it using StringBuilder
+		// String not found, allocate it using StringBuilder and add to set
 		StringBuilder sb(string_allocator_);
-		return sb.append(str).commit();
+		std::string_view interned = sb.append(str).commit();
+		interned_strings_.insert(interned);
+		return interned;
 	}
 };
 
