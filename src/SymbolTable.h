@@ -174,6 +174,41 @@ public:
 								// If the new one has a definition and the existing one doesn't, replace it
 								if (new_func.get_definition().has_value() && !existing_func.get_definition().has_value()) {
 									existing_nodes[i] = node;
+									
+									// Also update the namespace_symbols_ map if we're in a namespace
+									if (current_scope.scope_type == ScopeType::Namespace) {
+										NamespacePath ns_path = build_current_namespace_path();
+										auto& ns_symbols = namespace_symbols_[ns_path];
+										StringType<32> key(identifier);
+										
+										auto ns_it = ns_symbols.find(key);
+										if (ns_it != ns_symbols.end()) {
+											// Find and replace the matching node in namespace_symbols_
+											for (size_t k = 0; k < ns_it->second.size(); ++k) {
+												if (ns_it->second[k].is<FunctionDeclarationNode>()) {
+													const auto& ns_func = ns_it->second[k].as<FunctionDeclarationNode>();
+													const auto& ns_params = ns_func.parameter_nodes();
+													
+													// Check if this is the same signature
+													if (ns_params.size() == new_params.size()) {
+														bool params_match = true;
+														for (size_t m = 0; m < ns_params.size(); ++m) {
+															const auto& ns_param_type = ns_params[m].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+															const auto& new_param_type = new_params[m].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+															if (!ns_param_type.matches_signature(new_param_type)) {
+																params_match = false;
+																break;
+															}
+														}
+														if (params_match) {
+															ns_it->second[k] = node;
+															break;
+														}
+													}
+												}
+											}
+										}
+									}
 								}
 								// Otherwise, it's a duplicate declaration - just ignore it
 								return true;
