@@ -389,18 +389,13 @@ private:
 					return EvalResult::error("Struct alignment not available");
 				}
 				
-				// For primitive types, alignment is typically the same as size (up to 8 bytes)
+				// For primitive types, use standard alignment calculation
 				int size_bits = type_spec.size_in_bits();
 				if (size_bits == 0) {
 					size_bits = get_type_size_bits(type_spec.type());
 				}
 				size_t size_in_bytes = size_bits / 8;
-				size_t alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
-				
-				// Special case for long double
-				if (type_spec.type() == Type::LongDouble) {
-					alignment = 16;
-				}
+				size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
 				
 				return EvalResult::from_int(static_cast<long long>(alignment));
 			}
@@ -450,12 +445,7 @@ private:
 										size_bits = get_type_size_bits(type_spec.type());
 									}
 									size_t size_in_bytes = size_bits / 8;
-									size_t alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
-									
-									// Special case for long double
-									if (type_spec.type() == Type::LongDouble) {
-										alignment = 16;
-									}
+									size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
 									
 									return EvalResult::from_int(static_cast<long long>(alignment));
 								}

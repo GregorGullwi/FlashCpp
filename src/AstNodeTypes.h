@@ -909,6 +909,17 @@ Type promote_floating_point_type(Type type);
 Type get_common_type(Type left, Type right);
 bool requires_conversion(Type from, Type to);
 
+// Helper to calculate alignment from size in bytes
+// Standard alignment rules: min(size, 8) for most platforms, with special case for long double
+inline size_t calculate_alignment_from_size(size_t size_in_bytes, Type type) {
+	// Special case for long double on x86-64: often has 16-byte alignment
+	if (type == Type::LongDouble) {
+		return 16;
+	}
+	// Standard alignment: same as size, up to 8 bytes
+	return (size_in_bytes < 8) ? size_in_bytes : 8;
+}
+
 // Pointer level information - stores CV-qualifiers for each pointer level
 // Example: const int* const* volatile
 //   - Level 0 (base): const int

@@ -528,6 +528,30 @@ public:
 	}
 
 private:
+	// Helper function to try evaluating sizeof/alignof using ConstExprEvaluator
+	// Returns the evaluated operands if successful, empty vector otherwise
+	template<typename NodeType>
+	std::vector<IrOperand> tryEvaluateAsConstExpr(const NodeType& node) {
+		// Try to evaluate as a constant expression first
+		ConstExpr::EvaluationContext ctx(symbol_table);
+		auto expr_node = ASTNode::emplace_node<ExpressionNode>(node);
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		
+		if (eval_result.success) {
+			// Return the constant value
+			unsigned long long value = 0;
+			if (std::holds_alternative<long long>(eval_result.value)) {
+				value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+			} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+				value = std::get<unsigned long long>(eval_result.value);
+			}
+			return { Type::UnsignedLongLong, 64, value };
+		}
+		
+		// Return empty vector if evaluation failed
+		return {};
+	}
+
 	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 	// Used when a member function call syntax is used but the object is not a struct
 	std::vector<IrOperand> convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
@@ -4079,19 +4103,9 @@ private:
 			const auto& sizeof_node = std::get<SizeofExprNode>(exprNode);
 			
 			// Try to evaluate as a constant expression first
-			ConstExpr::EvaluationContext ctx(symbol_table);
-			auto sizeof_expr_node = ASTNode::emplace_node<ExpressionNode>(sizeof_node);
-			auto eval_result = ConstExpr::Evaluator::evaluate(sizeof_expr_node, ctx);
-			
-			if (eval_result.success) {
-				// Return the constant value
-				unsigned long long value = 0;
-				if (std::holds_alternative<long long>(eval_result.value)) {
-					value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
-				} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-					value = std::get<unsigned long long>(eval_result.value);
-				}
-				return { Type::UnsignedLongLong, 64, value };
+			auto const_result = tryEvaluateAsConstExpr(sizeof_node);
+			if (!const_result.empty()) {
+				return const_result;
 			}
 			
 			// Fall back to IR generation if constant evaluation failed
@@ -4109,19 +4123,9 @@ private:
 			const auto& alignof_node = std::get<AlignofExprNode>(exprNode);
 			
 			// Try to evaluate as a constant expression first
-			ConstExpr::EvaluationContext ctx(symbol_table);
-			auto alignof_expr_node = ASTNode::emplace_node<ExpressionNode>(alignof_node);
-			auto eval_result = ConstExpr::Evaluator::evaluate(alignof_expr_node, ctx);
-			
-			if (eval_result.success) {
-				// Return the constant value
-				unsigned long long value = 0;
-				if (std::holds_alternative<long long>(eval_result.value)) {
-					value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
-				} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-					value = std::get<unsigned long long>(eval_result.value);
-				}
-				return { Type::UnsignedLongLong, 64, value };
+			auto const_result = tryEvaluateAsConstExpr(alignof_node);
+			if (!const_result.empty()) {
+				return const_result;
 			}
 			
 			// Fall back to IR generation if constant evaluation failed
@@ -9197,15 +9201,9 @@ private:
 				alignment = struct_info->alignment;
 			}
 			else {
-				// For primitive types, alignment is typically the same as size (up to 8 bytes)
+				// For primitive types, use standard alignment calculation
 				size_t size_in_bytes = type_spec.size_in_bits() / 8;
-				// Standard alignment rules: min(size, 8) for most platforms
-				alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
-				
-				// Special case for long double on x86-64: often has 16-byte alignment
-				if (type == Type::LongDouble) {
-					alignment = 16;
-				}
+				alignment = calculate_alignment_from_size(size_in_bytes, type);
 			}
 		}
 		else {
@@ -9248,10 +9246,7 @@ private:
 								size_bits = get_type_size_bits(var_type.type());
 							}
 							size_t size_in_bytes = size_bits / 8;
-							alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
-							if (var_type.type() == Type::LongDouble) {
-								alignment = 16;
-							}
+							alignment = calculate_alignment_from_size(size_in_bytes, var_type.type());
 							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(alignment) };
 						}
 					}
@@ -9279,12 +9274,7 @@ private:
 			else {
 				// For primitive types
 				size_t size_in_bytes = size_in_bits / 8;
-				alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
-				
-				// Special case for long double
-				if (expr_type == Type::LongDouble) {
-					alignment = 16;
-				}
+				alignment = calculate_alignment_from_size(size_in_bytes, expr_type);
 			}
 		}
 
