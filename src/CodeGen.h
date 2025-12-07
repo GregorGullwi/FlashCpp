@@ -4076,8 +4076,26 @@ private:
 			return generateMemberAccessIr(expr);
 		}
 		else if (std::holds_alternative<SizeofExprNode>(exprNode)) {
-			const auto& expr = std::get<SizeofExprNode>(exprNode);
-			return generateSizeofIr(expr);
+			const auto& sizeof_node = std::get<SizeofExprNode>(exprNode);
+			
+			// Try to evaluate as a constant expression first
+			ConstExpr::EvaluationContext ctx(symbol_table);
+			auto sizeof_expr_node = ASTNode::emplace_node<ExpressionNode>(sizeof_node);
+			auto eval_result = ConstExpr::Evaluator::evaluate(sizeof_expr_node, ctx);
+			
+			if (eval_result.success) {
+				// Return the constant value
+				unsigned long long value = 0;
+				if (std::holds_alternative<long long>(eval_result.value)) {
+					value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+				} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+					value = std::get<unsigned long long>(eval_result.value);
+				}
+				return { Type::UnsignedLongLong, 64, value };
+			}
+			
+			// Fall back to IR generation if constant evaluation failed
+			return generateSizeofIr(sizeof_node);
 		}
 		else if (std::holds_alternative<SizeofPackNode>(exprNode)) {
 			const auto& expr = std::get<SizeofPackNode>(exprNode);
@@ -4088,8 +4106,26 @@ private:
 			return {};
 		}
 		else if (std::holds_alternative<AlignofExprNode>(exprNode)) {
-			const auto& expr = std::get<AlignofExprNode>(exprNode);
-			return generateAlignofIr(expr);
+			const auto& alignof_node = std::get<AlignofExprNode>(exprNode);
+			
+			// Try to evaluate as a constant expression first
+			ConstExpr::EvaluationContext ctx(symbol_table);
+			auto alignof_expr_node = ASTNode::emplace_node<ExpressionNode>(alignof_node);
+			auto eval_result = ConstExpr::Evaluator::evaluate(alignof_expr_node, ctx);
+			
+			if (eval_result.success) {
+				// Return the constant value
+				unsigned long long value = 0;
+				if (std::holds_alternative<long long>(eval_result.value)) {
+					value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+				} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+					value = std::get<unsigned long long>(eval_result.value);
+				}
+				return { Type::UnsignedLongLong, 64, value };
+			}
+			
+			// Fall back to IR generation if constant evaluation failed
+			return generateAlignofIr(alignof_node);
 		}
 		else if (std::holds_alternative<OffsetofExprNode>(exprNode)) {
 			const auto& expr = std::get<OffsetofExprNode>(exprNode);
