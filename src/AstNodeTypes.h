@@ -951,8 +951,8 @@ public:
 
 	// Reference support
 	bool is_reference() const { return reference_qualifier_ != ReferenceQualifier::None; }
-	bool is_rvalue_reference() const { return (static_cast<uint8_t>(reference_qualifier_) & static_cast<uint8_t>(ReferenceQualifier::RValueReference)) != 0; }
-	bool is_lvalue_reference() const { return (static_cast<uint8_t>(reference_qualifier_) & static_cast<uint8_t>(ReferenceQualifier::LValueReference)) != 0; }
+	bool is_rvalue_reference() const { return reference_qualifier_ == ReferenceQualifier::RValueReference; }
+	bool is_lvalue_reference() const { return reference_qualifier_ == ReferenceQualifier::LValueReference; }
 	ReferenceQualifier reference_qualifier() const { return reference_qualifier_; }
 	void set_reference(bool is_rvalue = false) {
 		reference_qualifier_ = is_rvalue ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
