@@ -121,7 +121,7 @@ struct Logger {
                 // General category: no prefix (user-facing messages)
                 if constexpr (Category == LogCategory::General) {
                     out << std::forward<First>(first);
-                    ((out << ... << std::forward<decltype(rest)>(rest)), void());
+                    (out << ... << std::forward<decltype(rest)>(rest));
                     out << "\n";
                 } else {
                     // Apply color based on log level
@@ -132,7 +132,7 @@ struct Logger {
                     // Print prefix
                     out << "[" << levelName() << "][" << categoryName() << "] ";
                     out << std::forward<First>(first);
-                    ((out << ... << std::forward<Rest>(rest)), void());
+                    (out << ... << std::forward<Rest>(rest));
 
                     // Reset color
                     if (LogConfig::use_colors) {
