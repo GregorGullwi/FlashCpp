@@ -1,9 +1,6 @@
 // Test constexpr lambda support
-// Compile with: x64\Debug\FlashCpp.exe tests\test_constexpr_lambda.cpp
-// Link with: link.bat test_constexpr_lambda.obj
 
 extern "C" int puts(const char* str);
-extern "C" void ExitProcess(unsigned int uExitCode);
 
 int main() {
 	// Test 1: Simple constexpr lambda with no captures
@@ -11,13 +8,13 @@ int main() {
 	constexpr int sum = add(3, 4);
 	
 	// sum should be 7 at compile time
-	// TODO: static_assert(sum == 7, "Lambda add failed");
+	static_assert(sum == 7, "Lambda add failed");
 	
 	if (sum == 7) {
 		puts("PASS: constexpr lambda add(3, 4) == 7");
 	} else {
 		puts("FAIL: constexpr lambda add returned wrong value");
-		ExitProcess(1);
+		return 1;
 	}
 	
 	// Test 2: Lambda used in array size (requires compile-time evaluation)
@@ -28,7 +25,7 @@ int main() {
 		puts("PASS: constexpr lambda used as array size");
 	} else {
 		puts("FAIL: constexpr lambda array size incorrect");
-		ExitProcess(1);
+		return 1;
 	}
 	
 	// Test 3: Lambda with explicit capture by value
@@ -40,7 +37,7 @@ int main() {
 		puts("PASS: constexpr lambda with capture [multiplier](5) == 50");
 	} else {
 		puts("FAIL: constexpr lambda with capture returned wrong value");
-		ExitProcess(1);
+		return 1;
 	}
 	
 	// Test 4: Lambda with multiple captures
@@ -53,10 +50,9 @@ int main() {
 		puts("PASS: constexpr lambda with multiple captures == 110");
 	} else {
 		puts("FAIL: constexpr lambda with multiple captures returned wrong value");
-		ExitProcess(1);
+		return 1;
 	}
 	
 	puts("All constexpr lambda tests passed!");
-	ExitProcess(0);
 	return 0;
 }
