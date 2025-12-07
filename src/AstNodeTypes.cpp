@@ -973,7 +973,9 @@ void StructTypeInfo::buildRTTI() {
     
     // Create Itanium-style mangled name
     // Itanium uses length-prefixed names: "3Foo" for class Foo
-    std::string itanium_mangled = std::to_string(name.length()) + name;
+    StringBuilder builder;
+    builder.append(name.length()).append(name);
+    std::string_view itanium_mangled = builder.commit();
     
     // Allocate permanent storage for the name string (persists for program lifetime)
     char* itanium_name = (char*)malloc(itanium_mangled.length() + 1);
@@ -981,7 +983,7 @@ void StructTypeInfo::buildRTTI() {
         // Allocation failed - Itanium RTTI won't be available
         return;
     }
-    strncpy(itanium_name, itanium_mangled.c_str(), itanium_mangled.length() + 1);
+    strncpy(itanium_name, itanium_mangled.data(), itanium_mangled.length());
     itanium_name[itanium_mangled.length()] = '\0';  // Ensure null termination
     itanium_name_storage.push_back(itanium_name);
     
