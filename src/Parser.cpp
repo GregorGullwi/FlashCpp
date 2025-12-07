@@ -5578,6 +5578,17 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 				// Return success (no AST node needed for type aliases)
 				return saved_position.success();
+			} else if (parsing_template_body_) {
+				// If we're in a template body and type parsing failed, it's likely a template-dependent type
+				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now)
+				while (peek_token().has_value() && peek_token()->value() != ";") {
+					consume_token();
+				}
+				if (consume_punctuator(";")) {
+					// Successfully skipped the template-dependent using declaration
+					return saved_position.success();
+				}
+				return ParseResult::error("Expected ';' after using declaration", *current_token_);
 			}
 
 			// Not a type alias, try parsing as namespace path for namespace alias
@@ -6179,6 +6190,13 @@ ParseResult Parser::parse_type_specifier()
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
 								type_info->type_, type_info->type_index_, type_size, type_name_token, cv_qualifier));
 						}
+					}
+					// If we're in a template body and the instantiated name contains "_unknown",
+					// this is likely a template-dependent nested type that can't be resolved yet
+					if (parsing_template_body_ && instantiated_name.find("_unknown") != std::string::npos) {
+						// Create a placeholder UserDefined type for template-dependent nested types
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::UserDefined, 0, 0, type_name_token, cv_qualifier));
 					}
 					return ParseResult::error("Unknown nested type: " + qualified_type_name, type_name_token);
 				}
