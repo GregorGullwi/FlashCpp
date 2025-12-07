@@ -10859,7 +10859,9 @@ ParseResult Parser::parse_primary_expression()
 				
 				// Not a constructor - check if this is a template function that needs instantiation
 				std::optional<ASTNode> template_func_inst;
-				if (gTemplateRegistry.lookupTemplate(idenfifier_token.value()).has_value()) {
+				auto template_lookup = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
+				FLASH_LOG(Parser, Debug, "Template lookup for '", idenfifier_token.value(), "': ", template_lookup.has_value() ? "FOUND" : "NOT FOUND");
+				if (template_lookup.has_value()) {
 					// Parse arguments to deduce template parameters
 					if (!peek_token().has_value())
 						return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
@@ -11502,9 +11504,24 @@ ParseResult Parser::parse_primary_expression()
 										}
 									} else {
 										// Have overloads - do overload resolution
+										FLASH_LOG(Parser, Debug, "Performing overload resolution for '", idenfifier_token.value(), "' with ", all_overloads.size(), " overloads and ", arg_types.size(), " argument types");
+										
+										// Log the argument types for debugging
+										for (size_t i = 0; i < arg_types.size(); ++i) {
+											FLASH_LOG(Parser, Debug, "  arg[", i, "]: type=", static_cast<int>(arg_types[i].type()), 
+											          " is_ref=", arg_types[i].is_reference(), 
+											          " is_rvalue_ref=", arg_types[i].is_rvalue_reference(),
+											          " is_lvalue_ref=", arg_types[i].is_lvalue_reference());
+										}
+										
 										auto resolution_result = resolve_overload(all_overloads, arg_types);
+										
+										FLASH_LOG(Parser, Debug, "Resolution result: has_match=", resolution_result.has_match, " is_ambiguous=", resolution_result.is_ambiguous);
 
-										if (!resolution_result.has_match) {
+										if (resolution_result.is_ambiguous) {
+											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+										} else if (!resolution_result.has_match) {
+											FLASH_LOG(Parser, Debug, "Overload resolution found NO match for '", idenfifier_token.value(), "', trying template instantiation");
 											// No matching regular function found - try template instantiation with deduction
 											auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
 											if (instantiated_func.has_value()) {
@@ -11517,8 +11534,6 @@ ParseResult Parser::parse_primary_expression()
 											} else {
 												return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 											}
-										} else if (resolution_result.is_ambiguous) {
-											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 										} else {
 											// Get the selected overload
 											const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
