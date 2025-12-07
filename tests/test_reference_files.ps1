@@ -133,8 +133,8 @@ Write-Host ""
 #
 # Unimplemented features:
 $expectedCompileFailures = @(
-  "test_cstddef.cpp",
-  "test_cstdio_puts.cpp"
+  # test_cstddef.cpp - Now compiles with minimal cstddef header
+  # test_cstdio_puts.cpp - Now compiles with minimal cstdio header
   # test_lambda_cpp20_comprehensive.cpp - Now compiles with unsupported features commented out
 )
 

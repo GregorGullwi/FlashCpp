@@ -241,6 +241,14 @@ int main(int argc, char *argv[]) {
     std::filesystem::path inputDirPath = inputFilePath.parent_path();
     context.addIncludeDir(inputDirPath.string());
 
+    // Add system include directory for standard library headers
+    // The include directory is located relative to the executable
+    std::filesystem::path execPath = std::filesystem::canonical("/proc/self/exe");
+    std::filesystem::path includeDir = execPath.parent_path().parent_path().parent_path() / "include";
+    if (std::filesystem::exists(includeDir)) {
+        context.addIncludeDir(includeDir.string());
+    }
+
     // Collect timing data silently
     double preprocessing_time = 0.0, parsing_time = 0.0, ir_conversion_time = 0.0, template_time = 0.0, codegen_time = 0.0;
 
