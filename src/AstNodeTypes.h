@@ -2121,6 +2121,30 @@ private:
 	Token sizeof_token_;
 };
 
+// alignof operator node - returns the alignment requirement of a type
+class AlignofExprNode {
+public:
+	// Constructor for alignof(type)
+	explicit AlignofExprNode(ASTNode type_node, Token alignof_token)
+		: type_or_expr_(type_node), alignof_token_(alignof_token), is_type_(true) {}
+
+	// Constructor for alignof(expression)
+	static AlignofExprNode from_expression(ASTNode expr_node, Token alignof_token) {
+		AlignofExprNode node(expr_node, alignof_token);
+		node.is_type_ = false;
+		return node;
+	}
+
+	ASTNode type_or_expr() const { return type_or_expr_; }
+	const Token& alignof_token() const { return alignof_token_; }
+	bool is_type() const { return is_type_; }
+
+private:
+	ASTNode type_or_expr_;  // Either TypeSpecifierNode or ExpressionNode
+	Token alignof_token_;
+	bool is_type_;
+};
+
 // offsetof operator node - offsetof(struct_type, member)
 class OffsetofExprNode {
 public:
@@ -2457,7 +2481,7 @@ private:
 
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
-	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
+	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode>;
 
 /*class FunctionDefinitionNode {
