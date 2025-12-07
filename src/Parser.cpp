@@ -9412,10 +9412,13 @@ ParseResult Parser::parse_primary_expression()
 	}
 	// Check for type trait intrinsics: __is_void(T), __is_integral(T), __has_unique_object_representations(T), etc.
 	// Also support GCC/Clang __builtin_ prefix variants (e.g., __builtin_is_constant_evaluated)
+	// But exclude regular builtin functions like __builtin_labs, __builtin_abs, etc.
 	else if (current_token_->type() == Token::Type::Identifier && 
 	         (current_token_->value().starts_with("__is_") || 
 	          current_token_->value().starts_with("__has_") ||
-	          current_token_->value().starts_with("__builtin_"))) {
+	          (current_token_->value().starts_with("__builtin_") && 
+	           (current_token_->value().starts_with("__builtin_is_") || 
+	            current_token_->value().starts_with("__builtin_has_"))))) {
 		// Parse type trait intrinsics
 		std::string_view trait_name = current_token_->value();
 		Token trait_token = *current_token_;
