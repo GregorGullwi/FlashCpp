@@ -5724,6 +5724,11 @@ ParseResult Parser::parse_type_specifier()
 		// Continue parsing the actual type after typename
 	}
 
+	// Skip C++11 attributes that might appear before the type
+	// e.g., [[nodiscard]] int foo();
+	skip_cpp_attributes();
+	current_token_opt = peek_token();
+
 	if (!current_token_opt.has_value() ||
 		(current_token_opt->type() != Token::Type::Keyword &&
 			current_token_opt->type() != Token::Type::Identifier)) {
