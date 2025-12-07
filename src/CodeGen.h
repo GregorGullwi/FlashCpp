@@ -7539,10 +7539,48 @@ private:
 		// For immediate lambda invocation, object_decl can be nullptr
 		// In that case, we still need object_type to be set correctly
 
-		// Verify this is a struct type
+		// Special case: Handle namespace-qualified function calls that were incorrectly parsed as member function calls
+		// This can happen when std::function() is parsed and the object is a namespace identifier
+		if (std::holds_alternative<QualifiedIdentifierNode>(object_expr)) {
+			// This is a namespace-qualified function call, not a member function call
+			// Treat it as a regular function call instead
+			const auto& qual_id = std::get<QualifiedIdentifierNode>(object_expr);
+			
+			// Get the function declaration
+			const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
+			
+			// Build a FunctionCallNode and process it
+			// Create a DeclarationNode from the FunctionDeclarationNode
+			DeclarationNode& decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
+			
+			// Copy the arguments using the visit method
+			ChunkedVector<ASTNode> args_copy;
+			memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
+				args_copy.push_back(arg);
+			});
+			
+			FunctionCallNode function_call(decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
+			
+			// Process as a regular function call
+			return generateFunctionCallIr(function_call);
+		}
+		
+		// Verify this is a struct type BEFORE checking other cases
+		// If object_type is not a struct, this might be a misparsed namespace-qualified function call
 		if (object_type.type() != Type::Struct) {
-			assert(false && "Member function call on non-struct type");
-			return { Type::Int, 32, TempVar{0} };
+			// The object is not a struct - this might be a namespace identifier or other non-struct type
+			// Treat this as a regular function call instead of a member function call
+			const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
+			DeclarationNode& decl_node = const_cast<DeclarationNode&>(func_decl.decl_node());
+			
+			// Copy the arguments using the visit method
+			ChunkedVector<ASTNode> args_copy;
+			memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
+				args_copy.push_back(arg);
+			});
+			
+			FunctionCallNode function_call(decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
+			return generateFunctionCallIr(function_call);
 		}
 
 		// Get the function declaration directly from the node (no need to look it up)
