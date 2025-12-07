@@ -287,6 +287,37 @@ public:
 	}
 
 	/**
+	 * @brief Add typeinfo symbol for RTTI (Itanium C++ ABI)
+	 * @param typeinfo_symbol Symbol name (e.g., "_ZTI4Base" for typeinfo for Base)
+	 * @param typeinfo_data Pointer to the typeinfo structure
+	 * @param typeinfo_size Size of the typeinfo structure in bytes
+	 */
+	void add_typeinfo(std::string_view typeinfo_symbol, const void* typeinfo_data, size_t typeinfo_size) {
+		if (g_enable_debug_output) {
+			std::cerr << "Adding typeinfo '" << typeinfo_symbol << "' of size " << typeinfo_size << std::endl;
+		}
+		
+		// Get .rodata section (typeinfo goes in read-only data)
+		auto* rodata = getSectionByName(".rodata");
+		if (!rodata) {
+			throw std::runtime_error(".rodata section not found");
+		}
+		
+		uint32_t typeinfo_offset = rodata->get_size();
+		
+		// Add typeinfo data to .rodata
+		rodata->append_data(reinterpret_cast<const char*>(typeinfo_data), typeinfo_size);
+		
+		// Add typeinfo symbol
+		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
+		                  rodata->get_index(), typeinfo_offset, typeinfo_size);
+		
+		if (g_enable_debug_output) {
+			std::cerr << "Typeinfo '" << typeinfo_symbol << "' added at offset " << typeinfo_offset << std::endl;
+		}
+	}
+
+	/**
 	 * @brief Add vtable for C++ class
 	 * Itanium C++ ABI vtable format: array of function pointers
 	 */
@@ -294,7 +325,8 @@ public:
 	               std::span<const std::string_view> function_symbols,
 	               std::string_view class_name,
 	               std::span<const std::string_view> base_class_names,
-	               std::span<const BaseClassDescriptorInfo> base_class_info) {
+	               std::span<const BaseClassDescriptorInfo> base_class_info,
+	               const RTTITypeInfo* rtti_info = nullptr) {
 		
 		if (g_enable_debug_output) {
 			std::cerr << "Adding vtable '" << vtable_symbol << "' for class " << class_name
@@ -311,8 +343,29 @@ public:
 		
 		// Itanium C++ ABI vtable structure:
 		// - Offset to top (8 bytes) - always 0 for simple cases
-		// - RTTI pointer (8 bytes) - null for now (RTTI deferred to future milestone)
+		// - RTTI pointer (8 bytes) - pointer to typeinfo structure
 		// - Function pointers (8 bytes each)
+		
+		// First, emit typeinfo if available
+		std::string typeinfo_symbol;
+		if (rtti_info && rtti_info->itanium_type_info) {
+			// Generate typeinfo symbol name: _ZTI + mangled class name
+			// For now, use the class name length-prefixed
+			typeinfo_symbol = "_ZTI" + std::to_string(class_name.length()) + std::string(class_name);
+			
+			// Determine which typeinfo structure to emit based on kind
+			if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::ClassTypeInfo) {
+				add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, sizeof(ItaniumClassTypeInfo));
+			} else if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::SIClassTypeInfo) {
+				add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, sizeof(ItaniumSIClassTypeInfo));
+			} else if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::VMIClassTypeInfo) {
+				// Variable size - need to calculate
+				const ItaniumVMIClassTypeInfo* vmi = static_cast<const ItaniumVMIClassTypeInfo*>(rtti_info->itanium_type_info);
+				size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo) + 
+				                 (vmi->base_count - 1) * sizeof(ItaniumBaseClassTypeInfo);
+				add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, vmi_size);
+			}
+		}
 		
 		std::vector<char> vtable_data;
 		
@@ -344,6 +397,18 @@ public:
 		// Add relocations for each function pointer
 		auto* rela_rodata = getOrCreateRelocationSection(".rodata");
 		auto* rela_accessor = getRelocationAccessor(".rela.rodata");
+		
+		// Add relocation for RTTI pointer if typeinfo was emitted
+		if (!typeinfo_symbol.empty()) {
+			auto typeinfo_symbol_idx = getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+			uint32_t rtti_reloc_offset = vtable_offset + 8;  // Offset to top is first 8 bytes
+			rela_accessor->add_entry(rtti_reloc_offset, typeinfo_symbol_idx, ELFIO::R_X86_64_64, 0);
+			
+			if (g_enable_debug_output) {
+				std::cerr << "  Added relocation for typeinfo " << typeinfo_symbol 
+				          << " at offset " << rtti_reloc_offset << std::endl;
+			}
+		}
 		
 		for (size_t i = 0; i < function_symbols.size(); ++i) {
 			// Get or create symbol for the function

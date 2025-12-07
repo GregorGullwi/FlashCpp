@@ -6835,6 +6835,9 @@ private:
 							}
 						}
 						
+						// Add RTTI information for this class
+						vtable_info.rtti_info = struct_info->rtti_info;
+						
 						vtables_.push_back(std::move(vtable_info));
 					}
 					
@@ -11166,7 +11169,7 @@ private:
 			}
 			
 			writer.add_vtable(vtable.vtable_symbol, func_symbols_sv, vtable.class_name, 
-			                  base_class_names_sv, vtable.base_class_info);
+			                  base_class_names_sv, vtable.base_class_info, vtable.rtti_info);
 		}
 
 		// Now add pending global variable relocations (after symbols are created)
@@ -11536,11 +11539,12 @@ private:
 
 	// VTable tracking
 	struct VTableInfo {
-		std::string vtable_symbol;  // e.g., "??_7Base@@6B@"
+		std::string vtable_symbol;  // e.g., "??_7Base@@6B@" or "_ZTV4Base"
 		std::string class_name;
 		std::vector<std::string> function_symbols;  // Mangled function names in vtable order
 		std::vector<std::string> base_class_names;  // Base class names for RTTI (legacy)
 		std::vector<ObjectFileWriter::BaseClassDescriptorInfo> base_class_info; // Detailed base class info for RTTI
+		const RTTITypeInfo* rtti_info;  // Pointer to RTTI information for this class (nullptr if not polymorphic)
 	};
 	std::vector<VTableInfo> vtables_;
 
