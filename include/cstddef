@@ -1,10 +1,10 @@
-// Minimal cstddef header for FlashCpp
-// Provides basic type definitions from the C++ standard library
+// Minimal cstddef header stub for FlashCpp
+// Provides only the basic type definitions needed for compilation
+// This is a simplified stub - the real libstdc++/libc++ headers are too complex for FlashCpp to parse
 
 #ifndef _FLASHCPP_CSTDDEF
 #define _FLASHCPP_CSTDDEF
 
-// Define types directly in std namespace
 namespace std {
     typedef unsigned long size_t;
     typedef long ptrdiff_t;

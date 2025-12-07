@@ -5189,26 +5189,28 @@ ParseResult Parser::parse_typedef_declaration()
 	}
 
 	// Build the qualified name for the typedef if we're in a namespace
-	std::string qualified_alias_name;
+	std::string_view qualified_alias_name;
 	auto namespace_path = gSymbolTable.build_current_namespace_path();
 	if (!namespace_path.empty()) {
-		// Build qualified name: ns1::ns2::alias_name
+		// Build qualified name: ns1::ns2::alias_name using StringBuilder
+		StringBuilder sb;
 		for (const auto& ns : namespace_path) {
 #if USE_OLD_STRING_APPROACH
-			qualified_alias_name += ns + "::";
+			sb.append(ns).append("::");
 #else
-			qualified_alias_name += std::string(ns.view()) + "::";
+			sb.append(ns.view()).append("::");
 #endif
 		}
-		qualified_alias_name += alias_name;
+		sb.append(alias_name);
+		qualified_alias_name = sb.commit();
 	} else {
-		qualified_alias_name = std::string(alias_name);
+		qualified_alias_name = alias_name;
 	}
 
 	// Register the typedef alias in the type system
 	// The typedef should resolve to the underlying type, not be a new UserDefined type
 	// We create a TypeInfo entry that mirrors the underlying type
-	auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, type_spec.type(), gTypeInfo.size());
+	auto& alias_type_info = gTypeInfo.emplace_back(std::string(qualified_alias_name), type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
 	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
