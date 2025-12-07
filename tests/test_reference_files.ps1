@@ -264,16 +264,21 @@ foreach ($file in $referenceFiles) {
             Write-Host "  [COMPILE FAILED]" -ForegroundColor Red
             $compileFailed += $file.Name
             # Show compile output to help diagnose the issue
-            # Filter out the version banner and empty lines, show last 10 relevant lines
-            $outputLines = $compileOutput -split "`n" | Where-Object { 
+            # Filter out the version banner and non-error lines, prioritize showing errors
+            $allLines = $compileOutput -split "`n" | Where-Object { 
                 $_.Trim() -ne "" -and 
-                $_ -notmatch "===== FLASHCPP VERSION" -and
-                $_ -notmatch "^Compiling:" -and
-                $_ -notmatch "^Processing:"
-            } | Select-Object -Last 10
-            if ($outputLines) {
+                $_ -notmatch "===== FLASHCPP VERSION"
+            }
+            # Try to show error lines first, otherwise show last 10 lines
+            $errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
+            if ($errorLines) {
+                Write-Host "    Error output:" -ForegroundColor Yellow
+                foreach ($line in ($errorLines | Select-Object -Last 10)) {
+                    Write-Host "    $($line.Trim())" -ForegroundColor Yellow
+                }
+            } elseif ($allLines.Count -gt 0) {
                 Write-Host "    Last 10 lines of output:" -ForegroundColor Yellow
-                foreach ($line in $outputLines) {
+                foreach ($line in ($allLines | Select-Object -Last 10)) {
                     Write-Host "    $($line.Trim())" -ForegroundColor Yellow
                 }
             } else {
