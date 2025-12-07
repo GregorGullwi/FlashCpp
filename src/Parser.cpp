@@ -8647,6 +8647,79 @@ ParseResult Parser::parse_unary_expression()
 		return ParseResult::success(cast_expr);
 	}
 
+	// Check for C-style cast: (Type)expression
+	// This must be checked before parse_primary_expression() which handles parenthesized expressions
+	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "(") {
+		// Save position to potentially backtrack if this isn't a cast
+		SaveHandle saved_pos = save_token_position();
+		consume_token(); // consume '('
+
+		// Try to parse as type
+		ParseResult type_result = parse_type_specifier();
+
+		if (!type_result.is_error() && type_result.node().has_value()) {
+			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			
+			// Parse pointer declarators: * (potentially with const/volatile)
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && 
+			       peek_token()->value() == "*") {
+				consume_token(); // consume '*'
+				
+				// Check for cv-qualifiers after the pointer
+				CVQualifier ptr_cv = CVQualifier::None;
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					std::string_view kw = peek_token()->value();
+					if (kw == "const") {
+						ptr_cv = static_cast<CVQualifier>(
+							static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+						consume_token();
+					} else if (kw == "volatile") {
+						ptr_cv = static_cast<CVQualifier>(
+							static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+						consume_token();
+					} else {
+						break;
+					}
+				}
+				
+				type_spec.add_pointer_level(ptr_cv);
+			}
+			
+			// Parse reference declarators: & or &&
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+				std::string_view op_value = peek_token()->value();
+				if (op_value == "&&" || op_value == "&") {
+					bool is_rvalue = (op_value == "&&");
+					consume_token();
+					type_spec.set_reference(is_rvalue);
+				}
+			}
+
+			// Check if followed by ')'
+			if (consume_punctuator(")")) {
+				// This is a C-style cast: (Type)expression
+				Token cast_token = Token(Token::Type::Punctuator, "cast",
+										current_token_->line(), current_token_->column(),
+										current_token_->file_index());
+
+				// Parse the expression to cast
+				ParseResult expr_result = parse_unary_expression();
+				if (expr_result.is_error() || !expr_result.node().has_value()) {
+					return ParseResult::error("Expected expression after C-style cast", *current_token_);
+				}
+
+				discard_saved_token(saved_pos);
+				// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
+				auto cast_expr = emplace_node<ExpressionNode>(
+					StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+				return ParseResult::success(cast_expr);
+			}
+		}
+		
+		// Not a cast, restore position and continue to parse_primary_expression
+		restore_token_position(saved_pos);
+	}
+
 	// Check for 'new' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "new") {
 		consume_token(); // consume 'new'
@@ -11670,100 +11743,22 @@ ParseResult Parser::parse_primary_expression()
 			}
 		}
 		
-		// If not a fold expression, parse as regular parenthesized expression or cast
+		// If not a fold expression, parse as parenthesized expression
 		if (!is_fold) {
 			restore_token_position(fold_check_pos);
 		
-			// Try to parse as type first
-			SaveHandle saved_pos = save_token_position();
-			ParseResult type_result = parse_type_specifier();
-
-			if (!type_result.is_error() && type_result.node().has_value()) {
-				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				
-				// Parse pointer declarators: * (potentially with const/volatile)
-				// This handles C-style casts like (int*)value, (const char*)str, etc.
-				while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*") {
-					consume_token(); // consume '*'
-					
-					// Check for cv-qualifiers after the pointer
-					CVQualifier ptr_cv = CVQualifier::None;
-					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-						std::string_view kw = peek_token()->value();
-						if (kw == "const") {
-							ptr_cv = static_cast<CVQualifier>(
-								static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-							consume_token();
-						} else if (kw == "volatile") {
-							ptr_cv = static_cast<CVQualifier>(
-								static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-							consume_token();
-						} else {
-							break;
-						}
-					}
-					
-					type_spec.add_pointer_level(ptr_cv);
-				}
-				
-				// Parse reference declarators: & or &&
-				// This handles C-style casts like (Widget&&)value
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-					std::string_view op_value = peek_token()->value();
-					if (op_value == "&&" || op_value == "&") {
-						bool is_rvalue = (op_value == "&&");
-						consume_token();
-						type_spec.set_reference(is_rvalue);
-					}
-				}
-
-				// Successfully parsed as type, check if followed by ')'
-				if (consume_punctuator(")")) {
-					// This is a C-style cast: (Type)expression
-					// Save the cast token for error reporting
-					Token cast_token = Token(Token::Type::Punctuator, "cast",
-											current_token_->line(), current_token_->column(),
-											current_token_->file_index());
-
-					// Parse the expression to cast
-					ParseResult expr_result = parse_unary_expression();
-					if (expr_result.is_error() || !expr_result.node().has_value()) {
-						return ParseResult::error("Expected expression after C-style cast", *current_token_);
-					}
-
-					discard_saved_token(saved_pos);
-					// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
-					auto cast_expr = emplace_node<ExpressionNode>(
-						StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
-					result = cast_expr;
-				} else {
-					// Not a cast, restore and parse as parenthesized expression
-					restore_token_position(saved_pos);
-					// Allow comma operator in parenthesized expressions
-					ParseResult paren_result = parse_expression(MIN_PRECEDENCE);
-					if (paren_result.is_error()) {
-						return paren_result;
-					}
-					if (!consume_punctuator(")")) {
-						return ParseResult::error("Expected ')' after parenthesized expression",
-							*current_token_);
-					}
-					result = paren_result.node();
-				}
-			} else {
-				// Not a type, parse as parenthesized expression
-				restore_token_position(saved_pos);
-				// Allow comma operator in parenthesized expressions
-				ParseResult paren_result = parse_expression(MIN_PRECEDENCE);
-				if (paren_result.is_error()) {
-					return paren_result;
-				}
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after parenthesized expression",
-						*current_token_);
-				}
-				result = paren_result.node();
+			// Parse as parenthesized expression
+			// Note: C-style casts are now handled in parse_unary_expression()
+			// Allow comma operator in parenthesized expressions
+			ParseResult paren_result = parse_expression(MIN_PRECEDENCE);
+			if (paren_result.is_error()) {
+				return paren_result;
 			}
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after parenthesized expression",
+					*current_token_);
+			}
+			result = paren_result.node();
 		}  // End of fold expression check
 	}
 	else {
