@@ -5769,6 +5769,10 @@ ParseResult Parser::parse_type_specifier()
 				{"void", {Type::Void, 0}},
 				{"bool", {Type::Bool, 8}},
 				{"char", {Type::Char, 8}},
+				{"wchar_t", {Type::Int, 32}},  // wchar_t is typically 32-bit on Linux
+				{"char8_t", {Type::UnsignedChar, 8}},  // C++20 UTF-8 character type
+				{"char16_t", {Type::UnsignedShort, 16}},  // C++11 UTF-16 character type
+				{"char32_t", {Type::UnsignedInt, 32}},  // C++11 UTF-32 character type
 				{"short", {Type::Short, 16}},
 				{"int", {Type::Int, 32}},
 				{"long", {Type::Long, sizeof(long) * 8}},
@@ -7450,6 +7454,10 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"float", &Parser::parse_variable_declaration},
 			{"double", &Parser::parse_variable_declaration},
 			{"char", &Parser::parse_variable_declaration},
+			{"wchar_t", &Parser::parse_variable_declaration},
+			{"char8_t", &Parser::parse_variable_declaration},
+			{"char16_t", &Parser::parse_variable_declaration},
+			{"char32_t", &Parser::parse_variable_declaration},
 			{"bool", &Parser::parse_variable_declaration},
 			{"void", &Parser::parse_variable_declaration},
 			{"short", &Parser::parse_variable_declaration},

@@ -241,26 +241,19 @@ int main(int argc, char *argv[]) {
     std::filesystem::path inputDirPath = inputFilePath.parent_path();
     context.addIncludeDir(inputDirPath.string());
 
-    // Add FlashCpp's minimal standard library header stubs directory
-    // These are simplified stubs since real libstdc++/libc++ headers are too complex to parse
-    #if defined(_WIN32) || defined(_WIN64)
-        std::filesystem::path execPath = std::filesystem::canonical(std::filesystem::path(__FILE__).parent_path());
-        std::filesystem::path includeDir = execPath.parent_path() / "include";
-    #else
-        std::filesystem::path execPath = std::filesystem::canonical("/proc/self/exe");
-        std::filesystem::path includeDir = execPath.parent_path().parent_path().parent_path() / "include";
-    #endif
-    if (std::filesystem::exists(includeDir)) {
-        context.addIncludeDir(includeDir.string());
-    }
-
-    // Optionally add system include directories as fallback for headers not in our stubs
-    // Note: Most system headers are too complex for FlashCpp to parse
+    // Add system include directories for standard library headers
     #if !defined(_WIN32) && !defined(_WIN64)
         const char* system_include_dirs[] = {
             "/usr/include/c++/14",
+            "/usr/include/x86_64-linux-gnu/c++/14",
             "/usr/include/c++/13",
+            "/usr/include/x86_64-linux-gnu/c++/13",
             "/usr/include/c++/12",
+            "/usr/include/x86_64-linux-gnu/c++/12",
+            "/usr/lib/llvm-18/lib/clang/18/include",  // Clang builtin headers (stddef.h, etc.)
+            "/usr/lib/llvm-17/lib/clang/17/include",
+            "/usr/lib/llvm-16/lib/clang/16/include",
+            "/usr/include/x86_64-linux-gnu",  // For bits/wordsize.h and other arch-specific headers
             "/usr/include",
         };
         for (const char* dir : system_include_dirs) {
