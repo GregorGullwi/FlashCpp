@@ -1,5 +1,7 @@
 // Comprehensive test for unary operators: sizeof, alignof, typeid
 // Tests that these operators work correctly in parse_unary_expression
+// NOTE: This test returns 0 on success, non-zero on failure
+// (Cannot use printf due to calling convention issues on Linux)
 
 struct TestStruct {
     int a;

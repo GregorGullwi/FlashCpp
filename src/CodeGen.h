@@ -9041,8 +9041,8 @@ private:
 				return {};
 			}
 
-			// Special handling for array identifiers: sizeof(arr) where arr is int[10]
-			// This path handles cases where the parser correctly identifies arr as an expression
+			// Special handling for identifiers: sizeof(x) where x is a variable
+			// This path handles cases where the parser correctly identifies x as an expression
 			const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
@@ -9056,10 +9056,32 @@ private:
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 					if (decl) {
+						// Check if it's an array
 						auto array_size = calculateArraySize(*decl);
 						if (array_size.has_value()) {
 							// Return sizeof result for array
 							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
+						}
+						
+						// For regular variables, get the type size from the declaration
+						const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
+						if (var_type.type() == Type::Struct) {
+							size_t type_index = var_type.type_index();
+							if (type_index < gTypeInfo.size()) {
+								const TypeInfo& type_info = gTypeInfo[type_index];
+								const StructTypeInfo* struct_info = type_info.getStructInfo();
+								if (struct_info) {
+									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(struct_info->total_size) };
+								}
+							}
+						} else {
+							// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
+							int size_bits = var_type.size_in_bits();
+							if (size_bits == 0) {
+								size_bits = get_type_size_bits(var_type.type());
+							}
+							size_in_bytes = size_bits / 8;
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 						}
 					}
 				}
@@ -9137,13 +9159,56 @@ private:
 			}
 		}
 		else {
-			// alignof(expression) - evaluate the type of the expression
+			// alignof(expression) - determine the alignment of the expression's type
 			const ASTNode& expr_node = alignofNode.type_or_expr();
 			if (!expr_node.is<ExpressionNode>()) {
 				assert(false && "alignof expression argument must be ExpressionNode");
 				return {};
 			}
 
+			// Special handling for identifiers: alignof(x) where x is a variable
+			const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr)) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+				
+				// Look up the identifier in the symbol table
+				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(id_node.name());
+				}
+				
+				if (symbol.has_value()) {
+					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+					if (decl) {
+						// Get the type alignment from the declaration
+						const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
+						if (var_type.type() == Type::Struct) {
+							size_t type_index = var_type.type_index();
+							if (type_index < gTypeInfo.size()) {
+								const TypeInfo& type_info = gTypeInfo[type_index];
+								const StructTypeInfo* struct_info = type_info.getStructInfo();
+								if (struct_info) {
+									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(struct_info->alignment) };
+								}
+							}
+						} else {
+							// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
+							int size_bits = var_type.size_in_bits();
+							if (size_bits == 0) {
+								size_bits = get_type_size_bits(var_type.type());
+							}
+							size_t size_in_bytes = size_bits / 8;
+							alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
+							if (var_type.type() == Type::LongDouble) {
+								alignment = 16;
+							}
+							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(alignment) };
+						}
+					}
+				}
+			}
+
+			// Fall back to default expression handling
 			// Generate IR for the expression to get its type
 			auto expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
 			if (expr_operands.empty()) {
