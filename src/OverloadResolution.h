@@ -140,7 +140,9 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 						return TypeConversionResult::exact_match();
 					} else {
 						// Non-const lvalue ref can only bind to lvalues
-						// Non-reference values are rvalues, so this doesn't match
+						// In this context, 'from' is not marked as a reference, indicating
+						// it represents the value category of a non-lvalue expression (rvalue)
+						// Note: The caller must set is_lvalue_reference on 'from' for actual lvalue expressions
 						return TypeConversionResult::no_match();
 					}
 				}
