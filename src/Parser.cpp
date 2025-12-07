@@ -5188,10 +5188,27 @@ ParseResult Parser::parse_typedef_declaration()
 		return ParseResult::error("Expected ';' after typedef declaration", *current_token_);
 	}
 
+	// Build the qualified name for the typedef if we're in a namespace
+	std::string qualified_alias_name;
+	auto namespace_path = gSymbolTable.build_current_namespace_path();
+	if (!namespace_path.empty()) {
+		// Build qualified name: ns1::ns2::alias_name
+		for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+			qualified_alias_name += ns + "::";
+#else
+			qualified_alias_name += std::string(ns.view()) + "::";
+#endif
+		}
+		qualified_alias_name += alias_name;
+	} else {
+		qualified_alias_name = std::string(alias_name);
+	}
+
 	// Register the typedef alias in the type system
 	// The typedef should resolve to the underlying type, not be a new UserDefined type
 	// We create a TypeInfo entry that mirrors the underlying type
-	auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+	auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
 	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
@@ -7484,6 +7501,23 @@ ParseResult Parser::parse_statement_or_declaration()
 
 		// Check if this identifier is a registered struct/class/enum/typedef type
 		std::string type_name(current_token.value());
+		
+		// Check for qualified name (e.g., std::size_t, ns::MyClass)
+		// Need to look ahead to see if there's a :: following
+		saved_pos = save_token_position();
+		consume_token(); // consume first identifier
+		while (peek_token().has_value() && peek_token()->value() == "::") {
+			consume_token(); // consume '::'
+			auto next = peek_token();
+			if (next.has_value() && next->type() == Token::Type::Identifier) {
+				type_name += "::" + std::string(next->value());
+				consume_token(); // consume next identifier
+			} else {
+				break;
+			}
+		}
+		restore_token_position(saved_pos);
+		
 		auto type_it = gTypesByName.find(type_name);
 		if (type_it != gTypesByName.end()) {
 			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
