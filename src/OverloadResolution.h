@@ -90,8 +90,42 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 	return TypeConversionResult::no_match();
 }
 
-// Check if one type can be implicitly converted to another (considering pointers)
+// Check if one type can be implicitly converted to another (considering pointers and references)
 inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	// Check reference compatibility
+	if (from.is_reference() || to.is_reference()) {
+		// If 'to' is a reference, 'from' must be compatible
+		if (to.is_reference()) {
+			// Check if both are references
+			if (from.is_reference()) {
+				// Both are references - check reference kind
+				bool from_is_rvalue = from.is_rvalue_reference();
+				bool to_is_rvalue = to.is_rvalue_reference();
+				
+				// Exact match: both lvalue ref or both rvalue ref, same base type
+				if (from_is_rvalue == to_is_rvalue && from.type() == to.type()) {
+					return TypeConversionResult::exact_match();
+				}
+				
+				// Lvalue ref can't bind to rvalue ref parameter
+				// Rvalue ref can't bind to lvalue ref parameter  
+				return TypeConversionResult::no_match();
+			} else {
+				// 'from' is not a reference, 'to' is a reference
+				// Can't bind non-reference to reference parameter
+				// (This would require creating a temporary, which isn't allowed for lvalue refs)
+				return TypeConversionResult::no_match();
+			}
+		} else {
+			// 'from' is a reference, 'to' is not
+			// References can be converted to their base type (automatic dereferencing)
+			if (from.type() == to.type()) {
+				return TypeConversionResult::exact_match();
+			}
+			return can_convert_type(from.type(), to.type());
+		}
+	}
+	
 	// Check pointer compatibility
 	if (from.is_pointer() || to.is_pointer()) {
 		// Both must be pointers for conversion
@@ -115,7 +149,7 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		return TypeConversionResult::no_match();
 	}
 
-	// Non-pointer types: use basic type conversion
+	// Non-pointer, non-reference types: use basic type conversion
 	return can_convert_type(from.type(), to.type());
 }
 
