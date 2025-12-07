@@ -84,8 +84,8 @@ struct Scope {
 
 	// Using declarations: specific symbols imported from namespaces
 	// Maps: local_name -> (namespace_path, original_name)
-	// Use std::string keys instead of string_view to avoid dangling references (UB)
-	std::unordered_map<std::string, std::pair<NamespacePath, std::string_view>> using_declarations;
+	// Use std::string for both key and original_name to avoid dangling references (UB)
+	std::unordered_map<std::string, std::pair<NamespacePath, std::string>> using_declarations;
 
 	// Namespace aliases: Maps alias -> target namespace path
 	// Use std::string keys instead of string_view to avoid dangling references (UB)
@@ -337,7 +337,7 @@ public:
 					if (ns_it != namespace_symbols_.end()) {
 						for (const auto& [key, value_vec] : ns_it->second) {
 #if USE_OLD_STRING_APPROACH
-							if (key == std::string(original_name)) {
+							if (key == original_name) {
 #else
 							if (key.view() == original_name) {
 #endif
@@ -559,7 +559,8 @@ public:
 
 		Scope& current_scope = symbol_table_stack_.back();
 		std::string key(local_name);  // Convert to string for map key
-		current_scope.using_declarations[key] = std::make_pair(namespace_path, original_name);
+		std::string orig_name(original_name);  // Convert to string to avoid dangling references
+		current_scope.using_declarations[key] = std::make_pair(namespace_path, orig_name);
 	}
 
 	// Add a namespace alias to the current scope
