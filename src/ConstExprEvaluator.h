@@ -176,6 +176,11 @@ public:
 			return evaluate_sizeof(std::get<SizeofExprNode>(expr), context);
 		}
 
+		// For AlignofExprNode
+		if (std::holds_alternative<AlignofExprNode>(expr)) {
+			return evaluate_alignof(std::get<AlignofExprNode>(expr), context);
+		}
+
 		// For ConstructorCallNode (type conversions like float(3.14), int(100))
 		if (std::holds_alternative<ConstructorCallNode>(expr)) {
 			return evaluate_constructor_call(std::get<ConstructorCallNode>(expr), context);
@@ -284,13 +289,87 @@ private:
 				const auto& type_spec = type_node.as<TypeSpecifierNode>();
 				// size_in_bits() returns bits, convert to bytes
 				unsigned long long size_in_bytes = type_spec.size_in_bits() / 8;
+				// Fallback if size not set: calculate from type
+				if (size_in_bytes == 0) {
+					size_in_bytes = get_type_size_bits(type_spec.type()) / 8;
+				}
 				return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 			}
 		}
+		else {
+			// sizeof(expression) - determine the size from the expression's type
+			const auto& expr_node = sizeof_expr.type_or_expr();
+			if (expr_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+				
+				// Handle identifier - get type from its declaration
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					// For identifiers, we need the Parser to look up the type
+					// Since we don't have access to the Parser here, return error for now
+					// This will cause the codegen path to be used instead
+					return EvalResult::error("sizeof with identifier requires type lookup");
+				}
+				
+				// For numeric literals, we can determine the size from the literal itself
+				if (std::holds_alternative<NumericLiteralNode>(expr)) {
+					const auto& lit = std::get<NumericLiteralNode>(expr);
+					unsigned long long size_in_bytes = lit.sizeInBits() / 8;
+					return EvalResult::from_int(static_cast<long long>(size_in_bytes));
+				}
+				
+				// For other expressions, we would need type inference
+				// Return error to fall back to codegen
+				return EvalResult::error("sizeof with complex expression not yet supported in constexpr");
+			}
+		}
 		
-		// For sizeof(expression), we would need to evaluate the expression type
-		// For now, just return an error
-		return EvalResult::error("sizeof with expression not yet supported");
+		return EvalResult::error("Invalid sizeof operand");
+	}
+
+	static EvalResult evaluate_alignof(const AlignofExprNode& alignof_expr, EvaluationContext& context) {
+		// alignof is always a constant expression
+		// Get the actual alignment from the type
+		if (alignof_expr.is_type()) {
+			// alignof(type) - get alignment from TypeSpecifierNode
+			const auto& type_node = alignof_expr.type_or_expr();
+			if (type_node.is<TypeSpecifierNode>()) {
+				const auto& type_spec = type_node.as<TypeSpecifierNode>();
+				
+				// For struct types, look up alignment from type info
+				if (type_spec.type() == Type::Struct) {
+					size_t type_index = type_spec.type_index();
+					if (type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (struct_info) {
+							return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
+						}
+					}
+					return EvalResult::error("Struct alignment not available");
+				}
+				
+				// For primitive types, alignment is typically the same as size (up to 8 bytes)
+				int size_bits = type_spec.size_in_bits();
+				if (size_bits == 0) {
+					size_bits = get_type_size_bits(type_spec.type());
+				}
+				size_t size_in_bytes = size_bits / 8;
+				size_t alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
+				
+				// Special case for long double
+				if (type_spec.type() == Type::LongDouble) {
+					alignment = 16;
+				}
+				
+				return EvalResult::from_int(static_cast<long long>(alignment));
+			}
+		}
+		else {
+			// alignof(expression) - requires type lookup, fall back to codegen
+			return EvalResult::error("alignof with expression requires type lookup");
+		}
+		
+		return EvalResult::error("Invalid alignof operand");
 	}
 
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context) {

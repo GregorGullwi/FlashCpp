@@ -4427,6 +4427,10 @@ private:
 			// Regular local variable
 			// For pointers, return 64 bits (pointer size)
 			int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+			// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
+			if (size_bits == 0 && type_node.pointer_depth() == 0) {
+				size_bits = get_type_size_bits(type_node.type());
+			}
 			// Include type_index for struct types (needed for proper name mangling)
 			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
 			return { type_node.type(), size_bits, identifierNode.name(), static_cast<unsigned long long>(type_index) };
@@ -4470,6 +4474,10 @@ private:
 				// This is a local variable - return variable name
 				// For pointers, return 64 bits (pointer size)
 				int size_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+				// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
+				if (size_bits == 0 && type_node.pointer_depth() == 0) {
+					size_bits = get_type_size_bits(type_node.type());
+				}
 				// Include type_index for struct types
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
 				return { type_node.type(), size_bits, identifierNode.name(), static_cast<unsigned long long>(type_index) };
