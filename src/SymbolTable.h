@@ -129,12 +129,12 @@ public:
 
 	bool insert(std::string_view identifier, ASTNode node) {
 		auto& current_scope = symbol_table_stack_.back();
-		// Intern the string_view to ensure it remains valid
-		std::string_view key = intern_string(identifier);
-		auto it = current_scope.symbols.find(key);
+		// First, try to find the identifier without interning
+		auto it = current_scope.symbols.find(identifier);
 
-		// If this is a new identifier, create a new vector
+		// If this is a new identifier, intern it and create a new vector
 		if (it == current_scope.symbols.end()) {
+			std::string_view key = intern_string(identifier);
 			current_scope.symbols[key] = std::vector<ASTNode>{node};
 		} else {
 			// Identifier exists - check if we can add this as an overload
@@ -256,11 +256,12 @@ public:
 		}
 
 		auto& global_scope = symbol_table_stack_[0];  // Global scope is always at index 0
-		std::string_view key = intern_string(identifier);  // Intern the string
-		auto it = global_scope.symbols.find(key);
+		// First, try to find the identifier without interning
+		auto it = global_scope.symbols.find(identifier);
 
-		// If this is a new identifier, create a new vector
+		// If this is a new identifier, intern it and create a new vector
 		if (it == global_scope.symbols.end()) {
+			std::string_view key = intern_string(identifier);
 			global_scope.symbols[key] = std::vector<ASTNode>{node};
 			return true;
 		}
@@ -554,9 +555,18 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		std::string_view key = intern_string(local_name);  // Intern the key
-		std::string_view orig_name = intern_string(original_name);  // Intern the value
-		current_scope.using_declarations[key] = std::make_pair(namespace_path, orig_name);
+		// Check if key already exists
+		auto it = current_scope.using_declarations.find(local_name);
+		if (it != current_scope.using_declarations.end()) {
+			// Key exists, reuse it
+			std::string_view orig_name = intern_string(original_name);  // Still need to intern the value
+			it->second = std::make_pair(namespace_path, orig_name);
+		} else {
+			// New key, intern both key and value
+			std::string_view key = intern_string(local_name);
+			std::string_view orig_name = intern_string(original_name);
+			current_scope.using_declarations[key] = std::make_pair(namespace_path, orig_name);
+		}
 	}
 
 	// Add a namespace alias to the current scope
@@ -564,8 +574,16 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		std::string_view key = intern_string(alias);  // Intern the key
-		current_scope.namespace_aliases[key] = target_namespace;
+		// Check if key already exists
+		auto it = current_scope.namespace_aliases.find(alias);
+		if (it != current_scope.namespace_aliases.end()) {
+			// Key exists, reuse it and just update the value
+			it->second = target_namespace;
+		} else {
+			// New key, intern it
+			std::string_view key = intern_string(alias);
+			current_scope.namespace_aliases[key] = target_namespace;
+		}
 	}
 
 	// Resolve a namespace alias (returns the target namespace path if alias exists)
