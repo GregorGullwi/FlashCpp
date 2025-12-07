@@ -80,6 +80,13 @@ enum class CVQualifier : uint8_t {
 	ConstVolatile = Const | Volatile
 };
 
+// Reference qualifiers - stored as a bitmask for efficient comparison
+enum class ReferenceQualifier : uint8_t {
+	None = 0,
+	LValueReference = 1 << 0,  // &
+	RValueReference = 1 << 1,  // &&
+};
+
 enum class Type : int_fast16_t {
 	Void,
 	Bool,
@@ -943,20 +950,18 @@ public:
 	void copy_pointer_levels_from(const TypeSpecifierNode& other) { pointer_levels_ = other.pointer_levels_; }
 
 	// Reference support
-	bool is_reference() const { return is_reference_; }
-	bool is_rvalue_reference() const { return is_rvalue_reference_; }
-	bool is_lvalue_reference() const { return is_reference_ && !is_rvalue_reference_; }
+	bool is_reference() const { return reference_qualifier_ != ReferenceQualifier::None; }
+	bool is_rvalue_reference() const { return (static_cast<uint8_t>(reference_qualifier_) & static_cast<uint8_t>(ReferenceQualifier::RValueReference)) != 0; }
+	bool is_lvalue_reference() const { return (static_cast<uint8_t>(reference_qualifier_) & static_cast<uint8_t>(ReferenceQualifier::LValueReference)) != 0; }
+	ReferenceQualifier reference_qualifier() const { return reference_qualifier_; }
 	void set_reference(bool is_rvalue = false) {
-		is_reference_ = true;
-		is_rvalue_reference_ = is_rvalue;
+		reference_qualifier_ = is_rvalue ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
 	}
 	void set_lvalue_reference(bool is_lvalue = true) {
 		if (is_lvalue) {
-			is_reference_ = true;
-			is_rvalue_reference_ = false;
+			reference_qualifier_ = ReferenceQualifier::LValueReference;
 		} else {
-			is_reference_ = false;
-			is_rvalue_reference_ = false;
+			reference_qualifier_ = ReferenceQualifier::None;
 		}
 	}
 
@@ -980,14 +985,39 @@ public:
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
 		pointer_levels_ = other.pointer_levels_;
-		is_reference_ = other.is_reference_;
-		is_rvalue_reference_ = other.is_rvalue_reference_;
+		reference_qualifier_ = other.reference_qualifier_;
 		is_array_ = other.is_array_;
 		array_size_ = other.array_size_;
 	}
 
 	// Get readable string representation
 	std::string getReadableString() const;
+
+	// Compare two type specifiers for function overload resolution
+	// Returns true if they represent the same type signature
+	bool matches_signature(const TypeSpecifierNode& other) const {
+		// Check basic type
+		if (type_ != other.type_) return false;
+		
+		// Check type index for user-defined types
+		if (type_ == Type::UserDefined || type_ == Type::Struct) {
+			if (type_index_ != other.type_index_) return false;
+		}
+		
+		// Check CV qualifiers
+		if (cv_qualifier_ != other.cv_qualifier_) return false;
+		
+		// Check reference qualifiers
+		if (reference_qualifier_ != other.reference_qualifier_) return false;
+		
+		// Check pointer depth and qualifiers at each level
+		if (pointer_levels_.size() != other.pointer_levels_.size()) return false;
+		for (size_t i = 0; i < pointer_levels_.size(); ++i) {
+			if (pointer_levels_[i].cv_qualifier != other.pointer_levels_[i].cv_qualifier) return false;
+		}
+		
+		return true;
+	}
 
 private:
 	Type type_;
@@ -997,8 +1027,7 @@ private:
 	Token token_;
 	TypeIndex type_index_;      // Index into gTypeInfo for user-defined types (structs, etc.)
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
-	bool is_reference_ = false;  // True if this is a reference type (&)
-	bool is_rvalue_reference_ = false;  // True if this is an rvalue reference (&&)
+	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;  // Reference qualifier bitmask
 	bool is_array_ = false;      // True if this is an array type (T[N] or T[])
 	std::optional<size_t> array_size_;  // Array size if known (e.g., int[10] -> 10)
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
