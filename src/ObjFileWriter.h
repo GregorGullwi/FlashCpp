@@ -1285,7 +1285,8 @@ public:
 	// base_class_info: detailed base class information for proper RTTI
 	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols,
 	                std::string_view class_name, std::span<const std::string_view> base_class_names,
-	                std::span<const BaseClassDescriptorInfo> base_class_info) {
+	                std::span<const BaseClassDescriptorInfo> base_class_info,
+	                const RTTITypeInfo* rtti_info = nullptr) {
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 		
 		if (g_enable_debug_output) std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
