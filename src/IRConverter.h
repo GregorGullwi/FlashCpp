@@ -4678,6 +4678,13 @@ private:
 		textSectionData.push_back(modrm);
 	}
 
+	// Helper to emit REP MOVSB for memory copying
+	// Copies RCX bytes from [RSI] to [RDI]
+	void emitRepMovsb() {
+		textSectionData.push_back(0xF3); // REP prefix
+		textSectionData.push_back(0xA4); // MOVSB
+	}
+
 	// Helper to emit MOV [RSP+disp8], reg
 	void emitMovToRSPDisp8(X64Register sourceRegister, int8_t displacement) {
 		// MOV [RSP+disp8], reg
@@ -11038,14 +11045,13 @@ private:
 				// RCX = count
 				emitMovImm64(X64Register::RCX, exception_size);
 				// Copy: rep movsb
-				textSectionData.push_back(0xF3); // REP prefix
-				textSectionData.push_back(0xA4); // MOVSB
+				emitRepMovsb();
 			}
 			
 			// Step 3: Call __cxa_throw(thrown_object, tinfo, destructor)
 			// RDI = thrown_object (from __cxa_allocate_exception, now in R15)
 			emitMovRegReg(X64Register::RDI, X64Register::R15);
-			// RSI = type_info* (NULL for now - TODO: implement proper type_info)
+			// RSI = type_info* (NULL for now - proper type_info requires RTTI implementation)
 			emitXorRegReg(X64Register::RSI);
 			// RDX = destructor function pointer (NULL for POD types)
 			emitXorRegReg(X64Register::RDX);
@@ -11089,8 +11095,7 @@ private:
 				}
 				emitLeaFromRSPDisp8(X64Register::RDI, 32);
 				emitMovImm64(X64Register::RCX, exception_size);
-				textSectionData.push_back(0xF3); // REP prefix
-				textSectionData.push_back(0xA4); // MOVSB
+				emitRepMovsb();
 			}
 			
 			// Set up arguments for _CxxThrowException
