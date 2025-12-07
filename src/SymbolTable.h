@@ -70,7 +70,8 @@ struct Scope {
 
 	ScopeType scope_type = ScopeType::Block;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
-	std::unordered_map<std::string_view, std::vector<ASTNode>> symbols;
+	// Use std::string keys instead of string_view to avoid dangling references (UB)
+	std::unordered_map<std::string, std::vector<ASTNode>> symbols;
 	ScopeHandle scope_handle;
 	StringType<> namespace_name;  // Only used for Namespace scopes
 
@@ -79,10 +80,12 @@ struct Scope {
 
 	// Using declarations: specific symbols imported from namespaces
 	// Maps: local_name -> (namespace_path, original_name)
-	std::unordered_map<std::string_view, std::pair<NamespacePath, std::string_view>> using_declarations;
+	// Use std::string keys instead of string_view to avoid dangling references (UB)
+	std::unordered_map<std::string, std::pair<NamespacePath, std::string_view>> using_declarations;
 
 	// Namespace aliases: Maps alias -> target namespace path
-	std::unordered_map<std::string_view, NamespacePath> namespace_aliases;
+	// Use std::string keys instead of string_view to avoid dangling references (UB)
+	std::unordered_map<std::string, NamespacePath> namespace_aliases;
 };
 
 // Helper function to extract parameter types from a FunctionDeclarationNode
@@ -123,11 +126,13 @@ public:
 
 	bool insert(std::string_view identifier, ASTNode node) {
 		auto& current_scope = symbol_table_stack_.back();
-		auto it = current_scope.symbols.find(identifier);
+		// Convert string_view to string for map key to avoid dangling references
+		std::string key(identifier);
+		auto it = current_scope.symbols.find(key);
 
 		// If this is a new identifier, create a new vector
 		if (it == current_scope.symbols.end()) {
-			current_scope.symbols[identifier] = std::vector<ASTNode>{node};
+			current_scope.symbols[key] = std::vector<ASTNode>{node};
 		} else {
 			// Identifier exists - check if we can add this as an overload
 			auto& existing_nodes = it->second;
@@ -248,11 +253,12 @@ public:
 		}
 
 		auto& global_scope = symbol_table_stack_[0];  // Global scope is always at index 0
-		auto it = global_scope.symbols.find(identifier);
+		std::string key(identifier);  // Convert to string for map key
+		auto it = global_scope.symbols.find(key);
 
 		// If this is a new identifier, create a new vector
 		if (it == global_scope.symbols.end()) {
-			global_scope.symbols[identifier] = std::vector<ASTNode>{node};
+			global_scope.symbols[key] = std::vector<ASTNode>{node};
 			return true;
 		}
 
@@ -305,14 +311,15 @@ public:
 			const Scope& scope = *stackIt;
 
 			// First, check direct symbols in this scope
-			auto symbolIt = scope.symbols.find(identifier);
+			std::string key(identifier);  // Convert to string for lookup
+			auto symbolIt = scope.symbols.find(key);
 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
 				// Return the first match for backward compatibility
 				return symbolIt->second[0];
 			}
 
 			// Second, check using declarations in this scope
-			auto usingIt = scope.using_declarations.find(identifier);
+			auto usingIt = scope.using_declarations.find(key);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
 				// Look up the symbol in the target namespace
@@ -402,17 +409,18 @@ public:
 	}
 
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
+		std::string key(identifier);  // Convert to string for lookup
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 			
 			// First, check direct symbols in this scope
-			auto symbolIt = scope.symbols.find(identifier);
+			auto symbolIt = scope.symbols.find(key);
 			if (symbolIt != scope.symbols.end()) {
 				return symbolIt->second;
 			}
 			
 			// Second, check using declarations in this scope
-			auto usingIt = scope.using_declarations.find(identifier);
+			auto usingIt = scope.using_declarations.find(key);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
 				auto result = lookup_qualified_all(namespace_path, original_name);
@@ -509,9 +517,10 @@ public:
 	}
 
  	std::optional<SymbolScopeHandle> get_scope_handle(std::string_view identifier, ScopeHandle scope_limit_handle) const {
+		std::string key(identifier);  // Convert to string for lookup
  		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
  			const Scope& scope = *stackIt;
- 			auto symbolIt = scope.symbols.find(identifier);
+ 			auto symbolIt = scope.symbols.find(key);
  			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
  				return SymbolScopeHandle{ .scope_handle = scope.scope_handle, .identifier = identifier };
  			}
@@ -545,7 +554,8 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		current_scope.using_declarations[local_name] = std::make_pair(namespace_path, original_name);
+		std::string key(local_name);  // Convert to string for map key
+		current_scope.using_declarations[key] = std::make_pair(namespace_path, original_name);
 	}
 
 	// Add a namespace alias to the current scope
@@ -553,14 +563,16 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		current_scope.namespace_aliases[alias] = target_namespace;
+		std::string key(alias);  // Convert to string for map key
+		current_scope.namespace_aliases[key] = target_namespace;
 	}
 
 	// Resolve a namespace alias (returns the target namespace path if alias exists)
 	std::optional<NamespacePath> resolve_namespace_alias(std::string_view alias) const {
+		std::string key(alias);  // Convert to string for lookup
 		// Search from current scope backwards
 		for (auto it = symbol_table_stack_.rbegin(); it != symbol_table_stack_.rend(); ++it) {
-			auto alias_it = it->namespace_aliases.find(alias);
+			auto alias_it = it->namespace_aliases.find(key);
 			if (alias_it != it->namespace_aliases.end()) {
 				return alias_it->second;
 			}
