@@ -5835,22 +5835,13 @@ ParseResult Parser::parse_type_specifier()
 		std::string_view kw = current_token_opt->value();
 		if (kw == "constexpr" || kw == "consteval" || kw == "constinit" ||
 		    kw == "inline" || kw == "static" || kw == "extern" ||
-		    kw == "virtual" || kw == "explicit" || kw == "friend" ||
-		    kw == "noexcept") {
-			consume_token(); // skip the function specifier or noexcept
+		    kw == "virtual" || kw == "explicit" || kw == "friend") {
+			consume_token(); // skip the function specifier
 			skip_cpp_attributes(); // there might be attributes after the specifier
 			current_token_opt = peek_token();
-			// If we consumed noexcept, check for optional (expr)
-			if (kw == "noexcept" && current_token_opt.has_value() && current_token_opt->value() == "(") {
-				// Skip the noexcept(expr) part
-				int paren_depth = 0;
-				do {
-					if (current_token_opt->value() == "(") paren_depth++;
-					else if (current_token_opt->value() == ")") paren_depth--;
-					consume_token();
-					current_token_opt = peek_token();
-				} while (current_token_opt.has_value() && paren_depth > 0);
-			}
+		} else if (kw == "noexcept") {
+			skip_noexcept_specifier();
+			current_token_opt = peek_token();
 		} else {
 			break;
 		}
