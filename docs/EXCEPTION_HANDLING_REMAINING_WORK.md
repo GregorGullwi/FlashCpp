@@ -1,48 +1,18 @@
-# Linux Exception Handling - Implementation Plan
+# Linux Exception Handling - Remaining Implementation Work
 
-This document provides a detailed breakdown of the remaining work needed for full Linux exception handling support in FlashCpp. Each section is sized to be a manageable unit of work (~1-2 days for an experienced compiler engineer).
+This document provides a detailed breakdown of the **remaining work** needed for full Linux exception handling support in FlashCpp. 
 
-## Current Status (What's Done ✅)
+For an overview of what's already completed, see `LINUX_ELF_SUPPORT_PLAN.md` - Milestone 6.
 
-### 1. Exception Throwing (✅ Complete)
-- **Files**: `src/IRConverter.h` (handleThrow, handleRethrow)
-- **What works**: 
-  - Generates calls to `__cxa_allocate_exception(size)`
-  - Copies exception object to allocated memory
-  - Calls `__cxa_throw(object, type_info, destructor)` with proper type_info
-  - Supports both built-in types (int, float, etc.) and user-defined classes
-  - Correct System V AMD64 calling convention (RDI, RSI, RDX)
-- **Test**: Compiles and links with stubs, shows proper type_info passing
+## What's Already Done ✅
 
-### 2. RTTI Type Information (✅ Complete)
-- **Files**: `src/AstNodeTypes.h/cpp`, `src/ElfFileWriter.h`
-- **What works**:
-  - Generates Itanium C++ ABI typeinfo structures
-  - Built-in types: `_ZTIi` (int), `_ZTIb` (bool), etc.
-  - Class types: `_ZTI7MyClass` (length-prefixed)
-  - Vtables include RTTI pointers
-  - Both Windows (MSVC) and Linux (Itanium) formats supported
-- **Test**: Object files contain correct `_ZTI` symbols
-
-### 3. Landing Pad Structure (✅ Documented)
-- **Files**: `src/IRConverter.h` (handleCatchBegin, handleCatchEnd)
-- **What's done**:
-  - Structure documented with comments
-  - Placeholder for `__cxa_begin_catch` / `__cxa_end_catch` calls
-  - Code commented out (requires exception tables to work)
-- **Test**: N/A (needs exception tables)
-
-### 4. Testing Infrastructure (✅ Functional)
-- **Files**: `tests/linux_exception_stubs.cpp`
-- **What works**:
-  - Stub implementations of `__cxa_*` functions
-  - Diagnostic messages showing exception flow
-  - Allows linking and basic testing
-- **Test**: Tests link and run with informative error messages
+Exception throwing infrastructure, RTTI structures, type_info generation, landing pad structure, and testing stubs are all complete. See the main plan document for details.
 
 ---
 
 ## Remaining Work (Priority Order)
+
+This section details the ~14-23 days of work needed to complete exception handling.
 
 ## Phase 1: .eh_frame Generation (DWARF CFI)
 **Estimated Effort**: 3-5 days  
@@ -808,34 +778,30 @@ noexcept functions shouldn't have exception tables - save space.
 ---
 
 ## Estimated Total Timeline
-- **Phase 1**: 3-5 days
-- **Phase 2**: 4-6 days  
-- **Phase 3**: 2-3 days
-- **Phase 4**: 1-2 days
-- **Phase 5**: 2-3 days
-- **Phase 6**: 2-4 days (optional)
+- **Phase 1**: 3-5 days (.eh_frame)
+- **Phase 2**: 4-6 days (.gcc_except_table)
+- **Phase 3**: 2-3 days (Landing pads)
+- **Phase 4**: 1-2 days (Personality routine)
+- **Phase 5**: 2-3 days (Testing)
+- **Phase 6**: 2-4 days (Optimizations - optional)
 
-**Total**: ~14-23 days of focused work
+**Total**: ~14-23 days of focused work for an experienced compiler engineer
 
 With part-time effort or learning curve, expect 4-6 weeks total.
 
 ---
 
-## Current Files Modified
-✅ `src/PlatformInternals.h` - Documentation  
-✅ `src/IRConverter.h` - Exception throwing, landing pad structure  
-✅ `src/ElfFileWriter.h` - Type_info generation  
-✅ `src/AstNodeTypes.h/cpp` - RTTI structures  
-✅ `tests/linux_exception_stubs.cpp` - Testing stubs  
+## Files To Create/Modify
 
-## Files To Create
-📝 `src/DwarfCFI.h` - DWARF encoding utilities  
-📝 `src/LSDAGenerator.h` - LSDA generation  
+**New files to create**:
+- `src/DwarfCFI.h` - DWARF encoding utilities  
+- `src/LSDAGenerator.h` - LSDA generation  
 
-## Files To Modify
-📝 `src/ElfFileWriter.h` - Add .eh_frame and .gcc_except_table generation  
-📝 `src/IRConverter.h` - Track CFI state, implement landing pads  
+**Existing files to modify**:
+- `src/ElfFileWriter.h` - Add .eh_frame and .gcc_except_table generation  
+- `src/IRConverter.h` - Track CFI state, implement landing pads  
 
 ---
 
-*This plan assumes familiarity with C++, compiler internals, and assembly. For someone new to these topics, add learning time for DWARF/exception handling concepts.*
+*For an overview of completed work, see `LINUX_ELF_SUPPORT_PLAN.md` - Milestone 6.*
+

@@ -278,9 +278,133 @@ Map COFF relocation types to ELF for x86-64:
 18. Add minimal debug symbols
 19. Test debugging with GDB
 
-### Milestone 6: Exception Handling (Future)
-20. Research Linux exception handling (`.eh_frame`)
-21. Implement if needed (may defer further)
+### Milestone 6: Exception Handling ⏳ IN PROGRESS
+
+**Status**: Foundation complete, full implementation requires DWARF CFI and LSDA generation
+
+#### What's Implemented ✅
+
+1. **Exception Throwing Infrastructure** (Complete)
+   - Platform-aware code generation in `src/IRConverter.h`
+   - `handleThrow()`: Calls `__cxa_allocate_exception` + `__cxa_throw`
+   - `handleRethrow()`: Calls `__cxa_rethrow`
+   - Proper System V AMD64 calling convention (RDI, RSI, RDX)
+   - Compile-time platform detection via templates
+
+2. **Type Information Generation** (Complete)
+   - Built-in types: `_ZTIi` (int), `_ZTIb` (bool), `_ZTIc` (char), etc.
+   - User-defined types: `_ZTI7MyClass` (length-prefixed class names)
+   - Proper type_info passed to `__cxa_throw` (not NULL)
+   - File: `src/ElfFileWriter.h` (`get_or_create_builtin_typeinfo`, `get_or_create_class_typeinfo`)
+
+3. **RTTI Structures** (Complete)
+   - Itanium C++ ABI typeinfo: `ItaniumClassTypeInfo`, `ItaniumSIClassTypeInfo`, `ItaniumVMIClassTypeInfo`
+   - Windows MSVC RTTI also implemented for dual platform support
+   - Vtables include RTTI pointers
+   - Files: `src/AstNodeTypes.h`, `src/AstNodeTypes.cpp`
+
+4. **Landing Pad Structure** (Documented)
+   - Code structure for `__cxa_begin_catch` / `__cxa_end_catch`
+   - Ready for exception table integration
+   - Commented implementation in `handleCatchBegin/handleCatchEnd`
+
+5. **Testing Infrastructure** (Functional)
+   - Stub implementations in `tests/linux_exception_stubs.cpp`
+   - Allows linking and provides diagnostic messages
+   - Shows exception flow even without full unwinding
+
+#### Current Behavior
+
+**Tests compile and link** successfully with stubs:
+```bash
+./x64/Debug/FlashCpp tests/test_exceptions_basic.cpp
+g++ -c tests/linux_exception_stubs.cpp -o stubs.o
+gcc -o test test_exceptions_basic.obj stubs.o
+./test
+```
+
+**Output**:
+```
+STUB: __cxa_allocate_exception(8) -> 0x...
+STUB: __cxa_throw(0x..., 0x..., (nil))
+STUB: Exception thrown but no exception tables present!
+STUB: Cannot find catch handlers without .eh_frame and .gcc_except_table
+Aborted
+```
+
+This demonstrates:
+- ✅ Exception allocation works
+- ✅ Type_info is correctly passed (non-null address)
+- ❌ Cannot catch exceptions (missing exception tables)
+
+#### Remaining Work for Full Exception Handling
+
+See detailed implementation plan in root: `LINUX_EXCEPTION_HANDLING_IMPLEMENTATION_PLAN.md`
+
+**Summary of remaining work** (~14-23 days for experienced compiler engineer):
+
+1. **.eh_frame Section** (DWARF CFI) - 3-5 days
+   - CIE (Common Information Entry) generation
+   - FDE (Frame Description Entry) per function
+   - CFI instructions for stack unwinding
+   - DWARF encoding utilities (ULEB128, SLEB128)
+
+2. **.gcc_except_table Section** (LSDA) - 4-6 days
+   - Call site table (try regions → handlers)
+   - Action table (what to do on exception)
+   - Type table (exception types for matching)
+   - LSDA encoding and generation
+
+3. **Landing Pad Implementation** - 2-3 days
+   - Uncomment and implement `__cxa_begin_catch` calls
+   - Exception value extraction
+   - Store to catch variables
+
+4. **Personality Routine Integration** - 1-2 days
+   - Reference `__gxx_personality_v0` in FDE
+   - LSDA pointer in FDE augmentation data
+
+5. **Testing and Refinement** - 2-3 days
+   - Basic throw/catch
+   - Multiple catch handlers
+   - Nested try/catch
+   - Class exceptions
+   - Rethrow
+
+#### Files Modified/Created
+
+**Modified**:
+- `src/IRConverter.h` - Exception throwing and landing pad structure
+- `src/ElfFileWriter.h` - Type_info generation
+- `src/AstNodeTypes.h/cpp` - RTTI structures
+- `src/PlatformInternals.h` - Documentation
+
+**Created**:
+- `tests/linux_exception_stubs.cpp` - Testing stubs
+- `tests/README_EXCEPTION_STUBS.md` - Stub usage documentation
+- `LINUX_EXCEPTION_HANDLING_IMPLEMENTATION_PLAN.md` - Detailed implementation guide
+
+#### Technical References
+
+- **Itanium C++ ABI Exception Handling**: https://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html
+- **DWARF 4 Standard**: http://dwarfstd.org/doc/DWARF4.pdf
+- **LSB Exception Frames**: https://refspecs.linuxfoundation.org/LSB_3.0.0/LSB-Core-generic/LSB-Core-generic/ehframechpt.html
+
+#### Why Exception Handling is Complex
+
+Exception handling on Linux requires generating two complex binary formats:
+
+1. **DWARF CFI** (.eh_frame): Describes how to unwind the stack frame-by-frame
+2. **LSDA** (.gcc_except_table): Maps code regions to exception handlers
+
+These are substantial compiler features (~2000+ LOC total) that require:
+- Binary encoding (ULEB128/SLEB128)
+- Stack frame tracking
+- Complex state management
+- Runtime coordination with personality routine
+
+The current implementation provides the foundation (throwing, type info, structure) but full exception support requires implementing these binary formats.
+
 
 ## Non-Goals (Out of Scope for Initial Implementation)
 
