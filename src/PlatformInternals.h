@@ -44,8 +44,8 @@
  * @note When both parameters are NULL, rethrows the current exception
  * 
  * Current Implementation:
- * - Used in handleThrow() in IRConverter.h (line ~10982)
- * - Used in handleRethrow() in IRConverter.h (line ~11076)
+ * - Used in handleThrow() in IRConverter.h
+ * - Used in handleRethrow() in IRConverter.h
  * - Allocates exception object on stack
  * - Calls _CxxThrowException with object pointer and NULL throw info
  * - Stack unwinding handled by Windows SEH via PDATA/XDATA sections
@@ -214,8 +214,13 @@
  * 
  * Comparison:
  *   - exit():      Performs cleanup (atexit, flush buffers)
- *   - _Exit():     No cleanup, immediate termination (similar to ExitProcess)
+ *   - _Exit():     No cleanup at all, most immediate termination
+ *   - ExitProcess: Some cleanup (DLL notifications), terminates all threads
  *   - quick_exit(): Calls at_quick_exit() handlers only
+ * 
+ * Note: _Exit() is more immediate than ExitProcess. ExitProcess sends
+ * DLL_PROCESS_DETACH notifications to loaded DLLs, while _Exit() performs
+ * absolutely no cleanup operations.
  */
 
 // ============================================================================
@@ -250,7 +255,7 @@
  *       char name[1];                    // Variable-length mangled name
  *   };
  * 
- * Current Implementation: src/AstNodeTypes.h (line ~266)
+ * Current Implementation: src/AstNodeTypes.h (struct MSVCTypeDescriptor)
  * Usage: Basic type identification for RTTI and dynamic_cast
  * 
  * 
@@ -267,7 +272,7 @@
  *       uint32_t attributes;             // Flags (virtual, ambiguous, etc.)
  *   };
  * 
- * Current Implementation: src/AstNodeTypes.h (line ~273)
+ * Current Implementation: src/AstNodeTypes.h (struct MSVCBaseClassDescriptor)
  * Usage: Describes each base class for inheritance traversal
  * 
  * 
@@ -279,7 +284,7 @@
  *       const MSVCBaseClassDescriptor* base_class_descriptors[1];
  *   };
  * 
- * Current Implementation: src/AstNodeTypes.h (line ~283)
+ * Current Implementation: src/AstNodeTypes.h (struct MSVCBaseClassArray)
  * Usage: Variable-length array of all base classes (including self)
  * 
  * 
@@ -294,7 +299,7 @@
  *       const MSVCBaseClassArray* base_class_array;  // ??_R2
  *   };
  * 
- * Current Implementation: src/AstNodeTypes.h (line ~288)
+ * Current Implementation: src/AstNodeTypes.h (struct MSVCClassHierarchyDescriptor)
  * Usage: Top-level hierarchy information
  * 
  * 
@@ -310,11 +315,11 @@
  *       const MSVCClassHierarchyDescriptor* hierarchy;    // ??_R3
  *   };
  * 
- * Current Implementation: src/AstNodeTypes.h (line ~296)
+ * Current Implementation: src/AstNodeTypes.h (struct MSVCCompleteObjectLocator)
  * Usage: Located before vtable in memory, accessed for dynamic_cast/typeid
  * 
  * Building RTTI Structures:
- *   - Implementation: src/AstNodeTypes.cpp build_rtti_info() (line ~840)
+ *   - Implementation: src/AstNodeTypes.cpp (build_rtti_info function)
  *   - Called during class definition processing
  *   - Structures persist in static storage for program lifetime
  */
