@@ -10983,12 +10983,59 @@ private:
 			
 			try_block.catch_handlers.push_back(handler);
 		}
+		
+		// Platform-specific landing pad code generation
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// Landing pad: call __cxa_begin_catch to get the exception object
+			//
+			// The exception object pointer is in RAX (passed by personality routine)
+			// We need to:
+			// 1. Call __cxa_begin_catch(void* exceptionObject) -> returns adjusted pointer
+			// 2. Extract/cast the exception value
+			// 3. Store it in the catch variable
+			
+			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
+			
+			// Note: In a full implementation, RAX would contain the exception pointer
+			// from the personality routine. For now, we'll generate the call structure.
+			
+			// Call __cxa_begin_catch with exception pointer in RDI
+			// The exception pointer would normally be in RAX from personality routine
+			// For minimal implementation: assume exception ptr in a known location
+			// emitMovRegReg(X64Register::RDI, X64Register::RAX);
+			// emitCall("__cxa_begin_catch");
+			
+			// Result in RAX is pointer to the actual exception object
+			// Store it to the catch variable's stack location
+			if (catch_op.exception_temp.var_number != 0) {
+				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+				// For POD types, dereference and copy the value
+				// For now: store the value directly (simplified)
+				// emitMovToFrame(X64Register::RAX, stack_offset);
+			}
+			
+		} else {
+			// ========== Windows/COFF (MSVC ABI) ==========
+			// Windows uses SEH which is already handled by existing code
+		}
 	}
 
 	void handleCatchEnd(const IrInstruction& instruction) {
 		// CatchEnd marks the end of a catch handler
-		// This is a marker instruction for control flow analysis in the IR.
-		// No machine code is needed at the catch handler end.
+		
+		// Platform-specific cleanup
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// Call __cxa_end_catch to complete exception handling
+			// This cleans up the exception object if needed
+			
+			// emitCall("__cxa_end_catch");
+			
+		} else {
+			// ========== Windows/COFF (MSVC ABI) ==========
+			// Windows SEH cleanup already handled
+		}
 	}
 
 	void handleThrow(const IrInstruction& instruction) {
