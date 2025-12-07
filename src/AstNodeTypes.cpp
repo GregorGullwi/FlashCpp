@@ -963,7 +963,9 @@ void StructTypeInfo::buildRTTI() {
     // ========== Build Itanium C++ ABI RTTI structures ==========
     // These are used for Linux/Unix targets (ELF format)
     
-    // Storage for Itanium structures
+    // Storage for Itanium structures (static lifetime - RTTI data persists for program lifetime)
+    // Note: Memory allocated here is intentionally never freed as RTTI must remain valid
+    // throughout the program execution. This is the same pattern as MSVC RTTI above.
     static std::vector<ItaniumClassTypeInfo> itanium_class_storage;
     static std::vector<ItaniumSIClassTypeInfo> itanium_si_storage;
     static std::vector<char*> itanium_vmi_storage;  // Variable-sized, use malloc
@@ -973,13 +975,14 @@ void StructTypeInfo::buildRTTI() {
     // Itanium uses length-prefixed names: "3Foo" for class Foo
     std::string itanium_mangled = std::to_string(name.length()) + name;
     
-    // Allocate permanent storage for the name string
+    // Allocate permanent storage for the name string (persists for program lifetime)
     char* itanium_name = (char*)malloc(itanium_mangled.length() + 1);
     if (!itanium_name) {
         // Allocation failed - Itanium RTTI won't be available
         return;
     }
-    strcpy(itanium_name, itanium_mangled.c_str());
+    strncpy(itanium_name, itanium_mangled.c_str(), itanium_mangled.length() + 1);
+    itanium_name[itanium_mangled.length()] = '\0';  // Ensure null termination
     itanium_name_storage.push_back(itanium_name);
     
     if (base_classes.empty()) {
@@ -1016,6 +1019,7 @@ void StructTypeInfo::buildRTTI() {
         // __vmi_class_type_info - Multiple or virtual base classes
         size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo) + 
                          (base_classes.size() - 1) * sizeof(ItaniumBaseClassTypeInfo);
+        // Allocate permanent storage (persists for program lifetime - RTTI data)
         ItaniumVMIClassTypeInfo* vmi_ti = (ItaniumVMIClassTypeInfo*)malloc(vmi_size);
         if (!vmi_ti) {
             // Allocation failed

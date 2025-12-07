@@ -361,8 +361,11 @@ public:
 			} else if (rtti_info->itanium_kind == RTTITypeInfo::ItaniumTypeInfoKind::VMIClassTypeInfo) {
 				// Variable size - need to calculate
 				const ItaniumVMIClassTypeInfo* vmi = static_cast<const ItaniumVMIClassTypeInfo*>(rtti_info->itanium_type_info);
-				size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo) + 
-				                 (vmi->base_count - 1) * sizeof(ItaniumBaseClassTypeInfo);
+				// Safe calculation - VMI always has at least 1 base class
+				size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo);
+				if (vmi->base_count > 1) {
+					vmi_size += (vmi->base_count - 1) * sizeof(ItaniumBaseClassTypeInfo);
+				}
 				add_typeinfo(typeinfo_symbol, rtti_info->itanium_type_info, vmi_size);
 			}
 		}
@@ -400,7 +403,7 @@ public:
 		
 		// Add relocation for RTTI pointer if typeinfo was emitted
 		if (!typeinfo_symbol.empty()) {
-			auto typeinfo_symbol_idx = getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+			auto typeinfo_symbol_idx = getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL);
 			uint32_t rtti_reloc_offset = vtable_offset + 8;  // Offset to top is first 8 bytes
 			rela_accessor->add_entry(rtti_reloc_offset, typeinfo_symbol_idx, ELFIO::R_X86_64_64, 0);
 			
