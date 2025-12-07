@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <iostream>
 #include <fstream>
+#include <set>
 
 // ELFIO headers - header-only ELF library
 #include "elfio/elfio.hpp"
@@ -317,6 +318,84 @@ public:
 		if (g_enable_debug_output) {
 			std::cerr << "Typeinfo '" << typeinfo_symbol << "' added at offset " << typeinfo_offset << std::endl;
 		}
+	}
+
+	/**
+	 * @brief Get or create type_info symbol for a built-in type
+	 * @param type The type to get type_info for
+	 * @return Symbol name for the type_info (e.g., "_ZTIi" for int)
+	 */
+	std::string get_or_create_builtin_typeinfo(Type type) {
+		// Map types to Itanium C++ ABI mangled type codes
+		std::string type_code;
+		switch (type) {
+			case Type::Void: type_code = "v"; break;
+			case Type::Bool: type_code = "b"; break;
+			case Type::Char: type_code = "c"; break;
+			case Type::UnsignedChar: type_code = "h"; break;
+			case Type::Short: type_code = "s"; break;
+			case Type::UnsignedShort: type_code = "t"; break;
+			case Type::Int: type_code = "i"; break;
+			case Type::UnsignedInt: type_code = "j"; break;
+			case Type::Long: type_code = "l"; break;
+			case Type::UnsignedLong: type_code = "m"; break;
+			case Type::LongLong: type_code = "x"; break;
+			case Type::UnsignedLongLong: type_code = "y"; break;
+			case Type::Float: type_code = "f"; break;
+			case Type::Double: type_code = "d"; break;
+			case Type::LongDouble: type_code = "e"; break;
+			default:
+				// For non-builtin types, return empty string
+				return "";
+		}
+		
+		// Type info symbol: _ZTI + type_code (e.g., _ZTIi for int)
+		std::string typeinfo_symbol = "_ZTI" + type_code;
+		
+		// Check if we've already created this symbol
+		static std::set<std::string> created_typeinfos;
+		if (created_typeinfos.find(typeinfo_symbol) != created_typeinfos.end()) {
+			return typeinfo_symbol;
+		}
+		
+		// For built-in types, we need to create a minimal type_info structure
+		// Itanium C++ ABI: type_info for fundamental types is just vtable pointer + name
+		struct FundamentalTypeInfo {
+			const void* vtable;  // Pointer to __fundamental_type_info vtable (external)
+			const char* name;    // Mangled type name
+		};
+		
+		// We'll emit a reference to an external vtable symbol
+		// The actual vtable will be provided by the C++ runtime library
+		std::string vtable_symbol = "_ZTVN10__cxxabiv123__fundamental_type_infoE";
+		
+		// For now, we'll create a placeholder that references the external vtable
+		// In a full implementation, we'd emit proper type_info data
+		// For the minimal case, we just need the symbol to exist
+		
+		// Create a minimal type_info: just 16 bytes (vtable ptr + name ptr)
+		std::vector<char> typeinfo_data(16, 0);
+		
+		// Add typeinfo data to .rodata
+		auto* rodata = getSectionByName(".rodata");
+		if (!rodata) {
+			throw std::runtime_error(".rodata section not found");
+		}
+		
+		uint32_t typeinfo_offset = rodata->get_size();
+		rodata->append_data(typeinfo_data.data(), typeinfo_data.size());
+		
+		// Add typeinfo symbol
+		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
+		                  rodata->get_index(), typeinfo_offset, typeinfo_data.size());
+		
+		created_typeinfos.insert(typeinfo_symbol);
+		
+		if (g_enable_debug_output) {
+			std::cerr << "Created built-in typeinfo '" << typeinfo_symbol << "' for type code '" << type_code << "'" << std::endl;
+		}
+		
+		return typeinfo_symbol;
 	}
 
 	/**
