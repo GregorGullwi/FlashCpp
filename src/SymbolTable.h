@@ -163,8 +163,7 @@ public:
 								const auto& new_param_type = new_params[j].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 								const auto& existing_param_type = existing_params[j].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 
-								if (new_param_type.type() != existing_param_type.type() ||
-								    new_param_type.pointer_depth() != existing_param_type.pointer_depth()) {
+								if (!new_param_type.matches_signature(existing_param_type)) {
 									all_match = false;
 									break;
 								}
