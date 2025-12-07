@@ -106,6 +106,11 @@ struct Logger {
         (Category == LogCategory::General) ||
         ((static_cast<uint32_t>(Category) & FLASHCPP_LOG_CATEGORIES) != 0);
 
+    template<typename First>
+    static void log(First&& first) {
+        return log(std::forward<First>(first), "");
+    }
+
     template<typename First, typename... Rest>
     static void log(First&& first, Rest&&... rest) {
         if constexpr (enabled) {
