@@ -164,8 +164,6 @@ foreach ($file in $referenceFiles) {
     $exeFile = "$baseName.exe"
     $ilkFile = "$baseName.ilk"
     
-    Write-Host "[$currentFile/$totalFiles] Testing: $($file.Name)"
-    
     # Clean up previous artifacts
     if (Test-Path $objFile) { Remove-Item $objFile -Force }
     if (Test-Path $exeFile) { Remove-Item $exeFile -Force }
@@ -176,7 +174,7 @@ foreach ($file in $referenceFiles) {
     
     # Check if compilation succeeded by verifying obj file was created
     if (Test-Path $objFile) {
-        Write-Host "  [COMPILE OK]" -ForegroundColor Green
+        # Skip printing compile success - only show failures
         $compileSuccess += $file.Name
         
         # Check if source file has a main function before attempting to link
@@ -208,7 +206,7 @@ foreach ($file in $referenceFiles) {
             $linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
             
             if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
-                Write-Host "  [LINK OK]" -ForegroundColor Green
+                # Skip printing link success - only show failures
                 $linkSuccess += $file.Name
                 # Clean up after successful link
                 Remove-Item $exeFile -Force -ErrorAction SilentlyContinue
@@ -222,6 +220,7 @@ foreach ($file in $referenceFiles) {
                     $linkSuccess += $file.Name
                 }
                 else {
+                    Write-Host "[$currentFile/$totalFiles] $($file.Name)" -ForegroundColor Red
                     Write-Host "  [LINK FAILED]" -ForegroundColor Red
                     $linkFailed += $file.Name
                     
@@ -236,16 +235,17 @@ foreach ($file in $referenceFiles) {
                         FullOutput = $linkOutput
                     }
                     
+                    # Show last 10 lines of output immediately
                     if ($errors) {
-                        Write-Host "    Link errors:" -ForegroundColor Yellow
-                        foreach ($err in $errors) {
+                        Write-Host "    Link errors (last 10):" -ForegroundColor Yellow
+                        foreach ($err in ($errors | Select-Object -Last 10)) {
                             Write-Host "      $err" -ForegroundColor Yellow
                         }
                     }
                     # Also show unresolved external symbols
                     if ($unresolved) {
-                        Write-Host "    Unresolved symbols:" -ForegroundColor Yellow
-                        foreach ($sym in $unresolved) {
+                        Write-Host "    Unresolved symbols (last 10):" -ForegroundColor Yellow
+                        foreach ($sym in ($unresolved | Select-Object -Last 10)) {
                             Write-Host "      $sym" -ForegroundColor Yellow
                         }
                     }
@@ -260,17 +260,19 @@ foreach ($file in $referenceFiles) {
             # Don't count expected failures as actual failures
         }
         else {
+            Write-Host "[$currentFile/$totalFiles] $($file.Name)" -ForegroundColor Red
             Write-Host "  [COMPILE FAILED]" -ForegroundColor Red
             $compileFailed += $file.Name
             # Show compile output to help diagnose the issue
-            # Filter out the version banner and empty lines, show first few relevant lines
+            # Filter out the version banner and empty lines, show last 10 relevant lines
             $outputLines = $compileOutput -split "`n" | Where-Object { 
                 $_.Trim() -ne "" -and 
                 $_ -notmatch "===== FLASHCPP VERSION" -and
                 $_ -notmatch "^Compiling:" -and
                 $_ -notmatch "^Processing:"
-            } | Select-Object -First 5
+            } | Select-Object -Last 10
             if ($outputLines) {
+                Write-Host "    Last 10 lines of output:" -ForegroundColor Yellow
                 foreach ($line in $outputLines) {
                     Write-Host "    $($line.Trim())" -ForegroundColor Yellow
                 }
@@ -304,15 +306,16 @@ foreach ($file in $failFiles) {
     $objFile = "$baseName.obj"
     $ilkFile = "$baseName.ilk"
     
-    Write-Host "[$currentFile/$totalFailFiles] Testing: $($file.Name)"
-    
     # Clean up previous artifacts
     if (Test-Path $objFile) { Remove-Item $objFile -Force }
     if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
     
     # Compile with FlashCpp - we EXPECT this to fail
+    $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
+    
     # Check if compilation succeeded (which is BAD for _fail tests)
     if (Test-Path $objFile) {
+        Write-Host "[$currentFile/$totalFailFiles] $($file.Name)" -ForegroundColor Red
         Write-Host "  [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
         $failTestFailed += $file.Name
         # Clean up the object file
@@ -320,7 +323,7 @@ foreach ($file in $failFiles) {
         Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue
     }
     else {
-        Write-Host "  [FAILED AS EXPECTED]" -ForegroundColor Green
+        # Skip printing expected failures - only show problems
         $failTestSuccess += $file.Name
     }
     

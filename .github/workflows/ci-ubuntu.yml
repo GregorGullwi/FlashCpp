@@ -1,0 +1,35 @@
+---
+name: CI - Ubuntu
+
+on:
+  push:
+    branches: [ main, pre-flight ]
+  pull_request:
+    branches: [ main, pre-flight ]
+
+jobs:
+  ubuntu-build-test:
+    name: Ubuntu - Clang - Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Build FlashCpp with Make
+        run: |
+          make main CXX=clang++
+
+      - name: Run All Tests
+        run: |
+          # Run the test script which compiles and links all .cpp files in tests/
+          # and fails the build if any compilation or linking errors occur
+          bash tests/run_all_tests.sh
+          if [ $? -ne 0 ]; then
+            echo "Tests failed!" >&2
+            exit 1
+          fi
