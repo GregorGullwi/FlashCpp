@@ -5705,6 +5705,14 @@ ParseResult Parser::parse_type_specifier()
 		return parse_decltype_specifier();
 	}
 
+	// Check for typename keyword (used in template-dependent contexts)
+	// e.g., typename Container<T>::value_type
+	if (current_token_opt.has_value() && current_token_opt->value() == "typename") {
+		consume_token(); // consume 'typename'
+		current_token_opt = peek_token();
+		// Continue parsing the actual type after typename
+	}
+
 	if (!current_token_opt.has_value() ||
 		(current_token_opt->type() != Token::Type::Keyword &&
 			current_token_opt->type() != Token::Type::Identifier)) {
