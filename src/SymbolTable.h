@@ -10,6 +10,7 @@
 #include "Token.h"
 #include "StackString.h"
 #include "Log.h"
+#include "ChunkedString.h"
 
 enum class ScopeType {
 	Global,
@@ -70,12 +71,10 @@ struct Scope {
 
 	ScopeType scope_type = ScopeType::Block;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
-	// Use std::string keys instead of string_view to avoid dangling references (UB)
-	// String views can point to temporary strings that get destroyed, causing platform-dependent failures.
-	// While string_view is efficient, using std::string ensures the key remains valid regardless of source.
-	// Note: Identifiers come from either Lexer source (persistent) or StringBuilder (chunked allocator),
-	// but without tracking source ranges here, std::string is the safest approach.
-	std::unordered_map<std::string, std::vector<ASTNode>> symbols;
+	// Use string_view keys with a dedicated ChunkedStringAllocator in SymbolTable to avoid copies
+	// while ensuring strings remain valid for the lifetime of the symbol table.
+	// String views are interned using the symbol table's allocator before being used as keys.
+	std::unordered_map<std::string_view, std::vector<ASTNode>> symbols;
 	ScopeHandle scope_handle;
 	StringType<> namespace_name;  // Only used for Namespace scopes
 
@@ -84,12 +83,12 @@ struct Scope {
 
 	// Using declarations: specific symbols imported from namespaces
 	// Maps: local_name -> (namespace_path, original_name)
-	// Use std::string for both key and original_name to avoid dangling references (UB)
-	std::unordered_map<std::string, std::pair<NamespacePath, std::string>> using_declarations;
+	// Use string_view with dedicated allocator for both key and original_name
+	std::unordered_map<std::string_view, std::pair<NamespacePath, std::string_view>> using_declarations;
 
 	// Namespace aliases: Maps alias -> target namespace path
-	// Use std::string keys instead of string_view to avoid dangling references (UB)
-	std::unordered_map<std::string, NamespacePath> namespace_aliases;
+	// Use string_view keys with dedicated allocator
+	std::unordered_map<std::string_view, NamespacePath> namespace_aliases;
 };
 
 // Helper function to extract parameter types from a FunctionDeclarationNode
@@ -130,8 +129,8 @@ public:
 
 	bool insert(std::string_view identifier, ASTNode node) {
 		auto& current_scope = symbol_table_stack_.back();
-		// Convert string_view to string for map key to avoid dangling references
-		std::string key(identifier);
+		// Intern the string_view to ensure it remains valid
+		std::string_view key = intern_string(identifier);
 		auto it = current_scope.symbols.find(key);
 
 		// If this is a new identifier, create a new vector
@@ -257,7 +256,7 @@ public:
 		}
 
 		auto& global_scope = symbol_table_stack_[0];  // Global scope is always at index 0
-		std::string key(identifier);  // Convert to string for map key
+		std::string_view key = intern_string(identifier);  // Intern the string
 		auto it = global_scope.symbols.find(key);
 
 		// If this is a new identifier, create a new vector
@@ -315,15 +314,14 @@ public:
 			const Scope& scope = *stackIt;
 
 			// First, check direct symbols in this scope
-			std::string key(identifier);  // Convert to string for lookup
-			auto symbolIt = scope.symbols.find(key);
+			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
 				// Return the first match for backward compatibility
 				return symbolIt->second[0];
 			}
 
 			// Second, check using declarations in this scope
-			auto usingIt = scope.using_declarations.find(key);
+			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
 				// Look up the symbol in the target namespace
@@ -413,18 +411,17 @@ public:
 	}
 
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
-		std::string key(identifier);  // Convert to string for lookup
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 			
 			// First, check direct symbols in this scope
-			auto symbolIt = scope.symbols.find(key);
+			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end()) {
 				return symbolIt->second;
 			}
 			
 			// Second, check using declarations in this scope
-			auto usingIt = scope.using_declarations.find(key);
+			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
 				auto result = lookup_qualified_all(namespace_path, original_name);
@@ -521,10 +518,9 @@ public:
 	}
 
  	std::optional<SymbolScopeHandle> get_scope_handle(std::string_view identifier, ScopeHandle scope_limit_handle) const {
-		std::string key(identifier);  // Convert to string for lookup
  		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
  			const Scope& scope = *stackIt;
- 			auto symbolIt = scope.symbols.find(key);
+ 			auto symbolIt = scope.symbols.find(identifier);
  			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
  				return SymbolScopeHandle{ .scope_handle = scope.scope_handle, .identifier = identifier };
  			}
@@ -558,8 +554,8 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		std::string key(local_name);  // Convert to string for map key
-		std::string orig_name(original_name);  // Convert to string to avoid dangling references
+		std::string_view key = intern_string(local_name);  // Intern the key
+		std::string_view orig_name = intern_string(original_name);  // Intern the value
 		current_scope.using_declarations[key] = std::make_pair(namespace_path, orig_name);
 	}
 
@@ -568,16 +564,15 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		std::string key(alias);  // Convert to string for map key
+		std::string_view key = intern_string(alias);  // Intern the key
 		current_scope.namespace_aliases[key] = target_namespace;
 	}
 
 	// Resolve a namespace alias (returns the target namespace path if alias exists)
 	std::optional<NamespacePath> resolve_namespace_alias(std::string_view alias) const {
-		std::string key(alias);  // Convert to string for lookup
 		// Search from current scope backwards
 		for (auto it = symbol_table_stack_.rbegin(); it != symbol_table_stack_.rend(); ++it) {
-			auto alias_it = it->namespace_aliases.find(key);
+			auto alias_it = it->namespace_aliases.find(alias);
 			if (alias_it != it->namespace_aliases.end()) {
 				return alias_it->second;
 			}
@@ -732,6 +727,37 @@ private:
 	// Uses NamespacePath (vector of components) as key to avoid string concatenation
 	// Maps: namespace_path -> (symbol_name -> vector<ASTNode>) to support overloading
 	std::unordered_map<NamespacePath, std::unordered_map<StringType<32>, std::vector<ASTNode>>, NamespacePathHash, NamespacePathEqual> namespace_symbols_;
+	
+	// Dedicated string allocator for symbol table keys
+	// Ensures string_view keys remain valid for the lifetime of the symbol table
+	ChunkedStringAllocator string_allocator_{1024 * 1024};  // 1 MB chunks for symbol names
+	
+	// Intern a string_view by checking if it already exists in maps, or allocate it
+	// Returns a string_view that is guaranteed to remain valid
+	std::string_view intern_string(std::string_view str) {
+		// First, check if this string already exists as a key in any of our maps
+		// This avoids duplicate allocations for the same identifier
+		for (const auto& scope : symbol_table_stack_) {
+			auto it = scope.symbols.find(str);
+			if (it != scope.symbols.end()) {
+				return it->first;  // Return existing key
+			}
+			
+			auto using_it = scope.using_declarations.find(str);
+			if (using_it != scope.using_declarations.end()) {
+				return using_it->first;  // Return existing key
+			}
+			
+			auto alias_it = scope.namespace_aliases.find(str);
+			if (alias_it != scope.namespace_aliases.end()) {
+				return alias_it->first;  // Return existing key
+			}
+		}
+		
+		// String not found in existing maps, allocate it using StringBuilder
+		StringBuilder sb(string_allocator_);
+		return sb.append(str).commit();
+	}
 };
 
 extern SymbolTable gSymbolTable;
