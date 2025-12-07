@@ -241,20 +241,34 @@ int main(int argc, char *argv[]) {
     std::filesystem::path inputDirPath = inputFilePath.parent_path();
     context.addIncludeDir(inputDirPath.string());
 
-    // Add system include directory for standard library headers
-    // The include directory is located relative to the executable
+    // Add FlashCpp's minimal standard library header stubs directory
+    // These are simplified stubs since real libstdc++/libc++ headers are too complex to parse
     #if defined(_WIN32) || defined(_WIN64)
-        // On Windows, the executable is in x64/Debug/, so we need to go up two levels
         std::filesystem::path execPath = std::filesystem::canonical(std::filesystem::path(__FILE__).parent_path());
         std::filesystem::path includeDir = execPath.parent_path() / "include";
     #else
-        // On Linux/Unix, use /proc/self/exe
         std::filesystem::path execPath = std::filesystem::canonical("/proc/self/exe");
         std::filesystem::path includeDir = execPath.parent_path().parent_path().parent_path() / "include";
     #endif
     if (std::filesystem::exists(includeDir)) {
         context.addIncludeDir(includeDir.string());
     }
+
+    // Optionally add system include directories as fallback for headers not in our stubs
+    // Note: Most system headers are too complex for FlashCpp to parse
+    #if !defined(_WIN32) && !defined(_WIN64)
+        const char* system_include_dirs[] = {
+            "/usr/include/c++/14",
+            "/usr/include/c++/13",
+            "/usr/include/c++/12",
+            "/usr/include",
+        };
+        for (const char* dir : system_include_dirs) {
+            if (std::filesystem::exists(dir)) {
+                context.addIncludeDir(dir);
+            }
+        }
+    #endif
 
     // Collect timing data silently
     double preprocessing_time = 0.0, parsing_time = 0.0, ir_conversion_time = 0.0, template_time = 0.0, codegen_time = 0.0;

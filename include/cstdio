@@ -1,19 +1,18 @@
-// Minimal cstdio header for FlashCpp
-// Provides basic I/O functions from the C++ standard library
+// Minimal cstdio header stub for FlashCpp
+// Provides only the basic I/O function declarations needed for compilation
+// This is a simplified stub - the real libstdc++/libc++ headers are too complex for FlashCpp to parse
 
 #ifndef _FLASHCPP_CSTDIO
 #define _FLASHCPP_CSTDIO
 
-// Include cstddef for size_t
 #include <cstddef>
 
-// Declare C I/O functions in std namespace directly
 namespace std {
-    // Declare FILE as an opaque struct pointer type for type safety
+    // FILE type as opaque struct pointer
     struct _FILE;
     typedef _FILE* FILE;
     
-    // I/O functions
+    // Basic I/O functions
     extern "C" int puts(const char* str);
     extern "C" int printf(const char* format, ...);
     extern "C" int fprintf(FILE stream, const char* format, ...);
