@@ -68,6 +68,15 @@ public:
     // Check if a string_view points to memory managed by this allocator
     bool owns_string(std::string_view sv) const {
         const char* ptr = sv.data();
+        
+        // Handle edge cases
+        if (!ptr || sv.empty()) return false;
+        
+        // Check for potential overflow when calculating end pointer
+        if (sv.size() > SIZE_MAX - reinterpret_cast<uintptr_t>(ptr)) {
+            return false;
+        }
+        
         const char* end = ptr + sv.size();
         for (const auto& chunk : chunks_) {
             const char* chunk_start = chunk->data_.data();
