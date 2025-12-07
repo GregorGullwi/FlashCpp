@@ -9118,6 +9118,12 @@ private:
 			}
 		}
 
+		// Safety check: if size_in_bytes is still 0, something went wrong
+		// This shouldn't happen, but add a fallback just in case
+		if (size_in_bytes == 0) {
+			FLASH_LOG(Codegen, Warning, "sizeof returned 0, this indicates a bug in type size tracking");
+		}
+
 		// Return sizeof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
@@ -9244,6 +9250,11 @@ private:
 					alignment = 16;
 				}
 			}
+		}
+
+		// Safety check: if alignment is still 0, something went wrong
+		if (alignment == 0) {
+			FLASH_LOG(Codegen, Warning, "alignof returned 0, this indicates a bug in type alignment tracking");
 		}
 
 		// Return alignof result as a constant unsigned long long (size_t equivalent)
