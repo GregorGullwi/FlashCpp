@@ -71,6 +71,10 @@ struct Scope {
 	ScopeType scope_type = ScopeType::Block;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
 	// Use std::string keys instead of string_view to avoid dangling references (UB)
+	// String views can point to temporary strings that get destroyed, causing platform-dependent failures.
+	// While string_view is efficient, using std::string ensures the key remains valid regardless of source.
+	// Note: Identifiers come from either Lexer source (persistent) or StringBuilder (chunked allocator),
+	// but without tracking source ranges here, std::string is the safest approach.
 	std::unordered_map<std::string, std::vector<ASTNode>> symbols;
 	ScopeHandle scope_handle;
 	StringType<> namespace_name;  // Only used for Namespace scopes

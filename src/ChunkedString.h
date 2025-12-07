@@ -64,6 +64,19 @@ public:
     }
 
     Chunk* current_chunk() { return chunks_.back().get(); }
+    
+    // Check if a string_view points to memory managed by this allocator
+    bool owns_string(std::string_view sv) const {
+        const char* ptr = sv.data();
+        for (const auto& chunk : chunks_) {
+            const char* chunk_start = chunk->data_.data();
+            const char* chunk_end = chunk_start + chunk->next_free_;
+            if (ptr >= chunk_start && ptr < chunk_end) {
+                return true;
+            }
+        }
+        return false;
+    }
 
 private:
     std::vector<std::unique_ptr<Chunk>> chunks_;
