@@ -10106,14 +10106,14 @@ ParseResult Parser::parse_primary_expression()
 			identifierType = lookup_symbol(idenfifier_token.value());
 		}
 		
-		FLASH_LOG(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
+		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
 		
 		// If identifier is followed by ::, it might be a namespace-qualified identifier
 		// This handles both: 
 		// 1. Identifier not found (might be namespace name)
 		// 2. Identifier found but followed by :: (namespace or class scope resolution)
 		if (peek_token().has_value() && peek_token()->value() == "::") {
-			FLASH_LOG(Parser, Warning, "@@@ QUALIFIED ID DETECTED: Identifier '{}' followed by '::', identifierType found: {}", idenfifier_token.value(), identifierType.has_value());
+			FLASH_LOG_FORMAT(Parser, Warning, "@@@ QUALIFIED ID DETECTED: Identifier '{}' followed by '::', identifierType found: {}", idenfifier_token.value(), identifierType.has_value());
 			// Parse as qualified identifier: Namespace::identifier
 			// Even if we don't know if it's a namespace, try parsing it as a qualified identifier
 			std::vector<StringType<32>> namespaces;
@@ -11773,7 +11773,7 @@ ParseResult Parser::parse_primary_expression()
 found_member_variable:  // Label for member variable detection - jump here to skip error checking
 	// Check for postfix operators (++, --, and array subscript [])
 	while (result.has_value() && peek_token().has_value()) {
-		FLASH_LOG(Parser, Warning, "@@@ POSTFIX LOOP: peek token type={}, value='{}'", 
+		FLASH_LOG_FORMAT(Parser, Warning, "@@@ POSTFIX LOOP: peek token type={}, value='{}'", 
 			static_cast<int>(peek_token()->type()), peek_token()->value());
 		if (peek_token()->type() == Token::Type::Operator) {
 			std::string_view op = peek_token()->value();
