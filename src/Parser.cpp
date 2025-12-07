@@ -5704,14 +5704,26 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 	// Check if this starts with :: (global namespace scope)
 	if (peek_token().has_value() && peek_token()->value() == "::") {
-		consume_token(); // consume ::
-		// For global namespace, we use an empty namespace_path
-		// The identifier follows immediately
-		auto token = consume_token();
-		if (!token.has_value() || token->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected identifier after :: in using declaration", token.value_or(Token()));
+		consume_token(); // consume leading ::
+		// After the leading ::, we need to parse the qualified name
+		// This could be ::name or ::namespace::name
+		while (true) {
+			auto token = consume_token();
+			if (!token.has_value() || token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after :: in using declaration", token.value_or(Token()));
+			}
+
+			// Check if followed by ::
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				// This is a namespace part
+				namespace_path.emplace_back(StringType<>(token->value()));
+				consume_token(); // consume ::
+			} else {
+				// This is the final identifier
+				identifier_token = *token;
+				break;
+			}
 		}
-		identifier_token = *token;
 	} else {
 		// Parse qualified name (namespace::...::identifier)
 		while (true) {
@@ -5744,6 +5756,50 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		namespace_path,
 		std::string_view(identifier_token.value())
 	);
+
+	// Check if the identifier is a known type from the global namespace or __gnu_cxx namespace (C library types)
+	// and register it in gTypesByName so it can be used as a type
+	// Common C library types that need to be registered as opaque types
+	static const std::unordered_map<std::string_view, size_t> c_library_types = {
+		{"div_t", 64},      // struct with two ints
+		{"ldiv_t", 128},    // struct with two longs
+		{"lldiv_t", 128},   // struct with two long longs
+		{"size_t", 64},     // typically unsigned long
+		{"ptrdiff_t", 64},  // typically long
+		{"wchar_t", 32},    // typically int
+		{"mbstate_t", 64},  // opaque type
+		{"fpos_t", 128},    // opaque type
+		{"FILE", 128},      // opaque struct
+		{"time_t", 64},     // typically long
+		{"clock_t", 64},    // typically long
+		{"tm", 256}         // struct with multiple fields
+	};
+	
+	std::string_view type_name = identifier_token.value();
+	auto type_it = c_library_types.find(type_name);
+	// Check if this is from global namespace or __gnu_cxx namespace
+	bool is_from_global = namespace_path.empty();
+	bool is_from_gnu_cxx = (namespace_path.size() == 1 && 
+	                         namespace_path[0] == "__gnu_cxx");
+	
+	if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
+		// This is a C library type being brought in via using ::type; or using ::__gnu_cxx::type;
+		// Register it as a struct type (opaque) so it can be recognized
+		std::string type_name_str(type_name);
+		if (gTypesByName.find(type_name_str) == gTypesByName.end()) {
+			// Add the type to gTypeInfo as a struct type
+			auto& type_info = gTypeInfo.emplace_back(type_name_str, Type::Struct, gTypeInfo.size());
+			type_info.type_size_ = type_it->second; // Set the size in bits
+			
+			// Create a minimal StructTypeInfo so it's recognized as a struct
+			auto struct_info = std::make_unique<StructTypeInfo>(type_name_str, AccessSpecifier::Public);
+			struct_info->total_size = type_it->second / 8; // Convert bits to bytes
+			type_info.setStructInfo(std::move(struct_info));
+			
+			gTypesByName.emplace(type_info.name_, &type_info);
+			FLASH_LOG(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", type_name_str, type_it->second);
+		}
+	}
 
 	auto decl_node = emplace_node<UsingDeclarationNode>(std::move(namespace_path), identifier_token, using_token);
 	return saved_position.success(decl_node);
