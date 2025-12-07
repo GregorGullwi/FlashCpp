@@ -18,3 +18,7 @@ flashcpp_crash_*.log
 output/*.exe
 output/*.obj
 .backup
+
+# Test executables
+test_*_exe
+*_exe
