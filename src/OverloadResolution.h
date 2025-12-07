@@ -112,8 +112,10 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				return TypeConversionResult::no_match();
 			} else {
 				// 'from' is not a reference, 'to' is a reference
-				// Can't bind non-reference to reference parameter
-				// (This would require creating a temporary, which isn't allowed for lvalue refs)
+				// TODO: Handle more complex cases:
+				// - Rvalue refs can bind to temporaries (prvalues)
+				// - Const lvalue refs can bind to both lvalues and rvalues
+				// For now, conservatively reject to avoid incorrect matches
 				return TypeConversionResult::no_match();
 			}
 		} else {
