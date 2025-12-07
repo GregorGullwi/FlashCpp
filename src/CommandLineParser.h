@@ -25,7 +25,16 @@ public:
 				continue;
 			}
 
-			if (arg.size() >= 2 && (arg[0] == '-' || arg[0] == '/')) {
+			// On Windows, allow both - and / for options
+			// On Unix/Linux, only allow - (to avoid treating absolute paths like /home/... as options)
+			bool isOption = false;
+			#if defined(_WIN32) || defined(_WIN64)
+				isOption = arg.size() >= 2 && (arg[0] == '-' || arg[0] == '/');
+			#else
+				isOption = arg.size() >= 2 && arg[0] == '-';
+			#endif
+
+			if (isOption) {
 				// Handle both - and / prefixes for options (Windows compatibility)
 				if (arg.size() >= 3 && arg[1] == '-') {
 					// Option with long name, e.g. --option=value (only with -)
