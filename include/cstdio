@@ -9,8 +9,9 @@
 
 // Declare C I/O functions in std namespace directly
 namespace std {
-    // Declare FILE as an opaque pointer type
-    typedef void* FILE;
+    // Declare FILE as an opaque struct pointer type for type safety
+    struct _FILE;
+    typedef _FILE* FILE;
     
     // I/O functions
     extern "C" int puts(const char* str);
