@@ -4087,6 +4087,10 @@ private:
 			FLASH_LOG(Codegen, Error, "sizeof... operator found during code generation - should have been substituted during template instantiation");
 			return {};
 		}
+		else if (std::holds_alternative<AlignofExprNode>(exprNode)) {
+			const auto& expr = std::get<AlignofExprNode>(exprNode);
+			return generateAlignofIr(expr);
+		}
 		else if (std::holds_alternative<OffsetofExprNode>(exprNode)) {
 			const auto& expr = std::get<OffsetofExprNode>(exprNode);
 			return generateOffsetofIr(expr);
@@ -9087,6 +9091,91 @@ private:
 		// Return sizeof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
 		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+	}
+
+	std::vector<IrOperand> generateAlignofIr(const AlignofExprNode& alignofNode) {
+		size_t alignment = 0;
+
+		if (alignofNode.is_type()) {
+			// alignof(type)
+			const ASTNode& type_node = alignofNode.type_or_expr();
+			if (!type_node.is<TypeSpecifierNode>()) {
+				assert(false && "alignof type argument must be TypeSpecifierNode");
+				return {};
+			}
+
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+			Type type = type_spec.type();
+
+			// Handle struct types
+			if (type == Type::Struct) {
+				size_t type_index = type_spec.type_index();
+				if (type_index >= gTypeInfo.size()) {
+					assert(false && "Invalid type index for struct");
+					return {};
+				}
+
+				const TypeInfo& type_info = gTypeInfo[type_index];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (!struct_info) {
+					assert(false && "Struct type info not found");
+					return {};
+				}
+
+				alignment = struct_info->alignment;
+			}
+			else {
+				// For primitive types, alignment is typically the same as size (up to 8 bytes)
+				size_t size_in_bytes = type_spec.size_in_bits() / 8;
+				// Standard alignment rules: min(size, 8) for most platforms
+				alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
+				
+				// Special case for long double on x86-64: often has 16-byte alignment
+				if (type == Type::LongDouble) {
+					alignment = 16;
+				}
+			}
+		}
+		else {
+			// alignof(expression) - evaluate the type of the expression
+			const ASTNode& expr_node = alignofNode.type_or_expr();
+			if (!expr_node.is<ExpressionNode>()) {
+				assert(false && "alignof expression argument must be ExpressionNode");
+				return {};
+			}
+
+			// Generate IR for the expression to get its type
+			auto expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
+			if (expr_operands.empty()) {
+				return {};
+			}
+
+			// Extract type and size from the expression result
+			Type expr_type = std::get<Type>(expr_operands[0]);
+			int size_in_bits = std::get<int>(expr_operands[1]);
+
+			// Handle struct types
+			if (expr_type == Type::Struct) {
+				// For struct expressions, we need to look up the type index
+				// This is a simplification - in a full implementation we'd track type_index through expressions
+				assert(false && "alignof(struct_expression) not fully implemented yet");
+				return {};
+			}
+			else {
+				// For primitive types
+				size_t size_in_bytes = size_in_bits / 8;
+				alignment = (size_in_bytes < 8) ? size_in_bytes : 8;
+				
+				// Special case for long double
+				if (expr_type == Type::LongDouble) {
+					alignment = 16;
+				}
+			}
+		}
+
+		// Return alignof result as a constant unsigned long long (size_t equivalent)
+		// Format: [type, size_bits, value]
+		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(alignment) };
 	}
 
 	std::vector<IrOperand> generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
