@@ -11054,8 +11054,27 @@ private:
 			// Step 3: Call __cxa_throw(thrown_object, tinfo, destructor)
 			// RDI = thrown_object (from __cxa_allocate_exception, now in R15)
 			emitMovRegReg(X64Register::RDI, X64Register::R15);
-			// RSI = type_info* (NULL for now - proper type_info requires RTTI implementation)
-			emitXorRegReg(X64Register::RSI);
+			
+			// RSI = type_info* - generate type_info for the thrown type
+			if (throw_op.type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[throw_op.type_index];
+				Type exception_type = type_info.type_;
+				
+				// Create type_info symbol for this type
+				std::string typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
+				
+				if (!typeinfo_symbol.empty()) {
+					// Load address of type_info into RSI using RIP-relative LEA
+					emitLeaRipRelativeWithRelocation(X64Register::RSI, typeinfo_symbol);
+				} else {
+					// For non-builtin types (not yet supported), use NULL
+					emitXorRegReg(X64Register::RSI);
+				}
+			} else {
+				// Unknown type, use NULL
+				emitXorRegReg(X64Register::RSI);
+			}
+			
 			// RDX = destructor function pointer (NULL for POD types)
 			emitXorRegReg(X64Register::RDX);
 			
