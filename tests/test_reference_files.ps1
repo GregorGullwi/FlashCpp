@@ -311,7 +311,7 @@ foreach ($file in $failFiles) {
     if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
     
     # Compile with FlashCpp - we EXPECT this to fail
-    $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
+    & .\$flashCppPath $file.FullName 2>&1 | Out-Null
     
     # Check if compilation succeeded (which is BAD for _fail tests)
     if (Test-Path $objFile) {
