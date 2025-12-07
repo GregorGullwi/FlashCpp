@@ -9,9 +9,11 @@
 #include <span>
 #include <assert.h>
 #include <unordered_map>
+#include <type_traits>
 
 #include "IRTypes.h"
 #include "ObjFileWriter.h"
+#include "ElfFileWriter.h"
 #include "ProfilingTimer.h"
 #include "ChunkedString.h"
 
@@ -10980,29 +10982,8 @@ private:
 	}
 
 	void handleThrow(const IrInstruction& instruction) {
-		// Throw creates and throws an exception by calling _CxxThrowException
 		// Extract data from typed payload
 		const auto& throw_op = instruction.getTypedPayload<ThrowOp>();
-		
-		// For C++ exception throwing:
-		// We need to call _CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo)
-		// where:
-		// - pExceptionObject is a pointer to the exception object
-		// - pThrowInfo describes the exception type (can be NULL for simple cases)
-		
-		// Windows x64 calling convention: RCX = first arg, RDX = second arg
-		
-		// Implementation:
-		// - Allocate space on stack for the exception object
-		// - Copy the exception value to that space
-		// - Pass pointer to it as first argument (RCX)
-		// - Pass NULL as second argument (RDX) for throw info
-		// - Call _CxxThrowException
-		
-		// Calculate stack space needed:
-		// - 32 bytes shadow space (Windows x64 calling convention)
-		// - N bytes for exception object (rounded up to 8-byte alignment)
-		// - Total rounded up to 16-byte alignment
 		
 		size_t exception_size = throw_op.size_in_bytes;
 		if (exception_size == 0) exception_size = 8; // Minimum size
@@ -11010,91 +10991,150 @@ private:
 		// Round exception size up to 8-byte alignment
 		size_t aligned_exception_size = (exception_size + 7) & ~7;
 		
-		// Total stack allocation: 32 (shadow) + aligned_exception_size
-		// Round up to 16-byte alignment
-		size_t total_stack = ((32 + aligned_exception_size) + 15) & ~15;
-		
-		emitSubRSP(static_cast<int32_t>(total_stack));
-		
-		// Copy exception object to stack at [RSP+32]
-		// For small objects (<=8 bytes), use register-based copy
-		// For larger objects, use memory-to-memory copy
-		
-		if (exception_size <= 8) {
-			// Small object: load into RAX and store
-			TempVar temp = throw_op.value;
-			if (temp.var_number != 0) {
-				int32_t stack_offset = getStackOffsetFromTempVar(temp);
-				// Load value from its stack location into RAX
-				emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
+		// Platform-specific exception handling
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// Two-step process:
+			// 1. Call __cxa_allocate_exception(size_t thrown_size) -> returns void*
+			// 2. Copy exception object to allocated memory
+			// 3. Call __cxa_throw(void* thrown_object, type_info* tinfo, void (*dest)(void*))
+			//
+			// System V AMD64 calling convention: RDI, RSI, RDX, RCX, R8, R9
+			
+			// Step 1: Call __cxa_allocate_exception(exception_size)
+			// Argument: RDI = exception_size
+			emitMovImm64(X64Register::RDI, aligned_exception_size);
+			emitSubRSP(8); // Align stack to 16 bytes before call
+			emitCall("__cxa_allocate_exception");
+			emitAddRSP(8); // Clean up alignment
+			
+			// Result is in RAX (pointer to allocated exception object)
+			// Save it to R15 (callee-saved register)
+			emitMovRegReg(X64Register::R15, X64Register::RAX);
+			
+			// Step 2: Copy exception object to allocated memory
+			if (exception_size <= 8) {
+				// Small object: load into RCX and store to [R15]
+				TempVar temp = throw_op.value;
+				if (temp.var_number != 0) {
+					int32_t stack_offset = getStackOffsetFromTempVar(temp);
+					emitMovFromFrameBySize(X64Register::RCX, stack_offset, static_cast<int>(exception_size * 8));
+				} else {
+					emitMovImm64(X64Register::RCX, 0);
+				}
+				// Store exception value to allocated memory [R15 + 0]
+				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::R15, 0, static_cast<int>(exception_size));
 			} else {
-				// No value, use 0
-				emitMovImm64(X64Register::RAX, 0);
+				// Large object: memory-to-memory copy
+				TempVar temp = throw_op.value;
+				if (temp.var_number != 0) {
+					int32_t stack_offset = getStackOffsetFromTempVar(temp);
+					emitLeaFromFrame(X64Register::RSI, stack_offset);
+				} else {
+					emitXorRegReg(X64Register::RSI);
+				}
+				// RDI = destination (allocated memory in R15)
+				emitMovRegReg(X64Register::RDI, X64Register::R15);
+				// RCX = count
+				emitMovImm64(X64Register::RCX, exception_size);
+				// Copy: rep movsb
+				textSectionData.push_back(0xF3); // REP prefix
+				textSectionData.push_back(0xA4); // MOVSB
 			}
 			
-			// Store exception value on stack at [RSP+32]
-			emitMovToRSPDisp8(X64Register::RAX, 32);
+			// Step 3: Call __cxa_throw(thrown_object, tinfo, destructor)
+			// RDI = thrown_object (from __cxa_allocate_exception, now in R15)
+			emitMovRegReg(X64Register::RDI, X64Register::R15);
+			// RSI = type_info* (NULL for now - TODO: implement proper type_info)
+			emitXorRegReg(X64Register::RSI);
+			// RDX = destructor function pointer (NULL for POD types)
+			emitXorRegReg(X64Register::RDX);
+			
+			emitCall("__cxa_throw");
+			// Note: __cxa_throw never returns
+			
 		} else {
-			// Large object: use memory-to-memory copy
-			// Load source address into RSI
-			TempVar temp = throw_op.value;
-			if (temp.var_number != 0) {
-				int32_t stack_offset = getStackOffsetFromTempVar(temp);
-				emitLeaFromFrame(X64Register::RSI, stack_offset);
+			// ========== Windows/COFF (MSVC ABI) ==========
+			// Single-step process:
+			// Call _CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo)
+			//
+			// Windows x64 calling convention: RCX, RDX, R8, R9
+			
+			// Calculate stack space needed:
+			// - 32 bytes shadow space (Windows x64 calling convention)
+			// - N bytes for exception object (rounded up to 8-byte alignment)
+			// - Total rounded up to 16-byte alignment
+			size_t total_stack = ((32 + aligned_exception_size) + 15) & ~15;
+			emitSubRSP(static_cast<int32_t>(total_stack));
+			
+			// Copy exception object to stack at [RSP+32]
+			if (exception_size <= 8) {
+				// Small object: load into RAX and store
+				TempVar temp = throw_op.value;
+				if (temp.var_number != 0) {
+					int32_t stack_offset = getStackOffsetFromTempVar(temp);
+					emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
+				} else {
+					emitMovImm64(X64Register::RAX, 0);
+				}
+				emitMovToRSPDisp8(X64Register::RAX, 32);
 			} else {
-				// No value - this shouldn't happen for large objects
-				emitXorRegReg(X64Register::RSI);
+				// Large object: use memory-to-memory copy
+				TempVar temp = throw_op.value;
+				if (temp.var_number != 0) {
+					int32_t stack_offset = getStackOffsetFromTempVar(temp);
+					emitLeaFromFrame(X64Register::RSI, stack_offset);
+				} else {
+					emitXorRegReg(X64Register::RSI);
+				}
+				emitLeaFromRSPDisp8(X64Register::RDI, 32);
+				emitMovImm64(X64Register::RCX, exception_size);
+				textSectionData.push_back(0xF3); // REP prefix
+				textSectionData.push_back(0xA4); // MOVSB
 			}
 			
-			// Load destination address into RDI (RSP+32)
-			emitLeaFromRSPDisp8(X64Register::RDI, 32);
+			// Set up arguments for _CxxThrowException
+			// RCX (first argument) = pointer to exception object = RSP+32
+			emitLeaFromRSPDisp8(X64Register::RCX, 32);
+			// RDX (second argument) = NULL (no throw info)
+			emitXorRegReg(X64Register::RDX);
 			
-			// Set up count in RCX for rep movsb
-			emitMovImm64(X64Register::RCX, exception_size);
-			
-			// Perform memory copy: rep movsb
-			// This copies RCX bytes from [RSI] to [RDI]
-			textSectionData.push_back(0xF3); // REP prefix
-			textSectionData.push_back(0xA4); // MOVSB
+			emitCall("_CxxThrowException");
+			// Note: _CxxThrowException never returns
 		}
-		
-		// Set up arguments for _CxxThrowException
-		// RCX (first argument) = pointer to exception object = RSP+32
-		emitLeaFromRSPDisp8(X64Register::RCX, 32);
-		
-		// RDX (second argument) = NULL (no throw info)
-		emitXorRegReg(X64Register::RDX);
-		
-		// Call _CxxThrowException
-		// This function never returns (it's [[noreturn]])
-		emitCall("_CxxThrowException");
-		
-		// Note: We don't clean up stack or restore RSP because _CxxThrowException never returns
-		// The C++ runtime will handle stack unwinding
 	}
 
 	void handleRethrow(const IrInstruction& instruction) {
-		// Rethrow re-throws the current exception using _CxxThrowException
-		// When called with NULL arguments, _CxxThrowException will rethrow the current exception
-		
-		// Allocate shadow space for Windows x64 calling convention
-		// - Requires 32 bytes shadow space
-		// - Stack must be 16-byte aligned at CALL instruction
-		// Round up to 48 bytes to maintain 16-byte alignment
-		emitSubRSP(48);
-		
-		// Set up arguments for _CxxThrowException to rethrow current exception
-		// RCX (first argument) = NULL (rethrow current exception object)
-		emitXorRegReg(X64Register::RCX);
-		
-		// RDX (second argument) = NULL (rethrow uses current throw info)
-		emitXorRegReg(X64Register::RDX);
-		
-		// Call _CxxThrowException
-		// This function never returns (it's [[noreturn]])
-		emitCall("_CxxThrowException");
-		
-		// Note: We don't clean up stack or restore RSP because _CxxThrowException never returns
+		// Platform-specific rethrow implementation
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// Call __cxa_rethrow() with no arguments
+			// System V AMD64 calling convention - no arguments needed
+			
+			emitSubRSP(8); // Align stack to 16 bytes before call
+			emitCall("__cxa_rethrow");
+			// Note: __cxa_rethrow never returns
+			
+		} else {
+			// ========== Windows/COFF (MSVC ABI) ==========
+			// Call _CxxThrowException(NULL, NULL) to rethrow current exception
+			// Windows x64 calling convention: RCX, RDX
+			
+			// Allocate shadow space for Windows x64 calling convention
+			// - Requires 32 bytes shadow space
+			// - Stack must be 16-byte aligned at CALL instruction
+			// Round up to 48 bytes to maintain 16-byte alignment
+			emitSubRSP(48);
+			
+			// Set up arguments for _CxxThrowException to rethrow current exception
+			// RCX (first argument) = NULL (rethrow current exception object)
+			emitXorRegReg(X64Register::RCX);
+			// RDX (second argument) = NULL (rethrow uses current throw info)
+			emitXorRegReg(X64Register::RDX);
+			
+			emitCall("_CxxThrowException");
+			// Note: _CxxThrowException never returns
+		}
 	}
 
 	void finalizeSections() {
