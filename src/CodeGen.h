@@ -6272,6 +6272,7 @@ private:
 							call_op.return_type = return_type;
 							call_op.return_size_in_bits = return_size;
 							call_op.is_member_function = true;
+							call_op.is_variadic = func_decl.is_variadic();
 							
 							// Add the LHS object as the first argument (this pointer)
 							// For member functions, the this pointer is passed by name or temp var
@@ -7227,6 +7228,11 @@ private:
 		call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
 		call_op.is_member_function = false;
 		
+		// Set is_variadic based on function declaration (if available)
+		if (matched_func_decl) {
+			call_op.is_variadic = matched_func_decl->is_variadic();
+		}
+		
 		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
 		// Operands come in groups of 3 (type, size, value) or 4 (type, size, value, type_index)
 		// toTypedValue handles both cases
@@ -7466,6 +7472,8 @@ private:
 				
 				call_op.function_name = std::string(mangled);
 				call_op.is_member_function = false;
+				call_op.is_variadic = false;  // Lambdas cannot be variadic in C++20
+
 
 				// Add arguments
 				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
@@ -8132,6 +8140,15 @@ private:
 			call_op.return_type = return_type.type();
 			call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
 			call_op.is_member_function = true;
+			
+			// Get the actual function declaration to check if it's variadic
+			const FunctionDeclarationNode* actual_func_decl_for_variadic = nullptr;
+			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+				actual_func_decl_for_variadic = &called_member_func->function_decl.as<FunctionDeclarationNode>();
+			} else {
+				actual_func_decl_for_variadic = &func_decl;
+			}
+			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 			
 			// Add the object as the first argument (this pointer)
 			call_op.args.push_back(TypedValue{

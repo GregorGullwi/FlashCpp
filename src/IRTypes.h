@@ -598,7 +598,8 @@ struct CallOp {
 	TempVar result;                       // 4 bytes
 	Type return_type;                     // 4 bytes
 	int return_size_in_bits;              // 4 bytes
-	bool is_member_function = false;      // 1 byte (+ 3 bytes padding)
+	bool is_member_function = false;      // 1 byte
+	bool is_variadic = false;             // 1 byte (+ 2 bytes padding)
 };
 
 // Member access (load member from struct/class)
