@@ -5024,23 +5024,33 @@ private:
 			}
 			
 			// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
-			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
-			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-			size_t max_reg_args = call_op.args.size();
-			for (size_t i = 0; i < max_reg_args; ++i) {
+			// Note: max_int_regs and max_float_regs already declared above for stack arg processing
+			// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
+			size_t int_reg_index = 0;
+			size_t float_reg_index = 0;
+			
+			for (size_t i = 0; i < call_op.args.size(); ++i) {
 				const auto& arg = call_op.args[i];
 				
 				// Determine if this is a floating-point argument
 				bool is_float_arg = is_floating_point_type(arg.type);
 				
 				// Check if this argument fits in a register
-				if ((is_float_arg && i >= max_float_regs) || (!is_float_arg && i >= max_int_regs)) {
-					break;  // Remaining arguments go on stack
+				if (is_float_arg) {
+					if (float_reg_index >= max_float_regs) {
+						break;  // Remaining float arguments go on stack
+					}
+				} else {
+					if (int_reg_index >= max_int_regs) {
+						break;  // Remaining integer arguments go on stack
+					}
 				}
 				
 				// Get the platform-specific calling convention register
-				// Use XMM registers for float args, INT registers for integer args
-				X64Register target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(i) : getIntParamReg<TWriterClass>(i);
+				// Use separate indices for int and float registers
+				X64Register target_reg = is_float_arg 
+					? getFloatParamReg<TWriterClass>(float_reg_index++)
+					: getIntParamReg<TWriterClass>(int_reg_index++);
 				
 				// Special handling for passing addresses (this pointer or large struct references)
 				// For member functions: first arg is always "this" pointer (pass address)
@@ -5236,6 +5246,10 @@ private:
 		size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 		size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 		
+		// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
+		size_t int_reg_index = 0;
+		size_t float_reg_index = 0;
+		
 		for (size_t i = 0; i < num_args; ++i) {
 			size_t argIndex = first_arg_index + i * arg_stride;
 			Type argType = instruction.getOperandAs<Type>(argIndex);
@@ -5247,7 +5261,7 @@ private:
 
 			// Check if this argument goes in a register or on the stack
 			// Platform-specific: Windows has 4 regs, Linux has 6 int regs / 8 float regs
-			bool use_register = is_float_arg ? (i < max_float_regs) : (i < max_int_regs);
+			bool use_register = is_float_arg ? (float_reg_index < max_float_regs) : (int_reg_index < max_int_regs);
 
 			if (!use_register) {
 				// Collect stack arguments for later processing
@@ -5256,7 +5270,10 @@ private:
 			}
 
 			// Determine the target register for the argument (if using registers)
-			X64Register target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(i) : getIntParamReg<TWriterClass>(i);
+			// Use separate indices for int and float registers
+			X64Register target_reg = is_float_arg 
+				? getFloatParamReg<TWriterClass>(float_reg_index++)
+				: getIntParamReg<TWriterClass>(int_reg_index++);
 
 			// Handle floating-point immediate values
 			if (is_float_arg && std::holds_alternative<double>(argValue)) {
