@@ -437,8 +437,11 @@ int main(int argc, char *argv[]) {
             // Use COFF format (Windows)
             FLASH_LOG(Codegen, Info, "Generating COFF object file (Windows target)");
             IrToObjConverter<ObjectFileWriter> irConverter;
+            FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before irConverter.convert()");
             irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
+            FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] After irConverter.convert(), before destructor");
         }
+        FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] After irConverter destructor");
     } catch (const std::exception& e) {
         FLASH_LOG(General, Error, "Code generation failed: ", e.what());
         printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
