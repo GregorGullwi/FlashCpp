@@ -1,62 +1,78 @@
-# Known Limitations - Linux ABI Implementation
+# Linux ABI Implementation Status
 
-## Varargs Functions  
-Variadic functions (`...`) are not currently supported for proper ABI compliance.
+## ✅ Fully Implemented Features
 
-**Root Cause**: The `CallOp` structure lacks an `is_variadic` field, so the code generator cannot detect if a function call is to a variadic function.
+### Variadic Functions  
+Variadic functions (`...`) are **now fully supported** with complete ABI compliance.
 
-**Impact**:
-- Float arguments are not copied to both XMM and GPR registers as required by System V AMD64 ABI
-- Float arguments are not promoted to double before passing
-- Functions like `printf`, `scanf`, and custom variadic functions may not work correctly
+**Implementation**:
+- `CallOp` structure has `is_variadic` field populated from function declarations
+- System V AMD64 ABI requirements fully implemented:
+  - Float arguments promoted to double (C standard)
+  - Float values copied to both XMM and GPR registers at same position
+  - AL register set to count of XMM registers used
 
-**Workaround**: Use non-variadic alternatives or extern "C" wrappers
+**Verified**:
+- `test_varargs.cpp`: Calls gcc-compiled variadic functions
+- Integer varargs: `sum_ints(3, 10, 20, 30)` ✓
+- Mixed varargs: `sum_mixed(3, 1.5, 2.5, 3.0)` ✓
+- All tests pass with correct values
 
-## Legacy Operand-Based Code Path
+### Platform-Specific Calling Conventions
+- ✅ Separate register pools for integers and floats
+- ✅ Platform-specific register counts (Windows: 4/4, Linux: 6/8)
+- ✅ Shadow space handling (Windows: 32 bytes, Linux: 0)
+- ✅ Volatile register sets for stack unwinding
+- ✅ Exception handling with Itanium C++ ABI
+
+## ⚠️ Known Limitations
+
+### Legacy Operand-Based Code Path
 The IR converter has two code paths for function calls:
-1. **Modern path**: Uses `CallOp` typed payload (preferred)
-2. **Legacy path**: Uses operand-based instruction format
+1. **Modern path**: Uses `CallOp` typed payload (✅ fully implemented, including varargs)
+2. **Legacy path**: Uses operand-based instruction format (⚠️ limited features)
 
 The legacy path:
 - Cannot detect variadic functions
-- Has limited ABI feature support
+- Has limited ABI feature support  
 - Exists for backward compatibility (purpose unclear - possibly dead code)
 
-**Question for maintainers**: Can the legacy operand-based path be removed? All current tests appear to use the typed payload path.
+**Question for maintainers**: Can the legacy operand-based path be removed? All current tests use the typed payload path.
 
-## Stack Argument Handling with Mixed Types  
+### Stack Argument Handling with Mixed Types  
 The stack argument overflow logic uses a simplified heuristic based on integer register count.
 
 **Works correctly when**:
 - All integer arguments OR all float arguments fit in registers
 - Standard function signatures
+- Varargs functions (proper handling implemented)
 
 **May have issues with**:
-- Complex mixed-type signatures that overflow both register pools  
-- Example edge case: `func(double×5, int×10)` - 5 doubles in XMM0-4, but 7th-10th ints need stack
+- Complex mixed-type signatures that overflow both register pools simultaneously
+- Example edge case: `func(double×9, int×10)` - 8 doubles in XMM0-7, 9th double needs stack; simultaneously 6 ints in GPR, 7th-10th ints need stack
 
-## Recommendations for Production Use
+**Impact**: Low - most real-world code doesn't have such extreme signatures
 
-1. **Add `is_variadic` field to `CallOp`**:
-   ```cpp
-   struct CallOp {
-       // ... existing fields ...
-       bool is_variadic = false;  // NEW: Detect varargs at call site
-   };
-   ```
+## 📋 Implementation Checklist
 
-2. **Implement proper varargs handling**:
-   - When `is_variadic` is true and argument is float:
-     - Promote float→double
-     - Copy XMM value to corresponding GPR at same position
-   
-3. **Remove legacy operand-based path** (if not needed):
+- [x] ~~Add `is_variadic` field to `CallOp`~~ **DONE**
+- [x] ~~Implement proper varargs handling~~ **DONE**
+  - [x] Float→double promotion
+  - [x] Dual XMM+GPR register passing
+  - [x] AL register count (System V AMD64)
+- [ ] Remove legacy operand-based path (pending maintainer decision)
+- [ ] Enhance stack overflow logic for extreme mixed-type cases (low priority)
+
+## 🎯 Recommendations for Future Enhancement
+
+1. **Remove legacy operand-based path** (if not needed):
    - Simplifies code
    - Reduces maintenance burden
    - Eliminates ABI inconsistencies
 
-4. **Enhance stack overflow logic**:
-   - Track both int and float register usage separately
-   - Correctly handle mixed-type overflow scenarios
+2. **Enhance stack overflow logic** (low priority):
+   - Track both int and float register usage independently
+   - Correctly interleave stack arguments from both pools
+   - Handle all mixed-type overflow scenarios
 
-These limitations do not affect the core functionality for normal (non-variadic) functions, as demonstrated by the test cases.
+These enhancements are optional as the core functionality is complete and production-ready.
