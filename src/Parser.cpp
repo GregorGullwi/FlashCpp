@@ -13991,6 +13991,22 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			return type_node.as<TypeSpecifierNode>();
 		}
 	}
+	else if (std::holds_alternative<StaticCastNode>(expr)) {
+		// For cast expressions like (Type)expr or static_cast<Type>(expr), return the target type
+		const auto& cast = std::get<StaticCastNode>(expr);
+		const ASTNode& target_type_node = cast.target_type();
+		if (target_type_node.is<TypeSpecifierNode>()) {
+			return target_type_node.as<TypeSpecifierNode>();
+		}
+	}
+	else if (std::holds_alternative<DynamicCastNode>(expr)) {
+		// For dynamic_cast<Type>(expr), return the target type
+		const auto& cast = std::get<DynamicCastNode>(expr);
+		const ASTNode& target_type_node = cast.target_type();
+		if (target_type_node.is<TypeSpecifierNode>()) {
+			return target_type_node.as<TypeSpecifierNode>();
+		}
+	}
 	// Add more cases as needed
 
 	return std::nullopt;
