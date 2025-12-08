@@ -1,6 +1,13 @@
 // Test variadic function support
-#include <stdio.h>
-#include <stdarg.h>
+
+// Forward declare printf and varargs builtins to avoid needing headers
+extern int printf(const char* format, ...);
+
+// Use compiler builtins for varargs instead of stdarg.h
+typedef __builtin_va_list va_list;
+#define va_start(v,l) __builtin_va_start(v,l)
+#define va_end(v) __builtin_va_end(v)
+#define va_arg(v,l) __builtin_va_arg(v,l)
 
 // External variadic function compiled with gcc
 int sum_ints(int count, ...) {

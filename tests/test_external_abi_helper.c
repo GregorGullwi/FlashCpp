@@ -1,7 +1,8 @@
 // Helper functions compiled with standard compiler to verify ABI compatibility
 // This file is compiled with gcc/clang and linked with code from FlashCpp
 
-#include <stdio.h>
+// Forward declare printf to avoid needing stdio.h
+extern int printf(const char* format, ...);
 
 // Test function with 6 integer parameters (all in registers on Linux)
 int external_int_6_params(int a, int b, int c, int d, int e, int f) {
