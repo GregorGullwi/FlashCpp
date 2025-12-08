@@ -147,8 +147,9 @@ $expectedLinkFailures = @(
     "test_external_abi_simple.cpp"
     "test_varargs.cpp"
     "test_stack_overflow.cpp"
-    # Self-contained ABI test (links on Linux but has Windows-specific issue)
+    # Self-contained ABI tests (link on Linux but fail on Windows)
     "test_mixed_abi.cpp"
+    "test_linux_abi.cpp"  # Tests 6 integer params (Linux ABI specific)
 )
 
 # Results tracking
