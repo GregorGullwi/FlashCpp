@@ -80,8 +80,29 @@ for base in "${TEST_FILES[@]}"; do
     
     rm -f "$obj" "$exe"
     
-    # Compile
-    compile_output=$(./x64/Debug/FlashCpp "$f" 2>&1)
+    # Clean up any old crash logs for this test
+    rm -f flashcpp_crash_*.log
+    
+    # Compile (with 30 second timeout to avoid hangs)
+    compile_output=$(timeout 30 ./x64/Debug/FlashCpp "$f" 2>&1)
+    compile_exit=$?
+    
+    # Check if compiler crashed (exit code 134 = SIGABRT, 136 = SIGFPE, 139 = SIGSEGV)
+    if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
+        echo "" >&2
+        echo -e "${RED}[COMPILER CRASH]${NC} $base (signal: $compile_exit)"
+        # Find and display the most recent crash log
+        latest_crash=$(ls -t flashcpp_crash_*.log 2>/dev/null | head -1)
+        if [ -n "$latest_crash" ]; then
+            echo "=== Crash Stack Trace ===" >&2
+            grep -A 50 "=== Stack Trace ===" "$latest_crash" | head -20 >&2
+            rm -f "$latest_crash"
+        fi
+        COMPILE_FAIL+=("$base (CRASHED)")
+        rm -f "$obj"
+        continue
+    fi
+    
     if [ -f "$obj" ]; then
         COMPILE_OK+=("$base")
         
@@ -134,7 +155,28 @@ if [ ${#FAIL_FILES[@]} -gt 0 ]; then
         
         rm -f "$obj"
         
-        if ./x64/Debug/FlashCpp "$f" > /dev/null 2>&1 && [ -f "$obj" ]; then
+        # Clean up any old crash logs for this test
+        rm -f flashcpp_crash_*.log
+        
+        compile_output=$(timeout 30 ./x64/Debug/FlashCpp "$f" 2>&1)
+        compile_exit=$?
+        
+        # Check if compiler crashed
+        if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
+            echo "" >&2
+            echo -e "${RED}[COMPILER CRASH]${NC} $base (should fail cleanly, not crash!)"
+            latest_crash=$(ls -t flashcpp_crash_*.log 2>/dev/null | head -1)
+            if [ -n "$latest_crash" ]; then
+                echo "=== Crash Stack Trace ===" >&2
+                grep -A 50 "=== Stack Trace ===" "$latest_crash" | head -20 >&2
+                rm -f "$latest_crash"
+            fi
+            FAIL_BAD+=("$base (CRASHED)")
+            rm -f "$obj"
+            continue
+        fi
+        
+        if [ -f "$obj" ]; then
             echo "" >&2
             echo -e "${RED}[UNEXPECTED PASS]${NC} $base (should have failed)"
             FAIL_BAD+=("$base")
