@@ -2145,11 +2145,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			initializer = ctor_call_node;
 		}
 
-		if (!consume_punctuator(";")) {
-			return ParseResult::error("Expected ;", *current_token_);
-		}
-
-		// Create a global variable declaration node
+		// Create a global variable declaration node for the first variable
 		// Reuse the existing decl_node from type_and_name_result
 		auto [global_var_node, global_decl_node] = emplace_node_ref<VariableDeclarationNode>(
 			type_and_name_result.node().value(),  // Use the existing DeclarationNode
@@ -2216,6 +2212,63 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Add to symbol table
 		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+		}
+
+		// Handle comma-separated declarations (e.g., int x, y, z;)
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+			consume_token(); // consume ','
+
+			// Parse the next variable name
+			auto next_identifier_token = consume_token();
+			if (!next_identifier_token.has_value() || next_identifier_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after comma in declaration list", *current_token_);
+			}
+
+			// Create a new DeclarationNode with the same type
+			auto next_decl_node = emplace_node<DeclarationNode>(
+				emplace_node<TypeSpecifierNode>(type_specifier),
+				*next_identifier_token
+			);
+
+			// Check for initialization
+			std::optional<ASTNode> next_initializer;
+			if (peek_token().has_value() && peek_token()->value() == "=") {
+				consume_token(); // consume '='
+
+				// Check if this is a brace initializer
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+					ParseResult init_list_result = parse_brace_initializer(type_specifier);
+					if (init_list_result.is_error()) {
+						return init_list_result;
+					}
+					next_initializer = init_list_result.node();
+				} else {
+					// Regular expression initializer
+					auto init_expr = parse_expression();
+					if (init_expr.is_error()) {
+						return init_expr;
+					}
+					next_initializer = init_expr.node();
+				}
+			}
+
+			// Create a variable declaration node for this additional variable
+			auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
+				next_decl_node,
+				next_initializer
+			);
+			next_var_decl.set_is_constexpr(is_constexpr);
+			next_var_decl.set_is_constinit(is_constinit);
+
+			// Add to symbol table
+			if (!gSymbolTable.insert(next_identifier_token->value(), next_var_node)) {
+				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *next_identifier_token);
+			}
+		}
+
+		// Expect semicolon after all declarations
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after declaration", *current_token_);
 		}
 
 		return saved_position.success(global_var_node);
