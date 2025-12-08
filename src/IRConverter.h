@@ -5119,11 +5119,11 @@ private:
 					uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
 					textSectionData.push_back(modrm_movq);
 					
-					// TODO: For varargs functions, System V AMD64 ABI requires:
-					//   1. Promote float to double
-					//   2. Copy XMM value to GPR at same argument position
-					// Implementation blocked: CallOp lacks is_variadic field
-					// See LINUX_ABI_LIMITATIONS.md for details and recommendations
+					// For varargs functions, System V AMD64 ABI requires copying XMM value to GPR
+					// Use the OVERALL argument position, not the float register index
+					if (call_op.is_variadic) {
+						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+					}
 					
 					// Release the temporary GPR
 					regAlloc.release(temp_gpr);
@@ -5143,8 +5143,16 @@ private:
 						// For floating-point, use movsd/movss into XMM register
 						bool is_float = (arg.type == Type::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
+						
 						// For varargs: floats must be promoted to double (C standard)
+						if (call_op.is_variadic && is_float) {
+							emitCvtss2sd(target_reg, target_reg);
+						}
+						
 						// For varargs: also copy to corresponding INT register
+						if (call_op.is_variadic) {
+							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+						}
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
 						// Both sizes are explicit for clarity
@@ -5162,8 +5170,16 @@ private:
 						// For floating-point, use movsd/movss into XMM register
 						bool is_float = (arg.type == Type::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
+						
 						// For varargs: floats must be promoted to double (C standard)
+						if (call_op.is_variadic && is_float) {
+							emitCvtss2sd(target_reg, target_reg);
+						}
+						
 						// For varargs: also copy to corresponding INT register
+						if (call_op.is_variadic) {
+							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+						}
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
 						emitMovFromFrameSized(
@@ -5172,6 +5188,24 @@ private:
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
+				}
+			}
+			
+			// For varargs functions on System V AMD64, set AL to number of XMM registers used
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				if (call_op.is_variadic) {
+					// Count the number of XMM registers used (float/double arguments)
+					size_t xmm_count = 0;
+					for (size_t i = 0; i < call_op.args.size() && i < max_float_regs; ++i) {
+						const auto& arg = call_op.args[i];
+						if (is_floating_point_type(arg.type)) {
+							xmm_count++;
+						}
+					}
+					// Set AL (lower 8 bits of RAX) to the count
+					// MOV AL, imm8: B0 + imm8
+					textSectionData.push_back(0xB0);
+					textSectionData.push_back(static_cast<uint8_t>(xmm_count));
 				}
 			}
 			
