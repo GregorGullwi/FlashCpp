@@ -65,6 +65,9 @@ int main() {
     int s6 = test6();
     int s7 = test7();
     
+    // Expected return value: 28
+    // test1: 4, test2: 4, test3: 4, test4: 4, test5: 4, test6: 4, test7: 4
+    // Total: 4+4+4+4+4+4+4 = 28
     return s1 + s2 + s3 + s4 + s5 + s6 + s7;
 }
 
