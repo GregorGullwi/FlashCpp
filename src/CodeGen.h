@@ -20,17 +20,6 @@
 
 class Parser;
 
-// Helper to get DeclarationNode from a symbol that could be either DeclarationNode or VariableDeclarationNode
-// Returns nullptr if the symbol is neither type
-inline const DeclarationNode* get_decl_from_symbol(const ASTNode& symbol) {
-	if (symbol.is<DeclarationNode>()) {
-		return &symbol.as<DeclarationNode>();
-	} else if (symbol.is<VariableDeclarationNode>()) {
-		return &symbol.as<VariableDeclarationNode>().declaration();
-	}
-	return nullptr;
-}
-
 // MSVC RTTI runtime structures (must match ObjFileWriter.h MSVC format):
 // These are the actual structures that exist at runtime in the object file
 
@@ -9278,10 +9267,8 @@ private:
 			}
 		}
 
-		// Safety check: if alignment is still 0, something went wrong
-		if (alignment == 0) {
-			FLASH_LOG(Codegen, Warning, "alignof returned 0, this indicates a bug in type alignment tracking");
-		}
+		// Safety check: alignment should never be 0 for valid types
+		assert(alignment != 0 && "alignof returned 0, this indicates a bug in type alignment tracking");
 
 		// Return alignof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]

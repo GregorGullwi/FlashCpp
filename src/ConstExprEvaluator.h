@@ -311,12 +311,7 @@ private:
 						auto symbol = context.symbols->lookup(id_node.name());
 						if (symbol.has_value()) {
 							// Get the declaration and extract the type
-							const DeclarationNode* decl = nullptr;
-							if (symbol->is<DeclarationNode>()) {
-								decl = &symbol->as<DeclarationNode>();
-							} else if (symbol->is<VariableDeclarationNode>()) {
-								decl = &symbol->as<VariableDeclarationNode>().declaration();
-							}
+							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 							
 							if (decl) {
 								const auto& type_node = decl->type_node();
@@ -358,8 +353,9 @@ private:
 					return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 				}
 				
-				// For other expressions, we would need type inference
-				// Return error to fall back to codegen
+				// For other expressions, we would need full type inference
+				// which requires tracking expression types through the AST
+				// This is a compiler limitation, not a C++20 limitation
 				return EvalResult::error("sizeof with complex expression not yet supported in constexpr");
 			}
 		}
@@ -415,12 +411,7 @@ private:
 						auto symbol = context.symbols->lookup(id_node.name());
 						if (symbol.has_value()) {
 							// Get the declaration and extract the type
-							const DeclarationNode* decl = nullptr;
-							if (symbol->is<DeclarationNode>()) {
-								decl = &symbol->as<DeclarationNode>();
-							} else if (symbol->is<VariableDeclarationNode>()) {
-								decl = &symbol->as<VariableDeclarationNode>().declaration();
-							}
+							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 							
 							if (decl) {
 								const auto& type_node = decl->type_node();
