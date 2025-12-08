@@ -5119,9 +5119,11 @@ private:
 					uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
 					textSectionData.push_back(modrm_movq);
 					
-					// TODO: For varargs, should copy to corresponding INT register
-					// However, CallOp doesn't have is_variadic field, so we can't detect this
-					// This is documented in LINUX_ABI_LIMITATIONS.md
+					// TODO: For varargs functions, System V AMD64 ABI requires:
+					//   1. Promote float to double
+					//   2. Copy XMM value to GPR at same argument position
+					// Implementation blocked: CallOp lacks is_variadic field
+					// See LINUX_ABI_LIMITATIONS.md for details and recommendations
 					
 					// Release the temporary GPR
 					regAlloc.release(temp_gpr);
