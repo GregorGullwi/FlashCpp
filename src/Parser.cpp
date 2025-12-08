@@ -975,6 +975,10 @@ ParseResult Parser::parse_type_and_name() {
         return type_specifier_result;
     }
 
+    if (!type_specifier_result.node().has_value()) {
+        return ParseResult::error("Expected type specifier", *current_token_);
+    }
+
     // Get the type specifier node to modify it with pointer levels
     TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
 
@@ -2360,18 +2364,49 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					return ParseResult::error("Expected type specifier in struct member", *current_token_);
 				}
 				
+				// Handle pointer declarators with CV-qualifiers (e.g., "unsigned short const* _locale_pctype")
+				// Parse pointer declarators: * [const] [volatile] *...
+				TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					   peek_token()->value() == "*") {
+					consume_token(); // consume '*'
+
+					// Check for CV-qualifiers after the *
+					CVQualifier ptr_cv = CVQualifier::None;
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+						std::string_view kw = peek_token()->value();
+						if (kw == "const") {
+							ptr_cv = static_cast<CVQualifier>(
+								static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+							consume_token();
+						} else if (kw == "volatile") {
+							ptr_cv = static_cast<CVQualifier>(
+								static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+							consume_token();
+						} else {
+							break;
+						}
+					}
+
+					// Add pointer level to the type specifier
+					member_type_spec.add_pointer_level(ptr_cv);
+				}
+
 				// Parse member name
-				auto member_name_token = consume_token();
+				auto member_name_token = peek_token();
 				if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
+					FLASH_LOG(Parser, Debug, "Expected member name but got: type=",
+						member_name_token.has_value() ? static_cast<int>(member_name_token->type()) : -1,
+						" value='", member_name_token.has_value() ? member_name_token->value() : "NONE", "'");
 					return ParseResult::error("Expected member name in struct", member_name_token.value_or(Token()));
 				}
-				
+				consume_token(); // consume the member name
+
 				// Create member declaration
 				auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
 				struct_ref_inner.add_member(member_decl_node, member_access, std::nullopt);
 				
 				// Handle comma-separated declarations
-				const TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
 				while (peek_token().has_value() && peek_token()->value() == ",") {
 					consume_token(); // consume ','
 					auto next_name = consume_token();
@@ -5200,11 +5235,40 @@ ParseResult Parser::parse_typedef_declaration()
 				return ParseResult::error("Expected type specifier in struct member", *current_token_);
 			}
 
+			// Handle pointer declarators with CV-qualifiers (e.g., "unsigned short const* _locale_pctype")
+			// Parse pointer declarators: * [const] [volatile] *...
+			TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+				   peek_token()->value() == "*") {
+				consume_token(); // consume '*'
+
+				// Check for CV-qualifiers after the *
+				CVQualifier ptr_cv = CVQualifier::None;
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					std::string_view kw = peek_token()->value();
+					if (kw == "const") {
+						ptr_cv = static_cast<CVQualifier>(
+							static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+						consume_token();
+					} else if (kw == "volatile") {
+						ptr_cv = static_cast<CVQualifier>(
+							static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+						consume_token();
+					} else {
+						break;
+					}
+				}
+
+				// Add pointer level to the type specifier
+				member_type_spec.add_pointer_level(ptr_cv);
+			}
+
 			// Parse member name
-			auto member_name_token = consume_token();
+			auto member_name_token = peek_token();
 			if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected member name in struct", member_name_token.value_or(Token()));
 			}
+			consume_token(); // consume the member name
 
 			// Create member declaration
 			auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
@@ -5212,7 +5276,6 @@ ParseResult Parser::parse_typedef_declaration()
 			struct_ref.add_member(member_decl_node, current_access, std::nullopt);
 
 			// Handle comma-separated declarations (e.g., int x, y, z;)
-			const TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
 			while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
 				consume_token(); // consume ','
 
@@ -6220,7 +6283,13 @@ ParseResult Parser::parse_type_specifier()
 				Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 		}
 
-		return ParseResult::error("Unknown struct/class type: " + type_name, type_name_token);
+		// Forward declaration: struct not yet defined
+		// Create a placeholder type entry for it
+		// This allows pointers to undefined structs (e.g., struct Foo* ptr;)
+		TypeInfo& forward_decl_type = add_struct_type(type_name);
+		type_size = 0;  // Unknown size until defined
+		return ParseResult::success(emplace_node<TypeSpecifierNode>(
+			Type::Struct, forward_decl_type.type_index_, type_size, type_name_token, cv_qualifier));
 	}
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier) {
 		// Handle user-defined type (struct, class, or other user-defined types)
