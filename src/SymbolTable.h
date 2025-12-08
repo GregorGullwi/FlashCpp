@@ -737,11 +737,10 @@ public:
 		symbol_table_stack_.clear();
 		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
 		namespace_symbols_.clear();
-		// Note: We intentionally do NOT clear interned_strings_ or string_allocator_
-		// because they maintain persistent string storage. Clearing would cause
-		// inconsistent state where allocated strings exist but aren't tracked.
-		// This is safe because the symbol table is typically used for a single
-		// compilation unit and then discarded entirely (not cleared and reused).
+		interned_strings_.clear();
+		// Note: We don't reset string_allocator_ itself (would need to reconstruct it),
+		// but clearing interned_strings_ allows strings to be re-interned.
+		// The allocator's memory will be reused for new strings.
 	}
 
 private:
