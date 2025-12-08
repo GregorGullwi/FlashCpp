@@ -5004,15 +5004,19 @@ private:
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number);
 			variable_scopes.back().identifier_offset[call_op.result.name()] = result_offset;
 			
-			// IMPORTANT: Process stack arguments (5+) FIRST, before loading register arguments.
-			// This prevents loadTypedValueIntoRegister from clobbering RCX/RDX/R8/R9 which
-			// will hold the first 4 arguments.
-			for (size_t i = 4; i < call_op.args.size(); ++i) {
+			// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
+			// This prevents loadTypedValueIntoRegister from clobbering parameter registers.
+			// Platform-specific: Windows has 4 int regs, Linux has 6 int regs
+			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+			size_t shadow_space = getShadowSpaceSize<TWriterClass>();
+			
+			for (size_t i = max_int_regs; i < call_op.args.size(); ++i) {
 				const auto& arg = call_op.args[i];
 				
-				// Stack args go at RSP+32+(i-4)*8
-				// Windows x64 ABI: stack args placed at [RSP+32] and above
-				int stack_offset = 32 + static_cast<int>(i - 4) * 8;
+				// Stack args placement:
+				// Windows: RSP+32 (shadow space) + (i-4)*8
+				// Linux: RSP+0 (no shadow space) + (i-6)*8
+				int stack_offset = static_cast<int>(shadow_space + (i - max_int_regs) * 8);
 				
 				X64Register temp_reg = loadTypedValueIntoRegister(arg);
 				emitStoreToRSP(textSectionData, temp_reg, stack_offset);
@@ -5190,7 +5194,9 @@ private:
 				}
 			}
 			
-			// No stack cleanup needed - Windows x64 ABI uses pre-allocated space, not PUSH
+			// No stack cleanup needed after call:
+			// - Windows x64 ABI: Uses pre-allocated shadow space, not PUSH
+			// - Linux System V AMD64: Arguments in registers or pushed before call, stack pointer already adjusted
 			
 			return;
 		}
@@ -5225,6 +5231,11 @@ private:
 		const size_t first_arg_index = 2; // Start after result and function name
 		const size_t arg_stride = 3; // type, size, value
 		const size_t num_args = (instruction.getOperandCount() - first_arg_index) / arg_stride;
+		
+		// Get platform-specific register counts
+		size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+		size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+		
 		for (size_t i = 0; i < num_args; ++i) {
 			size_t argIndex = first_arg_index + i * arg_stride;
 			Type argType = instruction.getOperandAs<Type>(argIndex);
@@ -5235,8 +5246,8 @@ private:
 			bool is_float_arg = is_floating_point_type(argType);
 
 			// Check if this argument goes in a register or on the stack
-			// x64 Windows calling convention: first 4 args in registers, rest on stack
-			bool use_register = (i < 4);
+			// Platform-specific: Windows has 4 regs, Linux has 6 int regs / 8 float regs
+			bool use_register = is_float_arg ? (i < max_float_regs) : (i < max_int_regs);
 
 			if (!use_register) {
 				// Collect stack arguments for later processing
@@ -5558,13 +5569,31 @@ private:
 		
 		// However, we DO need to invalidate volatile (caller-saved) registers after a call
 		// because they may have been clobbered by the callee.
-		// x86-64 Windows calling convention: RCX, RDX, R8, R9, R10, R11, XMM0-XMM5 are volatile
-		regAlloc.release(X64Register::RCX);
-		regAlloc.release(X64Register::RDX);
-		regAlloc.release(X64Register::R8);
-		regAlloc.release(X64Register::R9);
-		regAlloc.release(X64Register::R10);
-		regAlloc.release(X64Register::R11);
+		// Platform-specific volatile registers:
+		// Windows x64: RCX, RDX, R8, R9, R10, R11, XMM0-XMM5 are volatile
+		// Linux System V AMD64: RAX, RDI, RSI, RDX, RCX, R8, R9, R10, R11, XMM0-XMM15 are volatile
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Linux System V AMD64 volatile registers
+			regAlloc.release(X64Register::RAX);
+			regAlloc.release(X64Register::RDI);
+			regAlloc.release(X64Register::RSI);
+			regAlloc.release(X64Register::RDX);
+			regAlloc.release(X64Register::RCX);
+			regAlloc.release(X64Register::R8);
+			regAlloc.release(X64Register::R9);
+			regAlloc.release(X64Register::R10);
+			regAlloc.release(X64Register::R11);
+			// XMM0-XMM15 would also need to be released, but we don't track them in regAlloc yet
+		} else {
+			// Windows x64 volatile registers
+			regAlloc.release(X64Register::RCX);
+			regAlloc.release(X64Register::RDX);
+			regAlloc.release(X64Register::R8);
+			regAlloc.release(X64Register::R9);
+			regAlloc.release(X64Register::R10);
+			regAlloc.release(X64Register::R11);
+			// XMM0-XMM5 would also need to be released, but we don't track them in regAlloc yet
+		}
 	}
 
 	void handleConstructorCall(const IrInstruction& instruction) {
