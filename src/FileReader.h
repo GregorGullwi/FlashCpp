@@ -229,15 +229,55 @@ static std::unordered_map<char, CharInfo> char_info_table = {
 static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
 	int nesting = 1;
 	size_t pos = opening_pos + 1;
+	bool in_string = false;
+	bool in_char = false;
+	char string_delimiter = '\0';
+
 	while (pos < sv.size() && nesting > 0) {
-		if (sv[pos] == '(') {
-			nesting++;
+		char c = sv[pos];
+
+		// Handle escape sequences
+		if ((in_string || in_char) && c == '\\' && pos + 1 < sv.size()) {
+			pos += 2; // Skip the backslash and the next character
+			continue;
 		}
-		else if (sv[pos] == ')') {
-			nesting--;
+
+		// Handle string literals
+		if (!in_char && c == '"') {
+			if (!in_string) {
+				in_string = true;
+				string_delimiter = '"';
+			} else if (string_delimiter == '"') {
+				in_string = false;
+				string_delimiter = '\0';
+			}
+			pos++;
+			continue;
+		}
+
+		// Handle character literals
+		if (!in_string && c == '\'') {
+			if (!in_char) {
+				in_char = true;
+			} else {
+				in_char = false;
+			}
+			pos++;
+			continue;
+		}
+
+		// Only count parentheses outside of string/char literals
+		if (!in_string && !in_char) {
+			if (c == '(') {
+				nesting++;
+			}
+			else if (c == ')') {
+				nesting--;
+			}
 		}
 		pos++;
 	}
+
 	if (nesting == 0) {
 		return pos - 1;
 	}
@@ -259,42 +299,76 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
 
     size_t arg_start = i;
     int paren_depth = 0;
+    bool in_string = false;
+    bool in_char = false;
+    char string_delimiter = '\0';
 
     for (; i < n; ++i) {
         char c = argsStr[i];
 
-        if (c == '(') {
-            paren_depth++;
+        // Handle escape sequences in strings and character literals
+        if ((in_string || in_char) && c == '\\' && i + 1 < n) {
+            i++; // Skip the next character
             continue;
         }
-        if (c == ')') {
-            if (paren_depth == 0) {
-                // Final argument ends here
-                break;
+
+        // Handle string literals
+        if (!in_char && c == '"') {
+            if (!in_string) {
+                in_string = true;
+                string_delimiter = '"';
+            } else if (string_delimiter == '"') {
+                in_string = false;
+                string_delimiter = '\0';
             }
-            paren_depth--;
             continue;
         }
-        if (c == ',' && paren_depth == 0) {
-            // Argument ended
-            size_t end = i;
 
-            // Trim trailing whitespace
-            while (end > arg_start && is_whitespace(argsStr[end - 1]))
-                end--;
+        // Handle character literals
+        if (!in_string && c == '\'') {
+            if (!in_char) {
+                in_char = true;
+            } else {
+                in_char = false;
+            }
+            continue;
+        }
 
-            args.emplace_back(argsStr.substr(arg_start, end - arg_start));
+        // Only process parentheses and commas outside of string/char literals
+        if (!in_string && !in_char) {
+            if (c == '(') {
+                paren_depth++;
+                continue;
+            }
+            if (c == ')') {
+                if (paren_depth == 0) {
+                    // Final argument ends here
+                    break;
+                }
+                paren_depth--;
+                continue;
+            }
+            if (c == ',' && paren_depth == 0) {
+                // Argument ended
+                size_t end = i;
 
-            // Move to next argument (skip the comma and any whitespace)
-            i++;
-            while (i < n && is_whitespace(argsStr[i]))
+                // Trim trailing whitespace
+                while (end > arg_start && is_whitespace(argsStr[end - 1]))
+                    end--;
+
+                args.emplace_back(argsStr.substr(arg_start, end - arg_start));
+
+                // Move to next argument (skip the comma and any whitespace)
                 i++;
+                while (i < n && is_whitespace(argsStr[i]))
+                    i++;
 
-            if (i >= n)
-                return args;
+                if (i >= n)
+                    return args;
 
-            arg_start = i;
-            i--; // Decrement because the for loop will increment it
+                arg_start = i;
+                i--; // Decrement because the for loop will increment it
+            }
         }
     }
 
