@@ -12,8 +12,6 @@ void test_ref(const int& x) { } // By const lvalue reference
 // Test 2: Const qualifiers on pointers at different levels
 void test_ptr(int* p) { }             // Pointer to int
 void test_ptr(const int* p) { }       // Pointer to const int
-void test_ptr(int* const p) { }       // Const pointer to int (should be treated as same as int*)
-void test_ptr(const int* const p) { } // Const pointer to const int (should be treated as same as const int*)
 
 // Test 3: Multiple parameters with different qualifiers
 void test_multi(int a, int& b) { }
