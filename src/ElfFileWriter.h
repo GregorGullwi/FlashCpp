@@ -708,7 +708,7 @@ public:
 		FDEInfo fde_info;
 		fde_info.function_start_offset = function_start;
 		fde_info.function_length = function_size;
-		fde_info.function_symbol = std::string(mangled_name);
+		fde_info.function_symbol.assign(mangled_name.begin(), mangled_name.end());
 		fde_info.has_exception_handling = !try_blocks.empty();
 		
 		// TODO: Track CFI instructions during code generation
@@ -755,7 +755,8 @@ public:
 				lsda_info.try_regions.push_back(try_region);
 			}
 			
-			function_lsda_map_[std::string(mangled_name)] = lsda_info;
+			// Use the already-stored function symbol string to avoid creating another copy
+			function_lsda_map_[fde_info.function_symbol] = lsda_info;
 			
 			if (g_enable_debug_output) {
 				std::cerr << "Function " << mangled_name << " has " << try_blocks.size() 
