@@ -5024,27 +5024,29 @@ ParseResult Parser::parse_typedef_declaration()
 			is_inline_enum = false;
 		}
 	} else if (peek_token().has_value() &&
-	    (peek_token()->value() == "struct" || peek_token()->value() == "class")) {
+	    (peek_token()->value() == "struct" || peek_token()->value() == "class" || peek_token()->value() == "union")) {
 		// Look ahead to see if this is an inline definition
 		// Pattern 1: typedef struct { ... } alias;
 		// Pattern 2: typedef struct Name { ... } alias;
+		// Pattern 3: typedef union { ... } alias;
+		// Pattern 4: typedef union Name { ... } alias;
 		auto next_pos = current_token_;
-		consume_token(); // consume 'struct' or 'class'
+		consume_token(); // consume 'struct', 'class', or 'union'
 
-		// Check if next token is '{' (anonymous struct) or identifier followed by '{'
+		// Check if next token is '{' (anonymous struct/union) or identifier followed by '{'
 		if (peek_token().has_value() && peek_token()->value() == "{") {
-			// Pattern 1: typedef struct { ... } alias;
+			// Pattern 1/3: typedef struct/union { ... } alias;
 			is_inline_struct = true;
-			// Use a unique temporary name for the struct (will be replaced by typedef alias)
+			// Use a unique temporary name for the struct/union (will be replaced by typedef alias)
 			// Use the current AST size to make it unique
 			struct_name_for_typedef_storage = "__anonymous_typedef_struct_" + std::to_string(ast_nodes_.size());
 			struct_name_for_typedef = struct_name_for_typedef_storage;
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 			auto struct_name_token = peek_token();
-			consume_token(); // consume struct name
+			consume_token(); // consume struct/union name
 
 			if (peek_token().has_value() && peek_token()->value() == "{") {
-				// Pattern 2: typedef struct Name { ... } alias;
+				// Pattern 2/4: typedef struct/union Name { ... } alias;
 				is_inline_struct = true;
 				struct_name_for_typedef = struct_name_token->value();
 			} else {
