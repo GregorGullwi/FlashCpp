@@ -477,7 +477,9 @@ private:
 			"__int8",       "__int16",   "__int32",       "__int64",
 			// Microsoft-specific type modifiers/qualifiers
 			"__ptr32",      "__ptr64",   "__w64",         "__unaligned",
-			"__uptr",       "__sptr" };
+			"__uptr",       "__sptr",
+			// Microsoft-specific function specifiers
+			"__inline",     "__forceinline" };
 
 		return keywords.count(value) > 0;
 	}

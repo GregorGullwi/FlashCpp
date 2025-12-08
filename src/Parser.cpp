@@ -1626,7 +1626,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		} else if (kw == "consteval") {
 			is_consteval = true;
 			consume_token();
-		} else if (kw == "inline") {
+		} else if (kw == "inline" || kw == "__inline" || kw == "__forceinline") {
 			is_inline = true;
 			consume_token();
 		} else if (kw == "static") {
