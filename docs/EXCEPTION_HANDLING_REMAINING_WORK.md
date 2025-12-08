@@ -341,16 +341,27 @@ void finalize_eh_frame() {
 
 ---
 
-## Phase 2: .gcc_except_table Generation (LSDA)
+## Phase 2: .gcc_except_table Generation (LSDA) ✅ IN PROGRESS
 **Estimated Effort**: 4-6 days  
 **Priority**: CRITICAL - Needed for catch handler matching  
 **Files**: 
-- New: `src/LSDAGenerator.h` - LSDA encoding
-- Modify: `src/ElfFileWriter.h` - Add `.gcc_except_table` section
-- Modify: `src/IRConverter.h` - Track try/catch regions
+- New: `src/LSDAGenerator.h` - ✅ COMPLETED - LSDA encoding  
+- Modify: `src/ElfFileWriter.h` - ✅ COMPLETED - Add `.gcc_except_table` section  
+- Modify: `src/IRConverter.h` - Track try/catch regions (already implemented)
 
-### 2.1 LSDA Header Generation (~3 hours)
+### 2.1 LSDA Header Generation (~3 hours) ✅ COMPLETED
 **What**: Generate Language Specific Data Area header
+
+**File**: `src/LSDAGenerator.h` ✅ CREATED
+
+**Implementation Complete**:
+- ✅ LPStart encoding (omitted, using function-relative offsets)
+- ✅ TType encoding (absolute pointers)
+- ✅ TType base offset calculation
+- ✅ Call site table encoding specification
+- ✅ Call site table size encoding
+
+**Verified**: .gcc_except_table section generated in object files
 
 **File**: `src/LSDAGenerator.h`
 
@@ -386,8 +397,16 @@ private:
 
 ---
 
-### 2.2 Call Site Table Generation (~6 hours)
+### 2.2 Call Site Table Generation (~6 hours) ✅ COMPLETED
 **What**: Map code regions to exception handlers
+
+**Implementation Complete**:
+- ✅ Call site entry structure with ULEB128 encoding
+- ✅ Try block start offset tracking
+- ✅ Try block length calculation
+- ✅ Landing pad offset linkage
+- ✅ Action table index generation
+- ✅ Integration with TryBlockInfo from IRConverter
 
 **Call Site Entry Structure**:
 ```

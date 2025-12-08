@@ -6,6 +6,7 @@
 #include "ChunkedString.h"
 #include "CodeViewDebug.h"
 #include "DwarfCFI.h"
+#include "LSDAGenerator.h"
 #include <string>
 #include <string_view>
 #include <span>
@@ -14,6 +15,7 @@
 #include <iostream>
 #include <fstream>
 #include <set>
+#include <algorithm>
 
 // ELFIO headers - header-only ELF library
 #include "elfio/elfio.hpp"
@@ -714,10 +716,86 @@ public:
 		
 		functions_with_fdes_.push_back(fde_info);
 		
-		if (g_enable_debug_output && fde_info.has_exception_handling) {
-			std::cerr << "Function " << mangled_name << " has " << try_blocks.size() 
-			         << " try blocks - will need LSDA" << std::endl;
+		// Generate LSDA if function has exception handling
+		if (fde_info.has_exception_handling) {
+			LSDAGenerator::FunctionLSDAInfo lsda_info;
+			
+			// Convert each try block to LSDA format
+			for (const auto& try_block : try_blocks) {
+				LSDAGenerator::TryRegionInfo try_region;
+				try_region.try_start_offset = try_block.try_start_offset;
+				try_region.try_length = try_block.try_end_offset - try_block.try_start_offset;
+				
+				// Use first handler's offset as landing pad (they're all at the same location)
+				if (!try_block.catch_handlers.empty()) {
+					try_region.landing_pad_offset = try_block.catch_handlers[0].handler_offset;
+				}
+				
+				// Convert catch handlers
+				for (const auto& handler : try_block.catch_handlers) {
+					LSDAGenerator::CatchHandlerInfo catch_info;
+					catch_info.type_index = handler.type_index;
+					catch_info.is_catch_all = handler.is_catch_all;
+					
+					// Generate typeinfo symbol name from type name
+					// For now, use a simple mapping for built-in types
+					if (!handler.is_catch_all && !handler.type_name.empty()) {
+						catch_info.typeinfo_symbol = get_typeinfo_symbol(handler.type_name);
+						
+						// Add to type table if not already present
+						if (std::find(lsda_info.type_table.begin(), lsda_info.type_table.end(),
+						             catch_info.typeinfo_symbol) == lsda_info.type_table.end()) {
+							lsda_info.type_table.push_back(catch_info.typeinfo_symbol);
+						}
+					}
+					
+					try_region.catch_handlers.push_back(catch_info);
+				}
+				
+				lsda_info.try_regions.push_back(try_region);
+			}
+			
+			function_lsda_map_[std::string(mangled_name)] = lsda_info;
+			
+			if (g_enable_debug_output) {
+				std::cerr << "Function " << mangled_name << " has " << try_blocks.size() 
+				         << " try blocks - will need LSDA" << std::endl;
+			}
 		}
+	}
+	
+	// Helper: get typeinfo symbol for a type name
+	std::string get_typeinfo_symbol(const std::string& type_name) const {
+		// Map common type names to their typeinfo symbols (Itanium ABI mangling)
+		static const std::unordered_map<std::string, std::string> typeinfo_map = {
+			{"int", "_ZTIi"},
+			{"char", "_ZTIc"},
+			{"short", "_ZTIs"},
+			{"long", "_ZTIl"},
+			{"long long", "_ZTIx"},
+			{"unsigned int", "_ZTIj"},
+			{"unsigned char", "_ZTIh"},
+			{"unsigned short", "_ZTIt"},
+			{"unsigned long", "_ZTIm"},
+			{"unsigned long long", "_ZTIy"},
+			{"float", "_ZTIf"},
+			{"double", "_ZTId"},
+			{"long double", "_ZTIe"},
+			{"bool", "_ZTIb"},
+			{"void", "_ZTIv"},
+			{"wchar_t", "_ZTIw"},
+			{"char16_t", "_ZTIDs"},
+			{"char32_t", "_ZTIDi"},
+		};
+		
+		auto it = typeinfo_map.find(type_name);
+		if (it != typeinfo_map.end()) {
+			return it->second;
+		}
+		
+		// For class types, generate symbol: _ZTI + mangled class name
+		// This is a simplification - real implementation would use full name mangling
+		return "_ZTI" + type_name;  // Placeholder
 	}
 
 	// Additional compatibility methods
@@ -972,6 +1050,47 @@ public:
 		if (g_enable_debug_output) {
 			std::cerr << "Generated .eh_frame section with " << functions_with_fdes_.size() 
 			         << " FDEs (" << eh_frame_data.size() << " bytes)" << std::endl;
+		}
+	}
+	
+	// Map to store LSDA info for each function
+	std::unordered_map<std::string, LSDAGenerator::FunctionLSDAInfo> function_lsda_map_;
+	
+	// Generate .gcc_except_table section
+	void generate_gcc_except_table() {
+		if (function_lsda_map_.empty()) {
+			// No functions with exception handling
+			return;
+		}
+		
+		std::vector<uint8_t> gcc_except_table_data;
+		LSDAGenerator generator;
+		
+		// Generate LSDA for each function
+		for (const auto& [func_name, lsda_info] : function_lsda_map_) {
+			auto lsda_data = generator.generate(lsda_info);
+			
+			// TODO: We need to track where each function's LSDA starts
+			// for linking to FDE augmentation data
+			
+			gcc_except_table_data.insert(gcc_except_table_data.end(), 
+			                            lsda_data.begin(), lsda_data.end());
+		}
+		
+		// Create .gcc_except_table section
+		auto* except_section = elf_writer_.sections.add(".gcc_except_table");
+		except_section->set_type(ELFIO::SHT_PROGBITS);
+		except_section->set_flags(ELFIO::SHF_ALLOC);
+		except_section->set_addr_align(4);
+		except_section->set_data(reinterpret_cast<const char*>(gcc_except_table_data.data()),
+		                        gcc_except_table_data.size());
+		
+		// TODO: Create .rela.gcc_except_table for type_info relocations
+		
+		if (g_enable_debug_output) {
+			std::cerr << "Generated .gcc_except_table section with " 
+			         << function_lsda_map_.size() << " LSDAs (" 
+			         << gcc_except_table_data.size() << " bytes)" << std::endl;
 		}
 	}
 
@@ -1280,6 +1399,7 @@ private:
 	void finalizeSections() {
 		// Generate exception handling tables if needed
 		generate_eh_frame();
+		generate_gcc_except_table();
 		
 		// Update section sizes and offsets
 		// ELFIO handles most of this automatically, but we need to set sh_info for .symtab
