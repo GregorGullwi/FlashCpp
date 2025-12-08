@@ -124,7 +124,8 @@ private:
 		       flag == "perf-stats" || flag == "stats" ||
 		       flag == "time" || flag == "timing" ||
 		       flag == "fno-access-control" || flag == "no-access-control" ||
-		       flag == "fgcc-compat" || flag == "fclang-compat";
+		       flag == "fgcc-compat" || flag == "fclang-compat" ||
+		       flag == "fno-exceptions";
 	}
 
 	std::map<std::string_view, std::variant<std::monostate, std::string_view>> optionValues_;

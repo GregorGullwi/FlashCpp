@@ -17,6 +17,9 @@
 #include "ProfilingTimer.h"
 #include "ChunkedString.h"
 
+// Global exception handling control (defined in main.cpp)
+extern bool g_enable_exceptions;
+
 // Enable detailed profiling by default in debug builds
 // Can be overridden by defining ENABLE_DETAILED_PROFILING=0 or =1
 #ifndef ENABLE_DETAILED_PROFILING
@@ -10839,6 +10842,11 @@ private:
 	// ============================================================================
 	
 	void handleTryBegin(const IrInstruction& instruction) {
+		// Skip exception handling if disabled
+		if (!g_enable_exceptions) {
+			return;
+		}
+		
 		// TryBegin marks the start of a try block
 		// Record the current code offset as the start of the try block
 		
@@ -10854,6 +10862,11 @@ private:
 	}
 
 	void handleTryEnd(const IrInstruction& instruction) {
+		// Skip exception handling if disabled
+		if (!g_enable_exceptions) {
+			return;
+		}
+		
 		// TryEnd marks the end of a try block
 		// Record the current code offset as the end of the try block
 		
@@ -10864,6 +10877,11 @@ private:
 	}
 
 	void handleCatchBegin(const IrInstruction& instruction) {
+		// Skip exception handling if disabled
+		if (!g_enable_exceptions) {
+			return;
+		}
+		
 		// CatchBegin marks the start of a catch handler
 		// Record this catch handler in the most recent try block
 		
@@ -10939,6 +10957,11 @@ private:
 	}
 
 	void handleCatchEnd(const IrInstruction& instruction) {
+		// Skip exception handling if disabled
+		if (!g_enable_exceptions) {
+			return;
+		}
+		
 		// CatchEnd marks the end of a catch handler
 		
 		// Platform-specific cleanup
@@ -10956,6 +10979,13 @@ private:
 	}
 
 	void handleThrow(const IrInstruction& instruction) {
+		// Skip exception handling if disabled - generate abort() instead
+		if (!g_enable_exceptions) {
+			// Call abort() to terminate when exceptions are disabled
+			emitCall("abort");
+			return;
+		}
+		
 		// Extract data from typed payload
 		const auto& throw_op = instruction.getTypedPayload<ThrowOp>();
 		
@@ -11106,6 +11136,13 @@ private:
 	}
 
 	void handleRethrow(const IrInstruction& instruction) {
+		// Skip exception handling if disabled - generate abort() instead
+		if (!g_enable_exceptions) {
+			// Call abort() to terminate when exceptions are disabled
+			emitCall("abort");
+			return;
+		}
+		
 		// Platform-specific rethrow implementation
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
