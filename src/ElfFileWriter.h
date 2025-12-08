@@ -5,6 +5,7 @@
 #include "NameMangling.h"
 #include "ChunkedString.h"
 #include "CodeViewDebug.h"
+#include "DwarfCFI.h"
 #include <string>
 #include <string_view>
 #include <span>
@@ -701,7 +702,22 @@ public:
 	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start,
 	                                 uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {},
 	                                 const std::vector<UnwindMapEntryInfo>& unwind_map = {}) {
-		// Placeholder - exception handling deferred
+		// Add FDE for this function (all functions get an FDE for proper unwinding)
+		FDEInfo fde_info;
+		fde_info.function_start_offset = function_start;
+		fde_info.function_length = function_size;
+		fde_info.function_symbol = std::string(mangled_name);
+		fde_info.has_exception_handling = !try_blocks.empty();
+		
+		// TODO: Track CFI instructions during code generation
+		// For now, we'll generate basic CFI for standard function prologue/epilogue
+		
+		functions_with_fdes_.push_back(fde_info);
+		
+		if (g_enable_debug_output && fde_info.has_exception_handling) {
+			std::cerr << "Function " << mangled_name << " has " << try_blocks.size() 
+			         << " try blocks - will need LSDA" << std::endl;
+		}
 	}
 
 	// Additional compatibility methods
@@ -719,6 +735,178 @@ public:
 
 	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
 		// Placeholder for DWARF relocations
+	}
+
+	// Exception handling - .eh_frame generation
+	
+	// CFI instruction tracking for a single function
+	struct CFIInstruction {
+		enum Type {
+			PUSH_RBP,       // push rbp
+			MOV_RSP_RBP,    // mov rbp, rsp
+			SUB_RSP,        // sub rsp, imm
+			ADD_RSP,        // add rsp, imm
+			POP_RBP,        // pop rbp
+		};
+		Type type;
+		uint32_t offset;  // Offset in function where this occurs
+		uint32_t value;   // Immediate value (for SUB_RSP/ADD_RSP)
+	};
+	
+	// FDE (Frame Description Entry) information for a function
+	struct FDEInfo {
+		uint32_t function_start_offset;  // Offset in .text section
+		uint32_t function_length;        // Length of function code
+		std::string function_symbol;     // Symbol name of function
+		std::vector<CFIInstruction> cfi_instructions;  // CFI state changes
+		
+		// LSDA (Language Specific Data Area) info for exception handling
+		bool has_exception_handling = false;
+		std::string lsda_symbol;  // Symbol pointing to LSDA in .gcc_except_table
+	};
+	
+	// Track all functions that need FDEs
+	std::vector<FDEInfo> functions_with_fdes_;
+	
+	// Generate Common Information Entry (CIE) for .eh_frame
+	void generate_eh_frame_cie(std::vector<uint8_t>& eh_frame_data) {
+		// CIE header structure (x86-64 System V ABI)
+		
+		size_t length_offset = eh_frame_data.size();
+		
+		// Length field (will be filled in at the end)
+		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
+		
+		size_t cie_start = eh_frame_data.size();
+		
+		// CIE ID (0 for CIE)
+		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
+		
+		// Version
+		eh_frame_data.push_back(1);
+		
+		// Augmentation string "zR" (null-terminated)
+		eh_frame_data.push_back('z');
+		eh_frame_data.push_back('R');
+		eh_frame_data.push_back(0);
+		
+		// Code alignment factor (1 for x86-64)
+		DwarfCFI::appendULEB128(eh_frame_data, 1);
+		
+		// Data alignment factor (-8 for x86-64)
+		DwarfCFI::appendSLEB128(eh_frame_data, -8);
+		
+		// Return address register (RIP = 16 on x86-64)
+		DwarfCFI::appendULEB128(eh_frame_data, 16);
+		
+		// Augmentation data length
+		DwarfCFI::appendULEB128(eh_frame_data, 1);
+		
+		// FDE encoding (PC-relative signed 4-byte)
+		eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
+		
+		// Initial instructions
+		// DW_CFA_def_cfa: RSP (reg 7) + 8
+		eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa);
+		DwarfCFI::appendULEB128(eh_frame_data, 7);  // RSP
+		DwarfCFI::appendULEB128(eh_frame_data, 8);  // Offset 8
+		
+		// DW_CFA_offset: RIP (reg 16) is at CFA-8
+		eh_frame_data.push_back(DwarfCFI::DW_CFA_offset | 16);
+		DwarfCFI::appendULEB128(eh_frame_data, 1);  // Offset 1 * -8 = -8
+		
+		// Pad to 8-byte alignment
+		while ((eh_frame_data.size() - cie_start + 4) % 8 != 0) {
+			eh_frame_data.push_back(DwarfCFI::DW_CFA_nop);
+		}
+		
+		// Fill in length (excluding the length field itself)
+		uint32_t cie_length = static_cast<uint32_t>(eh_frame_data.size() - cie_start);
+		eh_frame_data[length_offset + 0] = (cie_length >> 0) & 0xff;
+		eh_frame_data[length_offset + 1] = (cie_length >> 8) & 0xff;
+		eh_frame_data[length_offset + 2] = (cie_length >> 16) & 0xff;
+		eh_frame_data[length_offset + 3] = (cie_length >> 24) & 0xff;
+	}
+	
+	// Generate Frame Description Entry (FDE) for a function
+	void generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data, 
+	                           uint32_t cie_offset,
+	                           const FDEInfo& fde_info) {
+		// FDE structure
+		
+		size_t length_offset = eh_frame_data.size();
+		
+		// Length field (will be filled in at the end)
+		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
+		
+		size_t fde_start = eh_frame_data.size();
+		
+		// CIE pointer (offset from current location to CIE)
+		uint32_t cie_pointer = static_cast<uint32_t>(fde_start - cie_offset);
+		eh_frame_data.push_back((cie_pointer >> 0) & 0xff);
+		eh_frame_data.push_back((cie_pointer >> 8) & 0xff);
+		eh_frame_data.push_back((cie_pointer >> 16) & 0xff);
+		eh_frame_data.push_back((cie_pointer >> 24) & 0xff);
+		
+		// PC begin (will be relocated - placeholder for now)
+		// This needs a relocation to the function symbol
+		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
+		
+		// PC range (function length)
+		eh_frame_data.push_back((fde_info.function_length >> 0) & 0xff);
+		eh_frame_data.push_back((fde_info.function_length >> 8) & 0xff);
+		eh_frame_data.push_back((fde_info.function_length >> 16) & 0xff);
+		eh_frame_data.push_back((fde_info.function_length >> 24) & 0xff);
+		
+		// Augmentation data length (0 for now - no LSDA yet)
+		DwarfCFI::appendULEB128(eh_frame_data, 0);
+		
+		// CFI instructions (to be implemented based on fde_info.cfi_instructions)
+		// For now, leave empty
+		
+		// Pad to 8-byte alignment
+		while ((eh_frame_data.size() - fde_start + 4) % 8 != 0) {
+			eh_frame_data.push_back(DwarfCFI::DW_CFA_nop);
+		}
+		
+		// Fill in length (excluding the length field itself)
+		uint32_t fde_length = static_cast<uint32_t>(eh_frame_data.size() - fde_start);
+		eh_frame_data[length_offset + 0] = (fde_length >> 0) & 0xff;
+		eh_frame_data[length_offset + 1] = (fde_length >> 8) & 0xff;
+		eh_frame_data[length_offset + 2] = (fde_length >> 16) & 0xff;
+		eh_frame_data[length_offset + 3] = (fde_length >> 24) & 0xff;
+	}
+	
+	// Generate .eh_frame section
+	void generate_eh_frame() {
+		if (functions_with_fdes_.empty()) {
+			// No functions with exception handling - skip .eh_frame generation
+			return;
+		}
+		
+		std::vector<uint8_t> eh_frame_data;
+		
+		// Generate CIE
+		uint32_t cie_offset = 0;
+		generate_eh_frame_cie(eh_frame_data);
+		
+		// Generate FDEs for each function
+		for (const auto& fde_info : functions_with_fdes_) {
+			generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info);
+		}
+		
+		// Create .eh_frame section
+		auto* eh_frame_section = elf_writer_.sections.add(".eh_frame");
+		eh_frame_section->set_type(ELFIO::SHT_PROGBITS);
+		eh_frame_section->set_flags(ELFIO::SHF_ALLOC);
+		eh_frame_section->set_addr_align(8);
+		eh_frame_section->set_data(reinterpret_cast<const char*>(eh_frame_data.data()),
+		                           eh_frame_data.size());
+		
+		if (g_enable_debug_output) {
+			std::cerr << "Generated .eh_frame section with " << functions_with_fdes_.size() 
+			         << " FDEs (" << eh_frame_data.size() << " bytes)" << std::endl;
+		}
 	}
 
 private:
@@ -1024,6 +1212,9 @@ private:
 	 * @brief Finalize sections before writing
 	 */
 	void finalizeSections() {
+		// Generate exception handling tables if needed
+		generate_eh_frame();
+		
 		// Update section sizes and offsets
 		// ELFIO handles most of this automatically, but we need to set sh_info for .symtab
 		

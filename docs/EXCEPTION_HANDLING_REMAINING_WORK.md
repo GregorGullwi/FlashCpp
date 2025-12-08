@@ -130,10 +130,23 @@ enum DW_EH_PE {
 
 ---
 
-### 1.2 CIE (Common Information Entry) Generation (~6 hours)
+### 1.2 CIE (Common Information Entry) Generation (~6 hours) ✅ COMPLETED
 **What**: Generate the Common Information Entry - shared info for all functions
 
-**File**: `src/ElfFileWriter.h`
+**File**: `src/ElfFileWriter.h` ✅ IMPLEMENTED
+
+**Implementation Complete**:
+- ✅ CIE structure with correct header fields
+- ✅ Version 1 format
+- ✅ Augmentation string "zR" (z=has augmentation data, R=FDE has encoding byte)
+- ✅ Code alignment factor = 1 (x86-64)
+- ✅ Data alignment factor = -8 (x86-64 stack)
+- ✅ Return address register = 16 (RIP)
+- ✅ FDE encoding = PC-relative signed 4-byte
+- ✅ Initial instructions: DW_CFA_def_cfa (RSP+8), DW_CFA_offset (RIP at CFA-8)
+- ✅ Proper 8-byte alignment padding
+
+**Verified**: `readelf -wf` shows correct CIE structure
 
 **Add method**:
 ```cpp
@@ -185,10 +198,21 @@ enum DW_CFA {
 
 ---
 
-### 1.3 FDE (Frame Description Entry) Generation (~8 hours)
+### 1.3 FDE (Frame Description Entry) Generation (~8 hours) ✅ COMPLETED
 **What**: Generate one FDE per function with exception handling
 
-**File**: `src/ElfFileWriter.h`
+**File**: `src/ElfFileWriter.h` ✅ IMPLEMENTED
+
+**Implementation Complete**:
+- ✅ FDEInfo structure to track function info
+- ✅ FDE header with CIE pointer
+- ✅ PC begin/range fields (placeholders for relocations)
+- ✅ Augmentation data length field
+- ✅ 8-byte alignment padding
+- ✅ Integration with add_function_exception_info()
+- ✅ FDE generated for all functions
+
+**Note**: CFI instructions and relocations still need to be added in next steps
 
 **Add method**:
 ```cpp
