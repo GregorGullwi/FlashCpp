@@ -64,31 +64,6 @@ public:
     }
 
     Chunk* current_chunk() { return chunks_.back().get(); }
-    
-    // Check if a string_view points to memory managed by this allocator
-    bool owns_string(std::string_view sv) const {
-        const char* ptr = sv.data();
-        
-        // Handle edge cases
-        if (!ptr || sv.empty()) return false;
-        
-        // Avoid potential overflow: reject unreasonably large strings
-        // (practical chunk sizes are much smaller than SIZE_MAX/2)
-        if (sv.size() > SIZE_MAX / 2) {
-            return false;
-        }
-        
-        const char* end = ptr + sv.size();
-        for (const auto& chunk : chunks_) {
-            const char* chunk_start = chunk->data_.data();
-            const char* chunk_end = chunk_start + chunk->next_free_;
-            // Check that both start and end of the string are within chunk bounds
-            if (ptr >= chunk_start && end <= chunk_end) {
-                return true;
-            }
-        }
-        return false;
-    }
 
 private:
     std::vector<std::unique_ptr<Chunk>> chunks_;

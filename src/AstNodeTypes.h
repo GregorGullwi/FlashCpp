@@ -3031,3 +3031,14 @@ private:
 	ASTNode constraint_expr_;                        // The constraint expression
 	Token concept_token_;                            // For error reporting
 };
+
+// Helper to get DeclarationNode from a symbol that could be either DeclarationNode or VariableDeclarationNode
+// Returns nullptr if the symbol is neither type
+inline const DeclarationNode* get_decl_from_symbol(const ASTNode& symbol) {
+	if (symbol.is<DeclarationNode>()) {
+		return &symbol.as<DeclarationNode>();
+	} else if (symbol.is<VariableDeclarationNode>()) {
+		return &symbol.as<VariableDeclarationNode>().declaration();
+	}
+	return nullptr;
+}

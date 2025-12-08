@@ -738,9 +738,8 @@ public:
 		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
 		namespace_symbols_.clear();
 		interned_strings_.clear();
-		// Note: We don't reset string_allocator_ itself (would need to reconstruct it),
-		// but clearing interned_strings_ allows strings to be re-interned.
-		// The allocator's memory will be reused for new strings.
+		// Recreate the string allocator to fully release all memory
+		string_allocator_ = ChunkedStringAllocator(64 * 1024);
 	}
 
 private:
