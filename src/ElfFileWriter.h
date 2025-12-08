@@ -763,6 +763,9 @@ public:
 		// LSDA (Language Specific Data Area) info for exception handling
 		bool has_exception_handling = false;
 		std::string lsda_symbol;  // Symbol pointing to LSDA in .gcc_except_table
+		
+		// Track where in .eh_frame this FDE's PC begin field is located
+		uint32_t pc_begin_offset = 0;  // Offset in .eh_frame where relocation is needed
 	};
 	
 	// Track all functions that need FDEs
@@ -831,7 +834,7 @@ public:
 	// Generate Frame Description Entry (FDE) for a function
 	void generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data, 
 	                           uint32_t cie_offset,
-	                           const FDEInfo& fde_info) {
+	                           FDEInfo& fde_info) {  // Non-const so we can update pc_begin_offset
 		// FDE structure
 		
 		size_t length_offset = eh_frame_data.size();
@@ -849,7 +852,8 @@ public:
 		eh_frame_data.push_back((cie_pointer >> 24) & 0xff);
 		
 		// PC begin (will be relocated - placeholder for now)
-		// This needs a relocation to the function symbol
+		// Record offset for relocation
+		fde_info.pc_begin_offset = static_cast<uint32_t>(eh_frame_data.size());
 		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
 		
 		// PC range (function length)
@@ -891,7 +895,7 @@ public:
 		generate_eh_frame_cie(eh_frame_data);
 		
 		// Generate FDEs for each function
-		for (const auto& fde_info : functions_with_fdes_) {
+		for (auto& fde_info : functions_with_fdes_) {  // Non-const to update pc_begin_offset
 			generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info);
 		}
 		
@@ -902,6 +906,68 @@ public:
 		eh_frame_section->set_addr_align(8);
 		eh_frame_section->set_data(reinterpret_cast<const char*>(eh_frame_data.data()),
 		                           eh_frame_data.size());
+		
+		// Create .rela.eh_frame section for relocations
+		auto* rela_eh_frame = elf_writer_.sections.add(".rela.eh_frame");
+		rela_eh_frame->set_type(ELFIO::SHT_RELA);
+		rela_eh_frame->set_flags(ELFIO::SHF_INFO_LINK);
+		rela_eh_frame->set_info(eh_frame_section->get_index());
+		rela_eh_frame->set_link(symtab_section_->get_index());
+		rela_eh_frame->set_addr_align(8);
+		rela_eh_frame->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+		
+		// Create relocation accessor for .eh_frame
+		auto rela_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
+			elf_writer_, rela_eh_frame
+		);
+		
+		// Add relocations for each FDE's PC begin field
+		for (const auto& fde_info : functions_with_fdes_) {
+			// R_X86_64_PC32: PC-relative 32-bit signed (S + A - P)
+			// where S = symbol value, A = addend, P = place (offset being relocated)
+			rela_accessor->add_entry(fde_info.pc_begin_offset, 
+			                        0,  // Symbol index (will be set below)
+			                        ELFIO::R_X86_64_PC32,
+			                        0);  // Addend (0 for PC-relative to function start)
+			
+			// Now we need to update the symbol index
+			// Find the symbol index for this function
+			auto* accessor = getSymbolAccessor();
+			if (accessor) {
+				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
+				for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
+					std::string sym_name;
+					ELFIO::Elf64_Addr sym_value;
+					ELFIO::Elf_Xword sym_size;
+					unsigned char sym_bind, sym_type;
+					ELFIO::Elf_Half sym_section;
+					unsigned char sym_other;
+					
+					accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, 
+					                    sym_type, sym_section, sym_other);
+					
+					if (sym_name == fde_info.function_symbol) {
+						// Update the relocation we just added
+						ELFIO::Elf64_Addr r_offset;
+						ELFIO::Elf_Word r_symbol;  // Use Elf_Word (32-bit)
+						unsigned r_type;
+						ELFIO::Elf_Sxword r_addend;
+						
+						// Get the last relocation we added
+						ELFIO::Elf_Xword rel_count = rela_accessor->get_entries_num();
+						if (rel_count > 0) {
+							rela_accessor->get_entry(rel_count - 1, r_offset, r_symbol, 
+							                        r_type, r_addend);
+							// Update symbol index
+							rela_accessor->set_entry(rel_count - 1, r_offset, 
+							                        static_cast<ELFIO::Elf_Word>(i), 
+							                        r_type, r_addend);
+						}
+						break;
+					}
+				}
+			}
+		}
 		
 		if (g_enable_debug_output) {
 			std::cerr << "Generated .eh_frame section with " << functions_with_fdes_.size() 
