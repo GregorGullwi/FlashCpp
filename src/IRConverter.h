@@ -5013,11 +5013,14 @@ private:
 			size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 			
 			// Reserve parameter registers to prevent them from being allocated as temporaries
+			// Only reserve registers that aren't already allocated
 			std::vector<X64Register> reserved_regs;
 			for (size_t i = 0; i < max_int_regs; ++i) {
 				X64Register reg = getIntParamReg<TWriterClass>(i);
-				regAlloc.allocateSpecific(reg, -1);  // Reserve with dummy offset
-				reserved_regs.push_back(reg);
+				if (!regAlloc.is_allocated(reg)) {
+					regAlloc.allocateSpecific(reg, -1);  // Reserve with dummy offset
+					reserved_regs.push_back(reg);
+				}
 			}
 			
 			// Enhanced stack overflow logic: Track both int and float register usage independently
@@ -6918,7 +6921,7 @@ private:
 			
 			if (use_register) {
 
-				if (!is_float_param) {
+				if (!is_float_param && !regAlloc.is_allocated(src_reg)) {
 					regAlloc.allocateSpecific(src_reg, offset);
 				}
 
