@@ -841,13 +841,18 @@ public:
 		// LSDA (Language Specific Data Area) info for exception handling
 		bool has_exception_handling = false;
 		std::string lsda_symbol;  // Symbol pointing to LSDA in .gcc_except_table
+		uint32_t lsda_offset = 0;  // Offset in .gcc_except_table where LSDA starts
 		
-		// Track where in .eh_frame this FDE's PC begin field is located
-		uint32_t pc_begin_offset = 0;  // Offset in .eh_frame where relocation is needed
+		// Track where in .eh_frame this FDE's fields are located (for relocations)
+		uint32_t pc_begin_offset = 0;  // Offset in .eh_frame where PC begin field is
+		uint32_t lsda_pointer_offset = 0;  // Offset in .eh_frame where LSDA pointer is
 	};
 	
 	// Track all functions that need FDEs
 	std::vector<FDEInfo> functions_with_fdes_;
+	
+	// Track offset of personality routine pointer in .eh_frame (for relocation)
+	uint32_t personality_routine_offset_ = 0;
 	
 	// Generate Common Information Entry (CIE) for .eh_frame
 	void generate_eh_frame_cie(std::vector<uint8_t>& eh_frame_data) {
@@ -866,8 +871,14 @@ public:
 		// Version
 		eh_frame_data.push_back(1);
 		
-		// Augmentation string "zR" (null-terminated)
+		// Augmentation string "zPLR" (null-terminated)
+		// z = has augmentation data
+		// P = personality routine pointer present
+		// L = LSDA encoding present
+		// R = FDE encoding present
 		eh_frame_data.push_back('z');
+		eh_frame_data.push_back('P');
+		eh_frame_data.push_back('L');
 		eh_frame_data.push_back('R');
 		eh_frame_data.push_back(0);
 		
@@ -880,11 +891,29 @@ public:
 		// Return address register (RIP = 16 on x86-64)
 		DwarfCFI::appendULEB128(eh_frame_data, 16);
 		
-		// Augmentation data length
-		DwarfCFI::appendULEB128(eh_frame_data, 1);
+		// Augmentation data length (will be calculated)
+		size_t aug_length_offset = eh_frame_data.size();
+		eh_frame_data.push_back(0);  // Placeholder, will be updated
 		
-		// FDE encoding (PC-relative signed 4-byte)
+		size_t aug_data_start = eh_frame_data.size();
+		
+		// P: Personality routine encoding and pointer
+		// Encoding: PC-relative signed 4-byte
 		eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
+		// Personality routine pointer (will need relocation to __gxx_personality_v0)
+		// Store offset for relocation tracking
+		personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());
+		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder
+		
+		// L: LSDA encoding
+		eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
+		
+		// R: FDE encoding (PC-relative signed 4-byte)
+		eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
+		
+		// Update augmentation data length
+		uint8_t aug_length = static_cast<uint8_t>(eh_frame_data.size() - aug_data_start);
+		eh_frame_data[aug_length_offset] = aug_length;
 		
 		// Initial instructions
 		// DW_CFA_def_cfa: RSP (reg 7) + 8
@@ -940,8 +969,20 @@ public:
 		eh_frame_data.push_back((fde_info.function_length >> 16) & 0xff);
 		eh_frame_data.push_back((fde_info.function_length >> 24) & 0xff);
 		
-		// Augmentation data length (0 for now - no LSDA yet)
-		DwarfCFI::appendULEB128(eh_frame_data, 0);
+		// Augmentation data
+		if (fde_info.has_exception_handling) {
+			// Augmentation data length (4 bytes for LSDA pointer)
+			DwarfCFI::appendULEB128(eh_frame_data, 4);
+			
+			// LSDA pointer (PC-relative to .gcc_except_table)
+			// Record offset for relocation
+			fde_info.lsda_pointer_offset = static_cast<uint32_t>(eh_frame_data.size());
+			fde_info.lsda_symbol = ".gcc_except_table";
+			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder for relocation
+		} else {
+			// No exception handling - augmentation data length is 0
+			DwarfCFI::appendULEB128(eh_frame_data, 0);
+		}
 		
 		// CFI instructions (to be implemented based on fde_info.cfi_instructions)
 		// For now, leave empty
@@ -1045,6 +1086,72 @@ public:
 					}
 				}
 			}
+			
+			// Add LSDA relocation if function has exception handling
+			if (fde_info.has_exception_handling && fde_info.lsda_pointer_offset > 0) {
+				// Add .gcc_except_table section symbol if needed
+				// First check if it exists
+				ELFIO::Elf_Xword gcc_except_table_sym_index = 0;
+				bool found_except_table = false;
+				
+				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
+				for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
+					std::string sym_name;
+					ELFIO::Elf64_Addr sym_value;
+					ELFIO::Elf_Xword sym_size;
+					unsigned char sym_bind, sym_type;
+					ELFIO::Elf_Half sym_section;
+					unsigned char sym_other;
+					
+					accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind,
+					                    sym_type, sym_section, sym_other);
+					
+					if (sym_name == ".gcc_except_table") {
+						gcc_except_table_sym_index = i;
+						found_except_table = true;
+						break;
+					}
+				}
+				
+				if (!found_except_table) {
+					// Add section symbol for .gcc_except_table
+					auto* except_section = getSectionByName(".gcc_except_table");
+					if (except_section) {
+						accessor->add_symbol(*string_accessor_, ".gcc_except_table",
+						                    0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION,
+						                    except_section->get_index(), ELFIO::STV_DEFAULT);
+						gcc_except_table_sym_index = accessor->get_symbols_num() - 1;
+					}
+				}
+				
+				// Add relocation for LSDA pointer with addend = lsda_offset
+				rela_accessor->add_entry(fde_info.lsda_pointer_offset,
+				                        static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
+				                        ELFIO::R_X86_64_PC32,
+				                        static_cast<ELFIO::Elf_Sxword>(fde_info.lsda_offset));
+			}
+		}
+		
+		// Add relocation for personality routine pointer in CIE
+		if (personality_routine_offset_ > 0) {
+			// Add __gxx_personality_v0 symbol if it doesn't exist
+			auto* accessor = getSymbolAccessor();
+			if (accessor) {
+				// Add as undefined external symbol
+				accessor->add_symbol(*string_accessor_, "__gxx_personality_v0", 
+				                    0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE, 
+				                    0, ELFIO::STV_DEFAULT);
+				
+				// Find the symbol index we just added
+				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
+				ELFIO::Elf_Xword personality_sym_index = sym_count - 1;
+				
+				// Add relocation for personality routine
+				rela_accessor->add_entry(personality_routine_offset_,
+				                        static_cast<ELFIO::Elf_Word>(personality_sym_index),
+				                        ELFIO::R_X86_64_PC32,
+				                        0);
+			}
 		}
 		
 		if (g_enable_debug_output) {
@@ -1066,13 +1173,17 @@ public:
 		std::vector<uint8_t> gcc_except_table_data;
 		LSDAGenerator generator;
 		
-		// Generate LSDA for each function
+		// Generate LSDA for each function and track offsets
 		for (const auto& [func_name, lsda_info] : function_lsda_map_) {
+			// Find the corresponding FDE to update its LSDA offset
+			for (auto& fde_info : functions_with_fdes_) {
+				if (fde_info.function_symbol == func_name) {
+					fde_info.lsda_offset = static_cast<uint32_t>(gcc_except_table_data.size());
+					break;
+				}
+			}
+			
 			auto lsda_data = generator.generate(lsda_info);
-			
-			// TODO: We need to track where each function's LSDA starts
-			// for linking to FDE augmentation data
-			
 			gcc_except_table_data.insert(gcc_except_table_data.end(), 
 			                            lsda_data.begin(), lsda_data.end());
 		}
@@ -1398,8 +1509,10 @@ private:
 	 */
 	void finalizeSections() {
 		// Generate exception handling tables if needed
-		generate_eh_frame();
+		// Generate .gcc_except_table first so LSDA offsets are known
 		generate_gcc_except_table();
+		// Then generate .eh_frame with LSDA pointers
+		generate_eh_frame();
 		
 		// Update section sizes and offsets
 		// ELFIO handles most of this automatically, but we need to set sh_info for .symtab
