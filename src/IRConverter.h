@@ -5120,8 +5120,8 @@ private:
 					textSectionData.push_back(modrm_movq);
 					
 					// For varargs functions, System V AMD64 ABI requires copying XMM value to GPR
-					// Use the OVERALL argument position, not the float register index
-					if (call_op.is_variadic) {
+					// Only copy if the corresponding integer register exists (i < max_int_regs)
+					if (call_op.is_variadic && i < max_int_regs) {
 						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 					}
 					
@@ -5150,7 +5150,7 @@ private:
 						}
 						
 						// For varargs: also copy to corresponding INT register
-						if (call_op.is_variadic) {
+						if (call_op.is_variadic && i < max_int_regs) {
 							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 						}
 					} else {
@@ -5177,7 +5177,7 @@ private:
 						}
 						
 						// For varargs: also copy to corresponding INT register
-						if (call_op.is_variadic) {
+						if (call_op.is_variadic && i < max_int_regs) {
 							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 						}
 					} else {
@@ -5191,15 +5191,19 @@ private:
 				}
 			}
 			
-			// For varargs functions on System V AMD64, set AL to number of XMM registers used
+			// For varargs functions on System V AMD64, set AL to number of XMM registers actually used
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				if (call_op.is_variadic) {
-					// Count the number of XMM registers used (float/double arguments)
+					// Count XMM registers actually allocated (need to track float_reg_index)
 					size_t xmm_count = 0;
-					for (size_t i = 0; i < call_op.args.size() && i < max_float_regs; ++i) {
+					size_t temp_float_idx = 0;
+					for (size_t i = 0; i < call_op.args.size(); ++i) {
 						const auto& arg = call_op.args[i];
 						if (is_floating_point_type(arg.type)) {
-							xmm_count++;
+							if (temp_float_idx < max_float_regs) {
+								xmm_count++;
+								temp_float_idx++;
+							}
 						}
 					}
 					// Set AL (lower 8 bits of RAX) to the count
