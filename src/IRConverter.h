@@ -2919,6 +2919,9 @@ public:
 	IrToObjConverter() = default;
 
 	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "", bool show_timing = false) {
+		FLASH_LOG_FORMAT(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] convert() started, textSectionData.size()={}, textSectionData.capacity()={}", 
+			textSectionData.size(), textSectionData.capacity());
+		
 		// High-level timing (always enabled when show_timing=true)
 		auto convert_start = std::chrono::high_resolution_clock::now();
 
@@ -11248,10 +11251,15 @@ private:
 			current_function_offset_ = 0;
 		}
 
+		FLASH_LOG_FORMAT(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before writer.add_data(), textSectionData.size()={}", 
+			textSectionData.size());
 		writer.add_data(textSectionData, SectionType::TEXT);
 
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before writer.finalize_debug_info()");
 		// Finalize debug information
 		writer.finalize_debug_info();
+		
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] convert() completed successfully, exiting function");
 	}
 
 	// Emit runtime helper functions for dynamic_cast as native x64 code
