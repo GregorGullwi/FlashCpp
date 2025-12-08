@@ -72,13 +72,26 @@ This section details the ~14-23 days of work needed to complete exception handli
 ## Phase 1: .eh_frame Generation (DWARF CFI)
 **Estimated Effort**: 3-5 days  
 **Priority**: CRITICAL - Nothing else works without this  
+**Status**: ✅ In Progress  
 **Files to Create/Modify**: 
-- New: `src/DwarfCFI.h` - DWARF CFI encoding utilities
+- New: `src/DwarfCFI.h` - ✅ COMPLETED - DWARF CFI encoding utilities
 - Modify: `src/ElfFileWriter.h` - Add `.eh_frame` section generation
 - Modify: `src/IRConverter.h` - Track CFI state during code generation
 
-### 1.1 DWARF Encoding Utilities (~4 hours)
+### 1.1 DWARF Encoding Utilities (~4 hours) ✅ COMPLETED
 **What**: Create helper functions for DWARF variable-length encoding
+
+**File**: `src/DwarfCFI.h` ✅ CREATED
+
+**Implementation**: All encoding functions have been implemented and tested:
+- ✅ `encodeULEB128()` - Unsigned LEB128 encoding
+- ✅ `encodeSLEB128()` - Signed LEB128 encoding  
+- ✅ `encodePointer()` - Pointer encoding with all DW_EH_PE formats
+- ✅ `appendULEB128()` / `appendSLEB128()` - Helper functions
+- ✅ All DW_EH_PE_* encoding constants defined
+- ✅ All DW_CFA_* instruction opcodes defined
+- ✅ DWARF register numbers for x86-64 defined
+- ✅ Unit tests created in `tests/test_dwarf_cfi.cpp` (20/20 tests pass)
 
 **File**: `src/DwarfCFI.h`
 
