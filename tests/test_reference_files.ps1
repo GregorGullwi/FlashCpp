@@ -274,7 +274,7 @@ foreach ($file in $referenceFiles) {
             $allLines = $compileOutput -split "`n" | Where-Object {
                 $_.Trim() -ne "" -and
                 $_ -notmatch "===== FLASHCPP VERSION" -and
-                $_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL)"
+                $_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL|\|)"
             }
             # Try to show error lines first, otherwise show last 10 lines
             $errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
