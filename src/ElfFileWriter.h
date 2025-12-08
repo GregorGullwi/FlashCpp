@@ -1216,6 +1216,17 @@ public:
 		except_section->set_data(reinterpret_cast<const char*>(gcc_except_table_data.data()),
 		                        gcc_except_table_data.size());
 		
+		// Add a DATA symbol for the .gcc_except_table section
+		// Use STB_WEAK instead of STB_LOCAL so it doesn't break symbol ordering
+		// (WEAK symbols are treated like GLOBAL for ordering purposes)
+		auto* accessor = getSymbolAccessor();
+		if (accessor && string_accessor_) {
+			accessor->add_symbol(*string_accessor_, ".gcc_except_table",
+			                    0, gcc_except_table_data.size(), 
+			                    ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
+			                    except_section->get_index(), ELFIO::STV_HIDDEN);
+		}
+		
 		// TODO: Create .rela.gcc_except_table for type_info relocations
 		
 		if (g_enable_debug_output) {
