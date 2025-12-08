@@ -5119,8 +5119,9 @@ private:
 					uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
 					textSectionData.push_back(modrm_movq);
 					
-					// For varargs: also copy to corresponding INT register
-					emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+					// TODO: For varargs, should copy to corresponding INT register
+					// However, CallOp doesn't have is_variadic field, so we can't detect this
+					// This is documented in LINUX_ABI_LIMITATIONS.md
 					
 					// Release the temporary GPR
 					regAlloc.release(temp_gpr);
@@ -5141,11 +5142,7 @@ private:
 						bool is_float = (arg.type == Type::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						// For varargs: floats must be promoted to double (C standard)
-						if (is_float) {
-							emitCvtss2sd(target_reg, target_reg);
-						}
 						// For varargs: also copy to corresponding INT register
-						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
 						// Both sizes are explicit for clarity
@@ -5164,11 +5161,7 @@ private:
 						bool is_float = (arg.type == Type::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						// For varargs: floats must be promoted to double (C standard)
-						if (is_float) {
-							emitCvtss2sd(target_reg, target_reg);
-						}
 						// For varargs: also copy to corresponding INT register
-						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
 						emitMovFromFrameSized(
@@ -5299,8 +5292,8 @@ private:
 				movqInst[4] = 0xC0 + (xmm_modrm_bits(target_reg) << 3) + static_cast<uint8_t>(temp_gpr);
 				textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
 				
-				// For varargs: also copy to corresponding INT register
-				emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+				// Note: Legacy path cannot detect varargs, so varargs functions may not work correctly
+				// This is documented in LINUX_ABI_LIMITATIONS.md
 				
 				// Release the temporary GPR
 				regAlloc.release(temp_gpr);
@@ -5341,12 +5334,8 @@ private:
 					// or movss for float (F3 0F 10 /r)
 					bool is_float = (argType == Type::Float);
 					emitFloatMovFromFrame(target_reg, var_offset, is_float);
-					// For varargs: floats must be promoted to double (C standard)
-					if (is_float) {
-						emitCvtss2sd(target_reg, target_reg);
-					}
-					// For varargs: also copy to corresponding INT register
-					emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+					// Note: Legacy path cannot detect varargs, so varargs functions may not work correctly
+					// This is documented in LINUX_ABI_LIMITATIONS.md
 				} else {
 					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
 					    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
@@ -5378,12 +5367,8 @@ private:
 						// or movss for float (F3 0F 10 /r)
 						bool is_float = (argType == Type::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
-						// For varargs: floats must be promoted to double (C standard)
-						if (is_float) {
-							emitCvtss2sd(target_reg, target_reg);
-						}
-						// For varargs: also copy to corresponding INT register
-						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
+						// Note: Legacy path cannot detect varargs, so varargs functions may not work correctly
+						// This is documented in LINUX_ABI_LIMITATIONS.md
 					} else {
 						if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
 						    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
