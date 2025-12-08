@@ -8,9 +8,7 @@ Link and run to verify the return output.
 
 ## Build, Test, and Development Commands
 - Use `make main CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, to produce `x64\Debug\FlashCpp`. Run it whenever you change compiler source files.
-- Use `make test CXX=clang++` — invokes all the tests in FlashCppTest.cpp on WSL/Linux. 
-- Clang workflow (WSL/Linux/macOS, experimental) — run `setup.sh`, then `make main` / `make test`; be ready to patch missing LLVM headers and register-allocator stubs before it links.
-- There is also a "tests/run_all_tests.sh", which is a bit untested. Feel free to modify and fix any issues you find with it.
+- Use `tests/run_all_tests.sh` — invokes all the tests in the tests folder on WSL/Linux. 
 - `tests/test_reference_files.ps1` is run on each commit from a Github Actions file.
 
 ## Coding Style & Naming Conventions
@@ -18,8 +16,10 @@ Target warning-clean builds under both MSVC and clang. Use tab indentation, same
 Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase.
 Prefer `std::string_view` for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
 Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do not add opcodes manually to `textSectionData` in `IRConverter.h`, make helper functions if no fitting `emit` function exist.
+
 ## Testing Guidelines
 The doctest runner lives in `tests/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp`. Add coverage with `TEST_CASE` blocks (e.g., `"Parser:IfWithInit"`). Run `link_and_run_test_debug.bat` for MSVC smoke tests, or `make test && ./x64/test` under WSL/Linux. Shared expectations belong in `tests/`; document intentional skips inline. Don't forget to add kernel32.lib to the link command line.
+When adding new test cases and files, verify that they are valid C++20 source file by compiling them with clang first in c++20 mode.
 
 ## Workspace Hygiene
 Delete binaries, dumps, and logs before you summarize your work. Feel free to leave debug output in the source code. Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
