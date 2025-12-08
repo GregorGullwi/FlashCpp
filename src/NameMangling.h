@@ -163,7 +163,9 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		const auto& ptr_level = type_node.pointer_levels()[i];
 		// CV-qualifiers on the pointer itself
 		// NOTE: For function parameters, top-level const on the pointer (i == 0) is ignored
-		// per C++ standard [dcl.fct]p5, e.g., int* const p is same as int* p
+		// per C++ standard [dcl.fct]p5. Examples:
+		//   int* const p → int* p (top-level const ignored)
+		//   const int* const p → const int* p (top-level const ignored, inner const preserved)
 		bool skip_pointer_cv = is_function_parameter && (i == 0);
 		if (!skip_pointer_cv) {
 			if (ptr_level.cv_qualifier == CVQualifier::Const) {
