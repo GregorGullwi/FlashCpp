@@ -5272,8 +5272,34 @@ ParseResult Parser::parse_typedef_declaration()
 			}
 			consume_token(); // consume the member name
 
+			// Check for array declarator: '[' size ']'
+			std::optional<ASTNode> array_size;
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+			    peek_token()->value() == "[") {
+				consume_token(); // consume '['
+
+				// Parse the array size expression
+				ParseResult size_result = parse_expression();
+				if (size_result.is_error()) {
+					return size_result;
+				}
+				array_size = size_result.node();
+
+				// Expect closing ']'
+				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
+				    peek_token()->value() != "]") {
+					return ParseResult::error("Expected ']' after array size", *current_token_);
+				}
+				consume_token(); // consume ']'
+			}
+
 			// Create member declaration
-			auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
+			ASTNode member_decl_node;
+			if (array_size.has_value()) {
+				member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token, array_size);
+			} else {
+				member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
+			}
 			members.push_back({member_decl_node, current_access, std::nullopt});
 			struct_ref.add_member(member_decl_node, current_access, std::nullopt);
 
