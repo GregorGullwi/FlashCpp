@@ -5008,6 +5008,7 @@ private:
 			// This prevents loadTypedValueIntoRegister from clobbering parameter registers.
 			// Platform-specific: Windows has 4 int regs, Linux has 6 int regs
 			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 			size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 			
 			for (size_t i = max_int_regs; i < call_op.args.size(); ++i) {
@@ -7097,6 +7098,11 @@ private:
 			size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
 			// Clear reference parameter tracking from previous function
 			reference_stack_info_.clear();
+			
+			// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
+			size_t int_param_reg_index = 0;
+			size_t float_param_reg_index = 0;
+			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
 			auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
@@ -7141,10 +7147,22 @@ private:
 			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 			bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
 			
-			// Check if parameter fits in a register
-			if ((is_float_param && static_cast<size_t>(paramNumber) < max_float_regs) ||
-			    (!is_float_param && static_cast<size_t>(paramNumber) < max_int_regs)) {
-				X64Register src_reg = is_float_param ? getFloatParamReg<TWriterClass>(paramNumber) : getIntParamReg<TWriterClass>(paramNumber);
+			// Check if parameter fits in a register using separate int/float counters
+			bool use_register = false;
+			X64Register src_reg = X64Register::Count;
+			if (is_float_param) {
+				if (float_param_reg_index < max_float_regs) {
+					src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
+					use_register = true;
+				}
+			} else {
+				if (int_param_reg_index < max_int_regs) {
+					src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
+					use_register = true;
+				}
+			}
+			
+			if (use_register) {
 
 				// Don't allocate XMM registers in the general register allocator
 				if (!is_float_param) {
@@ -7161,6 +7179,10 @@ private:
 		// Typed payload path: build ParameterInfo from already-extracted parameter_types
 		const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 		reference_stack_info_.clear();
+		
+		// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
+		size_t int_param_reg_index = 0;
+		size_t float_param_reg_index = 0;
 		
 		for (size_t i = 0; i < func_decl.parameters.size(); ++i) {
 			const auto& param = func_decl.parameters[i];
@@ -7199,10 +7221,22 @@ private:
 			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 			bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0;
 			
-			// Check if parameter fits in a register
-			if ((is_float_param && static_cast<size_t>(paramNumber) < max_float_regs) ||
-			    (!is_float_param && static_cast<size_t>(paramNumber) < max_int_regs)) {
-				X64Register src_reg = is_float_param ? getFloatParamReg<TWriterClass>(paramNumber) : getIntParamReg<TWriterClass>(paramNumber);
+			// Check if parameter fits in a register using separate int/float counters
+			bool use_register = false;
+			X64Register src_reg = X64Register::Count;
+			if (is_float_param) {
+				if (float_param_reg_index < max_float_regs) {
+					src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
+					use_register = true;
+				}
+			} else {
+				if (int_param_reg_index < max_int_regs) {
+					src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
+					use_register = true;
+				}
+			}
+			
+			if (use_register) {
 
 				if (!is_float_param) {
 					regAlloc.allocateSpecific(src_reg, offset);
