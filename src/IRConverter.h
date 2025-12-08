@@ -1622,20 +1622,119 @@ OpCodeWithSize generateMovFromRsp(X64Register destinationRegister, int32_t offse
 	return result;
 }
 
-// Win64 calling convention register mapping
-static constexpr std::array<X64Register, 4> INT_PARAM_REGS = {
+// ============================================================================
+// Platform-Specific Calling Conventions
+// ============================================================================
+// Windows x64 (Win64 ABI): Uses Microsoft x64 calling convention
+//   - Integer/pointer args: RCX, RDX, R8, R9 (4 registers)
+//   - Float args: XMM0-XMM3 (4 registers)
+//   - Shadow space: 32 bytes (4 * 8) for spilling register parameters
+//   - Stack alignment: 16 bytes at call instruction
+//
+// Linux x86-64 (System V AMD64 ABI): Uses System V calling convention
+//   - Integer/pointer args: RDI, RSI, RDX, RCX, R8, R9 (6 registers)
+//   - Float args: XMM0-XMM7 (8 registers)
+//   - No shadow space required
+//   - Stack alignment: 16 bytes at call instruction
+//   - Red zone: 128 bytes below RSP that won't be clobbered by signals/interrupts
+// ============================================================================
+
+// Win64 calling convention register mapping (Windows)
+static constexpr std::array<X64Register, 4> WIN64_INT_PARAM_REGS = {
 	X64Register::RCX,  // First integer/pointer argument
 	X64Register::RDX,  // Second integer/pointer argument
 	X64Register::R8,   // Third integer/pointer argument
 	X64Register::R9    // Fourth integer/pointer argument
 };
 
-static constexpr std::array<X64Register, 4> FLOAT_PARAM_REGS = {
+static constexpr std::array<X64Register, 4> WIN64_FLOAT_PARAM_REGS = {
 	X64Register::XMM0, // First floating point argument
 	X64Register::XMM1, // Second floating point argument
 	X64Register::XMM2, // Third floating point argument
 	X64Register::XMM3  // Fourth floating point argument
 };
+
+// System V AMD64 calling convention register mapping (Linux/Unix)
+static constexpr std::array<X64Register, 6> SYSV_INT_PARAM_REGS = {
+	X64Register::RDI,  // First integer/pointer argument
+	X64Register::RSI,  // Second integer/pointer argument
+	X64Register::RDX,  // Third integer/pointer argument
+	X64Register::RCX,  // Fourth integer/pointer argument
+	X64Register::R8,   // Fifth integer/pointer argument
+	X64Register::R9    // Sixth integer/pointer argument
+};
+
+static constexpr std::array<X64Register, 8> SYSV_FLOAT_PARAM_REGS = {
+	X64Register::XMM0, // First floating point argument
+	X64Register::XMM1, // Second floating point argument
+	X64Register::XMM2, // Third floating point argument
+	X64Register::XMM3, // Fourth floating point argument
+	X64Register::XMM4, // Fifth floating point argument
+	X64Register::XMM5, // Sixth floating point argument
+	X64Register::XMM6, // Seventh floating point argument
+	X64Register::XMM7  // Eighth floating point argument
+};
+
+// ============================================================================
+// Platform-Specific ABI Helper Functions
+// ============================================================================
+// These template functions select the correct parameter registers based on 
+// whether we're targeting Windows (COFF/PE) or Linux (ELF).
+// ============================================================================
+
+// Get the integer parameter register for the given index based on platform
+template<typename TWriterClass>
+constexpr X64Register getIntParamReg(size_t index) {
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		// Linux: System V AMD64 ABI (6 integer parameter registers)
+		return (index < SYSV_INT_PARAM_REGS.size()) ? SYSV_INT_PARAM_REGS[index] : X64Register::Count;
+	} else {
+		// Windows: Win64 ABI (4 integer parameter registers)
+		return (index < WIN64_INT_PARAM_REGS.size()) ? WIN64_INT_PARAM_REGS[index] : X64Register::Count;
+	}
+}
+
+// Get the float parameter register for the given index based on platform
+template<typename TWriterClass>
+constexpr X64Register getFloatParamReg(size_t index) {
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		// Linux: System V AMD64 ABI (8 float parameter registers)
+		return (index < SYSV_FLOAT_PARAM_REGS.size()) ? SYSV_FLOAT_PARAM_REGS[index] : X64Register::Count;
+	} else {
+		// Windows: Win64 ABI (4 float parameter registers)
+		return (index < WIN64_FLOAT_PARAM_REGS.size()) ? WIN64_FLOAT_PARAM_REGS[index] : X64Register::Count;
+	}
+}
+
+// Get the maximum number of integer parameter registers based on platform
+template<typename TWriterClass>
+constexpr size_t getMaxIntParamRegs() {
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		return SYSV_INT_PARAM_REGS.size();  // 6 for Linux
+	} else {
+		return WIN64_INT_PARAM_REGS.size(); // 4 for Windows
+	}
+}
+
+// Get the maximum number of float parameter registers based on platform
+template<typename TWriterClass>
+constexpr size_t getMaxFloatParamRegs() {
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		return SYSV_FLOAT_PARAM_REGS.size();  // 8 for Linux
+	} else {
+		return WIN64_FLOAT_PARAM_REGS.size(); // 4 for Windows
+	}
+}
+
+// Get the shadow space size based on platform
+template<typename TWriterClass>
+constexpr size_t getShadowSpaceSize() {
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		return 0;   // Linux: No shadow space
+	} else {
+		return 32;  // Windows: 32 bytes (4 * 8) for spilling register parameters
+	}
+}
 
 // Converts an X64Register enum to its corresponding CodeView register code.
 uint16_t getX64RegisterCodeViewCode(X64Register reg) {
@@ -4920,17 +5019,24 @@ private:
 				regAlloc.release(temp_reg);
 			}
 			
-			// Now process register arguments (first 4)
-			size_t max_reg_args = std::min<size_t>(call_op.args.size(), 4);
+			// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
+			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+			size_t max_reg_args = call_op.args.size();
 			for (size_t i = 0; i < max_reg_args; ++i) {
 				const auto& arg = call_op.args[i];
 				
 				// Determine if this is a floating-point argument
 				bool is_float_arg = is_floating_point_type(arg.type);
 				
-				// First 4 args go in calling convention registers
+				// Check if this argument fits in a register
+				if ((is_float_arg && i >= max_float_regs) || (!is_float_arg && i >= max_int_regs)) {
+					break;  // Remaining arguments go on stack
+				}
+				
+				// Get the platform-specific calling convention register
 				// Use XMM registers for float args, INT registers for integer args
-				X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
+				X64Register target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(i) : getIntParamReg<TWriterClass>(i);
 				
 				// Special handling for passing addresses (this pointer or large struct references)
 				// For member functions: first arg is always "this" pointer (pass address)
@@ -4999,7 +5105,7 @@ private:
 					textSectionData.push_back(modrm_movq);
 					
 					// For varargs: also copy to corresponding INT register
-					emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
+					emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 					
 					// Release the temporary GPR
 					regAlloc.release(temp_gpr);
@@ -5024,7 +5130,7 @@ private:
 							emitCvtss2sd(target_reg, target_reg);
 						}
 						// For varargs: also copy to corresponding INT register
-						emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
+						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
 						// Both sizes are explicit for clarity
@@ -5047,7 +5153,7 @@ private:
 							emitCvtss2sd(target_reg, target_reg);
 						}
 						// For varargs: also copy to corresponding INT register
-						emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
+						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 					} else {
 						// Use size-aware load: source (stack slot) -> destination (register)
 						emitMovFromFrameSized(
@@ -5139,7 +5245,7 @@ private:
 			}
 
 			// Determine the target register for the argument (if using registers)
-			X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
+			X64Register target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(i) : getIntParamReg<TWriterClass>(i);
 
 			// Handle floating-point immediate values
 			if (is_float_arg && std::holds_alternative<double>(argValue)) {
@@ -5165,7 +5271,7 @@ private:
 				textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
 				
 				// For varargs: also copy to corresponding INT register
-				emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
+				emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 				
 				// Release the temporary GPR
 				regAlloc.release(temp_gpr);
@@ -5211,7 +5317,7 @@ private:
 						emitCvtss2sd(target_reg, target_reg);
 					}
 					// For varargs: also copy to corresponding INT register
-					emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
+					emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 				} else {
 					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
 					    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
@@ -5248,7 +5354,7 @@ private:
 							emitCvtss2sd(target_reg, target_reg);
 						}
 						// For varargs: also copy to corresponding INT register
-						emitMovqXmmToGpr(target_reg, INT_PARAM_REGS[i]);
+						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 					} else {
 						if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
 						    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
@@ -5572,7 +5678,8 @@ private:
 			TypeIndex arg_type_index = arg.type_index;
 			const IrValue& paramValue = arg.value;
 
-			X64Register target_reg = INT_PARAM_REGS[i + 1]; // Skip RCX (index 0)
+			// Skip first register (this pointer): RCX on Windows, RDI on Linux
+			X64Register target_reg = getIntParamReg<TWriterClass>(i + 1);
 
 			// Check if this is a reference parameter (copy/move constructor - same struct type)
 			bool is_same_struct_type = false;
@@ -6930,9 +7037,10 @@ private:
 			// Add 'this' parameter to debug information
 			writer.add_function_parameter("this", 0x603, this_offset);  // 0x603 = T_64PVOID (pointer type)
 
-			// Store 'this' parameter info
-			parameters.push_back({Type::Struct, 64, "this", 0, this_offset, INT_PARAM_REGS[0], 1, false});
-			regAlloc.allocateSpecific(INT_PARAM_REGS[0], this_offset);
+			// Store 'this' parameter info (first parameter register: RCX on Windows, RDI on Linux)
+			X64Register this_reg = getIntParamReg<TWriterClass>(0);
+			parameters.push_back({Type::Struct, 64, "this", 0, this_offset, this_reg, 1, false});
+			regAlloc.allocateSpecific(this_reg, this_offset);
 
 			param_offset_adjustment = 1;  // Shift other parameters by 1
 		}
@@ -6983,10 +7091,14 @@ private:
 			}
 			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
-			if (paramNumber < static_cast<int>(INT_PARAM_REGS.size())) {
-				// Determine if this is a float parameter
-				bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
-				X64Register src_reg = is_float_param ? FLOAT_PARAM_REGS[paramNumber] : INT_PARAM_REGS[paramNumber];
+			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+			bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
+			
+			// Check if parameter fits in a register
+			if ((is_float_param && static_cast<size_t>(paramNumber) < max_float_regs) ||
+			    (!is_float_param && static_cast<size_t>(paramNumber) < max_int_regs)) {
+				X64Register src_reg = is_float_param ? getFloatParamReg<TWriterClass>(paramNumber) : getIntParamReg<TWriterClass>(paramNumber);
 
 				// Don't allocate XMM registers in the general register allocator
 				if (!is_float_param) {
@@ -7037,9 +7149,14 @@ private:
 			}
 			writer.add_function_parameter(param.name, param_type_index, offset);
 
-			if (paramNumber < static_cast<int>(INT_PARAM_REGS.size())) {
-				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0;
-				X64Register src_reg = is_float_param ? FLOAT_PARAM_REGS[paramNumber] : INT_PARAM_REGS[paramNumber];
+			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+			bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0;
+			
+			// Check if parameter fits in a register
+			if ((is_float_param && static_cast<size_t>(paramNumber) < max_float_regs) ||
+			    (!is_float_param && static_cast<size_t>(paramNumber) < max_int_regs)) {
+				X64Register src_reg = is_float_param ? getFloatParamReg<TWriterClass>(paramNumber) : getIntParamReg<TWriterClass>(paramNumber);
 
 				if (!is_float_param) {
 					regAlloc.allocateSpecific(src_reg, offset);
@@ -10835,7 +10952,7 @@ private:
 			bool is_float_arg = is_floating_point_type(argType);
 
 			// Determine the target register for the argument
-			X64Register target_reg = is_float_arg ? FLOAT_PARAM_REGS[i] : INT_PARAM_REGS[i];
+			X64Register target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(i) : getIntParamReg<TWriterClass>(i);
 
 			// Load argument into target register
 			if (std::holds_alternative<TempVar>(arg.value)) {
