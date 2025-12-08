@@ -9719,7 +9719,7 @@ private:
 		// Add string literal to .rdata and get symbol
 		std::string_view symbol_name = writer.add_string_literal(op.content);
 		int64_t stack_offset = getStackOffsetFromTempVar(result_var);
-		variable_scopes.back().identifier_offset[std::string(result_var.name())] = stack_offset;
+		variable_scopes.back().identifier_offset[result_var.name()] = stack_offset;
 
 		// LEA RAX, [RIP + symbol] with relocation
 		uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
