@@ -5005,23 +5005,61 @@ private:
 			variable_scopes.back().identifier_offset[call_op.result.name()] = result_offset;
 			
 			// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
-			// This prevents loadTypedValueIntoRegister from clobbering parameter registers.
+			// To prevent loadTypedValueIntoRegister from clobbering parameter registers,
+			// we reserve all parameter registers before processing stack arguments.
 			// Platform-specific: Windows has 4 int regs, Linux has 6 int regs
 			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 			size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 			
-			for (size_t i = max_int_regs; i < call_op.args.size(); ++i) {
+			// Reserve parameter registers to prevent them from being allocated as temporaries
+			std::vector<X64Register> reserved_regs;
+			for (size_t i = 0; i < max_int_regs; ++i) {
+				X64Register reg = getIntParamReg<TWriterClass>(i);
+				regAlloc.allocateSpecific(reg, -1);  // Reserve with dummy offset
+				reserved_regs.push_back(reg);
+			}
+			
+			// Enhanced stack overflow logic: Track both int and float register usage independently
+			// to correctly identify which arguments overflow to stack
+			size_t temp_int_idx = 0;
+			size_t temp_float_idx = 0;
+			size_t stack_arg_count = 0;
+			
+			for (size_t i = 0; i < call_op.args.size(); ++i) {
 				const auto& arg = call_op.args[i];
+				bool is_float_arg = is_floating_point_type(arg.type);
 				
-				// Stack args placement:
-				// Windows: RSP+32 (shadow space) + (i-4)*8
-				// Linux: RSP+0 (no shadow space) + (i-6)*8
-				int stack_offset = static_cast<int>(shadow_space + (i - max_int_regs) * 8);
+				// Determine if this argument goes on stack
+				bool goes_on_stack = false;
+				if (is_float_arg) {
+					if (temp_float_idx >= max_float_regs) {
+						goes_on_stack = true;
+					}
+					temp_float_idx++;
+				} else {
+					if (temp_int_idx >= max_int_regs) {
+						goes_on_stack = true;
+					}
+					temp_int_idx++;
+				}
 				
-				X64Register temp_reg = loadTypedValueIntoRegister(arg);
-				emitStoreToRSP(textSectionData, temp_reg, stack_offset);
-				regAlloc.release(temp_reg);
+				if (goes_on_stack) {
+					// Stack args placement:
+					// Windows: RSP+32 (shadow space) + stack_arg_count*8
+					// Linux: RSP+0 (no shadow space) + stack_arg_count*8
+					int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+					
+					X64Register temp_reg = loadTypedValueIntoRegister(arg);
+					emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+					regAlloc.release(temp_reg);
+					stack_arg_count++;
+				}
+			}
+			
+			// Release reserved parameter registers now that stack arguments are processed
+			for (X64Register reg : reserved_regs) {
+				regAlloc.release(reg);
 			}
 			
 			// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
@@ -5037,14 +5075,20 @@ private:
 				bool is_float_arg = is_floating_point_type(arg.type);
 				
 				// Check if this argument fits in a register
+				bool use_register = false;
 				if (is_float_arg) {
-					if (float_reg_index >= max_float_regs) {
-						break;  // Remaining float arguments go on stack
+					if (float_reg_index < max_float_regs) {
+						use_register = true;
 					}
 				} else {
-					if (int_reg_index >= max_int_regs) {
-						break;  // Remaining integer arguments go on stack
+					if (int_reg_index < max_int_regs) {
+						use_register = true;
 					}
+				}
+				
+				// Skip arguments that go on stack (already handled)
+				if (!use_register) {
+					continue;
 				}
 				
 				// Get the platform-specific calling convention register
@@ -5245,398 +5289,9 @@ private:
 			return;
 		}
 		
-		// Legacy operand-based handling
-		assert(instruction.getOperandCount() >= 2 && "Function call must have at least 2 ope rands (result, function name)");
-
-		flushAllDirtyRegisters();
-
-		struct StackArg {
-			Type type;
-			int size;
-			IrOperand value;
-		};
-		std::vector<StackArg> stack_args;
-
-		// Get result variable and function name
-		auto result_var = instruction.getOperand(0);
-		//auto funcName = instruction.getOperandAs<std::string_view>(1);
-
-		// Get result offset
-		int result_offset = 0;
-		if (std::holds_alternative<TempVar>(result_var)) {
-			const TempVar temp_var = std::get<TempVar>(result_var);
-			result_offset = getStackOffsetFromTempVar(temp_var);
-			variable_scopes.back().identifier_offset[temp_var.name()] = result_offset;
-		} else {
-			result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(result_var)];
-		}
-
-		// Process arguments (if any)
-		const size_t first_arg_index = 2; // Start after result and function name
-		const size_t arg_stride = 3; // type, size, value
-		const size_t num_args = (instruction.getOperandCount() - first_arg_index) / arg_stride;
-		
-		// Get platform-specific register counts
-		size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
-		size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-		
-		// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
-		size_t int_reg_index = 0;
-		size_t float_reg_index = 0;
-		
-		for (size_t i = 0; i < num_args; ++i) {
-			size_t argIndex = first_arg_index + i * arg_stride;
-			Type argType = instruction.getOperandAs<Type>(argIndex);
-			int argSize = instruction.getOperandAs<int>(argIndex + 1);
-			auto argValue = instruction.getOperand(argIndex + 2); // could be immediate or variable
-
-			// Determine if this is a floating-point argument
-			bool is_float_arg = is_floating_point_type(argType);
-
-			// Check if this argument goes in a register or on the stack
-			// Platform-specific: Windows has 4 regs, Linux has 6 int regs / 8 float regs
-			bool use_register = is_float_arg ? (float_reg_index < max_float_regs) : (int_reg_index < max_int_regs);
-
-			if (!use_register) {
-				// Collect stack arguments for later processing
-				stack_args.push_back({argType, argSize, argValue});
-				continue;
-			}
-
-			// Determine the target register for the argument (if using registers)
-			// Use separate indices for int and float registers
-			X64Register target_reg = is_float_arg 
-				? getFloatParamReg<TWriterClass>(float_reg_index++)
-				: getIntParamReg<TWriterClass>(int_reg_index++);
-
-			// Handle floating-point immediate values
-			if (is_float_arg && std::holds_alternative<double>(argValue)) {
-				// Load floating-point literal into XMM register
-				double float_value = std::get<double>(argValue);
-
-				// Convert double to bit pattern
-				uint64_t bits;
-				std::memcpy(&bits, &float_value, sizeof(bits));
-
-				// Allocate a temporary GPR for the bit pattern
-				X64Register temp_gpr = allocateRegisterWithSpilling();
-
-				// movabs temp_gpr, imm64 (load bit pattern)
-				std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
-				movInst[1] = 0xB8 + static_cast<uint8_t>(temp_gpr);
-				std::memcpy(&movInst[2], &bits, sizeof(bits));
-				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-
-				// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
-				std::array<uint8_t, 5> movqInst = { 0x66, 0x48, 0x0F, 0x6E, 0xC0 };
-				movqInst[4] = 0xC0 + (xmm_modrm_bits(target_reg) << 3) + static_cast<uint8_t>(temp_gpr);
-				textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
-				
-				// Note: Legacy path cannot detect varargs, so varargs functions may not work correctly
-				// This is documented in LINUX_ABI_LIMITATIONS.md
-				
-				// Release the temporary GPR
-				regAlloc.release(temp_gpr);
-			} else if (std::holds_alternative<unsigned long long>(argValue)) {
-				// Construct the REX prefix based on target_reg for destination (Reg field).
-				// REX.W is always needed for 64-bit operations (0x48).
-				// REX.R (bit 2) is set if the target_reg is R8-R15 (as it appears in the Reg field of ModR/M or is directly encoded).
-				uint8_t rex_prefix = 0x48;
-				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-					rex_prefix |= (1 << 2); // Set REX.R
-				}
-				// Push the REX prefix. It might be modified later for REX.B or REX.X if needed.
-				textSectionData.push_back(rex_prefix);
-
-				// Immediate value
-				// MOV r64, imm64 (REX.W/B + Opcode B8+rd)
-				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-					textSectionData.back() |= (1 << 0); // Set REX.B bit on the already pushed REX prefix (for rd in opcode)
-				}
-				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(target_reg) & 0x07)); // Opcode B8 + lower 3 bits of target_reg
-				unsigned long long value = std::get<unsigned long long>(argValue);
-				for (size_t j = 0; j < 8; ++j) {
-					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
-					value >>= 8;
-				}
-			} else if (std::holds_alternative<std::string_view>(argValue)) {
-				// Local variable - use RBP-relative addressing consistently
-				std::string_view var_name = std::get<std::string_view>(argValue);
-				int var_offset = variable_scopes.back().identifier_offset[var_name];
-
-				// Special case: For Struct type arguments, we need the ADDRESS (this pointer), not the value
-				if (argType == Type::Struct) {
-					// Load the address of the object using LEA
-					// LEA target_reg, [RBP + var_offset]
-					emitLeaFromFrame(target_reg, var_offset);
-				} else if (is_float_arg) {
-					// For floating-point arguments, use movsd xmm, [rbp+offset] (F2 0F 10 /r)
-					// or movss for float (F3 0F 10 /r)
-					bool is_float = (argType == Type::Float);
-					emitFloatMovFromFrame(target_reg, var_offset, is_float);
-					// Note: Legacy path cannot detect varargs, so varargs functions may not work correctly
-					// This is documented in LINUX_ABI_LIMITATIONS.md
-				} else {
-					if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
-					    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
-						if (reg_var.value() != target_reg) {
-							auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), argSize / 8);
-							textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
-						}
-					}
-					else {
-						// Load from stack using RBP-relative addressing
-						// Use size-appropriate load based on argument size
-						emitMovFromFrameBySize(target_reg, var_offset, argSize);
-						regAlloc.flushSingleDirtyRegister(target_reg);
-					}
-				}
-			} else if (std::holds_alternative<TempVar>(argValue)) {
-				// Temporary variable value (stored on stack)
-				auto src_reg_temp = std::get<TempVar>(argValue);
-				const std::string_view temp_var_name = src_reg_temp.name();
-
-				// Find the stack offset for this temporary variable
-				const StackVariableScope& current_scope = variable_scopes.back();
-				auto it = current_scope.identifier_offset.find(temp_var_name);
-				if (it != current_scope.identifier_offset.end()) {
-					int var_offset = it->second;
-
-					if (is_float_arg) {
-						// For floating-point arguments, use movsd xmm, [rbp+offset] (F2 0F 10 /r)
-						// or movss for float (F3 0F 10 /r)
-						bool is_float = (argType == Type::Float);
-						emitFloatMovFromFrame(target_reg, var_offset, is_float);
-						// Note: Legacy path cannot detect varargs, so varargs functions may not work correctly
-						// This is documented in LINUX_ABI_LIMITATIONS.md
-					} else {
-						if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value() &&
-						    reg_var.value() != X64Register::RSP && reg_var.value() != X64Register::RBP) {
-							if (reg_var.value() != target_reg) {
-								auto movResultToRax = regAlloc.get_reg_reg_move_op_code(target_reg, reg_var.value(), 8);	// Use 64-bit move
-								textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
-							}
-						}
-						else {
-							// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
-							emitMovFromFrameSized(
-								SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-								SizedStackSlot{var_offset, argSize, isSignedType(argType)}  // source: sized stack slot
-							);
-							regAlloc.flushSingleDirtyRegister(target_reg);
-						}
-					}
-				} else {
-					// Temporary variable not found in stack. This indicates a problem with our
-					// TempVar management. Let's allocate a stack slot for it now and assume
-					// the value is currently in RAX (from the most recent operation).
-
-					// Allocate stack slot for this TempVar
-					int stack_offset = allocateStackSlotForTempVar(src_reg_temp.var_number);
-
-					if (is_float_arg) {
-						// For floating-point, assume value is in XMM0 and store it
-						// movsd [rbp+offset], xmm0 (F2 0F 11 /r)
-						uint8_t prefix = (argType == Type::Float) ? 0xF3 : 0xF2;
-						textSectionData.push_back(prefix);
-						textSectionData.push_back(0x0F);
-						textSectionData.push_back(0x11); // Store variant
-
-						uint8_t modrm;
-						if (stack_offset >= -128 && stack_offset <= 127) {
-							modrm = 0x45; // Mod=01, Reg=XMM0, R/M=101 (RBP)
-							textSectionData.push_back(modrm);
-							textSectionData.push_back(static_cast<uint8_t>(stack_offset));
-						} else {
-							modrm = 0x85; // Mod=10, Reg=XMM0, R/M=101 (RBP)
-							textSectionData.push_back(modrm);
-							for (int j = 0; j < 4; ++j) {
-								textSectionData.push_back(static_cast<uint8_t>(stack_offset & 0xFF));
-								stack_offset >>= 8;
-							}
-						}
-
-						// Now load from stack to target register
-						// Use emitFloatMovFromFrame which correctly handles XMM8-XMM15 with REX prefix
-						bool is_float = (argType == Type::Float);
-						int load_offset = allocateStackSlotForTempVar(src_reg_temp.var_number);
-						emitFloatMovFromFrame(target_reg, load_offset, is_float);
-					} else {
-						// Store RAX to the newly allocated stack slot first (64-bit)
-						emitMovToFrameSized(
-							SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-							SizedStackSlot{stack_offset, 64, false}  // dest: 64-bit
-						);
-
-						// Now load from stack to target register
-						emitMovFromFrame(target_reg, stack_offset);
-						regAlloc.flushSingleDirtyRegister(target_reg);
-					}
-				}
-			} else {
-				assert(false && "Unsupported argument value type");
-			}
-		}
-
-		// Push stack arguments in reverse order (right to left)
-		for (auto it = stack_args.rbegin(); it != stack_args.rend(); ++it) {
-			const auto& arg = *it;
-			// Load value into a register
-			X64Register temp_reg = allocateRegisterWithSpilling();
-
-			// Handle different value types
-			if (std::holds_alternative<unsigned long long>(arg.value)) {
-				// Immediate value
-				uint8_t rex_prefix = 0x48;
-				if (static_cast<uint8_t>(temp_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-					rex_prefix |= (1 << 2);
-				}
-				textSectionData.push_back(rex_prefix);
-				if (static_cast<uint8_t>(temp_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-					textSectionData.back() |= (1 << 0);
-				}
-				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(temp_reg) & 0x07));
-				unsigned long long value = std::get<unsigned long long>(arg.value);
-				for (size_t j = 0; j < 8; ++j) {
-					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
-					value >>= 8;
-				}
-			} else if (std::holds_alternative<std::string_view>(arg.value)) {
-				// Local variable: source (sized stack slot) -> dest (64-bit register)
-				std::string_view var_name = std::get<std::string_view>(arg.value);
-				int var_offset = variable_scopes.back().identifier_offset[var_name];
-				emitMovFromFrameSized(
-					SizedRegister{temp_reg, 64, false},  // dest: 64-bit register
-					SizedStackSlot{var_offset, arg.size, isSignedType(arg.type)}  // source: sized stack slot
-				);
-				regAlloc.flushSingleDirtyRegister(temp_reg);
-			} else if (std::holds_alternative<TempVar>(arg.value)) {
-				// Temp var: source (sized stack slot) -> dest (64-bit register)
-				auto temp_var = std::get<TempVar>(arg.value);
-				int var_offset = getStackOffsetFromTempVar(temp_var);
-				emitMovFromFrameSized(
-					SizedRegister{temp_reg, 64, false},  // dest: 64-bit register
-					SizedStackSlot{var_offset, arg.size, isSignedType(arg.type)}  // source: sized stack slot
-				);
-				regAlloc.flushSingleDirtyRegister(temp_reg);
-			} else if (std::holds_alternative<double>(arg.value)) {
-				// Floating-point literal
-				double float_value = std::get<double>(arg.value);
-				uint64_t bits;
-				std::memcpy(&bits, &float_value, sizeof(bits));
-				// Load bits into temp_reg
-				uint8_t rex_prefix = 0x48;
-				if (static_cast<uint8_t>(temp_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-					rex_prefix |= (1 << 2);
-				}
-				textSectionData.push_back(rex_prefix);
-				if (static_cast<uint8_t>(temp_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-					textSectionData.back() |= (1 << 0);
-				}
-				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(temp_reg) & 0x07));
-				for (size_t j = 0; j < 8; ++j) {
-					textSectionData.push_back(static_cast<uint8_t>(bits & 0xFF));
-					bits >>= 8;
-				}
-			}
-
-			// Push the register
-			textSectionData.push_back(0x50 + static_cast<uint8_t>(temp_reg)); // PUSH reg
-			regAlloc.release(temp_reg);
-		}
-
-		// call [function name] instruction is 5 bytes
-		// Function name can be either std::string (mangled) or std::string_view (unmangled)
-		std::string function_name;
-		if (instruction.isOperandType<std::string>(1)) {
-			function_name = instruction.getOperandAs<std::string>(1);
-		} else if (instruction.isOperandType<std::string_view>(1)) {
-			function_name = std::string(instruction.getOperandAs<std::string_view>(1));
-		}
-
-		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
-		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
-
-		// Function name is already mangled by the Parser (or plain for C linkage)
-		writer.add_relocation(textSectionData.size() - 4, function_name);
-
-		// Invalidate caller-saved registers (function calls clobber them)
-		regAlloc.invalidateCallerSavedRegisters();
-
-		// REFERENCE COMPATIBILITY: Don't add closing brace line mappings
-		// The reference compiler (clang) only maps opening brace and actual statements
-		// Closing braces are not mapped in the line information
-
-		// Store the return value from RAX to the result variable's stack location
-		// This is critical - without this, the return value in RAX gets overwritten
-		// by subsequent operations before it's ever saved
-		// Skip storing return value for void functions:
-		// - MSVC: @@QAX (member) or @@YAX (global)
-		// - Itanium/ELF: _Z...v (ends with 'v' for void return)
-		bool is_void_function = (function_name.find("@@QAX") != std::string::npos) || 
-		                        (function_name.find("@@YAX") != std::string::npos) ||
-		                        (function_name.starts_with("_Z") && function_name.ends_with("v"));
-		if (!is_void_function) {
-			// Get size from result variable (stored at offset-4)
-			int result_size_bits = 64;  // Default to 64 bits for now
-			emitMovToFrameSized(
-				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-				SizedStackSlot{result_offset, result_size_bits, false}  // dest: 64-bit
-			);
-		}
-		// Clean up stack arguments
-		if (!stack_args.empty()) {
-			int cleanup_size = static_cast<int>(stack_args.size()) * 8;
-			if (cleanup_size <= 127) {
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x83); // ADD RSP, imm8
-				textSectionData.push_back(0xC4);
-				textSectionData.push_back(static_cast<uint8_t>(cleanup_size));
-			} else {
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0x81);
-				textSectionData.push_back(0xC4);
-				for (int i = 0; i < 4; ++i) {
-					textSectionData.push_back(static_cast<uint8_t>(cleanup_size & 0xFF));
-					cleanup_size >>= 8;
-				}
-			}
-		}
-
-		// NOTE: We used to call regAlloc.reset() here, but that was causing issues
-		// with register allocation across multiple function calls. The register allocator
-		// should track register state properly without needing a full reset after each call.
-		// Just flush dirty registers before the call (which we already do above) and
-		// let the register allocator manage state naturally.
-		// regAlloc.reset();  // REMOVED - was causing bugs with multiple function calls
-		
-		// However, we DO need to invalidate volatile (caller-saved) registers after a call
-		// because they may have been clobbered by the callee.
-		// Platform-specific volatile registers:
-		// Windows x64: RCX, RDX, R8, R9, R10, R11, XMM0-XMM5 are volatile
-		// Linux System V AMD64: RAX, RDI, RSI, RDX, RCX, R8, R9, R10, R11, XMM0-XMM15 are volatile
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			// Linux System V AMD64 volatile registers
-			regAlloc.release(X64Register::RAX);
-			regAlloc.release(X64Register::RDI);
-			regAlloc.release(X64Register::RSI);
-			regAlloc.release(X64Register::RDX);
-			regAlloc.release(X64Register::RCX);
-			regAlloc.release(X64Register::R8);
-			regAlloc.release(X64Register::R9);
-			regAlloc.release(X64Register::R10);
-			regAlloc.release(X64Register::R11);
-			// XMM0-XMM15 would also need to be released, but we don't track them in regAlloc yet
-		} else {
-			// Windows x64 volatile registers
-			regAlloc.release(X64Register::RCX);
-			regAlloc.release(X64Register::RDX);
-			regAlloc.release(X64Register::R8);
-			regAlloc.release(X64Register::R9);
-			regAlloc.release(X64Register::R10);
-			regAlloc.release(X64Register::R11);
-			// XMM0-XMM5 would also need to be released, but we don't track them in regAlloc yet
-		}
+		// All function calls should use typed payload (CallOp)
+		// Legacy operand-based path has been removed for better maintainability
+		assert(false && "Function call without typed payload - should not happen");
 	}
 
 	void handleConstructorCall(const IrInstruction& instruction) {
