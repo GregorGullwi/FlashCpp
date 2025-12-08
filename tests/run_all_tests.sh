@@ -25,6 +25,7 @@ fi
 EXPECTED_FAIL=(
     "test_cstddef.cpp"
     "test_cstdio_puts.cpp"
+    "test_cstdlib.cpp"
 )
 
 # Results

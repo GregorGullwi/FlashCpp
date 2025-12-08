@@ -1015,8 +1015,16 @@ public:
 			if (type_index_ != other.type_index_) return false;
 		}
 		
-		// Check CV qualifiers
-		if (cv_qualifier_ != other.cv_qualifier_) return false;
+		// For function signature matching, top-level CV qualifiers on value types are ignored
+		// Example: void f(const int) and void f(int) have the same signature
+		// However, CV qualifiers matter for pointers/references
+		// Example: void f(const int*) and void f(int*) have different signatures
+		bool has_indirection = !pointer_levels_.empty() || reference_qualifier_ != ReferenceQualifier::None;
+		if (has_indirection) {
+			// For pointers/references, CV qualifiers DO matter
+			if (cv_qualifier_ != other.cv_qualifier_) return false;
+		}
+		// else: For value types, ignore top-level CV qualifiers
 		
 		// Check reference qualifiers
 		if (reference_qualifier_ != other.reference_qualifier_) return false;
