@@ -75,6 +75,9 @@ for base in "${TEST_FILES[@]}"; do
     obj="${base%.cpp}.obj"
     exe="/tmp/${base%.cpp}_exe"
     
+    # Print current file being tested (for debugging hangs)
+    echo -n "[$N/$TOTAL] Testing $base... " >&2
+    
     rm -f "$obj" "$exe"
     
     # Compile
@@ -86,13 +89,16 @@ for base in "${TEST_FILES[@]}"; do
         if gcc -o "$exe" "$obj" 2>/dev/null; then
             LINK_OK+=("$base")
             rm -f "$exe"
+            echo "OK" >&2
         else
             # Check if this is an expected link failure
             if contains "$base" "${EXPECTED_LINK_FAIL[@]}"; then
                 # Expected link failure - don't print
                 LINK_OK+=("$base")  # Count as OK since compile succeeded
+                echo "OK (expected link fail)" >&2
             else
                 # Only print unexpected link failures
+                echo "" >&2
                 echo -e "${RED}[LINK FAIL]${NC} $base"
                 LINK_FAIL+=("$base")
             fi
@@ -100,9 +106,10 @@ for base in "${TEST_FILES[@]}"; do
     else
         if contains "$base" "${EXPECTED_FAIL[@]}"; then
             # Expected failure - don't print
-            :
+            echo "OK (expected fail)" >&2
         else
             # Print unexpected compile failures
+            echo "" >&2
             echo -e "${RED}[COMPILE FAIL]${NC} $base"
             COMPILE_FAIL+=("$base")
             # Show first error line
@@ -115,20 +122,26 @@ done
 
 # Test _fail files
 if [ ${#FAIL_FILES[@]} -gt 0 ]; then
+    echo "" >&2
+    echo "Testing _fail files (expected to fail compilation)..." >&2
     N=0
     for base in "${FAIL_FILES[@]}"; do
         ((N++))
         f="tests/$base"
         obj="${base%.cpp}.obj"
         
+        echo -n "[$N/$TOTAL_FAIL] Testing $base... " >&2
+        
         rm -f "$obj"
         
         if ./x64/Debug/FlashCpp "$f" > /dev/null 2>&1 && [ -f "$obj" ]; then
+            echo "" >&2
             echo -e "${RED}[UNEXPECTED PASS]${NC} $base (should have failed)"
             FAIL_BAD+=("$base")
             rm -f "$obj"
         else
             FAIL_OK+=("$base")
+            echo "OK (failed as expected)" >&2
         fi
     done
 fi

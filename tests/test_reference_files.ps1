@@ -102,10 +102,20 @@ Write-Host ""
 # Get all .cpp files from tests/
 $allTestFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
 
+# Linux-specific test files that should not run on Windows
+$linuxOnlyTests = @(
+    "test_dwarf_cfi.cpp"  # Uses Linux-specific DWARF/ELF headers
+)
+
 # Filter to only files that have a main function and separate _fail files
 $filesWithMain = @()
 $failFiles = @()
 foreach ($file in $allTestFiles) {
+    # Skip Linux-only test files on Windows
+    if ($linuxOnlyTests -contains $file.Name) {
+        continue
+    }
+    
     $sourceContent = Get-Content $file.FullName -Raw
     $hasMain = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
     if ($hasMain) {
