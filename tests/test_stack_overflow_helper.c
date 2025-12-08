@@ -1,5 +1,7 @@
 // Test enhanced stack overflow with mixed int/float types
-#include <stdio.h>
+
+// Forward declare printf to avoid needing stdio.h
+extern int printf(const char* format, ...);
 
 // Function with many mixed parameters to test stack overflow handling
 // On Linux: 6 int regs (RDI-R9), 8 float regs (XMM0-7)
