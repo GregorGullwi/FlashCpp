@@ -2427,6 +2427,38 @@ private:
 	Token cast_token_;     // Token for error reporting
 };
 
+// Const cast expression node: const_cast<Type>(expr)
+class ConstCastNode {
+public:
+	explicit ConstCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+
+	const ASTNode& target_type() const { return target_type_; }
+	const ASTNode& expr() const { return expr_; }
+	const Token& cast_token() const { return cast_token_; }
+
+private:
+	ASTNode target_type_;  // TypeSpecifierNode - the type to cast to (adds/removes const/volatile)
+	ASTNode expr_;         // ExpressionNode - the expression to cast
+	Token cast_token_;     // Token for error reporting
+};
+
+// Reinterpret cast expression node: reinterpret_cast<Type>(expr)
+class ReinterpretCastNode {
+public:
+	explicit ReinterpretCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+
+	const ASTNode& target_type() const { return target_type_; }
+	const ASTNode& expr() const { return expr_; }
+	const Token& cast_token() const { return cast_token_; }
+
+private:
+	ASTNode target_type_;  // TypeSpecifierNode - the type to cast to (bit pattern reinterpretation)
+	ASTNode expr_;         // ExpressionNode - the expression to cast
+	Token cast_token_;     // Token for error reporting
+};
+
 // Typeid expression node: typeid(expr) or typeid(Type)
 class TypeidNode {
 public:
@@ -2530,7 +2562,7 @@ private:
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode>;
+	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode>;
 
 /*class FunctionDefinitionNode {
 public:

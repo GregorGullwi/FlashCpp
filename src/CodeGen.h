@@ -4144,6 +4144,14 @@ private:
 			const auto& expr = std::get<DynamicCastNode>(exprNode);
 			return generateDynamicCastIr(expr);
 		}
+		else if (std::holds_alternative<ConstCastNode>(exprNode)) {
+			const auto& expr = std::get<ConstCastNode>(exprNode);
+			return generateConstCastIr(expr);
+		}
+		else if (std::holds_alternative<ReinterpretCastNode>(exprNode)) {
+			const auto& expr = std::get<ReinterpretCastNode>(exprNode);
+			return generateReinterpretCastIr(expr);
+		}
 		else if (std::holds_alternative<TypeidNode>(exprNode)) {
 			const auto& expr = std::get<TypeidNode>(exprNode);
 			return generateTypeidIr(expr);
@@ -10380,6 +10388,42 @@ private:
 		Type result_type = target_type_node.type();
 		int result_size = static_cast<int>(target_type_node.size_in_bits());
 		return { result_type, result_size, result_temp, 0ULL };
+	}
+
+	std::vector<IrOperand> generateConstCastIr(const ConstCastNode& constCastNode) {
+		// const_cast<Type>(expr) adds or removes const/volatile qualifiers
+		// It doesn't change the actual value, just the type metadata
+		
+		// Evaluate the expression to cast
+		auto expr_operands = visitExpressionNode(constCastNode.expr().as<ExpressionNode>());
+		
+		// Get the target type from the type specifier
+		const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
+		Type target_type = target_type_node.type();
+		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		
+		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
+		// For code generation purposes, we just return the expression with the new type metadata
+		// The actual value/address remains the same
+		return { target_type, target_size, expr_operands[2], 0ULL };
+	}
+
+	std::vector<IrOperand> generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
+		// reinterpret_cast<Type>(expr) reinterprets the bit pattern as a different type
+		// It doesn't change the actual bits, just the type interpretation
+		
+		// Evaluate the expression to cast
+		auto expr_operands = visitExpressionNode(reinterpretCastNode.expr().as<ExpressionNode>());
+		
+		// Get the target type from the type specifier
+		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
+		Type target_type = target_type_node.type();
+		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		
+		// reinterpret_cast reinterprets the bits without conversion
+		// For code generation purposes, we just return the expression with the new type metadata
+		// The actual bit pattern remains unchanged
+		return { target_type, target_size, expr_operands[2], 0ULL };
 	}
 
 	// Structure to track variables that need destructors called
