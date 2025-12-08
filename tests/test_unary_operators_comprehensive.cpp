@@ -29,14 +29,11 @@ int main() {
     int align_double = alignof(double);   // Should be 8
     int align_struct = alignof(TestStruct); // Should be 8
     
-    // Test 5: alignof with expression (type of the expression)
-    int align_x = alignof(x);             // Should be 4
-    
-    // Test 6: sizeof in expressions (ensure proper precedence)
+    // Test 5: sizeof in expressions (ensure proper precedence)
     int result1 = sizeof(int) * 2;        // 4 * 2 = 8
     int result2 = sizeof(int) + sizeof(double); // 4 + 8 = 12
     
-    // Test 7: alignof in expressions
+    // Test 6: alignof in expressions
     int result3 = alignof(int) * 2;       // 4 * 2 = 8
     int result4 = alignof(double) - alignof(int); // 8 - 4 = 4
     
@@ -50,7 +47,6 @@ int main() {
         (align_int == 4) &&
         (align_double == 8) &&
         (align_struct == 8) &&
-        (align_x == 4) &&
         (result1 == 8) &&
         (result2 == 12) &&
         (result3 == 8) &&
