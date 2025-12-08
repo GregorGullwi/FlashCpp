@@ -8638,6 +8638,150 @@ ParseResult Parser::parse_unary_expression()
 		return ParseResult::success(cast_expr);
 	}
 
+	// Check for 'const_cast' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "const_cast") {
+		Token cast_token = *current_token_;
+		consume_token(); // consume 'const_cast'
+
+		// Expect '<'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+		    peek_token()->value() != "<") {
+			return ParseResult::error("Expected '<' after 'const_cast'", *current_token_);
+		}
+		consume_token(); // consume '<'
+
+		// Parse the target type
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			return ParseResult::error("Expected type in const_cast", *current_token_);
+		}
+
+		// Parse pointer declarators: * [const] [volatile] *...
+		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		       peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+
+			// Check for CV-qualifiers after the *
+			CVQualifier ptr_cv = CVQualifier::None;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view kw = peek_token()->value();
+				if (kw == "const") {
+					ptr_cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+					consume_token();
+				} else if (kw == "volatile") {
+					ptr_cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+					consume_token();
+				} else {
+					break;
+				}
+			}
+
+			type_spec.add_pointer_level(ptr_cv);
+		}
+
+		// Expect '>'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+		    peek_token()->value() != ">") {
+			return ParseResult::error("Expected '>' after type in const_cast", *current_token_);
+		}
+		consume_token(); // consume '>'
+
+		// Expect '('
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after const_cast<Type>", *current_token_);
+		}
+
+		// Parse the expression to cast
+		ParseResult expr_result = parse_expression();
+		if (expr_result.is_error() || !expr_result.node().has_value()) {
+			return ParseResult::error("Expected expression in const_cast", *current_token_);
+		}
+
+		// Expect ')'
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after const_cast expression", *current_token_);
+		}
+
+		auto cast_expr = emplace_node<ExpressionNode>(
+			ConstCastNode(*type_result.node(), *expr_result.node(), cast_token));
+		return ParseResult::success(cast_expr);
+	}
+
+	// Check for 'reinterpret_cast' keyword
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "reinterpret_cast") {
+		Token cast_token = *current_token_;
+		consume_token(); // consume 'reinterpret_cast'
+
+		// Expect '<'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+		    peek_token()->value() != "<") {
+			return ParseResult::error("Expected '<' after 'reinterpret_cast'", *current_token_);
+		}
+		consume_token(); // consume '<'
+
+		// Parse the target type
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			return ParseResult::error("Expected type in reinterpret_cast", *current_token_);
+		}
+
+		// Parse pointer declarators: * [const] [volatile] *...
+		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		       peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+
+			// Check for CV-qualifiers after the *
+			CVQualifier ptr_cv = CVQualifier::None;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view kw = peek_token()->value();
+				if (kw == "const") {
+					ptr_cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+					consume_token();
+				} else if (kw == "volatile") {
+					ptr_cv = static_cast<CVQualifier>(
+						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+					consume_token();
+				} else {
+					break;
+				}
+			}
+
+			type_spec.add_pointer_level(ptr_cv);
+		}
+
+		// Expect '>'
+		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+		    peek_token()->value() != ">") {
+			return ParseResult::error("Expected '>' after type in reinterpret_cast", *current_token_);
+		}
+		consume_token(); // consume '>'
+
+		// Expect '('
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after reinterpret_cast<Type>", *current_token_);
+		}
+
+		// Parse the expression to cast
+		ParseResult expr_result = parse_expression();
+		if (expr_result.is_error() || !expr_result.node().has_value()) {
+			return ParseResult::error("Expected expression in reinterpret_cast", *current_token_);
+		}
+
+		// Expect ')'
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after reinterpret_cast expression", *current_token_);
+		}
+
+		auto cast_expr = emplace_node<ExpressionNode>(
+			ReinterpretCastNode(*type_result.node(), *expr_result.node(), cast_token));
+		return ParseResult::success(cast_expr);
+	}
+
 	// Check for C-style cast: (Type)expression
 	// This must be checked before parse_primary_expression() which handles parenthesized expressions
 	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "(") {
@@ -14002,6 +14146,22 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<DynamicCastNode>(expr)) {
 		// For dynamic_cast<Type>(expr), return the target type
 		const auto& cast = std::get<DynamicCastNode>(expr);
+		const ASTNode& target_type_node = cast.target_type();
+		if (target_type_node.is<TypeSpecifierNode>()) {
+			return target_type_node.as<TypeSpecifierNode>();
+		}
+	}
+	else if (std::holds_alternative<ConstCastNode>(expr)) {
+		// For const_cast<Type>(expr), return the target type
+		const auto& cast = std::get<ConstCastNode>(expr);
+		const ASTNode& target_type_node = cast.target_type();
+		if (target_type_node.is<TypeSpecifierNode>()) {
+			return target_type_node.as<TypeSpecifierNode>();
+		}
+	}
+	else if (std::holds_alternative<ReinterpretCastNode>(expr)) {
+		// For reinterpret_cast<Type>(expr), return the target type
+		const auto& cast = std::get<ReinterpretCastNode>(expr);
 		const ASTNode& target_type_node = cast.target_type();
 		if (target_type_node.is<TypeSpecifierNode>()) {
 			return target_type_node.as<TypeSpecifierNode>();
