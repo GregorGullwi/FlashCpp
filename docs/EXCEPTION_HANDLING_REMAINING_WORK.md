@@ -563,13 +563,24 @@ Modify FDE generation to include LSDA pointer in augmentation data.
 
 ---
 
-## Phase 3: Landing Pad Code Generation
+## Phase 3: Landing Pad Code Generation ✅ COMPLETED
 **Estimated Effort**: 2-3 days  
 **Priority**: HIGH - Needed for catch blocks to work  
-**Files**: `src/IRConverter.h`
+**Files**: `src/IRConverter.h` ✅ IMPLEMENTED
 
-### 3.1 Uncomment and Implement Landing Pad Code (~6 hours)
+### 3.1 Uncomment and Implement Landing Pad Code (~6 hours) ✅ COMPLETED
 **What**: Generate actual `__cxa_begin_catch` / `__cxa_end_catch` calls
+
+**Implementation Complete**:
+- ✅ Uncommented handleCatchBegin landing pad code
+- ✅ Call __cxa_begin_catch with exception pointer from RAX
+- ✅ Exception pointer passed in RDI (System V ABI)
+- ✅ Result (adjusted exception pointer) returned in RAX
+- ✅ Uncommented handleCatchEnd cleanup code
+- ✅ Call __cxa_end_catch to complete exception handling
+- ✅ Added emitMovFromMemory helper for loading exception values
+
+**Verified**: `readelf -s` shows __cxa_begin_catch and __cxa_end_catch symbols
 
 **Modify** `handleCatchBegin` in `IRConverter.h`:
 ```cpp
@@ -627,8 +638,17 @@ void handleCatchEnd(const IrInstruction& instruction) {
 
 ---
 
-### 3.2 Exception Value Extraction (~4 hours)
+### 3.2 Exception Value Extraction (~4 hours) ✅ COMPLETED
 **What**: Properly extract typed exception value
+
+**Implementation Complete**:
+- ✅ Reference exception handling (store pointer directly)
+- ✅ POD type exception handling (dereference and load value)
+- ✅ Size-appropriate memory loads (1, 2, 4, 8 bytes)
+- ✅ Value stored to catch variable's stack location
+- ✅ Type size checking from TypeInfo
+
+**Note**: Copy constructors for class types by value not yet implemented (would need additional work)
 
 **Challenge**: Exception pointer points to the exception object, need to:
 1. Dereference for POD types

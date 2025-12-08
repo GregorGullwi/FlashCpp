@@ -4537,6 +4537,28 @@ private:
 		modrm |= (static_cast<uint8_t>(dest) & 0x07);
 		textSectionData.push_back(modrm);
 	}
+	
+	// Helper to emit MOV dest, [base + offset] with size
+	void emitMovFromMemory(X64Register dest, X64Register base, int32_t offset, size_t size_bytes) {
+		OpCodeWithSize opcode_result;
+		if (size_bytes == 8) {
+			opcode_result = generateMovFromMemory(dest, base, offset);
+		} else if (size_bytes == 4) {
+			opcode_result = generateMovFromMemory32(dest, base, offset);
+		} else if (size_bytes == 2) {
+			opcode_result = generateMovFromMemory16(dest, base, offset);
+		} else if (size_bytes == 1) {
+			opcode_result = generateMovFromMemory8(dest, base, offset);
+		} else {
+			// Default to 8 bytes
+			opcode_result = generateMovFromMemory(dest, base, offset);
+		}
+		
+		// Emit the opcodes
+		for (size_t i = 0; i < opcode_result.size_in_bytes; ++i) {
+			textSectionData.push_back(opcode_result.op_codes[i]);
+		}
+	}
 
 	// Helper to emit MOV reg, [reg]
 	void emitMovRegFromMemReg(X64Register dest, X64Register src_addr) {
@@ -10877,22 +10899,37 @@ private:
 			
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
 			
-			// Note: In a full implementation, RAX would contain the exception pointer
-			// from the personality routine. For now, we'll generate the call structure.
-			
 			// Call __cxa_begin_catch with exception pointer in RDI
-			// The exception pointer would normally be in RAX from personality routine
-			// For minimal implementation: assume exception ptr in a known location
-			// emitMovRegReg(X64Register::RDI, X64Register::RAX);
-			// emitCall("__cxa_begin_catch");
+			// The exception pointer is in RAX from personality routine
+			emitMovRegReg(X64Register::RDI, X64Register::RAX);
+			emitCall("__cxa_begin_catch");
 			
 			// Result in RAX is pointer to the actual exception object
 			// Store it to the catch variable's stack location
 			if (catch_op.exception_temp.var_number != 0) {
 				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+				
 				// For POD types, dereference and copy the value
-				// For now: store the value directly (simplified)
-				// emitMovToFrame(X64Register::RAX, stack_offset);
+				// For references, store the pointer itself
+				if (catch_op.is_reference || catch_op.is_rvalue_reference) {
+					// Store the pointer (RAX) directly
+					emitMovToFrame(X64Register::RAX, stack_offset);
+				} else {
+					// Get type size for dereferencing
+					const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
+					size_t type_size = type_info.type_size_ / 8;  // Convert bits to bytes
+					
+					// Load value from exception object and store to catch variable
+					if (type_size <= 8 && type_size > 0) {
+						// Small POD: load from [RAX] and store to frame
+						// Move value from [RAX] to RCX
+						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
+						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_info.type_size_);
+					} else {
+						// Large type or unknown size: just store pointer
+						emitMovToFrame(X64Register::RAX, stack_offset);
+					}
+				}
 			}
 			
 		} else {
@@ -10910,7 +10947,7 @@ private:
 			// Call __cxa_end_catch to complete exception handling
 			// This cleans up the exception object if needed
 			
-			// emitCall("__cxa_end_catch");
+			emitCall("__cxa_end_catch");
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
