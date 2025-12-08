@@ -33,6 +33,9 @@
 // Global debug flag
 bool g_enable_debug_output = false;
 
+// Global exception handling control
+bool g_enable_exceptions = true;
+
 // Timing helper
 struct PhaseTimer {
     std::chrono::high_resolution_clock::time_point start;
@@ -175,6 +178,13 @@ int main(int argc, char *argv[]) {
     context.setVerboseMode(argsparser.hasFlag("v") || argsparser.hasFlag("verbose"));
     context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
     context.setDisableAccessControl(argsparser.hasFlag("fno-access-control") || argsparser.hasFlag("no-access-control"));
+    
+    // Check for -fno-exceptions flag
+    if (argsparser.hasFlag("fno-exceptions")) {
+        extern bool g_enable_exceptions;
+        g_enable_exceptions = false;
+        FLASH_LOG(General, Info, "Exception handling disabled by -fno-exceptions flag");
+    }
     
     // Compiler mode - default is MSVC, use -fgcc-compat or -fclang-compat for GCC/Clang mode
     // Enables compiler-specific builtin macros like __SIZE_TYPE__, __PTRDIFF_TYPE__, etc.

@@ -855,7 +855,7 @@ public:
 	uint32_t personality_routine_offset_ = 0;
 	
 	// Generate Common Information Entry (CIE) for .eh_frame
-	void generate_eh_frame_cie(std::vector<uint8_t>& eh_frame_data) {
+	void generate_eh_frame_cie(std::vector<uint8_t>& eh_frame_data, bool has_exception_handlers) {
 		// CIE header structure (x86-64 System V ABI)
 		
 		size_t length_offset = eh_frame_data.size();
@@ -871,16 +871,25 @@ public:
 		// Version
 		eh_frame_data.push_back(1);
 		
-		// Augmentation string "zPLR" (null-terminated)
-		// z = has augmentation data
-		// P = personality routine pointer present
-		// L = LSDA encoding present
-		// R = FDE encoding present
-		eh_frame_data.push_back('z');
-		eh_frame_data.push_back('P');
-		eh_frame_data.push_back('L');
-		eh_frame_data.push_back('R');
-		eh_frame_data.push_back(0);
+		if (has_exception_handlers) {
+			// Augmentation string "zPLR" (null-terminated)
+			// z = has augmentation data
+			// P = personality routine pointer present
+			// L = LSDA encoding present
+			// R = FDE encoding present
+			eh_frame_data.push_back('z');
+			eh_frame_data.push_back('P');
+			eh_frame_data.push_back('L');
+			eh_frame_data.push_back('R');
+			eh_frame_data.push_back(0);
+		} else {
+			// Augmentation string "zR" (null-terminated) - no exception handling
+			// z = has augmentation data
+			// R = FDE encoding present
+			eh_frame_data.push_back('z');
+			eh_frame_data.push_back('R');
+			eh_frame_data.push_back(0);
+		}
 		
 		// Code alignment factor (1 for x86-64)
 		DwarfCFI::appendULEB128(eh_frame_data, 1);
@@ -897,18 +906,20 @@ public:
 		
 		size_t aug_data_start = eh_frame_data.size();
 		
-		// P: Personality routine encoding and pointer
-		// Encoding: PC-relative indirect signed 4-byte (like GCC)
-		eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_indirect | DwarfCFI::DW_EH_PE_sdata4);
-		// Personality routine pointer (will need relocation to __gxx_personality_v0)
-		// Store offset for relocation tracking
-		personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());
-		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder
+		if (has_exception_handlers) {
+			// P: Personality routine encoding and pointer
+			// Encoding: PC-relative indirect signed 4-byte (like GCC)
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_indirect | DwarfCFI::DW_EH_PE_sdata4);
+			// Personality routine pointer (will need relocation to __gxx_personality_v0)
+			// Store offset for relocation tracking
+			personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());
+			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder
+			
+			// L: LSDA encoding
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
+		}
 		
-		// L: LSDA encoding
-		eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
-		
-		// R: FDE encoding (PC-relative signed 4-byte)
+		// R: FDE encoding (PC-relative signed 4-byte) - always present with 'z'
 		eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 		
 		// Update augmentation data length
@@ -1009,9 +1020,18 @@ public:
 		
 		std::vector<uint8_t> eh_frame_data;
 		
+		// Check if any function has exception handling
+		bool has_exception_handlers = false;
+		for (const auto& fde_info : functions_with_fdes_) {
+			if (fde_info.has_exception_handling) {
+				has_exception_handlers = true;
+				break;
+			}
+		}
+		
 		// Generate CIE
 		uint32_t cie_offset = 0;
-		generate_eh_frame_cie(eh_frame_data);
+		generate_eh_frame_cie(eh_frame_data, has_exception_handlers);
 		
 		// Generate FDEs for each function
 		for (auto& fde_info : functions_with_fdes_) {  // Non-const to update pc_begin_offset
