@@ -11958,7 +11958,7 @@ ParseResult Parser::parse_primary_expression()
 found_member_variable:  // Label for member variable detection - jump here to skip error checking
 	// Check for postfix operators (++, --, and array subscript [])
 	while (result.has_value() && peek_token().has_value()) {
-		FLASH_LOG_FORMAT(Parser, Warning, "@@@ POSTFIX LOOP: peek token type={}, value='{}'", 
+		FLASH_LOG_FORMAT(Parser, Debug, "Postfix operator: peek token type={}, value='{}'", 
 			static_cast<int>(peek_token()->type()), peek_token()->value());
 		if (peek_token()->type() == Token::Type::Operator) {
 			std::string_view op = peek_token()->value();

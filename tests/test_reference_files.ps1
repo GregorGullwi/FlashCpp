@@ -177,7 +177,7 @@ foreach ($file in $referenceFiles) {
     if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
     
     # Compile with FlashCpp
-    $compileOutput = & .\$flashCppPath $file.FullName 2>&1 | Out-String
+    $compileOutput = & .\$flashCppPath --log-level=Codegen:error $file.FullName 2>&1 | Out-String
     
     # Check if compilation succeeded by verifying obj file was created
     if (Test-Path $objFile) {
@@ -222,13 +222,12 @@ foreach ($file in $referenceFiles) {
             else {
                 # Check if this is an expected failure
                 if ($expectedLinkFailures -contains $file.Name) {
-                    Write-Host "  [LINK FAILED - EXPECTED]" -ForegroundColor Yellow
+                    Write-Host "[$currentFile/$totalFiles] $($file.Name) - [LINK FAILED - EXPECTED]" -ForegroundColor Yellow
                     # Don't count expected failures as actual failures
                     $linkSuccess += $file.Name
                 }
                 else {
-                    Write-Host "[$currentFile/$totalFiles] $($file.Name)" -ForegroundColor Red
-                    Write-Host "  [LINK FAILED]" -ForegroundColor Red
+                    Write-Host "[$currentFile/$totalFiles] $($file.Name) - [LINK FAILED]" -ForegroundColor Red
                     $linkFailed += $file.Name
                     
                     # Extract all errors from link output
@@ -263,18 +262,18 @@ foreach ($file in $referenceFiles) {
     else {
         # Check if this is an expected compile failure
         if ($expectedCompileFailures -contains $file.Name) {
-            Write-Host "  [COMPILE FAILED - EXPECTED]" -ForegroundColor Yellow
+            Write-Host "[$currentFile/$totalFiles] $($file.Name) - [COMPILE FAILED - EXPECTED]" -ForegroundColor Yellow
             # Don't count expected failures as actual failures
         }
         else {
-            Write-Host "[$currentFile/$totalFiles] $($file.Name)" -ForegroundColor Red
-            Write-Host "  [COMPILE FAILED]" -ForegroundColor Red
+            Write-Host "[$currentFile/$totalFiles] $($file.Name) - [COMPILE FAILED]" -ForegroundColor Red
             $compileFailed += $file.Name
             # Show compile output to help diagnose the issue
             # Filter out the version banner and non-error lines, prioritize showing errors
-            $allLines = $compileOutput -split "`n" | Where-Object { 
-                $_.Trim() -ne "" -and 
-                $_ -notmatch "===== FLASHCPP VERSION"
+            $allLines = $compileOutput -split "`n" | Where-Object {
+                $_.Trim() -ne "" -and
+                $_ -notmatch "===== FLASHCPP VERSION" -and
+                $_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL)"
             }
             # Try to show error lines first, otherwise show last 10 lines
             $errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
@@ -296,8 +295,6 @@ foreach ($file in $referenceFiles) {
     
     # Clean up obj file after each test (like the shell script does)
     if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
-    
-    Write-Host ""
 }
 
 # Test _fail files - these should fail compilation
@@ -323,11 +320,10 @@ foreach ($file in $failFiles) {
     if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
     
     # Compile with FlashCpp - we EXPECT this to fail
-    & .\$flashCppPath $file.FullName 2>&1 | Out-Null
+    & .\$flashCppPath --log-level=Codegen:error $file.FullName 2>&1 | Out-Null
     
     # Check if compilation succeeded (which is BAD for _fail tests)
     if (Test-Path $objFile) {
-        Write-Host "[$currentFile/$totalFailFiles] $($file.Name)" -ForegroundColor Red
         Write-Host "  [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
         $failTestFailed += $file.Name
         # Clean up the object file
@@ -342,8 +338,6 @@ foreach ($file in $failFiles) {
     # Clean up any artifacts
     if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
     if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
-    
-    Write-Host ""
 }
 
 # Summary
