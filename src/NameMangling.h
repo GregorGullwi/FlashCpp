@@ -162,13 +162,18 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		output += 'P';
 		const auto& ptr_level = type_node.pointer_levels()[i];
 		// CV-qualifiers on the pointer itself
-		if (ptr_level.cv_qualifier == CVQualifier::Const) {
-			output += 'K';
-		} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
-			output += 'V';
-		} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
-			output += 'K';  // const first
-			output += 'V';  // then volatile
+		// NOTE: For function parameters, top-level const on the pointer (i == 0) is ignored
+		// per C++ standard [dcl.fct]p5, e.g., int* const p is same as int* p
+		bool skip_pointer_cv = is_function_parameter && (i == 0);
+		if (!skip_pointer_cv) {
+			if (ptr_level.cv_qualifier == CVQualifier::Const) {
+				output += 'K';
+			} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
+				output += 'V';
+			} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
+				output += 'K';  // const first
+				output += 'V';  // then volatile
+			}
 		}
 	}
 	
