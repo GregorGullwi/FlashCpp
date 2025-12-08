@@ -195,11 +195,11 @@ class coffi_strings : public virtual string_to_name_provider
     {
         size_t size = name.size();
         if (size > COFFI_NAME_SIZE) {
-            size++;
             uint32_t offset = get_strings_size();
-            if (get_strings_size() + size > strings_reserved_) {
+            uint32_t size_with_null = narrow_cast<uint32_t>(size) + 1;  // +1 for null terminator
+            if (get_strings_size() + size_with_null > strings_reserved_) {
                 uint32_t new_strings_reserved =
-                    2 * (strings_reserved_ + narrow_cast<uint32_t>(size));
+                    2 * (strings_reserved_ + size_with_null);
                 std::unique_ptr<char[]> new_strings = std::make_unique<char[]>(new_strings_reserved);
                 if (!new_strings) {
                     offset = 0;
@@ -212,9 +212,12 @@ class coffi_strings : public virtual string_to_name_provider
                     strings_ = std::move(new_strings);
                 }
             }
+            // Copy string data (without null terminator from string_view)
             std::copy(name.data(), name.data() + size,
                       strings_.get() + get_strings_size());
-            set_strings_size(get_strings_size() + narrow_cast<uint32_t>(size));
+            // Add null terminator
+            strings_[get_strings_size() + size] = '\0';
+            set_strings_size(get_strings_size() + size_with_null);
             if (is_section) {
                 str[0]        = '/';
                 std::string s = std::to_string(offset);
