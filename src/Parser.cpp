@@ -1146,6 +1146,22 @@ ParseResult Parser::parse_type_and_name() {
         }
     }
 
+    // Check for calling convention AFTER pointer/reference declarators
+    // Example: void* __cdecl func(); or int& __stdcall func();
+    // This handles the case where calling convention appears after * or &
+    while (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+        std::string_view token_val = peek_token()->value();
+
+        // Look up calling convention in the mapping table using ranges
+        auto it = std::ranges::find(calling_convention_map, token_val, &CallingConventionMapping::keyword);
+        if (it != std::end(calling_convention_map)) {
+            last_calling_convention_ = it->convention;
+            consume_token();  // Consume calling convention token
+        } else {
+            break;  // Not a calling convention keyword, stop scanning
+        }
+    }
+
     // Check for parameter pack: Type... identifier
     // This is used in variadic function templates like: template<typename... Args> void func(Args... args)
     bool is_parameter_pack = false;
@@ -9921,6 +9937,7 @@ Linkage Parser::parse_declspec_attributes()
 {
 	Linkage linkage = Linkage::None;
 	
+	// Parse all __declspec attributes
 	while (peek_token().has_value() && peek_token()->value() == "__declspec") {
 		consume_token(); // consume "__declspec"
 		
@@ -9930,17 +9947,17 @@ Linkage Parser::parse_declspec_attributes()
 		
 		// Parse the declspec specifier(s)
 		while (peek_token().has_value() && peek_token()->value() != ")") {
-			if (peek_token()->type() == Token::Type::Identifier) {
+			if (peek_token()->type() == Token::Type::Identifier || peek_token()->type() == Token::Type::Keyword) {
 				std::string_view spec = peek_token()->value();
 				if (spec == "dllimport") {
 					linkage = Linkage::DllImport;
 				} else if (spec == "dllexport") {
 					linkage = Linkage::DllExport;
 				}
-				// else: ignore other declspec attributes like align, deprecated, etc.
+				// else: ignore other declspec attributes like align, deprecated, allocator, restrict, etc.
 				consume_token();
 			} else if (peek_token()->value() == "(") {
-				// Skip nested parens like __declspec(align(16))
+				// Skip nested parens like __declspec(align(16)) or __declspec(deprecated("..."))
 				int paren_depth = 1;
 				consume_token();
 				while (peek_token().has_value() && paren_depth > 0) {

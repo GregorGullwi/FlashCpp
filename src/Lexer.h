@@ -479,7 +479,10 @@ private:
 			"__ptr32",      "__ptr64",   "__w64",         "__unaligned",
 			"__uptr",       "__sptr",
 			// Microsoft-specific function specifiers
-			"__inline",     "__forceinline" };
+			"__inline",     "__forceinline",
+			// Microsoft-specific attributes
+			"__declspec"
+		};
 
 		return keywords.count(value) > 0;
 	}
