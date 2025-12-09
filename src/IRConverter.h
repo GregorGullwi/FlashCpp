@@ -2922,6 +2922,13 @@ public:
 	SafeStringKey(const std::string& s) : data_(s) {}
 	SafeStringKey(std::string_view sv) : data_(sv) {}
 	SafeStringKey(const char* s) : data_(s) {}
+	SafeStringKey(const SafeStringKey& other) = default;
+	SafeStringKey(SafeStringKey&& other) noexcept = default;
+	
+	SafeStringKey& operator=(const SafeStringKey& other) = default;
+	SafeStringKey& operator=(SafeStringKey&& other) noexcept = default;
+	
+	~SafeStringKey() = default;
 	
 	operator std::string_view() const { return data_; }
 	const std::string& str() const { return data_; }
