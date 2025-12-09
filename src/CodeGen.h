@@ -6930,7 +6930,7 @@ private:
 		ASTNode arg0 = functionCallNode.arguments()[0];
 		auto va_list_ir = visitExpressionNode(arg0.as<ExpressionNode>());
 		
-		// Get the second argument (type identifier) 
+		// Get the second argument (type identifier or type specifier) 
 		ASTNode arg1 = functionCallNode.arguments()[1];
 		
 		// Extract type information from the second argument
@@ -6938,8 +6938,16 @@ private:
 		int requested_size = 32;
 		bool is_float_type = false;
 		
-		// The second argument is typically an IdentifierNode representing the type
-		if (std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
+		// The second argument can be either an IdentifierNode (from old macro) or TypeSpecifierNode (from new parser)
+		// TypeSpecifierNode is stored directly in ASTNode, not in ExpressionNode
+		if (arg1.is<TypeSpecifierNode>()) {
+			// New parser path: TypeSpecifierNode passed directly
+			const auto& type_spec = arg1.as<TypeSpecifierNode>();
+			requested_type = type_spec.type();
+			requested_size = static_cast<int>(type_spec.size_in_bits());
+			is_float_type = (requested_type == Type::Float || requested_type == Type::Double);
+		} else if (arg1.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
+			// Old path: IdentifierNode with type name
 			std::string_view type_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
 			
 			// Map type names to Type enum
@@ -7184,18 +7192,10 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(reg_addr_op), functionCallNode.called_from()));
 			
 			// Initialize gp_offset field (offset 0) to 8 (skip RDI which holds first fixed param)
-			// Store 32-bit value at [va_list_struct + 0]
-			TempVar gp_offset_addr = va_list_struct_addr;  // offset 0, so same as base
-			TempVar gp_offset_val = var_counter.next();
-			AssignmentOp gp_assign;
-			gp_assign.result = gp_offset_val;
-			gp_assign.lhs = TypedValue{Type::UnsignedInt, 32, gp_offset_val};
-			gp_assign.rhs = TypedValue{Type::UnsignedInt, 32, 8ULL};  // Start at offset 8 (skip RDI)
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(gp_assign), functionCallNode.called_from()));
-			
+			// Store 32-bit value directly at [va_list_struct + 0]
 			DereferenceStoreOp gp_store;
-			gp_store.pointer = gp_offset_addr;
-			gp_store.value = TypedValue{Type::UnsignedInt, 32, gp_offset_val};
+			gp_store.pointer = va_list_struct_addr;  // offset 0, so same as base
+			gp_store.value = TypedValue{Type::UnsignedInt, 32, 8ULL};  // Start at offset 8 (skip RDI)
 			gp_store.pointee_type = Type::UnsignedInt;
 			gp_store.pointee_size_in_bits = 32;
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(gp_store), functionCallNode.called_from()));
@@ -7208,16 +7208,10 @@ private:
 			fp_addr_add.result = fp_offset_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_addr_add), functionCallNode.called_from()));
 			
-			TempVar fp_offset_val = var_counter.next();
-			AssignmentOp fp_assign;
-			fp_assign.result = fp_offset_val;
-			fp_assign.lhs = TypedValue{Type::UnsignedInt, 32, fp_offset_val};
-			fp_assign.rhs = TypedValue{Type::UnsignedInt, 32, 48ULL};  // Start of XMM area
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(fp_assign), functionCallNode.called_from()));
-			
+			// Store 48 (start of XMM area) directly
 			DereferenceStoreOp fp_store;
 			fp_store.pointer = fp_offset_addr;
-			fp_store.value = TypedValue{Type::UnsignedInt, 32, fp_offset_val};
+			fp_store.value = TypedValue{Type::UnsignedInt, 32, 48ULL};  // Start of XMM area
 			fp_store.pointee_type = Type::UnsignedInt;
 			fp_store.pointee_size_in_bits = 32;
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(fp_store), functionCallNode.called_from()));
