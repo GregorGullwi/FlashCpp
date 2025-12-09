@@ -108,13 +108,10 @@ for base in "${TEST_FILES[@]}"; do
         COMPILE_OK+=("$base")
         
         # Choose linker based on file type
-        link_success=0
         link_output=$(clang++ -no-pie -o "$exe" "$obj" -lstdc++ 2>&1)
-		if [ $? -eq 0 ]; then
-			link_success=1
-		fi
+        link_exit_code=$?
         
-        if [ $link_success -eq 1 ]; then
+        if [ $link_exit_code -eq 0 ]; then
             LINK_OK+=("$base")
             rm -f "$exe"
             echo "OK" >&2
@@ -128,8 +125,8 @@ for base in "${TEST_FILES[@]}"; do
                 # Only print unexpected link failures
                 echo "" >&2
                 echo -e "${RED}[LINK FAIL]${NC} $base"
-                # Show link errors
-                link_errors=$(echo "$link_output" | grep -E "undefined reference|error:" | head -5)
+                # Show link errors (undefined references and linker errors)
+                link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed" | head -5)
                 if [ -n "$link_errors" ]; then
                     echo "$link_errors" | sed 's/^/  /' >&2
                 fi
