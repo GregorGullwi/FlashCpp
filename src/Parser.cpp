@@ -7608,7 +7608,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"char16_t", &Parser::parse_variable_declaration},
 			{"char32_t", &Parser::parse_variable_declaration},
 			{"bool", &Parser::parse_variable_declaration},
-			{"void", &Parser::parse_variable_declaration},
+			{"void", &Parser::parse_declaration_or_function_definition},
 			{"short", &Parser::parse_variable_declaration},
 			{"long", &Parser::parse_variable_declaration},
 			{"signed", &Parser::parse_variable_declaration},
