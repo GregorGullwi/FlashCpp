@@ -35,6 +35,8 @@ EXPECTED_LINK_FAIL=(
     "test_dynamic_cast_debug.cpp"        # Needs RTTI data structures
     "test_virtual_inheritance.cpp"        # Needs typeinfo for virtual classes
     "test_varargs.cpp"                    # Needs external C helper functions (sum_ints, sum_mixed)
+    "test_cstddef.cpp"                    # Needs std::terminate() and operator() implementation
+    "test_cstdlib.cpp"                    # Needs builtin functions (__builtin_labs, __builtin_llabs, __builtin_fabs, __builtin_fabsf)
 )
 
 # Results
