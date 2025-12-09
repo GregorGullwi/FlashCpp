@@ -1,12 +1,11 @@
 // Test calling variadic functions from FlashCpp
 extern "C" {
-    int sum_ints(int count, ...);
-    double sum_mixed(int count, ...);
+   #include "test_varargs_helper.c"
+   
+	extern int printf(const char* fmt, ...);
 }
 
-extern "C" int printf(const char* fmt, ...);
-
-extern "C" int main() {
+int main() {
     // Test integer varargs
     int result1 = sum_ints(3, 10, 20, 30);
     if (result1 != 60) {

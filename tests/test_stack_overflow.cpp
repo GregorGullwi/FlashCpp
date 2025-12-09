@@ -1,5 +1,7 @@
 // Test that stack overflow logic correctly handles mixed int/float types
-#include "test_stack_overflow_helper.c"
+extern "C" {
+	#include "test_stack_overflow_helper.c"
+}
 
 extern "C" int main() {
     // Call function with many mixed parameters

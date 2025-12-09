@@ -1,6 +1,10 @@
 # Reference Files Test Script for FlashCpp (PowerShell)
 # This script compiles and links all .cpp files in tests/Reference/ and reports any failures
 
+param(
+    [string]$TestFile = $null
+)
+
 # Suppress PowerShell errors from native commands writing to stderr
 # (FlashCpp writes version info to stderr which is not an error)
 $ErrorActionPreference = "SilentlyContinue"
@@ -128,6 +132,18 @@ foreach ($file in $allTestFiles) {
 }
 
 $referenceFiles = $filesWithMain
+$totalFailFiles = $failFiles.Count
+
+# Filter to specific test file if provided
+if ($TestFile) {
+    $referenceFiles = $referenceFiles | Where-Object { $_.Name -eq $TestFile }
+    $failFiles = $failFiles | Where-Object { $_.Name -eq $TestFile }
+    if ($referenceFiles.Count -eq 0 -and $failFiles.Count -eq 0) {
+        Write-Host "ERROR: Test file '$TestFile' not found in tests/" -ForegroundColor Red
+        exit 1
+    }
+}
+
 $totalFiles = $referenceFiles.Count
 $totalFailFiles = $failFiles.Count
 Write-Host "Found $totalFiles test files with main() in tests/"
@@ -155,8 +171,6 @@ $expectedLinkFailures = @(
     # ABI tests that require external C helper files to be compiled and linked
     "test_external_abi.cpp"
     "test_external_abi_simple.cpp"
-    "test_varargs.cpp"
-    "test_stack_overflow.cpp"
     # Self-contained ABI tests (link on Linux but fail on Windows)
     "test_mixed_abi.cpp"
     "test_linux_abi.cpp"  # Tests 6 integer params (Linux ABI specific)
@@ -212,8 +226,6 @@ foreach ($file in $referenceFiles) {
                 "/OUT:$exeFile",
                 $objFile,
                 "kernel32.lib",
-                "libcmt.lib",
-                "libvcruntime.lib",
                 "libucrt.lib",
                 "legacy_stdio_definitions.lib"
             )
