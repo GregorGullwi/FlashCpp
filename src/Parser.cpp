@@ -543,6 +543,82 @@ ParseResult Parser::parse_pragma_pack_inner()
 	return ParseResult::error("Unsupported pragma pack format", *current_token_);
 }
 
+void Parser::register_builtin_functions() {
+	// Register compiler builtin functions so they can be recognized as function calls
+	// These will be handled as intrinsics in CodeGen
+	
+	// Create dummy tokens for builtin functions
+	Token dummy_token(Token::Type::Identifier, "", 0, 0, 0);
+	
+	// Helper lambda to register a builtin function with one parameter
+	auto register_builtin = [&](std::string_view name, Type return_type, Type param_type) {
+		// Create return type node
+		Token type_token = dummy_token;
+		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
+		
+		// Create function name token
+		Token func_token = dummy_token;
+		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
+		
+		// Create declaration node for the function
+		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
+		
+		// Create function declaration node
+		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+		
+		// Create parameter
+		Token param_token = dummy_token;
+		auto param_type_node = emplace_node<TypeSpecifierNode>(param_type, TypeQualifier::None, 64, param_token);
+		auto param_decl = emplace_node<DeclarationNode>(param_type_node, param_token);
+		func_decl_ref.add_parameter_node(param_decl);
+		
+		// Set extern "C" linkage
+		func_decl_ref.set_linkage(Linkage::C);
+		
+		// Register in global symbol table
+		gSymbolTable.insert(name, func_decl_node);
+	};
+	
+	// Helper lambda to register a builtin function with no parameters
+	auto register_no_param_builtin = [&](std::string_view name, Type return_type, std::string_view mangled_name = "") {
+		// Create return type node
+		Token type_token = dummy_token;
+		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
+		
+		// Create function name token
+		Token func_token = dummy_token;
+		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
+		
+		// Create declaration node for the function
+		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
+		
+		// Create function declaration node
+		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+		
+		// Set pre-computed mangled name if provided
+		if (!mangled_name.empty()) {
+			func_decl_ref.set_mangled_name(std::string(mangled_name));
+		}
+		
+		// Register in global symbol table
+		gSymbolTable.insert(name, func_decl_node);
+	};
+	
+	// Register integer abs builtins
+	register_builtin("__builtin_labs", Type::Long, Type::Long);
+	register_builtin("__builtin_llabs", Type::LongLong, Type::LongLong);
+	
+	// Register floating point abs builtins
+	register_builtin("__builtin_fabs", Type::Double, Type::Double);
+	register_builtin("__builtin_fabsf", Type::Float, Type::Float);
+	register_builtin("__builtin_fabsl", Type::LongDouble, Type::LongDouble);
+	
+	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
+	// Note: Forward declarations inside functions don't capture namespace context,
+	// so we register it globally without explicit mangling
+	register_no_param_builtin("terminate", Type::Void);
+}
+
 ParseResult Parser::parse_top_level_node()
 {
 	// Save the current token's position to restore later in case of a parsing

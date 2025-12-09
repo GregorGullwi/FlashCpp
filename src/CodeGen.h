@@ -7024,7 +7024,7 @@ private:
 						function_name = matched_func_decl->mangled_name();
 						FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name: {}", function_name);
 					} else if (matched_func_decl->linkage() != Linkage::C) {
-						function_name = generateMangledNameForCall(*matched_func_decl);
+						function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
 						FLASH_LOG_FORMAT(Codegen, Debug, "Generated mangled name (no pre-computed): {}", function_name);
 					}
 					break;
@@ -7040,8 +7040,9 @@ private:
 			// Use pre-computed mangled name if available, otherwise generate it
 			if (matched_func_decl->has_mangled_name()) {
 				function_name = matched_func_decl->mangled_name();
+				FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 1): {}", function_name);
 			} else if (matched_func_decl->linkage() != Linkage::C) {
-				function_name = generateMangledNameForCall(*matched_func_decl);
+				function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
 			}
 		}
 
@@ -7052,8 +7053,9 @@ private:
 			// Use pre-computed mangled name if available, otherwise generate it
 			if (matched_func_decl->has_mangled_name()) {
 				function_name = matched_func_decl->mangled_name();
+				FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 2): {}", function_name);
 			} else if (matched_func_decl->linkage() != Linkage::C) {
-				function_name = generateMangledNameForCall(*matched_func_decl);
+				function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
 			}
 		}
 
@@ -7128,6 +7130,7 @@ private:
 	} // End of symbol table lookup (only if no pre-computed mangled name)
 	
 		// Always add the return variable and function name (mangled for overload resolution)
+		FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
 		TempVar ret_var = var_counter.next();
 		irOperands.emplace_back(ret_var);
 		irOperands.emplace_back(function_name);

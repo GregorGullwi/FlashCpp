@@ -229,6 +229,7 @@ public:
 
         ParseResult parse() {
                 gSymbolTable = SymbolTable();
+                register_builtin_functions();
                 ParseResult parseResult;
                 while (peek_token().has_value() && !parseResult.is_error() &&
                         peek_token()->type() != Token::Type::EndOfFile) {
@@ -504,6 +505,7 @@ public:  // Public methods for template instantiation
 		const std::vector<ASTNode>& template_params,
 		const std::vector<TemplateArgument>& template_args
 	);private:  // Resume private methods
+		void register_builtin_functions();  // Register compiler builtin functions
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();
