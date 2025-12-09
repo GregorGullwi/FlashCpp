@@ -2913,6 +2913,37 @@ inline void emitMOVToFrame(std::vector<uint8_t>& textSectionData, X64Register re
 	}
 }
 
+// SafeStringKey wrapper that stores data as std::string internally
+// but accepts both std::string and std::string_view, preventing dangling pointers
+class SafeStringKey {
+	std::string data_;
+public:
+	SafeStringKey() = default;
+	SafeStringKey(const std::string& s) : data_(s) {}
+	SafeStringKey(std::string_view sv) : data_(sv) {}
+	SafeStringKey(const char* s) : data_(s) {}
+	
+	operator std::string_view() const { return data_; }
+	const std::string& str() const { return data_; }
+	
+	bool operator==(const SafeStringKey& other) const { return data_ == other.data_; }
+	bool operator!=(const SafeStringKey& other) const { return data_ != other.data_; }
+	bool operator<(const SafeStringKey& other) const { return data_ < other.data_; }
+	
+	friend struct std::hash<SafeStringKey>;
+	friend std::ostream& operator<<(std::ostream& os, const SafeStringKey& key) {
+		return os << key.data_;
+	}
+};
+
+// Hash support for std::unordered_map
+template<>
+struct std::hash<SafeStringKey> {
+	size_t operator()(const SafeStringKey& key) const {
+		return std::hash<std::string>{}(key.data_);
+	}
+};
+
 template<class TWriterClass = ObjectFileWriter>
 class IrToObjConverter {
 public:
@@ -4075,7 +4106,7 @@ private:
 	struct StackVariableScope
 	{
 		int scope_stack_space = 0;
-		std::unordered_map<std::string_view, int> identifier_offset;
+		std::unordered_map<SafeStringKey, int> identifier_offset;  // SafeStringKey accepts both string and string_view
 	};
 
 	struct ReferenceInfo {
@@ -4093,14 +4124,14 @@ private:
 		}
 
 		struct VarDecl {
-			std::string_view var_name{};
+			std::string_view var_name{};  // OK to use string_view here - local variable, doesn't outlive IR
 			int size_in_bits{};
 			size_t alignment{};  // Custom alignment from alignas(n), 0 = use natural alignment
 		};
 		std::vector<VarDecl> local_vars;
 
 		// Track TempVar sizes from instructions that produce them
-		std::unordered_map<std::string_view, int> temp_var_sizes;
+		std::unordered_map<SafeStringKey, int> temp_var_sizes;  // SafeStringKey accepts both string and string_view
 
 		for (const auto& instruction : it->second) {
 			// Look for TempVar operands in the instruction
@@ -11553,7 +11584,7 @@ private:
 
 	// Debug information tracking
 	std::string current_function_name_;
-	std::string_view current_function_mangled_name_;
+	std::string current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 
 	// Pending function info for exception handling
