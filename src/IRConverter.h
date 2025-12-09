@@ -2967,7 +2967,8 @@ public:
 		label_positions_.clear();
 		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing pending_branches_");
 		pending_branches_.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Destructor completed");
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Destructor body completed - about to destroy members");
+		// After this point, members will be destroyed in reverse order: writer is first member, so it's destroyed last
 	}
 
 	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "", bool show_timing = false) {
@@ -11605,16 +11606,16 @@ private:
 
 	// Control flow tracking
 	struct PendingBranch {
-		std::string_view target_label;
+		SafeStringKey target_label;
 		uint32_t patch_position; // Position in textSectionData where the offset needs to be written
 	};
-	std::unordered_map<std::string, uint32_t> label_positions_;
+	std::unordered_map<SafeStringKey, uint32_t> label_positions_;
 	std::vector<PendingBranch> pending_branches_;
 
 	// Loop context tracking for break/continue
 	struct LoopContext {
-		std::string_view loop_end_label;       // Label to jump to for break
-		std::string_view loop_increment_label; // Label to jump to for continue
+		SafeStringKey loop_end_label;       // Label to jump to for break
+		SafeStringKey loop_increment_label; // Label to jump to for continue
 	};
 	std::vector<LoopContext> loop_context_stack_;
 
