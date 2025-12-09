@@ -6717,12 +6717,100 @@ private:
 			return generateVaStartIntrinsic(functionCallNode);
 		}
 		
+		// Check for builtin abs functions
+		if (func_name == "__builtin_labs" || func_name == "__builtin_llabs") {
+			return generateBuiltinAbsIntIntrinsic(functionCallNode);
+		}
+		if (func_name == "__builtin_fabs" || func_name == "__builtin_fabsf" || func_name == "__builtin_fabsl") {
+			return generateBuiltinAbsFloatIntrinsic(functionCallNode, func_name);
+		}
+		
 		// Add other intrinsics here in the future
 		// if (func_name == "__other_intrinsic") {
 		//     return generateOtherIntrinsic(functionCallNode);
 		// }
 		
 		return std::nullopt;  // Not an intrinsic
+	}
+	
+	// Generate inline IR for __builtin_labs / __builtin_llabs
+	// Uses branchless abs: abs(x) = (x XOR sign_mask) - sign_mask where sign_mask = x >> 63
+	std::vector<IrOperand> generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode) {
+		if (functionCallNode.arguments().size() != 1) {
+			FLASH_LOG(Codegen, Error, "__builtin_labs/__builtin_llabs requires exactly 1 argument");
+			return {Type::Long, 64, 0ULL, 0ULL};
+		}
+		
+		// Get the argument
+		ASTNode arg = functionCallNode.arguments()[0];
+		auto arg_ir = visitExpressionNode(arg.as<ExpressionNode>());
+		
+		// Extract argument details
+		Type arg_type = std::get<Type>(arg_ir[0]);
+		int arg_size = std::get<int>(arg_ir[1]);
+		TypedValue arg_value = toTypedValue(arg_ir);
+		
+		// Step 1: Arithmetic shift right by 63 to get sign mask (all 1s if negative, all 0s if positive)
+		TempVar sign_mask = var_counter.next();
+		BinaryOp shift_op{
+			.lhs = arg_value,
+			.rhs = TypedValue{Type::Int, 32, 63ULL},
+			.result = sign_mask
+		};
+		ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(shift_op), functionCallNode.called_from()));
+		
+		// Step 2: XOR with sign mask
+		TempVar xor_result = var_counter.next();
+		BinaryOp xor_op{
+			.lhs = arg_value,
+			.rhs = TypedValue{arg_type, arg_size, sign_mask},
+			.result = xor_result
+		};
+		ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(xor_op), functionCallNode.called_from()));
+		
+		// Step 3: Subtract sign mask
+		TempVar abs_result = var_counter.next();
+		BinaryOp sub_op{
+			.lhs = TypedValue{arg_type, arg_size, xor_result},
+			.rhs = TypedValue{arg_type, arg_size, sign_mask},
+			.result = abs_result
+		};
+		ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), functionCallNode.called_from()));
+		
+		return {arg_type, arg_size, abs_result, 0ULL};
+	}
+	
+	// Generate inline IR for __builtin_fabs / __builtin_fabsf / __builtin_fabsl
+	// Uses bitwise AND to clear the sign bit
+	std::vector<IrOperand> generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name) {
+		if (functionCallNode.arguments().size() != 1) {
+			FLASH_LOG(Codegen, Error, func_name, " requires exactly 1 argument");
+			return {Type::Double, 64, 0ULL, 0ULL};
+		}
+		
+		// Get the argument
+		ASTNode arg = functionCallNode.arguments()[0];
+		auto arg_ir = visitExpressionNode(arg.as<ExpressionNode>());
+		
+		// Extract argument details
+		Type arg_type = std::get<Type>(arg_ir[0]);
+		int arg_size = std::get<int>(arg_ir[1]);
+		TypedValue arg_value = toTypedValue(arg_ir);
+		
+		// For floating point abs, clear the sign bit using bitwise AND
+		// Float (32-bit): AND with 0x7FFFFFFF
+		// Double (64-bit): AND with 0x7FFFFFFFFFFFFFFF
+		unsigned long long mask = (arg_size == 32) ? 0x7FFFFFFFULL : 0x7FFFFFFFFFFFFFFFULL;
+		
+		TempVar abs_result = var_counter.next();
+		BinaryOp and_op{
+			.lhs = arg_value,
+			.rhs = TypedValue{Type::UnsignedLongLong, arg_size, mask},
+			.result = abs_result
+		};
+		ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(and_op), functionCallNode.called_from()));
+		
+		return {arg_type, arg_size, abs_result, 0ULL};
 	}
 	
 	// Generate IR for __va_start intrinsic

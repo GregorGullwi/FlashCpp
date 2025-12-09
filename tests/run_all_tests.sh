@@ -108,7 +108,7 @@ for base in "${TEST_FILES[@]}"; do
         COMPILE_OK+=("$base")
         
         # Choose linker based on file type
-        link_output=$(clang++ -no-pie -o "$exe" "$obj" -lstdc++ 2>&1)
+        link_output=$(clang++ -no-pie -o "$exe" "$obj" -lstdc++ -lc 2>&1)
         link_exit_code=$?
         
         if [ $link_exit_code -eq 0 ]; then
