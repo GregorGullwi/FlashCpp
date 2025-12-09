@@ -7296,21 +7296,24 @@ private:
 				// we need to choose a layout that works with the simple pointer arithmetic
 				// in the va_arg macro: (*(type*)((ap += 8) - 8))
 				//
-				// Layout chosen: Integers FIRST (skipping RDI), then floats
-				//   Integer registers: RSI, RDX, RCX, R8, R9  (5 registers * 8 bytes = 40 bytes, skip RDI)
+				// Layout chosen: Floats FIRST, then integers (skipping first fixed int param)
 				//   Float registers: XMM0-XMM7  (8 registers * 8 bytes = 64 bytes, saving only low 64 bits)
+				//   Integer registers: RSI, RDX, RCX, R8, R9  (5 registers * 8 bytes = 40 bytes, skip RDI)
 				//   Total: 104 bytes
 				//
-				// This layout prioritizes integer varargs (RSI at offset 0).
-				// Note: For float varargs, va_start would need to point to offset 40,
+				// This layout prioritizes float varargs (XMM0 at offset 0).
+				// Note: For integer varargs, va_start would need to point to offset 64,
 				// but the current simple implementation doesn't support that.
 				//
-				// TODO: Implement proper System V va_list struct for mixed int/float support
+				// Rationale: The problem statement specifically mentions "doubles and floating
+				// points are problematic", suggesting float varargs are the primary concern.
+				//
+				// TODO: Implement proper System V va_list struct for full int/float support
 				
 				// Calculate offset for register save area
-				constexpr int INT_REG_SIZE = 5 * 8;     // 5 integer registers * 8 bytes (skip RDI)
 				constexpr int FLOAT_REG_SIZE = 8 * 8;  // 8 XMM registers * 8 bytes (double precision)
-				constexpr int REG_SAVE_AREA_SIZE = INT_REG_SIZE + FLOAT_REG_SIZE;
+				constexpr int INT_REG_SIZE = 5 * 8;     // 5 integer registers * 8 bytes (skip RDI)
+				constexpr int REG_SAVE_AREA_SIZE = FLOAT_REG_SIZE + INT_REG_SIZE;
 				
 				// The register save area starts after all other stack variables
 				int32_t reg_save_area_base = variable_scopes.back().scope_stack_space - REG_SAVE_AREA_SIZE;
@@ -7319,28 +7322,10 @@ private:
 				// Update the scope stack space to include the register save area
 				variable_scopes.back().scope_stack_space = reg_save_area_base;
 				
-				// Save integer registers FIRST: RSI, RDX, RCX, R8, R9 at offsets 0-39
-				// Skip RDI as it contains the first fixed parameter
-				const X64Register int_regs[] = {
-					X64Register::RSI,  // Offset 0 (first variadic int arg)
-					X64Register::RDX,  // Offset 8
-					X64Register::RCX,  // Offset 16
-					X64Register::R8,   // Offset 24
-					X64Register::R9    // Offset 32
-				};
-				
-				for (size_t i = 0; i < 5; ++i) {
-					int32_t offset = reg_save_area_base + static_cast<int32_t>(i * 8);
-					emitMovToFrameSized(
-						SizedRegister{int_regs[i], 64, false},  // source: 64-bit register
-						SizedStackSlot{offset, 64, false}  // dest: 64-bit stack slot
-					);
-				}
-				
-				// Save float registers SECOND: XMM0-XMM7 at offsets 40-103
+				// Save float registers FIRST: XMM0-XMM7 at offsets 0-63
 				for (size_t i = 0; i < 8; ++i) {
 					X64Register xmm_reg = static_cast<X64Register>(static_cast<int>(X64Register::XMM0) + i);
-					int32_t offset = reg_save_area_base + INT_REG_SIZE + static_cast<int32_t>(i * 8);
+					int32_t offset = reg_save_area_base + static_cast<int32_t>(i * 8);
 					
 					// Use movsd (store scalar double precision) to save low 64 bits
 					uint8_t xmm_idx = xmm_modrm_bits(xmm_reg);
@@ -7365,6 +7350,24 @@ private:
 							offset >>= 8;
 						}
 					}
+				}
+				
+				// Save integer registers SECOND: RSI, RDX, RCX, R8, R9 at offsets 64-103
+				// Skip RDI as it contains the first fixed parameter
+				const X64Register int_regs[] = {
+					X64Register::RSI,  // Offset 64 (first variadic int arg)
+					X64Register::RDX,  // Offset 72
+					X64Register::RCX,  // Offset 80
+					X64Register::R8,   // Offset 88
+					X64Register::R9    // Offset 96
+				};
+				
+				for (size_t i = 0; i < 5; ++i) {
+					int32_t offset = reg_save_area_base + FLOAT_REG_SIZE + static_cast<int32_t>(i * 8);
+					emitMovToFrameSized(
+						SizedRegister{int_regs[i], 64, false},  // source: 64-bit register
+						SizedStackSlot{offset, 64, false}  // dest: 64-bit stack slot
+					);
 				}
 				
 				// Register the special variable "__varargs_reg_save_area__" in the scope
