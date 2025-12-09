@@ -28,12 +28,15 @@ EXPECTED_FAIL=(
     "test_cstdlib.cpp"
 )
 
-# Expected link failures - files that compile but require external C helper files
+# Expected link failures - files that compile but require external C helper files or C++ runtime
 EXPECTED_LINK_FAIL=(
     "test_external_abi.cpp"
     "test_external_abi_simple.cpp"
     "test_varargs.cpp"
     "test_stack_overflow.cpp"
+    "test_exceptions_basic.cpp"      # Requires libstdc++ for exception runtime (__cxa_*)
+    "test_exceptions_nested.cpp"      # Requires libstdc++ for exception runtime (__cxa_*)
+    "test_noexcept.cpp"               # Requires libstdc++ for exception runtime (__cxa_*)
 )
 
 # Results
