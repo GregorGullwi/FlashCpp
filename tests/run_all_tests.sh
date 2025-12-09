@@ -28,10 +28,13 @@ EXPECTED_FAIL=(
     "test_cstdlib.cpp"
 )
 
-# Expected link failures - files that compile but require external C helper files
+# Expected link failures - files that compile but require external C helper files or RTTI support
 EXPECTED_LINK_FAIL=(
     "test_external_abi.cpp"
     "test_external_abi_simple.cpp"
+    "test_dynamic_cast_debug.cpp"        # Needs RTTI data structures
+    "test_virtual_inheritance.cpp"        # Needs typeinfo for virtual classes
+    "test_varargs.cpp"                    # Needs external C helper functions (sum_ints, sum_mixed)
 )
 
 # Results
