@@ -274,7 +274,10 @@ inline void generateItaniumMangledName(
 	// Check if we have namespaces or struct (needs nested-name encoding)
 	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
 	
-	if (has_nested_name) {
+	// Special case: std namespace alone uses "St" directly without nested-name encoding
+	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
+	
+	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
 		output += 'N';
 		
@@ -283,6 +286,9 @@ inline void generateItaniumMangledName(
 			// Anonymous namespaces are encoded as "_GLOBAL__N_1" per Itanium C++ ABI
 			if (ns.empty()) {
 				output += "12_GLOBAL__N_1";
+			} else if (ns == "std") {
+				// Special handling: std namespace uses "St" in Itanium C++ ABI
+				output += "St";
 			} else {
 				output += std::to_string(ns.size());
 				output += ns;
@@ -313,6 +319,11 @@ inline void generateItaniumMangledName(
 		
 		// End nested-name
 		output += 'E';
+	} else if (is_std_only) {
+		// Special case: std namespace uses "St" prefix without nested-name encoding
+		output += "St";
+		output += std::to_string(func_name.size());
+		output += func_name;
 	} else {
 		// Simple function name: <length><name>
 		output += std::to_string(func_name.size());
