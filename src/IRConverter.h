@@ -7284,6 +7284,95 @@ private:
 				}
 			}
 		}
+		
+		// For Linux (System V AMD64) variadic functions: Create register save area
+		// On System V AMD64, variadic arguments are passed in registers, so we need to
+		// save all potential variadic argument registers to a register save area that
+		// va_start can reference
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (is_variadic) {
+				// System V AMD64 ABI register save area layout:
+				// For this simplified va_list implementation (char* instead of struct),
+				// we need to choose a layout that works with the simple pointer arithmetic
+				// in the va_arg macro: (*(type*)((ap += 8) - 8))
+				//
+				// Layout chosen: Integers FIRST (skipping RDI), then floats
+				//   Integer registers: RSI, RDX, RCX, R8, R9  (5 registers * 8 bytes = 40 bytes, skip RDI)
+				//   Float registers: XMM0-XMM7  (8 registers * 8 bytes = 64 bytes, saving only low 64 bits)
+				//   Total: 104 bytes
+				//
+				// This layout prioritizes integer varargs (RSI at offset 0).
+				// Note: For float varargs, va_start would need to point to offset 40,
+				// but the current simple implementation doesn't support that.
+				//
+				// TODO: Implement proper System V va_list struct for mixed int/float support
+				
+				// Calculate offset for register save area
+				constexpr int INT_REG_SIZE = 5 * 8;     // 5 integer registers * 8 bytes (skip RDI)
+				constexpr int FLOAT_REG_SIZE = 8 * 8;  // 8 XMM registers * 8 bytes (double precision)
+				constexpr int REG_SAVE_AREA_SIZE = INT_REG_SIZE + FLOAT_REG_SIZE;
+				
+				// The register save area starts after all other stack variables
+				int32_t reg_save_area_base = variable_scopes.back().scope_stack_space - REG_SAVE_AREA_SIZE;
+				current_function_varargs_reg_save_offset_ = reg_save_area_base;
+				
+				// Update the scope stack space to include the register save area
+				variable_scopes.back().scope_stack_space = reg_save_area_base;
+				
+				// Save integer registers FIRST: RSI, RDX, RCX, R8, R9 at offsets 0-39
+				// Skip RDI as it contains the first fixed parameter
+				const X64Register int_regs[] = {
+					X64Register::RSI,  // Offset 0 (first variadic int arg)
+					X64Register::RDX,  // Offset 8
+					X64Register::RCX,  // Offset 16
+					X64Register::R8,   // Offset 24
+					X64Register::R9    // Offset 32
+				};
+				
+				for (size_t i = 0; i < 5; ++i) {
+					int32_t offset = reg_save_area_base + static_cast<int32_t>(i * 8);
+					emitMovToFrameSized(
+						SizedRegister{int_regs[i], 64, false},  // source: 64-bit register
+						SizedStackSlot{offset, 64, false}  // dest: 64-bit stack slot
+					);
+				}
+				
+				// Save float registers SECOND: XMM0-XMM7 at offsets 40-103
+				for (size_t i = 0; i < 8; ++i) {
+					X64Register xmm_reg = static_cast<X64Register>(static_cast<int>(X64Register::XMM0) + i);
+					int32_t offset = reg_save_area_base + INT_REG_SIZE + static_cast<int32_t>(i * 8);
+					
+					// Use movsd (store scalar double precision) to save low 64 bits
+					uint8_t xmm_idx = xmm_modrm_bits(xmm_reg);
+					
+					textSectionData.push_back(0xF2);  // movsd prefix
+					if (xmm_idx >= 8) {
+						textSectionData.push_back(0x44);  // REX.R for XMM8-15
+					}
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x11);  // movsd [mem], xmm
+					
+					// Encode [RBP + offset]
+					if (offset >= -128 && offset <= 127) {
+						uint8_t modrm = 0x45 + ((xmm_idx & 0x07) << 3);  // Mod=01, Reg=XMM, R/M=101 (RBP)
+						textSectionData.push_back(modrm);
+						textSectionData.push_back(static_cast<uint8_t>(offset));
+					} else {
+						uint8_t modrm = 0x85 + ((xmm_idx & 0x07) << 3);  // Mod=10, Reg=XMM, R/M=101 (RBP)
+						textSectionData.push_back(modrm);
+						for (int j = 0; j < 4; ++j) {
+							textSectionData.push_back(static_cast<uint8_t>(offset & 0xFF));
+							offset >>= 8;
+						}
+					}
+				}
+				
+				// Register the special variable "__varargs_reg_save_area__" in the scope
+				// This allows AddressOf to find it and return the register save area address
+				// The offset points to the base of the register save area (where integer regs are saved)
+				variable_scopes.back().identifier_offset["__varargs_reg_save_area__"] = reg_save_area_base;
+			}
+		}
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
@@ -11989,6 +12078,7 @@ private:
 	std::string current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
+	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
 
 	// Pending function info for exception handling
 	struct PendingFunctionInfo {
