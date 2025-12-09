@@ -6710,11 +6710,18 @@ private:
 	// Helper function to handle compiler intrinsics
 	// Returns true if the function is an intrinsic and has been handled, false otherwise
 	std::optional<std::vector<IrOperand>> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
-		// Check for __va_start intrinsic
-		// __va_start(va_list*, last_fixed_param) should set va_list to point to the first variadic argument
-		// On x64 Windows, this is the address right after the last fixed parameter on the stack
-		if (func_name == "__va_start") {
+		// Check for va_start intrinsics (support both Clang and MSVC naming)
+		// __builtin_va_start(va_list*, last_fixed_param) - Clang-style
+		// __va_start(va_list*, last_fixed_param) - MSVC-style (legacy)
+		// On x64 Windows, this sets va_list to point to the first variadic argument
+		if (func_name == "__builtin_va_start" || func_name == "__va_start") {
 			return generateVaStartIntrinsic(functionCallNode);
+		}
+		
+		// Check for __builtin_va_arg intrinsic (Clang-style)
+		// __builtin_va_arg(va_list, type) reads value at va_list, advances pointer by 8 bytes
+		if (func_name == "__builtin_va_arg") {
+			return generateVaArgIntrinsic(functionCallNode);
 		}
 		
 		// Check for builtin abs functions
@@ -6813,11 +6820,94 @@ private:
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
 	
-	// Generate IR for __va_start intrinsic
-	std::vector<IrOperand> generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
-		// __va_start takes 2 arguments: pointer to va_list, and last fixed parameter
+	// Generate IR for __builtin_va_arg intrinsic
+	// __builtin_va_arg(va_list, type) - reads the current value and advances the pointer
+	std::vector<IrOperand> generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
+		// __builtin_va_arg takes 1 argument: the va_list variable
+		// The second argument is the type, which comes from the macro: va_arg(args, int)
+		// After preprocessing: __builtin_va_arg(args, int) - but parser sees this as function call with 2 args
 		if (functionCallNode.arguments().size() != 2) {
-			FLASH_LOG(Codegen, Error, "__va_start requires exactly 2 arguments");
+			FLASH_LOG(Codegen, Error, "__builtin_va_arg requires exactly 2 arguments (va_list and type)");
+			return {Type::Void, 0, 0ULL, 0ULL};
+		}
+		
+		// Get the first argument (va_list variable)
+		ASTNode arg0 = functionCallNode.arguments()[0];
+		
+		// The va_list is a pointer (char*), so we need to:
+		// 1. Read the current value from *va_list
+		// 2. Advance va_list by 8 bytes (add 8 to it)
+		// 3. Return the value we read in step 1
+		
+		// First, get the va_list variable's IR representation
+		auto va_list_ir = visitExpressionNode(arg0.as<ExpressionNode>());
+		
+		// va_list_ir[2] contains the variable/temp identifier
+		std::variant<std::string_view, TempVar> va_list_var;
+		if (std::holds_alternative<TempVar>(va_list_ir[2])) {
+			va_list_var = std::get<TempVar>(va_list_ir[2]);
+		} else if (std::holds_alternative<std::string_view>(va_list_ir[2])) {
+			va_list_var = std::get<std::string_view>(va_list_ir[2]);
+		} else if (std::holds_alternative<std::string>(va_list_ir[2])) {
+			va_list_var = std::string_view(std::get<std::string>(va_list_ir[2]));
+		} else {
+			FLASH_LOG(Codegen, Error, "__builtin_va_arg first argument must be a variable");
+			return {Type::Void, 0, 0ULL, 0ULL};
+		}
+		
+		// The second argument should give us the type information
+		// For now, we'll read 8 bytes (pointer size on x64) and let the caller handle the cast
+		// TODO: Parse the type from arg1 to determine the actual size to read
+		
+		// Step 1: Dereference va_list to get the current pointer value
+		TempVar current_ptr = var_counter.next();
+		DereferenceOp deref_ptr_op;
+		deref_ptr_op.result = current_ptr;
+		deref_ptr_op.pointee_type = Type::UnsignedLongLong;  // va_list is char*, a 64-bit pointer
+		deref_ptr_op.pointee_size_in_bits = 64;
+		deref_ptr_op.pointer = va_list_var;
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
+		
+		// Step 2: Read the value at the current pointer
+		// We need to cast the pointer to the desired type
+		// For now, assume int (32-bit) - TODO: get actual type from arg1
+		TempVar value = var_counter.next();
+		DereferenceOp deref_value_op;
+		deref_value_op.result = value;
+		deref_value_op.pointee_type = Type::Int;  // TODO: get from arg1
+		deref_value_op.pointee_size_in_bits = 32;  // TODO: get from arg1
+		deref_value_op.pointer = current_ptr;
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
+		
+		// Step 3: Advance va_list by 8 bytes
+		TempVar next_ptr = var_counter.next();
+		BinaryOp add_op;
+		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
+		add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+		add_op.result = next_ptr;
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
+		
+		// Step 4: Store the updated pointer back to va_list
+		AssignmentOp assign_op;
+		assign_op.result = var_counter.next();  // unused but required
+		// Construct lhs TypedValue properly from variant
+		if (std::holds_alternative<TempVar>(va_list_var)) {
+			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+		} else {
+			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+		}
+		assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, next_ptr};
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+		
+		// Return the value we read
+		return {Type::Int, 32, value};  // TODO: return actual type from arg1
+	}
+	
+	// Generate IR for __builtin_va_start intrinsic
+	std::vector<IrOperand> generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
+		// __builtin_va_start takes 2 arguments: pointer to va_list, and last fixed parameter
+		if (functionCallNode.arguments().size() != 2) {
+			FLASH_LOG(Codegen, Error, "__builtin_va_start requires exactly 2 arguments");
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		
@@ -6834,7 +6924,7 @@ private:
 		if (std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
 			last_param_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
 		} else {
-			FLASH_LOG(Codegen, Error, "__va_start second argument must be a parameter name");
+			FLASH_LOG(Codegen, Error, "__builtin_va_start second argument must be a parameter name");
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		
@@ -6848,7 +6938,7 @@ private:
 		// Get the type of the last parameter from the symbol table
 		auto param_symbol = symbol_table.lookup(last_param_name);
 		if (!param_symbol.has_value()) {
-			FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __va_start");
+			FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __builtin_va_start");
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
@@ -6881,7 +6971,7 @@ private:
 		} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
 			va_list_ptr = std::string_view(std::get<std::string>(arg0_ir[2]));
 		} else {
-			FLASH_LOG(Codegen, Error, "__va_start first argument must be a variable or temp");
+			FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		
@@ -6901,7 +6991,7 @@ private:
 		assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 		
-		// __va_start returns void
+		// __builtin_va_start returns void
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
 	

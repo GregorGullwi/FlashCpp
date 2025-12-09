@@ -579,6 +579,41 @@ void Parser::register_builtin_functions() {
 		gSymbolTable.insert(name, func_decl_node);
 	};
 	
+	// Helper lambda to register a builtin function with two parameters
+	auto register_two_param_builtin = [&](std::string_view name, Type return_type, Type param1_type, Type param2_type) {
+		// Create return type node
+		Token type_token = dummy_token;
+		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
+		
+		// Create function name token
+		Token func_token = dummy_token;
+		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
+		
+		// Create declaration node for the function
+		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
+		
+		// Create function declaration node
+		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+		
+		// Create first parameter
+		Token param1_token = dummy_token;
+		auto param1_type_node = emplace_node<TypeSpecifierNode>(param1_type, TypeQualifier::None, 64, param1_token);
+		auto param1_decl = emplace_node<DeclarationNode>(param1_type_node, param1_token);
+		func_decl_ref.add_parameter_node(param1_decl);
+		
+		// Create second parameter
+		Token param2_token = dummy_token;
+		auto param2_type_node = emplace_node<TypeSpecifierNode>(param2_type, TypeQualifier::None, 64, param2_token);
+		auto param2_decl = emplace_node<DeclarationNode>(param2_type_node, param2_token);
+		func_decl_ref.add_parameter_node(param2_decl);
+		
+		// Set extern "C" linkage
+		func_decl_ref.set_linkage(Linkage::C);
+		
+		// Register in global symbol table
+		gSymbolTable.insert(name, func_decl_node);
+	};
+	
 	// Helper lambda to register a builtin function with no parameters
 	auto register_no_param_builtin = [&](std::string_view name, Type return_type, std::string_view mangled_name = "") {
 		// Create return type node
@@ -603,6 +638,18 @@ void Parser::register_builtin_functions() {
 		// Register in global symbol table
 		gSymbolTable.insert(name, func_decl_node);
 	};
+	
+	// Register variadic argument intrinsics (support both __va_start and __builtin_va_start)
+	// __builtin_va_start(va_list*, last_param) - Clang-style
+	// __va_start(va_list*, last_param) - MSVC-style (legacy)
+	// Both return void
+	register_two_param_builtin("__builtin_va_start", Type::Void, Type::UnsignedLongLong, Type::UnsignedLongLong);
+	register_two_param_builtin("__va_start", Type::Void, Type::UnsignedLongLong, Type::UnsignedLongLong);
+	
+	// __builtin_va_arg(va_list, type) - returns the specified type
+	// For registration purposes, we use int as the return type (will be overridden in codegen)
+	// The second parameter is the type identifier, but we just register it as int for parsing
+	register_two_param_builtin("__builtin_va_arg", Type::Int, Type::UnsignedLongLong, Type::Int);
 	
 	// Register integer abs builtins
 	register_builtin("__builtin_labs", Type::Long, Type::Long);
