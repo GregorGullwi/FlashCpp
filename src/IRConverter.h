@@ -9134,53 +9134,111 @@ private:
 	void handleAddAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "add assignment");
 		
-		// Use encodeRegToRegInstruction to properly handle R8-R15 registers
-		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
-		std::array<uint8_t, 3> addInst = { encoding.rex_prefix, 0x01, encoding.modrm_byte };
-		textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
+		// Check if this is floating-point addition
+		if (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double) {
+			// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
+			if (ctx.result_value.type == Type::Float) {
+				// addss xmm_dst, xmm_src (F3 [REX] 0F 58 /r)
+				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
+				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+			} else {
+				// addsd xmm_dst, xmm_src (F2 [REX] 0F 58 /r)
+				auto inst = generateSSEInstruction(0xF2, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
+				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+			}
+		} else {
+			// Integer addition: Use encodeRegToRegInstruction to properly handle R8-R15 registers
+			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+			std::array<uint8_t, 3> addInst = { encoding.rex_prefix, 0x01, encoding.modrm_byte };
+			textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
+		}
 		storeArithmeticResult(ctx);
 	}
 
 	void handleSubAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtract assignment");
 		
-		// Use encodeRegToRegInstruction to properly handle R8-R15 registers
-		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
-		std::array<uint8_t, 3> subInst = { encoding.rex_prefix, 0x29, encoding.modrm_byte };
-		textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
+		// Check if this is floating-point subtraction
+		if (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double) {
+			// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
+			if (ctx.result_value.type == Type::Float) {
+				// subss xmm_dst, xmm_src (F3 [REX] 0F 5C /r)
+				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
+				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+			} else {
+				// subsd xmm_dst, xmm_src (F2 [REX] 0F 5C /r)
+				auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
+				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+			}
+		} else {
+			// Integer subtraction: Use encodeRegToRegInstruction to properly handle R8-R15 registers
+			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
+			std::array<uint8_t, 3> subInst = { encoding.rex_prefix, 0x29, encoding.modrm_byte };
+			textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
+		}
 		storeArithmeticResult(ctx);
 	}
 
 	void handleMulAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "multiply assignment");
 		
-		// IMUL r64, r/m64: Use encodeRegToRegInstruction to properly handle R8-R15 registers
-		// Note: For IMUL, the reg field is the destination (result) and rm is the source (rhs)
-		auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg);
-		std::array<uint8_t, 4> imulInst = { encoding.rex_prefix, 0x0F, 0xAF, encoding.modrm_byte };
-		textSectionData.insert(textSectionData.end(), imulInst.begin(), imulInst.end());
+		// Check if this is floating-point multiplication
+		if (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double) {
+			// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
+			if (ctx.result_value.type == Type::Float) {
+				// mulss xmm_dst, xmm_src (F3 [REX] 0F 59 /r)
+				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
+				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+			} else {
+				// mulsd xmm_dst, xmm_src (F2 [REX] 0F 59 /r)
+				auto inst = generateSSEInstruction(0xF2, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
+				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+			}
+		} else {
+			// Integer multiplication: IMUL r64, r/m64
+			// Use encodeRegToRegInstruction to properly handle R8-R15 registers
+			// Note: For IMUL, the reg field is the destination (result) and rm is the source (rhs)
+			auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg);
+			std::array<uint8_t, 4> imulInst = { encoding.rex_prefix, 0x0F, 0xAF, encoding.modrm_byte };
+			textSectionData.insert(textSectionData.end(), imulInst.begin(), imulInst.end());
+		}
 		storeArithmeticResult(ctx);
 	}
 
 	void handleDivAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "divide assignment");
 		
-		// mov rax, result_reg (move dividend to RAX)
-		auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX);
-		std::array<uint8_t, 3> movInst = { mov_to_rax.rex_prefix, 0x89, mov_to_rax.modrm_byte };
-		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-		
-		// cqo (sign extend RAX to RDX:RAX)
-		std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
-		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
-		
-		// idiv rhs_reg (divide RDX:RAX by rhs_reg, quotient in RAX)
-		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.result_value.size_in_bits);
-		
-		// mov result_reg, rax (move quotient to result)
-		auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg);
-		std::array<uint8_t, 3> movResultInst = { mov_from_rax.rex_prefix, 0x89, mov_from_rax.modrm_byte };
-		textSectionData.insert(textSectionData.end(), movResultInst.begin(), movResultInst.end());
+		// Check if this is floating-point division
+		if (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double) {
+			// Use SSE divss (scalar single-precision) or divsd (scalar double-precision)
+			if (ctx.result_value.type == Type::Float) {
+				// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
+				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
+				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+			} else {
+				// divsd xmm_dst, xmm_src (F2 [REX] 0F 5E /r)
+				auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
+				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+			}
+		} else {
+			// Integer division
+			// mov rax, result_reg (move dividend to RAX)
+			auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX);
+			std::array<uint8_t, 3> movInst = { mov_to_rax.rex_prefix, 0x89, mov_to_rax.modrm_byte };
+			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+			
+			// cqo (sign extend RAX to RDX:RAX)
+			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
+			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+			
+			// idiv rhs_reg (divide RDX:RAX by rhs_reg, quotient in RAX)
+			emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.result_value.size_in_bits);
+			
+			// mov result_reg, rax (move quotient to result)
+			auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg);
+			std::array<uint8_t, 3> movResultInst = { mov_from_rax.rex_prefix, 0x89, mov_from_rax.modrm_byte };
+			textSectionData.insert(textSectionData.end(), movResultInst.begin(), movResultInst.end());
+		}
 		
 		storeArithmeticResult(ctx);
 	}
