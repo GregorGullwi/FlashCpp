@@ -5404,8 +5404,9 @@ private:
 					textSectionData.push_back(modrm_movq);
 					
 					// For varargs functions, System V AMD64 ABI requires copying XMM value to GPR
+					// System V AMD64 ABI does NOT require this - floats stay in XMM registers only
 					// Only copy if the corresponding integer register exists (i < max_int_regs)
-					if (call_op.is_variadic && i < max_int_regs) {
+					if (call_op.is_variadic && i < max_int_regs && is_coff_format) {
 						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 					}
 					
@@ -5434,7 +5435,8 @@ private:
 						}
 						
 						// For varargs: also copy to corresponding INT register
-						if (call_op.is_variadic && i < max_int_regs) {
+						// System V AMD64 ABI does NOT require this
+						if (call_op.is_variadic && i < max_int_regs && is_coff_format) {
 							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 						}
 					} else {
@@ -5461,7 +5463,8 @@ private:
 						}
 						
 						// For varargs: also copy to corresponding INT register
-						if (call_op.is_variadic && i < max_int_regs) {
+						// System V AMD64 ABI does NOT require this
+						if (call_op.is_variadic && i < max_int_regs && is_coff_format) {
 							emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i));
 						}
 					} else {
