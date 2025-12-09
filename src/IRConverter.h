@@ -2785,6 +2785,54 @@ inline void emitStoreToRSP(std::vector<char>& textSectionData, X64Register value
 }
 
 /**
+ * @brief Emits SSE store instruction to [RSP + offset] for XMM registers.
+ * 
+ * Generates MOVSD [RSP + offset], xmm or MOVSS [RSP + offset], xmm
+ * Uses SIB byte encoding for RSP-relative addressing.
+ *
+ * @param textSectionData The vector to append opcodes to
+ * @param xmm_reg The source XMM register
+ * @param offset The offset from RSP (signed 32-bit)
+ * @param is_float true for float (MOVSS), false for double (MOVSD)
+ */
+inline void emitFloatStoreToRSP(std::vector<char>& textSectionData, X64Register xmm_reg, int32_t offset, bool is_float) {
+	uint8_t xmm_bits = xmm_modrm_bits(xmm_reg);
+	
+	// Prefix: F3 for MOVSS (float), F2 for MOVSD (double)
+	textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+	
+	// REX prefix if XMM8-XMM15
+	if (xmm_bits >= 8) {
+		textSectionData.push_back(0x44); // REX.R for XMM8-XMM15
+	}
+	
+	// Opcode: 0F 11 for MOVSS/MOVSD [mem], xmm (store variant)
+	textSectionData.push_back(0x0F);
+	textSectionData.push_back(0x11);
+	
+	// ModR/M and SIB for [RSP + disp]
+	// RSP requires SIB byte
+	bool use_disp8 = (offset >= -128 && offset <= 127);
+	
+	// ModR/M byte: mod=01/10 for disp8/disp32, reg=xmm_bits, r/m=100 (SIB follows)
+	uint8_t modrm = (use_disp8 ? 0x44 : 0x84) | ((xmm_bits & 0x07) << 3);
+	textSectionData.push_back(modrm);
+	
+	// SIB byte: scale=00, index=100 (none), base=100 (RSP)
+	textSectionData.push_back(0x24);
+	
+	// Displacement
+	if (use_disp8) {
+		textSectionData.push_back(static_cast<uint8_t>(offset));
+	} else {
+		textSectionData.push_back((offset >> 0) & 0xFF);
+		textSectionData.push_back((offset >> 8) & 0xFF);
+		textSectionData.push_back((offset >> 16) & 0xFF);
+		textSectionData.push_back((offset >> 24) & 0xFF);
+	}
+}
+
+/**
  * @brief Emits x64 opcodes for LEA RAX, [RBP + offset].
  *
  * Load effective address - computes RBP + offset without dereferencing.
@@ -5134,9 +5182,68 @@ private:
 					// Linux: RSP+0 (no shadow space) + stack_arg_count*8
 					int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
 					
-					X64Register temp_reg = loadTypedValueIntoRegister(arg);
-					emitStoreToRSP(textSectionData, temp_reg, stack_offset);
-					regAlloc.release(temp_reg);
+					if (is_float_arg) {
+						// For floating-point arguments, load into XMM register and store with float instruction
+						X64Register temp_xmm = allocateXMMRegisterWithSpilling();
+						
+						// Load the float value into XMM register
+						if (std::holds_alternative<double>(arg.value)) {
+							// Handle floating-point literal
+							double float_value = std::get<double>(arg.value);
+							uint64_t bits;
+							if (arg.type == Type::Float) {
+								float float_val = static_cast<float>(float_value);
+								uint32_t float_bits;
+								std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+								bits = float_bits;
+							} else {
+								std::memcpy(&bits, &float_value, sizeof(bits));
+							}
+							
+							// Load bit pattern into temp GPR first
+							X64Register temp_gpr = allocateRegisterWithSpilling();
+							emitMovImm64(temp_gpr, bits);
+							
+							// movq xmm, r64
+							textSectionData.push_back(0x66);
+							uint8_t xmm_idx = xmm_modrm_bits(temp_xmm);
+							uint8_t rex_movq = 0x48;  // REX.W
+							if (xmm_idx >= 8) {
+								rex_movq |= 0x04; // REX.R for XMM8-XMM15 destination
+							}
+							if (static_cast<uint8_t>(temp_gpr) >= static_cast<uint8_t>(X64Register::R8)) {
+								rex_movq |= 0x01; // REX.B for source GPR
+							}
+							textSectionData.push_back(rex_movq);
+							textSectionData.push_back(0x0F);
+							textSectionData.push_back(0x6E);
+							uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
+							textSectionData.push_back(modrm_movq);
+							
+							regAlloc.release(temp_gpr);
+						} else if (std::holds_alternative<TempVar>(arg.value)) {
+							const auto& temp_var = std::get<TempVar>(arg.value);
+							int var_offset = getStackOffsetFromTempVar(temp_var);
+							bool is_float = (arg.type == Type::Float);
+							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
+						} else if (std::holds_alternative<std::string_view>(arg.value)) {
+							std::string_view var_name = std::get<std::string_view>(arg.value);
+							int var_offset = variable_scopes.back().identifier_offset[var_name];
+							bool is_float = (arg.type == Type::Float);
+							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
+						}
+						
+						// Store XMM register to stack using float store instruction
+						bool is_float = (arg.type == Type::Float);
+						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, is_float);
+						
+						regAlloc.release(temp_xmm);
+					} else {
+						// For integer arguments, use the existing code path
+						X64Register temp_reg = loadTypedValueIntoRegister(arg);
+						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+						regAlloc.release(temp_reg);
+					}
 					stack_arg_count++;
 				}
 			}
@@ -6875,7 +6982,26 @@ private:
 			// Calculate parameter number using FunctionDeclLayout helper
 			size_t param_index_in_list = (paramIndex - FunctionDeclLayout::FIRST_PARAM_INDEX) / FunctionDeclLayout::OPERANDS_PER_PARAM;
 			int paramNumber = static_cast<int>(param_index_in_list) + param_offset_adjustment;
-			int offset = paramNumber < 4 ? (paramNumber + 1) * -8 : 16 + (paramNumber - 4) * 8;
+			
+			// Platform-specific and type-aware offset calculation
+			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+			bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
+			
+			// Determine the register count threshold for this parameter type
+			size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
+			size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
+			
+			// Calculate offset based on whether this parameter comes from a register or stack
+			int offset;
+			if (type_specific_index < reg_threshold) {
+				// Parameter comes from register - allocate home/shadow space
+				offset = (static_cast<int>(type_specific_index) + 1) * -8;
+			} else {
+				// Parameter comes from stack - calculate positive offset
+				// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
+				offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
+			}
 
 			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + FunctionDeclLayout::PARAM_NAME);
 			variable_scopes.back().identifier_offset[param_name] = offset;
@@ -6907,10 +7033,6 @@ private:
 			}
 			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
-			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
-			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-			bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
-			
 			// Check if parameter fits in a register using separate int/float counters
 			bool use_register = false;
 			X64Register src_reg = X64Register::Count;
@@ -6918,11 +7040,15 @@ private:
 				if (float_param_reg_index < max_float_regs) {
 					src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
 					use_register = true;
+				} else {
+					float_param_reg_index++;  // Still increment counter for stack params
 				}
 			} else {
 				if (int_param_reg_index < max_int_regs) {
 					src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
 					use_register = true;
+				} else {
+					int_param_reg_index++;  // Still increment counter for stack params
 				}
 			}
 			
@@ -6951,7 +7077,26 @@ private:
 		for (size_t i = 0; i < func_decl.parameters.size(); ++i) {
 			const auto& param = func_decl.parameters[i];
 			int paramNumber = static_cast<int>(i) + param_offset_adjustment;
-			int offset = paramNumber < 4 ? (paramNumber + 1) * -8 : 16 + (paramNumber - 4) * 8;
+			
+			// Platform-specific and type-aware offset calculation
+			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+			bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0;
+			
+			// Determine the register count threshold for this parameter type
+			size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
+			size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
+			
+			// Calculate offset based on whether this parameter comes from a register or stack
+			int offset;
+			if (type_specific_index < reg_threshold) {
+				// Parameter comes from register - allocate home/shadow space
+				offset = (static_cast<int>(type_specific_index) + 1) * -8;
+			} else {
+				// Parameter comes from stack - calculate positive offset
+				// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
+				offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
+			}
 
 			variable_scopes.back().identifier_offset[param.name] = offset;
 
@@ -6981,10 +7126,6 @@ private:
 			}
 			writer.add_function_parameter(param.name, param_type_index, offset);
 
-			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
-			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-			bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0;
-			
 			// Check if parameter fits in a register using separate int/float counters
 			bool use_register = false;
 			X64Register src_reg = X64Register::Count;
@@ -6992,11 +7133,15 @@ private:
 				if (float_param_reg_index < max_float_regs) {
 					src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
 					use_register = true;
+				} else {
+					float_param_reg_index++;  // Still increment counter for stack params
 				}
 			} else {
 				if (int_param_reg_index < max_int_regs) {
 					src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
 					use_register = true;
+				} else {
+					int_param_reg_index++;  // Still increment counter for stack params
 				}
 			}
 			
