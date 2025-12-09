@@ -4158,6 +4158,7 @@ private:
 		uint16_t temp_vars_size = 0;
 		uint16_t named_vars_size = 0;
 		uint16_t shadow_stack_space = 0;
+		uint16_t outgoing_args_space = 0;  // Space for largest outgoing function call
 	};
 	struct StackVariableScope
 	{
@@ -4188,10 +4189,49 @@ private:
 
 		// Track TempVar sizes from instructions that produce them
 		std::unordered_map<SafeStringKey, int> temp_var_sizes;  // SafeStringKey accepts both string and string_view
+		
+		// Track maximum outgoing call argument space needed
+		size_t max_outgoing_arg_bytes = 0;
 
 		for (const auto& instruction : it->second) {
 			// Look for TempVar operands in the instruction
 			func_stack_space.shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall));
+			
+			// Track outgoing call argument space
+			if (instruction.getOpcode() == IrOpcode::FunctionCall && instruction.hasTypedPayload()) {
+				if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
+					// For Windows variadic calls: ALL args on stack starting at RSP+0
+					// For Windows normal calls: Args beyond 4 on stack starting at RSP+32 (shadow space)
+					// For Linux: Args beyond 6 on stack starting at RSP+0
+					constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+					size_t arg_count = call_op->args.size();
+					size_t outgoing_bytes = 0;
+					
+					if (is_coff_format) {
+						if (call_op->is_variadic) {
+							// Windows variadic: ALL args on stack, starting at RSP+0
+							outgoing_bytes = arg_count * 8;
+						} else {
+							// Windows normal: First 4 in registers, rest on stack starting at RSP+32
+							if (arg_count > 4) {
+								outgoing_bytes = 32 + (arg_count - 4) * 8;
+							} else {
+								outgoing_bytes = 32;  // Shadow space even if all args in registers
+							}
+						}
+					} else {
+						// Linux: First 6 in registers, rest on stack starting at RSP+0
+						if (arg_count > 6) {
+							outgoing_bytes = (arg_count - 6) * 8;
+						}
+						// No shadow space on Linux
+					}
+					
+					if (outgoing_bytes > max_outgoing_arg_bytes) {
+						max_outgoing_arg_bytes = outgoing_bytes;
+					}
+				}
+			}
 
 			if (instruction.getOpcode() == IrOpcode::VariableDecl) {
 				const VariableDeclOp& op = std::any_cast<const VariableDeclOp&>(instruction.getTypedPayload());
@@ -4332,6 +4372,7 @@ private:
 		// Calculate total stack space needed
 		func_stack_space.temp_vars_size = temp_var_space;  // TempVar space (added to total separately)
 		func_stack_space.named_vars_size = -stack_offset;  // Just named variables space
+		func_stack_space.outgoing_args_space = static_cast<uint16_t>(max_outgoing_arg_bytes);  // Outgoing call argument space
 		
 		// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
 		//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
@@ -5154,6 +5195,10 @@ private:
 			
 			// Enhanced stack overflow logic: Track both int and float register usage independently
 			// to correctly identify which arguments overflow to stack
+			// For Windows variadic functions: ALL arguments must go on stack (in addition to registers)
+			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+			bool variadic_needs_stack_args = call_op.is_variadic && is_coff_format;
+			
 			size_t temp_int_idx = 0;
 			size_t temp_float_idx = 0;
 			size_t stack_arg_count = 0;
@@ -5163,24 +5208,41 @@ private:
 				bool is_float_arg = is_floating_point_type(arg.type);
 				
 				// Determine if this argument goes on stack
-				bool goes_on_stack = false;
-				if (is_float_arg) {
-					if (temp_float_idx >= max_float_regs) {
-						goes_on_stack = true;
+				bool goes_on_stack = variadic_needs_stack_args; // For Windows variadic: ALL args go on stack
+				if (!goes_on_stack) {
+					if (is_float_arg) {
+						if (temp_float_idx >= max_float_regs) {
+							goes_on_stack = true;
+						}
+						temp_float_idx++;
+					} else {
+						if (temp_int_idx >= max_int_regs) {
+							goes_on_stack = true;
+						}
+						temp_int_idx++;
 					}
-					temp_float_idx++;
 				} else {
-					if (temp_int_idx >= max_int_regs) {
-						goes_on_stack = true;
+					// Still need to increment counters for variadic functions
+					if (is_float_arg) {
+						temp_float_idx++;
+					} else {
+						temp_int_idx++;
 					}
-					temp_int_idx++;
 				}
 				
 				if (goes_on_stack) {
 					// Stack args placement:
-					// Windows: RSP+32 (shadow space) + stack_arg_count*8
+					// Windows variadic: RSP+0 + arg_index*8 (args start at RSP+0, no shadow space offset)
+					// Windows normal: RSP+32 (shadow space) + stack_arg_count*8
 					// Linux: RSP+0 (no shadow space) + stack_arg_count*8
-					int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+					int stack_offset;
+					if (variadic_needs_stack_args) {
+						// For variadic on Windows: args at RSP+0, RSP+8, RSP+16, ...
+						stack_offset = static_cast<int>(i * 8);
+					} else {
+						// For normal functions: skip shadow space first
+						stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+					}
 					
 					if (is_float_arg) {
 						// For floating-point arguments, load into XMM register and store with float instruction
@@ -6647,14 +6709,14 @@ private:
 		
 		// Finalize previous function before starting new one
 		if (!current_function_name_.empty()) {
-			// Calculate actual stack space needed: named vars + shadow space + TempVars
+			// Calculate actual stack space needed: named vars + outgoing args + TempVars
 			// Use the stored named_vars_size from when we created the function
-			size_t temp_vars_space = (max_temp_var_index_ > 0) ? (max_temp_var_index_ * 8) : 0;
+			size_t temp_vars_space = (next_temp_var_offset_ > 8) ? (next_temp_var_offset_ - 8) : 0;
 			size_t named_and_shadow = current_function_named_vars_size_;
 			size_t total_stack = named_and_shadow + temp_vars_space;
-			// Align to 16 bytes
-			if (total_stack % 16 != 0) {
-				total_stack = ((total_stack / 16) + 1) * 16;
+			// Align so RSP is (16n + 8) - misaligned by 8, so after CALL pushes return address, RSP becomes 16-byte aligned
+			if (total_stack % 16 != 8) {
+				total_stack = ((total_stack + 8) & ~15) - 8 + 16;  // Round up to next (16n + 8)
 			}
 			
 			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
@@ -6754,7 +6816,9 @@ private:
 		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope, param_count);
 		
 		// TempVars are now pre-counted in calculateFunctionStackSpace, include them in total
-		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space + func_stack_space.temp_vars_size;
+		// Also include outgoing_args_space for function calls made from this function
+		// Note: named_vars_size already includes parameter home space, so don't add shadow_stack_space
+		uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.temp_vars_size + func_stack_space.outgoing_args_space;
 
 		
 		// Even if parameters stay in registers, we need space to spill them if needed
@@ -6782,6 +6846,7 @@ private:
 		current_function_name_ = func_name_str;
 		current_function_mangled_name_ = mangled_name;
 		current_function_offset_ = func_offset;
+		current_function_is_variadic_ = is_variadic;
 
 		// Patch pending branches from previous function before clearing
 		if (!pending_branches_.empty()) {
@@ -6916,8 +6981,9 @@ private:
 		// TempVars are allocated within this space, not extending beyond it
 		variable_scopes.back().scope_stack_space = -total_stack_space;
 		
-		// Store named_vars + shadow for patching (temp_vars are pre-calculated, not dynamic)
-		current_function_named_vars_size_ = func_stack_space.named_vars_size + func_stack_space.shadow_stack_space;
+		// Store named_vars + outgoing_args for patching (temp_vars are pre-calculated, not dynamic)
+		// Note: named_vars_size already includes parameter home space
+		current_function_named_vars_size_ = func_stack_space.named_vars_size + func_stack_space.outgoing_args_space;
 
 		// Handle parameters
 		struct ParameterInfo {
@@ -6962,237 +7028,257 @@ private:
 			size_t float_param_reg_index = 0;
 			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
-			auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
-			auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
-			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
+				auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
+				auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
+				auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
 
-			// Calculate parameter number using FunctionDeclLayout helper
-			size_t param_index_in_list = (paramIndex - FunctionDeclLayout::FIRST_PARAM_INDEX) / FunctionDeclLayout::OPERANDS_PER_PARAM;
-			int paramNumber = static_cast<int>(param_index_in_list) + param_offset_adjustment;
+				// Calculate parameter number using FunctionDeclLayout helper
+				size_t param_index_in_list = (paramIndex - FunctionDeclLayout::FIRST_PARAM_INDEX) / FunctionDeclLayout::OPERANDS_PER_PARAM;
+				int paramNumber = static_cast<int>(param_index_in_list) + param_offset_adjustment;
 			
-			// Platform-specific and type-aware offset calculation
-			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
-			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-			bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
+				// Platform-specific and type-aware offset calculation
+				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+				bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
 			
-			// Determine the register count threshold for this parameter type
-			size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
-			size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
+				// Determine the register count threshold for this parameter type
+				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
+				size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
 			
-			// Calculate offset based on whether this parameter comes from a register or stack
-			int offset;
-			if (type_specific_index < reg_threshold) {
-				// Parameter comes from register - allocate home/shadow space
-				offset = (static_cast<int>(type_specific_index) + 1) * -8;
-			} else {
-				// Parameter comes from stack - calculate positive offset
-				// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
-				offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
-			}
-
-			auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + FunctionDeclLayout::PARAM_NAME);
-			variable_scopes.back().identifier_offset[param_name] = offset;
-
-			// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
-			bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
-			if (is_reference) {
-				reference_stack_info_[offset] = ReferenceInfo{
-					.value_type = param_type,
-					.value_size_bits = param_size,
-					.is_rvalue_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE)
-				};
-			}
-
-			// Add parameter to debug information
-			uint32_t param_type_index = 0x74; // T_INT4 for int parameters
-			if (param_pointer_depth > 0) {
-				param_type_index = 0x603;  // T_64PVOID for pointer types
-			} else {
-				switch (param_type) {
-					case Type::Int: param_type_index = 0x74; break;  // T_INT4
-					case Type::Float: param_type_index = 0x40; break; // T_REAL32
-					case Type::Double: param_type_index = 0x41; break; // T_REAL64
-					case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-					case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-					case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-					default: param_type_index = 0x74; break;
-				}
-			}
-			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
-
-			// Check if parameter fits in a register using separate int/float counters
-			bool use_register = false;
-			X64Register src_reg = X64Register::Count;
-			if (is_float_param) {
-				if (float_param_reg_index < max_float_regs) {
-					src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
-					use_register = true;
+				// Calculate offset based on whether this parameter comes from a register or stack
+				// For Windows variadic functions: ALL parameters are on caller's stack starting at [RBP+16]
+				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+				int offset;
+				if (is_variadic && is_coff_format) {
+					// Windows x64 variadic: ALL params at positive offsets from RBP
+					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
+					offset = 16 + (paramNumber - param_offset_adjustment) * 8;
+				} else if (type_specific_index < reg_threshold) {
+					// Parameter comes from register - allocate home/shadow space
+					offset = (static_cast<int>(type_specific_index) + 1) * -8;
 				} else {
-					float_param_reg_index++;  // Still increment counter for stack params
+					// Parameter comes from stack - calculate positive offset
+					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
+					offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
 				}
-			} else {
-				if (int_param_reg_index < max_int_regs) {
-					src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
-					use_register = true;
+
+				auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + FunctionDeclLayout::PARAM_NAME);
+				variable_scopes.back().identifier_offset[param_name] = offset;
+
+				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
+				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
+				if (is_reference) {
+					reference_stack_info_[offset] = ReferenceInfo{
+						.value_type = param_type,
+						.value_size_bits = param_size,
+						.is_rvalue_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE)
+					};
+				}
+
+				// Add parameter to debug information
+				uint32_t param_type_index = 0x74; // T_INT4 for int parameters
+				if (param_pointer_depth > 0) {
+					param_type_index = 0x603;  // T_64PVOID for pointer types
 				} else {
-					int_param_reg_index++;  // Still increment counter for stack params
-				}
-			}
-			
-			if (use_register) {
-
-				// Don't allocate XMM registers in the general register allocator
-				if (!is_float_param) {
-					regAlloc.allocateSpecific(src_reg, offset);
-				}
-
-				// Store parameter info for later processing
-				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth, is_reference});
-			}
-
-			paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
-		}
-	} else {
-		// Typed payload path: build ParameterInfo from already-extracted parameter_types
-		const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
-		reference_stack_info_.clear();
-		
-		// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
-		size_t int_param_reg_index = 0;
-		size_t float_param_reg_index = 0;
-		
-		for (size_t i = 0; i < func_decl.parameters.size(); ++i) {
-			const auto& param = func_decl.parameters[i];
-			int paramNumber = static_cast<int>(i) + param_offset_adjustment;
-			
-			// Platform-specific and type-aware offset calculation
-			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
-			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-			bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0;
-			
-			// Determine the register count threshold for this parameter type
-			size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
-			size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
-			
-			// Calculate offset based on whether this parameter comes from a register or stack
-			int offset;
-			if (type_specific_index < reg_threshold) {
-				// Parameter comes from register - allocate home/shadow space
-				offset = (static_cast<int>(type_specific_index) + 1) * -8;
-			} else {
-				// Parameter comes from stack - calculate positive offset
-				// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
-				offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
-			}
-
-			variable_scopes.back().identifier_offset[param.name] = offset;
-
-			// Track reference parameters
-			if (param.is_reference) {
-				reference_stack_info_[offset] = ReferenceInfo{
-					.value_type = param.type,
-					.value_size_bits = param.size_in_bits,
-					.is_rvalue_reference = param.is_rvalue_reference
-				};
-			}
-
-			// Add parameter to debug information
-			uint32_t param_type_index = 0x74; // T_INT4 for int parameters
-			if (param.pointer_depth > 0) {
-				param_type_index = 0x603;  // T_64PVOID for pointer types
-			} else {
-				switch (param.type) {
-					case Type::Int: param_type_index = 0x74; break;  // T_INT4
-					case Type::Float: param_type_index = 0x40; break; // T_REAL32
-					case Type::Double: param_type_index = 0x41; break; // T_REAL64
-					case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-					case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-					case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-					default: param_type_index = 0x74; break;
-				}
-			}
-			writer.add_function_parameter(param.name, param_type_index, offset);
-
-			// Check if parameter fits in a register using separate int/float counters
-			bool use_register = false;
-			X64Register src_reg = X64Register::Count;
-			if (is_float_param) {
-				if (float_param_reg_index < max_float_regs) {
-					src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
-					use_register = true;
-				} else {
-					float_param_reg_index++;  // Still increment counter for stack params
-				}
-			} else {
-				if (int_param_reg_index < max_int_regs) {
-					src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
-					use_register = true;
-				} else {
-					int_param_reg_index++;  // Still increment counter for stack params
-				}
-			}
-			
-			if (use_register) {
-
-				if (!is_float_param && !regAlloc.is_allocated(src_reg)) {
-					regAlloc.allocateSpecific(src_reg, offset);
-				}
-
-				parameters.push_back({param.type, param.size_in_bits, param.name, paramNumber, offset, src_reg, param.pointer_depth, param.is_reference});
-			}
-		}
-	}
-
-	// Second pass: generate parameter storage code in the correct order
-
-		// Standard order for other functions
-		for (const auto& param : parameters) {
-			// MSVC-STYLE: Store parameters using RBP-relative addressing
-			bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && param.pointer_depth == 0;
-
-			if (is_float_param) {
-				// For floating-point parameters, use movss/movsd to store from XMM register
-				uint8_t prefix = (param.param_type == Type::Float) ? 0xF3 : 0xF2;
-				
-				// Check if we need REX prefix for XMM8-XMM15
-				uint8_t xmm_reg = xmm_modrm_bits(param.src_reg);
-				bool needs_rex = (xmm_reg >= 8);
-				
-				textSectionData.push_back(prefix);
-				if (needs_rex) {
-					textSectionData.push_back(0x44);  // REX.R - extends ModR/M reg field
-				}
-				textSectionData.push_back(0x0F);
-				textSectionData.push_back(0x11); // Store variant (movss/movsd [mem], xmm)
-
-				// ModR/M byte for [RBP + offset] - use only low 3 bits of xmm register
-				int32_t stack_offset = param.offset;
-
-				if (stack_offset >= -128 && stack_offset <= 127) {
-					uint8_t modrm = 0x45 + ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
-					textSectionData.push_back(modrm);
-					textSectionData.push_back(static_cast<uint8_t>(stack_offset));
-				} else {
-					uint8_t modrm = 0x85 + ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
-					textSectionData.push_back(modrm);
-					for (int j = 0; j < 4; ++j) {
-						textSectionData.push_back(static_cast<uint8_t>(stack_offset & 0xFF));
-						stack_offset >>= 8;
+					switch (param_type) {
+						case Type::Int: param_type_index = 0x74; break;  // T_INT4
+						case Type::Float: param_type_index = 0x40; break; // T_REAL32
+						case Type::Double: param_type_index = 0x41; break; // T_REAL64
+						case Type::Char: param_type_index = 0x10; break;  // T_CHAR
+						case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
+						case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
+						default: param_type_index = 0x74; break;
 					}
 				}
-			} else {
-				// For integer parameters, use size-appropriate MOV
-				// References are always passed as 64-bit pointers regardless of the type they refer to
-				int store_size = (param.is_reference || param.pointer_depth > 0) ? 64 : param.param_size;
-				emitMovToFrameSized(
-					SizedRegister{param.src_reg, 64, false},  // source: 64-bit register
-					SizedStackSlot{param.offset, store_size, isSignedType(param.param_type)}  // dest
-				);
+				writer.add_function_parameter(std::string(param_name), param_type_index, offset);
+
+				// Check if parameter fits in a register using separate int/float counters
+				bool use_register = false;
+				X64Register src_reg = X64Register::Count;
+				if (is_float_param) {
+					if (float_param_reg_index < max_float_regs) {
+						src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
+						use_register = true;
+					} else {
+						float_param_reg_index++;  // Still increment counter for stack params
+					}
+				} else {
+					if (int_param_reg_index < max_int_regs) {
+						src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
+						use_register = true;
+					} else {
+						int_param_reg_index++;  // Still increment counter for stack params
+					}
+				}
+			
+				if (use_register) {
+
+					// Don't allocate XMM registers in the general register allocator
+					if (!is_float_param) {
+						regAlloc.allocateSpecific(src_reg, offset);
+					}
+
+					// Store parameter info for later processing
+					parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth, is_reference});
+				}
+
+				paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
+			}
+		} else {
+			// Typed payload path: build ParameterInfo from already-extracted parameter_types
+			const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
+			reference_stack_info_.clear();
+		
+			// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
+			size_t int_param_reg_index = 0;
+			size_t float_param_reg_index = 0;
+		
+			for (size_t i = 0; i < func_decl.parameters.size(); ++i) {
+				const auto& param = func_decl.parameters[i];
+				int paramNumber = static_cast<int>(i) + param_offset_adjustment;
+			
+				// Platform-specific and type-aware offset calculation
+				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0;
+			
+				// Determine the register count threshold for this parameter type
+				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
+				size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
+			
+				// Calculate offset based on whether this parameter comes from a register or stack
+				// For Windows variadic functions: ALL parameters are on caller's stack starting at [RBP+16]
+				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+				int offset;
+				if (is_variadic && is_coff_format) {
+					// Windows x64 variadic: ALL params at positive offsets from RBP
+					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
+					offset = 16 + (paramNumber - param_offset_adjustment) * 8;
+				} else if (type_specific_index < reg_threshold) {
+					// Parameter comes from register - allocate home/shadow space
+					offset = (static_cast<int>(type_specific_index) + 1) * -8;
+				} else {
+					// Parameter comes from stack - calculate positive offset
+					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
+					offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
+				}
+
+				variable_scopes.back().identifier_offset[param.name] = offset;
+
+				// Track reference parameters
+				if (param.is_reference) {
+					reference_stack_info_[offset] = ReferenceInfo{
+						.value_type = param.type,
+						.value_size_bits = param.size_in_bits,
+						.is_rvalue_reference = param.is_rvalue_reference
+					};
+				}
+
+				// Add parameter to debug information
+				uint32_t param_type_index = 0x74; // T_INT4 for int parameters
+				if (param.pointer_depth > 0) {
+					param_type_index = 0x603;  // T_64PVOID for pointer types
+				} else {
+					switch (param.type) {
+						case Type::Int: param_type_index = 0x74; break;  // T_INT4
+						case Type::Float: param_type_index = 0x40; break; // T_REAL32
+						case Type::Double: param_type_index = 0x41; break; // T_REAL64
+						case Type::Char: param_type_index = 0x10; break;  // T_CHAR
+						case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
+						case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
+						default: param_type_index = 0x74; break;
+					}
+				}
+				writer.add_function_parameter(param.name, param_type_index, offset);
+
+				// Check if parameter fits in a register using separate int/float counters
+				bool use_register = false;
+				X64Register src_reg = X64Register::Count;
+				if (is_float_param) {
+					if (float_param_reg_index < max_float_regs) {
+						src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
+						use_register = true;
+					} else {
+						float_param_reg_index++;  // Still increment counter for stack params
+					}
+				} else {
+					if (int_param_reg_index < max_int_regs) {
+						src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
+						use_register = true;
+					} else {
+						int_param_reg_index++;  // Still increment counter for stack params
+					}
+				}
+			
+				if (use_register) {
+
+					if (!is_float_param && !regAlloc.is_allocated(src_reg)) {
+						regAlloc.allocateSpecific(src_reg, offset);
+					}
+
+					parameters.push_back({param.type, param.size_in_bits, param.name, paramNumber, offset, src_reg, param.pointer_depth, param.is_reference});
+				}
+			}
+		}
+
+		// Second pass: generate parameter storage code in the correct order
+
+		// For Windows x64 variadic functions, parameters are already at positive offsets
+		// from RBP (caller's stack), so we DON'T spill them from registers
+		// For Linux (ELF), register save area is more complex - not handled here
+		constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+		bool skip_param_spilling = is_variadic && is_coff_format;
+
+		// Standard order for other functions
+		if (!skip_param_spilling) {
+			for (const auto& param : parameters) {
+				// MSVC-STYLE: Store parameters using RBP-relative addressing
+				bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && param.pointer_depth == 0;
+
+				if (is_float_param) {
+					// For floating-point parameters, use movss/movsd to store from XMM register
+					uint8_t prefix = (param.param_type == Type::Float) ? 0xF3 : 0xF2;
 				
-				// Release the parameter register from the register allocator
-				// Parameters are now on the stack, so the register allocator should not
-				// think they're still in registers
-				regAlloc.release(param.src_reg);
+					// Check if we need REX prefix for XMM8-XMM15
+					uint8_t xmm_reg = xmm_modrm_bits(param.src_reg);
+					bool needs_rex = (xmm_reg >= 8);
+				
+					textSectionData.push_back(prefix);
+					if (needs_rex) {
+						textSectionData.push_back(0x44);  // REX.R - extends ModR/M reg field
+					}
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x11); // Store variant (movss/movsd [mem], xmm)
+
+					// ModR/M byte for [RBP + offset] - use only low 3 bits of xmm register
+					int32_t stack_offset = param.offset;
+
+					if (stack_offset >= -128 && stack_offset <= 127) {
+						uint8_t modrm = 0x45 + ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+						textSectionData.push_back(modrm);
+						textSectionData.push_back(static_cast<uint8_t>(stack_offset));
+					} else {
+						uint8_t modrm = 0x85 + ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+						textSectionData.push_back(modrm);
+						for (int j = 0; j < 4; ++j) {
+							textSectionData.push_back(static_cast<uint8_t>(stack_offset & 0xFF));
+							stack_offset >>= 8;
+						}
+					}
+				} else {
+					// For integer parameters, use size-appropriate MOV
+					// References are always passed as 64-bit pointers regardless of the type they refer to
+					int store_size = (param.is_reference || param.pointer_depth > 0) ? 64 : param.param_size;
+					emitMovToFrameSized(
+						SizedRegister{param.src_reg, 64, false},  // source: 64-bit register
+						SizedStackSlot{param.offset, store_size, isSignedType(param.param_type)}  // dest
+					);
+				
+					// Release the parameter register from the register allocator
+					// Parameters are now on the stack, so the register allocator should not
+					// think they're still in registers
+					regAlloc.release(param.src_reg);
+				}
 			}
 		}
 	}
@@ -10665,8 +10751,15 @@ private:
 			if (std::holds_alternative<TempVar>(op.pointer)) {
 				TempVar temp = std::get<TempVar>(op.pointer);
 				int32_t temp_offset = getStackOffsetFromTempVar(temp);
-				ptr_reg = allocateRegisterWithSpilling();
-				emitMovFromFrame(ptr_reg, temp_offset);
+				
+				// Check if the TempVar is already in a register (e.g., from a previous operation)
+				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(temp_offset); reg_opt.has_value()) {
+					ptr_reg = reg_opt.value();
+				} else {
+					// Not in a register, load from stack
+					ptr_reg = allocateRegisterWithSpilling();
+					emitMovFromFrame(ptr_reg, temp_offset);
+				}
 			} else {
 				std::string_view var_name = std::get<std::string_view>(op.pointer);
 				auto it = current_scope.identifier_offset.find(var_name);
@@ -10674,8 +10767,14 @@ private:
 					assert(false && "Pointer variable not found");
 					return;
 				}
-				ptr_reg = allocateRegisterWithSpilling();
-				emitMovFromFrame(ptr_reg, it->second);
+				
+				// Check if the variable is already in a register
+				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(it->second); reg_opt.has_value()) {
+					ptr_reg = reg_opt.value();
+				} else {
+					ptr_reg = allocateRegisterWithSpilling();
+					emitMovFromFrame(ptr_reg, it->second);
+				}
 			}
 
 			// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
@@ -11503,13 +11602,13 @@ private:
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (!current_function_name_.empty()) {
-			// Calculate actual stack space needed: named vars + shadow space + TempVars
-			size_t temp_vars_space = (max_temp_var_index_ > 0) ? (max_temp_var_index_ * 8) : 0;
+			// Calculate actual stack space needed: named vars + outgoing args + TempVars
+			size_t temp_vars_space = (next_temp_var_offset_ > 8) ? (next_temp_var_offset_ - 8) : 0;
 			size_t named_and_shadow = current_function_named_vars_size_;
 			size_t total_stack = named_and_shadow + temp_vars_space;
-			// Align to 16 bytes
-			if (total_stack % 16 != 0) {
-				total_stack = ((total_stack / 16) + 1) * 16;
+			// Align so RSP is (16n + 8) - misaligned by 8, so after CALL pushes return address, RSP becomes 16-byte aligned
+			if (total_stack % 16 != 8) {
+				total_stack = ((total_stack + 8) & ~15) - 8 + 16;  // Round up to next (16n + 8)
 			}
 			
 			// Patch the SUB RSP immediate at prologue offset + 3
@@ -11828,6 +11927,7 @@ private:
 	std::string current_function_name_;
 	std::string current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
+	bool current_function_is_variadic_ = false;
 
 	// Pending function info for exception handling
 	struct PendingFunctionInfo {

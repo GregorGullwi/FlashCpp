@@ -810,6 +810,9 @@ struct TypeInfo
 	// For typedef, store the size in bits (for primitive types)
 	unsigned char type_size_ = 0;
 
+	// For typedef of pointer types, store the pointer depth
+	size_t pointer_depth_ = 0;
+
 	std::string_view name() { return name_; };
 
 	// Helper methods for struct types

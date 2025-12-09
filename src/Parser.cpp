@@ -5378,6 +5378,7 @@ ParseResult Parser::parse_typedef_declaration()
 	auto& alias_type_info = gTypeInfo.emplace_back(std::string(qualified_alias_name), type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
+	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
 	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
 
 	// Update the type_node with the modified type_spec (with pointers)
@@ -6573,6 +6574,13 @@ ParseResult Parser::parse_type_specifier()
 			if (is_typedef) {
 				resolved_type = type_it->second->type_;
 				type_size = type_it->second->type_size_;
+				// Create TypeSpecifierNode and add pointer levels from typedef
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(
+					resolved_type, user_type_index, type_size, type_name_token, cv_qualifier);
+				for (size_t i = 0; i < type_it->second->pointer_depth_; ++i) {
+					type_spec_node.as<TypeSpecifierNode>().add_pointer_level();
+				}
+				return ParseResult::success(type_spec_node);
 			} else if (user_type_index < gTypeInfo.size()) {
 				// Not a typedef - might be a struct type without size set in TypeInfo
 				// Look up actual size from struct info if available

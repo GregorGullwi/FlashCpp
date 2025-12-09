@@ -6403,7 +6403,101 @@ private:
 			return { Type::Bool, 8, result_var, 0ULL };  // Logical operations return bool8
 		}
 
+		// Special handling for pointer compound assignment (ptr += int or ptr -= int)
+		// MUST be before type promotions to avoid truncating the pointer
+		if ((op == "+=" || op == "-=") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType)) {
+			// Left side is a pointer (64-bit), right side is integer
+			// Need to scale the offset by sizeof(pointed-to-type)
+			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_ARITH_DEBUG] Compound assignment: lhsSize={}, pointer_depth={}, rhsType={}", lhsSize, lhs_pointer_depth, static_cast<int>(rhsType));
+			
+			// Determine element size (same logic as regular pointer arithmetic)
+			int element_size;
+			if (lhs_pointer_depth > 1) {
+				element_size = 8;  // Multi-level pointer
+			} else {
+				// Single-level pointer: element size is the base type size
+				switch (lhsType) {
+					case Type::Bool: element_size = 1; break;
+					case Type::Char: element_size = 1; break;
+					case Type::Short: element_size = 2; break;
+					case Type::Int: element_size = 4; break;
+					case Type::Long: element_size = 8; break;
+					case Type::Float: element_size = 4; break;
+					case Type::Double: element_size = 8; break;
+					case Type::Struct: element_size = 8; break;
+					default: element_size = 8; break;
+				}
+			}
+			
+			// Scale the offset: offset_scaled = offset * element_size
+			TempVar scaled_offset = var_counter.next();
+			BinaryOp scale_op{
+				.lhs = toTypedValue(rhsIrOperands),
+				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+				.result = scaled_offset,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(scale_op), binaryOperatorNode.get_token()));
+			
+			// ptr = ptr + scaled_offset (or ptr - scaled_offset)
+			TempVar result_var = var_counter.next();
+			BinaryOp ptr_arith_op{
+				.lhs = { lhsType, lhsSize, toIrValue(lhsIrOperands[2]) },
+				.rhs = { Type::Int, 32, scaled_offset },
+				.result = result_var,
+			};
+			
+			IrOpcode ptr_opcode = (op == "+=") ? IrOpcode::Add : IrOpcode::Subtract;
+			ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
+			
+			// Store result back to LHS (must be a variable)
+			if (std::holds_alternative<std::string_view>(lhsIrOperands[2])) {
+				AssignmentOp assign_op;
+				assign_op.result = std::get<std::string_view>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<std::string_view>(lhsIrOperands[2]) };
+				assign_op.rhs = { lhsType, lhsSize, result_var };
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+				AssignmentOp assign_op;
+				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]) };
+				assign_op.rhs = { lhsType, lhsSize, result_var };
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+			}
+			
+			// Return the pointer result
+			return { lhsType, lhsSize, result_var, 0ULL };
+		}
+
 		// Apply integer promotions and find common type
+		// BUT: Skip type promotion for pointer assignments (ptr = ptr_expr)
+		// Pointers should not be converted to common types
+		if (op == "=" && lhsSize == 64 && lhs_pointer_depth > 0) {
+			// This is a pointer assignment - no type conversions needed
+			// Just assign the RHS to the LHS directly
+			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_ARITH_DEBUG] Pointer assignment: lhsSize={}, pointer_depth={}", lhsSize, lhs_pointer_depth);
+			
+			// Get the assignment target (must be a variable)
+			if (std::holds_alternative<std::string_view>(lhsIrOperands[2])) {
+				TempVar result_var = var_counter.next();
+				AssignmentOp assign_op;
+				assign_op.result = std::get<std::string_view>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<std::string_view>(lhsIrOperands[2]) };
+				assign_op.rhs = toTypedValue(rhsIrOperands);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+				// Return the assigned value
+				return { lhsType, lhsSize, std::get<std::string_view>(lhsIrOperands[2]), 0ULL };
+			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+				TempVar result_var = var_counter.next();
+				AssignmentOp assign_op;
+				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]) };
+				assign_op.rhs = toTypedValue(rhsIrOperands);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+				// Return the assigned value
+				return { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]), 0ULL };
+			}
+		}
+		
 		Type commonType = get_common_type(lhsType, rhsType);
 
 		// Generate conversions if needed
@@ -6523,6 +6617,8 @@ private:
 		}
 		// Compound assignment operations (typed)
 		// For compound assignments, result is stored back in LHS variable
+		// NOTE: Pointer compound assignments (ptr += int, ptr -= int) are handled earlier,
+		// before type promotions, to avoid truncating the pointer
 		else if (op == "+=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
@@ -6905,13 +7001,13 @@ private:
 	
 	// Generate IR for __builtin_va_start intrinsic
 	std::vector<IrOperand> generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
-		// __builtin_va_start takes 2 arguments: pointer to va_list, and last fixed parameter
+		// __builtin_va_start takes 2 arguments: va_list (not pointer!), and last fixed parameter
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start requires exactly 2 arguments");
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		
-		// Get the first argument (va_list pointer)
+		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
 		auto arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
 		
@@ -6958,36 +7054,33 @@ private:
 		add_op.result = va_start_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
 		
-		// Store the computed address into the va_list pointer (first argument)
-		// The first argument is a pointer to va_list (&args), we need to dereference it and assign
+		// Assign the computed address DIRECTLY to the va_list variable (first argument)
+		// NOTE: The first argument is the va_list variable itself (e.g., 'args'),
+		// NOT a pointer to it. We should assign directly, not dereference first.
 		
-		// Get the va_list pointer value from arg0_ir[2]
-		// arg0_ir[2] is an IrOperand which could be a TempVar or std::string_view
-		std::variant<std::string_view, TempVar> va_list_ptr;
+		// Get the va_list variable from arg0_ir[2]
+		std::variant<std::string_view, TempVar> va_list_var;
 		if (std::holds_alternative<TempVar>(arg0_ir[2])) {
-			va_list_ptr = std::get<TempVar>(arg0_ir[2]);
+			va_list_var = std::get<TempVar>(arg0_ir[2]);
 		} else if (std::holds_alternative<std::string_view>(arg0_ir[2])) {
-			va_list_ptr = std::get<std::string_view>(arg0_ir[2]);
+			va_list_var = std::get<std::string_view>(arg0_ir[2]);
 		} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
-			va_list_ptr = std::string_view(std::get<std::string>(arg0_ir[2]));
+			va_list_var = std::string_view(std::get<std::string>(arg0_ir[2]));
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		
-		// Create a dereference of the va_list pointer to get the actual va_list variable
-		TempVar va_list_deref = var_counter.next();
-		DereferenceOp deref_op;
-		deref_op.result = va_list_deref;
-		deref_op.pointee_type = Type::UnsignedLongLong;  // va_list is char* which is a pointer (64-bit)
-		deref_op.pointee_size_in_bits = 64;
-		deref_op.pointer = va_list_ptr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), functionCallNode.called_from()));
-		
-		// Assign the va_start_addr to the dereferenced va_list
+		// Assign the va_start_addr directly to the va_list variable
+		// No dereference needed - va_list IS a pointer type (char*)
 		AssignmentOp assign_op;
-		assign_op.result = var_counter.next();  // unused but required
-		assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_deref};
+		if (std::holds_alternative<std::string_view>(va_list_var)) {
+			assign_op.result = std::get<std::string_view>(va_list_var);
+			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+		} else {
+			assign_op.result = std::get<TempVar>(va_list_var);
+			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+		}
 		assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 		
@@ -10369,10 +10462,23 @@ private:
 		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		size_t target_pointer_depth = target_type_node.pointer_depth();
 
 		// Get the source type
 		Type source_type = std::get<Type>(expr_operands[0]);
 		int source_size = std::get<int>(expr_operands[1]);
+
+		// Special handling for pointer casts (e.g., char* to double*, int* to void*, etc.)
+		// Pointer casts should NOT generate type conversions - they're just reinterpretations
+		if (target_pointer_depth > 0) {
+			// Target is a pointer type - this is a pointer cast, not a value conversion
+			// Pointer casts are bitcasts - the value stays the same, only the type changes
+			// Return the expression with the target pointer type (char64, int64, etc.)
+			// All pointers are 64-bit on x64, so size should be 64
+			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}", 
+				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
+			return { target_type, 64, expr_operands[2], 0ULL };
+		}
 
 		// For now, static_cast just changes the type metadata
 		// The actual value remains the same (this works for enum to int, int to enum, etc.)
