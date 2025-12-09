@@ -10807,8 +10807,11 @@ ParseResult Parser::parse_primary_expression()
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 			}
 
-			// Try to instantiate the template function
-			auto template_func_inst = try_instantiate_template(idenfifier_token.value(), arg_types);
+			// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
+			std::optional<ASTNode> template_func_inst;
+			if (current_linkage_ != Linkage::C) {
+				template_func_inst = try_instantiate_template(idenfifier_token.value(), arg_types);
+			}
 			
 			if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
 				const auto& func = template_func_inst->as<FunctionDeclarationNode>();
@@ -11140,8 +11143,10 @@ ParseResult Parser::parse_primary_expression()
 						return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 					}
 
-					// Try to instantiate the template function
-					template_func_inst = try_instantiate_template(idenfifier_token.value(), arg_types);
+					// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
+					if (current_linkage_ != Linkage::C) {
+						template_func_inst = try_instantiate_template(idenfifier_token.value(), arg_types);
+					}
 					
 					if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
 						const auto& func = template_func_inst->as<FunctionDeclarationNode>();
@@ -11694,7 +11699,11 @@ ParseResult Parser::parse_primary_expression()
 							if (arg_types.size() == args.size()) {
 								// If explicit template arguments were provided, use them directly
 								if (explicit_template_args.has_value()) {
-									auto instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *explicit_template_args);
+									// Skip template instantiation in extern "C" contexts - C has no templates
+									std::optional<ASTNode> instantiated_func;
+									if (current_linkage_ != Linkage::C) {
+										instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *explicit_template_args);
+									}
 									if (instantiated_func.has_value()) {
 										// Successfully instantiated template
 										const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
@@ -11708,8 +11717,11 @@ ParseResult Parser::parse_primary_expression()
 								} else {
 									// No explicit template arguments - try overload resolution first
 									if (all_overloads.empty()) {
-										// No overloads found - try template instantiation
-										auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+										// No overloads found - try template instantiation (skip in extern "C" - C has no templates)
+										std::optional<ASTNode> instantiated_func;
+										if (current_linkage_ != Linkage::C) {
+											instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+										}
 										if (instantiated_func.has_value()) {
 											// Successfully instantiated template
 											const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
@@ -11727,8 +11739,11 @@ ParseResult Parser::parse_primary_expression()
 										if (resolution_result.is_ambiguous) {
 											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 										} else if (!resolution_result.has_match) {
-											// No matching regular function found - try template instantiation with deduction
-											auto instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+											// No matching regular function found - try template instantiation with deduction (skip in extern "C" - C has no templates)
+											std::optional<ASTNode> instantiated_func;
+											if (current_linkage_ != Linkage::C) {
+												instantiated_func = try_instantiate_template(idenfifier_token.value(), arg_types);
+											}
 											if (instantiated_func.has_value()) {
 												// Successfully instantiated template
 												const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
@@ -17682,8 +17697,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				}
 
 				// Unexpected token after numeric literal
-				FLASH_LOG(Parser, Error, "parse_explicit_template_arguments unexpected token after numeric literal: '", 
-				          peek_token()->value(), "'");
+				FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments unexpected token after numeric literal: '", 
+				          peek_token()->value(), "' (might be comparison operator)");
 				restore_token_position(saved_pos);
 				last_failed_template_arg_parse_handle_ = saved_pos;
 				return std::nullopt;
@@ -17697,7 +17712,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
 			// Neither type nor expression parsing worked
-			FLASH_LOG(Parser, Error, "parse_explicit_template_arguments failed to parse type or expression");
+			FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments failed to parse type or expression (might be comparison operator)");
 			restore_token_position(saved_pos);
 			last_failed_template_arg_parse_handle_ = saved_pos;
 			return std::nullopt;
@@ -17763,7 +17778,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		}
 
 		// Unexpected token
-		FLASH_LOG(Parser, Error, "parse_explicit_template_arguments unexpected token: '", peek_token()->value(), "'");
+		FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments unexpected token: '", peek_token()->value(), "' (might be comparison operator)");
 		restore_token_position(saved_pos);
 		last_failed_template_arg_parse_handle_ = saved_pos;
 		return std::nullopt;
