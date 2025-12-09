@@ -6917,11 +6917,10 @@ private:
 	}
 	
 	// Generate IR for __builtin_va_arg intrinsic
-	// __builtin_va_arg(va_list, type) - reads the current value and advances the pointer
+	// __builtin_va_arg(va_list, type) - reads the current value and advances the appropriate offset
 	std::vector<IrOperand> generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
-		// __builtin_va_arg takes 1 argument: the va_list variable
-		// The second argument is the type, which comes from the macro: va_arg(args, int)
-		// After preprocessing: __builtin_va_arg(args, int) - but parser sees this as function call with 2 args
+		// __builtin_va_arg takes 2 arguments: va_list variable and type
+		// After preprocessing: __builtin_va_arg(args, int) - parser sees this as function call with 2 args
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_va_arg requires exactly 2 arguments (va_list and type)");
 			return {Type::Void, 0, 0ULL, 0ULL};
@@ -6929,14 +6928,44 @@ private:
 		
 		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
-		
-		// The va_list is a pointer (char*), so we need to:
-		// 1. Read the current value from *va_list
-		// 2. Advance va_list by 8 bytes (add 8 to it)
-		// 3. Return the value we read in step 1
-		
-		// First, get the va_list variable's IR representation
 		auto va_list_ir = visitExpressionNode(arg0.as<ExpressionNode>());
+		
+		// Get the second argument (type identifier) 
+		ASTNode arg1 = functionCallNode.arguments()[1];
+		
+		// Extract type information from the second argument
+		Type requested_type = Type::Int;
+		int requested_size = 32;
+		bool is_float_type = false;
+		
+		// The second argument is typically an IdentifierNode representing the type
+		if (std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
+			std::string_view type_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
+			
+			// Map type names to Type enum
+			if (type_name == "int") {
+				requested_type = Type::Int;
+				requested_size = 32;
+			} else if (type_name == "double") {
+				requested_type = Type::Double;
+				requested_size = 64;
+				is_float_type = true;
+			} else if (type_name == "float") {
+				requested_type = Type::Float;
+				requested_size = 32;
+				is_float_type = true;
+			} else if (type_name == "long") {
+				requested_type = Type::Long;
+				requested_size = 64;
+			} else if (type_name == "char") {
+				requested_type = Type::Char;
+				requested_size = 8;
+			} else {
+				// Default to int
+				requested_type = Type::Int;
+				requested_size = 32;
+			}
+		}
 		
 		// va_list_ir[2] contains the variable/temp identifier
 		std::variant<std::string_view, TempVar> va_list_var;
@@ -6951,52 +6980,152 @@ private:
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		
-		// The second argument should give us the type information
-		// For now, we'll read 8 bytes (pointer size on x64) and let the caller handle the cast
-		// TODO: Parse the type from arg1 to determine the actual size to read
-		
-		// Step 1: Dereference va_list to get the current pointer value
-		TempVar current_ptr = var_counter.next();
-		DereferenceOp deref_ptr_op;
-		deref_ptr_op.result = current_ptr;
-		deref_ptr_op.pointee_type = Type::UnsignedLongLong;  // va_list is char*, a 64-bit pointer
-		deref_ptr_op.pointee_size_in_bits = 64;
-		deref_ptr_op.pointer = va_list_var;
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
-		
-		// Step 2: Read the value at the current pointer
-		// We need to cast the pointer to the desired type
-		// For now, assume int (32-bit) - TODO: get actual type from arg1
-		TempVar value = var_counter.next();
-		DereferenceOp deref_value_op;
-		deref_value_op.result = value;
-		deref_value_op.pointee_type = Type::Int;  // TODO: get from arg1
-		deref_value_op.pointee_size_in_bits = 32;  // TODO: get from arg1
-		deref_value_op.pointer = current_ptr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
-		
-		// Step 3: Advance va_list by 8 bytes
-		TempVar next_ptr = var_counter.next();
-		BinaryOp add_op;
-		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
-		add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
-		add_op.result = next_ptr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
-		
-		// Step 4: Store the updated pointer back to va_list
-		AssignmentOp assign_op;
-		assign_op.result = var_counter.next();  // unused but required
-		// Construct lhs TypedValue properly from variant
-		if (std::holds_alternative<TempVar>(va_list_var)) {
-			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+		if (context_->isItaniumMangling()) {
+			// Linux/System V AMD64 ABI: Use va_list structure
+			// va_list points to a structure with:
+			//   unsigned int gp_offset;      (offset 0)
+			//   unsigned int fp_offset;      (offset 4)
+			//   void *overflow_arg_area;     (offset 8)
+			//   void *reg_save_area;         (offset 16)
+			
+			// Step 1: Dereference va_list to get pointer to va_list structure
+			TempVar va_list_struct_ptr = var_counter.next();
+			DereferenceOp deref_va_list;
+			deref_va_list.result = va_list_struct_ptr;
+			deref_va_list.pointee_type = Type::UnsignedLongLong;
+			deref_va_list.pointee_size_in_bits = 64;
+			deref_va_list.pointer = va_list_var;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_va_list), functionCallNode.called_from()));
+			
+			// Step 2: Read the appropriate offset (gp_offset for ints, fp_offset for floats)
+			TempVar offset_field_addr = var_counter.next();
+			if (is_float_type) {
+				// fp_offset is at offset 4
+				BinaryOp fp_offset_addr;
+				fp_offset_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				fp_offset_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
+				fp_offset_addr.result = offset_field_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_addr), functionCallNode.called_from()));
+			} else {
+				// gp_offset is at offset 0, so address is the same as struct pointer
+				AssignmentOp gp_offset_addr;
+				gp_offset_addr.result = offset_field_addr;
+				gp_offset_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, offset_field_addr};
+				gp_offset_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(gp_offset_addr), functionCallNode.called_from()));
+			}
+			
+			// Step 3: Load current offset value
+			TempVar current_offset = var_counter.next();
+			DereferenceOp load_offset;
+			load_offset.result = current_offset;
+			load_offset.pointee_type = Type::UnsignedInt;
+			load_offset.pointee_size_in_bits = 32;
+			load_offset.pointer = offset_field_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), functionCallNode.called_from()));
+			
+			// Step 4: Load reg_save_area pointer (at offset 16)
+			TempVar reg_save_area_field_addr = var_counter.next();
+			BinaryOp reg_save_addr;
+			reg_save_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+			reg_save_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, 16ULL};
+			reg_save_addr.result = reg_save_area_field_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), functionCallNode.called_from()));
+			
+			TempVar reg_save_area_ptr = var_counter.next();
+			DereferenceOp load_reg_save_ptr;
+			load_reg_save_ptr.result = reg_save_area_ptr;
+			load_reg_save_ptr.pointee_type = Type::UnsignedLongLong;
+			load_reg_save_ptr.pointee_size_in_bits = 64;
+			load_reg_save_ptr.pointer = reg_save_area_field_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
+			
+			// Step 5: Compute address: reg_save_area + current_offset
+			TempVar arg_addr = var_counter.next();
+			BinaryOp compute_addr;
+			compute_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, reg_save_area_ptr};
+			// Need to convert offset from uint32 to uint64 for addition
+			TempVar offset_64 = var_counter.next();
+			AssignmentOp convert_offset;
+			convert_offset.result = offset_64;
+			convert_offset.lhs = TypedValue{Type::UnsignedLongLong, 64, offset_64};
+			convert_offset.rhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(convert_offset), functionCallNode.called_from()));
+			
+			compute_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, offset_64};
+			compute_addr.result = arg_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), functionCallNode.called_from()));
+			
+			// Step 6: Read the value at arg_addr
+			TempVar value = var_counter.next();
+			DereferenceOp read_value;
+			read_value.result = value;
+			read_value.pointee_type = requested_type;
+			read_value.pointee_size_in_bits = requested_size;
+			read_value.pointer = arg_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_value), functionCallNode.called_from()));
+			
+			// Step 7: Increment the offset by 8 bytes (or 16 for floats in XMM regs)
+			TempVar new_offset = var_counter.next();
+			BinaryOp increment_offset;
+			increment_offset.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+			increment_offset.rhs = TypedValue{Type::UnsignedInt, 32, is_float_type ? 16ULL : 8ULL};
+			increment_offset.result = new_offset;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
+			
+			// Step 8: Store updated offset back to the structure
+			DereferenceStoreOp store_offset;
+			store_offset.pointer = offset_field_addr;
+			store_offset.value = TypedValue{Type::UnsignedInt, 32, new_offset};
+			store_offset.pointee_type = Type::UnsignedInt;
+			store_offset.pointee_size_in_bits = 32;
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
+			
+			return {requested_type, requested_size, value};
+			
 		} else {
-			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+			// Windows/MSVC ABI: Simple pointer-based approach
+			// va_list is a char*, advance by 8 bytes
+			
+			// Step 1: Dereference va_list to get the current pointer value
+			TempVar current_ptr = var_counter.next();
+			DereferenceOp deref_ptr_op;
+			deref_ptr_op.result = current_ptr;
+			deref_ptr_op.pointee_type = Type::UnsignedLongLong;
+			deref_ptr_op.pointee_size_in_bits = 64;
+			deref_ptr_op.pointer = va_list_var;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
+			
+			// Step 2: Read the value at the current pointer
+			TempVar value = var_counter.next();
+			DereferenceOp deref_value_op;
+			deref_value_op.result = value;
+			deref_value_op.pointee_type = requested_type;
+			deref_value_op.pointee_size_in_bits = requested_size;
+			deref_value_op.pointer = current_ptr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
+			
+			// Step 3: Advance va_list by 8 bytes
+			TempVar next_ptr = var_counter.next();
+			BinaryOp add_op;
+			add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
+			add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+			add_op.result = next_ptr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
+			
+			// Step 4: Store the updated pointer back to va_list
+			AssignmentOp assign_op;
+			assign_op.result = var_counter.next();  // unused but required
+			if (std::holds_alternative<TempVar>(va_list_var)) {
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+			} else {
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+			}
+			assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, next_ptr};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+			
+			return {requested_type, requested_size, value};
 		}
-		assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, next_ptr};
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
-		
-		// Return the value we read
-		return {Type::Int, 32, value};  // TODO: return actual type from arg1
 	}
 	
 	// Generate IR for __builtin_va_start intrinsic
@@ -7026,28 +7155,130 @@ private:
 		
 		// Platform-specific varargs implementation:
 		// - Windows (MSVC mangling): variadic args on stack, use &last_param + 8
-		// - Linux (Itanium mangling): variadic args in registers, use register save area
-		// Note: The actual register save area address is computed by IRConverter
-		// during code generation, as it's platform-specific (template parameter)
-		// Here we just generate IR that will be handled appropriately
-		
-		TempVar va_start_addr;
+		// - Linux (Itanium mangling): variadic args in registers, initialize va_list structure
 		
 		if (context_->isItaniumMangling()) {
-			// Linux/System V AMD64 ABI: Use register save area
-			// Generate AddressOf for a special symbol that IRConverter will recognize
-			// and replace with the actual register save area address
-			va_start_addr = var_counter.next();
+			// Linux/System V AMD64 ABI: Initialize va_list structure
+			// The structure has 4 fields:
+			//   unsigned int gp_offset;       // offset 0: Current offset in GP register save area (8 for first vararg, since RDI is first fixed param)
+			//   unsigned int fp_offset;       // offset 4: Current offset in FP register save area (48, start of XMM area)
+			//   void *overflow_arg_area;      // offset 8: Stack overflow area (RBP + 16, after return address and saved RBP)
+			//   void *reg_save_area;          // offset 16: Pointer to register save area base
 			
-			AddressOfOp addr_op;
-			addr_op.result = va_start_addr;
-			addr_op.pointee_type = Type::Char;  // va_list is char*
-			addr_op.pointee_size_in_bits = 8;
-			addr_op.operand = std::string("__varargs_reg_save_area__");  // Special marker
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
+			// Get address of the va_list structure
+			TempVar va_list_struct_addr = var_counter.next();
+			AddressOfOp struct_addr_op;
+			struct_addr_op.result = va_list_struct_addr;
+			struct_addr_op.pointee_type = Type::Char;
+			struct_addr_op.pointee_size_in_bits = 8;
+			struct_addr_op.operand = std::string("__varargs_va_list_struct__");
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(struct_addr_op), functionCallNode.called_from()));
+			
+			// Get address of the register save area
+			TempVar reg_save_addr = var_counter.next();
+			AddressOfOp reg_addr_op;
+			reg_addr_op.result = reg_save_addr;
+			reg_addr_op.pointee_type = Type::Char;
+			reg_addr_op.pointee_size_in_bits = 8;
+			reg_addr_op.operand = std::string("__varargs_reg_save_area__");
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(reg_addr_op), functionCallNode.called_from()));
+			
+			// Initialize gp_offset field (offset 0) to 8 (skip RDI which holds first fixed param)
+			// Store 32-bit value at [va_list_struct + 0]
+			TempVar gp_offset_addr = va_list_struct_addr;  // offset 0, so same as base
+			TempVar gp_offset_val = var_counter.next();
+			AssignmentOp gp_assign;
+			gp_assign.result = gp_offset_val;
+			gp_assign.lhs = TypedValue{Type::UnsignedInt, 32, gp_offset_val};
+			gp_assign.rhs = TypedValue{Type::UnsignedInt, 32, 8ULL};  // Start at offset 8 (skip RDI)
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(gp_assign), functionCallNode.called_from()));
+			
+			DereferenceStoreOp gp_store;
+			gp_store.pointer = gp_offset_addr;
+			gp_store.value = TypedValue{Type::UnsignedInt, 32, gp_offset_val};
+			gp_store.pointee_type = Type::UnsignedInt;
+			gp_store.pointee_size_in_bits = 32;
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(gp_store), functionCallNode.called_from()));
+			
+			// Initialize fp_offset field (offset 4) to 48 (start of XMM register area)
+			TempVar fp_offset_addr = var_counter.next();
+			BinaryOp fp_addr_add;
+			fp_addr_add.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_addr};
+			fp_addr_add.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
+			fp_addr_add.result = fp_offset_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_addr_add), functionCallNode.called_from()));
+			
+			TempVar fp_offset_val = var_counter.next();
+			AssignmentOp fp_assign;
+			fp_assign.result = fp_offset_val;
+			fp_assign.lhs = TypedValue{Type::UnsignedInt, 32, fp_offset_val};
+			fp_assign.rhs = TypedValue{Type::UnsignedInt, 32, 48ULL};  // Start of XMM area
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(fp_assign), functionCallNode.called_from()));
+			
+			DereferenceStoreOp fp_store;
+			fp_store.pointer = fp_offset_addr;
+			fp_store.value = TypedValue{Type::UnsignedInt, 32, fp_offset_val};
+			fp_store.pointee_type = Type::UnsignedInt;
+			fp_store.pointee_size_in_bits = 32;
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(fp_store), functionCallNode.called_from()));
+			
+			// Initialize overflow_arg_area field (offset 8) - not used for register args, set to null
+			TempVar overflow_addr = var_counter.next();
+			BinaryOp overflow_addr_add;
+			overflow_addr_add.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_addr};
+			overflow_addr_add.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+			overflow_addr_add.result = overflow_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_add), functionCallNode.called_from()));
+			
+			DereferenceStoreOp overflow_store;
+			overflow_store.pointer = overflow_addr;
+			overflow_store.value = TypedValue{Type::UnsignedLongLong, 64, 0ULL};  // NULL for now
+			overflow_store.pointee_type = Type::UnsignedLongLong;
+			overflow_store.pointee_size_in_bits = 64;
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(overflow_store), functionCallNode.called_from()));
+			
+			// Initialize reg_save_area field (offset 16) to point to the register save area
+			TempVar reg_save_area_field_addr = var_counter.next();
+			BinaryOp reg_field_addr_add;
+			reg_field_addr_add.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_addr};
+			reg_field_addr_add.rhs = TypedValue{Type::UnsignedLongLong, 64, 16ULL};
+			reg_field_addr_add.result = reg_save_area_field_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_field_addr_add), functionCallNode.called_from()));
+			
+			DereferenceStoreOp reg_save_store;
+			reg_save_store.pointer = reg_save_area_field_addr;
+			reg_save_store.value = TypedValue{Type::UnsignedLongLong, 64, reg_save_addr};
+			reg_save_store.pointee_type = Type::UnsignedLongLong;
+			reg_save_store.pointee_size_in_bits = 64;
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(reg_save_store), functionCallNode.called_from()));
+			
+			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
+			// Get the va_list variable from arg0_ir[2]
+			std::variant<std::string_view, TempVar> va_list_var;
+			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
+				va_list_var = std::get<TempVar>(arg0_ir[2]);
+			} else if (std::holds_alternative<std::string_view>(arg0_ir[2])) {
+				va_list_var = std::get<std::string_view>(arg0_ir[2]);
+			} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
+				va_list_var = std::string_view(std::get<std::string>(arg0_ir[2]));
+			} else {
+				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
+				return {Type::Void, 0, 0ULL, 0ULL};
+			}
+			
+			AssignmentOp final_assign;
+			if (std::holds_alternative<std::string_view>(va_list_var)) {
+				final_assign.result = std::get<std::string_view>(va_list_var);
+				final_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+			} else {
+				final_assign.result = std::get<TempVar>(va_list_var);
+				final_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+			}
+			final_assign.rhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_addr};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(final_assign), functionCallNode.called_from()));
+			
 		} else {
 			// Windows/MSVC ABI: Compute &last_param + 8
-			// This is: &last_param + 8 (parameters are 8-byte aligned on x64)
 			TempVar last_param_addr = var_counter.next();
 			
 			// Generate AddressOf IR for the last parameter
@@ -7068,44 +7299,35 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
 			
 			// Add 8 bytes (64 bits) to get to the next parameter slot
-			// On x64, all parameters are aligned to 8-byte boundaries
-			va_start_addr = var_counter.next();
+			TempVar va_start_addr = var_counter.next();
 			BinaryOp add_op;
 			add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, last_param_addr};
 			add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
 			add_op.result = va_start_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
+			
+			// Assign to va_list variable
+			std::variant<std::string_view, TempVar> va_list_var;
+			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
+				va_list_var = std::get<TempVar>(arg0_ir[2]);
+			} else if (std::holds_alternative<std::string_view>(arg0_ir[2])) {
+				va_list_var = std::get<std::string_view>(arg0_ir[2]);
+			} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
+				va_list_var = std::string_view(std::get<std::string>(arg0_ir[2]));
+			} else {
+				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
+				return {Type::Void, 0, 0ULL, 0ULL};
+			}
+			
+			AssignmentOp assign_op;
+			if (std::holds_alternative<std::string_view>(va_list_var)) {
+				assign_op.result = std::get<std::string_view>(va_list_var);
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+			} else {
+			}
+			assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 		}
-		
-		// Assign the computed address DIRECTLY to the va_list variable (first argument)
-		// NOTE: The first argument is the va_list variable itself (e.g., 'args'),
-		// NOT a pointer to it. We should assign directly, not dereference first.
-		
-		// Get the va_list variable from arg0_ir[2]
-		std::variant<std::string_view, TempVar> va_list_var;
-		if (std::holds_alternative<TempVar>(arg0_ir[2])) {
-			va_list_var = std::get<TempVar>(arg0_ir[2]);
-		} else if (std::holds_alternative<std::string_view>(arg0_ir[2])) {
-			va_list_var = std::get<std::string_view>(arg0_ir[2]);
-		} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
-			va_list_var = std::string_view(std::get<std::string>(arg0_ir[2]));
-		} else {
-			FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
-			return {Type::Void, 0, 0ULL, 0ULL};
-		}
-		
-		// Assign the va_start_addr directly to the va_list variable
-		// No dereference needed - va_list IS a pointer type (char*)
-		AssignmentOp assign_op;
-		if (std::holds_alternative<std::string_view>(va_list_var)) {
-			assign_op.result = std::get<std::string_view>(va_list_var);
-			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
-		} else {
-			assign_op.result = std::get<TempVar>(va_list_var);
-			assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
-		}
-		assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 		
 		// __builtin_va_start returns void
 		return {Type::Void, 0, 0ULL, 0ULL};

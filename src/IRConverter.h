@@ -7285,57 +7285,74 @@ private:
 			}
 		}
 		
-		// For Linux (System V AMD64) variadic functions: Create register save area
+		// For Linux (System V AMD64) variadic functions: Create register save area and va_list structure
 		// On System V AMD64, variadic arguments are passed in registers, so we need to
-		// save all potential variadic argument registers to a register save area that
-		// va_start can reference
+		// save all potential variadic argument registers to a register save area and
+		// create a va_list structure to track offsets
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (is_variadic) {
 				// System V AMD64 ABI register save area layout:
-				// For this simplified va_list implementation (char* instead of struct),
-				// we need to choose a layout that works with the simple pointer arithmetic
-				// in the va_arg macro: (*(type*)((ap += 8) - 8))
+				// Integer registers: RDI, RSI, RDX, RCX, R8, R9  (6 registers * 8 bytes = 48 bytes)
+				// Float registers: XMM0-XMM7  (8 registers * 16 bytes = 128 bytes, need full 16 for alignment)
+				// Total register save area: 176 bytes
 				//
-				// Layout chosen: Floats FIRST, then integers (skipping first fixed int param)
-				//   Float registers: XMM0-XMM7  (8 registers * 8 bytes = 64 bytes, saving only low 64 bits)
-				//   Integer registers: RSI, RDX, RCX, R8, R9  (5 registers * 8 bytes = 40 bytes, skip RDI)
-				//   Total: 104 bytes
-				//
-				// This layout prioritizes float varargs (XMM0 at offset 0).
-				// Note: For integer varargs, va_start would need to point to offset 64,
-				// but the current simple implementation doesn't support that.
-				//
-				// Rationale: The problem statement specifically mentions "doubles and floating
-				// points are problematic", suggesting float varargs are the primary concern.
-				//
-				// TODO: Implement proper System V va_list struct for full int/float support
+				// Additionally, we need a va_list structure (compatible with System V AMD64):
+				// struct __va_list_tag {
+				//     unsigned int gp_offset;       // 4 bytes - offset into integer registers (0-48)
+				//     unsigned int fp_offset;       // 4 bytes - offset into float registers (48-176)  
+				//     void *overflow_arg_area;      // 8 bytes - stack overflow area
+				//     void *reg_save_area;          // 8 bytes - pointer to register save area
+				// };  // Total: 24 bytes
 				
-				// Calculate offset for register save area
-				constexpr int FLOAT_REG_SIZE = 8 * 8;  // 8 XMM registers * 8 bytes (double precision)
-				constexpr int INT_REG_SIZE = 5 * 8;     // 5 integer registers * 8 bytes (skip RDI)
-				constexpr int REG_SAVE_AREA_SIZE = FLOAT_REG_SIZE + INT_REG_SIZE;
+				// Calculate layout offsets
+				constexpr int INT_REG_AREA_SIZE = 6 * 8;      // 48 bytes for integer registers
+				constexpr int FLOAT_REG_AREA_SIZE = 8 * 16;   // 128 bytes for XMM registers  
+				constexpr int REG_SAVE_AREA_SIZE = INT_REG_AREA_SIZE + FLOAT_REG_AREA_SIZE;  // 176 bytes
+				constexpr int VA_LIST_STRUCT_SIZE = 24;        // Size of va_list structure
+				constexpr int TOTAL_VA_AREA_SIZE = REG_SAVE_AREA_SIZE + VA_LIST_STRUCT_SIZE;  // 200 bytes
 				
-				// The register save area starts after all other stack variables
+				// Allocate space: register save area first, then va_list structure
 				int32_t reg_save_area_base = variable_scopes.back().scope_stack_space - REG_SAVE_AREA_SIZE;
+				int32_t va_list_struct_base = reg_save_area_base - VA_LIST_STRUCT_SIZE;
 				current_function_varargs_reg_save_offset_ = reg_save_area_base;
 				
-				// Update the scope stack space to include the register save area
-				variable_scopes.back().scope_stack_space = reg_save_area_base;
+				// Update the scope stack space to include both areas
+				variable_scopes.back().scope_stack_space = va_list_struct_base;
 				
-				// Save float registers FIRST: XMM0-XMM7 at offsets 0-63
+				// Save all integer registers: RDI, RSI, RDX, RCX, R8, R9 at offsets 0-47
+				// (RDI is the first fixed param but we save it for completeness)
+				const X64Register int_regs[] = {
+					X64Register::RDI,  // Offset 0
+					X64Register::RSI,  // Offset 8
+					X64Register::RDX,  // Offset 16
+					X64Register::RCX,  // Offset 24
+					X64Register::R8,   // Offset 32
+					X64Register::R9    // Offset 40
+				};
+				
+				for (size_t i = 0; i < 6; ++i) {
+					int32_t offset = reg_save_area_base + static_cast<int32_t>(i * 8);
+					emitMovToFrameSized(
+						SizedRegister{int_regs[i], 64, false},  // source: 64-bit register
+						SizedStackSlot{offset, 64, false}  // dest: 64-bit stack slot
+					);
+				}
+				
+				// Save all float registers: XMM0-XMM7 at offsets 48-175
+				// Use full 16 bytes per register for proper alignment
 				for (size_t i = 0; i < 8; ++i) {
 					X64Register xmm_reg = static_cast<X64Register>(static_cast<int>(X64Register::XMM0) + i);
-					int32_t offset = reg_save_area_base + static_cast<int32_t>(i * 8);
+					int32_t offset = reg_save_area_base + INT_REG_AREA_SIZE + static_cast<int32_t>(i * 16);
 					
-					// Use movsd (store scalar double precision) to save low 64 bits
+					// Use movdqu (unaligned move) to save full 128 bits
 					uint8_t xmm_idx = xmm_modrm_bits(xmm_reg);
 					
-					textSectionData.push_back(0xF2);  // movsd prefix
+					textSectionData.push_back(0xF3);  // movdqu prefix
 					if (xmm_idx >= 8) {
 						textSectionData.push_back(0x44);  // REX.R for XMM8-15
 					}
 					textSectionData.push_back(0x0F);
-					textSectionData.push_back(0x11);  // movsd [mem], xmm
+					textSectionData.push_back(0x7F);  // movdqu [mem], xmm
 					
 					// Encode [RBP + offset]
 					if (offset >= -128 && offset <= 127) {
@@ -7352,27 +7369,9 @@ private:
 					}
 				}
 				
-				// Save integer registers SECOND: RSI, RDX, RCX, R8, R9 at offsets 64-103
-				// Skip RDI as it contains the first fixed parameter
-				const X64Register int_regs[] = {
-					X64Register::RSI,  // Offset 64 (first variadic int arg)
-					X64Register::RDX,  // Offset 72
-					X64Register::RCX,  // Offset 80
-					X64Register::R8,   // Offset 88
-					X64Register::R9    // Offset 96
-				};
-				
-				for (size_t i = 0; i < 5; ++i) {
-					int32_t offset = reg_save_area_base + FLOAT_REG_SIZE + static_cast<int32_t>(i * 8);
-					emitMovToFrameSized(
-						SizedRegister{int_regs[i], 64, false},  // source: 64-bit register
-						SizedStackSlot{offset, 64, false}  // dest: 64-bit stack slot
-					);
-				}
-				
-				// Register the special variable "__varargs_reg_save_area__" in the scope
-				// This allows AddressOf to find it and return the register save area address
-				// The offset points to the base of the register save area (where integer regs are saved)
+				// Register special variables for va_list structure and register save area
+				// The va_list structure fields will be initialized by __builtin_va_start
+				variable_scopes.back().identifier_offset["__varargs_va_list_struct__"] = va_list_struct_base;
 				variable_scopes.back().identifier_offset["__varargs_reg_save_area__"] = reg_save_area_base;
 			}
 		}
