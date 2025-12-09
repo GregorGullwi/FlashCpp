@@ -5204,21 +5204,8 @@ private:
 							X64Register temp_gpr = allocateRegisterWithSpilling();
 							emitMovImm64(temp_gpr, bits);
 							
-							// movq xmm, r64
-							textSectionData.push_back(0x66);
-							uint8_t xmm_idx = xmm_modrm_bits(temp_xmm);
-							uint8_t rex_movq = 0x48;  // REX.W
-							if (xmm_idx >= 8) {
-								rex_movq |= 0x04; // REX.R for XMM8-XMM15 destination
-							}
-							if (static_cast<uint8_t>(temp_gpr) >= static_cast<uint8_t>(X64Register::R8)) {
-								rex_movq |= 0x01; // REX.B for source GPR
-							}
-							textSectionData.push_back(rex_movq);
-							textSectionData.push_back(0x0F);
-							textSectionData.push_back(0x6E);
-							uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
-							textSectionData.push_back(modrm_movq);
+							// Move from GPR to XMM register
+							emitMovqGprToXmm(temp_gpr, temp_xmm);
 							
 							regAlloc.release(temp_gpr);
 						} else if (std::holds_alternative<TempVar>(arg.value)) {
