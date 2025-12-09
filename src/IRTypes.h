@@ -348,7 +348,11 @@ struct TempVar
 		return TempVar(++var_number);
 	}
 	std::string_view name() const {
-		// temp_name_array is 0-indexed, so subtract 1
+		// temp_name_array is 0-indexed, indexed by var_number - 1
+		// var_number=0 is a sentinel (invalid/uninitialized), return empty string
+		if (var_number == 0) {
+			return ""; // Sentinel value - no valid name
+		}
 		return temp_name_array[var_number - 1];
 	}
 	size_t var_number = 1;  // 1-based: first temp var is number 1

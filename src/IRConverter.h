@@ -9327,14 +9327,35 @@ private:
 			auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
 			if (it != variable_scopes.back().identifier_offset.end()) {
 				lhs_offset = it->second;
+			} else {
+				FLASH_LOG(Codegen, Error, "String LHS variable '", lhs_var_name, "' not found in identifier_offset map");
 			}
 		} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
 			TempVar lhs_var = std::get<TempVar>(op.lhs.value);
+			// TempVar(0) is a sentinel value indicating an invalid/uninitialized temp variable
+			// This can happen with template functions that have reference parameters
+			// In this case, the assignment should not have been generated - report error and skip
+			if (lhs_var.var_number == 0) {
+				FLASH_LOG(Codegen, Error, "Invalid assignment to sentinel TempVar(0) - likely a code generation bug with template reference parameters");
+				return;  // Skip this invalid assignment
+			}
 			lhs_offset = getStackOffsetFromTempVar(lhs_var);
+			if (lhs_offset == -1) {
+				FLASH_LOG(Codegen, Error, "TempVar LHS with var_number=", lhs_var.var_number, " (name='", lhs_var.name(), "') not found");
+			}
+		} else if (std::holds_alternative<unsigned long long>(op.lhs.value)) {
+			FLASH_LOG(Codegen, Error, "LHS is an immediate value (unsigned long long) - invalid for assignment");
+			return;
+		} else if (std::holds_alternative<double>(op.lhs.value)) {
+			FLASH_LOG(Codegen, Error, "LHS is an immediate value (double) - invalid for assignment");
+			return;
+		} else {
+			FLASH_LOG(Codegen, Error, "LHS value has completely unexpected type in variant");
+			return;
 		}
 
 		if (lhs_offset == -1) {
-			assert(false && "LHS variable not found in assignment");
+			FLASH_LOG(Codegen, Error, "LHS variable not found in assignment - skipping");
 			return;
 		}
 
@@ -9393,16 +9414,66 @@ private:
 		}
 		
 		// Store source register to LHS stack location
-		if (is_floating_point_type(rhs_type)) {
-			bool is_float = (rhs_type == Type::Float);
-			emitFloatMovFromFrame(source_reg, lhs_offset, is_float);
+		// Check if LHS is a reference parameter that needs dereferencing
+		auto ref_it = reference_stack_info_.find(lhs_offset);
+		if (ref_it != reference_stack_info_.end()) {
+			// LHS is a reference - need to dereference it before storing
+			// First, load the pointer (reference address) into a temporary register
+			X64Register ptr_reg = allocateRegisterWithSpilling();
+			auto load_ptr = generatePtrMovFromFrame(ptr_reg, lhs_offset);
+			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+			
+			// Now store the value to the address pointed to by ptr_reg
+			int value_size_bits = ref_it->second.value_size_bits;
+			int size_bytes = value_size_bits / 8;
+			
+			if (is_floating_point_type(rhs_type)) {
+				// For floating-point, manually generate SSE store instruction
+				// Format: F3/F2 [REX] 0F 11 /r - movss/movsd [reg], xmm
+				bool is_float = (rhs_type == Type::Float);
+				uint8_t xmm_reg = xmm_modrm_bits(source_reg);
+				uint8_t ptr_reg_bits = static_cast<uint8_t>(ptr_reg) & 0x07;
+				bool ptr_needs_rex = static_cast<uint8_t>(ptr_reg) >= 8;
+				bool xmm_needs_rex = xmm_reg >= 8;
+				
+				// Prefix: F3 for movss, F2 for movsd
+				textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+				
+				// REX prefix if needed
+				if (xmm_needs_rex || ptr_needs_rex) {
+					uint8_t rex = 0x40;
+					if (xmm_needs_rex) rex |= 0x04;  // REX.R
+					if (ptr_needs_rex) rex |= 0x01;  // REX.B
+					textSectionData.push_back(rex);
+				}
+				
+				// Opcode: 0F 11
+				textSectionData.push_back(0x0F);
+				textSectionData.push_back(0x11);
+				
+				// ModR/M: 00 xmm ptr_reg (indirect addressing, no displacement)
+				uint8_t modrm = 0x00 + ((xmm_reg & 0x07) << 3) + ptr_reg_bits;
+				textSectionData.push_back(modrm);
+			} else {
+				// For integer types, use the existing emitStoreToMemory helper
+				emitStoreToMemory(textSectionData, source_reg, ptr_reg, 0, size_bytes);
+			}
+			
+			// Release the pointer register
+			regAlloc.release(ptr_reg);
 		} else {
-			emitMovToFrameSized(
-				SizedRegister{source_reg, 64, false},  // source: 64-bit register
-				SizedStackSlot{lhs_offset, op.lhs.size_in_bits, isSignedType(lhs_type)}  // dest: sized stack slot
-			);
-			// Clear any stale register associations for this stack offset
-			regAlloc.clearStackVariableAssociations(lhs_offset);
+			// Normal (non-reference) assignment - store directly to stack location
+			if (is_floating_point_type(rhs_type)) {
+				bool is_float = (rhs_type == Type::Float);
+				emitFloatMovFromFrame(source_reg, lhs_offset, is_float);
+			} else {
+				emitMovToFrameSized(
+					SizedRegister{source_reg, 64, false},  // source: 64-bit register
+					SizedStackSlot{lhs_offset, op.lhs.size_in_bits, isSignedType(lhs_type)}  // dest: sized stack slot
+				);
+				// Clear any stale register associations for this stack offset
+				regAlloc.clearStackVariableAssociations(lhs_offset);
+			}
 		}
 	}
 
