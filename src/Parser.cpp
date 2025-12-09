@@ -9469,6 +9469,59 @@ ParseResult Parser::parse_unary_expression()
 		}
 	}
 
+	// Check for '__builtin_va_arg' intrinsic
+	// Special handling needed because second argument is a type, not an expression
+	// Syntax: __builtin_va_arg(va_list_var, type)
+	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_va_arg"sv) {
+		Token builtin_token = *current_token_;
+		consume_token(); // consume '__builtin_va_arg'
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after '__builtin_va_arg'", *current_token_);
+		}
+
+		// Parse first argument: va_list variable (expression)
+		ParseResult first_arg_result = parse_expression();
+		if (first_arg_result.is_error()) {
+			return ParseResult::error("Expected va_list variable as first argument to __builtin_va_arg", *current_token_);
+		}
+
+		if (!consume_punctuator(","sv)) {
+			return ParseResult::error("Expected ',' after first argument to __builtin_va_arg", *current_token_);
+		}
+
+		// Parse second argument: type specifier
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			return ParseResult::error("Expected type as second argument to __builtin_va_arg", *current_token_);
+		}
+
+		if (!consume_punctuator(")"sv)) {
+			return ParseResult::error("Expected ')' after __builtin_va_arg arguments", *current_token_);
+		}
+
+		// Create a function call node with both arguments
+		// The builtin_va_arg function was registered during initialization
+		auto builtin_symbol = gSymbolTable.lookup("__builtin_va_arg");
+		if (!builtin_symbol.has_value()) {
+			return ParseResult::error("__builtin_va_arg not found in symbol table", builtin_token);
+		}
+
+		// The symbol contains a FunctionDeclarationNode, get its underlying DeclarationNode
+		const FunctionDeclarationNode& func_decl_node = builtin_symbol->as<FunctionDeclarationNode>();
+		const DeclarationNode& func_decl = func_decl_node.decl_node();
+		
+		// Create arguments vector with both the va_list expression and the type
+		ChunkedVector<ASTNode> args;
+		args.push_back(*first_arg_result.node());
+		args.push_back(*type_result.node());  // Pass type node as second argument
+		
+		auto builtin_call = emplace_node<ExpressionNode>(
+			FunctionCallNode(const_cast<DeclarationNode&>(func_decl), std::move(args), builtin_token));
+		
+		return ParseResult::success(builtin_call);
+	}
+
 	// Check if the current token is a unary operator
 	if (current_token_->type() == Token::Type::Operator) {
 		std::string_view op = current_token_->value();
