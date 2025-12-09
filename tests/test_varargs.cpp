@@ -2,10 +2,9 @@
 
 extern "C" {
    typedef char* va_list;
+   extern int printf(const char* fmt, ...);
    
    #include "test_varargs_helper.c"
-   
-	extern int printf(const char* fmt, ...);
 }
 
 int main() {
