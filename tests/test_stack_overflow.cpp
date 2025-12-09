@@ -1,11 +1,5 @@
 // Test that stack overflow logic correctly handles mixed int/float types
-extern "C" double test_mixed_overflow(
-    int i1, double d1, int i2, double d2,
-    int i3, double d3, int i4, double d4,
-    int i5, double d5, int i6, double d6,
-    int i7, double d7, int i8, double d8,
-    int i9, double d9
-);
+#include "test_stack_overflow_helper.c"
 
 extern "C" int main() {
     // Call function with many mixed parameters
