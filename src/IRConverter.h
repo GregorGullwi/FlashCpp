@@ -7247,28 +7247,47 @@ private:
 					auto temp_var_name = return_var.name();
 					const StackVariableScope& current_scope = variable_scopes.back();
 					auto it = current_scope.identifier_offset.find(temp_var_name);
+					
+					// Check if return type is float/double
+					bool is_float_return = ret_op.return_type.has_value() && 
+					                        is_floating_point_type(ret_op.return_type.value());
+					
 					if (it != current_scope.identifier_offset.end()) {
 						int var_offset = it->second;
-						if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
-							if (reg_var.value() != X64Register::RAX) {
-								auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
-								for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
+						if (is_float_return) {
+							// Load floating-point value into XMM0
+							bool is_float = (ret_op.return_size == 32);
+							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+						} else {
+							// Integer/pointer return
+							if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+								if (reg_var.value() != X64Register::RAX) {
+									auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
+									for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
+									}
+									logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
+									textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+								} else {
 								}
-								logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
-								textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
-							} else {
 							}
-						}
-						else {
-							// Load from stack using RBP-relative addressing
-							emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
-							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							else {
+								// Load from stack using RBP-relative addressing
+								emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
+								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							}
 						}
 					} else {
 						// Value not in identifier_offset - use fallback offset calculation
 						int var_offset = getStackOffsetFromTempVar(return_var);
-						emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
-						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+						if (is_float_return) {
+							// Load floating-point value into XMM0
+							bool is_float = (ret_op.return_size == 32);
+							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+						} else {
+							// Load integer/pointer value into RAX
+							emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
+							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+						}
 					}
 				}
 				else if (std::holds_alternative<std::string_view>(ret_val)) {
@@ -7278,8 +7297,20 @@ private:
 					auto it = current_scope.identifier_offset.find(var_name);
 					if (it != current_scope.identifier_offset.end()) {
 						int var_offset = it->second;
-						emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
-						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+						
+						// Check if return type is float/double
+						bool is_float_return = ret_op.return_type.has_value() && 
+						                        is_floating_point_type(ret_op.return_type.value());
+						
+						if (is_float_return) {
+							// Load floating-point value into XMM0
+							bool is_float = (ret_op.return_size == 32);
+							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+						} else {
+							// Load integer/pointer value into RAX
+							emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
+							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+						}
 					}
 				}
 				else if (std::holds_alternative<double>(ret_val)) {
