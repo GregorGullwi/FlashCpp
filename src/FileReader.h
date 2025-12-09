@@ -583,6 +583,7 @@ public:
 				std::istringstream iss(line);
 				iss.seekg("#define"sv.length());
 				handleDefine(iss);
+				append_line_with_tracking("");  // Preserve line numbering
 			}
 			else if (line.find("#ifdef", 0) == 0) {
 				std::istringstream iss(line);
@@ -592,6 +593,7 @@ public:
 				bool is_defined = defines_.count(symbol) > 0;
 				skipping_stack.push(!is_defined);
 				condition_was_true_stack.push(is_defined);
+				append_line_with_tracking("");  // Preserve line numbering
 			}
 			else if (line.find("#ifndef", 0) == 0) {
 				std::istringstream iss(line);
@@ -601,6 +603,7 @@ public:
 				bool is_defined = defines_.count(symbol) > 0;
 				skipping_stack.push(is_defined);
 				condition_was_true_stack.push(!is_defined);
+				append_line_with_tracking("");  // Preserve line numbering
 			}
 			else if (line.find("#if", 0) == 0) {
 				// Extract and expand macros in the condition before evaluation
@@ -611,6 +614,7 @@ public:
 				bool condition_true = (expression_result != 0);
 				skipping_stack.push(!condition_true);
 				condition_was_true_stack.push(condition_true);
+				append_line_with_tracking("");  // Preserve line numbering
 			}
 			else if (line.find("#elif", 0) == 0) {
 				if (skipping_stack.empty() || condition_was_true_stack.empty()) {
@@ -632,6 +636,7 @@ public:
 						condition_was_true_stack.top() = true;  // Mark condition as true
 					}
 				}
+				append_line_with_tracking("");  // Preserve line numbering
 			}
 			else if (line.find("#else", 0) == 0) {
 				if (skipping_stack.empty() || condition_was_true_stack.empty()) {
@@ -646,6 +651,7 @@ public:
 					skipping_stack.top() = false;  // Stop skipping
 					condition_was_true_stack.top() = true;  // Mark that we're in a true block
 				}
+				append_line_with_tracking("");  // Preserve line numbering
 			}
 			else if (line.find("#endif", 0) == 0) {
 				if (!skipping_stack.empty()) {
@@ -656,6 +662,7 @@ public:
 					FLASH_LOG(Lexer, Error, "Unmatched #endif directive");
 					return false;
 				}
+				append_line_with_tracking("");  // Preserve line numbering
 			}
 			else if (line.find("#error", 0) == 0) {
 				std::string message = line.substr(6);
@@ -682,6 +689,7 @@ public:
 				std::string symbol;
 				iss >> symbol;
 				defines_.erase(symbol);
+				append_line_with_tracking("");  // Preserve line numbering
 			}
 			else if (line.find("#pragma once", 0) == 0) {
 				proccessedHeaders_.insert(std::string(filestack_.top().file_name));
