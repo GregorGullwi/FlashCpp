@@ -23,9 +23,7 @@ fi
 
 # Expected failures
 EXPECTED_FAIL=(
-    "test_cstddef.cpp"
     "test_cstdio_puts.cpp"
-    "test_cstdlib.cpp"
 )
 
 # Expected link failures - files that compile but require external C helper files or RTTI support
