@@ -2917,6 +2917,20 @@ template<class TWriterClass = ObjectFileWriter>
 class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
+	
+	~IrToObjConverter() {
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Destructor started");
+		// Explicitly clear maps to see which one hangs
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing functionSymbols");
+		functionSymbols.clear();
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing function_spans");
+		function_spans.clear();
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing label_positions_");
+		label_positions_.clear();
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing pending_branches_");
+		pending_branches_.clear();
+		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Destructor completed");
+	}
 
 	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "", bool show_timing = false) {
 		FLASH_LOG_FORMAT(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] convert() started, textSectionData.size()={}, textSectionData.capacity()={}", 
@@ -4030,7 +4044,7 @@ private:
 			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
 				// Save previous function's span
 				if (!current_func_name.empty()) {
-					function_spans[current_func_name] = std::span<const IrInstruction>(
+					function_spans[std::string(current_func_name)] = std::span<const IrInstruction>(
 						&instructions[current_func_start], i - current_func_start
 					);
 				}
@@ -4046,7 +4060,7 @@ private:
 
 		// Save the last function's span
 		if (!current_func_name.empty()) {
-			function_spans[current_func_name] = std::span<const IrInstruction>(
+			function_spans[std::string(current_func_name)] = std::span<const IrInstruction>(
 				&instructions[current_func_start], instructions.size() - current_func_start
 			);
 		}
@@ -4073,7 +4087,7 @@ private:
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
 
-		auto it = function_spans.find(func_name);
+		auto it = function_spans.find(std::string(func_name));
 		if (it == function_spans.end()) {
 			return func_stack_space; // No instructions found for this function
 		}
@@ -6629,7 +6643,7 @@ private:
 
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
 		writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage);
-		functionSymbols[func_name] = func_offset;
+		functionSymbols[std::string(func_name)] = func_offset;
 
 		// Track function for debug information
 		current_function_name_ = func_name_str;
@@ -9200,8 +9214,9 @@ private:
 		uint32_t label_offset = static_cast<uint32_t>(textSectionData.size());
 
 		// Track label positions for later resolution
-		if (label_positions_.find(label_name) == label_positions_.end()) {
-			label_positions_[label_name] = label_offset;
+		std::string label_name_str(label_name);
+		if (label_positions_.find(label_name_str) == label_positions_.end()) {
+			label_positions_[label_name_str] = label_offset;
 		}
 
 		// Flush all dirty registers at label boundaries to ensure correct state
@@ -10639,7 +10654,7 @@ private:
 
 		// Check if then_label is a backward reference (already defined)
 		// This happens in do-while loops where we jump back to the start when true
-		bool then_is_backward = label_positions_.find(then_label) != label_positions_.end();
+		bool then_is_backward = label_positions_.find(std::string(then_label)) != label_positions_.end();
 		
 		if (then_is_backward) {
 			// For do-while: then_label is backward (jump to loop start), else_label is forward (fall through to end)
@@ -11487,7 +11502,7 @@ private:
 	void patchBranches() {
 		// Patch all pending branch instructions with correct offsets
 		for (const auto& branch : pending_branches_) {
-			auto label_it = label_positions_.find(branch.target_label);
+			auto label_it = label_positions_.find(std::string(branch.target_label));
 			if (label_it == label_positions_.end()) {
 				FLASH_LOG(Codegen, Error, "Label not found: ", branch.target_label);
 				continue;
@@ -11531,8 +11546,8 @@ private:
 
 	TWriterClass writer;
 	std::vector<char> textSectionData;
-	std::unordered_map<std::string_view, uint32_t> functionSymbols;
-	std::unordered_map<std::string_view, std::span<const IrInstruction>> function_spans;
+	std::unordered_map<std::string, uint32_t> functionSymbols;
+	std::unordered_map<std::string, std::span<const IrInstruction>> function_spans;
 
 	RegisterAllocator regAlloc;
 
@@ -11555,7 +11570,7 @@ private:
 		std::string_view target_label;
 		uint32_t patch_position; // Position in textSectionData where the offset needs to be written
 	};
-	std::unordered_map<std::string_view, uint32_t> label_positions_;
+	std::unordered_map<std::string, uint32_t> label_positions_;
 	std::vector<PendingBranch> pending_branches_;
 
 	// Loop context tracking for break/continue

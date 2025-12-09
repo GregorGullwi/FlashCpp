@@ -431,6 +431,7 @@ int main(int argc, char *argv[]) {
             FLASH_LOG(Codegen, Info, "Generating ELF object file (Linux/Unix target)");
             IrToObjConverter<ElfFileWriter> irConverter;
             irConverter.convert(ir, context.getOutputFile(), context.getInputFile().value(), show_timing);
+            FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] After irConverter.convert(), before destructor");
         } else
         #endif
         {
