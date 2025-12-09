@@ -4623,6 +4623,34 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to emit MOVDQU (unaligned 128-bit move) from XMM register to frame
+	// Used for saving full XMM registers in variadic function register save areas
+	void emitMovdquToFrame(X64Register xmm_src, int32_t offset) {
+		uint8_t xmm_idx = xmm_modrm_bits(xmm_src);
+		
+		// MOVDQU [RBP + offset], xmm: F3 0F 7F /r
+		textSectionData.push_back(0xF3);  // movdqu prefix
+		if (xmm_idx >= 8) {
+			textSectionData.push_back(0x44);  // REX.R for XMM8-15
+		}
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0x7F);  // movdqu [mem], xmm
+		
+		// Encode [RBP + offset]
+		if (offset >= -128 && offset <= 127) {
+			uint8_t modrm = 0x45 + ((xmm_idx & 0x07) << 3);  // Mod=01, Reg=XMM, R/M=101 (RBP)
+			textSectionData.push_back(modrm);
+			textSectionData.push_back(static_cast<uint8_t>(offset));
+		} else {
+			uint8_t modrm = 0x85 + ((xmm_idx & 0x07) << 3);  // Mod=10, Reg=XMM, R/M=101 (RBP)
+			textSectionData.push_back(modrm);
+			textSectionData.push_back((offset >> 0) & 0xFF);
+			textSectionData.push_back((offset >> 8) & 0xFF);
+			textSectionData.push_back((offset >> 16) & 0xFF);
+			textSectionData.push_back((offset >> 24) & 0xFF);
+		}
+	}
+
 	// Helper to generate and emit MOV reg, imm64
 	void emitMovImm64(X64Register destinationRegister, uint64_t immediate_value) {
 		// REX prefix: REX.W for 64-bit operation, REX.B if destination is R8-R15
@@ -7343,30 +7371,7 @@ private:
 				for (size_t i = 0; i < 8; ++i) {
 					X64Register xmm_reg = static_cast<X64Register>(static_cast<int>(X64Register::XMM0) + i);
 					int32_t offset = reg_save_area_base + INT_REG_AREA_SIZE + static_cast<int32_t>(i * 16);
-					
-					// Use movdqu (unaligned move) to save full 128 bits
-					uint8_t xmm_idx = xmm_modrm_bits(xmm_reg);
-					
-					textSectionData.push_back(0xF3);  // movdqu prefix
-					if (xmm_idx >= 8) {
-						textSectionData.push_back(0x44);  // REX.R for XMM8-15
-					}
-					textSectionData.push_back(0x0F);
-					textSectionData.push_back(0x7F);  // movdqu [mem], xmm
-					
-					// Encode [RBP + offset]
-					if (offset >= -128 && offset <= 127) {
-						uint8_t modrm = 0x45 + ((xmm_idx & 0x07) << 3);  // Mod=01, Reg=XMM, R/M=101 (RBP)
-						textSectionData.push_back(modrm);
-						textSectionData.push_back(static_cast<uint8_t>(offset));
-					} else {
-						uint8_t modrm = 0x85 + ((xmm_idx & 0x07) << 3);  // Mod=10, Reg=XMM, R/M=101 (RBP)
-						textSectionData.push_back(modrm);
-						for (int j = 0; j < 4; ++j) {
-							textSectionData.push_back(static_cast<uint8_t>(offset & 0xFF));
-							offset >>= 8;
-						}
-					}
+					emitMovdquToFrame(xmm_reg, offset);
 				}
 				
 				// Register special variables for va_list structure and register save area
