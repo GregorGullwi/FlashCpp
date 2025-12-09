@@ -7024,35 +7024,58 @@ private:
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		
-		// Compute the address of the first variadic argument
-		// This is: &last_param + 8 (parameters are 8-byte aligned on x64)
-		TempVar last_param_addr = var_counter.next();
+		// Platform-specific varargs implementation:
+		// - Windows (MSVC mangling): variadic args on stack, use &last_param + 8
+		// - Linux (Itanium mangling): variadic args in registers, use register save area
+		// Note: The actual register save area address is computed by IRConverter
+		// during code generation, as it's platform-specific (template parameter)
+		// Here we just generate IR that will be handled appropriately
 		
-		// Generate AddressOf IR for the last parameter
-		AddressOfOp addr_op;
-		addr_op.result = last_param_addr;
-		// Get the type of the last parameter from the symbol table
-		auto param_symbol = symbol_table.lookup(last_param_name);
-		if (!param_symbol.has_value()) {
-			FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __builtin_va_start");
-			return {Type::Void, 0, 0ULL, 0ULL};
+		TempVar va_start_addr;
+		
+		if (context_->isItaniumMangling()) {
+			// Linux/System V AMD64 ABI: Use register save area
+			// Generate AddressOf for a special symbol that IRConverter will recognize
+			// and replace with the actual register save area address
+			va_start_addr = var_counter.next();
+			
+			AddressOfOp addr_op;
+			addr_op.result = va_start_addr;
+			addr_op.pointee_type = Type::Char;  // va_list is char*
+			addr_op.pointee_size_in_bits = 8;
+			addr_op.operand = std::string("__varargs_reg_save_area__");  // Special marker
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
+		} else {
+			// Windows/MSVC ABI: Compute &last_param + 8
+			// This is: &last_param + 8 (parameters are 8-byte aligned on x64)
+			TempVar last_param_addr = var_counter.next();
+			
+			// Generate AddressOf IR for the last parameter
+			AddressOfOp addr_op;
+			addr_op.result = last_param_addr;
+			// Get the type of the last parameter from the symbol table
+			auto param_symbol = symbol_table.lookup(last_param_name);
+			if (!param_symbol.has_value()) {
+				FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __builtin_va_start");
+				return {Type::Void, 0, 0ULL, 0ULL};
+			}
+			const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
+			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			
+			addr_op.pointee_type = param_type.type();
+			addr_op.pointee_size_in_bits = static_cast<int>(param_type.size_in_bits());
+			addr_op.operand = last_param_name;
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
+			
+			// Add 8 bytes (64 bits) to get to the next parameter slot
+			// On x64, all parameters are aligned to 8-byte boundaries
+			va_start_addr = var_counter.next();
+			BinaryOp add_op;
+			add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, last_param_addr};
+			add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+			add_op.result = va_start_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
 		}
-		const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
-		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-		
-		addr_op.pointee_type = param_type.type();
-		addr_op.pointee_size_in_bits = static_cast<int>(param_type.size_in_bits());
-		addr_op.operand = last_param_name;
-		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
-		
-		// Add 8 bytes (64 bits) to get to the next parameter slot
-		// On x64, all parameters are aligned to 8-byte boundaries
-		TempVar va_start_addr = var_counter.next();
-		BinaryOp add_op;
-		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, last_param_addr};
-		add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
-		add_op.result = va_start_addr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
 		
 		// Assign the computed address DIRECTLY to the va_list variable (first argument)
 		// NOTE: The first argument is the va_list variable itself (e.g., 'args'),
