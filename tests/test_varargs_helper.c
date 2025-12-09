@@ -2,15 +2,16 @@
 
 // Forward declare printf - will be declared in the parent file's extern "C" block
 
-// Hybrid varargs implementation for FlashCpp
-// Uses __va_start builtin (declared in parent file) with macro-based va_arg/va_end
-// Note: va_list and __va_start should be declared at file scope before including this file
+// Proper varargs implementation for FlashCpp with System V AMD64 ABI support
+// Uses __builtin_va_start and __builtin_va_arg intrinsics
 
 // __builtin_va_start is a compiler intrinsic - no need for forward declaration
 #define va_start(ap, param) __builtin_va_start(ap, param)
 
-// MSVC-style macros for va_arg and va_end
-#define va_arg(ap, type) (*(type*)((ap += 8) - 8))
+// Use __builtin_va_arg for proper type-aware va_arg implementation
+// This supports both integer and floating-point types correctly on System V AMD64
+#define va_arg(ap, type) __builtin_va_arg(ap, type)
+
 #define va_end(ap) (ap = (va_list)0)
 
 // External variadic function compiled with gcc
