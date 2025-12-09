@@ -2,19 +2,16 @@
 
 // Forward declare printf - will be declared in the parent file's extern "C" block
 
-// Use compiler builtins for varargs instead of stdarg.h
-// Windows x64 uses char*, Linux/GCC uses __builtin_va_list
-#ifdef _WIN32
-typedef char* va_list;
-#define va_start(v,l) __builtin_va_start(v,l)
-#define va_end(v) __builtin_va_end(v)
-#define va_arg(v,l) __builtin_va_arg(v,l)
-#else
-typedef __builtin_va_list va_list;
-#define va_start(v,l) __builtin_va_start(v,l)
-#define va_end(v) __builtin_va_end(v)
-#define va_arg(v,l) __builtin_va_arg(v,l)
-#endif
+// Hybrid varargs implementation for FlashCpp
+// Uses __va_start builtin (declared in parent file) with macro-based va_arg/va_end
+// Note: va_list and __va_start should be declared at file scope before including this file
+
+// __builtin_va_start is a compiler intrinsic - no need for forward declaration
+#define va_start(ap, param) __builtin_va_start(ap, param)
+
+// MSVC-style macros for va_arg and va_end
+#define va_arg(ap, type) (*(type*)((ap += 8) - 8))
+#define va_end(ap) (ap = (va_list)0)
 
 // External variadic function compiled with gcc
 int sum_ints(int count, ...) {

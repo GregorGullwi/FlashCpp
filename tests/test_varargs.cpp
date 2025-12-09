@@ -1,5 +1,8 @@
 // Test calling variadic functions from FlashCpp
+
 extern "C" {
+   typedef char* va_list;
+   
    #include "test_varargs_helper.c"
    
 	extern int printf(const char* fmt, ...);
