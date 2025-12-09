@@ -6899,7 +6899,7 @@ private:
 		// If so, use it directly and skip the lookup logic
 		if (functionCallNode.has_mangled_name()) {
 			function_name = std::string(functionCallNode.mangled_name());
-			FLASH_LOG(Codegen, Debug, "Using pre-computed mangled name from FunctionCallNode: {}", function_name);
+			FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name from FunctionCallNode: {}", function_name);
 			// We don't need to find matched_func_decl since we already have the mangled name
 			// The mangled name is sufficient for generating the call instruction
 		}
@@ -6919,13 +6919,13 @@ private:
 			// Find the matching overload by comparing the DeclarationNode address
 			// This works because the FunctionCallNode holds a reference to the specific
 			// DeclarationNode that was selected by overload resolution
-			FLASH_LOG(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
+			FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
 				func_name_view, all_overloads.size(), gSymbolTable_overloads.size());
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
 				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
-				FLASH_LOG(Codegen, Debug, "  Checking overload at {}, looking for {}", 
+				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}", 
 					(void*)overload_decl, (void*)&decl_node);
 				if (overload_decl == &decl_node) {
 					// Found the matching overload
@@ -6934,10 +6934,10 @@ private:
 					// Use pre-computed mangled name if available, otherwise generate it
 					if (matched_func_decl->has_mangled_name()) {
 						function_name = matched_func_decl->mangled_name();
-						FLASH_LOG(Codegen, Debug, "Using pre-computed mangled name: {}", function_name);
+						FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name: {}", function_name);
 					} else if (matched_func_decl->linkage() != Linkage::C) {
 						function_name = generateMangledNameForCall(*matched_func_decl);
-						FLASH_LOG(Codegen, Debug, "Generated mangled name (no pre-computed): {}", function_name);
+						FLASH_LOG_FORMAT(Codegen, Debug, "Generated mangled name (no pre-computed): {}", function_name);
 					}
 					break;
 				}
