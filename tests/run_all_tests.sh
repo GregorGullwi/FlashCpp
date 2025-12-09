@@ -28,15 +28,19 @@ EXPECTED_FAIL=(
     "test_cstdlib.cpp"
 )
 
-# Expected link failures - files that compile but require external C helper files or C++ runtime
+# Expected link failures - files that compile but require external C helper files
 EXPECTED_LINK_FAIL=(
     "test_external_abi.cpp"
     "test_external_abi_simple.cpp"
     "test_varargs.cpp"
     "test_stack_overflow.cpp"
-    "test_exceptions_basic.cpp"      # Requires libstdc++ for exception runtime (__cxa_*)
-    "test_exceptions_nested.cpp"      # Requires libstdc++ for exception runtime (__cxa_*)
-    "test_noexcept.cpp"               # Requires libstdc++ for exception runtime (__cxa_*)
+)
+
+# Exception test files - require libstdc++ for exception runtime (__cxa_*)
+EXCEPTION_TEST_FILES=(
+    "test_exceptions_basic.cpp"
+    "test_exceptions_nested.cpp"
+    "test_noexcept.cpp"
 )
 
 # Results
@@ -109,8 +113,21 @@ for base in "${TEST_FILES[@]}"; do
     if [ -f "$obj" ]; then
         COMPILE_OK+=("$base")
         
-        # Link silently
-        if gcc -o "$exe" "$obj" 2>/dev/null; then
+        # Choose linker based on file type
+        link_success=0
+        if contains "$base" "${EXCEPTION_TEST_FILES[@]}"; then
+            # Use clang++ with libstdc++ for exception test files
+            if clang++ -no-pie -o "$exe" "$obj" -lstdc++ 2>/dev/null; then
+                link_success=1
+            fi
+        else
+            # Use gcc for regular files
+            if gcc -o "$exe" "$obj" 2>/dev/null; then
+                link_success=1
+            fi
+        fi
+        
+        if [ $link_success -eq 1 ]; then
             LINK_OK+=("$base")
             rm -f "$exe"
             echo "OK" >&2
