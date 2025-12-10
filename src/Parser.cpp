@@ -11178,7 +11178,27 @@ ParseResult Parser::parse_primary_expression()
 						const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 						
 						if (struct_info) {
-							// Check if the identifier is a member of this struct
+							// FIRST check static members (these don't use this->)
+							for (const auto& static_member : struct_info->static_members) {
+								if (static_member.name == idenfifier_token.value()) {
+									// Found static member! Create a simple identifier node
+									// Static members are accessed directly, not via this->
+									result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+									// Set identifierType to prevent "Missing identifier" error
+									identifierType = emplace_node<DeclarationNode>(
+										emplace_node<TypeSpecifierNode>(
+											static_member.type,
+											static_member.type_index,
+											static_cast<unsigned char>(static_member.size * 8),
+											idenfifier_token
+										),
+										idenfifier_token
+									);
+									goto found_member_variable;
+								}
+							}
+							
+							// Check instance members (these use this->)
 							for (const auto& member : struct_info->members) {
 								if (member.name == idenfifier_token.value()) {
 									// This is a member variable! Transform it into this->member
@@ -20716,6 +20736,66 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				);
 			}
 		}
+	}
+
+	// PHASE 2: Parse deferred template member function bodies (two-phase lookup)
+	// Now that TypeInfo is fully created and registered in gTypesByName,
+	// we can parse the member function bodies that were deferred during template definition
+	// This allows static member lookups to work correctly
+	if (!template_class.deferred_bodies().empty()) {
+		FLASH_LOG(Templates, Debug, "Parsing ", template_class.deferred_bodies().size(), 
+		          " deferred template member function bodies for ", instantiated_name);
+		
+		// Save current position
+		SaveHandle current_pos = save_token_position();
+		
+		// Parse each deferred body
+		for (const auto& deferred : template_class.deferred_bodies()) {
+			// Restore position to the function body
+			restore_token_position(deferred.body_start);
+			
+			// Convert DeferredTemplateMemberBody back to DelayedFunctionBody for parsing
+			DelayedFunctionBody delayed;
+			delayed.func_node = static_cast<FunctionDeclarationNode*>(deferred.func_node_ptr);
+			delayed.body_start = deferred.body_start;
+			delayed.initializer_list_start = deferred.initializer_list_start;
+			delayed.has_initializer_list = deferred.has_initializer_list;
+			delayed.struct_name = instantiated_name;  // Use INSTANTIATED name, not template name
+			delayed.struct_type_index = struct_type_info.type_index_;  // Now valid!
+			delayed.struct_node = &instantiated_struct_ref;  // Use instantiated struct
+			delayed.is_constructor = deferred.is_constructor;
+			delayed.is_destructor = deferred.is_destructor;
+			delayed.ctor_node = static_cast<ConstructorDeclarationNode*>(deferred.ctor_node_ptr);
+			delayed.dtor_node = static_cast<DestructorDeclarationNode*>(deferred.dtor_node_ptr);
+			// Use template argument names for template parameter substitution
+			for (const auto& param_name : deferred.template_param_names) {
+				delayed.template_param_names.push_back(param_name);
+			}
+			
+			// Set up template parameter substitution context
+			// Map template parameter names to actual types
+			current_template_param_names_ = delayed.template_param_names;
+			
+			// TODO: Add actual template argument values for substitution
+			// For now, we're just parsing with the template parameter names available
+			
+			// Parse the body
+			std::optional<ASTNode> body;
+			auto result = parse_delayed_function_body(delayed, body);
+			
+			current_template_param_names_.clear();
+			
+			if (result.is_error()) {
+				FLASH_LOG(Templates, Error, "Failed to parse deferred template body: ", result.error_message());
+				// Continue with other bodies instead of failing entirely
+				continue;
+			}
+			
+			FLASH_LOG(Templates, Debug, "Successfully parsed deferred template body");
+		}
+		
+		// Restore position
+		restore_token_position(current_pos);
 	}
 
 	// Return the instantiated struct node for code generation

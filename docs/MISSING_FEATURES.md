@@ -108,14 +108,17 @@ This requires a more fundamental architectural change. Three possible approaches
    - In parse_template_declaration, attach pending bodies to TemplateClassDeclarationNode
    - Template function bodies are now deferred until instantiation
 
-2. **Phase 2: Parse Bodies During Instantiation** (NEXT)
-   - When instantiating template (in `try_instantiate_template_class`), after creating TypeInfo:
-     - Retrieve stored deferred function bodies from TemplateClassDeclarationNode
-     - For each body: restore position, parse with instantiated template parameters
-     - At this point, `struct_type_index` is valid and TypeInfo exists in gTypesByName
-     - Static member lookups will work via TypeInfo
+2. **Phase 2: Parse Bodies During Instantiation** ✅ COMPLETE
+   - Modified `try_instantiate_template_class()` to parse deferred bodies after TypeInfo creation
+   - Deferred bodies are retrieved from TemplateClassDeclarationNode
+   - For each body: restore position, convert to DelayedFunctionBody, parse with instantiated context
+   - At this point, `struct_type_index` is valid and TypeInfo exists in gTypesByName
+   - Added static member lookup in TypeInfo check (lines 11180-11195)
+   - Static members are now found during deferred body parsing!
+   - **Status**: Basic functionality works - static members are found
+   - **Issue**: Segfault in downstream code (code generation or IR conversion)
 
-3. **Phase 3: Handle Template Parameter Substitution**
+3. **Phase 3: Fix Remaining Issues and Template Parameter Substitution** (IN PROGRESS)
    - During deferred parsing, substitute template parameters with actual types
    - Update `current_template_param_names_` with instantiation arguments
    - Ensure symbol table lookups use instantiated context
