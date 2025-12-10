@@ -3768,6 +3768,7 @@ private:
 														tv.size_in_bits = 64;  // Pointer size
 														tv.value = addr_var;
 														tv.is_reference = true;  // Mark as reference parameter
+														tv.type_index = arg_type.type_index();  // Preserve type_index for struct references
 													}
 												} else {
 													// Not a simple identifier or not found - use as-is
@@ -4154,6 +4155,7 @@ private:
 												tv.size_in_bits = 64;  // Pointer size
 												tv.value = addr_var;
 												tv.is_reference = true;  // Mark as reference parameter
+												tv.type_index = arg_type.type_index();  // Preserve type_index for struct references
 											}
 										} else {
 											// Not a simple identifier or not found - use as-is

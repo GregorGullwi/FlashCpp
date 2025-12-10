@@ -5905,6 +5905,10 @@ private:
 			} else if (paramType == Type::Struct && arg_type_index != 0) {
 				// Not a copy constructor, but still a struct parameter - set the type_index
 				param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(paramSize), Token{});
+				// Also preserve the reference flag if it was set
+				if (arg_is_reference) {
+					param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
+				}
 			}
 			
 			parameter_types.push_back(param_type);
