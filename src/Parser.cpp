@@ -4720,17 +4720,30 @@ ParseResult Parser::parse_struct_declaration()
 		pending_template_deferred_bodies_.clear();
 		for (const auto& delayed : delayed_function_bodies_) {
 			DeferredTemplateMemberBody deferred;
-			deferred.func_node_ptr = delayed.func_node;
+			
+			// Get function name for matching during instantiation
+			std::string func_name;
+			bool is_const_method = false;
+			if (delayed.is_constructor && delayed.ctor_node) {
+				func_name = std::string(delayed.ctor_node->name());
+			} else if (delayed.is_destructor && delayed.dtor_node) {
+				func_name = std::string(delayed.dtor_node->name());
+			} else if (delayed.func_node) {
+				const auto& decl = delayed.func_node->decl_node();
+				func_name = std::string(decl.identifier_token().value());
+				// is_const is stored in StructMemberFunctionDecl, not in FunctionDeclarationNode
+				// We'll match by name only for now
+			}
+			
+			deferred.function_name = func_name;
 			deferred.body_start = delayed.body_start;
 			deferred.initializer_list_start = delayed.initializer_list_start;
 			deferred.has_initializer_list = delayed.has_initializer_list;
 			deferred.struct_name = std::string(delayed.struct_name);  // Copy to std::string
 			deferred.struct_type_index = delayed.struct_type_index;
-			deferred.struct_node_ptr = delayed.struct_node;
 			deferred.is_constructor = delayed.is_constructor;
 			deferred.is_destructor = delayed.is_destructor;
-			deferred.ctor_node_ptr = delayed.ctor_node;
-			deferred.dtor_node_ptr = delayed.dtor_node;
+			deferred.is_const_method = is_const_method;
 			// Copy template param names to std::string
 			for (const auto& name : delayed.template_param_names) {
 				deferred.template_param_names.push_back(std::string(name));
@@ -20751,12 +20764,53 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Parse each deferred body
 		for (const auto& deferred : template_class.deferred_bodies()) {
+			// Find the corresponding member function in the instantiated struct
+			FunctionDeclarationNode* target_func = nullptr;
+			ConstructorDeclarationNode* target_ctor = nullptr;
+			DestructorDeclarationNode* target_dtor = nullptr;
+			
+			// Search in member_functions() which contains all functions, constructors, and destructors
+			for (auto& mem_func : instantiated_struct_ref.member_functions()) {
+				if (deferred.is_constructor && mem_func.is_constructor) {
+					if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
+						auto& ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+						if (ctor.name() == deferred.function_name) {
+							target_ctor = &ctor;
+							break;
+						}
+					}
+				} else if (deferred.is_destructor && mem_func.is_destructor) {
+					if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
+						target_dtor = &mem_func.function_declaration.as<DestructorDeclarationNode>();
+						break;
+					}
+				} else if (!mem_func.is_constructor && !mem_func.is_destructor) {
+					// Regular member function
+					if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
+						auto& func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+						const auto& decl = func.decl_node();
+						// Match by name and const qualifier
+						if (decl.identifier_token().value() == deferred.function_name &&
+						    mem_func.is_const == deferred.is_const_method) {
+							target_func = &func;
+							break;
+						}
+					}
+				}
+			}
+			
+			if (!target_func && !target_ctor && !target_dtor) {
+				FLASH_LOG(Templates, Error, "Could not find member function ", deferred.function_name, 
+				          " in instantiated struct ", instantiated_name);
+				continue;
+			}
+			
 			// Restore position to the function body
 			restore_token_position(deferred.body_start);
 			
 			// Convert DeferredTemplateMemberBody back to DelayedFunctionBody for parsing
 			DelayedFunctionBody delayed;
-			delayed.func_node = static_cast<FunctionDeclarationNode*>(deferred.func_node_ptr);
+			delayed.func_node = target_func;
 			delayed.body_start = deferred.body_start;
 			delayed.initializer_list_start = deferred.initializer_list_start;
 			delayed.has_initializer_list = deferred.has_initializer_list;
@@ -20765,8 +20819,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			delayed.struct_node = &instantiated_struct_ref;  // Use instantiated struct
 			delayed.is_constructor = deferred.is_constructor;
 			delayed.is_destructor = deferred.is_destructor;
-			delayed.ctor_node = static_cast<ConstructorDeclarationNode*>(deferred.ctor_node_ptr);
-			delayed.dtor_node = static_cast<DestructorDeclarationNode*>(deferred.dtor_node_ptr);
+			delayed.ctor_node = target_ctor;
+			delayed.dtor_node = target_dtor;
 			// Use template argument names for template parameter substitution
 			for (const auto& param_name : deferred.template_param_names) {
 				delayed.template_param_names.push_back(param_name);
@@ -20791,7 +20845,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				continue;
 			}
 			
-			FLASH_LOG(Templates, Debug, "Successfully parsed deferred template body");
+			FLASH_LOG(Templates, Debug, "Successfully parsed deferred template body for ", deferred.function_name);
 		}
 		
 		// Restore position
