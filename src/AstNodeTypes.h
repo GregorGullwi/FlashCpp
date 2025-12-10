@@ -24,17 +24,15 @@ using SaveHandle = size_t;
 // Deferred template member function body information
 // Used to store template member function bodies for parsing during instantiation
 struct DeferredTemplateMemberBody {
-	void* func_node_ptr;                 // Pointer to FunctionDeclarationNode/ConstructorDeclarationNode/DestructorDeclarationNode
+	std::string function_name;                // Name of the function (for matching during instantiation)
 	SaveHandle body_start;                // Handle to saved position at '{'
 	SaveHandle initializer_list_start;   // Handle to saved position at ':' for constructor initializer list
 	bool has_initializer_list;            // True if constructor has an initializer list
 	std::string struct_name;              // Name of the struct (copied, not view)
 	size_t struct_type_index;             // Type index (will be 0 for templates during definition)
-	void* struct_node_ptr;                // Pointer to StructDeclarationNode
 	bool is_constructor;                  // Special handling for constructors
 	bool is_destructor;                   // Special handling for destructors
-	void* ctor_node_ptr;                  // For constructors (nullptr for regular functions)
-	void* dtor_node_ptr;                  // For destructors (nullptr for regular functions)
+	bool is_const_method;                 // True if this is a const member function
 	std::vector<std::string> template_param_names; // Template parameter names (copied, not views)
 };
 
