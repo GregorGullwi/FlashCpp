@@ -4712,37 +4712,36 @@ ParseResult Parser::parse_struct_declaration()
 	// Now parse all delayed inline function bodies
 	// At this point, all members are visible in the complete-class context
 
-	// If we're parsing a template class, parse the bodies now so they can be stored
-	// with the template for later instantiation with parameter substitution
+	// If we're parsing a template class, DON'T parse the bodies now
+	// Instead, store them for parsing during template instantiation (two-phase lookup)
+	// This allows static member lookups to work because TypeInfo will exist at instantiation time
 	if (parsing_template_class_) {
-		// Save the current token position (right after the struct definition)
-		SaveHandle position_after_struct = save_token_position();
-
-		// Parse all delayed function bodies using unified helper (Phase 5)
-		for (auto& delayed : delayed_function_bodies_) {
-			// Restore template parameter context for this delayed body
-			current_template_param_names_ = delayed.template_param_names;
-			
-			// Restore token position to the start of the function body
-			restore_token_position(delayed.body_start);
-
-			// Use Phase 5 unified delayed body parsing
-			std::optional<ASTNode> body;
-			auto result = parse_delayed_function_body(delayed, body);
-			if (result.is_error()) {
-				current_template_param_names_.clear();
-				struct_parsing_context_stack_.pop_back();
-				return result;
+		// Convert DelayedFunctionBody to DeferredTemplateMemberBody for storage
+		pending_template_deferred_bodies_.clear();
+		for (const auto& delayed : delayed_function_bodies_) {
+			DeferredTemplateMemberBody deferred;
+			deferred.func_node_ptr = delayed.func_node;
+			deferred.body_start = delayed.body_start;
+			deferred.initializer_list_start = delayed.initializer_list_start;
+			deferred.has_initializer_list = delayed.has_initializer_list;
+			deferred.struct_name = std::string(delayed.struct_name);  // Copy to std::string
+			deferred.struct_type_index = delayed.struct_type_index;
+			deferred.struct_node_ptr = delayed.struct_node;
+			deferred.is_constructor = delayed.is_constructor;
+			deferred.is_destructor = delayed.is_destructor;
+			deferred.ctor_node_ptr = delayed.ctor_node;
+			deferred.dtor_node_ptr = delayed.dtor_node;
+			// Copy template param names to std::string
+			for (const auto& name : delayed.template_param_names) {
+				deferred.template_param_names.push_back(std::string(name));
 			}
-
-			current_template_param_names_.clear();
+			pending_template_deferred_bodies_.push_back(std::move(deferred));
 		}
-
-		// Restore position after struct
-		restore_token_position(position_after_struct);
-
-		// Clear the delayed bodies list
+		
+		// Clear the delayed bodies list - they're now in pending_template_deferred_bodies_
 		delayed_function_bodies_.clear();
+		
+		// Return without parsing the bodies - they'll be parsed during instantiation
 		return saved_position.success(struct_node);
 	}
 
@@ -17136,6 +17135,14 @@ ParseResult Parser::parse_template_declaration() {
 			std::move(param_names),
 			decl_node
 		);
+		
+		// Attach deferred member function bodies for two-phase lookup
+		// These will be parsed during template instantiation when TypeInfo is available
+		if (!pending_template_deferred_bodies_.empty()) {
+			auto& template_class = template_class_node.as<TemplateClassDeclarationNode>();
+			template_class.set_deferred_bodies(std::move(pending_template_deferred_bodies_));
+			pending_template_deferred_bodies_.clear();  // Clear for next template
+		}
 
 		// Register the template in the template registry
 		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();

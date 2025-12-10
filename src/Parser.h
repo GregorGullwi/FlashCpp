@@ -325,6 +325,11 @@ private:
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
+        // Deferred template class member function bodies (for two-phase lookup)
+        // These are populated when parsing a template class definition and need to be
+        // attached to the TemplateClassDeclarationNode for parsing during instantiation
+        std::vector<DeferredTemplateMemberBody> pending_template_deferred_bodies_;
+
         // Template member function body for delayed instantiation
         // This stores the token position and template parameter info for re-parsing
         struct TemplateMemberFunctionBody {

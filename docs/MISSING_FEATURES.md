@@ -88,7 +88,7 @@ This requires a more fundamental architectural change. Three possible approaches
 - **Problem**: Creating any AST node (DeclarationNode, IdentifierNode) for static members during lookup triggers recursive processing
 - **Needs**: Debugger to trace where the hang occurs; likely in delayed parsing or code generation
 
-**Approach B: Defer Template Body Parsing** (RECOMMENDED - Not Yet Attempted)
+**Approach B: Defer Template Body Parsing** (🔄 IN PROGRESS - Phase 1 Complete)
 - Don't parse template member function bodies during template definition
 - Parse them only during instantiation (true two-phase lookup)
 - At instantiation time, full TypeInfo exists in `gTypesByName` and lookups work
@@ -96,6 +96,50 @@ This requires a more fundamental architectural change. Three possible approaches
 - Would require significant refactoring of template handling
 - **Advantage**: Clean separation between definition and instantiation, matches C++ standard
 - **Disadvantage**: Requires major refactoring of current template architecture
+
+**Implementation Plan for Approach B**:
+
+1. **Phase 1: Skip Template Body Parsing During Definition** ✅ COMPLETE
+   - Modified `parse_struct_declaration()` at line 4717-4746
+   - When `parsing_template_class_ == true`, DON'T parse delayed_function_bodies
+   - Instead, convert to DeferredTemplateMemberBody and store in pending_template_deferred_bodies_
+   - Added DeferredTemplateMemberBody structure to AstNodeTypes.h (stores body positions and context)
+   - Modified TemplateClassDeclarationNode to hold deferred_bodies_ vector
+   - In parse_template_declaration, attach pending bodies to TemplateClassDeclarationNode
+   - Template function bodies are now deferred until instantiation
+
+2. **Phase 2: Parse Bodies During Instantiation** (NEXT)
+   - When instantiating template (in `try_instantiate_template_class`), after creating TypeInfo:
+     - Retrieve stored deferred function bodies from TemplateClassDeclarationNode
+     - For each body: restore position, parse with instantiated template parameters
+     - At this point, `struct_type_index` is valid and TypeInfo exists in gTypesByName
+     - Static member lookups will work via TypeInfo
+
+3. **Phase 3: Handle Template Parameter Substitution**
+   - During deferred parsing, substitute template parameters with actual types
+   - Update `current_template_param_names_` with instantiation arguments
+   - Ensure symbol table lookups use instantiated context
+
+4. **Phase 4: Testing**
+   - Test 1: Simple template with static member
+   - Test 2: Template with conversion operator accessing static member  
+   - Test 3: `integral_constant<int, 42>`
+   - Test 4: Full `<type_traits>` header
+
+**Key Code Locations**:
+- Template class parsing: `parse_struct_declaration()` lines 4715-4746
+- Template instantiation: `try_instantiate_template_class()` around line 19707+
+- Delayed body parsing: `parse_delayed_function_body()` line 7463+
+- Template storage: `TemplateClassDeclarationNode` in AstNodeTypes.h lines 1937+
+- Deferred body structure: `DeferredTemplateMemberBody` in AstNodeTypes.h lines 25+
+
+**Risks and Mitigation**:
+- Risk: Breaking existing template functionality
+  - Mitigation: Test incrementally, keep existing non-template code unchanged
+- Risk: Complex parameter substitution
+  - Mitigation: Reuse existing template parameter tracking infrastructure
+- Risk: Position restoration after multiple instantiations  
+  - Mitigation: Use SaveHandle system already in place
 
 **Approach C: Add Static Members to AST with Separate Storage** (High Risk)
 - Modify `StructDeclarationNode` to have a separate `static_members_` vector

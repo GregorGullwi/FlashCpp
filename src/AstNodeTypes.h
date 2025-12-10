@@ -21,6 +21,23 @@
 // Matches Parser::SaveHandle typedef in Parser.h
 using SaveHandle = size_t;
 
+// Deferred template member function body information
+// Used to store template member function bodies for parsing during instantiation
+struct DeferredTemplateMemberBody {
+	void* func_node_ptr;                 // Pointer to FunctionDeclarationNode/ConstructorDeclarationNode/DestructorDeclarationNode
+	SaveHandle body_start;                // Handle to saved position at '{'
+	SaveHandle initializer_list_start;   // Handle to saved position at ':' for constructor initializer list
+	bool has_initializer_list;            // True if constructor has an initializer list
+	std::string struct_name;              // Name of the struct (copied, not view)
+	size_t struct_type_index;             // Type index (will be 0 for templates during definition)
+	void* struct_node_ptr;                // Pointer to StructDeclarationNode
+	bool is_constructor;                  // Special handling for constructors
+	bool is_destructor;                   // Special handling for destructors
+	void* ctor_node_ptr;                  // For constructors (nullptr for regular functions)
+	void* dtor_node_ptr;                  // For destructors (nullptr for regular functions)
+	std::vector<std::string> template_param_names; // Template parameter names (copied, not views)
+};
+
 // Forward declarations
 struct TemplateTypeArg;
 
@@ -1956,10 +1973,22 @@ public:
 		return class_declaration_.as<StructDeclarationNode>();
 	}
 
+	// Deferred template body parsing support
+	void set_deferred_bodies(std::vector<DeferredTemplateMemberBody> bodies) {
+		deferred_bodies_ = std::move(bodies);
+	}
+	const std::vector<DeferredTemplateMemberBody>& deferred_bodies() const {
+		return deferred_bodies_;
+	}
+	std::vector<DeferredTemplateMemberBody>& deferred_bodies() {
+		return deferred_bodies_;
+	}
+
 private:
 	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
 	std::vector<std::string_view> template_param_names_;  // Parameter names for lookup
 	ASTNode class_declaration_;  // StructDeclarationNode
+	std::vector<DeferredTemplateMemberBody> deferred_bodies_;  // Member function bodies to parse at instantiation
 };
 
 // Namespace declaration node
