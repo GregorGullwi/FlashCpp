@@ -135,10 +135,21 @@ This requires a more fundamental architectural change. Three possible approaches
    - **Status**: Segfault fixed, parsing completes successfully
    - **New Issue**: Code generation error - template parameter 'v' not substituted (expected, substitution not yet implemented)
 
-5. **Phase 5: Template Parameter Substitution in Deferred Bodies** (NEXT)
+5. **Phase 5: Fix Broken Tests - Selective Deferring** ✅ COMPLETE
+   - **Problem**: Deferring ALL template bodies broke templates that use template parameters in function bodies
+   - **Root Cause**: Template parameters not available during deferred parsing
+   - **Solution**: Only defer bodies for templates that have static members
+   - Check for static members before deferring (`has_static_members` flag)
+   - Templates without static members parse bodies normally (preserves template parameter access)
+   - Templates with static members defer bodies (enables static member access)
+   - **Status**: Tests without static members now work correctly
+   - **Remaining**: Template parameter substitution needed for deferred bodies (Phase 6)
+
+6. **Phase 6: Template Parameter Substitution in Deferred Bodies** (NEXT)
    - Need to substitute template parameters with actual values during deferred body parsing
    - Currently `v` (template parameter) is not being replaced with `42` (actual value)
    - This will require mapping template parameter names to instantiation argument values
+   - Affects only templates with static members (selective deferring ensures minimal impact)
    - Test 1: Simple template with static member
    - Test 2: Template with conversion operator accessing static member  
    - Test 3: `integral_constant<int, 42>`

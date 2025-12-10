@@ -4696,6 +4696,12 @@ ParseResult Parser::parse_struct_declaration()
 		struct_info->finalize();
 	}
 
+	// Check if template class has static members before moving struct_info
+	bool has_static_members = false;
+	if (parsing_template_class_ && struct_info) {
+		has_static_members = !struct_info->static_members.empty();
+	}
+
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
 
@@ -4712,10 +4718,11 @@ ParseResult Parser::parse_struct_declaration()
 	// Now parse all delayed inline function bodies
 	// At this point, all members are visible in the complete-class context
 
-	// If we're parsing a template class, DON'T parse the bodies now
+	// If we're parsing a template class that has static members, DON'T parse the bodies now
 	// Instead, store them for parsing during template instantiation (two-phase lookup)
 	// This allows static member lookups to work because TypeInfo will exist at instantiation time
-	if (parsing_template_class_) {
+	// For templates without static members, parse bodies normally to preserve template parameter access
+	if (parsing_template_class_ && has_static_members) {
 		// Convert DelayedFunctionBody to DeferredTemplateMemberBody for storage
 		pending_template_deferred_bodies_.clear();
 		for (const auto& delayed : delayed_function_bodies_) {
@@ -20768,6 +20775,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Note: parse_delayed_function_body internally restores to body_start, parses, then leaves position at end of body
 		for (const auto& deferred : template_class.deferred_bodies()) {
 			FLASH_LOG(Templates, Debug, "About to parse body for ", deferred.function_name, " at position ", deferred.body_start);
+			
 			// Find the corresponding member function in the instantiated struct
 			FunctionDeclarationNode* target_func = nullptr;
 			ConstructorDeclarationNode* target_ctor = nullptr;
