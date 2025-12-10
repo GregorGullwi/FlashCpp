@@ -6996,14 +6996,26 @@ private:
 			//   void *overflow_arg_area;     (offset 8)
 			//   void *reg_save_area;         (offset 16)
 			
-			// Step 1: Dereference va_list to get pointer to va_list structure
-			TempVar va_list_struct_ptr = var_counter.next();
-			DereferenceOp deref_va_list;
-			deref_va_list.result = va_list_struct_ptr;
-			deref_va_list.pointee_type = Type::UnsignedLongLong;
-			deref_va_list.pointee_size_in_bits = 64;
-			deref_va_list.pointer = va_list_var;
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_va_list), functionCallNode.called_from()));
+			// The va_list variable is a char* that points to the va_list structure.
+			// We use it directly as the struct pointer (no dereferencing needed).
+			TempVar va_list_struct_ptr;
+			if (std::holds_alternative<TempVar>(va_list_var)) {
+				va_list_struct_ptr = std::get<TempVar>(va_list_var);
+			} else {
+				// If it's a string_view, we need to load it into a TempVar
+				// This is the address of the va_list structure
+				va_list_struct_ptr = var_counter.next();
+				// Actually, for string_view we can just use it directly in operations
+				// Let's create a simple load operation
+				std::string_view var_name = std::get<std::string_view>(va_list_var);
+				// Load the va_list pointer (which points to the structure)
+				DereferenceOp load_va_list;
+				load_va_list.result = va_list_struct_ptr;
+				load_va_list.pointee_type = Type::UnsignedLongLong;
+				load_va_list.pointee_size_in_bits = 64;
+				load_va_list.pointer = var_name;
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_va_list), functionCallNode.called_from()));
+			}
 			
 			// Step 2: Read the appropriate offset (gp_offset for ints, fp_offset for floats)
 			TempVar offset_field_addr = var_counter.next();
@@ -7016,11 +7028,8 @@ private:
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_addr), functionCallNode.called_from()));
 			} else {
 				// gp_offset is at offset 0, so address is the same as struct pointer
-				AssignmentOp gp_offset_addr;
-				gp_offset_addr.result = offset_field_addr;
-				gp_offset_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, offset_field_addr};
-				gp_offset_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(gp_offset_addr), functionCallNode.called_from()));
+				// Just copy va_list_struct_ptr to offset_field_addr
+				offset_field_addr = va_list_struct_ptr;
 			}
 			
 			// Step 3: Load current offset value
@@ -7166,12 +7175,9 @@ private:
 		// - Linux (Itanium mangling): variadic args in registers, initialize va_list structure
 		
 		if (context_->isItaniumMangling()) {
-			// Linux/System V AMD64 ABI: Initialize va_list structure
-			// The structure has 4 fields:
-			//   unsigned int gp_offset;       // offset 0: Current offset in GP register save area (8 for first vararg, since RDI is first fixed param)
-			//   unsigned int fp_offset;       // offset 4: Current offset in FP register save area (48, start of XMM area)
-			//   void *overflow_arg_area;      // offset 8: Stack overflow area (RBP + 16, after return address and saved RBP)
-			//   void *reg_save_area;          // offset 16: Pointer to register save area base
+			// Linux/System V AMD64 ABI: Use va_list structure
+			// The structure has already been initialized in the function prologue by IRConverter.
+			// We just need to assign the address of the va_list structure to the user's va_list variable.
 			
 			// Get address of the va_list structure
 			TempVar va_list_struct_addr = var_counter.next();
@@ -7181,70 +7187,6 @@ private:
 			struct_addr_op.pointee_size_in_bits = 8;
 			struct_addr_op.operand = std::string("__varargs_va_list_struct__");
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(struct_addr_op), functionCallNode.called_from()));
-			
-			// Get address of the register save area
-			TempVar reg_save_addr = var_counter.next();
-			AddressOfOp reg_addr_op;
-			reg_addr_op.result = reg_save_addr;
-			reg_addr_op.pointee_type = Type::Char;
-			reg_addr_op.pointee_size_in_bits = 8;
-			reg_addr_op.operand = std::string("__varargs_reg_save_area__");
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(reg_addr_op), functionCallNode.called_from()));
-			
-			// Initialize gp_offset field (offset 0) to 8 (skip RDI which holds first fixed param)
-			// Store 32-bit value directly at [va_list_struct + 0]
-			DereferenceStoreOp gp_store;
-			gp_store.pointer = va_list_struct_addr;  // offset 0, so same as base
-			gp_store.value = TypedValue{Type::UnsignedInt, 32, 8ULL};  // Start at offset 8 (skip RDI)
-			gp_store.pointee_type = Type::UnsignedInt;
-			gp_store.pointee_size_in_bits = 32;
-			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(gp_store), functionCallNode.called_from()));
-			
-			// Initialize fp_offset field (offset 4) to 48 (start of XMM register area)
-			TempVar fp_offset_addr = var_counter.next();
-			BinaryOp fp_addr_add;
-			fp_addr_add.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_addr};
-			fp_addr_add.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
-			fp_addr_add.result = fp_offset_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_addr_add), functionCallNode.called_from()));
-			
-			// Store 48 (start of XMM area) directly
-			DereferenceStoreOp fp_store;
-			fp_store.pointer = fp_offset_addr;
-			fp_store.value = TypedValue{Type::UnsignedInt, 32, 48ULL};  // Start of XMM area
-			fp_store.pointee_type = Type::UnsignedInt;
-			fp_store.pointee_size_in_bits = 32;
-			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(fp_store), functionCallNode.called_from()));
-			
-			// Initialize overflow_arg_area field (offset 8) - not used for register args, set to null
-			TempVar overflow_addr = var_counter.next();
-			BinaryOp overflow_addr_add;
-			overflow_addr_add.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_addr};
-			overflow_addr_add.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
-			overflow_addr_add.result = overflow_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_add), functionCallNode.called_from()));
-			
-			DereferenceStoreOp overflow_store;
-			overflow_store.pointer = overflow_addr;
-			overflow_store.value = TypedValue{Type::UnsignedLongLong, 64, 0ULL};  // NULL for now
-			overflow_store.pointee_type = Type::UnsignedLongLong;
-			overflow_store.pointee_size_in_bits = 64;
-			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(overflow_store), functionCallNode.called_from()));
-			
-			// Initialize reg_save_area field (offset 16) to point to the register save area
-			TempVar reg_save_area_field_addr = var_counter.next();
-			BinaryOp reg_field_addr_add;
-			reg_field_addr_add.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_addr};
-			reg_field_addr_add.rhs = TypedValue{Type::UnsignedLongLong, 64, 16ULL};
-			reg_field_addr_add.result = reg_save_area_field_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_field_addr_add), functionCallNode.called_from()));
-			
-			DereferenceStoreOp reg_save_store;
-			reg_save_store.pointer = reg_save_area_field_addr;
-			reg_save_store.value = TypedValue{Type::UnsignedLongLong, 64, reg_save_addr};
-			reg_save_store.pointee_type = Type::UnsignedLongLong;
-			reg_save_store.pointee_size_in_bits = 64;
-			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(reg_save_store), functionCallNode.called_from()));
 			
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 			// Get the va_list variable from arg0_ir[2]

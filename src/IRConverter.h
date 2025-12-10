@@ -7375,9 +7375,58 @@ private:
 				}
 				
 				// Register special variables for va_list structure and register save area
-				// The va_list structure fields will be initialized by __builtin_va_start
 				variable_scopes.back().identifier_offset["__varargs_va_list_struct__"] = va_list_struct_base;
 				variable_scopes.back().identifier_offset["__varargs_reg_save_area__"] = reg_save_area_base;
+				
+				// Initialize the va_list structure fields directly in the function prologue
+				// This avoids IR complexity with pointer arithmetic and dereferencing
+				// Structure layout (24 bytes total):
+				//   unsigned int gp_offset;       // offset 0 (4 bytes): Start at 8 (skip RDI which holds first fixed param)
+				//   unsigned int fp_offset;       // offset 4 (4 bytes): Start at 48 (start of XMM area)
+				//   void *overflow_arg_area;      // offset 8 (8 bytes): NULL for now (not used for register args)
+				//   void *reg_save_area;          // offset 16 (8 bytes): Pointer to register save area base
+				
+				// Load va_list structure base address into RAX
+				emitLeaFromFrame(X64Register::RAX, va_list_struct_base);
+				
+				// Store gp_offset = 8 at [RAX + 0]
+				// MOV DWORD PTR [RAX], 8
+				textSectionData.push_back(0xC7);  // MOV r/m32, imm32
+				textSectionData.push_back(0x00);  // ModR/M: [RAX]
+				textSectionData.push_back(0x08);  // Immediate value: 8
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				
+				// Store fp_offset = 48 at [RAX + 4]
+				// MOV DWORD PTR [RAX + 4], 48
+				textSectionData.push_back(0xC7);  // MOV r/m32, imm32
+				textSectionData.push_back(0x40);  // ModR/M: [RAX + disp8]
+				textSectionData.push_back(0x04);  // disp8: 4
+				textSectionData.push_back(0x30);  // Immediate value: 48
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				
+				// Store overflow_arg_area = 0 at [RAX + 8]
+				// MOV QWORD PTR [RAX + 8], 0
+				textSectionData.push_back(0x48);  // REX.W
+				textSectionData.push_back(0xC7);  // MOV r/m64, imm32 (sign-extended)
+				textSectionData.push_back(0x40);  // ModR/M: [RAX + disp8]
+				textSectionData.push_back(0x08);  // disp8: 8
+				textSectionData.push_back(0x00);  // Immediate value: 0
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				
+				// Store reg_save_area pointer at [RAX + 16]
+				// Load register save area address into RCX
+				emitLeaFromFrame(X64Register::RCX, reg_save_area_base);
+				// MOV QWORD PTR [RAX + 16], RCX
+				textSectionData.push_back(0x48);  // REX.W
+				textSectionData.push_back(0x89);  // MOV r/m64, r64
+				textSectionData.push_back(0x48);  // ModR/M: [RAX + disp8], RCX
+				textSectionData.push_back(0x10);  // disp8: 16
 			}
 		}
 	}
