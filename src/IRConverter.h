@@ -5827,15 +5827,17 @@ private:
 			object_is_this_pointer = (std::get<std::string_view>(ctor_op.object) == "this");
 		}
 
-		// Load the address of the object into RCX (first parameter - 'this' pointer)
+		// Load the address of the object into the first parameter register ('this' pointer)
+		// Use platform-specific register: RDI on Linux, RCX on Windows
+		X64Register this_reg = getIntParamReg<TWriterClass>(0);
 		if (object_is_this_pointer) {
 			// For 'this' pointer: reload the pointer value (not its address)
-			// MOV RCX, [RBP + object_offset]
-			emitMovFromFrame(X64Register::RCX, object_offset);
+			// MOV this_reg, [RBP + object_offset]
+			emitMovFromFrame(this_reg, object_offset);
 		} else {
 			// For regular objects: get the address
-			// LEA RCX, [RBP + object_offset]
-			auto lea_inst = generateLeaFromFrame(X64Register::RCX, object_offset);
+			// LEA this_reg, [RBP + object_offset]
+			auto lea_inst = generateLeaFromFrame(this_reg, object_offset);
 			textSectionData.insert(textSectionData.end(), lea_inst.op_codes.begin(), lea_inst.op_codes.begin() + lea_inst.size_in_bytes);
 		}
 
@@ -5949,9 +5951,17 @@ private:
 				const TempVar temp_var = std::get<TempVar>(paramValue);
 				int param_offset = getStackOffsetFromTempVar(temp_var);
 				if (is_reference_param) {
-					// For reference parameters, load address (LEA)
-					// LEA target_reg, [RBP + param_offset]
-					emitLeaFromFrame(target_reg, param_offset);
+					// For reference parameters, check if the temp var already holds a pointer
+					// (e.g., from addressof operation). If so, load the pointer value (MOV),
+					// otherwise take the address of the variable (LEA).
+					auto ref_it = reference_stack_info_.find(param_offset);
+					if (ref_it != reference_stack_info_.end()) {
+						// Temp var holds a pointer - load it
+						emitMovFromFrame(target_reg, param_offset);
+					} else {
+						// Temp var holds a value - take its address
+						emitLeaFromFrame(target_reg, param_offset);
+					}
 				} else {
 					// For value parameters: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
@@ -11205,6 +11215,16 @@ private:
 				SizedRegister{target_reg, 64, false},  // source: 64-bit register
 				SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 			);
+			
+			// Mark the result as holding a pointer (so it's treated like a reference)
+			// This ensures that when passed to reference parameters, we MOV (load the pointer)
+			// instead of LEA (taking address of the temp variable holding the pointer)
+			reference_stack_info_[result_offset] = ReferenceInfo{
+				.value_type = op.pointee_type,
+				.value_size_bits = op.pointee_size_in_bits,
+				.is_rvalue_reference = false
+			};
+			
 			return;
 		}
 		
