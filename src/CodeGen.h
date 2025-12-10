@@ -7083,7 +7083,10 @@ private:
 			read_value.pointer = arg_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_value), functionCallNode.called_from()));
 			
-			// Step 7: Increment the offset by 8 bytes (or 16 for floats in XMM regs)
+			// Step 7: Increment the offset by 8 bytes (or 16 for floats in XMM regs) and store back
+			// Instead of creating a separate TempVar for new_offset, compute and store directly
+			
+			// First, compute new_offset = current_offset + increment
 			TempVar new_offset = var_counter.next();
 			BinaryOp increment_offset;
 			increment_offset.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
@@ -7092,6 +7095,14 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
 			
 			// Step 8: Store updated offset back to the appropriate field in the structure
+			// Use Assignment to ensure new_offset is materialized before DereferenceStore reads it
+			TempVar materialized_offset = var_counter.next();
+			AssignmentOp materialize;
+			materialize.result = materialized_offset;
+			materialize.lhs = TypedValue{Type::UnsignedInt, 32, materialized_offset};
+			materialize.rhs = TypedValue{Type::UnsignedInt, 32, new_offset};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
+			
 			DereferenceStoreOp store_offset;
 			if (is_float_type) {
 				// Store to fp_offset field at offset 4
@@ -7107,7 +7118,7 @@ private:
 				// Store to gp_offset field at offset 0
 				store_offset.pointer = va_list_struct_ptr;
 			}
-			store_offset.value = TypedValue{Type::UnsignedInt, 32, new_offset};
+			store_offset.value = TypedValue{Type::UnsignedInt, 32, materialized_offset};
 			store_offset.pointee_type = Type::UnsignedInt;
 			store_offset.pointee_size_in_bits = 32;
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
