@@ -7438,7 +7438,9 @@ private:
 			reference_stack_info_.clear();
 		
 			// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
-			size_t int_param_reg_index = 0;
+			// For member functions, 'this' was already added above and consumed index 0,
+			// so we start counting from param_offset_adjustment (which is 1 for member functions)
+			size_t int_param_reg_index = param_offset_adjustment;
 			size_t float_param_reg_index = 0;
 		
 			for (size_t i = 0; i < func_decl.parameters.size(); ++i) {
