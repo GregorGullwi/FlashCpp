@@ -32,7 +32,7 @@ struct integral_constant {
 
 ### Root Cause Analysis
 
-**Investigation Results** (2025-12-10):
+**Investigation Results** (2025-12-10 - Updated):
 
 1. **Parser Support Exists**: The parser correctly handles conversion operator syntax (`operator T()`) - code exists in `Parser.cpp` lines 1260-1286 and 3702-3742.
 
@@ -52,6 +52,22 @@ struct integral_constant {
    - Adding static members to AST with `is_static` flag → causes infinite lookup loops
    - Creating `QualifiedIdentifierNode` for static access → triggers recursive lookups  
    - Setting `identifierType` without proper node creation → parsing errors
+   - Global `static_member_registry_` map → causes hangs (root cause unknown, needs debugger)
+   - **Approach A Implementation Attempt** (2025-12-10):
+     - Added `StructTypeInfo* struct_info` to `MemberFunctionContext`
+     - Passed struct_info pointer through all delayed function body creation sites
+     - Updated identifier lookup to check `context.struct_info->static_members` directly
+     - Created DeclarationNode for static members and set identifierType
+     - **Result**: Still caused hangs even for simple non-template cases
+     - **Issue**: Creating DeclarationNode or setting identifierType for static members triggers recursive processing somewhere in the pipeline
+     - All approaches that create ANY AST node for static members during lookup cause hangs
+
+7. **Architecture Discovery**:
+   - Template bodies ARE parsed immediately during template definition (line 4722-4750)
+   - Delayed parsing happens AFTER struct definition but BEFORE instantiation
+   - For templates, `struct_type_index` is often 0 (not in `gTypesByName` until instantiation)
+   - TypeInfo lookup at line 11175 checks `if (struct_type_index != 0)` and skips for templates
+   - StructTypeInfo exists but isn't accessible via type index during template parsing
 
 ### Why This Blocks Conversion Operators
 
@@ -59,12 +75,36 @@ The conversion operator itself parses correctly. The failure occurs when the ope
 
 ### Correct Fix Approach
 
-This requires fixing **Priority 2: Non-Type Template Parameters with Dependent Types** AND implementing proper static member handling:
+**Root Architectural Issue**: Template member functions have `struct_type_index == 0`, causing TypeInfo-based static member lookup to be skipped (line 11175).
 
-1. Fix template parameter tracking so `template<typename T, T v>` works correctly
-2. Implement delayed template body parsing OR add static members to AST without causing lookup loops
-3. Ensure static member access doesn't create `this->member` transforms
-4. Handle qualified name lookups (e.g., `StructName::static_member`) in template contexts
+This requires a more fundamental architectural change. Three possible approaches:
+
+**Approach A: Pass StructTypeInfo Pointer Directly** (ATTEMPTED - FAILED)
+- Add `StructTypeInfo* struct_info` to `MemberFunctionContext`
+- Pass struct_info pointer (not just index) when setting up member function context
+- Check `struct_info->static_members` directly instead of requiring type index lookup
+- Avoids the `struct_type_index == 0` problem entirely
+- **Status**: FAILED - causes hangs even for simple cases
+- **Problem**: Creating any AST node (DeclarationNode, IdentifierNode) for static members during lookup triggers recursive processing
+- **Needs**: Debugger to trace where the hang occurs; likely in delayed parsing or code generation
+
+**Approach B: Defer Template Body Parsing** (RECOMMENDED - Not Yet Attempted)
+- Don't parse template member function bodies during template definition
+- Parse them only during instantiation (true two-phase lookup)
+- At instantiation time, full TypeInfo exists in `gTypesByName` and lookups work
+- Major architectural change but aligns with C++ semantics
+- Would require significant refactoring of template handling
+- **Advantage**: Clean separation between definition and instantiation, matches C++ standard
+- **Disadvantage**: Requires major refactoring of current template architecture
+
+**Approach C: Add Static Members to AST with Separate Storage** (High Risk)
+- Modify `StructDeclarationNode` to have a separate `static_members_` vector
+- Don't mix static and instance members in `members_`
+- Special lookup path for static members that doesn't create `this->` transforms
+- Requires very careful handling to avoid the lookup loops encountered in previous attempts
+- Need to ensure IdentifierNode creation doesn't trigger recursive lookups
+- **Status**: All AST-based approaches so far have failed with hangs
+- **Needs**: Understanding of why node creation causes hangs
 
 ### Required For
 
