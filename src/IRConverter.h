@@ -4038,6 +4038,8 @@ private:
 				auto& reg_info = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)];
 				if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN && 
 				    reg_info.stackVariableOffset != stack_offset) {
+					FLASH_LOG_FORMAT(Codegen, Debug, "FLUSHING dirty reg {} from old offset {} to new offset {}, size={}", 
+						static_cast<int>(ctx.result_physical_reg), reg_info.stackVariableOffset, stack_offset, reg_info.size_in_bits);
 					emitMovToFrameSized(
 						SizedRegister{ctx.result_physical_reg, 64, false},
 						SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits, false}
@@ -4509,6 +4511,12 @@ private:
 			opcodes = generateMovToFrame8(source.reg, dest.offset);
 		}
 		
+		std::string bytes_str;
+		for (int i = 0; i < opcodes.size_in_bytes; i++) {
+			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
+		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrameSized: reg={} offset={} size={} is_xmm={} bytes={}", 
+			static_cast<int>(source.reg), dest.offset, dest.size_in_bits, is_xmm_source, bytes_str);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
@@ -4589,6 +4597,11 @@ private:
 	// Helper to generate and emit MOV to frame (64-bit pointers/references)
 	void emitMovToFrame(X64Register sourceRegister, int32_t offset) {
 		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, 64);
+		std::string bytes_str;
+		for (int i = 0; i < opcodes.size_in_bytes; i++) {
+			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
+		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrame: reg={} offset={} bytes={}", static_cast<int>(sourceRegister), offset, bytes_str);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
@@ -6638,23 +6651,33 @@ private:
 						// For floating-point types, the value is in an XMM register
 						// Use float mov instructions instead of integer mov
 						bool is_float = (var_type == Type::Float);
-						auto store_opcodes = generateFloatMovToFrame(src_reg.value(), dst_offset, is_float);
-						textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-						                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+						emitFloatMovToFrame(src_reg.value(), dst_offset, is_float);
 					} else {
 						// For integer types, use regular mov
-						auto store_opcodes = generateMovToFrameBySize(src_reg.value(), dst_offset, op.size_in_bits);
-						textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-						                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+						emitMovToFrameSized(
+							SizedRegister{src_reg.value(), 64, false},
+							SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}
+						);
 					}
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
-					allocated_reg_val = allocateRegisterWithSpilling();
-					emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits);
-					auto store_opcodes = generateMovToFrameBySize(allocated_reg_val, dst_offset, op.size_in_bits);
-					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-										   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
-					regAlloc.release(allocated_reg_val);
+					if (is_floating_point_type(var_type)) {
+						// For floating-point types, use XMM register and float moves
+						allocated_reg_val = allocateXMMRegisterWithSpilling();
+						bool is_float = (var_type == Type::Float);
+						emitFloatMovFromFrame(allocated_reg_val, src_offset, is_float);
+						emitFloatMovToFrame(allocated_reg_val, dst_offset, is_float);
+						regAlloc.release(allocated_reg_val);
+					} else {
+						// For integer types, use GPR and integer moves
+						allocated_reg_val = allocateRegisterWithSpilling();
+						emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits);
+						emitMovToFrameSized(
+							SizedRegister{allocated_reg_val, 64, false},
+							SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}
+						);
+						regAlloc.release(allocated_reg_val);
+					}
 				}
 			} // end else (not literal)
 		} // end if (is_initialized)
