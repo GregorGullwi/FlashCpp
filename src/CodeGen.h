@@ -1813,19 +1813,51 @@ private:
 						// Check for explicit initializer first (highest precedence)
 						auto explicit_it = explicit_inits.find(member.name);
 						if (explicit_it != explicit_inits.end()) {
-							// Use explicit initializer from constructor initializer list
-							auto init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
-							// Extract just the value (third element of init_operands)
-							if (std::holds_alternative<TempVar>(init_operands[2])) {
-								member_value = std::get<TempVar>(init_operands[2]);
-							} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-								member_value = std::get<unsigned long long>(init_operands[2]);
-							} else if (std::holds_alternative<double>(init_operands[2])) {
-								member_value = std::get<double>(init_operands[2]);
-							} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-								member_value = std::get<std::string_view>(init_operands[2]);
-							} else {
-								member_value = 0ULL;  // fallback
+							// Special handling for reference members initialized with reference variables/parameters
+							// When initializing a reference member (int& ref) with a reference parameter (int& r),
+							// we need to use the pointer value that the parameter holds, not dereference it
+							bool handled_as_reference_init = false;
+							if (member.is_reference || member.is_rvalue_reference) {
+								// Check if the initializer is a simple identifier
+								const ASTNode& init_expr = explicit_it->second->initializer_expr;
+								if (init_expr.is<ExpressionNode>()) {
+									const auto& expr_node = init_expr.as<ExpressionNode>();
+									if (std::holds_alternative<IdentifierNode>(expr_node)) {
+										const auto& id_node = std::get<IdentifierNode>(expr_node);
+										std::string_view init_name = id_node.name();
+										
+										// Look up the identifier in the symbol table
+										std::optional<ASTNode> init_symbol = symbol_table.lookup(init_name);
+										if (init_symbol.has_value() && init_symbol->is<DeclarationNode>()) {
+											const auto& init_decl = init_symbol->as<DeclarationNode>();
+											const auto& init_type = init_decl.type_node().as<TypeSpecifierNode>();
+											
+											// If the initializer is a reference, use its value directly (it's already a pointer)
+											// Don't dereference it - just use the string_view to refer to the variable
+											if (init_type.is_reference() || init_type.is_rvalue_reference()) {
+												member_value = init_name;
+												handled_as_reference_init = true;
+											}
+										}
+									}
+								}
+							}
+							
+							if (!handled_as_reference_init) {
+								// Use explicit initializer from constructor initializer list
+								auto init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
+								// Extract just the value (third element of init_operands)
+								if (std::holds_alternative<TempVar>(init_operands[2])) {
+									member_value = std::get<TempVar>(init_operands[2]);
+								} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+									member_value = std::get<unsigned long long>(init_operands[2]);
+								} else if (std::holds_alternative<double>(init_operands[2])) {
+									member_value = std::get<double>(init_operands[2]);
+								} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+									member_value = std::get<std::string_view>(init_operands[2]);
+								} else {
+									member_value = 0ULL;  // fallback
+								}
 							}
 						} else if (member.default_initializer.has_value()) {
 							const ASTNode& init_node = member.default_initializer.value();
@@ -5774,18 +5806,60 @@ private:
 							return { Type::Int, 32, TempVar{0} };
 						}
 
-						MemberStoreOp member_store;
-						member_store.value.type = member->type;
-						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
-						member_store.value.value = member_value;
-						member_store.object = object_name;
-						member_store.member_name = member_name;
-						member_store.offset = static_cast<int>(member->offset);
-						member_store.is_reference = member->is_reference;
-						member_store.is_rvalue_reference = member->is_rvalue_reference;
-						member_store.struct_type_info = nullptr;
+						// Check if this is an assignment to a reference member
+						// Reference members need special handling: they store a pointer, so assignment
+						// should store THROUGH the pointer, not TO the member itself
+						if (member->is_reference || member->is_rvalue_reference) {
+							// Step 1: Load the reference (pointer) from the member
+							TempVar ref_ptr_temp = var_counter.next();
+							MemberLoadOp load_ref;
+							load_ref.result.value = ref_ptr_temp;
+							load_ref.result.type = member->type;
+							load_ref.result.size_in_bits = 64;  // Pointer is always 64-bit
+							load_ref.object = object_name;
+							load_ref.member_name = member_name;
+							load_ref.offset = static_cast<int>(member->offset);
+							load_ref.is_reference = true;  // Load the pointer value
+							load_ref.is_rvalue_reference = member->is_rvalue_reference;
+							load_ref.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_ref), binaryOperatorNode.get_token()));
+							
+							// Step 2: Store the value through the pointer (using Assignment to a dereferenced pointer)
+							// Create a synthetic dereference + assignment
+							// First, dereference the pointer to get an lvalue
+							TempVar deref_temp = var_counter.next();
+							DereferenceOp deref_op;
+							deref_op.result = deref_temp;
+							deref_op.pointer = ref_ptr_temp;
+							deref_op.pointee_type = member->type;
+							deref_op.pointee_size_in_bits = static_cast<int>(member->size * 8);
+							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), binaryOperatorNode.get_token()));
+							
+							// Now assign to the dereferenced value
+							AssignmentOp assign_op;
+							assign_op.lhs.type = member->type;
+							assign_op.lhs.size_in_bits = static_cast<int>(member->size * 8);
+							assign_op.lhs.value = ref_ptr_temp;  // Use the pointer directly for indirect store
+							assign_op.rhs.type = member->type;
+							assign_op.rhs.size_in_bits = static_cast<int>(member->size * 8);
+							assign_op.rhs.value = member_value;
+							assign_op.is_pointer_store = true;  // Flag to indicate this is a store through pointer
+							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+						} else {
+							// Normal member store for non-reference members
+							MemberStoreOp member_store;
+							member_store.value.type = member->type;
+							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+							member_store.value.value = member_value;
+							member_store.object = object_name;
+							member_store.member_name = member_name;
+							member_store.offset = static_cast<int>(member->offset);
+							member_store.is_reference = member->is_reference;
+							member_store.is_rvalue_reference = member->is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
 
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
+						}
 
 						// Return the RHS value as the result
 						return rhsIrOperands;
