@@ -6740,7 +6740,7 @@ private:
 				}
 				if (!pointer_initialized) {
 					FLASH_LOG(Codegen, Error, "Reference initializer is not an addressable lvalue");
-					assert(false && "Reference initializer must be an lvalue");
+					return; // Exit gracefully instead of crashing
 				}
 			} else {
 				moveImmediateToRegister(pointer_reg, 0);
@@ -11029,7 +11029,7 @@ private:
 			}
 			if (!pointer_loaded) {
 				FLASH_LOG(Codegen, Error, "Reference member initializer must be an lvalue");
-				assert(false && "Reference member initializer must be an lvalue");
+				return; // Exit gracefully instead of crashing
 			}
 		} else if (is_literal) {
 			if (is_double_literal) {

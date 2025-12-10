@@ -11,7 +11,7 @@
 // Attempt 2: <type_traits> - fundamental for template metaprogramming
 // Status: FAILS - Missing identifier 'value' in conversion operator
 // Error: constexpr operator value_type() const noexcept { return value; }
-// #include <type_traits>
+#include <type_traits>
 
 // Attempt 3: <utility> - provides std::move, std::forward, std::pair
 // Status: HANGS during compilation (timeout after 10+ seconds)
@@ -21,7 +21,7 @@
 // Status: HANGS during compilation (timeout after 10+ seconds)
 // #include <vector>
 
-// For now, we just have a minimal main to make this a valid test file
+// This should fail during compilation due to missing conversion operator support
 int main() {
     return 0;
 }
