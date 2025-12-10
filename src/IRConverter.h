@@ -1004,6 +1004,73 @@ OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register base_reg
  * @param is_float True for movss (float), false for movsd (double).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
+/**
+ * @brief Generates x86-64 binary opcodes for 'movss/movsd xmm, [base_reg + offset]'.
+ *
+ * This function creates the byte sequence for loading a float/double value from
+ * a memory address ([base_reg + offset]) into an XMM register.
+ *
+ * @param destinationRegister The destination XMM register (XMM0-XMM15).
+ * @param base_reg The base address register (any GP register, typically a pointer).
+ * @param offset The signed byte offset from base_reg.
+ * @param is_float True for movss (float), false for movsd (double).
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateFloatMovFromMemory(X64Register destinationRegister, X64Register base_reg, int32_t offset, bool is_float) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// Prefix: F3 for movss (float), F2 for movsd (double)
+	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
+	result.size_in_bytes++;
+
+	// Check if we need REX prefix
+	uint8_t xmm_reg = xmm_modrm_bits(destinationRegister);
+	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+	bool need_rex = (xmm_reg >= 8) || (static_cast<uint8_t>(base_reg) >= 8);
+	
+	if (need_rex) {
+		uint8_t rex = 0x40;
+		if (xmm_reg >= 8) rex |= 0x04;  // REX.R for XMM8-15
+		if (static_cast<uint8_t>(base_reg) >= 8) rex |= 0x01;  // REX.B for R8-R15
+		*current_byte_ptr++ = rex;
+		result.size_in_bytes++;
+	}
+
+	// Opcode: 0F 10 for movss/movsd xmm, [mem]
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0x10;
+	result.size_in_bytes += 2;
+
+	// ModR/M byte - encode [base_reg + offset]
+	if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
+		// Mod=00, no displacement (except for RBP/R13 which need at least disp8)
+		uint8_t modrm = 0x00 + ((xmm_reg & 0x07) << 3) + base_bits;
+		*current_byte_ptr++ = modrm;
+		result.size_in_bytes++;
+	} else if (offset >= -128 && offset <= 127) {
+		// 8-bit displacement
+		uint8_t modrm = 0x40 + ((xmm_reg & 0x07) << 3) + base_bits;  // Mod=01
+		*current_byte_ptr++ = modrm;
+		*current_byte_ptr++ = static_cast<uint8_t>(offset);
+		result.size_in_bytes += 2;
+	} else {
+		// 32-bit displacement
+		uint8_t modrm = 0x80 + ((xmm_reg & 0x07) << 3) + base_bits;  // Mod=10
+		*current_byte_ptr++ = modrm;
+		result.size_in_bytes++;
+
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		result.size_in_bytes += 4;
+	}
+
+	return result;
+}
+
 OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_t offset, bool is_float) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
@@ -4666,6 +4733,20 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to emit MOVSS/MOVSD from memory [reg + offset] into XMM register
+	void emitFloatMovFromMemory(X64Register xmm_dest, X64Register base_reg, int32_t offset, bool is_float) {
+		// Assert that xmm_dest is an XMM register
+		assert(static_cast<uint8_t>(xmm_dest) >= 16 && static_cast<uint8_t>(xmm_dest) < 32 && 
+		       "emitFloatMovFromMemory requires XMM destination register (XMM0-XMM15)");
+		// Assert that base_reg is NOT an XMM register
+		assert(static_cast<uint8_t>(base_reg) < 16 && 
+		       "emitFloatMovFromMemory requires non-XMM base register");
+		
+		// Generate the float mov instruction from memory
+		auto opcodes = generateFloatMovFromMemory(xmm_dest, base_reg, offset, is_float);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	}
+
 	// Helper to emit MOVDQU (unaligned 128-bit move) from XMM register to frame
 	// Used for saving full XMM registers in variadic function register save areas
 	void emitMovdquToFrame(X64Register xmm_src, int32_t offset) {
@@ -4699,6 +4780,9 @@ private:
 
 	// Helper to emit MOV DWORD PTR [reg + offset], imm32
 	void emitMovDwordPtrImmToRegOffset(X64Register base_reg, int32_t offset, uint32_t imm32) {
+		// Assert that base_reg is NOT an XMM register
+		assert(static_cast<uint8_t>(base_reg) < 16 && 
+		       "emitMovDwordPtrImmToRegOffset requires non-XMM base register");
 		// MOV r/m32, imm32: C7 /0
 		textSectionData.push_back(0xC7);
 		
@@ -4729,6 +4813,9 @@ private:
 
 	// Helper to emit MOV QWORD PTR [reg + offset], imm32 (sign-extended to 64-bit)
 	void emitMovQwordPtrImmToRegOffset(X64Register base_reg, int32_t offset, uint32_t imm32) {
+		// Assert that base_reg is NOT an XMM register
+		assert(static_cast<uint8_t>(base_reg) < 16 && 
+		       "emitMovQwordPtrImmToRegOffset requires non-XMM base register");
 		// REX.W prefix for 64-bit operation
 		textSectionData.push_back(0x48);
 		
@@ -4762,6 +4849,12 @@ private:
 
 	// Helper to emit MOV QWORD PTR [reg + offset], src_reg
 	void emitMovQwordPtrRegToRegOffset(X64Register base_reg, int32_t offset, X64Register src_reg) {
+		// Assert that base_reg is NOT an XMM register
+		assert(static_cast<uint8_t>(base_reg) < 16 && 
+		       "emitMovQwordPtrRegToRegOffset requires non-XMM base register");
+		// Assert that src_reg is NOT an XMM register
+		assert(static_cast<uint8_t>(src_reg) < 16 && 
+		       "emitMovQwordPtrRegToRegOffset requires non-XMM source register");
 		// REX.W prefix for 64-bit operation
 		uint8_t rex = 0x48;
 		if (static_cast<uint8_t>(src_reg) >= 8) rex |= 0x04;  // REX.R if src is R8-R15
@@ -6909,7 +7002,7 @@ private:
 			// Stack alignment depends on target platform ABI
 			// System V AMD64 (Linux): RSP must be (16n + 8) before CALL so it's 16-aligned after CALL pushes return
 			// MS x64 (Windows): RSP must be 16-aligned before CALL
-			if constexpr (std::is_same_v<decltype(writer), ELFWriter>) {
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				// Linux/ELF: Align to (16n + 8)
 				if (total_stack % 16 != 8) {
 					total_stack = ((total_stack + 8) & ~15) - 8 + 16;  // Round up to next (16n + 8)
