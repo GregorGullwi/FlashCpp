@@ -1,12 +1,12 @@
 // EXPECTED FAIL TEST: Actual standard header inclusion
 // This test attempts to include real C++20 standard headers
-// It is expected to fail or hang during compilation
+// All includes are enabled to test compiler behavior with timeouts
 //
 // NOTE: This test is marked as _fail so run_all_tests.sh expects it to fail
 
 // Attempt 1: <cstddef> - smallest standard header
 // Status: Compiles but has link failures (needs std::terminate, operator())
-// #include <cstddef>
+#include <cstddef>
 
 // Attempt 2: <type_traits> - fundamental for template metaprogramming
 // Status: FAILS - Missing identifier 'value' in conversion operator
@@ -14,14 +14,14 @@
 #include <type_traits>
 
 // Attempt 3: <utility> - provides std::move, std::forward, std::pair
-// Status: HANGS during compilation (timeout after 10+ seconds)
-// #include <utility>
+// Status: HANGS during compilation (timeout protects against this)
+#include <utility>
 
 // Attempt 4: <vector> - common container
-// Status: HANGS during compilation (timeout after 10+ seconds)
-// #include <vector>
+// Status: HANGS during compilation (timeout protects against this)
+#include <vector>
 
-// This should fail during compilation due to missing conversion operator support
+// This should fail during compilation due to missing features
 int main() {
     return 0;
 }
