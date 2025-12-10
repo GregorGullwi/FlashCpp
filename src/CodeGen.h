@@ -3729,13 +3729,26 @@ private:
 											TypedValue tv;
 											
 											// Check if parameter expects a reference and argument is an identifier
-											if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
-											    std::holds_alternative<IdentifierNode>(init_expr.as<ExpressionNode>())) {
+											bool is_ident = std::holds_alternative<IdentifierNode>(init_expr.as<ExpressionNode>());
+											bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
+											
+											if (param_is_ref && is_ident) {
 												const auto& identifier = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
 												std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+												if (symbol.has_value()) {
+													bool is_decl = symbol->is<DeclarationNode>();
+													bool is_vardecl = symbol->is<VariableDeclarationNode>();
+												}
+												
+												const DeclarationNode* arg_decl = nullptr;
 												if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-													const auto& arg_decl = symbol->as<DeclarationNode>();
-													const auto& arg_type = arg_decl.type_node().as<TypeSpecifierNode>();
+													arg_decl = &symbol->as<DeclarationNode>();
+												} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
+													arg_decl = &symbol->as<VariableDeclarationNode>().declaration();
+												}
+												
+												if (arg_decl) {
+													const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
 													
 													if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
 														// Argument is already a reference - just pass it through
@@ -3754,6 +3767,7 @@ private:
 														tv.type = arg_type.type();
 														tv.size_in_bits = 64;  // Pointer size
 														tv.value = addr_var;
+														tv.is_reference = true;  // Mark as reference parameter
 													}
 												} else {
 													// Not a simple identifier or not found - use as-is
@@ -4139,6 +4153,7 @@ private:
 												tv.type = arg_type.type();
 												tv.size_in_bits = 64;  // Pointer size
 												tv.value = addr_var;
+												tv.is_reference = true;  // Mark as reference parameter
 											}
 										} else {
 											// Not a simple identifier or not found - use as-is
@@ -12510,6 +12525,7 @@ private:
 							tv.type = arg_type.type();
 							tv.size_in_bits = 64;  // Pointer size
 							tv.value = addr_var;
+							tv.is_reference = true;  // Mark as reference parameter
 						}
 					} else {
 						// Not a simple identifier or not found - use as-is
