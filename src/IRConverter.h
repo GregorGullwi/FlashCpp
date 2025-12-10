@@ -1120,6 +1120,10 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
  *         of `uint8_t` and the actual number of bytes generated.
  */
 OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset) {
+	// Assert that this is a general-purpose register, not an XMM register
+	assert(static_cast<uint8_t>(sourceRegister) < 16 && 
+	       "generatePtrMovToFrame called with XMM register - use generateFloatMovToFrame instead");
+	
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
@@ -1186,6 +1190,10 @@ OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset)
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
 OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) {
+	// Assert that this is a general-purpose register, not an XMM register
+	assert(static_cast<uint8_t>(sourceRegister) < 16 && 
+	       "generateMovToFrame32 called with XMM register - use generateFloatMovToFrame instead");
+	
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
@@ -4477,11 +4485,24 @@ private:
 	void emitMovToFrameSized(SizedRegister source, SizedStackSlot dest) {
 		OpCodeWithSize opcodes;
 		
+		// Check if source is an XMM register (enum values >= 16)
+		bool is_xmm_source = static_cast<uint8_t>(source.reg) >= 16;
+		
 		// Use the destination size to determine the store instruction
 		if (dest.size_in_bits == 64) {
-			opcodes = generatePtrMovToFrame(source.reg, dest.offset);
+			if (is_xmm_source) {
+				// For XMM registers, use MOVSD (double) instruction
+				opcodes = generateFloatMovToFrame(source.reg, dest.offset, false);
+			} else {
+				opcodes = generatePtrMovToFrame(source.reg, dest.offset);
+			}
 		} else if (dest.size_in_bits == 32) {
-			opcodes = generateMovToFrame32(source.reg, dest.offset);
+			if (is_xmm_source) {
+				// For XMM registers, use MOVSS (float) instruction
+				opcodes = generateFloatMovToFrame(source.reg, dest.offset, true);
+			} else {
+				opcodes = generateMovToFrame32(source.reg, dest.offset);
+			}
 		} else if (dest.size_in_bits == 16) {
 			opcodes = generateMovToFrame16(source.reg, dest.offset);
 		} else { // 8-bit
