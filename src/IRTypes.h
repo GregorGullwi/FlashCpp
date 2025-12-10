@@ -738,10 +738,17 @@ struct StackAllocOp {
 };
 
 // Assignment operation
+// NOTE: There is no separate StoreOp - AssignmentOp handles both direct assignment and
+// indirect stores (assignment through pointers). Use is_pointer_store=true for indirect stores.
+// This design keeps the IR simpler while supporting:
+// 1. Direct assignment: x = 5 (lhs is variable/tempvar)
+// 2. Assignment through pointer: *ptr = 5 (lhs is pointer, is_pointer_store=true)
+// 3. Reference member assignment: obj.ref = 5 (loads ref pointer, then stores through it)
 struct AssignmentOp {
 	std::variant<std::string_view, TempVar> result;  // Result variable (usually same as lhs)
 	TypedValue lhs;                                   // Left-hand side (destination)
 	TypedValue rhs;                                   // Right-hand side (source)
+	bool is_pointer_store = false;                    // True if lhs is a pointer and we should store through it
 };
 
 // Loop begin (marks loop start with labels for break/continue)

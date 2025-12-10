@@ -9709,6 +9709,50 @@ private:
 		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();		Type lhs_type = op.lhs.type;
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
+		// Special handling for pointer store (assignment through pointer)
+		if (op.is_pointer_store) {
+			// LHS is a pointer (TempVar), RHS is the value to store
+			// Load the pointer into a register
+			X64Register ptr_reg = allocateRegisterWithSpilling();
+			if (std::holds_alternative<TempVar>(op.lhs.value)) {
+				TempVar ptr_var = std::get<TempVar>(op.lhs.value);
+				int32_t ptr_offset = getStackOffsetFromTempVar(ptr_var);
+				emitMovFromFrame(ptr_reg, ptr_offset);
+			} else {
+				assert(false && "Pointer store LHS must be a TempVar");
+				return;
+			}
+			
+			// Get the value to store
+			X64Register value_reg = allocateRegisterWithSpilling();
+			int value_size_bytes = op.rhs.size_in_bits / 8;
+			
+			if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
+				// Immediate value
+				unsigned long long imm_value = std::get<unsigned long long>(op.rhs.value);
+				if (value_size_bytes == 8) {
+					emitMovImm64(value_reg, imm_value);
+				} else {
+					moveImmediateToRegister(value_reg, static_cast<int32_t>(imm_value));
+				}
+			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
+				// Load from temp var
+				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
+				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
+				emitMovFromFrameBySize(value_reg, rhs_offset, op.rhs.size_in_bits);
+			} else {
+				assert(false && "Unsupported RHS type for pointer store");
+				return;
+			}
+			
+			// Store through the pointer: [ptr_reg] = value_reg
+			emitStoreToMemory(textSectionData, value_reg, ptr_reg, 0, value_size_bytes);
+			
+			regAlloc.release(ptr_reg);
+			regAlloc.release(value_reg);
+			return;
+		}
+
 		// Special handling for function pointer assignment
 		if (lhs_type == Type::FunctionPointer) {
 			// Get LHS destination
@@ -11005,12 +11049,21 @@ private:
 			// value_reg already allocated above
 			bool pointer_loaded = false;
 			if (is_variable) {
-				// Load address of the variable
+				// Check if this variable is itself a reference (e.g., reference parameter)
 				const StackVariableScope& current_scope = variable_scopes.back();
 				auto it = current_scope.identifier_offset.find(variable_name);
 				if (it != current_scope.identifier_offset.end()) {
 					int32_t var_offset = it->second;
-					emitLeaFromFrame(value_reg, var_offset);
+					// Check if this stack variable is a reference
+					auto ref_it = reference_stack_info_.find(var_offset);
+					if (ref_it != reference_stack_info_.end()) {
+						// This variable is a reference - it already holds a pointer
+						// MOV the pointer value, don't take its address
+						emitMovFromFrame(value_reg, var_offset);
+					} else {
+						// This variable is not a reference - take its address
+						emitLeaFromFrame(value_reg, var_offset);
+					}
 					pointer_loaded = true;
 				}
 			} else if (!is_literal) {
