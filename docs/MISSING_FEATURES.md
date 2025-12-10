@@ -127,7 +127,18 @@ This requires a more fundamental architectural change. Three possible approaches
    - **Remaining Issue**: Segfault in downstream code (likely code generation or IR conversion)
    - Next: Investigate code generation issue
 
-4. **Phase 4: Testing and Verification** (NEXT)
+4. **Phase 4: Fix Segfault - Position Restore Issue** ✅ COMPLETE
+   - Identified that segfault was caused by invalid position restore after deferred body parsing
+   - Root cause: saved_pos from save_token_position() was being restored incorrectly
+   - Solution: Use restore_lexer_position_only() instead of restore_token_position()
+   - Added validity check before restoring position
+   - **Status**: Segfault fixed, parsing completes successfully
+   - **New Issue**: Code generation error - template parameter 'v' not substituted (expected, substitution not yet implemented)
+
+5. **Phase 5: Template Parameter Substitution in Deferred Bodies** (NEXT)
+   - Need to substitute template parameters with actual values during deferred body parsing
+   - Currently `v` (template parameter) is not being replaced with `42` (actual value)
+   - This will require mapping template parameter names to instantiation argument values
    - Test 1: Simple template with static member
    - Test 2: Template with conversion operator accessing static member  
    - Test 3: `integral_constant<int, 42>`
