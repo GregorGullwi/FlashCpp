@@ -4028,23 +4028,134 @@ private:
 					}
 
 					if (type_info.struct_info_->hasConstructor()) {
+						FLASH_LOG(Codegen, Debug, "Struct ", type_info.name_, " has constructor");
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"
 						// Skip if the variable was already initialized with an rvalue (function return)
 						bool has_copy_init = false;
+						bool has_direct_ctor_call = false;
+						const ConstructorCallNode* direct_ctor = nullptr;
 						
+						FLASH_LOG(Codegen, Debug, "has_rvalue_initializer=", has_rvalue_initializer, " node.initializer()=", (bool)node.initializer());
 						if (node.initializer() && !has_rvalue_initializer) {
 							const ASTNode& init_node = *node.initializer();
-							if (init_node.is<ExpressionNode>() && !init_node.is<InitializerListNode>()) {
-								// For copy initialization like "AllSizes b = a;", we need to
-								// generate a copy constructor call.
-								has_copy_init = true;
+							if (init_node.is<ExpressionNode>()) {
+								const auto& expr = init_node.as<ExpressionNode>();
+								FLASH_LOG(Codegen, Debug, "Checking initializer for ", decl.identifier_token().value());
+								// Check if this is a direct constructor call (e.g., S s(x))
+								if (std::holds_alternative<ConstructorCallNode>(expr)) {
+									has_direct_ctor_call = true;
+									direct_ctor = &std::get<ConstructorCallNode>(expr);
+									FLASH_LOG(Codegen, Debug, "Found ConstructorCallNode initializer");
+								} else if (!init_node.is<InitializerListNode>()) {
+									// For copy initialization like "AllSizes b = a;", we need to
+									// generate a copy constructor call.
+									has_copy_init = true;
+								}
 							}
 						}
 
-						// For copy initialization, ALWAYS generate a copy constructor call
-						// (even for implicit copy constructors - they still need to be called)
-						// UNLESS the initializer was already added (rvalue temp case)
-						if (has_copy_init) {
+						if (has_direct_ctor_call && direct_ctor) {
+							// Direct constructor call like S s(x) - process its arguments directly
+							FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info.name_);
+							// Find the matching constructor to get parameter types for reference handling
+							const ConstructorDeclarationNode* matching_ctor = nullptr;
+							size_t num_args = 0;
+							direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
+							
+							if (type_info.struct_info_) {
+								for (const auto& func : type_info.struct_info_->member_functions) {
+									if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+										const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+										const auto& params = ctor_node.parameter_nodes();
+										
+										// Match constructor with same number of parameters or with default parameters
+										if (params.size() == num_args) {
+											matching_ctor = &ctor_node;
+											break;
+										} else if (params.size() > num_args) {
+											// Check if remaining params have defaults
+											bool all_have_defaults = true;
+											for (size_t i = num_args; i < params.size(); ++i) {
+												if (!params[i].is<DeclarationNode>() || 
+												    !params[i].as<DeclarationNode>().has_default_value()) {
+													all_have_defaults = false;
+													break;
+												}
+											}
+											if (all_have_defaults) {
+												matching_ctor = &ctor_node;
+												break;
+											}
+										}
+									}
+								}
+							}
+							
+							// Create constructor call with the declared variable as the object
+							ConstructorCallOp ctor_op;
+							ctor_op.struct_name = std::string(type_info.name_);
+							ctor_op.object = decl.identifier_token().value();
+							
+							// Get constructor parameter types for reference handling
+							const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
+							
+							// Process constructor arguments with reference parameter handling
+							size_t arg_index = 0;
+							direct_ctor->arguments().visit([&](ASTNode argument) {
+								// Get the parameter type for this argument (if it exists)
+								const TypeSpecifierNode* param_type = nullptr;
+								if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
+									param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								}
+								
+								auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+								// argumentIrOperands = [type, size, value]
+								if (argumentIrOperands.size() >= 3) {
+									TypedValue tv;
+									
+									// Check if parameter expects a reference and argument is an identifier
+									if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
+									    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+										const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+										std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+										if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+											const auto& arg_decl = symbol->as<DeclarationNode>();
+											const auto& arg_type = arg_decl.type_node().as<TypeSpecifierNode>();
+											
+											if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
+												// Argument is already a reference - just pass it through
+												tv = toTypedValue(argumentIrOperands);
+											} else {
+												// Argument is a value - take its address
+												TempVar addr_var = var_counter.next();
+												AddressOfOp addr_op;
+												addr_op.result = addr_var;
+												addr_op.pointee_type = arg_type.type();
+												addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
+												addr_op.operand = identifier.name();
+												ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+												
+												// Create TypedValue with the address
+												tv.type = arg_type.type();
+												tv.size_in_bits = 64;  // Pointer size
+												tv.value = addr_var;
+											}
+										} else {
+											// Not a simple identifier or not found - use as-is
+											tv = toTypedValue(argumentIrOperands);
+										}
+									} else {
+										// Not a reference parameter or not an identifier - use as-is
+										tv = toTypedValue(argumentIrOperands);
+									}
+									
+									ctor_op.arguments.push_back(std::move(tv));
+								}
+								arg_index++;
+							});
+							
+							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
+						} else if (has_copy_init) {
 							// Generate copy constructor call
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = std::string(type_info.name_);
@@ -12322,14 +12433,96 @@ private:
 		ctor_op.struct_name = constructor_name;
 		ctor_op.object = ret_var;  // The temporary variable that will hold the result
 
+		// Find the matching constructor to get parameter types for reference handling
+		const ConstructorDeclarationNode* matching_ctor = nullptr;
+		size_t num_args = 0;
+		constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
+		
+		if (struct_info) {
+			for (const auto& func : struct_info->member_functions) {
+				if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+					const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+					const auto& params = ctor_node.parameter_nodes();
+					
+					// Match constructor with same number of parameters or with default parameters
+					if (params.size() == num_args) {
+						matching_ctor = &ctor_node;
+						break;
+					} else if (params.size() > num_args) {
+						// Check if remaining params have defaults
+						bool all_have_defaults = true;
+						for (size_t i = num_args; i < params.size(); ++i) {
+							if (!params[i].is<DeclarationNode>() || 
+							    !params[i].as<DeclarationNode>().has_default_value()) {
+								all_have_defaults = false;
+								break;
+							}
+						}
+						if (all_have_defaults) {
+							matching_ctor = &ctor_node;
+							break;
+						}
+					}
+				}
+			}
+		}
+		
+		// Get constructor parameter types for reference handling
+		const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
+
 		// Generate IR for constructor arguments and add them to ctor_op.arguments
+		size_t arg_index = 0;
 		constructorCallNode.arguments().visit([&](ASTNode argument) {
+			// Get the parameter type for this argument (if it exists)
+			const TypeSpecifierNode* param_type = nullptr;
+			if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
+				param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			}
+			
 			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 			// argumentIrOperands = [type, size, value]
 			if (argumentIrOperands.size() >= 3) {
-				TypedValue tv = toTypedValue(argumentIrOperands);
+				TypedValue tv;
+				
+				// Check if parameter expects a reference and argument is an identifier
+				if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
+				    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+					std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+						const auto& arg_decl = symbol->as<DeclarationNode>();
+						const auto& arg_type = arg_decl.type_node().as<TypeSpecifierNode>();
+						
+						if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
+							// Argument is already a reference - just pass it through
+							tv = toTypedValue(argumentIrOperands);
+						} else {
+							// Argument is a value - take its address
+							TempVar addr_var = var_counter.next();
+							AddressOfOp addr_op;
+							addr_op.result = addr_var;
+							addr_op.pointee_type = arg_type.type();
+							addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
+							addr_op.operand = identifier.name();
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constructorCallNode.called_from()));
+							
+							// Create TypedValue with the address
+							tv.type = arg_type.type();
+							tv.size_in_bits = 64;  // Pointer size
+							tv.value = addr_var;
+						}
+					} else {
+						// Not a simple identifier or not found - use as-is
+						tv = toTypedValue(argumentIrOperands);
+					}
+				} else {
+					// Not a reference parameter or not an identifier - use as-is
+					tv = toTypedValue(argumentIrOperands);
+				}
+				
 				ctor_op.arguments.push_back(std::move(tv));
 			}
+			arg_index++;
 		});
 
 		// Fill in default arguments for parameters that weren't explicitly provided
