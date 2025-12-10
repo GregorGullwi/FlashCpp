@@ -12,7 +12,15 @@
 // This supports both integer and floating-point types correctly on System V AMD64
 #define va_arg(ap, type) __builtin_va_arg(ap, type)
 
-#define va_end(ap) (ap = (va_list)0)
+// Platform-specific va_end implementation
+// System V AMD64 (Linux/ELF): va_list is typically char*
+// MS x64 (Windows/COFF): va_list is typically char*
+// Both can use simple null assignment for cleanup
+#ifdef _WIN32
+#define va_end(ap) ((void)(ap = 0))
+#else
+#define va_end(ap) ((void)(ap = 0))
+#endif
 
 // External variadic function compiled with gcc
 int sum_ints(int count, ...) {
