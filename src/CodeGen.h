@@ -3710,13 +3710,60 @@ private:
 								ctor_op.struct_name = type_info.name_;
 								ctor_op.object = decl.identifier_token().value();
 
+								// Get constructor parameter types for reference handling
+								const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
+								
 								// Add each initializer as a constructor parameter
+								size_t arg_index = 0;
 								for (const ASTNode& init_expr : initializers) {
 									if (init_expr.is<ExpressionNode>()) {
+										// Get the parameter type for this argument (if it exists)
+										const TypeSpecifierNode* param_type = nullptr;
+										if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
+											param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+										}
+										
 										auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										// init_operands = [type, size, value]
 										if (init_operands.size() >= 3) {
-											TypedValue tv = toTypedValue(init_operands);
+											TypedValue tv;
+											
+											// Check if parameter expects a reference and argument is an identifier
+											if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
+											    std::holds_alternative<IdentifierNode>(init_expr.as<ExpressionNode>())) {
+												const auto& identifier = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
+												std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+												if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+													const auto& arg_decl = symbol->as<DeclarationNode>();
+													const auto& arg_type = arg_decl.type_node().as<TypeSpecifierNode>();
+													
+													if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
+														// Argument is already a reference - just pass it through
+														tv = toTypedValue(init_operands);
+													} else {
+														// Argument is a value - take its address
+														TempVar addr_var = var_counter.next();
+														AddressOfOp addr_op;
+														addr_op.result = addr_var;
+														addr_op.pointee_type = arg_type.type();
+														addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
+														addr_op.operand = identifier.name();
+														ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+														
+														// Create TypedValue with the address
+														tv.type = arg_type.type();
+														tv.size_in_bits = 64;  // Pointer size
+														tv.value = addr_var;
+													}
+												} else {
+													// Not a simple identifier or not found - use as-is
+													tv = toTypedValue(init_operands);
+												}
+											} else {
+												// Not a reference parameter or not an identifier - use as-is
+												tv = toTypedValue(init_operands);
+											}
+											
 											ctor_op.arguments.push_back(std::move(tv));
 										} else {
 											assert(false && "Invalid initializer operands - expected [type, size, value]");
@@ -3724,6 +3771,7 @@ private:
 									} else {
 										assert(false && "Initializer must be an ExpressionNode");
 									}
+									arg_index++;
 								}
 								
 								// Fill in default arguments for missing parameters
