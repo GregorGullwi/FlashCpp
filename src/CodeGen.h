@@ -7032,8 +7032,16 @@ private:
 				fp_offset_calc.result = fp_offset_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_calc), functionCallNode.called_from()));
 				
+				// Materialize the address before using it
+				TempVar materialized_fp_addr = var_counter.next();
+				AssignmentOp materialize;
+				materialize.result = materialized_fp_addr;
+				materialize.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_fp_addr};
+				materialize.rhs = TypedValue{Type::UnsignedLongLong, 64, fp_offset_addr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
+				
 				// Read 32-bit fp_offset value from [va_list_struct + 4]
-				load_offset.pointer = fp_offset_addr;
+				load_offset.pointer = materialized_fp_addr;
 			} else {
 				// gp_offset is at offset 0 - read directly from va_list_struct_ptr
 				// Read 32-bit gp_offset value from [va_list_struct + 0]
@@ -7050,12 +7058,20 @@ private:
 			reg_save_addr.result = reg_save_area_field_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), functionCallNode.called_from()));
 			
+			// Materialize the address before using it
+			TempVar materialized_reg_save_addr = var_counter.next();
+			AssignmentOp materialize_reg;
+			materialize_reg.result = materialized_reg_save_addr;
+			materialize_reg.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_reg_save_addr};
+			materialize_reg.rhs = TypedValue{Type::UnsignedLongLong, 64, reg_save_area_field_addr};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_reg), functionCallNode.called_from()));
+			
 			TempVar reg_save_area_ptr = var_counter.next();
 			DereferenceOp load_reg_save_ptr;
 			load_reg_save_ptr.result = reg_save_area_ptr;
 			load_reg_save_ptr.pointee_type = Type::UnsignedLongLong;
 			load_reg_save_ptr.pointee_size_in_bits = 64;
-			load_reg_save_ptr.pointer = reg_save_area_field_addr;
+			load_reg_save_ptr.pointer = materialized_reg_save_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
 			
 			// Step 5: Compute address: reg_save_area + current_offset
@@ -7113,7 +7129,15 @@ private:
 				fp_store_addr_calc.result = fp_offset_store_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), functionCallNode.called_from()));
 				
-				store_offset.pointer = fp_offset_store_addr;
+				// Materialize the address before using it in DereferenceStore
+				TempVar materialized_addr = var_counter.next();
+				AssignmentOp materialize_addr;
+				materialize_addr.result = materialized_addr;
+				materialize_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_addr};
+				materialize_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, fp_offset_store_addr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_addr), functionCallNode.called_from()));
+				
+				store_offset.pointer = materialized_addr;
 			} else {
 				// Store to gp_offset field at offset 0
 				store_offset.pointer = va_list_struct_ptr;
