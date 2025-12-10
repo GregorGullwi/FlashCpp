@@ -5852,9 +5852,15 @@ private:
 			Type paramType = arg.type;
 			int paramSize = arg.size_in_bits;
 			TypeIndex arg_type_index = arg.type_index;
+			bool arg_is_reference = arg.is_reference;  // Check if marked as reference
 			
 			// Build TypeSpecifierNode for this parameter
 			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(paramSize), Token{});
+			
+			// If the argument is marked as a reference, set it as such
+			if (arg_is_reference) {
+				param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
+			}
 			
 			// For copy/move constructors: if parameter is the same struct type, it should be a reference
 			// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
@@ -5909,16 +5915,17 @@ private:
 			int paramSize = arg.size_in_bits;
 			TypeIndex arg_type_index = arg.type_index;
 			const IrValue& paramValue = arg.value;
+			bool arg_is_reference = arg.is_reference;  // Check if marked as reference
 
 			// Skip first register (this pointer): RCX on Windows, RDI on Linux
 			X64Register target_reg = getIntParamReg<TWriterClass>(i + 1);
 
-			// Check if this is a reference parameter (copy/move constructor - same struct type)
+			// Check if this is a reference parameter (copy/move constructor - same struct type, OR marked as reference)
 			bool is_same_struct_type = false;
 			if (struct_type_it != gTypesByName.end() && arg_type_index != 0) {
 				is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 			}
-			bool is_reference_param = (num_params == 1 && paramType == Type::Struct && is_same_struct_type);
+			bool is_reference_param = arg_is_reference || (num_params == 1 && paramType == Type::Struct && is_same_struct_type);
 
 			if (std::holds_alternative<unsigned long long>(paramValue)) {
 				// Immediate value
