@@ -20759,11 +20759,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FLASH_LOG(Templates, Debug, "Parsing ", template_class.deferred_bodies().size(), 
 		          " deferred template member function bodies for ", instantiated_name);
 		
-		// Save current position
-		SaveHandle current_pos = save_token_position();
+		// Save current position before parsing deferred bodies
+		// We need to restore this after parsing so the parser continues from the correct location
+		SaveHandle saved_pos = save_token_position();
+		FLASH_LOG(Templates, Debug, "Saved current position: ", saved_pos);
 		
 		// Parse each deferred body
+		// Note: parse_delayed_function_body internally restores to body_start, parses, then leaves position at end of body
 		for (const auto& deferred : template_class.deferred_bodies()) {
+			FLASH_LOG(Templates, Debug, "About to parse body for ", deferred.function_name, " at position ", deferred.body_start);
 			// Find the corresponding member function in the instantiated struct
 			FunctionDeclarationNode* target_func = nullptr;
 			ConstructorDeclarationNode* target_ctor = nullptr;
@@ -20833,9 +20837,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// TODO: Add actual template argument values for substitution
 			// For now, we're just parsing with the template parameter names available
 			
+			FLASH_LOG(Templates, Debug, "About to parse deferred body for ", deferred.function_name);
+			
 			// Parse the body
 			std::optional<ASTNode> body;
 			auto result = parse_delayed_function_body(delayed, body);
+			
+			FLASH_LOG(Templates, Debug, "Finished parse_delayed_function_body, result.is_error()=", result.is_error());
 			
 			current_template_param_names_.clear();
 			
@@ -20848,10 +20856,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			FLASH_LOG(Templates, Debug, "Successfully parsed deferred template body for ", deferred.function_name);
 		}
 		
-		// Restore position
-		restore_token_position(current_pos);
+		FLASH_LOG(Templates, Debug, "Finished parsing all deferred bodies");
+		
+		// Restore the position we saved before parsing deferred bodies
+		// This ensures the parser continues from the correct location after template instantiation
+		FLASH_LOG(Templates, Debug, "About to restore to saved position: ", saved_pos);
+		
+		// Check if the saved position is still valid
+		if (saved_tokens_.find(saved_pos) == saved_tokens_.end()) {
+			FLASH_LOG(Templates, Error, "Saved position ", saved_pos, " not found in saved_tokens_!");
+		} else {
+			FLASH_LOG(Templates, Debug, "Saved position ", saved_pos, " found, restoring...");
+			restore_lexer_position_only(saved_pos);
+			FLASH_LOG(Templates, Debug, "Restored to saved position");
+		}
 	}
 
+	FLASH_LOG(Templates, Debug, "About to return instantiated_struct for ", instantiated_name);
+	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
 }
