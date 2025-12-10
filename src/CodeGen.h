@@ -6997,48 +6997,49 @@ private:
 			//   void *reg_save_area;         (offset 16)
 			
 			// The va_list variable is a char* that points to the va_list structure.
-			// We use it directly as the struct pointer (no dereferencing needed).
+			// We need to load this pointer value into a TempVar.
 			TempVar va_list_struct_ptr;
 			if (std::holds_alternative<TempVar>(va_list_var)) {
+				// va_list is already a TempVar - use it directly
 				va_list_struct_ptr = std::get<TempVar>(va_list_var);
 			} else {
-				// If it's a string_view, we need to load it into a TempVar
-				// This is the address of the va_list structure
+				// va_list is a variable name - load its value (which is a pointer) into a TempVar
 				va_list_struct_ptr = var_counter.next();
-				// Actually, for string_view we can just use it directly in operations
-				// Let's create a simple load operation
 				std::string_view var_name = std::get<std::string_view>(va_list_var);
-				// Load the va_list pointer (which points to the structure)
-				DereferenceOp load_va_list;
-				load_va_list.result = va_list_struct_ptr;
-				load_va_list.pointee_type = Type::UnsignedLongLong;
-				load_va_list.pointee_size_in_bits = 64;
-				load_va_list.pointer = var_name;
-				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_va_list), functionCallNode.called_from()));
+				
+				// Use Assignment to load the pointer value from the variable
+				AssignmentOp load_pointer;
+				load_pointer.result = va_list_struct_ptr;
+				load_pointer.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				load_pointer.rhs = TypedValue{Type::UnsignedLongLong, 64, var_name};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_pointer), functionCallNode.called_from()));
 			}
 			
-			// Step 2: Read the appropriate offset (gp_offset for ints, fp_offset for floats)
-			TempVar offset_field_addr = var_counter.next();
-			if (is_float_type) {
-				// fp_offset is at offset 4
-				BinaryOp fp_offset_addr;
-				fp_offset_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-				fp_offset_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
-				fp_offset_addr.result = offset_field_addr;
-				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_addr), functionCallNode.called_from()));
-			} else {
-				// gp_offset is at offset 0, so address is the same as struct pointer
-				// Just copy va_list_struct_ptr to offset_field_addr
-				offset_field_addr = va_list_struct_ptr;
-			}
-			
-			// Step 3: Load current offset value
+			// Step 2: Compute address of the appropriate offset field (gp_offset for ints, fp_offset for floats)
+			// Step 3: Load current offset value (32-bit unsigned) from the offset field
 			TempVar current_offset = var_counter.next();
 			DereferenceOp load_offset;
 			load_offset.result = current_offset;
 			load_offset.pointee_type = Type::UnsignedInt;
 			load_offset.pointee_size_in_bits = 32;
-			load_offset.pointer = offset_field_addr;
+			
+			if (is_float_type) {
+				// fp_offset is at offset 4 - compute va_list_struct_ptr + 4
+				TempVar fp_offset_addr = var_counter.next();
+				BinaryOp fp_offset_calc;
+				fp_offset_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				fp_offset_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
+				fp_offset_calc.result = fp_offset_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_calc), functionCallNode.called_from()));
+				
+				// Read 32-bit fp_offset value from [va_list_struct + 4]
+				load_offset.pointer = fp_offset_addr;
+			} else {
+				// gp_offset is at offset 0 - read directly from va_list_struct_ptr
+				// Read 32-bit gp_offset value from [va_list_struct + 0]
+				load_offset.pointer = va_list_struct_ptr;
+			}
+			
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), functionCallNode.called_from()));
 			
 			// Step 4: Load reg_save_area pointer (at offset 16)
@@ -7090,9 +7091,22 @@ private:
 			increment_offset.result = new_offset;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
 			
-			// Step 8: Store updated offset back to the structure
+			// Step 8: Store updated offset back to the appropriate field in the structure
 			DereferenceStoreOp store_offset;
-			store_offset.pointer = offset_field_addr;
+			if (is_float_type) {
+				// Store to fp_offset field at offset 4
+				TempVar fp_offset_store_addr = var_counter.next();
+				BinaryOp fp_store_addr_calc;
+				fp_store_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				fp_store_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
+				fp_store_addr_calc.result = fp_offset_store_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), functionCallNode.called_from()));
+				
+				store_offset.pointer = fp_offset_store_addr;
+			} else {
+				// Store to gp_offset field at offset 0
+				store_offset.pointer = va_list_struct_ptr;
+			}
 			store_offset.value = TypedValue{Type::UnsignedInt, 32, new_offset};
 			store_offset.pointee_type = Type::UnsignedInt;
 			store_offset.pointee_size_in_bits = 32;
