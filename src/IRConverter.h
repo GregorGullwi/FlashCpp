@@ -4040,8 +4040,9 @@ private:
 				    reg_info.stackVariableOffset != stack_offset) {
 					FLASH_LOG_FORMAT(Codegen, Debug, "FLUSHING dirty reg {} from old offset {} to new offset {}, size={}", 
 						static_cast<int>(ctx.result_physical_reg), reg_info.stackVariableOffset, stack_offset, reg_info.size_in_bits);
+					// Use the actual register size from reg_info, not hardcoded 64 bits
 					emitMovToFrameSized(
-						SizedRegister{ctx.result_physical_reg, 64, false},
+						SizedRegister{ctx.result_physical_reg, static_cast<uint8_t>(reg_info.size_in_bits), false},
 						SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits, false}
 					);
 				}
@@ -4121,9 +4122,7 @@ private:
 				// Without this, subsequent loads from the stack location will read garbage.
 				if (is_float_type) {
 					bool is_single_precision = (ctx.result_value.type == Type::Float);
-					auto store_opcodes = generateFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
-					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+					emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
 				}
 				// For integer types: Don't store to memory - keep the value in the register for subsequent operations
 			}
@@ -4670,6 +4669,9 @@ private:
 	// Helper to emit MOVDQU (unaligned 128-bit move) from XMM register to frame
 	// Used for saving full XMM registers in variadic function register save areas
 	void emitMovdquToFrame(X64Register xmm_src, int32_t offset) {
+		// Assert that xmm_src is actually an XMM register (16-31 for XMM0-XMM15)
+		assert(static_cast<uint8_t>(xmm_src) >= 16 && static_cast<uint8_t>(xmm_src) < 32 && 
+		       "emitMovdquToFrame requires XMM register (XMM0-XMM15)");
 		uint8_t xmm_idx = xmm_modrm_bits(xmm_src);
 		
 		// MOVDQU [RBP + offset], xmm: F3 0F 7F /r
@@ -4688,6 +4690,101 @@ private:
 		} else {
 			uint8_t modrm = 0x85 + ((xmm_idx & 0x07) << 3);  // Mod=10, Reg=XMM, R/M=101 (RBP)
 			textSectionData.push_back(modrm);
+			textSectionData.push_back((offset >> 0) & 0xFF);
+			textSectionData.push_back((offset >> 8) & 0xFF);
+			textSectionData.push_back((offset >> 16) & 0xFF);
+			textSectionData.push_back((offset >> 24) & 0xFF);
+		}
+	}
+
+	// Helper to emit MOV DWORD PTR [reg + offset], imm32
+	void emitMovDwordPtrImmToRegOffset(X64Register base_reg, int32_t offset, uint32_t imm32) {
+		// MOV r/m32, imm32: C7 /0
+		textSectionData.push_back(0xC7);
+		
+		// ModR/M and offset encoding
+		uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+		if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
+			// Mod=00, no displacement
+			textSectionData.push_back(0x00 | base_bits);
+		} else if (offset >= -128 && offset <= 127) {
+			// Mod=01, 8-bit displacement
+			textSectionData.push_back(0x40 | base_bits);
+			textSectionData.push_back(static_cast<uint8_t>(offset));
+		} else {
+			// Mod=10, 32-bit displacement
+			textSectionData.push_back(0x80 | base_bits);
+			textSectionData.push_back((offset >> 0) & 0xFF);
+			textSectionData.push_back((offset >> 8) & 0xFF);
+			textSectionData.push_back((offset >> 16) & 0xFF);
+			textSectionData.push_back((offset >> 24) & 0xFF);
+		}
+		
+		// Immediate value (32-bit little-endian)
+		textSectionData.push_back((imm32 >> 0) & 0xFF);
+		textSectionData.push_back((imm32 >> 8) & 0xFF);
+		textSectionData.push_back((imm32 >> 16) & 0xFF);
+		textSectionData.push_back((imm32 >> 24) & 0xFF);
+	}
+
+	// Helper to emit MOV QWORD PTR [reg + offset], imm32 (sign-extended to 64-bit)
+	void emitMovQwordPtrImmToRegOffset(X64Register base_reg, int32_t offset, uint32_t imm32) {
+		// REX.W prefix for 64-bit operation
+		textSectionData.push_back(0x48);
+		
+		// MOV r/m64, imm32: C7 /0 (imm32 is sign-extended to 64-bit)
+		textSectionData.push_back(0xC7);
+		
+		// ModR/M and offset encoding
+		uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+		if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
+			// Mod=00, no displacement
+			textSectionData.push_back(0x00 | base_bits);
+		} else if (offset >= -128 && offset <= 127) {
+			// Mod=01, 8-bit displacement
+			textSectionData.push_back(0x40 | base_bits);
+			textSectionData.push_back(static_cast<uint8_t>(offset));
+		} else {
+			// Mod=10, 32-bit displacement
+			textSectionData.push_back(0x80 | base_bits);
+			textSectionData.push_back((offset >> 0) & 0xFF);
+			textSectionData.push_back((offset >> 8) & 0xFF);
+			textSectionData.push_back((offset >> 16) & 0xFF);
+			textSectionData.push_back((offset >> 24) & 0xFF);
+		}
+		
+		// Immediate value (32-bit little-endian, will be sign-extended)
+		textSectionData.push_back((imm32 >> 0) & 0xFF);
+		textSectionData.push_back((imm32 >> 8) & 0xFF);
+		textSectionData.push_back((imm32 >> 16) & 0xFF);
+		textSectionData.push_back((imm32 >> 24) & 0xFF);
+	}
+
+	// Helper to emit MOV QWORD PTR [reg + offset], src_reg
+	void emitMovQwordPtrRegToRegOffset(X64Register base_reg, int32_t offset, X64Register src_reg) {
+		// REX.W prefix for 64-bit operation
+		uint8_t rex = 0x48;
+		if (static_cast<uint8_t>(src_reg) >= 8) rex |= 0x04;  // REX.R if src is R8-R15
+		if (static_cast<uint8_t>(base_reg) >= 8) rex |= 0x01; // REX.B if base is R8-R15
+		textSectionData.push_back(rex);
+		
+		// MOV r/m64, r64: 89 /r
+		textSectionData.push_back(0x89);
+		
+		// ModR/M encoding
+		uint8_t src_bits = (static_cast<uint8_t>(src_reg) & 0x07) << 3;
+		uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
+		
+		if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
+			// Mod=00, no displacement
+			textSectionData.push_back(0x00 | src_bits | base_bits);
+		} else if (offset >= -128 && offset <= 127) {
+			// Mod=01, 8-bit displacement
+			textSectionData.push_back(0x40 | src_bits | base_bits);
+			textSectionData.push_back(static_cast<uint8_t>(offset));
+		} else {
+			// Mod=10, 32-bit displacement
+			textSectionData.push_back(0x80 | src_bits | base_bits);
 			textSectionData.push_back((offset >> 0) & 0xFF);
 			textSectionData.push_back((offset >> 8) & 0xFF);
 			textSectionData.push_back((offset >> 16) & 0xFF);
@@ -6654,8 +6751,9 @@ private:
 						emitFloatMovToFrame(src_reg.value(), dst_offset, is_float);
 					} else {
 						// For integer types, use regular mov
+						// Use the actual size from the variable type, not hardcoded 64 bits
 						emitMovToFrameSized(
-							SizedRegister{src_reg.value(), 64, false},
+							SizedRegister{src_reg.value(), static_cast<uint8_t>(op.size_in_bits), false},
 							SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}
 						);
 					}
@@ -6808,9 +6906,19 @@ private:
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 			
-			// Align so RSP is (16n + 8) - misaligned by 8, so after CALL pushes return address, RSP becomes 16-byte aligned
-			if (total_stack % 16 != 8) {
-				total_stack = ((total_stack + 8) & ~15) - 8 + 16;  // Round up to next (16n + 8)
+			// Stack alignment depends on target platform ABI
+			// System V AMD64 (Linux): RSP must be (16n + 8) before CALL so it's 16-aligned after CALL pushes return
+			// MS x64 (Windows): RSP must be 16-aligned before CALL
+			if constexpr (std::is_same_v<decltype(writer), ELFWriter>) {
+				// Linux/ELF: Align to (16n + 8)
+				if (total_stack % 16 != 8) {
+					total_stack = ((total_stack + 8) & ~15) - 8 + 16;  // Round up to next (16n + 8)
+				}
+			} else {
+				// Windows/COFF: Align to 16n
+				if (total_stack % 16 != 0) {
+					total_stack = (total_stack + 15) & ~15;  // Round up to next 16n
+				}
 			}
 			
 			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
@@ -6933,14 +7041,11 @@ private:
 			total_stack_space = (total_stack_space + 15) & -16;
 		}
 		
-		// DEBUG: Check if we're skipping the prologue
-		if (total_stack_space == 0 && func_name_str.find("insert") != std::string::npos) {
-			FLASH_LOG(Codegen, Warning, "Function ", func_name, " has total_stack_space=0!");
-			FLASH_LOG(Codegen, Warning, "  named_vars_size=", func_stack_space.named_vars_size);
-			FLASH_LOG(Codegen, Warning, "  shadow_stack_space=", func_stack_space.shadow_stack_space);
-			FLASH_LOG(Codegen, Warning, "  temp_vars_size=", func_stack_space.temp_vars_size);
-		}
-
+		// Save function prologue information before setup
+		current_function_offset_ = static_cast<uint32_t>(textSectionData.size());
+		current_function_name_ = func_name;
+		current_function_prologue_offset_ = 0;
+		
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
 		writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage);
 		functionSymbols[std::string(func_name)] = func_offset;
@@ -7421,7 +7526,7 @@ private:
 				
 				// Save all integer registers: RDI, RSI, RDX, RCX, R8, R9 at offsets 0-47
 				// (RDI is the first fixed param but we save it for completeness)
-				const X64Register int_regs[] = {
+				constexpr X64Register int_regs[] = {
 					X64Register::RDI,  // Offset 0
 					X64Register::RSI,  // Offset 8
 					X64Register::RDX,  // Offset 16
@@ -7429,8 +7534,9 @@ private:
 					X64Register::R8,   // Offset 32
 					X64Register::R9    // Offset 40
 				};
+				constexpr size_t INT_REG_COUNT = sizeof(int_regs) / sizeof(int_regs[0]);
 				
-				for (size_t i = 0; i < 6; ++i) {
+				for (size_t i = 0; i < INT_REG_COUNT; ++i) {
 					int32_t offset = reg_save_area_base + static_cast<int32_t>(i * 8);
 					emitMovToFrameSized(
 						SizedRegister{int_regs[i], 64, false},  // source: 64-bit register
@@ -7462,43 +7568,18 @@ private:
 				emitLeaFromFrame(X64Register::RAX, va_list_struct_base);
 				
 				// Store gp_offset = 8 at [RAX + 0]
-				// MOV DWORD PTR [RAX], 8
-				textSectionData.push_back(0xC7);  // MOV r/m32, imm32
-				textSectionData.push_back(0x00);  // ModR/M: [RAX]
-				textSectionData.push_back(0x08);  // Immediate value: 8
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
+				emitMovDwordPtrImmToRegOffset(X64Register::RAX, 0, 8);
 				
 				// Store fp_offset = 48 at [RAX + 4]
-				// MOV DWORD PTR [RAX + 4], 48
-				textSectionData.push_back(0xC7);  // MOV r/m32, imm32
-				textSectionData.push_back(0x40);  // ModR/M: [RAX + disp8]
-				textSectionData.push_back(0x04);  // disp8: 4
-				textSectionData.push_back(0x30);  // Immediate value: 48
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
+				emitMovDwordPtrImmToRegOffset(X64Register::RAX, 4, INT_REG_AREA_SIZE);
 				
 				// Store overflow_arg_area = 0 at [RAX + 8]
-				// MOV QWORD PTR [RAX + 8], 0
-				textSectionData.push_back(0x48);  // REX.W
-				textSectionData.push_back(0xC7);  // MOV r/m64, imm32 (sign-extended)
-				textSectionData.push_back(0x40);  // ModR/M: [RAX + disp8]
-				textSectionData.push_back(0x08);  // disp8: 8
-				textSectionData.push_back(0x00);  // Immediate value: 0
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
-				textSectionData.push_back(0x00);
+				emitMovQwordPtrImmToRegOffset(X64Register::RAX, 8, 0);
 				
 				// Store reg_save_area pointer at [RAX + 16]
 				// Load register save area address into RCX
 				emitLeaFromFrame(X64Register::RCX, reg_save_area_base);
-				// MOV QWORD PTR [RAX + 16], RCX
-				textSectionData.push_back(0x48);  // REX.W
-				textSectionData.push_back(0x89);  // MOV r/m64, r64
-				textSectionData.push_back(0x48);  // ModR/M: [RAX + disp8], RCX
-				textSectionData.push_back(0x10);  // disp8: 16
+				emitMovQwordPtrRegToRegOffset(X64Register::RAX, 16, X64Register::RCX);
 			}
 		}
 	}
@@ -9737,9 +9818,7 @@ private:
 				if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (rhs_type == Type::Float);
-					auto load_opcodes = generateFloatMovFromFrame(source_reg, rhs_offset, is_float);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 				} else {
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
@@ -9759,9 +9838,7 @@ private:
 				if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (rhs_type == Type::Float);
-					auto load_opcodes = generateFloatMovFromFrame(source_reg, rhs_offset, is_float);
-					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 				} else {
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
@@ -11061,34 +11138,14 @@ private:
 			if (is_float_type) {
 				// Use XMM0 as the destination register for float loads
 				X64Register xmm_reg = X64Register::XMM0;
-				bool is_double = (op.pointee_type == Type::Double);
+				bool is_float = (op.pointee_type == Type::Float);
 				
-				// Generate MOVSD xmm0, [ptr_reg] or MOVSS xmm0, [ptr_reg]
-				// MOVSD: F2 0F 10 /r  or  MOVSS: F3 0F 10 /r
-				uint8_t prefix = is_double ? 0xF2 : 0xF3;
-				
-				uint8_t ptr_encoding = static_cast<uint8_t>(ptr_reg) & 0x07;
-				bool needs_sib = (ptr_encoding == 0x04);  // RSP/R12 needs SIB byte
-				
-				// ModR/M byte: mod=00 (indirect), reg=XMM0 (0), r/m=ptr_reg
-				uint8_t modrm_byte = (0x00 << 6) | (0x00 << 3) | ptr_encoding;
-				
-				textSectionData.push_back(prefix);  // F2 or F3 prefix
-				if (static_cast<uint8_t>(ptr_reg) >= 8) {
-					textSectionData.push_back(0x41);  // REX with B bit for R8-R15 base
-				}
-				textSectionData.push_back(0x0F);  // Two-byte opcode prefix
-				textSectionData.push_back(0x10);  // MOVSD/MOVSS opcode
-				textSectionData.push_back(modrm_byte);
-				if (needs_sib) {
-					textSectionData.push_back(0x24);  // SIB: base=RSP/R12
-				}
+				// Load float/double from memory into XMM register
+				emitFloatMovFromMemory(xmm_reg, ptr_reg, 0, is_float);
 				
 				// Store the XMM value to the result location
 				int32_t result_offset = getStackOffsetFromTempVar(op.result);
-				auto store_opcodes = generateFloatMovToFrame(xmm_reg, result_offset, !is_double);
-				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				emitFloatMovToFrame(xmm_reg, result_offset, is_float);
 				return;
 			}
 
