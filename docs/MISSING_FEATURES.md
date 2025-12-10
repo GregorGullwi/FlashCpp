@@ -11,28 +11,60 @@ Standard headers like `<type_traits>` and `<utility>` currently fail to compile 
 
 ## Priority 1: Conversion Operators
 
-**Status**: ❌ **BLOCKING** - Prevents `<type_traits>` from compiling  
+**Status**: ❌ **BLOCKED BY PRIORITY 2** - Static member access in template classes must be fixed first  
 **Test Case**: `tests/test_real_std_headers_fail.cpp` (lines 12-14)
 
 ### Problem
 
-User-defined conversion operators (`operator T()`) fail with "Missing identifier" errors when accessing class members within the operator body.
+User-defined conversion operators (`operator T()`) fail with "Missing identifier" errors when accessing static class members within the operator body. However, this is actually a symptom of a deeper issue with static member access in template classes.
 
 ### Example Failure
 
 ```cpp
 template<typename T, T v>
 struct integral_constant {
-    static constexpr T value = v;
+    static constexpr T value = v;  // Static member with non-type template parameter initializer
     constexpr operator T() const noexcept { return value; }
     //                                              ^^^^^
     // Error: Missing identifier 'value'
 };
 ```
 
-### Root Cause
+### Root Cause Analysis
 
-The parser recognizes conversion operator syntax (code exists in `Parser.cpp` lines 1260-1286 and 3702-3742), but the symbol table lookup fails to find static members when inside a conversion operator's function body. This is a scope resolution issue specific to conversion operators.
+**Investigation Results** (2025-12-10):
+
+1. **Parser Support Exists**: The parser correctly handles conversion operator syntax (`operator T()`) - code exists in `Parser.cpp` lines 1260-1286 and 3702-3742.
+
+2. **Actual Problem**: The issue is NOT with conversion operator parsing, but with **static member lookup in template class contexts**.
+
+3. **Why It Fails**:
+   - When parsing a template class definition, member function bodies are parsed before template instantiation
+   - Static members are added to `StructTypeInfo::static_members` but NOT to `StructDeclarationNode::members_` in the AST
+   - Member lookup code (lines 11117-11140) only checks `struct_node->members()` which doesn't include static members
+   - Static members are also not registered in the global symbol table during template parsing
+
+4. **Why Simple Structs Work**: Non-template structs can access static members because they're looked up via `StructTypeInfo` after the struct is fully defined.
+
+5. **Why Templates Fail**: Template class bodies are parsed before instantiation, so `StructTypeInfo` doesn't exist yet. The AST-based lookup fails because static members aren't in the AST.
+
+6. **Attempted Fixes That Failed**:
+   - Adding static members to AST with `is_static` flag → causes infinite lookup loops
+   - Creating `QualifiedIdentifierNode` for static access → triggers recursive lookups  
+   - Setting `identifierType` without proper node creation → parsing errors
+
+### Why This Blocks Conversion Operators
+
+The conversion operator itself parses correctly. The failure occurs when the operator body tries to return the static member `value`. This is a general template static member issue, not specific to conversion operators.
+
+### Correct Fix Approach
+
+This requires fixing **Priority 2: Non-Type Template Parameters with Dependent Types** AND implementing proper static member handling:
+
+1. Fix template parameter tracking so `template<typename T, T v>` works correctly
+2. Implement delayed template body parsing OR add static members to AST without causing lookup loops
+3. Ensure static member access doesn't create `this->member` transforms
+4. Handle qualified name lookups (e.g., `StructName::static_member`) in template contexts
 
 ### Required For
 
@@ -43,33 +75,62 @@ The parser recognizes conversion operator syntax (code exists in `Parser.cpp` li
 
 ### Implementation Notes
 
-- Parser code for conversion operators exists but scope lookup is broken
-- Need to ensure member function scope includes class static members
-- Test with simple `integral_constant` before attempting full `<type_traits>`
+- **DO NOT** start with conversion operators - fix template static member access first
+- Test with simple template + static member before adding conversion operators
+- Consider whether template bodies should be parsed lazily (deferred until instantiation)
+- May need to distinguish between template definition parsing and template instantiation contexts
+
+### Test Progression
+
+1. First make this work: `template<typename T> struct S { static int x; int f() { return x; } };`
+2. Then add non-type params: `template<typename T, T v> struct S { static constexpr T x = v; T f() { return x; } };`
+3. Then add conversion operators: `... constexpr operator T() { return x; }`
+4. Finally test with `<type_traits>` header
 
 ---
 
-## Priority 2: Non-Type Template Parameters with Dependent Types
+## Priority 2: Non-Type Template Parameters with Dependent Types + Static Member Access
 
-**Status**: ❌ **BLOCKING** - Required for `integral_constant`  
+**Status**: ❌ **BLOCKING** - Required for `integral_constant` and blocks Priority 1  
 **Test Case**: `tests/test_real_std_headers_fail.cpp` (lines 38-40)
 
 ### Problem
 
-Templates with non-type parameters whose types depend on other template parameters fail with "Symbol not found" errors.
+Templates with non-type parameters whose types depend on other template parameters fail. Additionally, static member access in template class definitions doesn't work during template body parsing.
 
 ### Example Failure
 
 ```cpp
 template<typename T, T v>  // T is a type parameter, v is a non-type parameter of type T
 struct integral_constant {
-    static constexpr T value = v;  // Error: Symbol 'v' not found
+    static constexpr T value = v;  // Compiles: v is recognized as template parameter
+    
+    int get() { return value; }     // Error: Missing identifier 'value'
+    //                  ^^^^^        // Static member not found during template parsing
 };
 ```
 
 ### Root Cause
 
-The parser doesn't properly track non-type template parameters when their type is a dependent type (another template parameter). The symbol `v` should be recognized as a template parameter reference.
+**Two Related Issues**:
+
+1. **Non-Type Template Parameters**: The symbol `v` is being looked up correctly as a template parameter (logs show "SymbolTable lookup found template parameter 'v'"), so this part actually WORKS.
+
+2. **Static Member Access** (THE REAL BLOCKER): Static members declared in template classes cannot be accessed within member function bodies during template parsing because:
+   - Static members are stored in `StructTypeInfo::static_members` (runtime type system)
+   - They are NOT added to `StructDeclarationNode::members_` (AST)
+   - Member function body parsing happens during template definition (before instantiation)
+   - At this point, `StructTypeInfo` doesn't exist yet (created during instantiation)
+   - AST-based lookup fails because static members aren't in the members list
+
+###  Investigation Results
+
+Tested variations:
+- ✅ Regular struct with static member: WORKS (uses TypeInfo lookup)
+- ❌ Template struct with static member: FAILS (TypeInfo doesn't exist during parsing)
+- ❌ Template struct with static member in conversion operator: FAILS (same issue)
+
+The parser correctly identifies template parameters including non-type ones with dependent types. The failure is purely about static member visibility.
 
 ### Required For
 
@@ -80,9 +141,56 @@ The parser doesn't properly track non-type template parameters when their type i
 
 ### Implementation Notes
 
-- Template parameter tracking exists for type parameters
-- Need to extend to non-type parameters with dependent types
-- May interact with template argument deduction
+**Current Architecture**:
+- Template class parsing: Immediate (builds AST, parses member bodies)
+- Type info creation: Delayed (happens at instantiation)
+- Static member storage: TypeInfo only (not in AST)
+
+**Possible Solutions**:
+
+1. **Add static members to AST** (`StructDeclarationNode::members_` with `is_static` flag)
+   - Attempted but caused infinite lookup loops
+   - Need to ensure static member lookup doesn't create `this->` prefix
+   - Must avoid creating nodes that trigger recursive lookups
+
+2. **Defer template body parsing** (parse bodies only at instantiation)
+   - Major architectural change
+   - Would allow TypeInfo to exist during member function parsing
+   - Aligns with C++ two-phase lookup semantics
+
+3. **Special template-context symbol table**
+   - Register static members in a template-specific scope during parsing
+   - Look up from this scope when `parsing_template_body_` is true
+
+4. **Create TypeInfo early for templates**
+   - Create StructTypeInfo during template definition (not just instantiation)
+   - Populate with template parameter placeholders
+   - Would need instantiation-specific copies
+
+### Test Cases to Create
+
+```cpp
+// Test 1: Basic template static member
+template<typename T>
+struct Test1 {
+    static int count;
+    int get() { return count; }  // Should find 'count'
+};
+
+// Test 2: Template with constexpr static
+template<typename T>
+struct Test2 {
+    static constexpr int value = 42;
+    int get() { return value; }  // Should find 'value'
+};
+
+// Test 3: Non-type parameter with dependent type
+template<typename T, T v>
+struct Test3 {
+    static constexpr T value = v;  // v lookup works
+    T get() { return value; }       // value lookup fails
+};
+```
 
 ---
 
