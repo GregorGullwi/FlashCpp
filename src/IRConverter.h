@@ -6740,11 +6740,10 @@ private:
 		
 		// Finalize previous function before starting new one
 		if (!current_function_name_.empty()) {
-			// Calculate actual stack space needed: named vars + outgoing args + TempVars
-			// Use the stored named_vars_size from when we created the function
-			size_t temp_vars_space = (next_temp_var_offset_ > 8) ? (next_temp_var_offset_ - 8) : 0;
-			size_t named_and_shadow = current_function_named_vars_size_;
-			size_t total_stack = named_and_shadow + temp_vars_space;
+			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
+			// scope_stack_space is negative (offset from RBP), so negate to get positive size
+			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
+			
 			// Align so RSP is (16n + 8) - misaligned by 8, so after CALL pushes return address, RSP becomes 16-byte aligned
 			if (total_stack % 16 != 8) {
 				total_stack = ((total_stack + 8) & ~15) - 8 + 16;  // Round up to next (16n + 8)
@@ -10981,6 +10980,43 @@ private:
 					ptr_reg = allocateRegisterWithSpilling();
 					emitMovFromFrame(ptr_reg, it->second);
 				}
+			}
+
+			// Check if we're dereferencing a float/double type - use XMM register and MOVSD/MOVSS
+			bool is_float_type = (op.pointee_type == Type::Float || op.pointee_type == Type::Double);
+			
+			if (is_float_type) {
+				// Use XMM0 as the destination register for float loads
+				X64Register xmm_reg = X64Register::XMM0;
+				bool is_double = (op.pointee_type == Type::Double);
+				
+				// Generate MOVSD xmm0, [ptr_reg] or MOVSS xmm0, [ptr_reg]
+				// MOVSD: F2 0F 10 /r  or  MOVSS: F3 0F 10 /r
+				uint8_t prefix = is_double ? 0xF2 : 0xF3;
+				
+				uint8_t ptr_encoding = static_cast<uint8_t>(ptr_reg) & 0x07;
+				bool needs_sib = (ptr_encoding == 0x04);  // RSP/R12 needs SIB byte
+				
+				// ModR/M byte: mod=00 (indirect), reg=XMM0 (0), r/m=ptr_reg
+				uint8_t modrm_byte = (0x00 << 6) | (0x00 << 3) | ptr_encoding;
+				
+				textSectionData.push_back(prefix);  // F2 or F3 prefix
+				if (static_cast<uint8_t>(ptr_reg) >= 8) {
+					textSectionData.push_back(0x41);  // REX with B bit for R8-R15 base
+				}
+				textSectionData.push_back(0x0F);  // Two-byte opcode prefix
+				textSectionData.push_back(0x10);  // MOVSD/MOVSS opcode
+				textSectionData.push_back(modrm_byte);
+				if (needs_sib) {
+					textSectionData.push_back(0x24);  // SIB: base=RSP/R12
+				}
+				
+				// Store the XMM value to the result location
+				int32_t result_offset = getStackOffsetFromTempVar(op.result);
+				auto store_opcodes = generateFloatMovToFrame(xmm_reg, result_offset, !is_double);
+				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				return;
 			}
 
 			// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
