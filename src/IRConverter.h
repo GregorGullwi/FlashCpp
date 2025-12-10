@@ -4105,7 +4105,17 @@ private:
 				// Tell the register allocator that this register now holds this temp variable
 				assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
 				regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits);
-				// Don't store to memory - keep the value in the register for subsequent operations
+				
+				// For floating-point types, we MUST write to memory immediately because the register
+				// allocator doesn't properly track XMM registers across all operations.
+				// Without this, subsequent loads from the stack location will read garbage.
+				if (is_float_type) {
+					bool is_single_precision = (ctx.result_value.type == Type::Float);
+					auto store_opcodes = generateFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
+					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				}
+				// For integer types: Don't store to memory - keep the value in the register for subsequent operations
 			}
 
 		}
@@ -6601,11 +6611,21 @@ private:
 				}
 
 				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
-					// Source value is already in a register (e.g., from function return)
+					// Source value is already in a register (e.g., from function return or arithmetic)
 					// Store it directly to the destination stack location
-					auto store_opcodes = generateMovToFrameBySize(src_reg.value(), dst_offset, op.size_in_bits);
-					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+					if (is_floating_point_type(var_type)) {
+						// For floating-point types, the value is in an XMM register
+						// Use float mov instructions instead of integer mov
+						bool is_float = (var_type == Type::Float);
+						auto store_opcodes = generateFloatMovToFrame(src_reg.value(), dst_offset, is_float);
+						textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+						                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+					} else {
+						// For integer types, use regular mov
+						auto store_opcodes = generateMovToFrameBySize(src_reg.value(), dst_offset, op.size_in_bits);
+						textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+						                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+					}
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
 					allocated_reg_val = allocateRegisterWithSpilling();
@@ -9756,7 +9776,7 @@ private:
 			// Normal (non-reference) assignment - store directly to stack location
 			if (is_floating_point_type(rhs_type)) {
 				bool is_float = (rhs_type == Type::Float);
-				emitFloatMovFromFrame(source_reg, lhs_offset, is_float);
+				emitFloatMovToFrame(source_reg, lhs_offset, is_float);
 			} else {
 				emitMovToFrameSized(
 					SizedRegister{source_reg, 64, false},  // source: 64-bit register
