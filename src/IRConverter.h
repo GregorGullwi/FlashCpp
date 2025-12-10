@@ -9728,13 +9728,19 @@ private:
 			int value_size_bytes = op.rhs.size_in_bits / 8;
 			
 			if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
-				// Immediate value
+				// Immediate integer value
 				unsigned long long imm_value = std::get<unsigned long long>(op.rhs.value);
 				if (value_size_bytes == 8) {
 					emitMovImm64(value_reg, imm_value);
 				} else {
 					moveImmediateToRegister(value_reg, static_cast<int32_t>(imm_value));
 				}
+			} else if (std::holds_alternative<double>(op.rhs.value)) {
+				// Immediate double value
+				double double_value = std::get<double>(op.rhs.value);
+				uint64_t bits;
+				std::memcpy(&bits, &double_value, sizeof(bits));
+				emitMovImm64(value_reg, bits);
 			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
 				// Load from temp var
 				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
