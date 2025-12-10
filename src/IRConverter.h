@@ -6922,7 +6922,16 @@ private:
 		}
 		
 		// Ensure stack alignment to 16 bytes
-		total_stack_space = (total_stack_space + 15) & -16;
+		// System V AMD64 (Linux): After push rbp, RSP is at 16n. We need RSP at 16m+8 before calls.
+		// So total_stack_space should be 16k+8 (rounds up to next 16k+8)
+		// Windows x64: Different alignment rules, keep existing 16-byte alignment
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Round up to 16k + 8 form for System V AMD64
+			total_stack_space = ((total_stack_space + 7) & -16) + 8;
+		} else {
+			// Round up to 16k form for Windows x64
+			total_stack_space = (total_stack_space + 15) & -16;
+		}
 		
 		// DEBUG: Check if we're skipping the prologue
 		if (total_stack_space == 0 && func_name_str.find("insert") != std::string::npos) {
