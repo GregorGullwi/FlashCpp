@@ -74,7 +74,7 @@ int main() {
     RefWrapper<Point> tw3{tp};
     tw3.ref.x = 30;
     tw3.ref.y = 40;
-    if (tp.x != 30 || tp.y != 40) return 8;
+    if (tp.x != 30 || tp.y != 40) return 7;
     
     return 0;  // All tests passed
 }
