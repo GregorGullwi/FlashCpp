@@ -251,6 +251,61 @@ template<> struct Base<int> : Base<char> { };  // ERROR: Not supported
 
 ---
 
+## Priority 8b: Implicit Constructor Generation for Derived Classes
+
+**Status**: ⚠️ **LIMITATION** - Implicit constructors generated for derived classes require base class constructors  
+**Issue**: FlashCpp generates implicit copy/move constructors for derived classes that call base class constructors, even when no objects are instantiated
+
+### Problem
+
+When a struct/class inherits from a base class, FlashCpp automatically generates implicit copy and move constructors that attempt to call the corresponding base class constructors. This causes link failures when the base class doesn't have those constructors defined.
+
+### Example
+
+```cpp
+template<> 
+struct Base<int> { 
+    static const int value = 42;
+    // No constructors defined
+};
+
+struct Derived : Base<int> {
+    // FlashCpp generates:
+    // Derived(const Derived&) - calls Base<int>(const Base<int>&)
+    // Derived(Derived&&) - calls Base<int>(Base<int>&&)
+};
+
+int main() {
+    return Derived::value;  // No objects created, but still link error!
+}
+```
+
+**Error**:
+```
+undefined reference to `Base_int::Base_int(Base_int const&)'
+```
+
+### Current Workaround
+
+Avoid creating derived classes that inherit from template specializations unless:
+1. The base class has all required constructors defined, or
+2. The derived class explicitly defines all constructors (but this may not work with current parser limitations)
+
+### Impact
+
+- Cannot easily test static member access through inheritance
+- Limits usefulness of inheritance from template specializations
+- Standard library headers may face similar issues
+
+### Implementation Notes
+
+- The implicit constructor generation happens during code generation
+- May need to add a flag to suppress implicit constructor generation when not needed
+- Or only generate implicit constructors when they're actually referenced
+- Location: Code generation phase that creates implicit member functions
+
+---
+
 ## Priority 9: Complex Preprocessor Expressions
 
 **Status**: ⚠️ **NON-BLOCKING** - Causes warnings but doesn't fail compilation  
