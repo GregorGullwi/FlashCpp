@@ -18188,12 +18188,9 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	);
 
 	// Register the alias template with qualified name (ClassName::AliasName)
-	std::string qualified_name;
-	qualified_name.reserve(struct_node.name().size() + 2 + alias_name.size());
-	qualified_name += struct_node.name();
-	qualified_name += "::";
-	qualified_name += alias_name;
-	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
+	StringBuilder sb;
+	std::string_view qualified_name = sb.append(struct_node.name()).append("::").append(alias_name).commit();
+	gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", qualified_name);
 
