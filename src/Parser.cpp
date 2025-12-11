@@ -286,6 +286,11 @@ Parser::SaveHandle Parser::save_token_position() {
     TokenPosition lexer_pos = lexer_.save_token_position();
     saved_tokens_[handle] = { current_token_, ast_nodes_.size(), lexer_pos };
     
+    if (current_token_.has_value()) {
+        FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}", 
+            static_cast<unsigned long>(handle), std::string(current_token_->value()));
+    }
+    
     return handle;
 }
 
@@ -297,6 +302,20 @@ void Parser::restore_token_position(SaveHandle handle, const std::source_locatio
     }
     
     const SavedToken& saved_token = it->second;
+    if (saved_token.current_token_.has_value()) {
+        std::string saved_tok = std::string(saved_token.current_token_->value());
+        std::string current_tok = current_token_.has_value() ? std::string(current_token_->value()) : "N/A";
+        
+        // DEBUGGING: Track if we're restoring to "ns" token
+        if (saved_tok == "ns") {
+            FLASH_LOG_FORMAT(Parser, Error, "!!! RESTORING TO 'ns' TOKEN !!! handle={}, current={}", 
+                static_cast<unsigned long>(handle), current_tok);
+        }
+        
+        FLASH_LOG_FORMAT(Parser, Debug, "restore_token_position: handle={}, saved token={}, current={}", 
+            static_cast<unsigned long>(handle), saved_tok, current_tok);
+    }
+    
     lexer_.restore_token_position(saved_token.lexer_position_);
     current_token_ = saved_token.current_token_;
 	
