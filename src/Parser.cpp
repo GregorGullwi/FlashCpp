@@ -11671,7 +11671,7 @@ ParseResult Parser::parse_primary_expression()
 							for (const auto& subst : template_param_substitutions_) {
 								if (subst.param_name == param_name && subst.is_value_param) {
 									// Substitute with actual value - return immediately
-									// Use StringBuilder to persist the string value (avoid dangling string_view)
+									// Use StringBuilder.append(int64_t) to persist the string value (avoids temporary strings)
 									StringBuilder value_str;
 									value_str.append(subst.value);  // Directly append int64_t without std::to_string()
 									std::string_view value_view = value_str.commit();
