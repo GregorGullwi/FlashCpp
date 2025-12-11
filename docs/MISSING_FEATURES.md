@@ -2,7 +2,7 @@
 
 This document tracks missing C++20 features that prevent FlashCpp from compiling standard library headers. Features are listed in priority order based on their blocking impact.
 
-**Last Updated**: 2025-12-11  
+**Last Updated**: 2025-12-11 (18:25 UTC)  
 **Test Reference**: `tests/test_real_std_headers_fail.cpp`
 
 ## Summary
@@ -16,10 +16,10 @@ Standard headers like `<type_traits>` and `<utility>` are becoming increasingly 
 - ⚠️ Compiler intrinsics (most critical ones implemented, including __is_same)
 - ✅ Anonymous template parameters
 - ✅ Type alias access from template specializations
-- ✅ Full specialization inheritance (parsing complete, runtime limitations exist)
-- ✅ **Out-of-class static member definitions in templates** (**NEW! - Just implemented**)
+- ✅ Out-of-class static member definitions in templates
+- ✅ **Implicit constructor generation for derived classes** (**NEW! - Just fixed**)
 
-The main remaining gaps are advanced template features (SFINAE, complex template metaprogramming), and implicit constructor generation issues.
+The main remaining gaps are advanced template features (SFINAE, complex template metaprogramming), and complex preprocessor expressions.
 
 ## Completed Features ✅
 
@@ -27,12 +27,9 @@ The main remaining gaps are advanced template features (SFINAE, complex template
 1. **Conversion Operators** - User-defined conversion operators (`operator T()`) with static member access
 2. **Non-Type Template Parameters** - `template<typename T, T v>` patterns with dependent types
 3. **Template Specialization Inheritance** - Both partial and full specializations can inherit from base classes
-   - **Partial specializations**: Test: `tests/test_partial_spec_inherit.cpp`, `tests/template_partial_specialization_test.cpp`
-   - **Full specializations**: Test: `tests/test_full_spec_inherit.cpp`, `tests/test_full_spec_inherit_simple.cpp`
+   - Test: `tests/test_partial_spec_inherit.cpp`, `tests/test_full_spec_inherit.cpp`
    - Example: `template<> struct Base<int> : Base<char> { };`
-   - Parsing is complete - base classes are correctly recognized and stored
-   - **Known limitation**: Static member lookup through inheritance chain needs improvement
-   - **Known limitation**: Implicit constructor generation (see Priority 8b) causes link failures
+   - **Fully working** - can inherit and access static members correctly
 4. **Anonymous Template Parameters** - `template<bool, typename T>` and `template<typename, class>` syntax
 5. **Type Alias Access from Specializations** - Accessing `using` type aliases from template specializations
    - Test: `tests/test_type_alias_from_specialization.cpp`
@@ -50,6 +47,13 @@ The main remaining gaps are advanced template features (SFINAE, complex template
 7. **Reference Members in Structs** - Reference-type members in classes/structs
    - Supports: `int&`, `char&`, `short&`, `struct&`, template wrappers
    - Known limitation: `double&` has runtime issues (pre-existing bug)
+
+8. **Implicit Constructor Generation for Derived Classes** - Smart handling of base class constructor calls
+   - Test: `tests/test_full_spec_inherit.cpp`, `tests/test_full_spec_inherit_simple.cpp`
+   - Implicit constructors (default, copy, move) now check if base class has constructors before calling them
+   - Prevents link failures when inheriting from classes without constructors
+   - Example: `template<> struct Derived : Base { };` works even if `Base` has no constructors
+   - Fixed in CodeGen.h: generateTrivialDefaultConstructors(), implicit copy/move generation, explicit constructor generation
 
 All completed features maintain backward compatibility - all 633 existing tests continue to pass.
 
@@ -297,61 +301,6 @@ struct Container {
 
 ---
 
-## Priority 8b: Implicit Constructor Generation for Derived Classes
-
-**Status**: ⚠️ **LIMITATION** - Implicit constructors generated for derived classes require base class constructors  
-**Issue**: FlashCpp generates implicit copy/move constructors for derived classes that call base class constructors, even when no objects are instantiated
-
-### Problem
-
-When a struct/class inherits from a base class, FlashCpp automatically generates implicit copy and move constructors that attempt to call the corresponding base class constructors. This causes link failures when the base class doesn't have those constructors defined.
-
-### Example
-
-```cpp
-template<> 
-struct Base<int> { 
-    static const int value = 42;
-    // No constructors defined
-};
-
-struct Derived : Base<int> {
-    // FlashCpp generates:
-    // Derived(const Derived&) - calls Base<int>(const Base<int>&)
-    // Derived(Derived&&) - calls Base<int>(Base<int>&&)
-};
-
-int main() {
-    return Derived::value;  // No objects created, but still link error!
-}
-```
-
-**Error**:
-```
-undefined reference to `Base_int::Base_int(Base_int const&)'
-```
-
-### Current Workaround
-
-Avoid creating derived classes that inherit from template specializations unless:
-1. The base class has all required constructors defined, or
-2. The derived class explicitly defines all constructors (but this may not work with current parser limitations)
-
-### Impact
-
-- Cannot easily test static member access through inheritance
-- Limits usefulness of inheritance from template specializations
-- Standard library headers may face similar issues
-
-### Implementation Notes
-
-- The implicit constructor generation happens during code generation
-- May need to add a flag to suppress implicit constructor generation when not needed
-- Or only generate implicit constructors when they're actually referenced
-- Location: Code generation phase that creates implicit member functions
-
----
-
 ## Priority 9: Complex Preprocessor Expressions
 
 **Status**: ⚠️ **NON-BLOCKING** - Causes warnings but doesn't fail compilation  
@@ -462,15 +411,18 @@ int func(T t);  // Fallback if first template fails
    - Test: `template<typename T> struct Base<const T> : Base<T> { };`
    - Verify: Partial specializations can inherit from their base templates
 
-9. ✅ **Phase 9**: Full template specialization with inheritance - COMPLETE (parsing)
+9. ✅ **Phase 9**: Full template specialization with inheritance - COMPLETE
    - Test: `template<> struct Base<int> : Base<char> { };`
-   - Verify: Full specializations can declare base classes (parsing works)
-   - Known limitation: Runtime issues with implicit constructors (Priority 8b)
+   - Verify: Full specializations can declare base classes and work correctly
+   
+10. ✅ **Phase 10**: Implicit constructor generation for derived classes - COMPLETE
+   - Test: Derived classes inherit from bases without constructors
+   - Verify: No link errors when base class lacks constructors
 
 ### Test Files
 
-- `tests/test_full_spec_inherit.cpp` - Full specialization with inheritance (COMPILES but link fails due to Priority 8b)
-- `tests/test_full_spec_inherit_simple.cpp` - Simple full specialization inheritance (COMPILES but link fails due to Priority 8b)
+- `tests/test_full_spec_inherit.cpp` - Full specialization with inheritance (PASSES - fixed in Priority 8b)
+- `tests/test_full_spec_inherit_simple.cpp` - Simple full specialization inheritance (PASSES - fixed in Priority 8b)
 - `tests/test_partial_spec_inherit.cpp` - Partial specialization with inheritance (PASSES)
 - `tests/test_partial_spec_inherit_simple.cpp` - Simple partial specialization with inheritance (PASSES)
 - `tests/template_partial_specialization_test.cpp` - Comprehensive partial specialization tests (PASSES)
@@ -504,6 +456,9 @@ int func(T t);  // Fallback if first template fails
   - Lines 21929-21964: Out-of-line static member variable parsing (**NEW!**)
 - **Code Generator**: `src/CodeGen.h` - Code generation
   - Lines 10215+: Type trait evaluation logic (generateTypeTraitIr)
+  - Lines 587-599: Trivial default constructor generation with base class check (**FIXED Priority 8b**)
+  - Lines 1686-1707: Explicit constructor generation with base class check (**FIXED Priority 8b**)
+  - Lines 1763-1795: Implicit copy/move constructor generation with base class check (**FIXED Priority 8b**)
 - **Template Registry**: `src/TemplateRegistry.h` - Template instantiation tracking
   - Lines 256-271: OutOfLineMemberFunction and OutOfLineMemberVariable structs (**NEW!**)
   - Lines 653-681: Registration methods for out-of-line members (**NEW!**)
@@ -521,8 +476,8 @@ int func(T t);  // Fallback if first template fails
 - ⚠️ **Priority 5**: Compiler intrinsics (partially complete - most critical intrinsics work, __is_same added)
 - ✅ **Priority 6**: Anonymous template parameters (both type and non-type parameters)
 - ✅ **Priority 7**: Type alias access from template specializations (both full and partial specializations)
-- ✅ **Priority 8**: Out-of-class static member definitions in templates (**NEW! - Just implemented**)
-- ✅ **Priority 8 (alt)**: Full specialization inheritance (parsing complete - runtime limitations exist)
+- ✅ **Priority 8**: Out-of-class static member definitions in templates
+- ✅ **Priority 8b**: Implicit constructor generation for derived classes (**NEW! - Just fixed**)
 - Basic preprocessor support for standard headers
 - GCC/Clang builtin type macros (`__SIZE_TYPE__`, etc.)
 - Preprocessor arithmetic and bitwise operators
@@ -530,7 +485,6 @@ int func(T t);  // Fallback if first template fails
 
 ### Remaining Missing Features ❌
 
-- ⚠️ **Priority 8b**: Implicit constructor generation for derived classes (causes link failures)
 - ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
 - ⚠️ **Priority 10**: Advanced template features (SFINAE, some metaprogramming patterns)
 
