@@ -33,29 +33,32 @@ See **Progress Tracking** section below for detailed test references.
 
 ## Remaining Work
 
-### Priority 4.5: Member Template Aliases (BLOCKING `<type_traits>`)
+### Priority 4.5: Member Template Aliases (PARTIAL - PARSING WORKS)
 
-**Status**: ❌ **BLOCKING** - Required for standard library headers  
-**Test Case**: `/tmp/test_member_template_alias.cpp`
+**Status**: ⚠️ **PARTIAL** - Parsing implemented, instantiation needs work  
+**Test Case**: `tests/test_member_template_alias.cpp`
 
-**Problem**: The standard library uses template aliases as members of structs/classes, which is currently not supported:
+**Problem**: The standard library uses template aliases as members of structs/classes:
 
 ```cpp
 template<bool B>
 struct Conditional {
     template<typename T, typename U>
-    using type = T;  // Member template alias - not yet supported
+    using type = T;  // Member template alias
 };
 ```
 
-**Current Error**: `Unexpected token in type specifier: 'using'` when parsing member template aliases.
+**Progress**: 
+- ✅ **Parsing**: Successfully parse member template aliases in struct/class definitions
+- ✅ **Registration**: Register member template aliases with qualified names (e.g., `Container::Ptr`)
+- ⚠️ **Instantiation**: Runtime issues - instantiation logic needs debugging
 
-**Impact**: **BLOCKS `<type_traits>`** - The standard library's `__conditional` and other metaprogramming utilities use this pattern extensively.
+**Current Status**: The compiler now **accepts** member template alias syntax without errors. However, the instantiation and usage has runtime issues that need to be resolved before this fully works with `<type_traits>`.
 
-**Implementation Needed**: 
-- Parser support for `using` declarations with template parameters inside struct/class definitions
-- Template instantiation for member template aliases
-- Qualified name resolution for accessing member template aliases (e.g., `Conditional<true>::type<int, float>`)
+**Implementation**: 
+- `parse_member_template_alias()` in Parser.cpp (lines ~18017+)
+- Template keyword handling in struct parsing (lines ~3048+)
+- Uses existing `TemplateAliasNode` AST node type
 
 ---
 
@@ -120,8 +123,8 @@ int func(T t);  // Fallback if first template fails
 
 ### Remaining Work 🔄
 
-- **Priority 4.5**: Implement member template aliases (blocks `<type_traits>`)
-- **Priority 5**: Validate/fix edge cases in some intrinsics (`__has_unique_object_representations`, `__is_constructible`, etc.)
+- **Priority 4.5**: Fix member template alias instantiation (parsing works, runtime issues remain)
+- **Priority 5**: Validate/fix edge cases in some intrinsics
 - **Priority 8**: Improve preprocessor expression handling (non-blocking)
 - **Priority 9**: SFINAE and advanced template metaprogramming (lower priority)
 
@@ -142,6 +145,10 @@ int func(T t);  // Fallback if first template fails
 - `tests/test_is_same_intrinsic.cpp` - `__is_same` type trait intrinsic
 - `tests/test_struct_ref_members.cpp` - Reference member support
 - `tests/test_struct_ref_member_simple.cpp` - Simple reference member test
+- `tests/test_std_forward.cpp` - Perfect forwarding with `std::forward`
+
+**In Progress Tests**:
+- `tests/test_member_template_alias.cpp` - Member template aliases (parsing works, instantiation issues)
 
 **Intrinsics & Standard Headers**:
 - `tests/test_type_traits_intrinsics.cpp` - Comprehensive type traits test (needs validation)
