@@ -588,11 +588,16 @@ public:
 				for (const auto& base : struct_info->base_classes) {
 					auto base_type_it = gTypesByName.find(std::string(base.name));
 					if (base_type_it != gTypesByName.end()) {
-						ConstructorCallOp call_op;
-						call_op.struct_name = std::string(base_type_it->second->name_);
-						call_op.object = std::string_view("this");
-						// No arguments for default constructor
-						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
+						// Only call base constructor if the base class actually has constructors
+						// This avoids link errors when inheriting from classes without constructors
+						const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
+						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
+							ConstructorCallOp call_op;
+							call_op.struct_name = std::string(base_type_it->second->name_);
+							call_op.object = std::string_view("this");
+							// No arguments for default constructor
+							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
+						}
 					}
 				}
 				
@@ -1695,8 +1700,13 @@ private:
 					// For implicit copy/move constructors, the base constructor call is generated
 					// in the implicit constructor generation code above (lines 1000-1023)
 					else if (!node.is_implicit()) {
-						// Call default constructor with no arguments
-						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+						// Only call base default constructor if the base class actually has constructors
+						// This avoids link errors when inheriting from classes without constructors
+						const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
+							// Call default constructor with no arguments
+							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+						}
 					}
 				}
 				
@@ -1765,6 +1775,13 @@ private:
 								continue;  // Invalid base type index
 							}
 							const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+
+							// Only call base copy/move constructor if the base class actually has constructors
+							// This avoids link errors when inheriting from classes without constructors
+							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							if (!base_struct_info || !base_struct_info->hasAnyConstructor()) {
+								continue;  // Skip if base has no constructors
+							}
 
 							// Build constructor call: Base::Base(this, other)
 							// For copy constructors, pass 'other' as the copy source (cast to base class reference)
