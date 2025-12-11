@@ -4589,13 +4589,19 @@ private:
 					if (static_member) {
 						// This is a static member access - generate GlobalLoad IR
 						// Static members are stored as globals with qualified names
-						std::string qualified_name = current_struct_name_ + "::" + var_name_str;
+						// Note: Namespaces are already included in current_struct_name_ via mangling
+						StringBuilder qualified_name_builder;
+						qualified_name_builder.append(current_struct_name_);
+						qualified_name_builder.append("::");
+						qualified_name_builder.append(var_name_str);
+						std::string_view qualified_name = qualified_name_builder.commit();
+						
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
 						op.result.size_in_bits = static_cast<int>(static_member->size * 8);
 						op.result.value = result_temp;
-						op.global_name = StringBuilder().append(qualified_name).commit();
+						op.global_name = qualified_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 						
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
