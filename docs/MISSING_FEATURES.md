@@ -16,9 +16,10 @@ Standard headers like `<type_traits>` and `<utility>` are becoming increasingly 
 - ⚠️ Compiler intrinsics (most critical ones implemented, including __is_same)
 - ✅ Anonymous template parameters
 - ✅ Type alias access from template specializations
-- ✅ Full specialization inheritance (NEW! - parsing complete, runtime limitations exist)
+- ✅ Full specialization inheritance (parsing complete, runtime limitations exist)
+- ✅ **Out-of-class static member definitions in templates** (**NEW! - Just implemented**)
 
-The main remaining gaps are advanced template features (SFINAE, complex template metaprogramming), some static member variable definition patterns, and implicit constructor generation issues.
+The main remaining gaps are advanced template features (SFINAE, complex template metaprogramming), and implicit constructor generation issues.
 
 ## Completed Features ✅
 
@@ -37,13 +38,19 @@ The main remaining gaps are advanced template features (SFINAE, complex template
    - Test: `tests/test_type_alias_from_specialization.cpp`
    - Example: `template<> struct enable_if<true> { using type = int; }; enable_if<true>::type x;`
    - Critical for `<type_traits>` patterns like `enable_if`, `conditional`, etc.
+6. **Out-of-Class Static Member Definitions** - Template static member variable definitions outside the class
+   - Test: `tests/test_out_of_class_static.cpp`, `tests/test_out_of_class_static_simple.cpp`
+   - Example: `template<typename T> int Container<T>::value = 42;`
+   - Fully working - initializer expressions are properly substituted during template instantiation
+   - Supports single and multiple template parameters
+   - **Note**: Complex initializers like `T()` may have limitations
 
 ### Language Features
-6. **Reference Members in Structs** - Reference-type members in classes/structs
+7. **Reference Members in Structs** - Reference-type members in classes/structs
    - Supports: `int&`, `char&`, `short&`, `struct&`, template wrappers
    - Known limitation: `double&` has runtime issues (pre-existing bug)
 
-All completed features maintain backward compatibility - all 631 existing tests continue to pass.
+All completed features maintain backward compatibility - all 632 existing tests continue to pass.
 
 ---
 
@@ -203,14 +210,21 @@ The parser now properly registers type aliases from template specializations wit
 
 ---
 
-## Priority 8: Out-of-Class Static Member Definitions in Templates
+## Priority 8: Out-of-Class Static Member Definitions in Templates (COMPLETE)
 
-**Status**: ❌ **NOT IMPLEMENTED** - Cannot define static member variables outside the class for templates  
-**Test Case**: Manual testing shows this limitation
+**Status**: ✅ **COMPLETE** - Can define static member variables outside the class for templates  
+**Test Case**: `tests/test_out_of_class_static.cpp`, `tests/test_out_of_class_static_simple.cpp`
 
 ### Problem
 
-FlashCpp does not support out-of-class static member variable definitions for template classes. This is a common C++ pattern that is required by many codebases and standard library implementations.
+FlashCpp needed support for out-of-class static member variable definitions for template classes. This is a common C++ pattern required by many codebases and standard library implementations.
+
+### Solution
+
+The parser now recognizes and processes the pattern `template<typename T> Type ClassName<T>::member = value;`:
+- Out-of-line static member variable definitions are parsed in `try_parse_out_of_line_template_member()`
+- Definitions are stored in the template registry and applied during template instantiation
+- Template parameter substitution is correctly applied to initializer expressions
 
 ### Example
 
@@ -221,25 +235,28 @@ struct Container {
 };
 
 template<typename T>
-int Container<T>::value = 42;  // ERROR: Not supported by FlashCpp
+int Container<T>::value = 42;  // Now fully supported!
 
 int main() {
-    return Container<int>::value - 42;
+    return Container<int>::value - 42;  // Returns 0
 }
 ```
 
-**Error**: `Expected type specifier` when parsing the out-of-class definition.
+### Implementation Details
 
-### Workaround
+- Modified `try_parse_out_of_line_template_member()` in Parser.cpp (lines 21929-21964) to detect `=` after member name
+- Added `OutOfLineMemberVariable` struct in TemplateRegistry.h to store definitions
+- Added `registerOutOfLineMemberVariable()` and `getOutOfLineMemberVariables()` methods to TemplateRegistry
+- Modified template instantiation logic (lines 20875-20933) to process out-of-line static member variables
+- Template parameter substitution is applied to initializer expressions during instantiation
 
-Use inline static member variables (C++17 feature):
+### Test Results
 
-```cpp
-template<typename T>
-struct Container {
-    static inline int value = 42;  // Works in FlashCpp
-};
-```
+- ✅ Basic static member definition: `Container<int>::value = 42` - PASSES
+- ✅ Multiple instantiations: `Container<int>` and `Container<char>` - PASSES
+- ✅ Multiple template parameters: `Pair<int, char>::count = 100` - PASSES
+- ✅ All 632 existing tests continue to pass
+- ⚠️ Complex initializers like `T()` may have limitations (crash in code generation)
 
 ### Required For
 
@@ -247,11 +264,16 @@ struct Container {
 - Legacy C++ code that predates C++17
 - Template patterns that require separate declaration and definition
 
-### Implementation Notes
+### Workaround (if needed)
 
-- The parser needs to handle the `template<typename T> Type ClassName<T>::member = value;` syntax
-- This is lower priority since the inline static workaround is available
-- Location: Parser needs to recognize this pattern during declaration parsing
+For complex initializers, inline static member variables (C++17 feature) can still be used:
+
+```cpp
+template<typename T>
+struct Container {
+    static inline int value = 42;  // Alternative approach
+};
+```
 
 ---
 
@@ -452,15 +474,19 @@ int func(T t);  // Fallback if first template fails
   - Lines 1260-1286: Conversion operator parsing (first location)
   - Lines 3702-3742: Conversion operator parsing (member function context)
   - Lines 10217-10400: Type trait intrinsic parsing
-  - Lines 15438-15536: Full specialization base class parsing (NEW!)
+  - Lines 15438-15536: Full specialization base class parsing
   - Lines 15514-15527: Type alias parsing in template specializations
   - Lines 16194-16274: Partial specialization base class parsing
   - Lines 17657-17690: Anonymous type parameter parsing (typename/class)
   - Lines 17722-17756: Anonymous non-type parameter parsing
   - Lines 19168-19220: Type alias registration in `instantiate_full_specialization`
+  - Lines 20875-20933: Out-of-line static member variable processing (**NEW!**)
+  - Lines 21929-21964: Out-of-line static member variable parsing (**NEW!**)
 - **Code Generator**: `src/CodeGen.h` - Code generation
   - Lines 10215+: Type trait evaluation logic (generateTypeTraitIr)
 - **Template Registry**: `src/TemplateRegistry.h` - Template instantiation tracking
+  - Lines 256-271: OutOfLineMemberFunction and OutOfLineMemberVariable structs (**NEW!**)
+  - Lines 653-681: Registration methods for out-of-line members (**NEW!**)
 
 ---
 
@@ -475,16 +501,18 @@ int func(T t);  // Fallback if first template fails
 - ⚠️ **Priority 5**: Compiler intrinsics (partially complete - most critical intrinsics work, __is_same added)
 - ✅ **Priority 6**: Anonymous template parameters (both type and non-type parameters)
 - ✅ **Priority 7**: Type alias access from template specializations (both full and partial specializations)
-- ✅ **Priority 8**: Full specialization inheritance (parsing complete - runtime limitations exist)
+- ✅ **Priority 8**: Out-of-class static member definitions in templates (**NEW! - Just implemented**)
+- ✅ **Priority 8 (alt)**: Full specialization inheritance (parsing complete - runtime limitations exist)
 - Basic preprocessor support for standard headers
 - GCC/Clang builtin type macros (`__SIZE_TYPE__`, etc.)
 - Preprocessor arithmetic and bitwise operators
 - `__attribute__` and `noexcept` parsing
 
-### Newly Discovered Missing Features ❌
+### Remaining Missing Features ❌
 
-- ❌ **Priority 8**: Out-of-class static member definitions in templates (workaround: use inline static)
 - ⚠️ **Priority 8b**: Implicit constructor generation for derived classes (causes link failures)
+- ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
+- ⚠️ **Priority 10**: Advanced template features (SFINAE, some metaprogramming patterns)
 
 ### In Progress 🔄
 
