@@ -10910,8 +10910,15 @@ ParseResult Parser::parse_primary_expression()
 				
 				FLASH_LOG(Parser, Debug, "Looking up template '{}' with {} template arguments", qualified_template_name, template_args->size());
 				
-				// Try to instantiate as class template
-				auto instantiated = try_instantiate_class_template(final_identifier.value(), *template_args);
+				// Try to instantiate as class template with qualified name first
+				auto instantiated = try_instantiate_class_template(qualified_template_name, *template_args);
+				
+				// If that didn't work, try with simple name (for backward compatibility)
+				if (!instantiated.has_value()) {
+					FLASH_LOG(Parser, Debug, "Qualified name lookup failed, trying simple name '{}'", final_identifier.value());
+					instantiated = try_instantiate_class_template(final_identifier.value(), *template_args);
+				}
+				
 				if (instantiated.has_value()) {
 					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
 					FLASH_LOG(Parser, Debug, "Successfully instantiated class template: {}", inst_struct.name());
@@ -17343,8 +17350,24 @@ ParseResult Parser::parse_template_declaration() {
 		}
 
 		// Register the template in the template registry
+		// If we're in a namespace, register with both simple and qualified names
 		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
-		gTemplateRegistry.registerTemplate(struct_decl.name(), template_class_node);
+		std::string_view simple_name = struct_decl.name();
+		
+		// Register with simple name (for backward compatibility and unqualified lookups)
+		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
+		
+		// If in a namespace, also register with qualified name for namespace-qualified lookups
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		if (!namespace_path.empty()) {
+			std::string qualified_name;
+			for (const auto& ns : namespace_path) {
+				qualified_name += std::string(ns) + "::";
+			}
+			qualified_name += std::string(simple_name);
+			FLASH_LOG(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
+			gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
+		}
 
 		// Primary templates shouldn't be added to AST - only instantiations and specializations
 		// Return success with no node so the caller doesn't add it to ast_nodes_
