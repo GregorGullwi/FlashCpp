@@ -2320,6 +2320,7 @@ public:
 	// Check if this is a binary trait (takes exactly 2 types)
 	bool is_binary_trait() const {
 		return kind_ == TypeTraitKind::IsBaseOf ||
+		       kind_ == TypeTraitKind::IsSame ||
 		       kind_ == TypeTraitKind::IsAssignable ||
 		       kind_ == TypeTraitKind::IsTriviallyAssignable ||
 		       kind_ == TypeTraitKind::IsNothrowAssignable ||
