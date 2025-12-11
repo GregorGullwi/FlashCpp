@@ -17680,12 +17680,10 @@ ParseResult Parser::parse_template_parameter() {
 				     (peek_token()->type() == Token::Type::Operator && (peek_token()->value() == ">" || peek_token()->value() == "=")))) {
 					// Generate unique anonymous parameter name
 					static int anonymous_type_counter = 0;
-					static std::string temp_anon_type_name;
-					temp_anon_type_name = "__anon_type_" + std::to_string(anonymous_type_counter++);
+					param_name = StringBuilder().append("__anon_type_"sv).append(static_cast<int64_t>(anonymous_type_counter++)).commit();
 					
 					// Use the current token as the token reference
 					param_name_token = *current_token_;
-					param_name = temp_anon_type_name;
 				} else {
 					return ParseResult::error("Expected identifier after 'typename' or 'class'", *current_token_);
 				}
@@ -17757,13 +17755,11 @@ ParseResult Parser::parse_template_parameter() {
 		     (peek_token()->type() == Token::Type::Operator && (peek_token()->value() == ">" || peek_token()->value() == "=")))) {
 			// Generate unique anonymous parameter name
 			static int anonymous_counter = 0;
-			static std::string temp_anon_name;
-			temp_anon_name = "__anon_param_" + std::to_string(anonymous_counter++);
+			param_name = StringBuilder().append("__anon_param_"sv).append(static_cast<int64_t>(anonymous_counter++)).commit();
 			
 			// Store the anonymous name in a way that persists
 			// We'll use the current token as the token reference
 			param_name_token = *current_token_;
-			param_name = temp_anon_name;
 			is_anonymous = true;
 		} else {
 			return ParseResult::error("Expected identifier for non-type template parameter", *current_token_);
