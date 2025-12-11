@@ -6120,6 +6120,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 ParseResult Parser::parse_type_specifier()
 {
+	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	
 	auto current_token_opt = peek_token();
 
 	// Check for decltype FIRST, before any other checks
@@ -8334,6 +8336,7 @@ ParseResult Parser::parse_variable_declaration()
 				} else {
 					// Parse expression with precedence > comma operator (precedence 1)
 					// This prevents comma from being treated as an operator in declaration lists
+					FLASH_LOG(Parser, Debug, "parse_variable_declaration: About to parse initializer expression, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 					ParseResult init_expr_result = parse_expression(2);
 					if (init_expr_result.is_error()) {
 						return init_expr_result;
@@ -9600,6 +9603,12 @@ ParseResult Parser::parse_unary_expression()
 ParseResult Parser::parse_expression(int precedence)
 {
 	FLASH_LOG(Parser, Debug, "parse_expression: Starting with precedence=", precedence, ", current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	
+	// Add a specific check for the problematic case
+	if (peek_token().has_value() && peek_token()->value() == "ns" && precedence == 2) {
+		FLASH_LOG(Parser, Error, "UNEXPECTED: parse_expression called with token 'ns' and precedence=2 (initializer context)");
+	}
+	
 	ParseResult result = parse_unary_expression();
 	if (result.is_error()) {
 		FLASH_LOG(Parser, Debug, "parse_expression: parse_unary_expression failed: ", result.error_message());
