@@ -3045,11 +3045,54 @@ ParseResult Parser::parse_struct_declaration()
 				continue;
 			}
 
-			// Check for 'template' keyword - member function template
+			// Check for 'template' keyword - could be member function template or member template alias
 			if (keyword == "template") {
-				auto template_result = parse_member_function_template(struct_ref, current_access);
-				if (template_result.is_error()) {
-					return template_result;
+				// Look ahead to determine if this is a template alias or template function
+				// Save position to restore if needed
+				SaveHandle lookahead_pos = save_token_position();
+				
+				consume_token(); // consume 'template'
+				
+				// Skip template parameter list to find what comes after
+				bool is_template_alias = false;
+				if (peek_token().has_value() && peek_token()->value() == "<") {
+					consume_token(); // consume '<'
+					
+					// Skip template parameters (simplified - just count angle brackets)
+					int angle_bracket_depth = 1;
+					while (angle_bracket_depth > 0 && peek_token().has_value()) {
+						if (peek_token()->value() == "<") {
+							angle_bracket_depth++;
+						} else if (peek_token()->value() == ">") {
+							angle_bracket_depth--;
+						}
+						consume_token();
+					}
+					
+					// Now check what comes after the template parameters
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+						std::string_view next_keyword = peek_token()->value();
+						if (next_keyword == "using") {
+							is_template_alias = true;
+						}
+					}
+				}
+				
+				// Restore position before calling the appropriate parser
+				restore_token_position(lookahead_pos);
+				
+				if (is_template_alias) {
+					// This is a member template alias
+					auto template_result = parse_member_template_alias(struct_ref, current_access);
+					if (template_result.is_error()) {
+						return template_result;
+					}
+				} else {
+					// This is a member function template
+					auto template_result = parse_member_function_template(struct_ref, current_access);
+					if (template_result.is_error()) {
+						return template_result;
+					}
 				}
 				continue;
 			}
@@ -18008,6 +18051,147 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	// Register the template in the global registry with qualified name (ClassName::functionName)
 	std::string qualified_name = std::string(struct_node.name()) + "::" + std::string(decl_node.identifier_token().value());
 	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
+
+	// template_scope automatically cleans up template parameters when it goes out of scope
+
+	return saved_position.success();
+}
+
+// Parse member template alias: template<typename T, typename U> using type = T;
+ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, AccessSpecifier access) {
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'template' keyword
+	if (!consume_keyword("template")) {
+		return ParseResult::error("Expected 'template' keyword", *peek_token());
+	}
+
+	// Expect '<' to start template parameter list
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+	}
+	consume_token(); // consume '<'
+
+	// Parse template parameter list
+	std::vector<ASTNode> template_params;
+	std::vector<std::string_view> template_param_names;
+
+	auto param_list_result = parse_template_parameter_list(template_params);
+	if (param_list_result.is_error()) {
+		return param_list_result;
+	}
+
+	// Extract parameter names for later lookup
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			template_param_names.push_back(param.as<TemplateParameterNode>().name());
+		}
+	}
+
+	// Expect '>' to close template parameter list
+	if (!peek_token().has_value() || peek_token()->value() != ">") {
+		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+	}
+	consume_token(); // consume '>'
+
+	// Temporarily add template parameters to type system using RAII scope guard
+	FlashCpp::TemplateParameterScope template_scope;
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name_, &type_info);
+				template_scope.addParameter(&type_info);
+			}
+		}
+	}
+
+	// Expect 'using' keyword
+	if (!consume_keyword("using")) {
+		return ParseResult::error("Expected 'using' keyword in member template alias", *peek_token());
+	}
+
+	// Parse alias name
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected alias name after 'using' in member template alias", *current_token_);
+	}
+	Token alias_name_token = *peek_token();
+	std::string_view alias_name = alias_name_token.value();
+	consume_token();
+
+	// Expect '='
+	if (!peek_token().has_value() || peek_token()->value() != "=") {
+		return ParseResult::error("Expected '=' after alias name in member template alias", *current_token_);
+	}
+	consume_token(); // consume '='
+
+	// Parse the target type
+	ParseResult type_result = parse_type_specifier();
+	if (type_result.is_error()) {
+		return type_result;
+	}
+
+	// Get the TypeSpecifierNode and check for pointer/reference modifiers
+	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+
+	// Handle pointer depth (*, **, etc.)
+	while (peek_token().has_value() && peek_token()->value() == "*") {
+		consume_token(); // consume '*'
+
+		// Parse CV-qualifiers after the * (const, volatile)
+		CVQualifier ptr_cv = CVQualifier::None;
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view kw = peek_token()->value();
+			if (kw == "const") {
+				ptr_cv = static_cast<CVQualifier>(
+					static_cast<uint8_t>(ptr_cv) |
+					static_cast<uint8_t>(CVQualifier::Const));
+				consume_token();
+			} else if (kw == "volatile") {
+				ptr_cv = static_cast<CVQualifier>(
+					static_cast<uint8_t>(ptr_cv) |
+					static_cast<uint8_t>(CVQualifier::Volatile));
+				consume_token();
+			} else {
+				break;
+			}
+		}
+
+		type_spec.add_pointer_level(ptr_cv);
+	}
+
+	// Handle reference modifiers (&, &&)
+	if (peek_token().has_value() && peek_token()->value() == "&") {
+		consume_token(); // consume first '&'
+
+		// Check for rvalue reference (&&)
+		if (peek_token().has_value() && peek_token()->value() == "&") {
+			consume_token(); // consume second '&'
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else {
+			type_spec.set_lvalue_reference(true);  // lvalue reference
+		}
+	}
+
+	// Expect semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after member template alias declaration", *current_token_);
+	}
+
+	// Create TemplateAliasNode
+	auto alias_node = emplace_node<TemplateAliasNode>(
+		std::move(template_params),
+		std::move(template_param_names),
+		alias_name,
+		type_result.node().value()
+	);
+
+	// Register the alias template with qualified name (ClassName::AliasName)
+	std::string qualified_name = std::string(struct_node.name()) + "::" + std::string(alias_name);
+	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
+
+	FLASH_LOG_FORMAT(Parser, Debug, "Registered member template alias: {}", qualified_name);
 
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
