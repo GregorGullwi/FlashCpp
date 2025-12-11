@@ -56,16 +56,16 @@ int main() {
     Point p;
     p.x = 1;
     p.y = 2;
-    StructRefHolder holder5{p};
-    holder5.ref.x = 10;
-    holder5.ref.y = 20;
-    if (p.x != 10 || p.y != 20) return 5;
+    StructRefHolder holder4{p};
+    holder4.ref.x = 10;
+    holder4.ref.y = 20;
+    if (p.x != 10 || p.y != 20) return 4;
     
     // Test template with int
     int ti = 5;
     RefWrapper<int> tw1{ti};
     tw1.ref = 15;
-    if (ti != 15) return 6;
+    if (ti != 15) return 5;
     
     // Test template with struct
     Point tp;
@@ -74,7 +74,7 @@ int main() {
     RefWrapper<Point> tw3{tp};
     tw3.ref.x = 30;
     tw3.ref.y = 40;
-    if (tp.x != 30 || tp.y != 40) return 7;
+    if (tp.x != 30 || tp.y != 40) return 6;
     
     return 0;  // All tests passed
 }
