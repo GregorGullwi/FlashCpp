@@ -11199,23 +11199,23 @@ ParseResult Parser::parse_primary_expression()
 						
 						if (struct_info) {
 							// FIRST check static members (these don't use this->)
-							for (const auto& static_member : struct_info->static_members) {
-								if (static_member.name == idenfifier_token.value()) {
-									// Found static member! Create a simple identifier node
-									// Static members are accessed directly, not via this->
-									result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
-									// Set identifierType to prevent "Missing identifier" error
-									identifierType = emplace_node<DeclarationNode>(
-										emplace_node<TypeSpecifierNode>(
-											static_member.type,
-											static_member.type_index,
-											static_cast<unsigned char>(static_member.size * 8),
-											idenfifier_token
-										),
+							// Use findStaticMemberRecursive to also search base classes
+							auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(idenfifier_token.value());
+							if (static_member) {
+								// Found static member! Create a simple identifier node
+								// Static members are accessed directly, not via this->
+								result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+								// Set identifierType to prevent "Missing identifier" error
+								identifierType = emplace_node<DeclarationNode>(
+									emplace_node<TypeSpecifierNode>(
+										static_member->type,
+										static_member->type_index,
+										static_cast<unsigned char>(static_member->size * 8),
 										idenfifier_token
-									);
-									goto found_member_variable;
-								}
+									),
+									idenfifier_token
+								);
+								goto found_member_variable;
 							}
 							
 							// Check instance members (these use this->)

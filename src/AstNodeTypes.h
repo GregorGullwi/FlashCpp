@@ -579,6 +579,10 @@ struct StructTypeInfo {
 
 	// Find member recursively through base classes
 	const StructMember* findMemberRecursive(std::string_view member_name) const;
+	
+	// Find static member recursively through base classes
+	// Returns a pair of the static member and the StructTypeInfo that defines it
+	std::pair<const StructStaticMember*, const StructTypeInfo*> findStaticMemberRecursive(std::string_view member_name) const;
 
 	void set_custom_alignment(size_t align) {
 		custom_alignment = align;

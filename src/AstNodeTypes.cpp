@@ -825,6 +825,35 @@ const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_
     return nullptr;  // Not found
 }
 
+std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(std::string_view member_name) const {
+    // First, check own static members
+    for (const auto& static_member : static_members) {
+        if (static_member.name == member_name) {
+            return { &static_member, this };
+        }
+    }
+
+    // Then, check base class static members
+    for (const auto& base : base_classes) {
+        if (base.type_index >= gTypeInfo.size()) {
+            continue;
+        }
+
+        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const StructTypeInfo* base_info = base_type.getStructInfo();
+
+        if (base_info) {
+            auto [base_static_member, owner_struct] = base_info->findStaticMemberRecursive(member_name);
+            if (base_static_member) {
+                // Found in base class - return it with its owner
+                return { base_static_member, owner_struct };
+            }
+        }
+    }
+
+    return { nullptr, nullptr };  // Not found
+}
+
 // Build RTTI information for polymorphic classes
 void StructTypeInfo::buildRTTI() {
     // Only build RTTI for polymorphic classes (those with vtables)
