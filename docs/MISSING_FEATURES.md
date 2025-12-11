@@ -40,7 +40,6 @@ The main remaining gaps are advanced template features (SFINAE, complex template
    - **Known limitation**: Template parameter substitution for base classes in partial specializations is incorrect
      - Example: `template<typename T> struct Base<const T> : Base<T>` - when instantiated with `const int`, base should be `Base<int>` but is `Base<const int>`
      - This causes inherited static member access to fail in partial specializations
-     - Regular (non-template) inheritance with static members works correctly (see `tests/test_static_inherit_nontemplate.cpp`)
 
 
 ### Language Features
