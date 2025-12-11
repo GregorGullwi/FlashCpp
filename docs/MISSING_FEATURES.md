@@ -7,7 +7,15 @@ This document tracks missing C++20 features that prevent FlashCpp from compiling
 
 ## Summary
 
-Standard headers like `<type_traits>` and `<utility>` currently fail to compile due to missing language features at the parser/semantic level. The preprocessor handles most standard headers correctly, but the parser encounters unsupported C++ constructs.
+Standard headers like `<type_traits>` and `<utility>` are becoming increasingly viable as key language features have been implemented. The preprocessor handles most standard headers correctly, and most critical parser/semantic features are now complete:
+
+- ✅ Conversion operators with static member access (Priority 1)
+- ✅ Non-type template parameters with dependent types (Priority 2)
+- ✅ Template specialization inheritance (Priority 3)
+- ✅ Reference members in structs (Priority 4)
+- ⚠️ Compiler intrinsics (Priority 5 - most critical ones implemented, including __is_same)
+
+The main remaining gaps are advanced template features (SFINAE, complex template metaprogramming) and some edge cases in existing features.
 
 ## Completed Features ✅
 
@@ -67,25 +75,43 @@ Structs/classes with reference-type members now work correctly. Reference member
 
 ---
 
-## Priority 5: Compiler Intrinsics
+## Priority 5: Compiler Intrinsics (PARTIALLY IMPLEMENTED)
 
-**Status**: ⚠️ **RECOMMENDED** - Performance and standard conformance  
-**Test Case**: `tests/test_real_std_headers_fail.cpp` (lines 51-54)
+**Status**: ⚠️ **PARTIAL** - Many intrinsics already work, __is_same newly added  
+**Test Case**: `tests/test_type_traits_intrinsics.cpp`, `tests/test_is_same_intrinsic.cpp`
 
 ### Problem
 
 Standard library implementations rely on compiler intrinsics for efficient type trait implementations and built-in operations.
 
-### Required Intrinsics
+### Implemented Intrinsics ✅
 
-| Intrinsic | Purpose | Fallback |
-|-----------|---------|----------|
-| `__is_same(T, U)` | Type equality check | Template specialization |
-| `__is_base_of(Base, Derived)` | Inheritance check | Template trickery |
-| `__is_pod(T)` | POD type check | Conservative assumptions |
-| `__is_trivial(T)` | Trivial type check | Conservative assumptions |
-| `__is_trivially_copyable(T)` | Trivially copyable check | Conservative assumptions |
-| `__builtin_abs`, `__builtin_labs`, etc. | Math operations | Regular function calls |
+| Intrinsic | Status | Notes |
+|-----------|--------|-------|
+| `__is_same(T, U)` | ✅ **NEW** | Type equality check - fully working |
+| `__is_base_of(Base, Derived)` | ✅ WORKING | Inheritance check |
+| `__is_class(T)` | ✅ WORKING | Class type check |
+| `__is_enum(T)` | ✅ WORKING | Enum type check |
+| `__is_union(T)` | ✅ WORKING | Union type check |
+| `__is_polymorphic(T)` | ✅ WORKING | Has virtual functions |
+| `__is_abstract(T)` | ✅ WORKING | Has pure virtual functions |
+| `__is_final(T)` | ✅ WORKING | Class marked final |
+| `__is_empty(T)` | ✅ WORKING | No non-static data members |
+| `__is_standard_layout(T)` | ✅ WORKING | Standard layout type |
+| `__is_trivially_copyable(T)` | ✅ WORKING | Trivially copyable check |
+| `__is_trivial(T)` | ✅ WORKING | Trivial type check |
+| `__is_pod(T)` | ✅ WORKING | POD type check |
+| `__is_void(T)` | ✅ WORKING | Void type check |
+| `__is_integral(T)` | ✅ WORKING | Integral type check |
+| `__is_floating_point(T)` | ✅ WORKING | Floating point type check |
+| `__is_array(T)` | ✅ WORKING | Array type check |
+| `__is_pointer(T)` | ✅ WORKING | Pointer type check |
+| `__builtin_labs` | ✅ WORKING | Long absolute value |
+| `__builtin_llabs` | ✅ WORKING | Long long absolute value |
+| `__builtin_fabs` | ✅ WORKING | Double absolute value |
+| `__builtin_fabsf` | ✅ WORKING | Float absolute value |
+| `__builtin_va_start` | ✅ WORKING | Variadic argument support |
+| `__builtin_va_arg` | ✅ WORKING | Variadic argument access |
 
 ### Required For
 
@@ -94,12 +120,18 @@ Standard library implementations rely on compiler intrinsics for efficient type 
 - Optimized container operations
 - `<type_traits>` performance
 
+### Recent Changes
+
+- **2025-12-11**: Added `__is_same(T, U)` intrinsic (one of the most critical type traits)
+  - Checks exact type equality including cv-qualifiers, references, pointers
+  - Test: `tests/test_is_same_intrinsic.cpp` - PASSES
+
 ### Implementation Notes
 
-- Not strictly required (library can use workarounds)
-- Greatly improves compilation speed for type traits
-- Start with `__is_same` and `__is_base_of` as most critical
-- Can implement as special parser constructs or built-in functions
+- Type trait intrinsics are parsed as special expressions in Parser.cpp (lines 10217-10400)
+- Evaluation logic in CodeGen.h::generateTypeTraitIr() (lines 10215+)
+- Most critical intrinsics for `<type_traits>` are now implemented
+- Math builtin functions (`__builtin_labs`, etc.) are registered as built-in functions
 
 ---
 
@@ -207,6 +239,8 @@ int func(T t);  // Fallback if first template fails
 - `/tmp/test_simple_static_inheritance.cpp` - Static member inheritance (PASSES)
 - `tests/test_struct_ref_members.cpp` - Reference member support (PASSES)
 - `tests/test_struct_ref_member_simple.cpp` - Simple reference member test (PASSES)
+- `tests/test_is_same_intrinsic.cpp` - __is_same type trait intrinsic (PASSES)
+- `tests/test_type_traits_intrinsics.cpp` - Comprehensive type traits test
 - `/tmp/test_cstddef.cpp` - Basic `<cstddef>` inclusion
 - `/tmp/test_type_traits.cpp` - Full `<type_traits>` test
 - `tests/test_real_std_headers_fail.cpp` - Comprehensive failure analysis
@@ -220,6 +254,9 @@ int func(T t);  // Fallback if first template fails
 - **Parser Code**: `src/Parser.cpp` - Main parsing logic
   - Lines 1260-1286: Conversion operator parsing (first location)
   - Lines 3702-3742: Conversion operator parsing (member function context)
+  - Lines 10217-10400: Type trait intrinsic parsing
+- **Code Generator**: `src/CodeGen.h` - Code generation
+  - Lines 10215+: Type trait evaluation logic (generateTypeTraitIr)
 - **Template Registry**: `src/TemplateRegistry.h` - Template instantiation tracking
 
 ---
@@ -232,6 +269,7 @@ int func(T t);  // Fallback if first template fails
 - ✅ **Priority 2**: Non-type template parameters with dependent types
 - ✅ **Priority 3**: Template specialization inheritance (static members propagate through base classes)
 - ✅ **Priority 4**: Reference members in structs (int&, char&, short&, struct&, template wrappers)
+- ⚠️ **Priority 5**: Compiler intrinsics (partially complete - most critical intrinsics work, __is_same newly added)
 - Basic preprocessor support for standard headers
 - GCC/Clang builtin type macros (`__SIZE_TYPE__`, etc.)
 - Preprocessor arithmetic and bitwise operators
@@ -243,8 +281,8 @@ int func(T t);  // Fallback if first template fails
 
 ### Blocked ❌
 
-- `<type_traits>` - Needs Priority 5 (Compiler Intrinsics) for efficient implementations
-- `<utility>` - Mostly works, may need intrinsics for optimizations
+- `<type_traits>` - Most intrinsics work, may need additional features
+- `<utility>` - May work now with reference member support
 - `<vector>` - May need additional features
 - `<algorithm>` - May need additional features
 

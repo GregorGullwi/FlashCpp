@@ -10275,6 +10275,10 @@ ParseResult Parser::parse_primary_expression()
 			// Type relationship: binary trait taking two types
 			kind = TypeTraitKind::IsBaseOf;
 			is_binary_trait = true;
+		} else if (trait_name == "__is_same") {
+			// Type relationship: binary trait taking two types
+			kind = TypeTraitKind::IsSame;
+			is_binary_trait = true;
 		} else if (trait_name == "__is_polymorphic") {
 			// Type properties
 			kind = TypeTraitKind::IsPolymorphic;

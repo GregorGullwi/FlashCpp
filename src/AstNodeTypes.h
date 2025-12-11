@@ -2262,6 +2262,7 @@ enum class TypeTraitKind {
 	IsFunction,
 	// Type relationships (binary trait - takes 2 types)
 	IsBaseOf,
+	IsSame,
 	IsAssignable,
 	IsTriviallyAssignable,
 	IsNothrowAssignable,

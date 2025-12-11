@@ -10369,6 +10369,26 @@ private:
 				}
 				break;
 
+			case TypeTraitKind::IsSame:
+				// __is_same(T, U) - Check if T and U are the same type (exactly the same)
+				if (traitNode.has_second_type()) {
+					const ASTNode& second_type_node = traitNode.second_type_node();
+					if (second_type_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& second_spec = second_type_node.as<TypeSpecifierNode>();
+						
+						// Check if all properties match exactly
+						result = (type == second_spec.type() &&
+						         is_reference == second_spec.is_reference() &&
+						         is_rvalue_reference == second_spec.is_rvalue_reference() &&
+						         pointer_depth == second_spec.pointer_depth() &&
+						         type_spec.type_index() == second_spec.type_index() &&
+						         type_spec.is_array() == second_spec.is_array() &&
+						         type_spec.is_const() == second_spec.is_const() &&
+						         type_spec.is_volatile() == second_spec.is_volatile());
+					}
+				}
+				break;
+
 			case TypeTraitKind::IsPolymorphic:
 				// A polymorphic class has at least one virtual function
 				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
