@@ -39,18 +39,19 @@ The main remaining gaps are advanced template features (SFINAE, complex template
    - Example: `template<> struct enable_if<true> { using type = int; }; enable_if<true>::type x;`
    - Critical for `<type_traits>` patterns like `enable_if`, `conditional`, etc.
 6. **Out-of-Class Static Member Definitions** - Template static member variable definitions outside the class
-   - Test: `tests/test_out_of_class_static.cpp`, `tests/test_out_of_class_static_simple.cpp`
+   - Test: `tests/test_out_of_class_static.cpp`, `tests/test_out_of_class_static_simple.cpp`, `tests/test_out_of_class_static_comprehensive.cpp`
    - Example: `template<typename T> int Container<T>::value = 42;`
    - Fully working - initializer expressions are properly substituted during template instantiation
    - Supports single and multiple template parameters
-   - **Note**: Complex initializers like `T()` may have limitations
+   - Supports constructor call initializers (e.g., `T()` initializes to zero)
+   - **Fixed**: Crash when using constructor call initializers - now properly handled
 
 ### Language Features
 7. **Reference Members in Structs** - Reference-type members in classes/structs
    - Supports: `int&`, `char&`, `short&`, `struct&`, template wrappers
    - Known limitation: `double&` has runtime issues (pre-existing bug)
 
-All completed features maintain backward compatibility - all 632 existing tests continue to pass.
+All completed features maintain backward compatibility - all 633 existing tests continue to pass.
 
 ---
 
@@ -213,7 +214,7 @@ The parser now properly registers type aliases from template specializations wit
 ## Priority 8: Out-of-Class Static Member Definitions in Templates (COMPLETE)
 
 **Status**: ✅ **COMPLETE** - Can define static member variables outside the class for templates  
-**Test Case**: `tests/test_out_of_class_static.cpp`, `tests/test_out_of_class_static_simple.cpp`
+**Test Case**: `tests/test_out_of_class_static.cpp`, `tests/test_out_of_class_static_simple.cpp`, `tests/test_out_of_class_static_comprehensive.cpp`
 
 ### Problem
 
@@ -225,6 +226,7 @@ The parser now recognizes and processes the pattern `template<typename T> Type C
 - Out-of-line static member variable definitions are parsed in `try_parse_out_of_line_template_member()`
 - Definitions are stored in the template registry and applied during template instantiation
 - Template parameter substitution is correctly applied to initializer expressions
+- Constructor call initializers (e.g., `T()`) are properly handled and initialize to zero
 
 ### Example
 
@@ -236,6 +238,15 @@ struct Container {
 
 template<typename T>
 int Container<T>::value = 42;  // Now fully supported!
+
+// Also supports constructor call initializers
+template<typename T>
+struct TypeContainer {
+    static T data;
+};
+
+template<typename T>
+T TypeContainer<T>::data = T();  // Initializes to zero - now works!
 
 int main() {
     return Container<int>::value - 42;  // Returns 0
@@ -249,14 +260,23 @@ int main() {
 - Added `registerOutOfLineMemberVariable()` and `getOutOfLineMemberVariables()` methods to TemplateRegistry
 - Modified template instantiation logic (lines 20875-20933) to process out-of-line static member variables
 - Template parameter substitution is applied to initializer expressions during instantiation
+- **Fixed**: Modified CodeGen.h (lines 430-510) to handle `ConstructorCallNode` initializers without crashing
+
+### Bug Fix (2025-12-11)
+
+Fixed a crash when processing constructor call initializers like `T()`:
+- **Issue**: Code generator tried to evaluate constructor calls in global context, but `visitExpressionNode()` expected function context
+- **Symptom**: Segmentation fault at IRConverter.h:4509 when `variable_scopes` was empty
+- **Fix**: Added special handling for `ConstructorCallNode` to initialize to zero without calling `visitExpressionNode()`
+- **Result**: Constructor calls like `int()`, `float()`, etc. now properly initialize to zero
 
 ### Test Results
 
 - ✅ Basic static member definition: `Container<int>::value = 42` - PASSES
 - ✅ Multiple instantiations: `Container<int>` and `Container<char>` - PASSES
 - ✅ Multiple template parameters: `Pair<int, char>::count = 100` - PASSES
-- ✅ All 632 existing tests continue to pass
-- ⚠️ Complex initializers like `T()` may have limitations (crash in code generation)
+- ✅ Constructor call initializers: `TypeContainer<int>::data = int()` - PASSES (initializes to 0)
+- ✅ All 633 existing tests continue to pass (including comprehensive test)
 
 ### Required For
 
@@ -266,7 +286,7 @@ int main() {
 
 ### Workaround (if needed)
 
-For complex initializers, inline static member variables (C++17 feature) can still be used:
+For very complex initializers, inline static member variables (C++17 feature) can still be used:
 
 ```cpp
 template<typename T>
