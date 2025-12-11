@@ -8,11 +8,10 @@ template<typename T> struct MyType { };
 template<> struct MyType<int> { using type = int; };
 
 // Partial specialization - has template params but specializes on a pattern
-template<typename T> struct MyType<const T> { };
 template<typename T> struct MyType<T*> { };
 
-// CURRENTLY FAILING: Partial specialization with inheritance
+// Partial specialization with inheritance
 // This pattern is used in <cstddef> for __byte_operand
-// template<typename T> struct MyType<const T> : MyType<T> { };
+template<typename T> struct MyType<const T> : MyType<T> { };
 
 int main() { return 0; }

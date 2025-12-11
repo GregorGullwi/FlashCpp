@@ -15,7 +15,8 @@ Standard headers like `<type_traits>` and `<utility>` are becoming increasingly 
 - ✅ Reference members in structs
 - ⚠️ Compiler intrinsics (most critical ones implemented, including __is_same)
 - ✅ Anonymous template parameters
-- ✅ Type alias access from template specializations (NEW!)
+- ✅ Type alias access from template specializations
+- ✅ Template partial specialization with inheritance (NEW!)
 
 The main remaining gaps are advanced template features (SFINAE, complex template metaprogramming) and some edge cases in existing features.
 
@@ -30,13 +31,18 @@ The main remaining gaps are advanced template features (SFINAE, complex template
    - Test: `tests/test_type_alias_from_specialization.cpp`
    - Example: `template<> struct enable_if<true> { using type = int; }; enable_if<true>::type x;`
    - Critical for `<type_traits>` patterns like `enable_if`, `conditional`, etc.
+6. **Template Partial Specialization with Inheritance** - Partial specializations can inherit from base classes
+   - Test: `tests/test_partial_spec_inherit.cpp`, `tests/template_partial_specialization_test.cpp`
+   - Example: `template<typename T> struct Base<const T> : Base<T> { };`
+   - Critical for standard library patterns like `__byte_operand` in `<cstddef>`
+   - Supports both simple and complex inheritance hierarchies in partial specializations
 
 ### Language Features
-6. **Reference Members in Structs** - Reference-type members in classes/structs
+7. **Reference Members in Structs** - Reference-type members in classes/structs
    - Supports: `int&`, `char&`, `short&`, `struct&`, template wrappers
    - Known limitation: `double&` has runtime issues (pre-existing bug)
 
-All completed features maintain backward compatibility - all 627 existing tests continue to pass.
+All completed features maintain backward compatibility - all 628 existing tests continue to pass.
 
 ---
 
@@ -302,8 +308,15 @@ int func(T t);  // Fallback if first template fails
    - Test: `enable_if<true>::type` accesses type alias from specialization
    - Verify: Type aliases properly registered with qualified names
 
+8. ✅ **Phase 8**: Template partial specialization with inheritance - COMPLETE
+   - Test: `template<typename T> struct Base<const T> : Base<T> { };`
+   - Verify: Partial specializations can inherit from their base templates
+
 ### Test Files
 
+- `tests/test_partial_spec_inherit.cpp` - Partial specialization with inheritance (PASSES)
+- `tests/test_partial_spec_inherit_simple.cpp` - Simple partial specialization with inheritance (PASSES)
+- `tests/template_partial_specialization_test.cpp` - Comprehensive partial specialization tests (PASSES)
 - `tests/test_type_alias_from_specialization.cpp` - Type alias access from specializations (PASSES)
 - `tests/test_anonymous_template_params.cpp` - Anonymous template parameters (PASSES)
 - `tests/test_is_same_intrinsic.cpp` - __is_same type trait intrinsic (PASSES)
@@ -345,6 +358,7 @@ int func(T t);  // Fallback if first template fails
 - ⚠️ **Priority 5**: Compiler intrinsics (partially complete - most critical intrinsics work, __is_same added)
 - ✅ **Priority 6**: Anonymous template parameters (both type and non-type parameters)
 - ✅ **Priority 7**: Type alias access from template specializations (both full and partial specializations)
+- ✅ **Priority 8**: Template partial specialization with inheritance (NEW!)
 - Basic preprocessor support for standard headers
 - GCC/Clang builtin type macros (`__SIZE_TYPE__`, etc.)
 - Preprocessor arithmetic and bitwise operators

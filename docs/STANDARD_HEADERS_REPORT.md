@@ -6,7 +6,7 @@ This document reports on the current state of standard C++ header support in Fla
 
 ## Test Results Summary
 
-Standard headers now pass the preprocessor stage and most parsing. The current blocker is **template partial specialization with inheritance** syntax.
+Standard headers now pass the preprocessor stage and most parsing. Many core template features are now complete including template partial specialization with inheritance.
 
 ### Compiler Mode
 
@@ -67,18 +67,21 @@ if (keyword.find("__") == 0) {  // __ is reserved for the compiler
 
 **Fix Applied**: Added `skip_gcc_attributes()` and `skip_function_trailing_specifiers()` in Parser.cpp.
 
-### Current Blocker
+#### Issue 1e: Template Partial Specialization with Inheritance (FIXED)
 
-#### Template Partial Specialization with Inheritance
-
-**Problem**: The parser doesn't handle partial template specialization with inheritance:
+**Problem**: The parser needed to handle partial template specialization with inheritance:
 ```cpp
 template<typename T> struct MyType<const T> : MyType<T> { };
 ```
 
-The parser expects `{` after the specialization header but gets `:` for inheritance.
+**Fix Applied**: The parser now properly handles inheritance in partial specializations (lines 16195-16300 in Parser.cpp). When a partial specialization includes a base class list (`:` followed by base classes), it correctly parses the inheritance and sets up the type hierarchy.
 
-**Location**: `src/Parser.cpp`, `parse_template_declaration()` function
+**Test Cases**: 
+- `tests/test_partial_spec_inherit.cpp` - PASSES
+- `tests/test_partial_spec_inherit_simple.cpp` - PASSES  
+- `tests/template_partial_specialization_test.cpp` - PASSES
+
+**Status**: ✅ COMPLETE - This pattern is now fully supported and critical for standard library headers like `<cstddef>`.
 
 ### Remaining Issues
 
@@ -172,13 +175,15 @@ Or run the doctest test case:
 
 1. ~~**First Priority**: Fix the `evaluate_expression()` bug where `__` prefixed identifiers don't push a value. This is the immediate crash cause.~~ **DONE**
 
-2. **Second Priority (Current)**: Add compiler builtin types (`__SIZE_TYPE__`, etc.) as preprocessor macros.
+2. ~~**Second Priority**: Add compiler builtin types (`__SIZE_TYPE__`, etc.) as preprocessor macros.~~ **DONE**
 
-3. **Third Priority**: Add basic feature test macros (`__cpp_exceptions`, `__cpp_rtti`, `__cpp_constexpr`, etc.) to `addBuiltinDefines()`.
+3. ~~**Third Priority**: Template partial specialization with inheritance.~~ **DONE**
 
-4. **Fourth Priority**: Implement `__has_feature`, `__has_builtin`, etc. as preprocessor intrinsics.
+4. **Fourth Priority (Current)**: Add basic feature test macros (`__cpp_exceptions`, `__cpp_rtti`, `__cpp_constexpr`, etc.) to `addBuiltinDefines()`.
 
-5. **Fifth Priority**: Add sanitizer macro handling.
+5. **Fifth Priority**: Implement `__has_feature`, `__has_builtin`, etc. as preprocessor intrinsics.
+
+6. **Sixth Priority**: Add sanitizer macro handling.
 
 ### Test File Location
 
