@@ -9729,7 +9729,44 @@ private:
 		}
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
-		// Use recursive lookup to find members in base classes as well
+		
+		// FIRST check if this is a static member (can be accessed via instance in C++)
+		auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name);
+		if (static_member) {
+			// This is a static member! Access it via GlobalLoad instead of MemberLoad
+			// Static members are accessed using qualified names (OwnerClassName::memberName)
+			// Use the owner_struct name, not the current struct, to get the correct qualified name
+			StringBuilder qualified_name_sb;
+			qualified_name_sb.append(owner_struct->name);
+			qualified_name_sb.append("::");
+			qualified_name_sb.append(member_name);
+			std::string_view qualified_name = qualified_name_sb.commit();
+			
+			FLASH_LOG(Codegen, Debug, "Static member access: ", member_name, " in struct ", type_info->name_, " owned by ", owner_struct->name, " -> qualified_name: ", qualified_name);
+			
+			// Create a temporary variable for the result
+			TempVar result_var = var_counter.next();
+			
+			// Build GlobalLoadOp for the static member
+			GlobalLoadOp global_load;
+			global_load.result.value = result_var;
+			global_load.result.type = static_member->type;
+			global_load.result.size_in_bits = static_cast<int>(static_member->size * 8);
+			global_load.global_name = qualified_name;
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
+			
+			// Return operands in the same format as regular members
+			if (static_member->type == Type::Struct) {
+				// Format: [type, size_bits, temp_var, type_index]
+				return { static_member->type, static_cast<int>(static_member->size * 8), result_var, static_cast<unsigned long long>(static_member->type_index) };
+			} else {
+				// Format: [type, size_bits, temp_var]
+				return { static_member->type, static_cast<int>(static_member->size * 8), result_var };
+			}
+		}
+		
+		// Use recursive lookup to find instance members in base classes as well
 		const StructMember* member = struct_info->findMemberRecursive(member_name);
 
 		if (!member) {
