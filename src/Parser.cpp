@@ -18188,10 +18188,14 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	);
 
 	// Register the alias template with qualified name (ClassName::AliasName)
-	std::string qualified_name = std::string(struct_node.name()) + "::" + std::string(alias_name);
+	std::string qualified_name;
+	qualified_name.reserve(struct_node.name().size() + 2 + alias_name.size());
+	qualified_name += struct_node.name();
+	qualified_name += "::";
+	qualified_name += alias_name;
 	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
 
-	FLASH_LOG_FORMAT(Parser, Debug, "Registered member template alias: {}", qualified_name);
+	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", qualified_name);
 
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
