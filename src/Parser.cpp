@@ -15513,14 +15513,14 @@ ParseResult Parser::parse_template_declaration() {
 						continue;
 					} else if (peek_token()->value() == "using") {
 						// Handle type alias inside class body: using value_type = T;
-						auto alias_result = parse_member_type_alias("using", nullptr, AccessSpecifier::Public);
+						auto alias_result = parse_member_type_alias("using", &struct_ref, current_access);
 						if (alias_result.is_error()) {
 							return alias_result;
 						}
 						continue;
 					} else if (peek_token()->value() == "typedef") {
 						// Handle typedef inside class body: typedef T _Type;
-						auto alias_result = parse_member_type_alias("typedef", nullptr, AccessSpecifier::Public);
+						auto alias_result = parse_member_type_alias("typedef", &struct_ref, current_access);
 						if (alias_result.is_error()) {
 							return alias_result;
 						}
@@ -19169,8 +19169,47 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
-	if (existing_type != gTypesByName.end()) {
+	bool already_instantiated = (existing_type != gTypesByName.end());
+	
+	if (already_instantiated) {
 		FLASH_LOG(Templates, Debug, "Full spec already instantiated: ", instantiated_name);
+		
+		// Even if the struct is already instantiated, we need to register type aliases
+		// with qualified names if they haven't been registered yet
+		if (!spec_node.is<StructDeclarationNode>()) {
+			FLASH_LOG(Templates, Error, "Full specialization is not a StructDeclarationNode");
+			return std::nullopt;
+		}
+		
+		const StructDeclarationNode& spec_struct = spec_node.as<StructDeclarationNode>();
+		
+		// Register type aliases with qualified names
+		for (const auto& type_alias : spec_struct.type_aliases()) {
+			std::string qualified_alias_name = std::string(instantiated_name) + "::" + std::string(type_alias.alias_name);
+			
+			// Check if already registered
+			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
+				continue;  // Already registered
+			}
+			
+			// Get the type information from the alias
+			const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+			
+			// Register the type alias globally with its qualified name
+			auto& alias_type_info = gTypeInfo.emplace_back(
+				qualified_alias_name,
+				alias_type_spec.type(),
+				gTypeInfo.size()
+			);
+			alias_type_info.type_index_ = alias_type_spec.type_index();
+			alias_type_info.type_size_ = alias_type_spec.size_in_bits();
+			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			
+			FLASH_LOG(Templates, Debug, "Registered type alias (for already instantiated spec): ", qualified_alias_name, 
+				" -> type=", static_cast<int>(alias_type_spec.type()), 
+				", type_index=", alias_type_spec.type_index());
+		}
+		
 		return std::nullopt;  // Already instantiated
 	}
 	
@@ -19230,6 +19269,30 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				struct_info->static_members.push_back(static_member);
 			}
 		}
+	}
+	
+	// Copy type aliases from the specialization
+	// Type aliases need to be registered with qualified names (e.g., "MyType_bool::type")
+	for (const auto& type_alias : spec_struct.type_aliases()) {
+		// Build the qualified name: instantiated_name::alias_name
+		std::string qualified_alias_name = std::string(instantiated_name) + "::" + std::string(type_alias.alias_name);
+		
+		// Get the type information from the alias
+		const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+		
+		// Register the type alias globally with its qualified name
+		auto& alias_type_info = gTypeInfo.emplace_back(
+			qualified_alias_name,
+			alias_type_spec.type(),
+			gTypeInfo.size()
+		);
+		alias_type_info.type_index_ = alias_type_spec.type_index();
+		alias_type_info.type_size_ = alias_type_spec.size_in_bits();
+		gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+		
+		FLASH_LOG(Templates, Debug, "Registered type alias: ", qualified_alias_name, 
+			" -> type=", static_cast<int>(alias_type_spec.type()), 
+			", type_index=", alias_type_spec.type_index());
 	}
 	
 	// Check if there's an explicit constructor - if not, we need to generate a default one
