@@ -11673,7 +11673,7 @@ ParseResult Parser::parse_primary_expression()
 									// Substitute with actual value - return immediately
 									// Use StringBuilder to persist the string value (avoid dangling string_view)
 									StringBuilder value_str;
-									value_str.append(std::to_string(subst.value));
+									value_str.append(subst.value);  // Directly append int64_t without std::to_string()
 									std::string_view value_view = value_str.commit();
 									Token num_token(Token::Type::Literal, value_view, 
 									                idenfifier_token.line(), idenfifier_token.column(), 
@@ -19699,6 +19699,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
+						// Handle IdentifierNode that might be a template parameter (for cases where TemplateParameterReferenceNode was converted)
+						else if (std::holds_alternative<IdentifierNode>(expr)) {
+							const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+							std::string_view id_name = id_node.name();
+							FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
+							// Check if this identifier matches a template parameter name
+							for (size_t i = 0; i < template_params.size(); ++i) {
+								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+								if (tparam.name() == id_name && 
+								    tparam.kind() == TemplateParameterKind::NonType) {
+									// Found the non-type parameter - substitute with actual value
+									if (i < template_args.size() && template_args[i].is_value) {
+										int64_t val = template_args[i].value;
+										Type val_type = template_args[i].base_type;
+										StringBuilder value_str;
+										value_str.append(val);
+										std::string_view value_view = value_str.commit();
+										Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
+										substituted_initializer = emplace_node<ExpressionNode>(
+											NumericLiteralNode(num_token, 
+											                   static_cast<unsigned long long>(val), 
+											                   val_type, 
+											                   TypeQualifier::None, 
+											                   get_type_size_bits(val_type))
+										);
+										FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", 
+										          id_name, "' (template parameter) with value ", val);
+										break;
+									}
+								}
+							}
+						}
 					}
 					
 					struct_info->addStaticMember(
@@ -20826,6 +20858,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									);
 									FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", 
 									          tparam_ref.param_name(), "' with value ", val);
+									break;
+								}
+							}
+						}
+					}
+					// Handle IdentifierNode that might be a template parameter (for cases where TemplateParameterReferenceNode was converted)
+					else if (std::holds_alternative<IdentifierNode>(expr)) {
+						const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+						std::string_view id_name = id_node.name();
+						FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
+						// Check if this identifier matches a template parameter name
+						for (size_t i = 0; i < template_params.size(); ++i) {
+							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+							if (tparam.name() == id_name && 
+							    tparam.kind() == TemplateParameterKind::NonType) {
+								// Found the non-type parameter - substitute with actual value
+								if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
+									int64_t val = template_args_to_use[i].value;
+									Type val_type = template_args_to_use[i].base_type;
+									StringBuilder value_str;
+									value_str.append(val);
+									std::string_view value_view = value_str.commit();
+									Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
+									substituted_initializer = emplace_node<ExpressionNode>(
+										NumericLiteralNode(num_token, 
+										                   static_cast<unsigned long long>(val), 
+										                   val_type, 
+										                   TypeQualifier::None, 
+										                   get_type_size_bits(val_type))
+									);
+									FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", 
+									          id_name, "' (template parameter) with value ", val);
 									break;
 								}
 							}
