@@ -14,64 +14,32 @@ Standard headers like `<type_traits>` and `<utility>` are becoming increasingly 
 - ✅ Template specialization inheritance (Priority 3)
 - ✅ Reference members in structs (Priority 4)
 - ⚠️ Compiler intrinsics (Priority 5 - most critical ones implemented, including __is_same)
+- ✅ Anonymous template parameters (Priority 6 - NEW!)
 
-The main remaining gaps are advanced template features (SFINAE, complex template metaprogramming) and some edge cases in existing features.
+The main remaining gaps are advanced template features (SFINAE, complex template metaprogramming), accessing type aliases from template specializations, and some edge cases in existing features.
 
 ## Completed Features ✅
 
-### Priority 1: Conversion Operators (FIXED)
-**Status**: ✅ **COMPLETE** - Conversion operators work with static member access  
-**Test**: `/tmp/test_integral_constant.cpp`
+The following features have been successfully implemented and tested:
 
-User-defined conversion operators (`operator T()`) now work correctly when accessing static class members. Implemented via deferred template body parsing (two-phase lookup) which parses template member function bodies during instantiation when TypeInfo is available.
+1. **Conversion Operators** - User-defined conversion operators (`operator T()`) with static member access
+   - Test: `/tmp/test_integral_constant.cpp`
+   - Implementation: Deferred template body parsing (two-phase lookup)
 
-**Key Changes**: Deferred template body parsing, template parameter substitution, static member access via GlobalLoad IR.
+2. **Non-Type Template Parameters with Dependent Types** - `template<typename T, T v>` patterns
+   - Test: `/tmp/test_integral_constant.cpp`
+   - Static members accessible in member function bodies
 
-### Priority 2: Non-Type Template Parameters with Dependent Types (FIXED)
-**Status**: ✅ **COMPLETE** - Static members in template classes accessible  
-**Test**: `/tmp/test_integral_constant.cpp`
+3. **Template Specialization Inheritance** - Static members propagate through base classes
+   - Test: `/tmp/test_simple_static_inheritance.cpp`
+   - Example: `template<typename T> struct is_pointer<T*> : true_type {};`
 
-Templates with non-type parameters whose types depend on other template parameters (e.g., `template<typename T, T v>`) now work correctly. Template parameters are substituted with actual values during deferred parsing, and static members are accessible in member function bodies.
+4. **Reference Members in Structs** - Reference-type members in classes/structs
+   - Test: `tests/test_struct_ref_members.cpp`
+   - Supports: `int&`, `char&`, `short&`, `struct&`, template wrappers
+   - Known limitation: `double&` has runtime issues (pre-existing bug)
 
-### Priority 3: Template Specialization Inheritance (FIXED)
-**Status**: ✅ **COMPLETE** - Static members propagate through inheritance  
-**Test**: `/tmp/test_simple_static_inheritance.cpp`
-
-Template partial specializations now properly propagate static members from base classes. Example: `template<typename T> struct is_pointer<T*> : true_type {};` now correctly inherits the static `value` member from `true_type`.
-
-**Implementation**: Added `findStaticMemberRecursive()` to search base classes for static members, updated both parser (member function context) and code generator (member access) to handle inherited static members via GlobalLoad IR with qualified names from the owning class.
-
-**Test Results**: 
-- ✅ Simple inheritance: `struct Derived : Base {}` accessing inherited `Base::value` - PASSES
-- ✅ All 621 existing tests continue to pass
-
-**Required For**: Type traits (`is_pointer`, `is_array`, `is_const`, etc.) in `<type_traits>`
-
-### Priority 4: Reference Members in Structs (FIXED)
-**Status**: ✅ **COMPLETE** - Reference members work for most types  
-**Test**: `tests/test_struct_ref_members.cpp`
-
-Structs/classes with reference-type members now work correctly. Reference members are stored as pointers internally and properly initialized through constructor initializer lists.
-
-**Supported Types**:
-- ✅ `int&`, `char&`, `short&` - All integral reference types work
-- ✅ `struct&` - Struct reference members work correctly
-- ✅ Template reference wrappers - `template<typename T> struct RefWrapper { T& ref; }` works
-
-**Key Implementation Details**:
-- Reference members are tracked with `is_reference` flag in `StructMember`
-- Size is set to `sizeof(void*)` during struct layout calculation (lines 4168-4174 in Parser.cpp)
-- Member stores for references use `MemberStoreOp` with `is_reference` flag set
-- IR converter handles reference member initialization by loading pointer values
-
-**Test Results**: 
-- ✅ Simple reference members: `struct RefHolder { int& ref; };` - PASSES
-- ✅ Template reference wrappers: `RefWrapper<int>` - PASSES  
-- ✅ All 621 existing tests continue to pass
-
-**Known Limitation**: Reference members with `double&` type currently have a runtime issue (separate from reference member support itself - pre-existing double handling bug).
-
-**Required For**: `std::reference_wrapper<T>`, `std::tuple` with references, `std::pair` with references
+All completed features maintain backward compatibility - all 626 existing tests continue to pass.
 
 ---
 
@@ -135,7 +103,70 @@ Standard library implementations rely on compiler intrinsics for efficient type 
 
 ---
 
-## Priority 6: Complex Preprocessor Expressions
+## Priority 6: Anonymous Template Parameters (COMPLETE)
+
+**Status**: ✅ **COMPLETE** - Anonymous template parameters fully supported  
+**Test Case**: `tests/test_anonymous_template_params.cpp`
+
+### Problem
+
+Standard library headers like `<type_traits>` use anonymous template parameters where the parameter has no name, only a type:
+
+```cpp
+template<bool, typename T = void>
+struct enable_if { };
+
+template<typename _Tp, typename>
+struct pair_first { _Tp value; };
+```
+
+This is valid C++20 syntax but was not previously supported by the parser.
+
+### Solution
+
+The parser now accepts template parameters without names for both:
+- **Type parameters**: `template<typename, class>`
+- **Non-type parameters**: `template<bool, int>`
+
+When a parameter name is omitted, the parser automatically generates a unique internal name (e.g., `__anon_param_0`, `__anon_type_1`) that is used for internal tracking but not exposed to user code.
+
+### Implementation Details
+
+- Modified `parse_template_parameter()` in Parser.cpp (lines 17657-17690 and 17722-17756)
+- Checks if the next token after the type is `,`, `>`, or `=` to detect anonymous parameters
+- Generates unique names using static counters for both type and non-type parameters
+- Template instantiation and specialization work correctly with anonymous parameters
+
+### Test Results
+
+- ✅ Anonymous non-type parameters: `template<bool, typename T>` - PASSES
+- ✅ Anonymous type parameters: `template<typename T, typename>` - PASSES
+- ✅ Multiple anonymous parameters: `template<bool, bool, typename T>` - PASSES
+- ✅ Mixed named and anonymous: `template<typename T, bool, typename>` - PASSES
+- ✅ Template instantiation with anonymous parameters: `Foo<true, int>` - PASSES
+- ✅ All 626 existing tests continue to pass
+
+### Required For
+
+- `<type_traits>` - Uses `template<bool, typename T = void> struct enable_if`
+- `<utility>` - Includes `<type_traits>` which needs this feature
+- Many other standard library headers that depend on `<type_traits>`
+
+### Remaining Limitations
+
+While anonymous parameters now parse correctly, there is a separate pre-existing bug with accessing `using` type aliases from template specializations. For example:
+
+```cpp
+template<bool B> struct Test { using type = int; };
+template<> struct Test<true> { using type = double; };
+// This fails: Test<true>::type x;
+```
+
+This is unrelated to anonymous parameters and affects both named and anonymous parameters equally.
+
+---
+
+## Priority 7: Complex Preprocessor Expressions
 
 **Status**: ⚠️ **NON-BLOCKING** - Causes warnings but doesn't fail compilation  
 **Test Case**: `tests/test_real_std_headers_fail.cpp` (lines 46-49)
@@ -172,7 +203,7 @@ When `__GNUC__` is undefined, the expression may evaluate incorrectly.
 
 ---
 
-## Priority 7: Advanced Template Features
+## Priority 8: Advanced Template Features
 
 **Status**: ⚠️ **PARTIAL SUPPORT** - Some features work, others don't  
 **Test Case**: `tests/test_real_std_headers_fail.cpp` (lines 61-65)
@@ -229,9 +260,13 @@ int func(T t);  // Fallback if first template fails
    - Test: `RefWrapper<int>` compiles and works
    - Verify: Can construct with lvalue reference and modify through reference
    
-5. **Phase 5**: Add basic intrinsics - NEXT
+5. ✅ **Phase 5**: Add compiler intrinsics - PARTIALLY COMPLETE
    - Test: `__is_same(int, int)` works in constexpr context
-   - Verify: Returns `true` for same types
+   - Most critical intrinsics implemented and working
+
+6. ✅ **Phase 6**: Anonymous template parameters - COMPLETE
+   - Test: `template<bool, typename T>` compiles
+   - Verify: Both type and non-type anonymous parameters work
 
 ### Test Files
 
@@ -241,6 +276,7 @@ int func(T t);  // Fallback if first template fails
 - `tests/test_struct_ref_member_simple.cpp` - Simple reference member test (PASSES)
 - `tests/test_is_same_intrinsic.cpp` - __is_same type trait intrinsic (PASSES)
 - `tests/test_type_traits_intrinsics.cpp` - Comprehensive type traits test
+- `tests/test_anonymous_template_params.cpp` - Anonymous template parameters (PASSES)
 - `/tmp/test_cstddef.cpp` - Basic `<cstddef>` inclusion
 - `/tmp/test_type_traits.cpp` - Full `<type_traits>` test
 - `tests/test_real_std_headers_fail.cpp` - Comprehensive failure analysis
@@ -255,6 +291,8 @@ int func(T t);  // Fallback if first template fails
   - Lines 1260-1286: Conversion operator parsing (first location)
   - Lines 3702-3742: Conversion operator parsing (member function context)
   - Lines 10217-10400: Type trait intrinsic parsing
+  - Lines 17657-17690: Anonymous type parameter parsing (typename/class)
+  - Lines 17722-17756: Anonymous non-type parameter parsing
 - **Code Generator**: `src/CodeGen.h` - Code generation
   - Lines 10215+: Type trait evaluation logic (generateTypeTraitIr)
 - **Template Registry**: `src/TemplateRegistry.h` - Template instantiation tracking
@@ -269,7 +307,8 @@ int func(T t);  // Fallback if first template fails
 - ✅ **Priority 2**: Non-type template parameters with dependent types
 - ✅ **Priority 3**: Template specialization inheritance (static members propagate through base classes)
 - ✅ **Priority 4**: Reference members in structs (int&, char&, short&, struct&, template wrappers)
-- ⚠️ **Priority 5**: Compiler intrinsics (partially complete - most critical intrinsics work, __is_same newly added)
+- ⚠️ **Priority 5**: Compiler intrinsics (partially complete - most critical intrinsics work, __is_same added)
+- ✅ **Priority 6**: Anonymous template parameters (both type and non-type parameters)
 - Basic preprocessor support for standard headers
 - GCC/Clang builtin type macros (`__SIZE_TYPE__`, etc.)
 - Preprocessor arithmetic and bitwise operators
@@ -281,10 +320,17 @@ int func(T t);  // Fallback if first template fails
 
 ### Blocked ❌
 
-- `<type_traits>` - Most intrinsics work, may need additional features
-- `<utility>` - May work now with reference member support
+- `<type_traits>` - Still blocked by accessing `using` aliases from template specializations (separate bug)
+- `<utility>` - Depends on `<type_traits>`
 - `<vector>` - May need additional features
 - `<algorithm>` - May need additional features
+
+### Known Issues
+
+- **Type alias access from specializations**: Cannot access `using type = ...` from template specializations
+  - Affects both full and partial specializations
+  - Pre-existing bug unrelated to anonymous parameters
+  - Example: `template<bool> struct Test { using type = int; }; template<> struct Test<true> { using type = double; }; Test<true>::type x; // FAILS`
 
 ---
 
