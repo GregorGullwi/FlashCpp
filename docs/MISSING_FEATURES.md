@@ -11,8 +11,9 @@ Most critical parser/semantic features for basic standard library support are no
 - ✅ Conversion operators, non-type template parameters, template specialization inheritance
 - ✅ Reference members in structs, anonymous template parameters, type alias access from specializations
 - ⚠️ Compiler intrinsics (most critical ones implemented including `__is_same`)
+- ✅ Perfect forwarding (`std::forward` works correctly)
 
-**Remaining gaps**: Advanced template features (SFINAE, complex metaprogramming), some intrinsic edge cases, and preprocessor expression handling.
+**Remaining gaps**: Member template aliases (blocking `<type_traits>`), advanced template features (SFINAE, complex metaprogramming), some intrinsic edge cases, and preprocessor expression handling.
 
 ## Completed Features Summary ✅
 
@@ -31,6 +32,32 @@ See **Progress Tracking** section below for detailed test references.
 ---
 
 ## Remaining Work
+
+### Priority 4.5: Member Template Aliases (BLOCKING `<type_traits>`)
+
+**Status**: ❌ **BLOCKING** - Required for standard library headers  
+**Test Case**: `/tmp/test_member_template_alias.cpp`
+
+**Problem**: The standard library uses template aliases as members of structs/classes, which is currently not supported:
+
+```cpp
+template<bool B>
+struct Conditional {
+    template<typename T, typename U>
+    using type = T;  // Member template alias - not yet supported
+};
+```
+
+**Current Error**: `Unexpected token in type specifier: 'using'` when parsing member template aliases.
+
+**Impact**: **BLOCKS `<type_traits>`** - The standard library's `__conditional` and other metaprogramming utilities use this pattern extensively.
+
+**Implementation Needed**: 
+- Parser support for `using` declarations with template parameters inside struct/class definitions
+- Template instantiation for member template aliases
+- Qualified name resolution for accessing member template aliases (e.g., `Conditional<true>::type<int, float>`)
+
+---
 
 ### Priority 5: Compiler Intrinsics (MOSTLY COMPLETE)
 
@@ -64,7 +91,7 @@ See **Progress Tracking** section below for detailed test references.
 **Supported**: 
 - ✅ Variadic templates (basic support)
 - ✅ Template template parameters (partial support)
-- ⚠️ Perfect forwarding (needs testing)
+- ✅ Perfect forwarding (`std::forward` works correctly)
 
 **Missing**:
 - ❌ SFINAE (Substitution Failure Is Not An Error) - needed for `std::enable_if` and advanced metaprogramming
@@ -93,6 +120,7 @@ int func(T t);  // Fallback if first template fails
 
 ### Remaining Work 🔄
 
+- **Priority 4.5**: Implement member template aliases (blocks `<type_traits>`)
 - **Priority 5**: Validate/fix edge cases in some intrinsics (`__has_unique_object_representations`, `__is_constructible`, etc.)
 - **Priority 8**: Improve preprocessor expression handling (non-blocking)
 - **Priority 9**: SFINAE and advanced template metaprogramming (lower priority)
