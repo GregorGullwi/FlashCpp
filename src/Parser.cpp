@@ -17663,14 +17663,33 @@ ParseResult Parser::parse_template_parameter() {
 				is_variadic = true;
 			}
 
-			// Expect identifier (parameter name)
-			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected identifier after 'typename' or 'class'", *current_token_);
+			// Check for identifier (parameter name) - it's optional for anonymous parameters
+			std::string_view param_name;
+			Token param_name_token;
+			
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+				// Named parameter
+				param_name_token = *peek_token();
+				param_name = param_name_token.value();
+				consume_token(); // consume parameter name
+			} else {
+				// Anonymous parameter - generate unique name
+				// Check if next token is valid for end of parameter (comma, >, or =)
+				if (peek_token().has_value() && 
+				    ((peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") ||
+				     (peek_token()->type() == Token::Type::Operator && (peek_token()->value() == ">" || peek_token()->value() == "=")))) {
+					// Generate unique anonymous parameter name
+					static int anonymous_type_counter = 0;
+					static std::string temp_anon_type_name;
+					temp_anon_type_name = "__anon_type_" + std::to_string(anonymous_type_counter++);
+					
+					// Use the current token as the token reference
+					param_name_token = *current_token_;
+					param_name = temp_anon_type_name;
+				} else {
+					return ParseResult::error("Expected identifier after 'typename' or 'class'", *current_token_);
+				}
 			}
-
-			Token param_name_token = *peek_token();
-			std::string_view param_name = param_name_token.value();
-			consume_token(); // consume parameter name
 
 			// Create type parameter node
 			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
@@ -17719,14 +17738,37 @@ ParseResult Parser::parse_template_parameter() {
 	    peek_token()->value() == "...") {
 		consume_token(); // consume '...'
 		is_variadic = true;
-	}	// Expect identifier (parameter name)
-	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected identifier for non-type template parameter", *current_token_);
+	}	
+	// Check for identifier (parameter name) - it's optional for anonymous parameters
+	std::string_view param_name;
+	Token param_name_token;
+	bool is_anonymous = false;
+	
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+		// Named parameter
+		param_name_token = *peek_token();
+		param_name = param_name_token.value();
+		consume_token(); // consume parameter name
+	} else {
+		// Anonymous parameter - generate unique name
+		// Check if next token is valid for end of parameter (comma, >, or =)
+		if (peek_token().has_value() && 
+		    ((peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") ||
+		     (peek_token()->type() == Token::Type::Operator && (peek_token()->value() == ">" || peek_token()->value() == "=")))) {
+			// Generate unique anonymous parameter name
+			static int anonymous_counter = 0;
+			static std::string temp_anon_name;
+			temp_anon_name = "__anon_param_" + std::to_string(anonymous_counter++);
+			
+			// Store the anonymous name in a way that persists
+			// We'll use the current token as the token reference
+			param_name_token = *current_token_;
+			param_name = temp_anon_name;
+			is_anonymous = true;
+		} else {
+			return ParseResult::error("Expected identifier for non-type template parameter", *current_token_);
+		}
 	}
-
-	Token param_name_token = *peek_token();
-	std::string_view param_name = param_name_token.value();
-	consume_token(); // consume parameter name
 
 	// Create non-type parameter node
 	auto param_node = emplace_node<TemplateParameterNode>(param_name, *type_result.node(), param_name_token);
