@@ -11666,10 +11666,39 @@ ParseResult Parser::parse_primary_expression()
 					for (const auto& param_name : current_template_param_names_) {
 						if (param_name == idenfifier_token.value()) {
 							// This is a template parameter reference
-							// Don't return yet - we need to check if this is a constructor call T(...)
-							result = emplace_node<ExpressionNode>(TemplateParameterReferenceNode(param_name, idenfifier_token));
-							// Set identifierType so the constructor call logic below can detect it
-							identifierType = result;
+							// Check if we have a substitution value (for deferred template body parsing)
+							bool substituted = false;
+							for (const auto& subst : template_param_substitutions_) {
+								if (subst.param_name == param_name && subst.is_value_param) {
+									// Substitute with actual value - return immediately
+									// Use StringBuilder to persist the string value (avoid dangling string_view)
+									StringBuilder value_str;
+									value_str.append(std::to_string(subst.value));
+									std::string_view value_view = value_str.commit();
+									Token num_token(Token::Type::Literal, value_view, 
+									                idenfifier_token.line(), idenfifier_token.column(), 
+									                idenfifier_token.file_index());
+									result = emplace_node<ExpressionNode>(
+										NumericLiteralNode(num_token, 
+										                   static_cast<unsigned long long>(subst.value), 
+										                   subst.value_type, 
+										                   TypeQualifier::None, 
+										                   get_type_size_bits(subst.value_type))
+									);
+									FLASH_LOG(Templates, Debug, "Substituted template parameter '", param_name, 
+									          "' with value ", subst.value);
+									// Return the substituted value immediately
+									return ParseResult::success(*result);
+								}
+							}
+							
+							if (!substituted) {
+								// No substitution - create TemplateParameterReferenceNode as before
+								// Don't return yet - we need to check if this is a constructor call T(...)
+								result = emplace_node<ExpressionNode>(TemplateParameterReferenceNode(param_name, idenfifier_token));
+								// Set identifierType so the constructor call logic below can detect it
+								identifierType = result;
+							}
 							break;
 						}
 					}
@@ -19639,6 +19668,37 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
+						// Handle template parameter reference substitution (e.g., static constexpr T value = v;)
+						else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+							FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
+							// Find the template parameter and substitute with actual value
+							for (size_t i = 0; i < template_params.size(); ++i) {
+								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+								if (tparam.name() == tparam_ref.param_name() && 
+								    tparam.kind() == TemplateParameterKind::NonType) {
+									// Found the non-type parameter - substitute with actual value
+									if (i < template_args.size() && template_args[i].is_value) {
+										int64_t val = template_args[i].value;
+										Type val_type = template_args[i].base_type;
+										StringBuilder value_str;
+										value_str.append(val);
+										std::string_view value_view = value_str.commit();
+										Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
+										substituted_initializer = emplace_node<ExpressionNode>(
+											NumericLiteralNode(num_token, 
+											                   static_cast<unsigned long long>(val), 
+											                   val_type, 
+											                   TypeQualifier::None, 
+											                   get_type_size_bits(val_type))
+										);
+										FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", 
+										          tparam_ref.param_name(), "' with value ", val);
+										break;
+									}
+								}
+							}
+						}
 					}
 					
 					struct_info->addStaticMember(
@@ -20741,6 +20801,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 					}
+					// Handle template parameter reference substitution (e.g., static constexpr T value = v;)
+					else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+						// Find the template parameter and substitute with actual value
+						for (size_t i = 0; i < template_params.size(); ++i) {
+							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+							if (tparam.name() == tparam_ref.param_name() && 
+							    tparam.kind() == TemplateParameterKind::NonType) {
+								// Found the non-type parameter - substitute with actual value
+								if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
+									int64_t val = template_args_to_use[i].value;
+									Type val_type = template_args_to_use[i].base_type;
+									StringBuilder value_str;
+									value_str.append(val);
+									std::string_view value_view = value_str.commit();
+									Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
+									substituted_initializer = emplace_node<ExpressionNode>(
+										NumericLiteralNode(num_token, 
+										                   static_cast<unsigned long long>(val), 
+										                   val_type, 
+										                   TypeQualifier::None, 
+										                   get_type_size_bits(val_type))
+									);
+									FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", 
+									          tparam_ref.param_name(), "' with value ", val);
+									break;
+								}
+							}
+						}
+					}
 				}
 				
 				// Use struct_info_ptr instead of struct_info (which was moved)
@@ -20839,11 +20929,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			
 			// Set up template parameter substitution context
-			// Map template parameter names to actual types
+			// Map template parameter names to actual types and values
 			current_template_param_names_ = delayed.template_param_names;
 			
-			// TODO: Add actual template argument values for substitution
-			// For now, we're just parsing with the template parameter names available
+			// Create template parameter substitutions for non-type parameters
+			// This allows template parameters like 'v' in 'return v;' to be substituted with actual values
+			template_param_substitutions_.clear();
+			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+				const auto& param = template_params[i].as<TemplateParameterNode>();
+				const auto& arg = template_args_to_use[i];
+				
+				if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
+					// Non-type parameter - store value for substitution
+					TemplateParamSubstitution subst;
+					subst.param_name = param.name();
+					subst.is_value_param = true;
+					subst.value = arg.value;
+					subst.value_type = arg.base_type;
+					template_param_substitutions_.push_back(subst);
+					
+					FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
+					          param.name(), "' with value ", arg.value);
+				}
+			}
 			
 			FLASH_LOG(Templates, Debug, "About to parse deferred body for ", deferred.function_name);
 			
@@ -20854,6 +20962,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			FLASH_LOG(Templates, Debug, "Finished parse_delayed_function_body, result.is_error()=", result.is_error());
 			
 			current_template_param_names_.clear();
+			template_param_substitutions_.clear();  // Clear substitutions after parsing
 			
 			if (result.is_error()) {
 				FLASH_LOG(Templates, Error, "Failed to parse deferred template body: ", result.error_message());
