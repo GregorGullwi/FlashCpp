@@ -7,6 +7,8 @@ This document tracks missing C++20 features that prevent FlashCpp from compiling
 
 ## Summary
 
+**Status Update (2025-12-11)**: Most blocking features for basic standard library headers have been implemented! The compiler now supports the majority of critical C++20 features needed for template-heavy code.
+
 Standard headers like `<type_traits>` and `<utility>` are becoming increasingly viable as key language features have been implemented. The preprocessor handles most standard headers correctly, and most critical parser/semantic features are now complete:
 
 - ✅ Conversion operators with static member access
