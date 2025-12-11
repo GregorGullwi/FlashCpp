@@ -10886,12 +10886,59 @@ ParseResult Parser::parse_primary_expression()
 			
 			FLASH_LOG(Parser, Debug, "Qualified identifier: final name = '{}'", final_identifier.value());
 			
+			// Check if final identifier is followed by template arguments: ns::Template<Args>
+			std::optional<std::vector<TemplateTypeArg>> template_args;
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				FLASH_LOG(Parser, Debug, "Qualified identifier followed by '<', attempting to parse template arguments");
+				template_args = parse_explicit_template_arguments();
+				// If parsing failed, it might be a less-than operator, continue normally
+			}
+			
 			// Create a QualifiedIdentifierNode
 			auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 			const auto& qual_id = qualified_node_ast.as<QualifiedIdentifierNode>();
 			
-			// Look up the qualified identifier
-			identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.identifier_token().value());
+			// Look up the qualified identifier (either the template name or instantiated template)
+			if (template_args.has_value()) {
+				// Try to instantiate the template with namespace qualification
+				// Build the qualified template name for lookup
+				std::string qualified_template_name;
+				for (const auto& ns : namespaces) {
+					qualified_template_name += std::string(ns.c_str()) + "::";
+				}
+				qualified_template_name += std::string(final_identifier.value());
+				
+				FLASH_LOG(Parser, Debug, "Looking up template '{}' with {} template arguments", qualified_template_name, template_args->size());
+				
+				// Try to instantiate as class template
+				auto instantiated = try_instantiate_class_template(final_identifier.value(), *template_args);
+				if (instantiated.has_value()) {
+					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
+					FLASH_LOG(Parser, Debug, "Successfully instantiated class template: {}", inst_struct.name());
+					
+					// Look up the instantiated template
+					identifierType = gSymbolTable.lookup(inst_struct.name());
+					
+					// Check for :: after template arguments (Template<T>::member)
+					if (peek_token().has_value() && peek_token()->value() == "::") {
+						auto qualified_result = parse_qualified_identifier_after_template(final_identifier);
+						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
+							auto qualified_node2 = qualified_result.node()->as<QualifiedIdentifierNode>();
+							result = emplace_node<ExpressionNode>(qualified_node2);
+							return ParseResult::success(*result);
+						}
+					}
+					
+					// Return identifier reference to the instantiated template
+					Token inst_token(Token::Type::Identifier, inst_struct.name(), 
+					                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+					result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+					return ParseResult::success(*result);
+				}
+			} else {
+				// No template arguments, lookup as regular qualified identifier
+				identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.identifier_token().value());
+			}
 			
 			FLASH_LOG(Parser, Debug, "Qualified lookup result: {}", identifierType.has_value() ? "found" : "not found");
 			
