@@ -4862,19 +4862,20 @@ private:
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
-					// Look for static member
-					const StructStaticMember* static_member = struct_info->findStaticMember(std::string(qualifiedIdNode.name()));
-					if (static_member) {
+					// Look for static member recursively (checks base classes too)
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(qualifiedIdNode.name());
+					if (static_member && owner_struct) {
 						// This is a static member access - generate GlobalLoad
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
 						op.result.size_in_bits = static_cast<int>(static_member->size * 8);
 						op.result.value = result_temp;
-						// Use qualified name as the global symbol name: StructName::static_member
-						// Use the actual type name (which may be an instantiated template name like Container_int)
+						// Use qualified name as the global symbol name: OwnerStructName::static_member
+						// The owner_struct is the struct that actually defines the static member
+						// (could be a base class)
 						StringBuilder qualified_name_sb;
-						qualified_name_sb.append(struct_type_it->second->name_);
+						qualified_name_sb.append(owner_struct->name);
 						qualified_name_sb.append("::");
 						qualified_name_sb.append(qualifiedIdNode.name());
 						op.global_name = qualified_name_sb.commit();

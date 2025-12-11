@@ -36,7 +36,12 @@ The main remaining gaps are advanced template features (SFINAE, complex template
    - Example: `template<typename T> struct Base<const T> : Base<T> { };`
    - Critical for standard library patterns like `__byte_operand` in `<cstddef>`
    - Supports both simple and complex inheritance hierarchies in partial specializations
-   - **Known limitation**: Accessing inherited static members from partial specializations causes IR generation crash (TODO: fix member lookup)
+   - **Partial fix**: Static member lookup now searches base classes recursively (CodeGen.h:4866)
+   - **Known limitation**: Template parameter substitution for base classes in partial specializations is incorrect
+     - Example: `template<typename T> struct Base<const T> : Base<T>` - when instantiated with `const int`, base should be `Base<int>` but is `Base<const int>`
+     - This causes inherited static member access to fail in partial specializations
+     - Regular (non-template) inheritance with static members works correctly (see `tests/test_static_inherit_nontemplate.cpp`)
+
 
 ### Language Features
 7. **Reference Members in Structs** - Reference-type members in classes/structs
