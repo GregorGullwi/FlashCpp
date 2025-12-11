@@ -4729,15 +4729,15 @@ ParseResult Parser::parse_struct_declaration()
 			DeferredTemplateMemberBody deferred;
 			
 			// Get function name for matching during instantiation
-			std::string func_name;
+			std::string_view func_name;
 			bool is_const_method = false;
 			if (delayed.is_constructor && delayed.ctor_node) {
-				func_name = std::string(delayed.ctor_node->name());
+				func_name = delayed.ctor_node->name();
 			} else if (delayed.is_destructor && delayed.dtor_node) {
-				func_name = std::string(delayed.dtor_node->name());
+				func_name = delayed.dtor_node->name();
 			} else if (delayed.func_node) {
 				const auto& decl = delayed.func_node->decl_node();
-				func_name = std::string(decl.identifier_token().value());
+				func_name = decl.identifier_token().value();
 				// is_const is stored in StructMemberFunctionDecl, not in FunctionDeclarationNode
 				// We'll match by name only for now
 			}
@@ -4746,7 +4746,7 @@ ParseResult Parser::parse_struct_declaration()
 			deferred.body_start = delayed.body_start;
 			deferred.initializer_list_start = delayed.initializer_list_start;
 			deferred.has_initializer_list = delayed.has_initializer_list;
-			deferred.struct_name = std::string(delayed.struct_name);  // Copy to std::string
+			deferred.struct_name = delayed.struct_name;  // string_view from token (persistent)
 			deferred.struct_type_index = delayed.struct_type_index;
 			deferred.is_constructor = delayed.is_constructor;
 			deferred.is_destructor = delayed.is_destructor;
@@ -19668,67 +19668,49 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
-						// Handle template parameter reference substitution (e.g., static constexpr T value = v;)
-						else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-							const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-							FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
-							// Find the template parameter and substitute with actual value
+						// Helper lambda to substitute template parameters in static member initializers
+						auto substitute_template_param = [&](std::string_view param_name, 
+						                                       const std::vector<TemplateTypeArg>& args) -> std::optional<ASTNode> {
 							for (size_t i = 0; i < template_params.size(); ++i) {
 								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-								if (tparam.name() == tparam_ref.param_name() && 
-								    tparam.kind() == TemplateParameterKind::NonType) {
-									// Found the non-type parameter - substitute with actual value
-									if (i < template_args.size() && template_args[i].is_value) {
-										int64_t val = template_args[i].value;
-										Type val_type = template_args[i].base_type;
+								if (tparam.name() == param_name && tparam.kind() == TemplateParameterKind::NonType) {
+									if (i < args.size() && args[i].is_value) {
+										int64_t val = args[i].value;
+										Type val_type = args[i].base_type;
 										StringBuilder value_str;
 										value_str.append(val);
 										std::string_view value_view = value_str.commit();
 										Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
-										substituted_initializer = emplace_node<ExpressionNode>(
+										return emplace_node<ExpressionNode>(
 											NumericLiteralNode(num_token, 
 											                   static_cast<unsigned long long>(val), 
 											                   val_type, 
 											                   TypeQualifier::None, 
 											                   get_type_size_bits(val_type))
 										);
-										FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", 
-										          tparam_ref.param_name(), "' with value ", val);
-										break;
 									}
 								}
 							}
+							return std::nullopt;
+						};
+						
+						// Handle template parameter reference substitution (e.g., static constexpr T value = v;)
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+							FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
+							if (auto subst = substitute_template_param(tparam_ref.param_name(), template_args)) {
+								substituted_initializer = subst;
+								FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", tparam_ref.param_name(), "'");
+							}
 						}
-						// Handle IdentifierNode that might be a template parameter (for cases where TemplateParameterReferenceNode was converted)
+						// Handle IdentifierNode that might be a template parameter
 						else if (std::holds_alternative<IdentifierNode>(expr)) {
 							const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 							std::string_view id_name = id_node.name();
 							FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
-							// Check if this identifier matches a template parameter name
-							for (size_t i = 0; i < template_params.size(); ++i) {
-								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-								if (tparam.name() == id_name && 
-								    tparam.kind() == TemplateParameterKind::NonType) {
-									// Found the non-type parameter - substitute with actual value
-									if (i < template_args.size() && template_args[i].is_value) {
-										int64_t val = template_args[i].value;
-										Type val_type = template_args[i].base_type;
-										StringBuilder value_str;
-										value_str.append(val);
-										std::string_view value_view = value_str.commit();
-										Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
-										substituted_initializer = emplace_node<ExpressionNode>(
-											NumericLiteralNode(num_token, 
-											                   static_cast<unsigned long long>(val), 
-											                   val_type, 
-											                   TypeQualifier::None, 
-											                   get_type_size_bits(val_type))
-										);
-										FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", 
-										          id_name, "' (template parameter) with value ", val);
-										break;
-									}
-								}
+							if (auto subst = substitute_template_param(id_name, template_args)) {
+								substituted_initializer = subst;
+								FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", id_name, "' (template parameter)");
 							}
 						}
 					}
@@ -20833,66 +20815,46 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 					}
-					// Handle template parameter reference substitution (e.g., static constexpr T value = v;)
-					else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-						// Find the template parameter and substitute with actual value
-						for (size_t i = 0; i < template_params.size(); ++i) {
-							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-							if (tparam.name() == tparam_ref.param_name() && 
-							    tparam.kind() == TemplateParameterKind::NonType) {
-								// Found the non-type parameter - substitute with actual value
-								if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
-									int64_t val = template_args_to_use[i].value;
-									Type val_type = template_args_to_use[i].base_type;
-									StringBuilder value_str;
-									value_str.append(val);
-									std::string_view value_view = value_str.commit();
-									Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
-									substituted_initializer = emplace_node<ExpressionNode>(
-										NumericLiteralNode(num_token, 
-										                   static_cast<unsigned long long>(val), 
-										                   val_type, 
-										                   TypeQualifier::None, 
-										                   get_type_size_bits(val_type))
-									);
-									FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", 
-									          tparam_ref.param_name(), "' with value ", val);
-									break;
-								}
-							}
+					// Handle template parameter reference substitution using shared helper lambda
+					else if (std::holds_alternative<TemplateParameterReferenceNode>(expr) || 
+					         std::holds_alternative<IdentifierNode>(expr)) {
+						std::string_view param_name;
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							param_name = std::get<TemplateParameterReferenceNode>(expr).param_name();
+						} else {
+							param_name = std::get<IdentifierNode>(expr).name();
 						}
-					}
-					// Handle IdentifierNode that might be a template parameter (for cases where TemplateParameterReferenceNode was converted)
-					else if (std::holds_alternative<IdentifierNode>(expr)) {
-						const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-						std::string_view id_name = id_node.name();
-						FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
-						// Check if this identifier matches a template parameter name
-						for (size_t i = 0; i < template_params.size(); ++i) {
-							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-							if (tparam.name() == id_name && 
-							    tparam.kind() == TemplateParameterKind::NonType) {
-								// Found the non-type parameter - substitute with actual value
-								if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
-									int64_t val = template_args_to_use[i].value;
-									Type val_type = template_args_to_use[i].base_type;
-									StringBuilder value_str;
-									value_str.append(val);
-									std::string_view value_view = value_str.commit();
-									Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
-									substituted_initializer = emplace_node<ExpressionNode>(
-										NumericLiteralNode(num_token, 
-										                   static_cast<unsigned long long>(val), 
-										                   val_type, 
-										                   TypeQualifier::None, 
-										                   get_type_size_bits(val_type))
-									);
-									FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", 
-									          id_name, "' (template parameter) with value ", val);
-									break;
+						
+						// Use the same substitution logic as above (code reuse via lambda defined above)
+						// Helper lambda to substitute template parameters in static member initializers
+						auto substitute_template_param = [&](std::string_view name, 
+						                                       const std::vector<TemplateTypeArg>& args) -> std::optional<ASTNode> {
+							for (size_t i = 0; i < template_params.size(); ++i) {
+								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+								if (tparam.name() == name && tparam.kind() == TemplateParameterKind::NonType) {
+									if (i < args.size() && args[i].is_value) {
+										int64_t val = args[i].value;
+										Type val_type = args[i].base_type;
+										StringBuilder value_str;
+										value_str.append(val);
+										std::string_view value_view = value_str.commit();
+										Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
+										return emplace_node<ExpressionNode>(
+											NumericLiteralNode(num_token, 
+											                   static_cast<unsigned long long>(val), 
+											                   val_type, 
+											                   TypeQualifier::None, 
+											                   get_type_size_bits(val_type))
+										);
+									}
 								}
 							}
+							return std::nullopt;
+						};
+						
+						if (auto subst = substitute_template_param(param_name, template_args_to_use)) {
+							substituted_initializer = subst;
+							FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", param_name, "'");
 						}
 					}
 				}
