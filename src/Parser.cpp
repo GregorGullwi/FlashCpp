@@ -952,6 +952,7 @@ ParseResult Parser::parse_top_level_node()
 	}
 
 	// Attempt to parse a function definition, variable declaration, or typedef
+	FLASH_LOG(Parser, Debug, "parse_top_level_node: About to call parse_declaration_or_function_definition, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
 		if (auto node = result.node()) {
@@ -962,16 +963,21 @@ ParseResult Parser::parse_top_level_node()
 
 	// If we failed to parse any top-level construct, restore the token position
 	// and report an error
+	FLASH_LOG(Parser, Debug, "parse_top_level_node: parse_declaration_or_function_definition failed, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A", ", error: ", result.error_message());
 	return saved_position.error("Failed to parse top-level construct");
 }
 
 ParseResult Parser::parse_type_and_name() {
+    FLASH_LOG(Parser, Debug, "parse_type_and_name: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+    
     // Check for alignas specifier before the type
     std::optional<size_t> custom_alignment = parse_alignas_specifier();
 
     // Parse the type specifier
+    FLASH_LOG(Parser, Debug, "parse_type_and_name: About to parse type_specifier, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
     auto type_specifier_result = parse_type_specifier();
     if (type_specifier_result.is_error()) {
+        FLASH_LOG(Parser, Debug, "parse_type_and_name: parse_type_specifier failed: ", type_specifier_result.error_message());
         return type_specifier_result;
     }
 
@@ -1620,6 +1626,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 {
 	ScopedTokenPosition saved_position(*this);
 	
+	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	
 	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), __cdecl, etc.)
 	AttributeInfo attr_info = parse_attributes();
 
@@ -1666,8 +1674,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	// Parse the type specifier and identifier (name)
 	// This will also extract any calling convention that appears after the type
+	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: About to parse type_and_name, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
+		FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name failed: ", type_and_name_result.error_message());
 		return type_and_name_result;
 	}
 
