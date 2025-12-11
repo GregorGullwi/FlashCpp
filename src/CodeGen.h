@@ -372,13 +372,40 @@ public:
 			}
 			
 			for (const auto& static_member : struct_info->static_members) {
-				// Skip static members with unsubstituted sizeof... (template pattern members)
+				// Skip static members with unsubstituted template parameters or sizeof... (template pattern members)
 				// These should only be instantiated when the template is instantiated
 				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
 					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
 					if (std::holds_alternative<SizeofPackNode>(expr)) {
 						// This is an uninstantiated template - skip
+						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.name, 
+						          "' with unsubstituted sizeof... in type '", type_name, "'");
 						continue;
+					}
+					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+						// Template parameter not substituted - this is a template pattern, not an instantiation
+						// Skip it (instantiated versions will have NumericLiteralNode instead)
+						const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
+						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.name, 
+						          "' with unsubstituted template parameter '", tparam.param_name(), 
+						          "' in type '", type_name, "'");
+						continue;
+					}
+					// Also skip IdentifierNode that looks like an unsubstituted template parameter
+					// (pattern templates may have IdentifierNode instead of TemplateParameterReferenceNode)
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& id = std::get<IdentifierNode>(expr);
+						// If the identifier is not in the global symbol table and is a simple name (no qualified access),
+						// it's likely an unsubstituted template parameter - skip it
+						// Instantiated templates will have NumericLiteralNode or other concrete expressions
+						auto symbol = global_symbol_table_->lookup(id.name());
+						if (!symbol.has_value()) {
+							// Not found in global symbol table - likely a template parameter
+							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.name, 
+							          "' with identifier initializer '", id.name(), 
+							          "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
+							continue;
+						}
 					}
 				}
 
@@ -403,8 +430,23 @@ public:
 				// Check if static member has an initializer
 				op.is_initialized = static_member.initializer.has_value();
 				if (op.is_initialized) {
+					const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
+					if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '", 
+						          qualified_name, "'");
+					} else if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
+						FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '", 
+						          qualified_name, "' - should have been substituted!");
+					} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
+						const auto& id = std::get<IdentifierNode>(init_expr);
+						FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '", 
+						          qualified_name, "'");
+					} else {
+						FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
+						          qualified_name, "'");
+					}
 					// Evaluate the initializer expression
-					auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
+					auto init_operands = visitExpressionNode(init_expr);
 					// Convert to raw bytes
 					if (init_operands.size() >= 3) {
 						unsigned long long value = 0;
@@ -4540,6 +4582,24 @@ private:
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
 						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+					}
+					
+					// Check if this identifier is a static member
+					const StructStaticMember* static_member = struct_info->findStaticMember(var_name_str);
+					if (static_member) {
+						// This is a static member access - generate GlobalLoad IR
+						// Static members are stored as globals with qualified names
+						std::string qualified_name = current_struct_name_ + "::" + var_name_str;
+						TempVar result_temp = var_counter.next();
+						GlobalLoadOp op;
+						op.result.type = static_member->type;
+						op.result.size_in_bits = static_cast<int>(static_member->size * 8);
+						op.result.value = result_temp;
+						op.global_name = StringBuilder().append(qualified_name).commit();
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+						
+						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
+						return { static_member->type, static_cast<int>(static_member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 					}
 				}
 			}
