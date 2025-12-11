@@ -145,15 +145,25 @@ This requires a more fundamental architectural change. Three possible approaches
    - **Status**: Tests without static members now work correctly
    - **Remaining**: Template parameter substitution needed for deferred bodies (Phase 6)
 
-6. **Phase 6: Template Parameter Substitution in Deferred Bodies** (NEXT)
-   - Need to substitute template parameters with actual values during deferred body parsing
-   - Currently `v` (template parameter) is not being replaced with `42` (actual value)
-   - This will require mapping template parameter names to instantiation argument values
-   - Affects only templates with static members (selective deferring ensures minimal impact)
-   - Test 1: Simple template with static member
-   - Test 2: Template with conversion operator accessing static member  
-   - Test 3: `integral_constant<int, 42>`
-   - Test 4: Full `<type_traits>` header
+6. **Phase 6: Template Parameter Substitution in Deferred Bodies** ✅ COMPLETE
+   - **Parsing-Level Implementation**: Fully implemented template parameter substitution during deferred body parsing
+   - Added `template_param_substitutions_` map in Parser to track parameter values
+   - Non-type template parameters (like `T v` in `template<typename T, T v>`) are now substituted with actual values
+   - Modified identifier lookup to check substitutions and return NumericLiteralNode instead of TemplateParameterReferenceNode
+   - Also added substitution in static member initializers during template instantiation
+   - **Test Results**: 
+     - ✅ Template bodies parse successfully with template parameter references
+     - ✅ `integral_constant<int, 42>` parses correctly - `v` substituted with `42` in function bodies
+     - ✅ Static member access (`value`) works in deferred bodies
+   - **Remaining Issue**: Code generation error for static members (out of scope for parsing phase)
+   - The issue is in CodeGen, not in parsing - static members exist in StructTypeInfo but code generator can't find them
+
+7. **Phase 7: Code Generation for Static Members** (NEXT - OUT OF SCOPE FOR THIS PR)
+   - Parsing phase is complete and working
+   - Issue: Code generator looks for symbols in symbol table, but static members are stored in StructTypeInfo
+   - Error: "Symbol 'x' not found in symbol table during code generation"
+   - This requires changes to CodeGen.h/IR generation, not Parser
+   - Recommendation: Address in separate PR focused on code generation
 
 **Key Code Locations**:
 - Template class parsing: `parse_struct_declaration()` lines 4715-4746

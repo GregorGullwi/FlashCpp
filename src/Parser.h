@@ -344,6 +344,16 @@ private:
         bool parsing_template_class_ = false;
         std::vector<std::string_view> current_template_param_names_;  // Names of current template parameters - from Token storage
 
+        // Template parameter substitution for deferred template body parsing
+        // Maps template parameter names to their substituted values (for non-type parameters)
+        struct TemplateParamSubstitution {
+            std::string_view param_name;
+            bool is_value_param;  // true for non-type parameters
+            int64_t value;        // For non-type parameters
+            Type value_type;      // Type of the value
+        };
+        std::vector<TemplateParamSubstitution> template_param_substitutions_;
+
         // Track if we're parsing a template body (for template parameter reference recognition)
         bool parsing_template_body_ = false;
         std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
