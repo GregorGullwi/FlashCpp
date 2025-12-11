@@ -85,33 +85,34 @@ template<typename T> struct MyType<const T> : MyType<T> { };
 
 ### Remaining Issues
 
-#### Issue 2: Missing C++ Feature Test Macros
+#### Issue 2: Missing C++ Feature Test Macros (FIXED)
 
 **Problem**: The standard library headers rely heavily on C++ feature test macros to enable/disable features based on compiler/language support. These need to be predefined in the preprocessor.
 
-**Essential macros to define**:
+**Fix Applied**: All essential C++ feature test macros are now defined in `FileReader.h`, `addBuiltinDefines()` method (lines 1903-1923):
 
 | Macro | Value | Description |
 |-------|-------|-------------|
 | `__cpp_exceptions` | 199711L | Exception support |
 | `__cpp_rtti` | 199711L | RTTI support |
 | `__cpp_noexcept_function_type` | 201510L | C++17 noexcept in function type |
-| `__cpp_constexpr` | 202002L | C++20 constexpr |
+| `__cpp_constexpr` | 201603L | C++17 constexpr (relaxed) |
 | `__cpp_concepts` | 202002L | C++20 concepts |
 | `__cpp_if_constexpr` | 201606L | C++17 if constexpr |
 | `__cpp_inline_variables` | 201606L | C++17 inline variables |
 | `__cpp_structured_bindings` | 201606L | C++17 structured bindings |
 | `__cpp_variadic_templates` | 200704L | Variadic templates |
-| `__cpp_static_assert` | 200410L | Static assert |
+| `__cpp_static_assert` | 201411L | C++17 static_assert with message |
 | `__cpp_decltype` | 200707L | decltype |
 | `__cpp_range_based_for` | 200907L | Range-based for |
 | `__cpp_lambdas` | 200907L | Lambda expressions |
 | `__cpp_initializer_lists` | 200806L | Initializer lists |
 | `__cpp_delegating_constructors` | 200604L | Delegating constructors |
-| `__cpp_nullptr` | 200802L | nullptr |
+| `__cpp_nullptr` | 200704L | nullptr |
 | `__cpp_auto_type` | 200606L | auto type |
+| `__cpp_aggregate_bases` | 201603L | C++17 aggregate base classes |
 
-**Location to add**: `FileReader.h`, in `addBuiltinDefines()` method
+**Status**: ✅ COMPLETE - All essential feature test macros are now defined.
 
 #### Issue 3: Missing Compiler Intrinsic Functions
 
@@ -179,9 +180,9 @@ Or run the doctest test case:
 
 3. ~~**Third Priority**: Template partial specialization with inheritance.~~ **DONE**
 
-4. **Fourth Priority (Current)**: Add basic feature test macros (`__cpp_exceptions`, `__cpp_rtti`, `__cpp_constexpr`, etc.) to `addBuiltinDefines()`.
+4. ~~**Fourth Priority**: Add basic feature test macros (`__cpp_exceptions`, `__cpp_rtti`, `__cpp_constexpr`, etc.) to `addBuiltinDefines()`.~~ **DONE**
 
-5. **Fifth Priority**: Implement `__has_feature`, `__has_builtin`, etc. as preprocessor intrinsics.
+5. **Fifth Priority (Current)**: Implement `__has_feature`, `__has_builtin`, etc. as preprocessor intrinsics.
 
 6. **Sixth Priority**: Add sanitizer macro handling.
 
