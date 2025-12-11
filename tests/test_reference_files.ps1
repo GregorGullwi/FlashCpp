@@ -195,26 +195,27 @@ foreach ($file in $referenceFiles) {
     $objFile = "$baseName.obj"
     $exeFile = "$baseName.exe"
     $ilkFile = "$baseName.ilk"
-    
+
     # Clean up previous artifacts
     if (Test-Path $objFile) { Remove-Item $objFile -Force }
     if (Test-Path $exeFile) { Remove-Item $exeFile -Force }
     if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
-    
+
+    Write-Host "[$currentFile/$totalFiles] Testing $($file.Name)... " -NoNewline
+
     # Compile with FlashCpp
     $compileOutput = & .\$flashCppPath --log-level=Codegen:error $file.FullName 2>&1 | Out-String
-    
+
     # Check if compilation succeeded by verifying obj file was created
     if (Test-Path $objFile) {
-        # Skip printing compile success - only show failures
         $compileSuccess += $file.Name
-        
+
         # Check if source file has a main function before attempting to link
         $sourceContent = Get-Content $file.FullName -Raw
         $hasMain = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
-        
+
         if (-not $hasMain) {
-            Write-Host "  [LINK SKIPPED - no main()]" -ForegroundColor Cyan
+            Write-Host "OK (no main - link skipped)"
             $linkSuccess += $file.Name  # Count as success since compilation worked
         }
         else {
@@ -229,14 +230,14 @@ foreach ($file in $referenceFiles) {
                 "libucrt.lib",
                 "legacy_stdio_definitions.lib"
             )
-            
+
             if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
             if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
-            
+
             $linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
-            
+
             if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
-                # Skip printing link success - only show failures
+                Write-Host "OK"
                 $linkSuccess += $file.Name
                 # Clean up after successful link
                 Remove-Item $exeFile -Force -ErrorAction SilentlyContinue
@@ -245,25 +246,26 @@ foreach ($file in $referenceFiles) {
             else {
                 # Check if this is an expected failure
                 if ($expectedLinkFailures -contains $file.Name) {
-                    Write-Host "[$currentFile/$totalFiles] $($file.Name) - [LINK FAILED - EXPECTED]" -ForegroundColor Yellow
+                    Write-Host "OK (expected link fail)"
                     # Don't count expected failures as actual failures
                     $linkSuccess += $file.Name
                 }
                 else {
+                    Write-Host ""
                     Write-Host "[$currentFile/$totalFiles] $($file.Name) - [LINK FAILED]" -ForegroundColor Red
                     $linkFailed += $file.Name
-                    
+
                     # Extract all errors from link output
                     $errors = ($linkOutput -split "`n" | Where-Object { $_ -match "error" })
                     $unresolved = ($linkOutput -split "`n" | Where-Object { $_ -match "unresolved external symbol" })
-                    
+
                     # Store detailed error info for later display
                     $linkErrorDetails[$file.Name] = @{
                         Errors = $errors
                         Unresolved = $unresolved
                         FullOutput = $linkOutput
                     }
-                    
+
                     # Show last 10 lines of output immediately
                     if ($errors) {
                         Write-Host "    Link errors (last 10):" -ForegroundColor Yellow
@@ -285,10 +287,11 @@ foreach ($file in $referenceFiles) {
     else {
         # Check if this is an expected compile failure
         if ($expectedCompileFailures -contains $file.Name) {
-            Write-Host "[$currentFile/$totalFiles] $($file.Name) - [COMPILE FAILED - EXPECTED]" -ForegroundColor Yellow
+            Write-Host "OK (expected fail)"
             # Don't count expected failures as actual failures
         }
         else {
+            Write-Host ""
             Write-Host "[$currentFile/$totalFiles] $($file.Name) - [COMPILE FAILED]" -ForegroundColor Red
             $compileFailed += $file.Name
             # Show compile output to help diagnose the issue
@@ -315,7 +318,7 @@ foreach ($file in $referenceFiles) {
             }
         }
     }
-    
+
     # Clean up obj file after each test (like the shell script does)
     if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
 }
@@ -337,27 +340,41 @@ foreach ($file in $failFiles) {
     $baseName = $file.BaseName
     $objFile = "$baseName.obj"
     $ilkFile = "$baseName.ilk"
-    
+
     # Clean up previous artifacts
     if (Test-Path $objFile) { Remove-Item $objFile -Force }
     if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force }
-    
+
+    Write-Host "[$currentFile/$totalFailFiles] Testing $($file.Name)... " -NoNewline
+
     # Compile with FlashCpp - we EXPECT this to fail
-    & .\$flashCppPath --log-level=Codegen:error $file.FullName 2>&1 | Out-Null
-    
+    $compileOutput = & .\$flashCppPath --log-level=Codegen:error $file.FullName 2>&1 | Out-String
+
+    # Check if compiler crashed (exit codes: 134=SIGABRT, 136=SIGFPE, 139=SIGSEGV)
+    if ($LASTEXITCODE -eq 134 -or $LASTEXITCODE -eq 136 -or $LASTEXITCODE -eq 139) {
+        Write-Host ""
+        Write-Host "[$currentFile/$totalFailFiles] $($file.Name) - [COMPILER CRASH - SHOULD FAIL CLEANLY]" -ForegroundColor Red
+        $failTestFailed += "$($file.Name) (CRASHED)"
+        # Clean up any artifacts
+        if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
+        continue
+    }
+
     # Check if compilation succeeded (which is BAD for _fail tests)
     if (Test-Path $objFile) {
-        Write-Host "  [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "[$currentFile/$totalFailFiles] $($file.Name) - [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
         $failTestFailed += $file.Name
         # Clean up the object file
         Remove-Item $objFile -Force -ErrorAction SilentlyContinue
         Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue
     }
     else {
-        # Skip printing expected failures - only show problems
+        Write-Host "OK (failed as expected)"
         $failTestSuccess += $file.Name
     }
-    
+
     # Clean up any artifacts
     if (Test-Path $objFile) { Remove-Item $objFile -Force -ErrorAction SilentlyContinue }
     if (Test-Path $ilkFile) { Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue }
