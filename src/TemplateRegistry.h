@@ -261,6 +261,15 @@ struct OutOfLineMemberFunction {
 	std::vector<std::string_view> template_param_names;  // Names of template parameters
 };
 
+// Out-of-line template static member variable definition
+struct OutOfLineMemberVariable {
+	std::vector<ASTNode> template_params;       // Template parameters (e.g., <typename T>)
+	std::string_view member_name;               // Name of the static member variable
+	ASTNode type_node;                          // Type of the variable (TypeSpecifierNode)
+	std::optional<ASTNode> initializer;         // Initializer expression
+	std::vector<std::string_view> template_param_names;  // Names of template parameters
+};
+
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
 struct TemplatePattern {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., typename T)
@@ -656,6 +665,22 @@ public:
 		return {};
 	}
 
+	// Register an out-of-line template static member variable definition
+	void registerOutOfLineMemberVariable(std::string_view class_name, OutOfLineMemberVariable member_var) {
+		std::string key(class_name);
+		out_of_line_variables_[key].push_back(std::move(member_var));
+	}
+
+	// Get out-of-line member variables for a class
+	std::vector<OutOfLineMemberVariable> getOutOfLineMemberVariables(std::string_view class_name) const {
+		// Heterogeneous lookup - string_view accepted directly
+		auto it = out_of_line_variables_.find(class_name);
+		if (it != out_of_line_variables_.end()) {
+			return it->second;
+		}
+		return {};
+	}
+
 	// Register a template specialization pattern
 	void registerSpecializationPattern(std::string_view template_name, 
 	                                   const std::vector<ASTNode>& template_params,
@@ -766,6 +791,9 @@ private:
 
 	// Map from class name to out-of-line member function definitions (supports heterogeneous lookup)
 	std::unordered_map<std::string, std::vector<OutOfLineMemberFunction>, TransparentStringHash, std::equal_to<>> out_of_line_members_;
+
+	// Map from class name to out-of-line static member variable definitions (supports heterogeneous lookup)
+	std::unordered_map<std::string, std::vector<OutOfLineMemberVariable>, TransparentStringHash, std::equal_to<>> out_of_line_variables_;
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
