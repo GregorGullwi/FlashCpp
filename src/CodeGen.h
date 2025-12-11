@@ -372,8 +372,8 @@ public:
 			}
 			
 			for (const auto& static_member : struct_info->static_members) {
-				// Skip static members with unsubstituted template parameters or sizeof... (template pattern members)
-				// These should only be instantiated when the template is instantiated
+				// Skip static members with unsubstituted template parameters, identifiers, or sizeof...
+				// These are in pattern templates and should only generate code when instantiated
 				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
 					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
 					if (std::holds_alternative<SizeofPackNode>(expr)) {
