@@ -36,6 +36,7 @@ The main remaining gaps are advanced template features (SFINAE, complex template
    - Example: `template<typename T> struct Base<const T> : Base<T> { };`
    - Critical for standard library patterns like `__byte_operand` in `<cstddef>`
    - Supports both simple and complex inheritance hierarchies in partial specializations
+   - **Known limitation**: Accessing inherited static members from partial specializations causes IR generation crash (TODO: fix member lookup)
 
 ### Language Features
 7. **Reference Members in Structs** - Reference-type members in classes/structs
@@ -202,7 +203,51 @@ The parser now properly registers type aliases from template specializations wit
 
 ---
 
-## Priority 8: Complex Preprocessor Expressions
+## Priority 8: Full Specialization Inheritance Support
+
+**Status**: ❌ **NOT IMPLEMENTED** - Full template specializations cannot inherit from base classes  
+**Test Case**: `tests/test_full_spec_inherit_static.cpp`
+
+### Problem
+
+Full template specializations currently cannot have base classes. The parser has a TODO comment for this:
+
+```cpp
+// Parse base classes if any
+if (peek_token().has_value() && peek_token()->value() == ":") {
+    // TODO: Handle base classes in specializations
+    // For now, skip this
+}
+```
+
+### Example
+
+```cpp
+template<typename T> struct Base { };
+template<> struct Base<int> : Base<char> { };  // ERROR: Not supported
+```
+
+**Location**: `src/Parser.cpp`, lines 15445-15448 in `parse_template_declaration()`
+
+### Current Status
+
+- Partial specializations CAN inherit from base classes (✅ implemented)
+- Full specializations CANNOT inherit from base classes (❌ not implemented)
+
+### Required For
+
+- Some standard library patterns that use full specialization with inheritance
+- Complete template specialization feature parity
+
+### Implementation Notes
+
+- Lower priority since partial specializations (which are more common) already support inheritance
+- Would need to add base class parsing in the full specialization branch similar to partial specialization
+- Should also handle static member lookup through inheritance (currently broken for both)
+
+---
+
+## Priority 9: Complex Preprocessor Expressions
 
 **Status**: ⚠️ **NON-BLOCKING** - Causes warnings but doesn't fail compilation  
 **Test Case**: `tests/test_real_std_headers_fail.cpp` (lines 46-49)
@@ -239,7 +284,7 @@ When `__GNUC__` is undefined, the expression may evaluate incorrectly.
 
 ---
 
-## Priority 9: Advanced Template Features
+## Priority 10: Advanced Template Features
 
 **Status**: ⚠️ **PARTIAL SUPPORT** - Some features work, others don't  
 **Test Case**: `tests/test_real_std_headers_fail.cpp` (lines 61-65)
