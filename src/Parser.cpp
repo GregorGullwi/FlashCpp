@@ -9599,8 +9599,10 @@ ParseResult Parser::parse_unary_expression()
 
 ParseResult Parser::parse_expression(int precedence)
 {
+	FLASH_LOG(Parser, Debug, "parse_expression: Starting with precedence=", precedence, ", current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	ParseResult result = parse_unary_expression();
 	if (result.is_error()) {
+		FLASH_LOG(Parser, Debug, "parse_expression: parse_unary_expression failed: ", result.error_message());
 		return result;
 	}
 
