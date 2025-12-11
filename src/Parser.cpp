@@ -20872,6 +20872,58 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	// Process out-of-line static member variable definitions for the template
+	auto out_of_line_vars = gTemplateRegistry.getOutOfLineMemberVariables(template_name);
+	
+	for (const auto& out_of_line_var : out_of_line_vars) {
+		// Substitute template parameters in the type and initializer
+		std::vector<TemplateArgument> converted_template_args;
+		converted_template_args.reserve(template_args_to_use.size());
+		for (const auto& ttype_arg : template_args_to_use) {
+			if (ttype_arg.is_value) {
+				converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+			} else {
+				converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+			}
+		}
+		
+		// Substitute template parameters in the initializer
+		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
+		if (out_of_line_var.initializer.has_value()) {
+			try {
+				substituted_initializer = substituteTemplateParameters(
+					*out_of_line_var.initializer,
+					out_of_line_var.template_params,
+					converted_template_args
+				);
+			} catch (const std::exception& e) {
+				FLASH_LOG(Templates, Error, "Exception during template parameter substitution for static member ", 
+				          out_of_line_var.member_name, ": ", e.what());
+			}
+		}
+		
+		// Add the static member to the instantiated struct
+		if (out_of_line_var.type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = out_of_line_var.type_node.as<TypeSpecifierNode>();
+			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+			
+			struct_info_ptr->addStaticMember(
+				std::string(out_of_line_var.member_name),
+				type_spec.type(),
+				type_spec.type_index(),
+				member_size,
+				member_alignment,
+				AccessSpecifier::Public,
+				substituted_initializer,
+				false  // is_const
+			);
+			
+			FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name, 
+			          " to instantiated struct ", instantiated_name);
+		}
+	}
+
 	// Copy static members from the primary template
 	// Get the primary template's StructTypeInfo
 	auto primary_type_it = gTypesByName.find(std::string(template_name));
@@ -21926,9 +21978,43 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
+	// Check if this is a static member variable definition (=) or a member function (()
+	if (peek_token().has_value() && peek_token()->value() == "=") {
+		// This is a static member variable definition: template<typename T> Type ClassName<T>::member = value;
+		consume_token();  // consume '='
+		
+		// Parse initializer expression
+		auto init_result = parse_expression();
+		if (init_result.is_error() || !init_result.node().has_value()) {
+			FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable");
+			return std::nullopt;
+		}
+		
+		// Expect semicolon
+		if (!consume_punctuator(";")) {
+			FLASH_LOG(Parser, Error, "Expected ';' after static member variable definition");
+			return std::nullopt;
+		}
+		
+		// Register the static member variable definition
+		OutOfLineMemberVariable out_of_line_var;
+		out_of_line_var.template_params = template_params;
+		out_of_line_var.member_name = function_name_token.value();  // Actually the variable name
+		out_of_line_var.type_node = return_type_node;               // Actually the variable type
+		out_of_line_var.initializer = *init_result.node();
+		out_of_line_var.template_param_names = template_param_names;
+		
+		gTemplateRegistry.registerOutOfLineMemberVariable(class_name, std::move(out_of_line_var));
+		
+		FLASH_LOG(Templates, Debug, "Registered out-of-class static member variable definition: ", 
+		          class_name, "::", function_name_token.value());
+		
+		return true;  // Successfully parsed out-of-line static member variable definition
+	}
+	
 	// Parse parameter list
 	if (!peek_token().has_value() || peek_token()->value() != "(") {
-		return std::nullopt;  // Error - expected '('
+		return std::nullopt;  // Error - expected '(' for function or '=' for variable
 	}
 
 	// Create a function declaration node
