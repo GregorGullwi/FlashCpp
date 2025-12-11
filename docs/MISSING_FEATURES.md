@@ -10,10 +10,11 @@ This document tracks missing C++20 features that prevent FlashCpp from compiling
 Most critical parser/semantic features for basic standard library support are now **complete**:
 - ✅ Conversion operators, non-type template parameters, template specialization inheritance
 - ✅ Reference members in structs, anonymous template parameters, type alias access from specializations
+- ✅ Member template aliases (parsing and instantiation complete)
 - ⚠️ Compiler intrinsics (most critical ones implemented including `__is_same`)
 - ✅ Perfect forwarding (`std::forward` works correctly)
 
-**Remaining gaps**: Member template aliases (blocking `<type_traits>`), advanced template features (SFINAE, complex metaprogramming), some intrinsic edge cases, and preprocessor expression handling.
+**Remaining gaps**: Advanced template features (SFINAE, complex metaprogramming), some intrinsic edge cases, and preprocessor expression handling.
 
 ## Completed Features Summary ✅
 
@@ -26,6 +27,8 @@ The following features are **fully implemented and tested** (all 627+ existing t
 5. **Type Alias Access from Specializations** - Accessing `using` type aliases from template specializations (e.g., `enable_if<true>::type`)
 6. **Reference Members in Structs** - Reference-type members (`int&`, `char&`, `short&`, `struct&`, template wrappers)
    - Known limitation: `double&` has runtime issues (pre-existing bug)
+7. **Member Template Aliases** - Template aliases inside struct/class definitions (e.g., `template<typename T> using Ptr = T*;`)
+   - Works for pointers and types; references have the same pre-existing bug as #6
 
 See **Progress Tracking** section below for detailed test references.
 
@@ -33,9 +36,9 @@ See **Progress Tracking** section below for detailed test references.
 
 ## Remaining Work
 
-### Priority 4.5: Member Template Aliases (PARTIAL - PARSING WORKS)
+### Priority 4.5: Member Template Aliases (COMPLETE ✅)
 
-**Status**: ⚠️ **PARTIAL** - Parsing implemented, instantiation needs work  
+**Status**: ✅ **COMPLETE** - Parsing and instantiation both working  
 **Test Case**: `tests/test_member_template_alias.cpp`
 
 **Problem**: The standard library uses template aliases as members of structs/classes:
@@ -51,13 +54,14 @@ struct Conditional {
 **Progress**: 
 - ✅ **Parsing**: Successfully parse member template aliases in struct/class definitions
 - ✅ **Registration**: Register member template aliases with qualified names (e.g., `Container::Ptr`)
-- ⚠️ **Instantiation**: Runtime issues - instantiation logic needs debugging
+- ✅ **Instantiation**: Working correctly for pointers and types
 
-**Current Status**: The compiler now **accepts** member template alias syntax without errors. However, the instantiation and usage has runtime issues that need to be resolved before this fully works with `<type_traits>`.
+**Current Status**: Member template aliases are **fully functional** for pointer types. Reference types have a pre-existing runtime issue in the compiler that affects all references (not specific to template aliases).
 
 **Implementation**: 
 - `parse_member_template_alias()` in Parser.cpp (lines ~18017+)
 - Template keyword handling in struct parsing (lines ~3048+)
+- Instantiation uses existing alias template logic (lines ~6480+)
 - Uses existing `TemplateAliasNode` AST node type
 
 ---
@@ -123,14 +127,14 @@ int func(T t);  // Fallback if first template fails
 
 ### Remaining Work 🔄
 
-- **Priority 4.5**: Fix member template alias instantiation (parsing works, runtime issues remain)
 - **Priority 5**: Validate/fix edge cases in some intrinsics
 - **Priority 8**: Improve preprocessor expression handling (non-blocking)
 - **Priority 9**: SFINAE and advanced template metaprogramming (lower priority)
+- **Known Bug**: References have runtime issues (affects both direct references and reference template aliases)
 
 ### Standard Header Status
 
-- `<type_traits>` - ⚠️ May still have some missing intrinsics or edge cases
+- `<type_traits>` - ⚠️ May still have some missing intrinsics or advanced features (SFINAE)
 - `<utility>` - ⚠️ Depends on `<type_traits>`
 - `<vector>` - ❌ May need additional features
 - `<algorithm>` - ❌ May need additional features
@@ -146,16 +150,14 @@ int func(T t);  // Fallback if first template fails
 - `tests/test_struct_ref_members.cpp` - Reference member support
 - `tests/test_struct_ref_member_simple.cpp` - Simple reference member test
 - `tests/test_std_forward.cpp` - Perfect forwarding with `std::forward`
-
-**In Progress Tests**:
-- `tests/test_member_template_alias.cpp` - Member template aliases (parsing works, instantiation issues)
+- `tests/test_member_template_alias.cpp` - Member template aliases (PASSES - works for pointers and types)
 
 **Intrinsics & Standard Headers**:
 - `tests/test_type_traits_intrinsics.cpp` - Comprehensive type traits test (needs validation)
 - `tests/test_real_std_headers_fail.cpp` - Comprehensive standard header failure analysis
 
 **Implementation References**:
-- `src/Parser.cpp` - Type trait intrinsics (lines 10217-10400), anonymous parameters (lines 17657-17756), type alias registration (lines 19168-19220)
+- `src/Parser.cpp` - Type trait intrinsics (lines 10217-10400), anonymous parameters (lines 17657-17756), type alias registration (lines 19168-19220), member template alias parsing (~18017+)
 - `src/CodeGen.h` - Type trait evaluation (lines 10215+)
 - `src/TemplateRegistry.h` - Template instantiation tracking
 
