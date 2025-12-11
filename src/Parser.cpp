@@ -22012,9 +22012,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		return true;  // Successfully parsed out-of-line static member variable definition
 	}
 	
-	// Parse parameter list
+	// Parse parameter list for member function
 	if (!peek_token().has_value() || peek_token()->value() != "(") {
-		return std::nullopt;  // Error - expected '(' for function or '=' for variable
+		return std::nullopt;  // Error - expected '(' for function definition
 	}
 
 	// Create a function declaration node
