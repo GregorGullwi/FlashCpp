@@ -467,6 +467,7 @@ private:
         ParseResult parse_concept_declaration();   // NEW: Parse C++20 concept declarations
        ParseResult parse_requires_expression();   // NEW: Parse C++20 requires expressions
         ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member function templates
+        ParseResult parse_member_template_alias(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member template aliases
         // Phase 6: Shared helper for template function declaration parsing
         // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
         // Returns the TemplateFunctionDeclarationNode in out_template_node
