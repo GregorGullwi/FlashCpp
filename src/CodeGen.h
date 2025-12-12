@@ -3390,9 +3390,6 @@ private:
 		const auto& decl = node.declaration();
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 
-		FLASH_LOG_FORMAT(Codegen, Debug, "visitVariableDeclarationNode: var_name={}, type={}, ptr_depth={}, size_in_bits={}", 
-			decl.identifier_token().value(), static_cast<int>(type_node.type()), type_node.pointer_depth(), type_node.size_in_bits());
-
 		// Check if this is a global variable (declared at global scope)
 		bool is_global = (symbol_table.get_current_scope_type() == ScopeType::Global);
 
