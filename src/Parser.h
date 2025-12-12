@@ -168,12 +168,22 @@ public:
                 }
                 
                 // Primary error location
-                if (tok.file_index() < file_paths.size()) {
-                        result += file_paths[tok.file_index()] + ":" + 
-                                std::to_string(tok.line()) + ":" + 
+                size_t error_line = tok.line();
+                size_t error_file_index = tok.file_index();
+                
+                // Map preprocessed line to source line if line_map is available
+                if (!line_map.empty() && tok.line() > 0 && tok.line() <= line_map.size()) {
+                        const auto& mapping = line_map[tok.line() - 1];
+                        error_line = mapping.source_line;
+                        error_file_index = mapping.source_file_index;
+                }
+                
+                if (error_file_index < file_paths.size()) {
+                        result += file_paths[error_file_index] + ":" + 
+                                std::to_string(error_line) + ":" + 
                                 std::to_string(tok.column()) + ": ";
                 } else {
-                        result += "<unknown>:" + std::to_string(tok.line()) + ":" + 
+                        result += "<unknown>:" + std::to_string(error_line) + ":" + 
                                 std::to_string(tok.column()) + ": ";
                 }
                 
