@@ -2260,15 +2260,29 @@ enum class TypeTraitKind {
 	IsUnion,
 	IsClass,
 	IsFunction,
+	// Composite type categories
+	IsReference,        // __is_reference - lvalue or rvalue reference
+	IsArithmetic,       // __is_arithmetic - integral or floating point
+	IsFundamental,      // __is_fundamental - void, nullptr, arithmetic
+	IsObject,           // __is_object - not function, not reference, not void
+	IsScalar,           // __is_scalar - arithmetic, pointer, enum, member pointer, nullptr
+	IsCompound,         // __is_compound - array, function, pointer, reference, class, union, enum, member pointer
 	// Type relationships (binary trait - takes 2 types)
 	IsBaseOf,
 	IsSame,
+	IsConvertible,      // __is_convertible(From, To) - check if From can convert to To
 	IsAssignable,
 	IsTriviallyAssignable,
 	IsNothrowAssignable,
 	IsLayoutCompatible,
 	IsPointerInterconvertibleBaseOf,
 	// Type properties
+	IsConst,            // __is_const - has const qualifier
+	IsVolatile,         // __is_volatile - has volatile qualifier
+	IsSigned,           // __is_signed - signed integral type
+	IsUnsigned,         // __is_unsigned - unsigned integral type
+	IsBoundedArray,     // __is_bounded_array - array with known bound
+	IsUnboundedArray,   // __is_unbounded_array - array with unknown bound
 	IsPolymorphic,
 	IsFinal,
 	IsAbstract,
@@ -2321,6 +2335,7 @@ public:
 	bool is_binary_trait() const {
 		return kind_ == TypeTraitKind::IsBaseOf ||
 		       kind_ == TypeTraitKind::IsSame ||
+		       kind_ == TypeTraitKind::IsConvertible ||
 		       kind_ == TypeTraitKind::IsAssignable ||
 		       kind_ == TypeTraitKind::IsTriviallyAssignable ||
 		       kind_ == TypeTraitKind::IsNothrowAssignable ||
@@ -2357,7 +2372,21 @@ public:
 			case TypeTraitKind::IsUnion: return "__is_union";
 			case TypeTraitKind::IsClass: return "__is_class";
 			case TypeTraitKind::IsFunction: return "__is_function";
+			case TypeTraitKind::IsReference: return "__is_reference";
+			case TypeTraitKind::IsArithmetic: return "__is_arithmetic";
+			case TypeTraitKind::IsFundamental: return "__is_fundamental";
+			case TypeTraitKind::IsObject: return "__is_object";
+			case TypeTraitKind::IsScalar: return "__is_scalar";
+			case TypeTraitKind::IsCompound: return "__is_compound";
 			case TypeTraitKind::IsBaseOf: return "__is_base_of";
+			case TypeTraitKind::IsSame: return "__is_same";
+			case TypeTraitKind::IsConvertible: return "__is_convertible";
+			case TypeTraitKind::IsConst: return "__is_const";
+			case TypeTraitKind::IsVolatile: return "__is_volatile";
+			case TypeTraitKind::IsSigned: return "__is_signed";
+			case TypeTraitKind::IsUnsigned: return "__is_unsigned";
+			case TypeTraitKind::IsBoundedArray: return "__is_bounded_array";
+			case TypeTraitKind::IsUnboundedArray: return "__is_unbounded_array";
 			case TypeTraitKind::IsPolymorphic: return "__is_polymorphic";
 			case TypeTraitKind::IsFinal: return "__is_final";
 			case TypeTraitKind::IsAbstract: return "__is_abstract";

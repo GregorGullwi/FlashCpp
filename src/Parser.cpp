@@ -10393,6 +10393,19 @@ ParseResult Parser::parse_primary_expression()
 			kind = TypeTraitKind::IsClass;
 		} else if (trait_name == "__is_function") {
 			kind = TypeTraitKind::IsFunction;
+		// Composite type categories
+		} else if (trait_name == "__is_reference") {
+			kind = TypeTraitKind::IsReference;
+		} else if (trait_name == "__is_arithmetic") {
+			kind = TypeTraitKind::IsArithmetic;
+		} else if (trait_name == "__is_fundamental") {
+			kind = TypeTraitKind::IsFundamental;
+		} else if (trait_name == "__is_object") {
+			kind = TypeTraitKind::IsObject;
+		} else if (trait_name == "__is_scalar") {
+			kind = TypeTraitKind::IsScalar;
+		} else if (trait_name == "__is_compound") {
+			kind = TypeTraitKind::IsCompound;
 		} else if (trait_name == "__is_base_of") {
 			// Type relationship: binary trait taking two types
 			kind = TypeTraitKind::IsBaseOf;
