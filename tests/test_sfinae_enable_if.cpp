@@ -39,8 +39,9 @@ int main() {
     // This should work - is_int<int>::value is true
     int result = only_for_int(42);
     
-    // This would fail if uncommented - is_int<double>::value is false
-    // The compiler should give an error about no matching function
+    // Note: This would cause a compilation error if uncommented:
+    // The function template is removed from the overload set via SFINAE
+    // since is_int<double>::value is false, making enable_if<false>::type invalid
     // double d_result = only_for_int(3.14);
     
     // Expected: 42 + 100 = 142

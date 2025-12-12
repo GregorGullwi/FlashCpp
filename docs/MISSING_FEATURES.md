@@ -393,7 +393,11 @@ Templates in namespaces can now be instantiated with fully-qualified names (e.g.
 
 ## Testing Strategy
 
-All 654 tests: 649 pass, 5 SFINAE tests pass. Key test files:
+**All tests pass!** The test suite includes:
+- 649+ original tests (all passing)
+- 6 new SFINAE tests (all passing)
+
+Key SFINAE test files:
 - **SFINAE Tests** (NEW):
   - `test_sfinae_enable_if.cpp` - Basic enable_if pattern (PASSES)
   - `test_sfinae_is_same.cpp` - Type equality checking (PASSES)
