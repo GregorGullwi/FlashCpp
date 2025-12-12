@@ -3141,7 +3141,7 @@ ParseResult Parser::parse_struct_declaration()
 				if (peek_token().has_value() && peek_token()->value() == "<") {
 					consume_token(); // consume '<'
 					
-					// Skip template parameters (simplified - just count angle brackets)
+					// Skip template parameters by counting angle brackets
 					int angle_bracket_depth = 1;
 					while (angle_bracket_depth > 0 && peek_token().has_value()) {
 						if (peek_token()->value() == "<") {
