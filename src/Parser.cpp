@@ -15974,6 +15974,55 @@ ParseResult Parser::parse_template_declaration() {
 							return alias_result;
 						}
 						continue;
+					} else if (peek_token()->value() == "template") {
+						// Handle member function template or member template alias
+						// Look ahead to determine which one
+						SaveHandle lookahead_pos = save_token_position();
+						
+						consume_token(); // consume 'template'
+						
+						// Skip template parameter list to find what comes after
+						bool is_template_alias = false;
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							consume_token(); // consume '<'
+							
+							// Skip template parameters by counting angle brackets
+							int angle_bracket_depth = 1;
+							while (angle_bracket_depth > 0 && peek_token().has_value()) {
+								if (peek_token()->value() == "<") {
+									angle_bracket_depth++;
+								} else if (peek_token()->value() == ">") {
+									angle_bracket_depth--;
+								}
+								consume_token();
+							}
+							
+							// Now check what comes after the template parameters
+							if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+								std::string_view next_keyword = peek_token()->value();
+								if (next_keyword == "using") {
+									is_template_alias = true;
+								}
+							}
+						}
+						
+						// Restore position before calling the appropriate parser
+						restore_token_position(lookahead_pos);
+						
+						if (is_template_alias) {
+							// This is a member template alias
+							auto template_result = parse_member_template_alias(struct_ref, current_access);
+							if (template_result.is_error()) {
+								return template_result;
+							}
+						} else {
+							// This is a member function template
+							auto template_result = parse_member_function_template(struct_ref, current_access);
+							if (template_result.is_error()) {
+								return template_result;
+							}
+						}
+						continue;
 					} else if (peek_token()->value() == "static") {
 						// Handle static members: static const int size = 10;
 						consume_token(); // consume "static"
@@ -16844,6 +16893,55 @@ ParseResult Parser::parse_template_declaration() {
 						auto alias_result = parse_member_type_alias("typedef", nullptr, current_access);
 						if (alias_result.is_error()) {
 							return alias_result;
+						}
+						continue;
+					} else if (peek_token()->value() == "template") {
+						// Handle member function template or member template alias
+						// Look ahead to determine which one
+						SaveHandle lookahead_pos = save_token_position();
+						
+						consume_token(); // consume 'template'
+						
+						// Skip template parameter list to find what comes after
+						bool is_template_alias = false;
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							consume_token(); // consume '<'
+							
+							// Skip template parameters by counting angle brackets
+							int angle_bracket_depth = 1;
+							while (angle_bracket_depth > 0 && peek_token().has_value()) {
+								if (peek_token()->value() == "<") {
+									angle_bracket_depth++;
+								} else if (peek_token()->value() == ">") {
+									angle_bracket_depth--;
+								}
+								consume_token();
+							}
+							
+							// Now check what comes after the template parameters
+							if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+								std::string_view next_keyword = peek_token()->value();
+								if (next_keyword == "using") {
+									is_template_alias = true;
+								}
+							}
+						}
+						
+						// Restore position before calling the appropriate parser
+						restore_token_position(lookahead_pos);
+						
+						if (is_template_alias) {
+							// This is a member template alias
+							auto template_result = parse_member_template_alias(struct_ref, current_access);
+							if (template_result.is_error()) {
+								return template_result;
+							}
+						} else {
+							// This is a member function template
+							auto template_result = parse_member_function_template(struct_ref, current_access);
+							if (template_result.is_error()) {
+								return template_result;
+							}
 						}
 						continue;
 					}
