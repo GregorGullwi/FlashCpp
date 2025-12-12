@@ -10888,11 +10888,44 @@ ParseResult Parser::parse_primary_expression()
 				
 				// Check if followed by :: for member access (Template<T>::member)
 				if (current_token_.has_value() && current_token_->value() == "::") {
-					auto member_result = parse_qualified_identifier_after_template(final_identifier);
-					if (member_result.is_error()) {
-						return member_result;
+					// Get the instantiated class name to use in qualified identifier
+					std::string_view instantiated_name = get_instantiated_class_name(qual_id.name(), *template_args);
+					
+					// Build the full namespace path including the instantiated template name
+					// For "my_ns::Wrapper<int>::value", we want namespaces=["my_ns", "Wrapper_int"] and name="value"
+					std::vector<StringType<32>> full_namespaces;
+					
+					// Add all the original namespaces (e.g., "my_ns")
+					for (const auto& ns : qual_id.namespaces()) {
+						full_namespaces.emplace_back(ns);
 					}
-					result = member_result.node();
+					
+					// Add the instantiated template name (e.g., "Wrapper_int")
+					full_namespaces.emplace_back(StringType<32>(instantiated_name));
+					
+					// Parse the :: and the member name
+					consume_token(); // consume ::
+					if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+						return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+					}
+					
+					Token member_token = *current_token_;
+					consume_token(); // consume member identifier
+					
+					// Handle additional :: if present (nested member access)
+					while (current_token_.has_value() && current_token_->value() == "::") {
+						full_namespaces.emplace_back(StringType<32>(member_token.value()));
+						consume_token(); // consume ::
+						if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
+						}
+						member_token = *current_token_;
+						consume_token(); // consume identifier
+					}
+					
+					// Create QualifiedIdentifierNode with the complete path
+					auto qualified_node = emplace_node<QualifiedIdentifierNode>(full_namespaces, member_token);
+					result = emplace_node<ExpressionNode>(qualified_node.as<QualifiedIdentifierNode>());
 					return ParseResult::success(*result);
 				}
 				
