@@ -2,25 +2,27 @@
 
 This document tracks missing C++20 features that prevent FlashCpp from compiling standard library headers. Features are listed in priority order based on their blocking impact.
 
-**Last Updated**: 2025-12-12 (09:04 UTC)  
+**Last Updated**: 2025-12-12 (09:50 UTC)  
 **Test Reference**: `tests/test_real_std_headers_fail.cpp`
 
 ## Summary
 
-**Status Update (2025-12-12)**: **MAJOR BREAKTHROUGH!** The critical blocker for standard library headers has been fixed! Namespace-qualified template instantiation (e.g., `std::is_same<int, int>`) now works perfectly.
+**Status Update (2025-12-12)**: **EXCELLENT PROGRESS!** Standard library support continues to improve with 35+ compiler intrinsics now fully implemented, including all critical type traits needed for `<type_traits>`.
 
 Standard headers like `<type_traits>` and `<utility>` are now **fully viable** as all blocking language features have been implemented. The preprocessor handles most standard headers correctly, and all critical parser/semantic features are complete.
 
-**BREAKTHROUGH (2025-12-12 09:04 UTC)**: Namespace-qualified template instantiation is now **COMPLETE**. Templates in namespaces can be instantiated and their members accessed using qualified names like `std::Template<Args>::member`. This was the last major blocker for standard library header support!
+**Recent updates**:
+- **2025-12-12 09:50 UTC**: Added 13 new compiler intrinsics including `__is_reference`, `__is_arithmetic`, `__is_convertible`, `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`, `__is_bounded_array`, `__is_unbounded_array`, and more. Total: 35+ intrinsics!
+- **2025-12-12 09:04 UTC**: Namespace-qualified template instantiation is now **COMPLETE**. Templates in namespaces can be instantiated and their members accessed using qualified names like `std::Template<Args>::member`.
 
 Completed features:
 - ✅ Conversion operators, non-type template parameters, template specialization inheritance
 - ✅ Reference members, anonymous template parameters, type alias access from specializations
 - ✅ Out-of-class static member definitions, implicit constructor generation for derived classes
-- ✅ **Namespace-qualified template instantiation (NEW!)**
-- ⚠️ Compiler intrinsics (most critical ones implemented)
+- ✅ Namespace-qualified template instantiation
+- ✅ **35+ compiler intrinsics for type traits (NEW!)**
 
-**No workarounds needed anymore!** Standard library headers can now be used with fully-qualified names like `std::vector`, `std::is_same<T, U>`, etc.
+**No workarounds needed!** Standard library headers can now be used with fully-qualified names like `std::vector`, `std::is_same<T, U>`, etc.
 
 ## Completed Features ✅
 
@@ -41,10 +43,10 @@ Completed features:
 
 ---
 
-## Priority 5: Compiler Intrinsics (PARTIALLY IMPLEMENTED)
+## Priority 5: Compiler Intrinsics (MOSTLY COMPLETE)
 
-**Status**: ⚠️ **PARTIAL** - Many intrinsics already work, __is_same newly added  
-**Test Case**: `tests/test_type_traits_intrinsics.cpp`, `tests/test_is_same_intrinsic.cpp`
+**Status**: ✅ **MOSTLY COMPLETE** - 35+ intrinsics fully implemented and tested  
+**Test Case**: `tests/test_type_traits_intrinsics.cpp`, `tests/test_is_same_intrinsic.cpp`, `tests/test_new_intrinsics.cpp`
 
 ### Problem
 
@@ -52,32 +54,47 @@ Standard library implementations rely on compiler intrinsics for efficient type 
 
 ### Implemented Intrinsics ✅
 
-| Intrinsic | Status | Notes |
-|-----------|--------|-------|
-| `__is_same(T, U)` | ✅ **NEW** | Type equality check - fully working |
-| `__is_base_of(Base, Derived)` | ✅ WORKING | Inheritance check |
-| `__is_class(T)` | ✅ WORKING | Class type check |
-| `__is_enum(T)` | ✅ WORKING | Enum type check |
-| `__is_union(T)` | ✅ WORKING | Union type check |
-| `__is_polymorphic(T)` | ✅ WORKING | Has virtual functions |
-| `__is_abstract(T)` | ✅ WORKING | Has pure virtual functions |
-| `__is_final(T)` | ✅ WORKING | Class marked final |
-| `__is_empty(T)` | ✅ WORKING | No non-static data members |
-| `__is_standard_layout(T)` | ✅ WORKING | Standard layout type |
-| `__is_trivially_copyable(T)` | ✅ WORKING | Trivially copyable check |
-| `__is_trivial(T)` | ✅ WORKING | Trivial type check |
-| `__is_pod(T)` | ✅ WORKING | POD type check |
-| `__is_void(T)` | ✅ WORKING | Void type check |
-| `__is_integral(T)` | ✅ WORKING | Integral type check |
-| `__is_floating_point(T)` | ✅ WORKING | Floating point type check |
-| `__is_array(T)` | ✅ WORKING | Array type check |
-| `__is_pointer(T)` | ✅ WORKING | Pointer type check |
-| `__builtin_labs` | ✅ WORKING | Long absolute value |
-| `__builtin_llabs` | ✅ WORKING | Long long absolute value |
-| `__builtin_fabs` | ✅ WORKING | Double absolute value |
-| `__builtin_fabsf` | ✅ WORKING | Float absolute value |
-| `__builtin_va_start` | ✅ WORKING | Variadic argument support |
-| `__builtin_va_arg` | ✅ WORKING | Variadic argument access |
+**Primary type categories (14 intrinsics)**:
+- `__is_void(T)`, `__is_nullptr(T)`, `__is_integral(T)`, `__is_floating_point(T)`
+- `__is_array(T)`, `__is_pointer(T)`, `__is_lvalue_reference(T)`, `__is_rvalue_reference(T)`
+- `__is_member_object_pointer(T)`, `__is_member_function_pointer(T)`
+- `__is_enum(T)`, `__is_union(T)`, `__is_class(T)`, `__is_function(T)`
+
+**Composite type categories (6 intrinsics - NEW!)**:
+- `__is_reference(T)` - lvalue or rvalue reference
+- `__is_arithmetic(T)` - integral or floating point
+- `__is_fundamental(T)` - void, nullptr_t, or arithmetic
+- `__is_object(T)` - not function, reference, or void
+- `__is_scalar(T)` - arithmetic, pointer, enum, member pointer, or nullptr
+- `__is_compound(T)` - not fundamental (array, function, pointer, reference, class, union, enum, member pointer)
+
+**Type relationships (3 intrinsics)**:
+- `__is_base_of(Base, Derived)` - inheritance check
+- `__is_same(T, U)` - exact type equality
+- `__is_convertible(From, To)` - conversion check **NEW!**
+
+**Type properties (11 intrinsics)**:
+- `__is_polymorphic(T)`, `__is_final(T)`, `__is_abstract(T)`, `__is_empty(T)`
+- `__is_standard_layout(T)`, `__is_trivially_copyable(T)`, `__is_trivial(T)`, `__is_pod(T)`
+- `__is_const(T)` - const qualifier check **NEW!**
+- `__is_volatile(T)` - volatile qualifier check **NEW!**
+- `__has_unique_object_representations(T)`
+
+**Signedness traits (2 intrinsics - NEW!)**:
+- `__is_signed(T)` - signed integral type
+- `__is_unsigned(T)` - unsigned integral type
+
+**Array traits (2 intrinsics - NEW!)**:
+- `__is_bounded_array(T)` - array with known bound (e.g., int[10])
+- `__is_unbounded_array(T)` - array with unknown bound (e.g., int[])
+
+**Math builtins (4 intrinsics)**:
+- `__builtin_labs`, `__builtin_llabs`, `__builtin_fabs`, `__builtin_fabsf`
+
+**Variadic support (2 intrinsics)**:
+- `__builtin_va_start`, `__builtin_va_arg`
+
+**Total**: 35+ compiler intrinsics fully implemented
 
 ### Required For
 
@@ -85,17 +102,28 @@ Standard library implementations rely on compiler intrinsics for efficient type 
 - Standard library math functions
 - Optimized container operations
 - `<type_traits>` performance
+- Type-based metaprogramming
 
 ### Recent Changes
 
-- **2025-12-11**: Added `__is_same(T, U)` intrinsic (one of the most critical type traits)
+- **2025-12-12**: Added 13 new type trait intrinsics for better `<type_traits>` support
+  - Composite categories: `__is_reference`, `__is_arithmetic`, `__is_fundamental`, `__is_object`, `__is_scalar`, `__is_compound`
+  - Type conversion: `__is_convertible(From, To)` 
+  - Type properties: `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`
+  - Array traits: `__is_bounded_array`, `__is_unbounded_array`
+  - Added array type parsing support in type trait arguments (e.g., `__is_bounded_array(int[10])`)
+  - Test: `tests/test_new_intrinsics.cpp` - PASSES (all 13 intrinsics tested)
+  
+- **2025-12-11**: Added `__is_same(T, U)` intrinsic
   - Checks exact type equality including cv-qualifiers, references, pointers
   - Test: `tests/test_is_same_intrinsic.cpp` - PASSES
 
 ### Implementation Notes
 
-- Type trait intrinsics are parsed as special expressions in Parser.cpp (lines 10217-10400)
-- Evaluation logic in CodeGen.h::generateTypeTraitIr() (lines 10215+)
+- Type trait intrinsics are parsed as special expressions in Parser.cpp (lines 10339-10700)
+- Array type parsing support for bounded/unbounded arrays (lines 10545-10690)
+- Evaluation logic in CodeGen.h::generateTypeTraitIr() (lines 10282+)
+- Constexpr evaluation in ConstExprEvaluator.h::evaluate_type_trait() (lines 2344+)
 - Most critical intrinsics for `<type_traits>` are now implemented
 - Math builtin functions (`__builtin_labs`, etc.) are registered as built-in functions
 
@@ -493,8 +521,9 @@ Additionally, the CodeGen's `generateQualifiedIdentifierIr` function only handle
 - **Parser Code**: `src/Parser.cpp` - Main parsing logic
   - Lines 1260-1286: Conversion operator parsing (first location)
   - Lines 3702-3742: Conversion operator parsing (member function context)
-  - Lines 10217-10400: Type trait intrinsic parsing
-  - Lines 10888-10930: **Qualified identifier parsing with namespace-qualified templates - FIXED Priority 11**
+  - Lines 10339-10700: **Type trait intrinsic parsing with array type support (35+ intrinsics - UPDATED 2025-12-12)**
+  - Lines 10545-10690: Array type parsing in type trait arguments ([N] and [])
+  - Lines 10888-10930: Qualified identifier parsing with namespace-qualified templates
   - Lines 15438-15536: Full specialization base class parsing
   - Lines 15514-15527: Type alias parsing in template specializations
   - Lines 16194-16274: Partial specialization base class parsing
@@ -504,11 +533,14 @@ Additionally, the CodeGen's `generateQualifiedIdentifierIr` function only handle
   - Lines 20875-20933: Out-of-line static member variable processing
   - Lines 21929-21964: Out-of-line static member variable parsing
 - **Code Generator**: `src/CodeGen.h` - Code generation
-  - Lines 4906-4954: Qualified identifier IR generation - **FIXED Priority 11**
-  - Lines 10215+: Type trait evaluation logic (generateTypeTraitIr)
+  - Lines 4906-4954: Qualified identifier IR generation
+  - Lines 10269-10280: Helper functions (isScalarType, isArithmeticType)
+  - Lines 10282+: **Type trait evaluation logic (generateTypeTraitIr) - 35+ intrinsics**
   - Lines 587-599: Trivial default constructor generation with base class check
   - Lines 1686-1707: Explicit constructor generation with base class check
   - Lines 1763-1795: Implicit copy/move constructor generation with base class check
+- **ConstExpr Evaluator**: `src/ConstExprEvaluator.h` - Compile-time evaluation
+  - Lines 2344+: Type trait constexpr evaluation (evaluate_type_trait)
 - **Template Registry**: `src/TemplateRegistry.h` - Template instantiation tracking
   - Lines 256-271: OutOfLineMemberFunction and OutOfLineMemberVariable structs
   - Lines 653-681: Registration methods for out-of-line members
@@ -523,7 +555,7 @@ Additionally, the CodeGen's `generateQualifiedIdentifierIr` function only handle
 - ✅ **Priority 2**: Non-type template parameters with dependent types
 - ✅ **Priority 3**: Template specialization inheritance (both partial and full specializations)
 - ✅ **Priority 4**: Reference members in structs (int&, char&, short&, struct&, template wrappers)
-- ⚠️ **Priority 5**: Compiler intrinsics (partially complete - most critical intrinsics work, __is_same added)
+- ✅ **Priority 5**: Compiler intrinsics (**35+ intrinsics fully implemented - 2025-12-12**)
 - ✅ **Priority 6**: Anonymous template parameters (both type and non-type parameters)
 - ✅ **Priority 7**: Type alias access from template specializations (both full and partial specializations)
 - ✅ **Priority 8**: Out-of-class static member definitions in templates
