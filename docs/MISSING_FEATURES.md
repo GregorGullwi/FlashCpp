@@ -12,7 +12,7 @@ This document tracks missing C++20 features that prevent FlashCpp from compiling
 `<type_traits>` now parses **148 lines** (previously failed much earlier) before hitting the member template alias issue in the `__conditional<false>` specialization. This is a significant milestone showing most features work correctly. The preprocessor handles standard headers well, and nearly all critical parser/semantic features are complete.
 
 **Recent updates**:
-- **2025-12-12 13:01 UTC**: Discovered member template aliases fail in full specializations - blocks `<type_traits>` at line 148.
+- **2025-12-12 13:01 UTC**: Discovered member template aliases fail in **all** template specializations (full and partial) - blocks `<type_traits>` at line 148.
 - **2025-12-12 13:01 UTC**: Verified bool conditionals work correctly - no bool bug exists. All 639 tests pass.
 - **2025-12-12 13:01 UTC**: Tested `<type_traits>` inclusion - parses 148 lines before hitting member alias issue in `__conditional<false>`.
 - **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic for aggregate type detection. Total: 36+ intrinsics!
@@ -23,7 +23,7 @@ Completed features:
 - ✅ Reference members, anonymous template parameters, type alias access from specializations
 - ✅ Out-of-class static member definitions, implicit constructor generation for derived classes
 - ✅ Namespace-qualified template instantiation
-- ⚠️ **Member template aliases** (work in regular classes, not in full specializations)
+- ⚠️ **Member template aliases** (work in regular classes, not in any template specialization)
 - ✅ **36+ compiler intrinsics for type traits** (including `__is_aggregate`)
 
 **One remaining blocker for `<type_traits>`**: Member template aliases in full template specializations (Priority 8.5).
@@ -169,8 +169,8 @@ Supports `template<typename T> Type ClassName<T>::member = value;` pattern. Temp
 
 ## Priority 8.5: Member Template Aliases (PARTIAL ⚠️)
 
-**Status**: ⚠️ **PARTIAL** - Works in regular classes, but NOT in template specializations  
-**Test Case**: `tests/test_member_template_alias.cpp` (passes), `tests/test_member_alias_in_full_spec.cpp` (fails)
+**Status**: ⚠️ **PARTIAL** - Works in regular classes, but NOT in template specializations (full or partial)  
+**Test Case**: `tests/test_member_template_alias.cpp` (passes), `tests/test_member_alias_in_full_spec.cpp` (fails), `tests/test_member_alias_in_partial_spec.cpp` (fails)
 
 ### Problem
 
@@ -201,7 +201,7 @@ This blocks `<type_traits>` at line 148 where `std::__conditional<false>` specia
 - ✅ Member template aliases work in regular classes
 - ✅ Member template aliases work in primary template classes
 - ❌ Member template aliases fail in full template specializations
-- ❓ Partial template specializations not yet tested
+- ❌ Member template aliases fail in partial template specializations  
 - ⚠️ **Known limitation**: Reference aliases have the same pre-existing runtime issue as direct reference members
 
 ### Required For
@@ -244,8 +244,9 @@ Templates in namespaces can now be instantiated with fully-qualified names (e.g.
 
 ## Testing Strategy
 
-All 640 tests: 639 pass, 1 new test documents the member alias issue. Key test files:
+All 641 tests: 639 pass, 2 new tests document the member alias issue. Key test files:
 - `test_member_alias_in_full_spec.cpp` - **NEW**: Documents member template alias bug in full specializations
+- `test_member_alias_in_partial_spec.cpp` - **NEW**: Documents member template alias bug in partial specializations
 - `test_namespace_template_instantiation.cpp`, `test_is_aggregate_simple.cpp`, `test_is_aggregate_with_if.cpp`
 - `test_bool_conditional_bug.cpp` - Verifies bool conditionals work correctly in if statements
 - `test_full_spec_inherit.cpp`, `test_partial_spec_inherit.cpp`
@@ -301,7 +302,7 @@ All 640 tests: 639 pass, 1 new test documents the member alias issue. Key test f
 - ✅ **Priority 7**: Type alias access from template specializations (both full and partial specializations)
 - ✅ **Priority 8**: Out-of-class static member definitions in templates
 - ✅ **Priority 8b**: Implicit constructor generation for derived classes
-- ⚠️ **Priority 8.5**: Member template aliases (**PARTIAL** - works in regular classes, NOT in full specializations)
+- ⚠️ **Priority 8.5**: Member template aliases (**PARTIAL** - works in regular classes, NOT in any template specialization)
 - ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
 - ⚠️ **Priority 10**: Advanced template features (partial support)
 - ✅ **Priority 11**: **Namespace-qualified template instantiation** (**FIXED 2025-12-12**)
@@ -313,12 +314,12 @@ All 640 tests: 639 pass, 1 new test documents the member alias issue. Key test f
 ### Potential Issues ⚠️
 
 **Newly Discovered (2025-12-12 13:01 UTC)**:
-- **Member Template Aliases in Full Specializations**: Member template aliases work in regular classes and primary templates, but fail to parse inside full template specializations (e.g., `template<> struct S<false> { template<typename T> using type = T; };`). This blocks `<type_traits>` at line 148. See Priority 8.5 for details.
+- **Member Template Aliases in Specializations**: Member template aliases work in regular classes and primary templates, but fail to parse inside **any template specialization** (both full and partial). For example, `template<> struct S<false> { template<typename T> using type = T; };` fails with "Unexpected token in type specifier: 'template'". This blocks `<type_traits>` at line 148. See Priority 8.5 for details.
 
 ### Critical Blockers ❌
 
 **One blocker found for `<type_traits>`**:
-- Member template aliases in full specializations (Priority 8.5) - Prevents compilation of `<type_traits>` at line 148
+- Member template aliases in template specializations (Priority 8.5) - Prevents compilation of `<type_traits>` at line 148. Affects both full and partial specializations.
 
 ### Remaining Missing Features ❌
 
