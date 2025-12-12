@@ -987,7 +987,10 @@ ParseResult Parser::parse_top_level_node()
 	// If we failed to parse any top-level construct, restore the token position
 	// and report an error
 	FLASH_LOG(Parser, Debug, "parse_top_level_node: parse_declaration_or_function_definition failed, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A", ", error: ", result.error_message());
-	return saved_position.error("Failed to parse top-level construct");
+	
+	// Preserve the original error token instead of creating a new error with the saved token
+	// This ensures error messages point to the actual error location, not the start of the construct
+	return saved_position.propagate(std::move(result));
 }
 
 ParseResult Parser::parse_type_and_name() {

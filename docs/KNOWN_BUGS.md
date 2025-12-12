@@ -6,96 +6,53 @@ This document tracks confirmed bugs in the FlashCpp compiler that need to be fix
 
 ## Bug #1: Incorrect Line Numbers for Errors in Included Files
 
-**Status**: 🐛 **CONFIRMED BUG**  
+**Status**: ✅ **FIXED**  
 **Severity**: Medium  
 **Affects**: Error reporting, debugging experience
 
 ### Description
 
-When the compiler encounters an error in a file included via `#include`, it reports an incorrect line number. The line number appears to be off by approximately 17 lines in the tested case.
+When the compiler encountered an error in a file included via `#include`, it reported an incorrect line number. The line number was off because the parser's error recovery mechanism would wrap errors with a token from earlier in the parse tree (e.g., the function declaration's start token instead of the actual error token).
 
-### Reproduction
+### Fix
 
-1. Create a file `test_varargs_helper.c` with an intentional error on line 35:
-```c
-int sum_ints(int count, ...) {
-    va_list args;
-    va_start(args, count);
-    
-    int sum = 0;
-    for (int i = 0; i < count; i++) {
-        sum += va_arg(args, int);
-    }
-    
-    INTENTIONAL_ERROR_HERE;  // Line 35: This should cause an error
-    
-    va_end(args);
-    return sum;
-}
+**Fixed in commit 937b067 and follow-up commit:**
+
+1. **Line Number Mapping** (commit 937b067): Added infrastructure to map preprocessed line numbers to source file line numbers using the `line_map_` in `src/Parser.h`.
+
+2. **Error Token Preservation** (this commit): Modified `parse_top_level_node()` in `src/Parser.cpp` to preserve the original error token instead of wrapping it with a new token. Changed from calling `saved_position.error()` to `saved_position.propagate()`, which maintains the original error context.
+
+### Verification
+
+Testing with an intentional error on line 35 of an included file now correctly reports:
+```
+test_varargs_helper.c:35:27: error: Missing identifier
+      INTENTIONAL_ERROR_HERE;  
+                            ^
 ```
 
-2. Include this file from `test_varargs.cpp`:
-```cpp
-extern "C" {
-   #include "test_varargs_helper.c"
-}
-```
-
-3. Compile with FlashCpp
-
-### Expected Behavior
-
-Error message should report:
-```
-test_varargs_helper.c:35:5: error: Missing identifier: INTENTIONAL_ERROR_HERE
-    INTENTIONAL_ERROR_HERE;
-    ^
-```
-
-### Actual Behavior
-
-Error message reports:
-```
-test_varargs_helper.c:18:4: error: Failed to parse top-level construct
-  int sum_ints(int count, ...) {
-     ^
-```
-
-The line number is wrong (18 instead of 35), and it points to a comment line instead of the actual error location.
-
-### Root Cause
-
-The issue has two parts:
-
-1. **Error Token Selection**: When a parse error occurs deep in the parse tree (e.g., in a function body), the error bubbles up and gets re-wrapped with an earlier token (e.g., the function declaration's start token). This is standard error recovery behavior, but it means the error is reported at the function declaration rather than the actual error location.
-
-2. **Line Number Mapping** (PARTIALLY FIXED): The line number is now correctly mapped from preprocessed output to source file using the line_map. However, because the wrong token is being used (see #1), it still reports the wrong line.
-
-### Status
-
-**Partially Fixed** - The line number mapping infrastructure is now in place and working correctly. However, the parser's error recovery mechanism still causes errors to be reported with the wrong token. A complete fix would require changing how errors bubble up through the parser to preserve the original error token.
-
-### Affected Code
-
-- `src/FileReader.h` - Preprocessor and file inclusion handling
-- `src/Lexer.h` - Token line number tracking
-- `src/Parser.cpp` - Error reporting
-
-### Suggested Fix
-
-1. Check how `FileReader` handles line number tracking when processing `#include` directives
-2. Ensure tokens from included files have their line numbers correctly set relative to the included file, not the including file
-3. Verify that error messages correctly report the file name and line number from the token's metadata
+Previously would have incorrectly reported line 18 or 26.
 
 ### Test Case
 
-File: `tests/test_varargs.cpp` and `tests/test_varargs_helper.c`
+Files: `tests/test_varargs.cpp` and `tests/test_varargs_helper.c`
 
-Can reproduce by adding an intentional error to line 35 of `test_varargs_helper.c`:
+Can verify the fix by adding an intentional error to line 35 of `test_varargs_helper.c`:
 ```c
-INTENTIONAL_ERROR_HERE;  // Should report line 35, not line 18
+INTENTIONAL_ERROR_HERE;  // Now correctly reports line 35
 ```
 
-### Priority
+### Root Cause (FIXED)
 
-Medium - This doesn't affect code generation, but makes debugging significantly harder when errors occur in included files. Users may spend time looking at the wrong line of code.
+The issue had two parts, both now resolved:
+
+1. **Error Token Selection** (NOW FIXED): When a parse error occurred deep in the parse tree (e.g., in a function body), the error would bubble up and get re-wrapped with an earlier token (e.g., the function declaration's start token). This was because `parse_top_level_node()` called `saved_position.error()` which created a new error with the saved token. Fixed by calling `saved_position.propagate()` instead, which preserves the original error token.
+
+2. **Line Number Mapping** (FIXED): The line number mapping from preprocessed output to source file is now correctly implemented in `src/Parser.h` using the `line_map_` structure.
+
+### Affected Code (FIXED)
+
+- `src/Parser.h` - Error formatting with line number mapping (commit 937b067)
+- `src/Parser.cpp` - Error propagation in `parse_top_level_node()` (this commit)
+- `src/FileReader.h` - Preprocessor and file inclusion handling (line_map infrastructure)
+
