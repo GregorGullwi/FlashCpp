@@ -10866,24 +10866,24 @@ ParseResult Parser::parse_primary_expression()
 				}
 				
 				// Try to instantiate the template with these arguments
+				// Note: try_instantiate_class_template returns nullopt on success (type registered in gTypesByName)
 				// Try class template instantiation first (for struct/class templates)
-				auto instantiation = try_instantiate_class_template(simple_name, *template_args);
-				if (!instantiation.has_value()) {
-					// Also try with qualified name
-					instantiation = try_instantiate_class_template(qualified_name, *template_args);
-				}
-				
-				// If class instantiation didn't work, try function template
-				if (!instantiation.has_value()) {
-					instantiation = try_instantiate_template_explicit(simple_name, *template_args);
-					if (!instantiation.has_value()) {
-						instantiation = try_instantiate_template_explicit(qualified_name, *template_args);
+				auto instantiation_result = try_instantiate_class_template(simple_name, *template_args);
+				if (instantiation_result.has_value()) {
+					// Simple name failed, try with qualified name
+					instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
+					if (instantiation_result.has_value()) {
+						// Class instantiation didn't work, try function template
+						instantiation_result = try_instantiate_template_explicit(simple_name, *template_args);
+						if (instantiation_result.has_value()) {
+							instantiation_result = try_instantiate_template_explicit(qualified_name, *template_args);
+							if (instantiation_result.has_value()) {
+								return ParseResult::error("Failed to instantiate template", final_identifier);
+							}
+						}
 					}
 				}
-				
-				if (!instantiation.has_value()) {
-					return ParseResult::error("Failed to instantiate template", final_identifier);
-				}
+				// If we reach here, instantiation succeeded (returned nullopt)
 				
 				// Check if followed by :: for member access (Template<T>::member)
 				if (current_token_.has_value() && current_token_->value() == "::") {
@@ -10895,7 +10895,7 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::success(*result);
 				}
 				
-				// Use the instantiated type
+				// Use the qualified identifier node as the result
 				result = emplace_node<ExpressionNode>(qualified_node.as<QualifiedIdentifierNode>());
 				return ParseResult::success(*result);
 			}

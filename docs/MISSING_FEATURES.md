@@ -355,15 +355,17 @@ int func(T t);  // Fallback if first template fails
 
 ---
 
-## Priority 11: Namespace-Qualified Template Instantiation (**CRITICAL BLOCKER**)
+## Priority 11: Namespace-Qualified Template Instantiation (**PARSING FIXED, CODEGEN BUG**)
 
-**Status**: ❌ **BLOCKING** - Templates in namespaces cannot be instantiated with qualified names  
+**Status**: ⚠️ **PARTIALLY FIXED** - Parsing works, codegen has `bad_any_cast` bug  
 **Test Case**: `tests/test_namespace_template_instantiation_fail.cpp`  
-**Discovered**: 2025-12-11 (19:05 UTC)
+**Discovered**: 2025-12-11 (19:05 UTC)  
+**Parsing Fixed**: 2025-12-12 (07:45 UTC)  
+**Remaining Issue**: Codegen crashes with `std::bad_any_cast` exception
 
 ### Problem
 
-Templates defined in namespaces fail to parse when instantiated with fully-qualified names:
+Templates defined in namespaces can now be **parsed** when instantiated with fully-qualified names, but **codegen crashes**:
 
 ```cpp
 namespace std {
@@ -374,21 +376,46 @@ namespace std {
 }
 
 int main() {
-    // This FAILS: "Failed to parse top-level construct"
+    // PARSING: ✅ Works (fixed)
+    // CODEGEN: ❌ Crashes with bad_any_cast
     return std::integral_constant<bool, true>::value ? 0 : 1;
 }
 ```
 
-The parser encounters `std::integral_constant<bool, true>` and:
-1. Recognizes `std` followed by `::`
-2. Parses `integral_constant` as the final identifier
-3. **FAILS** to recognize that `integral_constant` is followed by `<` for template arguments
-4. Tries to lookup `std::integral_constant` (without template args) and fails
-5. Causes parsing to fail
+### Root Cause
+
+**Parsing Bug (FIXED)**: The parser wasn't checking if identifiers after `::` were templates before attempting `<>` parsing. Fixed by adding template lookup check in Parser.cpp:10846-10905.
+
+**Codegen Bug (REMAINING)**: After successful parsing, codegen crashes at Parser.cpp:12656 when calling `result->is<ExpressionNode>()` on the parsed qualified template instantiation. The `std::bad_any_cast` indicates the ASTNode type doesn't match what's expected.
+
+**Investigation Needed**: The template instantiation function (`try_instantiate_class_template`) returns `std::nullopt` on success, but the parsing code was checking backwards (treating `nullopt` as failure). This has been fixed, but there's still a type mismatch when the instantiated template result is used in expression contexts.
+
+### Parsing Fix (Commit dbf7fa8, updated)
+
+Added template lookup check before parsing `<>` as template arguments:
+
+```cpp
+// Parser.cpp:10858-10905
+if (!parsing_template_body_ && current_token_->value() == "<") {
+    // Check if identifier is registered as a template
+    if (gTemplateRegistry.lookupTemplate(qualified_name).has_value() || 
+        gTemplateRegistry.lookupTemplate(simple_name).has_value()) {
+        // Parse template arguments and instantiate
+        // Note: try_instantiate_class_template returns nullopt on SUCCESS
+        auto result = try_instantiate_class_template(simple_name, *template_args);
+        if (!result.has_value()) {  // Success!
+            // Handle :: member access if present
+            // ...
+        }
+    }
+}
+```
+
+**Bug Fixed**: Reversed the logic - `nullopt` means success, `has_value()` means failure.
 
 ### Workaround
 
-Use `using` declarations to bring templates into the current scope:
+For now, use `using` declarations to avoid the codegen crash:
 
 ```cpp
 namespace std {
@@ -405,25 +432,19 @@ int main() {
 }
 ```
 
-Or use `using namespace std;` (not recommended but works).
-
 ### Required For
 
 - ✅ **BLOCKING**: All standard library headers (`<type_traits>`, `<utility>`, `<vector>`, etc.)
 - ✅ **BLOCKING**: Any code using namespace-qualified template names
 - ✅ **BLOCKING**: Idiomatic C++ code that doesn't pollute global namespace
 
-### Implementation Notes
+### Next Steps
 
-The issue is in `Parser.cpp` around lines 10860-10960 in the qualified identifier parsing code:
-- After consuming `::`, the parser reads the final identifier
-- It doesn't check if the identifier is followed by `<` for template arguments
-- A partial fix was attempted but needs more work to properly handle:
-  - Template argument parsing in qualified contexts
-  - Template registry lookup with namespace qualification
-  - Symbol table interaction with namespaced templates
-
-This is a **CRITICAL** priority that must be fixed before standard library headers can be properly supported.
+1. ✅ Fix parsing logic to check for templates before `<>` parsing - DONE
+2. ✅ Fix backwards nullopt check in template instantiation - DONE  
+3. ❌ Fix codegen `bad_any_cast` bug when using instantiated qualified templates in expressions
+4. ❌ Verify the ASTNode type returned from qualified template parsing matches what expression parsing expects
+5. ❌ Run all existing tests to ensure no regressions
 
 ---
 
