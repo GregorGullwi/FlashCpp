@@ -21097,11 +21097,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// This allows lookups like __conditional<true>::type<Args> to work correctly
 	{
 		// Build the template prefix string (e.g., "__conditional::")
-		std::string template_prefix_str = std::string(template_name) + "::";
-		std::string_view template_prefix = template_prefix_str;
+		StringBuilder prefix_builder;
+		std::string_view template_prefix = prefix_builder.append(template_name).append("::").preview();
 		
 		// Get all alias templates from the registry with this prefix
-		std::vector<std::string> base_aliases_to_copy = gTemplateRegistry.get_alias_templates_with_prefix(template_prefix);
+		std::vector<std::string_view> base_aliases_to_copy = gTemplateRegistry.get_alias_templates_with_prefix(template_prefix);
+		prefix_builder.reset();
 		
 		// Now register each one with the instantiated name
 		for (const auto& base_alias_name : base_aliases_to_copy) {
