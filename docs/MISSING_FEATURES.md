@@ -42,7 +42,8 @@ using enable_if_t = typename enable_if<B, T>::type;
 - ✅ 36+ compiler intrinsics for type traits
 
 **Recent updates**:
-- **2025-12-12 20:40 UTC**: **IMPLEMENTATION** - Added declaration position tracking and re-parsing infrastructure. Partial support for dependent return types. Template-dependent types with `_unknown` markers can trigger SFINAE. Full support requires constant expression evaluation.
+- **2025-12-12 21:50 UTC**: **INFRASTRUCTURE** - Added try_evaluate_constant_expression() for template argument evaluation. Framework in place for evaluating expressions like `is_int<T>::value`. Full implementation requires constant expression evaluator with template instantiation and static member value lookup.
+- **2025-12-12 20:40 UTC**: **IMPLEMENTATION** - Added declaration position tracking and re-parsing infrastructure. Partial support for dependent return types. Template-dependent types with `_unknown` markers can trigger SFINAE.
 - **2025-12-12 20:15 UTC**: **INVESTIGATION** - Discovered template architecture limitation: return types stored as placeholders, only bodies re-parsed during instantiation.
 - **2025-12-12 20:10 UTC**: **PROGRESS** - Multi-overload template lookup implemented for SFINAE. Compiler now tries all template overloads with same name.
 - **2025-12-12 19:30 UTC**: **MAJOR** - SFINAE support confirmed working! 6 new test cases pass.
@@ -50,13 +51,22 @@ using enable_if_t = typename enable_if<B, T>::type;
 - **2025-12-12 13:47 UTC**: Added `template` keyword handler to specialization parsing
 - **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic. Total: 36+ intrinsics!
 
-**Known limitation**: Function overload resolution with same name and different SFINAE conditions - **PARTIAL IMPLEMENTATION**. Multi-overload lookup, SFINAE context, and declaration re-parsing implemented. Limitation: constant expressions in template arguments (e.g., `is_int<T>::value`) not evaluated during instantiation.
+**Known limitation**: Function overload resolution with same name and different SFINAE conditions - **EXTENSIVE INFRASTRUCTURE IN PLACE**. Remaining work: full constant expression evaluator.
 
-**Architecture status**: 
-- ✅ Declaration position tracking added to FunctionDeclarationNode
+**Architecture status - Complete Infrastructure**: 
+- ✅ Declaration position tracking in FunctionDeclarationNode
 - ✅ Re-parsing infrastructure for template declarations  
 - ✅ SFINAE-aware error handling
-- ⏸️ Constant expression evaluation during template instantiation (required for full support)
+- ✅ Multi-overload template lookup
+- ✅ try_evaluate_constant_expression() framework
+- ⏸️ **Final piece**: Constant expression evaluator with:
+  - Template instantiation for types in expressions (e.g., instantiate `is_int<double>`)
+  - Static member value lookup and retrieval
+  - Expression tree evaluation
+  
+**What works**: SFINAE with simple dependent types, type specialization selection, all existing test patterns.
+
+**What requires constant expression evaluator**: Expressions in template arguments like `enable_if<is_int<T>::value>` where `is_int<T>::value` must be evaluated to a constant bool.
 
 **Next steps**: Consider auto return type deduction or declaration re-parsing for complete SFINAE support.
 

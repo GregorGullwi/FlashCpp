@@ -18791,6 +18791,45 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 	}
 }
 
+// Evaluate constant expressions for template arguments
+// Handles cases like is_int<T>::value where T is substituted
+// Returns the integer value if successful, nullopt otherwise
+// 
+// NOTE: This is a placeholder for full constant expression evaluation
+// Currently returns nullopt - full implementation would require:
+// 1. Template instantiation for types like is_int<double>
+// 2. Reading static constexpr member values
+// 3. Evaluating more complex constant expressions
+// This limitation means same-name SFINAE overloads with constant expressions
+// in template arguments (e.g., enable_if<is_int<T>::value>) don't work yet
+std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& expr_node) {
+	if (!expr_node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+	
+	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+	
+	// Handle numeric literals directly
+	if (std::holds_alternative<NumericLiteralNode>(expr)) {
+		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+		const auto& val = lit.value();
+		if (std::holds_alternative<unsigned long long>(val)) {
+			return static_cast<int64_t>(std::get<unsigned long long>(val));
+		} else if (std::holds_alternative<double>(val)) {
+			return static_cast<int64_t>(std::get<double>(val));
+		}
+	}
+	
+	// TODO: Implement member access evaluation (e.g., is_int<double>::value)
+	// This would require:
+	// - Parsing the member access expression
+	// - Instantiating the template type (e.g., is_int<double>)
+	// - Looking up the static member value
+	// - Returning the constexpr value
+	
+	return std::nullopt;
+}
+
 // Parse explicit template arguments: <int, float, ...>
 // Returns a vector of types if successful, nullopt otherwise
 std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
@@ -18874,7 +18913,39 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				return std::nullopt;
 			}
 
-			// Expression is not a numeric literal - fall through to type parsing
+			// Expression is not a numeric literal - try to evaluate it as a constant expression
+			// This handles cases like is_int<T>::value where the expression needs evaluation
+			auto const_value = try_evaluate_constant_expression(*expr_result.node());
+			if (const_value.has_value()) {
+				// Successfully evaluated as a constant expression
+				template_args.emplace_back(*const_value, Type::Int);  // Assume int type for now
+				discard_saved_token(arg_saved_pos);
+				
+				// Check for ',' or '>' after the expression
+				if (!peek_token().has_value()) {
+					restore_token_position(saved_pos);
+					last_failed_template_arg_parse_handle_ = saved_pos;
+					return std::nullopt;
+				}
+
+				if (peek_token()->value() == ">") {
+					consume_token(); // consume '>'
+					break;
+				}
+
+				if (peek_token()->value() == ",") {
+					consume_token(); // consume ','
+					continue;
+				}
+
+				// Unexpected token after expression
+				FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments unexpected token after constant expression");
+				restore_token_position(saved_pos);
+				last_failed_template_arg_parse_handle_ = saved_pos;
+				return std::nullopt;
+			}
+
+			// Expression is not a numeric literal or evaluable constant - fall through to type parsing
 		}
 
 		// Expression parsing failed or wasn't a numeric literal - try parsing a type
