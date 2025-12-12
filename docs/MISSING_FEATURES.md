@@ -42,15 +42,18 @@ using enable_if_t = typename enable_if<B, T>::type;
 - ✅ 36+ compiler intrinsics for type traits
 
 **Recent updates**:
-- **2025-12-12 20:10 UTC**: **PROGRESS** - Multi-overload template lookup implemented for SFINAE. Compiler now tries all template overloads with same name. Return type validation during instantiation still needed for complete support.
+- **2025-12-12 20:15 UTC**: **INVESTIGATION** - Discovered template architecture limitation: return types stored as placeholders, only bodies re-parsed during instantiation. Full SFINAE same-name overload support requires deeper changes to template system.
+- **2025-12-12 20:10 UTC**: **PROGRESS** - Multi-overload template lookup implemented for SFINAE. Compiler now tries all template overloads with same name.
 - **2025-12-12 19:30 UTC**: **MAJOR** - SFINAE support confirmed working! 6 new test cases pass.
 - **2025-12-12 15:45 UTC**: Member template alias instantiation working for full specializations
 - **2025-12-12 13:47 UTC**: Added `template` keyword handler to specialization parsing
 - **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic. Total: 36+ intrinsics!
 
-**Known limitation**: Function overload resolution with same name and different SFINAE conditions - **PARTIAL IMPLEMENTATION IN PROGRESS** (commit 23ebe3f). Multi-overload lookup implemented, but return type validation during instantiation still needed.
+**Known limitation**: Function overload resolution with same name and different SFINAE conditions - **PARTIAL IMPLEMENTATION** (commit 23ebe3f+). Multi-overload lookup implemented, but return type validation limited by template system architecture.
 
-**Next steps**: Complete return type validation during template instantiation for full SFINAE same-name overload support.
+**Architecture finding**: Template function declarations store return types as placeholders. During instantiation, only function bodies are re-parsed, not declarations. Full SFINAE same-name overload support would require re-parsing declarations or implementing dependent type expression evaluation.
+
+**Next steps**: Consider auto return type deduction or declaration re-parsing for complete SFINAE support.
 
 ## Completed Features ✅
 

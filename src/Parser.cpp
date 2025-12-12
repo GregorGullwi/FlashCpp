@@ -19518,6 +19518,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		orig_return_type, template_params, template_args_as_type_args
 	);
 
+	// NOTE: SFINAE limitation discovered - return types are stored as placeholders in template declarations
+	// Only function bodies are re-parsed during instantiation, not declarations
+	// This means dependent return types like "typename enable_if<condition>::type" cannot be fully
+	// validated during instantiation. Complete SFINAE same-name overload support would require:
+	// 1. Re-parsing function declarations during instantiation, OR
+	// 2. Storing and evaluating dependent type expressions, OR  
+	// 3. Implementing auto return type deduction from function bodies
+	//
+	// For now, SFINAE works for different function names or when return types don't depend on
+	// template parameters in complex ways.
+
 	ASTNode return_type = emplace_node<TypeSpecifierNode>(
 		return_type_enum,
 		TypeQualifier::None,
