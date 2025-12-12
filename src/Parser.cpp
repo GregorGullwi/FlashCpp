@@ -10843,6 +10843,65 @@ ParseResult Parser::parse_primary_expression()
 			return ParseResult::success(*result);
 		}
 
+		// Check if qualified identifier is followed by template arguments: ns::Template<Args>
+		// This must come BEFORE we try to use current_token_ as an operator
+		// Skip this if we're already parsing a template body to avoid infinite recursion
+		std::optional<std::vector<TemplateTypeArg>> template_args;
+		if (!parsing_template_body_ && current_token_.has_value() && current_token_->value() == "<") {
+			// Build the qualified name from namespaces
+			std::string qualified_name;
+			for (const auto& ns : qual_id.namespaces()) {
+				qualified_name += std::string(ns) + "::";
+			}
+			qualified_name += std::string(qual_id.name());
+			
+			// Check if this identifier is a registered template
+			std::string simple_name(qual_id.name());
+			if (gTemplateRegistry.lookupTemplate(qualified_name).has_value() || 
+			    gTemplateRegistry.lookupTemplate(simple_name).has_value()) {
+				// Yes, this is a template - parse template arguments
+				template_args = parse_explicit_template_arguments();
+				if (!template_args.has_value()) {
+					return ParseResult::error("Failed to parse template arguments", *current_token_);
+				}
+				
+				// Try to instantiate the template with these arguments
+				// Try class template instantiation first (for struct/class templates)
+				auto instantiation = try_instantiate_class_template(simple_name, *template_args);
+				if (!instantiation.has_value()) {
+					// Also try with qualified name
+					instantiation = try_instantiate_class_template(qualified_name, *template_args);
+				}
+				
+				// If class instantiation didn't work, try function template
+				if (!instantiation.has_value()) {
+					instantiation = try_instantiate_template_explicit(simple_name, *template_args);
+					if (!instantiation.has_value()) {
+						instantiation = try_instantiate_template_explicit(qualified_name, *template_args);
+					}
+				}
+				
+				if (!instantiation.has_value()) {
+					return ParseResult::error("Failed to instantiate template", final_identifier);
+				}
+				
+				// Check if followed by :: for member access (Template<T>::member)
+				if (current_token_.has_value() && current_token_->value() == "::") {
+					auto member_result = parse_qualified_identifier_after_template(final_identifier);
+					if (member_result.is_error()) {
+						return member_result;
+					}
+					result = member_result.node();
+					return ParseResult::success(*result);
+				}
+				
+				// Use the instantiated type
+				result = emplace_node<ExpressionNode>(qualified_node.as<QualifiedIdentifierNode>());
+				return ParseResult::success(*result);
+			}
+			// Not a template - let it fall through to be parsed as operator<
+		}
+
 		// Try to look up the qualified identifier
 		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());			// Check if followed by '(' for function call
 			if (current_token_.has_value() && current_token_->value() == "(") {
