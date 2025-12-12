@@ -6718,7 +6718,18 @@ ParseResult Parser::parse_type_specifier()
 						// First try looking up with the instantiated name
 						auto member_alias_opt = gTemplateRegistry.lookup_alias_template(member_alias_name);
 						
-						// If not found, try with the base template name
+						// If not found, check if this instantiation came from a partial specialization pattern
+						if (!member_alias_opt.has_value()) {
+							auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(instantiated_name);
+							if (pattern_name_opt.has_value()) {
+								// This instantiation came from a partial specialization
+								// Look up the member alias from the pattern
+								std::string pattern_member_alias_name = std::string(*pattern_name_opt) + "::" + std::string(member_name);
+								member_alias_opt = gTemplateRegistry.lookup_alias_template(pattern_member_alias_name);
+							}
+						}
+						
+						// If still not found, try with the base template name (for non-partial-spec cases)
 						// Instantiated names have patterns like "ClassName_int" or "ClassName_int_1"
 						// We need to find the original template name by progressively stripping suffixes
 						if (!member_alias_opt.has_value()) {
@@ -20176,6 +20187,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		const StructDeclarationNode& pattern_struct = pattern_node.as<StructDeclarationNode>();
 		FLASH_LOG(Templates, Debug, "Pattern struct name: ", pattern_struct.name());
+		
+		// Register the mapping from instantiated name to pattern name
+		// This allows member alias lookup to find the correct specialization
+		gTemplateRegistry.register_instantiation_pattern(instantiated_name, pattern_struct.name());
 		
 		// Get template parameters from the pattern (partial specialization), NOT the primary template
 		// The pattern stores its own template parameters (e.g., <typename First, typename... Rest>)

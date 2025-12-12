@@ -225,7 +225,27 @@ Member template alias instantiation now works for full specializations!
 **Working:** `__conditional<true>::type<int, double>` correctly resolves to `int`
 
 **Still TODO:**
-- Partial specialization instantiation (requires mapping instantiated names to specialization patterns)
+- None for parsing and instantiation logic!
+
+**Partial Specialization Status (2025-12-12 15:55 UTC):**
+
+✅ **FIXED!** Partial specialization member template alias instantiation now works correctly at the parsing level.
+
+**Implementation:**
+1. Added `instantiation_to_pattern_` map in TemplateRegistry
+2. Store pattern mapping during template instantiation (when pattern match found)
+3. Check pattern mapping during member alias lookup before falling back to progressive stripping
+4. Correctly resolves `Wrapper<int, false>::Type<double>` to `U*` → `double*`
+
+**Known Code Generation Issue:**
+There's a separate bug in the code generator where pointer types from member template aliases aren't properly allocated. The parser correctly identifies the type as `double*` with ptr_depth=1, but codegen allocates it as `double64` instead of a pointer. This is a pre-existing code generator limitation, not a parser issue.
+
+**Test Status:**
+- Parsing: ✅ Works perfectly
+- Type instantiation: ✅ Produces correct types (`double*`)
+- Code generation: ❌ Doesn't properly handle pointers (separate bug)
+
+**Implementation Status:** Parser implementation COMPLETE for both full and partial specializations!
 
 **Test Results:**
 - ✅ `test_member_alias_in_full_spec.cpp` - NOW PASSES!
