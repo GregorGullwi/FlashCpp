@@ -522,6 +522,18 @@ public:
 		return std::nullopt;
 	}
 
+	// Get all alias template names with a given prefix (for template instantiation)
+	// Used to copy member template aliases from primary template to instantiated template
+	std::vector<std::string> get_alias_templates_with_prefix(std::string_view prefix) const {
+		std::vector<std::string> result;
+		for (const auto& [name, node] : alias_templates_) {
+			if (name.starts_with(prefix)) {
+				result.push_back(name);
+			}
+		}
+		return result;
+	}
+
 	// Register a deduction guide: template<typename T> ClassName(T) -> ClassName<T>;
 	void register_deduction_guide(std::string_view class_name, ASTNode guide_node) {
 		std::string key(class_name);

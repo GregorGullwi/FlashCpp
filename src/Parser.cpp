@@ -21101,6 +21101,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
 
+	// Register member template aliases with the instantiated name
+	// Member template aliases were registered during parsing with the primary template name (e.g., "__conditional::type")
+	// We need to re-register them with the instantiated name (e.g., "__conditional_1::type")
+	// This allows lookups like __conditional<true>::type<Args> to work correctly
+	{
+		FLASH_LOG_FORMAT(Parser, Debug, "Looking for member template aliases with prefix: {}::", template_name);
+		
+		// Build the template prefix string (e.g., "__conditional::")
+		std::string template_prefix_str = std::string(template_name) + "::";
+		std::string_view template_prefix = template_prefix_str;
+		
+		FLASH_LOG_FORMAT(Parser, Debug, "Full template_prefix: {}", template_prefix);
+		
+		// Get all alias templates from the registry with this prefix
+		std::vector<std::string> base_aliases_to_copy = gTemplateRegistry.get_alias_templates_with_prefix(template_prefix);
+		
+		FLASH_LOG_FORMAT(Parser, Debug, "Found {} member template aliases to copy", base_aliases_to_copy.size());
+		
+		// Now register each one with the instantiated name
+		for (const auto& base_alias_name : base_aliases_to_copy) {
+			// Extract the member name (everything after "template_name::")
+			std::string_view member_name = std::string_view(base_alias_name).substr(template_prefix.size());
+			
+			FLASH_LOG_FORMAT(Parser, Debug, "Copying member template alias: {} -> member_name={}", base_alias_name, member_name);
+			
+			// Build the new qualified name with the instantiated struct name
+			std::string_view inst_alias_name = StringBuilder()
+				.append(instantiated_name)
+				.append("::")
+				.append(member_name)
+				.commit();
+			
+			// Look up the original alias node
+			auto alias_opt = gTemplateRegistry.lookup_alias_template(base_alias_name);
+			if (alias_opt.has_value()) {
+				// Re-register with the instantiated name
+				gTemplateRegistry.register_alias_template(std::string(inst_alias_name), *alias_opt);
+				
+				FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias for instantiated template: {} (from {})", 
+					inst_alias_name, base_alias_name);
+			}
+		}
+		
+		FLASH_LOG_FORMAT(Parser, Debug, "Finished registering member template aliases for {}", instantiated_name);
+	}
+
 	// Get a pointer to the moved struct_info for later use
 	StructTypeInfo* struct_info_ptr = struct_type_info.getStructInfo();
 
