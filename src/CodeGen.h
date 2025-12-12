@@ -10618,6 +10618,54 @@ private:
 				}
 				break;
 
+			case TypeTraitKind::IsAggregate:
+				// An aggregate is:
+				// - An array type, or
+				// - A class type (struct/class/union) with:
+				//   - No user-declared or inherited constructors
+				//   - No private or protected non-static data members
+				//   - No virtual functions
+				//   - No virtual, private, or protected base classes
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				    !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						// Check aggregate conditions:
+						// 1. No user-declared constructors (check member_functions for non-implicit constructors)
+						// 2. No private or protected members (all members are public)
+						// 3. No virtual functions (has_vtable flag)
+						bool has_user_constructors = false;
+						for (const auto& func : struct_info->member_functions) {
+							if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+								const ConstructorDeclarationNode& ctor = func.function_decl.as<ConstructorDeclarationNode>();
+								if (!ctor.is_implicit()) {
+									has_user_constructors = true;
+									break;
+								}
+							}
+						}
+						
+						bool no_virtual = !struct_info->has_vtable;
+						bool all_public = true;
+						
+						for (const auto& member : struct_info->members) {
+							if (member.access == AccessSpecifier::Private || 
+							    member.access == AccessSpecifier::Protected) {
+								all_public = false;
+								break;
+							}
+						}
+						
+						result = !has_user_constructors && no_virtual && all_public;
+					}
+				}
+				// Arrays are aggregates
+				else if (pointer_depth == 0 && !is_reference && type_spec.is_array()) {
+					result = true;
+				}
+				break;
+
 			case TypeTraitKind::IsStandardLayout:
 				// A standard-layout class has specific requirements:
 				// - No virtual functions or virtual base classes

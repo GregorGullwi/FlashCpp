@@ -10443,6 +10443,7 @@ ParseResult Parser::parse_primary_expression()
 			{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
 			{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
 			{"__is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
+			{"__is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
 			{"__is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
 			{"__has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
 			{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},

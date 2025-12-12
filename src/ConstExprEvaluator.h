@@ -2471,6 +2471,12 @@ public:
 				result = type_spec.is_array() & (type_spec.array_size() <= 0) & !is_reference & (pointer_depth == 0);
 				break;
 
+			case TypeTraitKind::IsAggregate:
+				// Arrays are aggregates
+				result = type_spec.is_array() & !is_reference & (pointer_depth == 0);
+				// For struct types, we need runtime type info, so fall through to default
+				break;
+
 			// Add more type traits as needed
 			// For now, other type traits return false during constexpr evaluation
 			default:
