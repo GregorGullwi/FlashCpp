@@ -6711,12 +6711,21 @@ ParseResult Parser::parse_type_specifier()
 					
 					// Check if this might be a member template alias (e.g., Template<int>::type<Args>)
 					std::string_view member_name = qualified_node.identifier_token().value();
-					std::string member_alias_name = qualified_type_name;  // e.g., "__conditional_1::type"
 					
 					// Check if the next token is '<', indicating template arguments for the member
 					if (peek_token().has_value() && peek_token()->value() == "<") {
 						// First try looking up with the instantiated name
+						// Use StringBuilder for efficient string building
+						StringBuilder member_alias_builder;
+						std::string_view member_alias_name = member_alias_builder.append(qualified_type_name).append("::").append(member_name).preview();
 						auto member_alias_opt = gTemplateRegistry.lookup_alias_template(member_alias_name);
+						
+						// Keep a copy for error messages before resetting
+						std::string member_alias_name_str;
+						if (!member_alias_opt.has_value()) {
+							member_alias_name_str = std::string(member_alias_name);
+						}
+						member_alias_builder.reset();
 						
 						// If not found, check if this instantiation came from a partial specialization pattern
 						if (!member_alias_opt.has_value()) {
@@ -6724,8 +6733,10 @@ ParseResult Parser::parse_type_specifier()
 							if (pattern_name_opt.has_value()) {
 								// This instantiation came from a partial specialization
 								// Look up the member alias from the pattern
-								std::string pattern_member_alias_name = std::string(*pattern_name_opt) + "::" + std::string(member_name);
+								StringBuilder pattern_builder;
+								std::string_view pattern_member_alias_name = pattern_builder.append(*pattern_name_opt).append("::").append(member_name).preview();
 								member_alias_opt = gTemplateRegistry.lookup_alias_template(pattern_member_alias_name);
+								pattern_builder.reset();
 							}
 						}
 						
@@ -6733,12 +6744,12 @@ ParseResult Parser::parse_type_specifier()
 						// Instantiated names have patterns like "ClassName_int" or "ClassName_int_1"
 						// We need to find the original template name by progressively stripping suffixes
 						if (!member_alias_opt.has_value()) {
-							std::string base_template_name(instantiated_name);
+							std::string_view base_template_name = instantiated_name;
 							
 							// Try progressively stripping '_suffix' patterns until we find a match
 							while (!member_alias_opt.has_value() && !base_template_name.empty()) {
 								size_t underscore_pos = base_template_name.find_last_of('_');
-								if (underscore_pos == std::string::npos) {
+								if (underscore_pos == std::string_view::npos) {
 									break;  // No more underscores to strip
 								}
 								
@@ -6747,8 +6758,10 @@ ParseResult Parser::parse_type_specifier()
 									break;
 								}
 								
-								std::string base_member_alias_name = base_template_name + "::" + std::string(member_name);
+								StringBuilder base_builder;
+								std::string_view base_member_alias_name = base_builder.append(base_template_name).append("::").append(member_name).preview();
 								member_alias_opt = gTemplateRegistry.lookup_alias_template(base_member_alias_name);
+								base_builder.reset();
 							}
 						}
 						
@@ -6758,7 +6771,7 @@ ParseResult Parser::parse_type_specifier()
 							// Parse template arguments for the member alias
 							auto member_template_args = parse_explicit_template_arguments();
 							if (!member_template_args.has_value()) {
-								return ParseResult::error("Failed to parse template arguments for member template alias: " + member_alias_name, type_name_token);
+								return ParseResult::error("Failed to parse template arguments for member template alias: " + member_alias_name_str, type_name_token);
 							}
 							
 							// Instantiate the member template alias with the provided arguments
