@@ -1,75 +1,255 @@
 # Missing Features for Standard Library Header Support
 
-This document tracks missing C++20 features in FlashCpp. Features are organized by implementation status and priority.
+This document tracks missing C++20 features that prevent FlashCpp from compiling standard library headers. Features are listed in priority order based on their blocking impact.
 
-**Last Updated**: 2025-12-12 (Compacted and reorganized)  
-**Test Status**: 643 total tests (642 passing, 11 expected failures)
+**Last Updated**: 2025-12-12 (15:45 UTC)  
+**Test Reference**: `tests/test_real_std_headers_fail.cpp`
 
 ## Summary
 
-**Status Update (2025-12-12)**: All critical parsing features for standard library headers are complete! 643 tests pass (642 successful, 11 expected failures).
+**Status Update (2025-12-12 15:45 UTC)**: **BREAKTHROUGH!** Member template alias **instantiation** now works for full specializations! This is a major milestone beyond just parsing - the compiler can now actually **use** member template aliases.
 
-**Recent Discoveries:**
-- ✅ C++20 concepts partially implemented (literal constraints work, error reporting functional)
-- ✅ constinit enforcement fully working (validates constant expressions)
-- ✅ All previously documented parsing features confirmed working
+Example that now works:
+```cpp
+template<>
+struct __conditional<false> {
+    template<typename, typename _Up>
+    using type = _Up;
+};
 
-**Recent Achievements:**
-- ✅ Member template alias instantiation working for full and partial specializations
-- ✅ 36+ compiler intrinsics implemented for type traits support
-- ✅ Namespace-qualified template instantiation
-- ✅ All core C++20 language features needed for parsing headers
+// This now compiles and runs correctly!
+__conditional<false>::type<int, double> y = 3.14;  // y is double
+```
 
-**Remaining Work:**
-- Complex concept expressions (basic concepts work)
-- Pack expansion in member declarations
-- SFINAE (Substitution Failure Is Not An Error)
-- Code generation bug: pointer types in partial specialization member aliases
+**Implementation complete:**
+- ✅ Parsing member template aliases in all contexts
+- ✅ **Instantiating member template aliases in full specializations** (NEW!)
+- ✅ Template parameter substitution
+- ✅ Nested type lookup for template aliases
+
+**Recent updates**:
+- **2025-12-12 15:45 UTC**: **MAJOR** - Member template alias instantiation working for full specializations! `test_member_alias_in_full_spec.cpp` now passes.
+- **2025-12-12 13:47 UTC**: Added `template` keyword handler to specialization parsing
+- **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic. Total: 36+ intrinsics!
+
+**Known limitation**: Partial specialization member aliases compile but use primary template (needs specialization pattern mapping).
+
+**Next step**: Fix partial specialization instantiation (requires tracking which specialization pattern was used).
 
 ## Completed Features ✅
 
-**All completed features maintain backward compatibility - all 642 passing tests continue to pass.**
+**All completed features maintain backward compatibility - all 641 passing tests continue to pass (643 total tests including 2 expected failures).**
 
-### Core Language Features Implemented
-
+### Core Language Features (Priorities 1-8.5, 11)
 1. **Conversion Operators** - User-defined conversion operators (`operator T()`) with static member access
 2. **Non-Type Template Parameters** - `template<typename T, T v>` patterns with dependent types  
 3. **Template Specialization Inheritance** - Both partial and full specializations inherit from base classes
 4. **Anonymous Template Parameters** - Unnamed parameters like `template<bool, typename T>`
-5. **Type Alias Access from Specializations** - Access `using` aliases from template specializations
+5. **Type Alias Access from Specializations** - Access `using` aliases from template specializations (critical for `<type_traits>`)
 6. **Out-of-Class Static Member Definitions** - Template static member variables defined outside class
 7. **Reference Members in Structs** - Reference-type members (`int&`, `char&`, `short&`, `struct&`)
 8. **Implicit Constructor Generation** - Smart handling of base class constructor calls in derived classes
-9. **Member Template Aliases** - Template aliases inside classes, full specializations, and partial specializations
-10. **Namespace-Qualified Template Instantiation** - Templates in namespaces with qualified member access
-11. **Compiler Intrinsics** - 36+ intrinsics for type traits, math operations, and variadic support
+8.5. **Member Template Aliases** - Template aliases inside classes, full specializations, and partial specializations (`template<typename T> using type = T;`)
+11. **Namespace-Qualified Template Instantiation** - Templates in namespaces with qualified member access (`std::Template<Args>::member`)
 
-*For detailed implementation notes, test cases, and code references, see git history.*
-
----
-
-## Active Work Items
-
-### Priority 5: Compiler Intrinsics (COMPLETE ✅)
-
-**Status**: ✅ **36+ intrinsics fully implemented**  
-**Test Cases**: `tests/test_type_traits_intrinsics.cpp`, `tests/test_is_same_intrinsic.cpp`, `tests/test_new_intrinsics.cpp`, `tests/test_is_aggregate_simple.cpp`
-
-**Categories Implemented:**
-- Primary type categories (14): `__is_void`, `__is_integral`, `__is_floating_point`, `__is_array`, `__is_pointer`, `__is_reference`, `__is_class`, `__is_enum`, `__is_union`, `__is_function`, etc.
-- Composite type categories (6): `__is_reference`, `__is_arithmetic`, `__is_fundamental`, `__is_object`, `__is_scalar`, `__is_compound`
-- Type relationships (3): `__is_base_of`, `__is_same`, `__is_convertible`
-- Type properties (12): `__is_polymorphic`, `__is_final`, `__is_abstract`, `__is_empty`, `__is_aggregate`, `__is_const`, `__is_volatile`, etc.
-- Signedness traits (2): `__is_signed`, `__is_unsigned`
-- Array traits (2): `__is_bounded_array`, `__is_unbounded_array`
-- Math builtins (4): `__builtin_labs`, `__builtin_llabs`, `__builtin_fabs`, `__builtin_fabsf`
-- Variadic support (2): `__builtin_va_start`, `__builtin_va_arg`
+*For detailed implementation notes and test cases, see git history or previous versions of this document.*
 
 ---
 
-### Priority 6-8: Core Language Features (COMPLETE ✅)
+## Priority 5: Compiler Intrinsics (MOSTLY COMPLETE)
 
-All documented in **Completed Features** section above.
+**Status**: ✅ **MOSTLY COMPLETE** - 36+ intrinsics fully implemented and tested  
+**Test Case**: `tests/test_type_traits_intrinsics.cpp`, `tests/test_is_same_intrinsic.cpp`, `tests/test_new_intrinsics.cpp`, `tests/test_is_aggregate_simple.cpp`
+
+### Problem
+
+Standard library implementations rely on compiler intrinsics for efficient type trait implementations and built-in operations.
+
+### Implemented Intrinsics ✅
+
+**Primary type categories (14 intrinsics)**:
+- `__is_void(T)`, `__is_nullptr(T)`, `__is_integral(T)`, `__is_floating_point(T)`
+- `__is_array(T)`, `__is_pointer(T)`, `__is_lvalue_reference(T)`, `__is_rvalue_reference(T)`
+- `__is_member_object_pointer(T)`, `__is_member_function_pointer(T)`
+- `__is_enum(T)`, `__is_union(T)`, `__is_class(T)`, `__is_function(T)`
+
+**Composite type categories (6 intrinsics)**:
+- `__is_reference(T)` - lvalue or rvalue reference
+- `__is_arithmetic(T)` - integral or floating point
+- `__is_fundamental(T)` - void, nullptr_t, or arithmetic
+- `__is_object(T)` - not function, reference, or void
+- `__is_scalar(T)` - arithmetic, pointer, enum, member pointer, or nullptr
+- `__is_compound(T)` - not fundamental (array, function, pointer, reference, class, union, enum, member pointer)
+
+**Type relationships (3 intrinsics)**:
+- `__is_base_of(Base, Derived)` - inheritance check
+- `__is_same(T, U)` - exact type equality
+- `__is_convertible(From, To)` - conversion check
+
+**Type properties (12 intrinsics - NEW!)**:
+- `__is_polymorphic(T)`, `__is_final(T)`, `__is_abstract(T)`, `__is_empty(T)`
+- `__is_aggregate(T)` - aggregate type check **NEW!**
+- `__is_standard_layout(T)`, `__is_trivially_copyable(T)`, `__is_trivial(T)`, `__is_pod(T)`
+- `__is_const(T)` - const qualifier check
+- `__is_volatile(T)` - volatile qualifier check
+- `__has_unique_object_representations(T)`
+
+**Signedness traits (2 intrinsics)**:
+- `__is_signed(T)` - signed integral type
+- `__is_unsigned(T)` - unsigned integral type
+
+**Array traits (2 intrinsics)**:
+- `__is_bounded_array(T)` - array with known bound (e.g., int[10])
+- `__is_unbounded_array(T)` - array with unknown bound (e.g., int[])
+
+**Math builtins (4 intrinsics)**:
+- `__builtin_labs`, `__builtin_llabs`, `__builtin_fabs`, `__builtin_fabsf`
+
+**Variadic support (2 intrinsics)**:
+- `__builtin_va_start`, `__builtin_va_arg`
+
+**Total**: 36+ compiler intrinsics fully implemented
+
+### Required For
+
+- Efficient type trait implementations
+- Standard library math functions
+- Optimized container operations
+- `<type_traits>` performance
+- Type-based metaprogramming
+
+### Recent Changes
+
+- **2025-12-12 12:15 UTC**: Added `__is_aggregate(T)` intrinsic
+  - Detects aggregate types: arrays and structs with no user-declared constructors, no private/protected members, no virtual functions
+  - Correctly distinguishes user-declared from compiler-generated constructors
+  - Arrays are always aggregates
+  - Test: `tests/test_is_aggregate_simple.cpp` - PASSES
+  
+- **2025-12-12 09:50 UTC**: Added 13 new type trait intrinsics for better `<type_traits>` support
+  - Composite categories: `__is_reference`, `__is_arithmetic`, `__is_fundamental`, `__is_object`, `__is_scalar`, `__is_compound`
+  - Type conversion: `__is_convertible(From, To)` 
+  - Type properties: `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`
+  - Array traits: `__is_bounded_array`, `__is_unbounded_array`
+  - Added array type parsing support in type trait arguments (e.g., `__is_bounded_array(int[10])`)
+  - Test: `tests/test_new_intrinsics.cpp` - PASSES (all 13 intrinsics tested)
+  
+- **2025-12-11**: Added `__is_same(T, U)` intrinsic
+  - Checks exact type equality including cv-qualifiers, references, pointers
+  - Test: `tests/test_is_same_intrinsic.cpp` - PASSES
+
+### Implementation Notes
+
+- Type trait intrinsics are parsed as special expressions in Parser.cpp (lines 10339-10700)
+- Array type parsing support for bounded/unbounded arrays (lines 10545-10690)
+- Evaluation logic in CodeGen.h::generateTypeTraitIr() (lines 10282+)
+- Constexpr evaluation in ConstExprEvaluator.h::evaluate_type_trait() (lines 2344+)
+- Most critical intrinsics for `<type_traits>` are now implemented
+- Math builtin functions (`__builtin_labs`, etc.) are registered as built-in functions
+
+---
+
+## Priority 6: Anonymous Template Parameters (COMPLETE)
+
+**Status**: ✅ **COMPLETE**  
+**Test Case**: `tests/test_anonymous_template_params.cpp`
+
+Enables unnamed template parameters like `template<bool, typename T>` and `template<typename, class>`. Parser generates unique internal names for tracking. All 638 tests pass.
+
+---
+
+## Priority 7: Type Alias Access from Template Specializations (COMPLETE)
+
+**Status**: ✅ **COMPLETE**  
+**Test Case**: `tests/test_type_alias_from_specialization.cpp`
+
+Type aliases in template specializations are now accessible with qualified names (e.g., `enable_if<true>::type`). Critical for `<type_traits>` functionality.
+
+---
+
+## Priority 8: Out-of-Class Static Member Definitions in Templates (COMPLETE)
+
+**Status**: ✅ **COMPLETE**  
+**Test Case**: `tests/test_out_of_class_static.cpp`
+
+Supports `template<typename T> Type ClassName<T>::member = value;` pattern. Template parameter substitution works correctly, including constructor call initializers like `T()`.
+
+---
+
+## Priority 8.5: Member Template Aliases (COMPLETE ✅)
+
+**Status**: 🔄 **IN PROGRESS** - Parsing complete, instantiation working for full specializations  
+**Test Cases**: 
+- `tests/test_member_template_alias.cpp` (passes) - Regular classes
+- `tests/test_member_alias_in_spec_parse_only.cpp` (passes) - Parsing in specializations
+- `tests/test_member_alias_in_full_spec.cpp` (NOW PASSES! 🎉)
+- `tests/test_member_alias_in_partial_spec_fail.cpp` (expected fail - partial spec instantiation needs more work)
+
+### Solution Implemented (2025-12-12 13:47 UTC)
+
+Added the `template` keyword handler to both full and partial template specialization parsing. The handler:
+1. Detects `template` keyword in class body
+2. Looks ahead to determine if it's a member template alias (ends with `using`) or member function template
+3. Calls the appropriate parser (`parse_member_template_alias` or `parse_member_function_template`)
+
+### Changes Made
+
+**File**: `src/Parser.cpp`
+- Lines ~15977-16030: Added template keyword handler in full specialization parsing
+- Lines ~16891-16944: Added template keyword handler in partial specialization parsing
+
+Both handlers mirror the existing logic from regular struct parsing (lines 3131-3180).
+
+### What Works Now
+
+- ✅ Member template aliases parse in regular classes
+- ✅ Member template aliases parse in primary template classes  
+- ✅ Member template aliases parse in full template specializations
+- ✅ Member template aliases parse in partial template specializations
+- ✅ Parser correctly registers all member template aliases (visible in debug logs)
+
+### Implementation Status (2025-12-12 15:38 UTC)
+
+**Phase 1: Parsing** ✅ COMPLETE
+- Member template aliases parse correctly in all contexts
+
+**Phase 2: Instantiation/Usage** 🔄 PARTIAL
+Member template alias instantiation now works for full specializations!
+
+**Implemented:**
+1. ✅ Modified qualified identifier parsing to detect member template aliases
+2. ✅ Parse template arguments after `::` for member aliases  
+3. ✅ Implement instantiation with parameter substitution for full specializations
+4. ✅ Handle nested lookups by stripping instantiation suffixes to find base template
+
+**Working:** `__conditional<true>::type<int, double>` correctly resolves to `int`
+
+**Still TODO:**
+- None for parsing and instantiation logic!
+
+**Partial Specialization Status (2025-12-12 15:55 UTC):**
+
+✅ **FIXED!** Partial specialization member template alias instantiation now works correctly at the parsing level.
+
+**Implementation:**
+1. Added `instantiation_to_pattern_` map in TemplateRegistry
+2. Store pattern mapping during template instantiation (when pattern match found)
+3. Check pattern mapping during member alias lookup before falling back to progressive stripping
+4. Correctly resolves `Wrapper<int, false>::Type<double>` to `U*` → `double*`
+
+**Known Code Generation Issue:**
+There's a separate bug in the code generator where pointer types from member template aliases aren't properly allocated. The parser correctly identifies the type as `double*` with ptr_depth=1, but codegen allocates it as `double64` instead of a pointer. This is a pre-existing code generator limitation, not a parser issue.
+
+**Test Status:**
+- Parsing: ✅ Works perfectly
+- Type instantiation: ✅ Produces correct types (`double*`)
+- Code generation: ❌ Doesn't properly handle pointers (separate bug)
+
+**Implementation Status:** Parser implementation COMPLETE for both full and partial specializations!
+
+**Test Results:**
+- ✅ `test_member_alias_in_full_spec.cpp` - NOW PASSES!
+- ❌ `test_member_alias_in_partial_spec_fail.cpp` - Needs partial spec support
 
 ---
 
@@ -77,9 +257,7 @@ All documented in **Completed Features** section above.
 
 **Status**: ⚠️ **NON-BLOCKING** - Warnings only, doesn't block compilation
 
-**Issue**: Preprocessor handles most expressions correctly but may warn on undefined macros in complex conditionals.
-
-**Impact**: Standard library headers work despite warnings. Better undefined macro handling in `evaluate_expression()` would eliminate warnings (see `src/FileReader.h`).
+Preprocessor handles most expressions correctly but may warn on undefined macros in complex conditionals. Needs better undefined macro handling in `evaluate_expression()` (see `src/FileReader.h`).
 
 ---
 
@@ -87,178 +265,150 @@ All documented in **Completed Features** section above.
 
 **Status**: ⚠️ **PARTIAL SUPPORT**
 
-**Implemented**:
 - ✅ Variadic templates (basic support)
 - ✅ Template template parameters (partial support)
-- ✅ C++20 Concepts (literal constraint evaluation: `requires true`, `requires false`)
-
-**Not Implemented**:
-- ❌ Perfect forwarding (needs testing)
+- ⚠️ Perfect forwarding (needs testing)
 - ❌ SFINAE (Substitution Failure Is Not An Error)
-- ❌ Complex concept expressions (e.g., `requires std::integral<T>`)
-- ❌ Pack expansion in member declarations
 
-**Priority**: Low for basic standard library support. SFINAE requires sophisticated template instantiation logic. Complex concepts require full expression evaluation in constraints.
+Low priority for basic standard library support. SFINAE requires sophisticated template instantiation logic.
 
 ---
 
-## Priority 11: Namespace-Qualified Template Instantiation (COMPLETE ✅)
+## Priority 11: Namespace-Qualified Template Instantiation (COMPLETE)
 
 **Status**: ✅ **COMPLETE**  
 **Test Case**: `tests/test_namespace_template_instantiation.cpp`
 
-Templates in namespaces can now be instantiated with fully-qualified names (e.g., `std::integral_constant<bool, true>::value`). Parser and CodeGen updated to handle multi-level namespace qualification.
-
----
-
-## Recently Verified Working Features
-
-These features were previously thought to be incomplete but are actually fully or partially implemented:
-
-### constinit Enforcement
-
-**Status**: ✅ **IMPLEMENTED**  
-**Test Case**: `tests/test_constinit_fail.cpp` (correctly fails with error)
-
-**Description**: The `constinit` specifier requires variables to be initialized with constant expressions. The compiler parses and enforces this requirement.
-
-**What Works**:
-- ✅ Parsing `constinit` keyword
-- ✅ Validating that initializers are constant expressions
-- ✅ Proper error messages when validation fails
-- ✅ Distinction between `constexpr` and `constinit` semantics
-
-**Implementation**: See `src/Parser.cpp` lines 2259-2294.
-
----
-
-### C++20 Concepts and Requires Clauses
-
-**Status**: ✅ **PARTIALLY IMPLEMENTED**  
-**Test Case**: `tests/concept_error_test_fail.cpp` (correctly fails with constraint error)
-
-**What Works**:
-- ✅ Parsing concept declarations (`template<typename T> concept Name = ...;`)
-- ✅ Parsing requires clauses on function templates
-- ✅ Evaluating literal constraints (`requires true`, `requires false`)
-- ✅ Proper error messages when constraints are not satisfied
-
-**Not Yet Implemented**:
-- Complex concept expressions (e.g., `requires std::integral<T>`)
-- Requires expressions with type requirements
-- Concept composition (conjunction, disjunction)
-
----
-
-## Remaining Missing Features
-
-### Pack Expansion in Member Declarations
-
-**Status**: ❌ **NOT IMPLEMENTED**  
-**Test Case**: `tests/test_pack_expansion_members_fail.cpp`
-
-**Description**: Variadic template parameter packs should be expandable in member variable declarations.
-
-**Example**:
-```cpp
-template<typename... Args>
-struct Tuple {
-    Args... values;  // Should expand to multiple members
-};
-```
-
-**Current Support**: Variadic templates work for function parameters and template parameters, but not for struct member expansion.
-
-**Impact**: Medium priority. Required for implementing `std::tuple` and similar variadic containers from scratch. Most standard library implementations use different techniques.
+Templates in namespaces can now be instantiated with fully-qualified names (e.g., `std::integral_constant<bool, true>::value`). Parser and CodeGen both updated to handle multi-level namespace qualification.
 
 ---
 
 ## Testing Strategy
 
-**Test Suite**: 643 total tests
-- ✅ 642 passing tests
-- ✅ 11 expected failures (documented above)
-
-**Key Test Categories**:
-- Member template aliases: `test_member_template_alias.cpp`, `test_member_alias_in_full_spec.cpp`
-- Compiler intrinsics: `test_type_traits_intrinsics.cpp`, `test_is_same_intrinsic.cpp`, `test_new_intrinsics.cpp`
-- Template features: `test_namespace_template_instantiation.cpp`, `test_anonymous_template_params.cpp`
-- Specializations: `test_full_spec_inherit.cpp`, `test_partial_spec_inherit.cpp`
-- Type system: `test_struct_ref_members.cpp`, `test_out_of_class_static.cpp`
-
----
-
-## Code References
-
-### Parser (`src/Parser.cpp`)
-- Lines 3131-3180: Member template alias/function template detection in regular classes
-- Lines 10339-10700: Type trait intrinsic parsing (36+ intrinsics)
-- Lines 10545-10690: Array type parsing in type trait arguments
-- Lines 15977-16030: Member template alias/function template detection in full specializations
-- Lines 16891-16944: Member template alias/function template detection in partial specializations
-- Lines 18483-18610: Member template alias parsing implementation
-
-### Code Generator (`src/CodeGen.h`)
-- Lines 4906-4954: Qualified identifier IR generation
-- Lines 10282+: Type trait evaluation logic (36+ intrinsics)
-- Lines 587-599: Trivial default constructor generation with base class check
-- Lines 1686-1707: Explicit constructor generation with base class check
-
-### ConstExpr Evaluator (`src/ConstExprEvaluator.h`)
-- Lines 2344+: Type trait constexpr evaluation
-
-### Template Registry (`src/TemplateRegistry.h`)
-- Lines 256-271: OutOfLineMemberFunction and OutOfLineMemberVariable structs
-- Lines 653-681: Registration methods for out-of-line members
+All 643 tests: 641 pass, 2 expected failures (usage, not parsing). Key test files:
+- `test_member_alias_in_spec_parse_only.cpp` - **NEW**: Verifies member template alias **parsing** works in specializations (PASSES)
+- `test_member_alias_in_full_spec.cpp` - Tests member template alias **usage** in full specializations (NOW PASSES!)
+- `test_member_alias_in_partial_spec_fail.cpp` - Tests member template alias **usage** in partial specializations (expected fail - partial spec support not yet implemented)
+- `test_member_template_alias.cpp` - Tests member template aliases in regular classes (PASSES)
+- `test_namespace_template_instantiation.cpp`, `test_is_aggregate_simple.cpp`, `test_is_aggregate_with_if.cpp`
+- `test_bool_conditional_bug.cpp` - Verifies bool conditionals work correctly in if statements
+- `test_full_spec_inherit.cpp`, `test_partial_spec_inherit.cpp`
+- `test_type_alias_from_specialization.cpp`, `test_anonymous_template_params.cpp`
+- `test_is_same_intrinsic.cpp`, `test_new_intrinsics.cpp`
+- `test_struct_ref_members.cpp`, `test_out_of_class_static.cpp`
 
 ---
 
-## Progress Summary
+## References
+
+- **Test File**: `tests/test_real_std_headers_fail.cpp` - Detailed failure analysis with all standard header attempts
+- **Preprocessor Documentation**: `docs/STANDARD_HEADERS_REPORT.md` - Preprocessor and macro fixes already applied
+- **Parser Code**: `src/Parser.cpp` - Main parsing logic
+  - Lines 1260-1286: Conversion operator parsing (first location)
+  - Lines 3131-3180: **Member template alias/function template detection in regular classes**
+  - Lines 3702-3742: Conversion operator parsing (member function context)
+  - Lines 10339-10700: **Type trait intrinsic parsing with array type support (36+ intrinsics - UPDATED 2025-12-12)**
+  - Lines 10545-10690: Array type parsing in type trait arguments ([N] and [])
+  - Lines 10888-10930: Qualified identifier parsing with namespace-qualified templates
+  - Lines 15438-15536: Full specialization base class parsing
+  - Lines 15514-15527: Type alias parsing in template specializations
+  - Lines ~15977-16030: **Member template alias/function template detection in full specializations (ADDED 2025-12-12)**
+  - Lines 16194-16274: Partial specialization base class parsing
+  - Lines ~16891-16944: **Member template alias/function template detection in partial specializations (ADDED 2025-12-12)**
+  - Lines 17657-17690: Anonymous type parameter parsing (typename/class)
+  - Lines 17722-17756: Anonymous non-type parameter parsing
+  - Lines 18483-18610: **Member template alias parsing implementation (parse_member_template_alias)**
+  - Lines 19168-19220: Type alias registration in `instantiate_full_specialization`
+  - Lines 20875-20933: Out-of-line static member variable processing
+  - Lines 21929-21964: Out-of-line static member variable parsing
+- **Code Generator**: `src/CodeGen.h` - Code generation
+  - Lines 4906-4954: Qualified identifier IR generation
+  - Lines 10269-10280: Helper functions (isScalarType, isArithmeticType)
+  - Lines 10282+: **Type trait evaluation logic (generateTypeTraitIr) - 36+ intrinsics**
+  - Lines 587-599: Trivial default constructor generation with base class check
+  - Lines 1686-1707: Explicit constructor generation with base class check
+  - Lines 1763-1795: Implicit copy/move constructor generation with base class check
+- **ConstExpr Evaluator**: `src/ConstExprEvaluator.h` - Compile-time evaluation
+  - Lines 2344+: Type trait constexpr evaluation (evaluate_type_trait)
+- **Template Registry**: `src/TemplateRegistry.h` - Template instantiation tracking
+  - Lines 256-271: OutOfLineMemberFunction and OutOfLineMemberVariable structs
+  - Lines 653-681: Registration methods for out-of-line members
+
+---
+
+## Progress Tracking
 
 ### Completed ✅
-All critical parsing features for standard library headers are complete! This includes:
-- All core language features (conversion operators, template specializations, etc.)
-- 36+ compiler intrinsics for type traits
-- Member template aliases in all contexts
-- Namespace-qualified template instantiation
-- Reference members in structs
-- Anonymous template parameters
-- C++20 concepts (literal constraints)
-- constinit enforcement
 
-### Known Issues ⚠️
-- Partial specialization member aliases: Code generator bug with pointer types (parsing works)
-- Complex preprocessor expressions: Non-blocking warnings
+- ✅ **Priority 1**: Conversion operators with static member access
+- ✅ **Priority 2**: Non-type template parameters with dependent types
+- ✅ **Priority 3**: Template specialization inheritance (both partial and full specializations)
+- ✅ **Priority 4**: Reference members in structs (int&, char&, short&, struct&, template wrappers)
+- ✅ **Priority 5**: Compiler intrinsics (**36+ intrinsics fully implemented - 2025-12-12**)
+- ✅ **Priority 6**: Anonymous template parameters (both type and non-type parameters)
+- ✅ **Priority 7**: Type alias access from template specializations (both full and partial specializations)
+- ✅ **Priority 8**: Out-of-class static member definitions in templates
+- ✅ **Priority 8b**: Implicit constructor generation for derived classes
+- ✅ **Priority 8.5**: Member template aliases (**COMPLETE** - parsing works in all contexts: regular classes, full specializations, partial specializations)
+- ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
+- ⚠️ **Priority 10**: Advanced template features (partial support)
+- ✅ **Priority 11**: **Namespace-qualified template instantiation** (**COMPLETE 2025-12-12**)
+- Basic preprocessor support for standard headers
+- GCC/Clang builtin type macros (`__SIZE_TYPE__`, etc.)
+- Preprocessor arithmetic and bitwise operators
+- `__attribute__` and `noexcept` parsing
 
-### Not Yet Implemented ❌
-- Complex concept expressions (basic literal constraints work)
-- Pack expansion in member declarations  
-- SFINAE (Substitution Failure Is Not An Error)
+### Potential Issues ⚠️
+
+**None currently known for parsing.**
+
+Note: Using member template aliases (e.g., `MyClass<false>::type<int, double>`) requires template instantiation support, which is a separate feature not yet implemented. This is not a parsing issue.
+
+### Critical Blockers ❌
+
+**No critical blockers for parsing standard library headers!**
+
+All known parsing blockers have been resolved. The remaining work is in template instantiation and semantic analysis, which are separate from parsing.
+
+### Remaining Missing Features ❌
+
+- ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
+- ⚠️ **Priority 10**: Advanced template features (SFINAE, some metaprogramming patterns)
+- ⚠️ **Template Instantiation**: Using member template aliases (instantiation, not parsing)
+
+### In Progress 🔄
+
+**None currently in progress.**
 
 ### All Parsing Complete! ✅
-All critical parsing features for C++20 standard library header support have been implemented. The remaining work is primarily in:
-1. Code generation optimizations (e.g., pointer type handling in partial specializations)
-2. Advanced template metaprogramming (SFINAE)
-3. Complex concept expression evaluation
-4. Pack expansion in member variable declarations
+
+All critical parsing features for standard library header support have been implemented!
+
+- ✅ Member template aliases in all contexts (regular, full specialization, partial specialization)
+- ✅ Template specialization inheritance
+- ✅ Namespace-qualified template instantiation
+- ✅ 36+ compiler intrinsics for type traits
+- ✅ All core C++20 language features needed for headers
 
 ---
 
 ## How to Update This Document
 
-When working on a missing feature:
+When working on any missing feature:
 
-1. Update the **Status** field (❌ NOT IMPLEMENTED → 🔄 IN PROGRESS → ✅ COMPLETE)
-2. Add brief implementation notes (1-2 sentences max)
-3. Update the **Progress Summary** section
-4. Document test cases created
-5. When complete, move to **Completed Features** section and condense details
-6. Remove excessive implementation details to keep document concise
+1. Update the **Status** field (❌ BLOCKING → 🔄 IN PROGRESS → ✅ FIXED)
+2. Add implementation notes as you discover details
+3. Update the **Progress Tracking** section
+4. Cross-reference with related test files
+5. Document any new test cases created
+6. Move completed features to the **Completed Features** section at the top
+7. Compact the completed features list by removing excessive details
 
-When discovering a new missing feature:
+When adding a new missing feature discovered during implementation:
 
-1. Add it to the **Newly Discovered Missing Features** section
-2. Include a brief description and example
-3. Note the impact level (High/Medium/Low priority)
-4. Add a test case if possible
-5. Document any known workarounds
+1. Add it in the appropriate priority section
+2. Include example failure code
+3. Explain root cause if known
+4. List what standard library features depend on it
+5. Add to **Newly Discovered Missing Features** section in Progress Tracking
+6. Document any workarounds available
