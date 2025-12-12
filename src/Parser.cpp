@@ -240,7 +240,11 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
 
 std::optional<Token> Parser::consume_token() {
     std::optional<Token> token = peek_token();
-    current_token_.emplace(lexer_.next_token());
+    Token next = lexer_.next_token();
+    FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'", 
+        token.has_value() ? std::string(token->value()) : "N/A",
+        std::string(next.value()));
+    current_token_.emplace(next);
     return token;
 }
 
@@ -286,6 +290,11 @@ Parser::SaveHandle Parser::save_token_position() {
     TokenPosition lexer_pos = lexer_.save_token_position();
     saved_tokens_[handle] = { current_token_, ast_nodes_.size(), lexer_pos };
     
+    if (current_token_.has_value()) {
+        FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}", 
+            static_cast<unsigned long>(handle), std::string(current_token_->value()));
+    }
+    
     return handle;
 }
 
@@ -297,6 +306,20 @@ void Parser::restore_token_position(SaveHandle handle, const std::source_locatio
     }
     
     const SavedToken& saved_token = it->second;
+    if (saved_token.current_token_.has_value()) {
+        std::string saved_tok = std::string(saved_token.current_token_->value());
+        std::string current_tok = current_token_.has_value() ? std::string(current_token_->value()) : "N/A";
+        
+        // DEBUGGING: Track if we're restoring to "ns" token
+        if (saved_tok == "ns") {
+            FLASH_LOG_FORMAT(Parser, Error, "!!! RESTORING TO 'ns' TOKEN !!! handle={}, current={}", 
+                static_cast<unsigned long>(handle), current_tok);
+        }
+        
+        FLASH_LOG_FORMAT(Parser, Debug, "restore_token_position: handle={}, saved token={}, current={}", 
+            static_cast<unsigned long>(handle), saved_tok, current_tok);
+    }
+    
     lexer_.restore_token_position(saved_token.lexer_position_);
     current_token_ = saved_token.current_token_;
 	
@@ -952,6 +975,7 @@ ParseResult Parser::parse_top_level_node()
 	}
 
 	// Attempt to parse a function definition, variable declaration, or typedef
+	FLASH_LOG(Parser, Debug, "parse_top_level_node: About to call parse_declaration_or_function_definition, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
 		if (auto node = result.node()) {
@@ -962,16 +986,21 @@ ParseResult Parser::parse_top_level_node()
 
 	// If we failed to parse any top-level construct, restore the token position
 	// and report an error
+	FLASH_LOG(Parser, Debug, "parse_top_level_node: parse_declaration_or_function_definition failed, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A", ", error: ", result.error_message());
 	return saved_position.error("Failed to parse top-level construct");
 }
 
 ParseResult Parser::parse_type_and_name() {
+    FLASH_LOG(Parser, Debug, "parse_type_and_name: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+    
     // Check for alignas specifier before the type
     std::optional<size_t> custom_alignment = parse_alignas_specifier();
 
     // Parse the type specifier
+    FLASH_LOG(Parser, Debug, "parse_type_and_name: About to parse type_specifier, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
     auto type_specifier_result = parse_type_specifier();
     if (type_specifier_result.is_error()) {
+        FLASH_LOG(Parser, Debug, "parse_type_and_name: parse_type_specifier failed: ", type_specifier_result.error_message());
         return type_specifier_result;
     }
 
@@ -1003,9 +1032,14 @@ ParseResult Parser::parse_type_and_name() {
     // Function pointers have the pattern: type (*identifier)(params)
     // We need to check for '(' followed by '*' to detect this
     if (peek_token().has_value() && peek_token()->value() == "(") {
+        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Found '(' - checking for function pointer. current_token={}", 
+            current_token_.has_value() ? std::string(current_token_->value()) : "N/A");
         // Save position in case this isn't a function pointer or reference declarator
         SaveHandle saved_pos = save_token_position();
         consume_token(); // consume '('
+        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: After consuming '(', current_token={}, peek={}", 
+            current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+            peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 
         // Check if next token is '*' (function pointer pattern) or '&' (reference to array pattern)
         if (peek_token().has_value() && peek_token()->value() == "*") {
@@ -1099,7 +1133,12 @@ ParseResult Parser::parse_type_and_name() {
             }
         } else {
             // Not a function pointer or reference declarator, restore and continue with regular parsing
+            FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Not a function pointer, restoring. Before restore: current_token={}", 
+                current_token_.has_value() ? std::string(current_token_->value()) : "N/A");
             restore_token_position(saved_pos);
+            FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: After restore: current_token={}, peek={}", 
+                current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
         }
     }
 
@@ -1292,15 +1331,20 @@ ParseResult Parser::parse_type_and_name() {
     } else {
         // Regular identifier (or unnamed parameter)
         // Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
+        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}", 
+            current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+            peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
         if (peek_token().has_value()) {
             auto next = peek_token()->value();
             if (next == "," || next == ")" || next == "=" || next == "[") {
                 // This is an unnamed parameter - create a synthetic empty identifier
+                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
                 identifier_token = Token(Token::Type::Identifier, "",
                                         current_token_->line(), current_token_->column(),
                                         current_token_->file_index());
             } else {
                 // Regular identifier
+                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consuming token as identifier, peek={}", std::string(next));
                 auto id_token = consume_token();
                 if (!id_token) {
                     return ParseResult::error("Expected identifier token", Token());
@@ -1309,6 +1353,10 @@ ParseResult Parser::parse_type_and_name() {
                     return ParseResult::error("Expected identifier token", *id_token);
                 }
                 identifier_token = *id_token;
+                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consumed identifier={}, now current_token={}, peek={}", 
+                    std::string(identifier_token.value()),
+                    current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                    peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
             }
         } else {
             return ParseResult::error("Expected identifier or end of parameter", Token());
@@ -1620,6 +1668,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 {
 	ScopedTokenPosition saved_position(*this);
 	
+	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	
 	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), __cdecl, etc.)
 	AttributeInfo attr_info = parse_attributes();
 
@@ -1666,14 +1716,24 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	// Parse the type specifier and identifier (name)
 	// This will also extract any calling convention that appears after the type
+	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: About to parse type_and_name, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
+		FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name failed: ", type_and_name_result.error_message());
 		return type_and_name_result;
 	}
+
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name succeeded. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 
 	// Check for out-of-line member function definition: ClassName::functionName(...)
 	// Pattern: ReturnType ClassName::functionName(...) { ... }
 	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: Got decl_node, identifier={}. About to check for '::', current_token={}, peek={}", 
+		std::string(decl_node.identifier_token().value()),
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	if (peek_token().has_value() && peek_token()->value() == "::") {
 		// This is an out-of-line member function definition
 		consume_token();  // consume '::'
@@ -1847,8 +1907,15 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	// First, try to parse as a function definition
 	// Save position before attempting function parse so we can backtrack if it's actually a variable
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to try parse_function_declaration. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	SaveHandle before_function_parse = save_token_position();
 	ParseResult function_definition_result = parse_function_declaration(decl_node, attr_info.calling_convention);
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_declaration returned. is_error={}, current_token={}, peek={}", 
+		function_definition_result.is_error(),
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	if (!function_definition_result.is_error()) {
 		// Successfully parsed as function - discard saved position
 		discard_saved_token(before_function_parse);
@@ -1871,7 +1938,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// For free functions: noexcept is applied, const/volatile/&/&&/override/final are ignored
 		FlashCpp::MemberQualifiers member_quals;
 		FlashCpp::FunctionSpecifiers func_specs;
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse_function_trailing_specifiers. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_trailing_specifiers returned. is_error={}, current_token={}, peek={}", 
+			specs_result.is_error(),
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		if (specs_result.is_error()) {
 			return specs_result;
 		}
@@ -1996,6 +2070,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		// Is only function declaration
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: Checking for ';' vs function body. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		if (consume_punctuator(";")) {
 			// Return the function declaration node (needed for templates)
 			if (auto func_node = function_definition_result.node()) {
@@ -2005,6 +2082,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		// Add function parameters to the symbol table within a function scope (Phase 3: RAII)
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse function body. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
 
 		// Set current function pointer for __func__, __PRETTY_FUNCTION__
@@ -2024,6 +2104,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// Note: trailing specifiers were already skipped after parse_function_declaration()
 
 			// Parse function body
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to call parse_block. current_token={}, peek={}", 
+				current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+				peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 			auto block_result = parse_block();
 			if (block_result.is_error()) {
 				current_function_ = nullptr;
@@ -6110,6 +6193,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 ParseResult Parser::parse_type_specifier()
 {
+	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	
 	auto current_token_opt = peek_token();
 
 	// Check for decltype FIRST, before any other checks
@@ -7846,11 +7931,22 @@ ParseResult Parser::parse_block()
 		return ParseResult::error("Expected '{' for block", *current_token_);
 	}
 
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_block: Entered block. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 
 	while (!consume_punctuator("}")) {
 		// Parse statements or declarations
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: About to parse_statement_or_declaration. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		ParseResult parse_result = parse_statement_or_declaration();
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: parse_statement_or_declaration returned. is_error={}, current_token={}, peek={}", 
+			parse_result.is_error(),
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		if (parse_result.is_error())
 			return parse_result;
 
@@ -7881,6 +7977,11 @@ ParseResult Parser::parse_statement_or_declaration()
 			*current_token_);
 	}
 	const Token& current_token = current_token_opt.value();
+
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_statement_or_declaration: current_token={}, type={}", 
+		std::string(current_token.value()),
+		current_token.type() == Token::Type::Keyword ? "Keyword" : 
+		current_token.type() == Token::Type::Identifier ? "Identifier" : "Other");
 
 	// Handle nested blocks
 	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
@@ -7952,6 +8053,8 @@ ParseResult Parser::parse_statement_or_declaration()
 		auto keyword_iter = keyword_parsing_functions.find(current_token.value());
 		if (keyword_iter != keyword_parsing_functions.end()) {
 			// Call the appropriate parsing function
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_statement_or_declaration: Found keyword '{}', calling handler", 
+				std::string(current_token.value()));
 			return (this->*(keyword_iter->second))();
 		}
 
@@ -8324,6 +8427,7 @@ ParseResult Parser::parse_variable_declaration()
 				} else {
 					// Parse expression with precedence > comma operator (precedence 1)
 					// This prevents comma from being treated as an operator in declaration lists
+					FLASH_LOG(Parser, Debug, "parse_variable_declaration: About to parse initializer expression, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 					ParseResult init_expr_result = parse_expression(2);
 					if (init_expr_result.is_error()) {
 						return init_expr_result;
@@ -8779,7 +8883,14 @@ ParseResult Parser::parse_return_statement()
 			current_token_opt.value_or(Token()));
 	}
 	Token return_token = current_token_opt.value();
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to consume 'return'. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	consume_token(); // Consume the 'return' keyword
+
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: Consumed 'return'. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 
 	// Parse the return expression (if any)
 	ParseResult return_expr_result;
@@ -8787,6 +8898,9 @@ ParseResult Parser::parse_return_statement()
 	if (!next_token_opt.has_value() ||
 		(next_token_opt.value().type() != Token::Type::Punctuator ||
 			next_token_opt.value().value() != ";")) {
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to parse_expression. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		return_expr_result = parse_expression();
 		if (return_expr_result.is_error()) {
 			return return_expr_result;
@@ -9589,8 +9703,16 @@ ParseResult Parser::parse_unary_expression()
 
 ParseResult Parser::parse_expression(int precedence)
 {
+	FLASH_LOG(Parser, Debug, "parse_expression: Starting with precedence=", precedence, ", current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	
+	// Add a specific check for the problematic case
+	if (peek_token().has_value() && peek_token()->value() == "ns" && precedence == 2) {
+		FLASH_LOG(Parser, Error, "UNEXPECTED: parse_expression called with token 'ns' and precedence=2 (initializer context)");
+	}
+	
 	ParseResult result = parse_unary_expression();
 	if (result.is_error()) {
+		FLASH_LOG(Parser, Debug, "parse_expression: parse_unary_expression failed: ", result.error_message());
 		return result;
 	}
 
@@ -10721,6 +10843,67 @@ ParseResult Parser::parse_primary_expression()
 			return ParseResult::success(*result);
 		}
 
+		// Check if qualified identifier is followed by template arguments: ns::Template<Args>
+		// This must come BEFORE we try to use current_token_ as an operator
+		// Skip this if we're already parsing a template body to avoid infinite recursion
+		std::optional<std::vector<TemplateTypeArg>> template_args;
+		if (!parsing_template_body_ && current_token_.has_value() && current_token_->value() == "<") {
+			// Build the qualified name from namespaces using StringBuilder
+			StringBuilder qualified_name_builder;
+			for (const auto& ns : qual_id.namespaces()) {
+				qualified_name_builder.append(ns).append("::");
+			}
+			qualified_name_builder.append(qual_id.name());
+			std::string_view qualified_name = qualified_name_builder.preview();
+			
+			// Check if this identifier is a registered template
+			if (gTemplateRegistry.lookupTemplate(qualified_name).has_value() || 
+			    gTemplateRegistry.lookupTemplate(qual_id.name()).has_value()) {
+				qualified_name_builder.reset();
+				// Yes, this is a template - parse template arguments
+				template_args = parse_explicit_template_arguments();
+				if (!template_args.has_value()) {
+					return ParseResult::error("Failed to parse template arguments", *current_token_);
+				}
+				
+				// Try to instantiate the template with these arguments
+				// Note: try_instantiate_class_template returns nullopt on success (type registered in gTypesByName)
+				// Try class template instantiation first (for struct/class templates)
+				auto instantiation_result = try_instantiate_class_template(qual_id.name(), *template_args);
+				if (instantiation_result.has_value()) {
+					// Simple name failed, try with qualified name
+					instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
+					if (instantiation_result.has_value()) {
+						// Class instantiation didn't work, try function template
+						instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
+						if (instantiation_result.has_value()) {
+							instantiation_result = try_instantiate_template_explicit(qualified_name, *template_args);
+							if (instantiation_result.has_value()) {
+								return ParseResult::error("Failed to instantiate template", final_identifier);
+							}
+						}
+					}
+				}
+				// If we reach here, instantiation succeeded (returned nullopt)
+				
+				// Check if followed by :: for member access (Template<T>::member)
+				if (current_token_.has_value() && current_token_->value() == "::") {
+					auto member_result = parse_qualified_identifier_after_template(final_identifier);
+					if (member_result.is_error()) {
+						return member_result;
+					}
+					result = member_result.node();
+					return ParseResult::success(*result);
+				}
+				
+				// Template instantiation succeeded
+				// Don't return early - let it fall through to normal lookup which will find the instantiated type
+			} else {
+				qualified_name_builder.reset();
+			}
+			// Not a template - let it fall through to be parsed as operator<
+		}
+
 		// Try to look up the qualified identifier
 		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());			// Check if followed by '(' for function call
 			if (current_token_.has_value() && current_token_->value() == "(") {
@@ -10886,12 +11069,69 @@ ParseResult Parser::parse_primary_expression()
 			
 			FLASH_LOG(Parser, Debug, "Qualified identifier: final name = '{}'", final_identifier.value());
 			
+			// Check if final identifier is followed by template arguments: ns::Template<Args>
+			std::optional<std::vector<TemplateTypeArg>> template_args;
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				FLASH_LOG(Parser, Debug, "Qualified identifier followed by '<', attempting to parse template arguments");
+				template_args = parse_explicit_template_arguments();
+				// If parsing failed, it might be a less-than operator, continue normally
+			}
+			
 			// Create a QualifiedIdentifierNode
 			auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 			const auto& qual_id = qualified_node_ast.as<QualifiedIdentifierNode>();
 			
-			// Look up the qualified identifier
-			identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.identifier_token().value());
+			// Look up the qualified identifier (either the template name or instantiated template)
+			if (template_args.has_value()) {
+				// Try to instantiate the template with namespace qualification
+				// Build the qualified template name for lookup using StringBuilder
+				StringBuilder qualified_template_name_builder;
+				for (const auto& ns : namespaces) {
+					qualified_template_name_builder.append(ns.c_str()).append("::");
+				}
+				qualified_template_name_builder.append(final_identifier.value());
+				std::string_view qualified_template_name = qualified_template_name_builder.preview();
+				
+				FLASH_LOG_FORMAT(Parser, Debug, "Looking up template '{}' with {} template arguments", qualified_template_name, template_args->size());
+				
+				// Try to instantiate as class template with qualified name first
+				auto instantiated = try_instantiate_class_template(qualified_template_name, *template_args);
+				
+				// If that didn't work, try with simple name (for backward compatibility)
+				if (!instantiated.has_value()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Qualified name lookup failed, trying simple name '{}'", final_identifier.value());
+					instantiated = try_instantiate_class_template(final_identifier.value(), *template_args);
+				}
+				
+				qualified_template_name_builder.reset();
+				
+				if (instantiated.has_value()) {
+					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
+					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", inst_struct.name());
+					
+					// Look up the instantiated template
+					identifierType = gSymbolTable.lookup(inst_struct.name());
+					
+					// Check for :: after template arguments (Template<T>::member)
+					if (peek_token().has_value() && peek_token()->value() == "::") {
+						auto qualified_result = parse_qualified_identifier_after_template(final_identifier);
+						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
+							auto qualified_node2 = qualified_result.node()->as<QualifiedIdentifierNode>();
+							result = emplace_node<ExpressionNode>(qualified_node2);
+							return ParseResult::success(*result);
+						}
+					}
+					
+					// Return identifier reference to the instantiated template
+					Token inst_token(Token::Type::Identifier, inst_struct.name(), 
+					                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+					result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+					return ParseResult::success(*result);
+				}
+			} else {
+				// No template arguments, lookup as regular qualified identifier
+				identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.identifier_token().value());
+			}
 			
 			FLASH_LOG(Parser, Debug, "Qualified lookup result: {}", identifierType.has_value() ? "found" : "not found");
 			
@@ -17296,8 +17536,25 @@ ParseResult Parser::parse_template_declaration() {
 		}
 
 		// Register the template in the template registry
+		// If we're in a namespace, register with both simple and qualified names
 		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
-		gTemplateRegistry.registerTemplate(struct_decl.name(), template_class_node);
+		std::string_view simple_name = struct_decl.name();
+		
+		// Register with simple name (for backward compatibility and unqualified lookups)
+		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
+		
+		// If in a namespace, also register with qualified name for namespace-qualified lookups
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		if (!namespace_path.empty()) {
+			StringBuilder qualified_name_builder;
+			for (const auto& ns : namespace_path) {
+				qualified_name_builder.append(ns).append("::");
+			}
+			qualified_name_builder.append(simple_name);
+			std::string_view qualified_name = qualified_name_builder.commit();
+			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
+			gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
+		}
 
 		// Primary templates shouldn't be added to AST - only instantiations and specializations
 		// Return success with no node so the caller doesn't add it to ast_nodes_
