@@ -2,18 +2,19 @@
 
 This document tracks missing C++20 features that prevent FlashCpp from compiling standard library headers. Features are listed in priority order based on their blocking impact.
 
-**Last Updated**: 2025-12-12 (09:50 UTC)  
+**Last Updated**: 2025-12-12 (12:15 UTC)  
 **Test Reference**: `tests/test_real_std_headers_fail.cpp`
 
 ## Summary
 
-**Status Update (2025-12-12)**: **EXCELLENT PROGRESS!** Standard library support continues to improve with 35+ compiler intrinsics now fully implemented, including all critical type traits needed for `<type_traits>`.
+**Status Update (2025-12-12 12:15 UTC)**: **EXCELLENT PROGRESS!** Standard library support continues to improve with 36+ compiler intrinsics now fully implemented, including all critical type traits needed for `<type_traits>`.
 
 Standard headers like `<type_traits>` and `<utility>` are now **fully viable** as all blocking language features have been implemented. The preprocessor handles most standard headers correctly, and all critical parser/semantic features are complete.
 
 **Recent updates**:
+- **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic for aggregate type detection. Total: 36+ intrinsics!
 - **2025-12-12 11:06 UTC**: Member template aliases (Priority 8.5) are now **COMPLETE** - cherry-picked from `main` branch.
-- **2025-12-12 09:50 UTC**: Added 13 new compiler intrinsics including `__is_reference`, `__is_arithmetic`, `__is_convertible`, `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`, `__is_bounded_array`, `__is_unbounded_array`, and more. Total: 35+ intrinsics!
+- **2025-12-12 09:50 UTC**: Added 13 new compiler intrinsics including `__is_reference`, `__is_arithmetic`, `__is_convertible`, `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`, `__is_bounded_array`, `__is_unbounded_array`, and more.
 - **2025-12-12 09:04 UTC**: Namespace-qualified template instantiation is now **COMPLETE**.
 
 Completed features:
@@ -21,14 +22,14 @@ Completed features:
 - ✅ Reference members, anonymous template parameters, type alias access from specializations
 - ✅ Out-of-class static member definitions, implicit constructor generation for derived classes
 - ✅ Namespace-qualified template instantiation
-- ✅ **Member template aliases** (NEW!)
-- ✅ **35+ compiler intrinsics for type traits**
+- ✅ **Member template aliases**
+- ✅ **36+ compiler intrinsics for type traits** (including `__is_aggregate`)
 
 **No workarounds needed!** Standard library headers can now be used with fully-qualified names like `std::vector`, `std::is_same<T, U>`, etc.
 
 ## Completed Features ✅
 
-**All completed features maintain backward compatibility - all 633+ existing tests continue to pass.**
+**All completed features maintain backward compatibility - all 638 existing tests continue to pass.**
 
 ### Core Language Features (Priorities 1-8, 11)
 1. **Conversion Operators** - User-defined conversion operators (`operator T()`) with static member access
@@ -47,8 +48,8 @@ Completed features:
 
 ## Priority 5: Compiler Intrinsics (MOSTLY COMPLETE)
 
-**Status**: ✅ **MOSTLY COMPLETE** - 35+ intrinsics fully implemented and tested  
-**Test Case**: `tests/test_type_traits_intrinsics.cpp`, `tests/test_is_same_intrinsic.cpp`, `tests/test_new_intrinsics.cpp`
+**Status**: ✅ **MOSTLY COMPLETE** - 36+ intrinsics fully implemented and tested  
+**Test Case**: `tests/test_type_traits_intrinsics.cpp`, `tests/test_is_same_intrinsic.cpp`, `tests/test_new_intrinsics.cpp`, `tests/test_is_aggregate_simple.cpp`
 
 ### Problem
 
@@ -62,7 +63,7 @@ Standard library implementations rely on compiler intrinsics for efficient type 
 - `__is_member_object_pointer(T)`, `__is_member_function_pointer(T)`
 - `__is_enum(T)`, `__is_union(T)`, `__is_class(T)`, `__is_function(T)`
 
-**Composite type categories (6 intrinsics - NEW!)**:
+**Composite type categories (6 intrinsics)**:
 - `__is_reference(T)` - lvalue or rvalue reference
 - `__is_arithmetic(T)` - integral or floating point
 - `__is_fundamental(T)` - void, nullptr_t, or arithmetic
@@ -73,20 +74,21 @@ Standard library implementations rely on compiler intrinsics for efficient type 
 **Type relationships (3 intrinsics)**:
 - `__is_base_of(Base, Derived)` - inheritance check
 - `__is_same(T, U)` - exact type equality
-- `__is_convertible(From, To)` - conversion check **NEW!**
+- `__is_convertible(From, To)` - conversion check
 
-**Type properties (11 intrinsics)**:
+**Type properties (12 intrinsics - NEW!)**:
 - `__is_polymorphic(T)`, `__is_final(T)`, `__is_abstract(T)`, `__is_empty(T)`
+- `__is_aggregate(T)` - aggregate type check **NEW!**
 - `__is_standard_layout(T)`, `__is_trivially_copyable(T)`, `__is_trivial(T)`, `__is_pod(T)`
-- `__is_const(T)` - const qualifier check **NEW!**
-- `__is_volatile(T)` - volatile qualifier check **NEW!**
+- `__is_const(T)` - const qualifier check
+- `__is_volatile(T)` - volatile qualifier check
 - `__has_unique_object_representations(T)`
 
-**Signedness traits (2 intrinsics - NEW!)**:
+**Signedness traits (2 intrinsics)**:
 - `__is_signed(T)` - signed integral type
 - `__is_unsigned(T)` - unsigned integral type
 
-**Array traits (2 intrinsics - NEW!)**:
+**Array traits (2 intrinsics)**:
 - `__is_bounded_array(T)` - array with known bound (e.g., int[10])
 - `__is_unbounded_array(T)` - array with unknown bound (e.g., int[])
 
@@ -96,7 +98,7 @@ Standard library implementations rely on compiler intrinsics for efficient type 
 **Variadic support (2 intrinsics)**:
 - `__builtin_va_start`, `__builtin_va_arg`
 
-**Total**: 35+ compiler intrinsics fully implemented
+**Total**: 36+ compiler intrinsics fully implemented
 
 ### Required For
 
@@ -108,7 +110,13 @@ Standard library implementations rely on compiler intrinsics for efficient type 
 
 ### Recent Changes
 
-- **2025-12-12**: Added 13 new type trait intrinsics for better `<type_traits>` support
+- **2025-12-12 12:15 UTC**: Added `__is_aggregate(T)` intrinsic
+  - Detects aggregate types: arrays and structs with no user-declared constructors, no private/protected members, no virtual functions
+  - Correctly distinguishes user-declared from compiler-generated constructors
+  - Arrays are always aggregates
+  - Test: `tests/test_is_aggregate_simple.cpp` - PASSES
+  
+- **2025-12-12 09:50 UTC**: Added 13 new type trait intrinsics for better `<type_traits>` support
   - Composite categories: `__is_reference`, `__is_arithmetic`, `__is_fundamental`, `__is_object`, `__is_scalar`, `__is_compound`
   - Type conversion: `__is_convertible(From, To)` 
   - Type properties: `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`
@@ -621,7 +629,13 @@ Additionally, the CodeGen's `generateQualifiedIdentifierIr` function only handle
 
 ### Potential Issues ⚠️
 
-None identified. All critical blocking features have been implemented.
+**Bool Conditional Bug (Discovered 2025-12-12)**:
+- **Issue**: Bool values stored in variables are evaluated incorrectly in conditional expressions (`if`, ternary operator)
+- **Symptom**: `bool test = false;` prints as 0 but evaluates as true in `if (test)` or ternary
+- **Impact**: Medium - affects boolean logic in conditionals
+- **Workaround**: Use ternary operator in arithmetic expressions instead of direct conditionals
+- **Example Test**: See `test_is_aggregate_simple.cpp` for workaround pattern
+- **Status**: Needs investigation in code generation for bool conditional evaluation
 
 ### Critical Blockers ❌
 

@@ -2287,6 +2287,7 @@ enum class TypeTraitKind {
 	IsFinal,
 	IsAbstract,
 	IsEmpty,
+	IsAggregate,         // __is_aggregate - type is an aggregate
 	IsStandardLayout,
 	HasUniqueObjectRepresentations,
 	IsTriviallyCopyable,
@@ -2391,6 +2392,7 @@ public:
 			case TypeTraitKind::IsFinal: return "__is_final";
 			case TypeTraitKind::IsAbstract: return "__is_abstract";
 			case TypeTraitKind::IsEmpty: return "__is_empty";
+			case TypeTraitKind::IsAggregate: return "__is_aggregate";
 			case TypeTraitKind::IsStandardLayout: return "__is_standard_layout";
 			case TypeTraitKind::HasUniqueObjectRepresentations: return "__has_unique_object_representations";
 			case TypeTraitKind::IsTriviallyCopyable: return "__is_trivially_copyable";
