@@ -18794,20 +18794,16 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 // Evaluate constant expressions for template arguments
 // Handles cases like is_int<T>::value where T is substituted
 // Returns the integer value if successful, nullopt otherwise
-// 
-// NOTE: This is a placeholder for full constant expression evaluation
-// Currently returns nullopt - full implementation would require:
-// 1. Template instantiation for types like is_int<double>
-// 2. Reading static constexpr member values
-// 3. Evaluating more complex constant expressions
-// This limitation means same-name SFINAE overloads with constant expressions
-// in template arguments (e.g., enable_if<is_int<T>::value>) don't work yet
 std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& expr_node) {
 	if (!expr_node.is<ExpressionNode>()) {
+		FLASH_LOG(Templates, Debug, "Not an ExpressionNode");
 		return std::nullopt;
 	}
 	
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+	
+	// Log what variant we have
+	FLASH_LOG_FORMAT(Templates, Debug, "Expression variant index: {}", expr.index());
 	
 	// Handle numeric literals directly
 	if (std::holds_alternative<NumericLiteralNode>(expr)) {
@@ -18820,12 +18816,68 @@ std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& e
 		}
 	}
 	
-	// TODO: Implement member access evaluation (e.g., is_int<double>::value)
-	// This would require:
-	// - Parsing the member access expression
-	// - Instantiating the template type (e.g., is_int<double>)
-	// - Looking up the static member value
-	// - Returning the constexpr value
+	// Handle member access expressions (e.g., is_int<double>::value)
+	if (std::holds_alternative<MemberAccessNode>(expr)) {
+		const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
+		std::string_view member_name = member_access.member_name();
+		
+		// The object should be an identifier representing the template instance
+		// For example, in "is_int<double>::value", the object is is_int<double>
+		const ASTNode& object = member_access.object();
+		if (!object.is<ExpressionNode>()) {
+			return std::nullopt;
+		}
+		
+		const ExpressionNode& obj_expr = object.as<ExpressionNode>();
+		if (!std::holds_alternative<IdentifierNode>(obj_expr)) {
+			return std::nullopt;
+		}
+		
+		const IdentifierNode& id_node = std::get<IdentifierNode>(obj_expr);
+		std::string_view type_name = id_node.name();
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating constant expression: {}::{}", type_name, member_name);
+		
+		// Look up the type - it should be an instantiated template class
+		auto type_it = gTypesByName.find(type_name);
+		if (type_it == gTypesByName.end()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system", type_name);
+			return std::nullopt;
+		}
+		
+		const TypeInfo* type_info = type_it->second;
+		if (!type_info->isStruct()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Type {} is not a struct", type_name);
+			return std::nullopt;
+		}
+		
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
+		if (!struct_info) {
+			FLASH_LOG(Templates, Debug, "Could not get struct info");
+			return std::nullopt;
+		}
+		
+		// Look for the static member with the given name
+		std::string member_name_str(member_name);  // Convert string_view to string
+		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_str);
+		if (!static_member) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
+			return std::nullopt;
+		}
+		
+		// Check if it has an initializer
+		if (!static_member->initializer.has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Static member {}::{} has no initializer", type_name, member_name);
+			return std::nullopt;
+		}
+		
+		// Evaluate the initializer - it should be a constant expression
+		// For type traits, this is typically a bool literal (true/false)
+		const ASTNode& init_node = *static_member->initializer;
+		
+		// Recursively evaluate the initializer
+		return try_evaluate_constant_expression(init_node);
+	}
 	
 	return std::nullopt;
 }
@@ -18833,6 +18885,8 @@ std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& e
 // Parse explicit template arguments: <int, float, ...>
 // Returns a vector of types if successful, nullopt otherwise
 std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
+	FLASH_LOG_FORMAT(Templates, Debug, "parse_explicit_template_arguments called, in_sfinae_context={}", in_sfinae_context_);
+	
 	// Save position in case this isn't template arguments
 	auto saved_pos = save_token_position();
 
@@ -18865,7 +18919,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
-		auto expr_result = parse_primary_expression();
+		// Use parse_expression() to handle complex expressions like is_int<T>::value
+		auto expr_result = parse_expression();
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
@@ -18915,6 +18970,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 			// Expression is not a numeric literal - try to evaluate it as a constant expression
 			// This handles cases like is_int<T>::value where the expression needs evaluation
+			FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant");
 			auto const_value = try_evaluate_constant_expression(*expr_result.node());
 			if (const_value.has_value()) {
 				// Successfully evaluated as a constant expression
@@ -19595,19 +19651,41 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	Token func_name_token = orig_decl.identifier_token();
 	
 	// Check if we have a saved declaration position for re-parsing (SFINAE support)
-	// Only re-parse if the return type appears to be template-dependent (contains _unknown)
+	// Re-parse if we have a saved position AND the return type appears template-dependent
 	bool should_reparse = func_decl.has_template_declaration_position();
-	if (should_reparse && orig_return_type.type() == Type::UserDefined && 
-	    orig_return_type.type_index() < gTypeInfo.size()) {
-		const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
-		// Only re-parse if the type contains _unknown (template-dependent placeholder)
-		should_reparse = (orig_type_info.name_.find("_unknown") != std::string::npos);
-	} else {
-		should_reparse = false;
+	
+	FLASH_LOG_FORMAT(Templates, Debug, "Checking re-parse for template function: has_position={}, return_type={}, type_index={}",
+		should_reparse, static_cast<int>(orig_return_type.type()), orig_return_type.type_index());
+	
+	// Only re-parse if the return type is a placeholder for template-dependent types
+	if (should_reparse) {
+		if (orig_return_type.type() == Type::Void) {
+			// Void return type - re-parse
+			FLASH_LOG(Templates, Debug, "Return type is void - will re-parse");
+			should_reparse = true;
+		} else if (orig_return_type.type() == Type::UserDefined) {
+			if (orig_return_type.type_index() == 0) {
+				// UserDefined with type_index=0 is a placeholder (points to void)
+				FLASH_LOG(Templates, Debug, "Return type is UserDefined placeholder (void) - will re-parse");
+				should_reparse = true;
+			} else if (orig_return_type.type_index() < gTypeInfo.size()) {
+				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
+				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", orig_type_info.name_);
+				// Re-parse if type contains _unknown (template-dependent marker)
+				should_reparse = (orig_type_info.name_.find("_unknown") != std::string::npos);
+			} else {
+				should_reparse = false;
+			}
+		} else {
+			// Other types don't need re-parsing
+			should_reparse = false;
+		}
 	}
 	
+	FLASH_LOG_FORMAT(Templates, Debug, "Should re-parse: {}", should_reparse);
+	
 	if (should_reparse) {
-		FLASH_LOG(Templates, Debug, "Re-parsing function declaration for SFINAE validation");
+		FLASH_LOG_FORMAT(Templates, Debug, "Re-parsing function declaration for SFINAE validation, in_sfinae_context={}", in_sfinae_context_);
 		
 		// Save current position
 		SaveHandle current_pos = save_token_position();
