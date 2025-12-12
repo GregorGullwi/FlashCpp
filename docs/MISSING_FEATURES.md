@@ -2,28 +2,39 @@
 
 This document tracks missing C++20 features that prevent FlashCpp from compiling standard library headers. Features are listed in priority order based on their blocking impact.
 
-**Last Updated**: 2025-12-12 (13:47 UTC)  
+**Last Updated**: 2025-12-12 (15:45 UTC)  
 **Test Reference**: `tests/test_real_std_headers_fail.cpp`
 
 ## Summary
 
-**Status Update (2025-12-12 13:47 UTC)**: **MAJOR MILESTONE!** Member template aliases now parse correctly in all template specializations! This was the last known blocker for parsing `<type_traits>`. The parser can now handle the full syntax needed for standard library headers.
+**Status Update (2025-12-12 15:45 UTC)**: **BREAKTHROUGH!** Member template alias **instantiation** now works for full specializations! This is a major milestone beyond just parsing - the compiler can now actually **use** member template aliases.
 
-All critical parsing features are now complete:
-- ✅ Conversion operators, non-type template parameters, template specialization inheritance
-- ✅ Reference members, anonymous template parameters, type alias access from specializations
-- ✅ Out-of-class static member definitions, implicit constructor generation for derived classes
-- ✅ Namespace-qualified template instantiation
-- ✅ **Member template aliases in ALL contexts** (regular classes, full specializations, partial specializations)
-- ✅ **36+ compiler intrinsics for type traits** (including `__is_aggregate`)
+Example that now works:
+```cpp
+template<>
+struct __conditional<false> {
+    template<typename, typename _Up>
+    using type = _Up;
+};
+
+// This now compiles and runs correctly!
+__conditional<false>::type<int, double> y = 3.14;  // y is double
+```
+
+**Implementation complete:**
+- ✅ Parsing member template aliases in all contexts
+- ✅ **Instantiating member template aliases in full specializations** (NEW!)
+- ✅ Template parameter substitution
+- ✅ Nested type lookup for template aliases
 
 **Recent updates**:
-- **2025-12-12 13:47 UTC**: **FIXED** member template aliases in template specializations (Priority 8.5)! Added `template` keyword handler to both full and partial specialization parsing. All 643 tests run, 641 pass, 2 expected failures for usage (not parsing).
-- **2025-12-12 13:01 UTC**: Discovered member template aliases fail in **all** template specializations (full and partial) - blocks `<type_traits>` at line 148.
-- **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic for aggregate type detection. Total: 36+ intrinsics!
-- **2025-12-12 11:06 UTC**: Member template aliases (Priority 8.5) work in regular classes - cherry-picked from `main` branch.
+- **2025-12-12 15:45 UTC**: **MAJOR** - Member template alias instantiation working for full specializations! `test_member_alias_in_full_spec.cpp` now passes.
+- **2025-12-12 13:47 UTC**: Added `template` keyword handler to specialization parsing
+- **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic. Total: 36+ intrinsics!
 
-**Next step**: Template instantiation for member template aliases (allows using them, not just parsing them).
+**Known limitation**: Partial specialization member aliases compile but use primary template (needs specialization pattern mapping).
+
+**Next step**: Fix partial specialization instantiation (requires tracking which specialization pattern was used).
 
 ## Completed Features ✅
 
