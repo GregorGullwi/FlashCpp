@@ -10280,12 +10280,16 @@ private:
 	}
 
 	bool isArithmeticType(Type type) const {
-		return (type == Type::Bool || type == Type::Char || type == Type::Short ||
-		        type == Type::Int || type == Type::Long || type == Type::LongLong ||
-		        type == Type::UnsignedChar || type == Type::UnsignedShort ||
-		        type == Type::UnsignedInt || type == Type::UnsignedLong ||
-		        type == Type::UnsignedLongLong || type == Type::Float ||
-		        type == Type::Double || type == Type::LongDouble);
+		// Branchless: arithmetic types are Bool(1) through LongDouble(14)
+		// Using range check instead of multiple comparisons
+		return static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool) &&
+		       static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble);
+	}
+
+	bool isFundamentalType(Type type) const {
+		// Branchless: fundamental types are Void(0), Nullptr(28), or arithmetic types Bool(1) through LongDouble(14)
+		// Using bitwise OR of conditions for branchless evaluation
+		return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
 	}
 
 	std::vector<IrOperand> generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
@@ -10414,24 +10418,12 @@ private:
 
 			case TypeTraitKind::IsArithmetic:
 				// __is_arithmetic - integral or floating point
-				result = ((type == Type::Bool ||
-				          type == Type::Char ||
-				          type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				          type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
-				          type == Type::UnsignedLong || type == Type::UnsignedLongLong ||
-				          type == Type::Float || type == Type::Double || type == Type::LongDouble)
-				          && !is_reference && pointer_depth == 0);
+				result = isArithmeticType(type) && !is_reference && pointer_depth == 0;
 				break;
 
 			case TypeTraitKind::IsFundamental:
 				// __is_fundamental - void, nullptr_t, arithmetic types
-				result = ((type == Type::Void || type == Type::Nullptr ||
-				          type == Type::Bool || type == Type::Char ||
-				          type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				          type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
-				          type == Type::UnsignedLong || type == Type::UnsignedLongLong ||
-				          type == Type::Float || type == Type::Double || type == Type::LongDouble)
-				          && !is_reference && pointer_depth == 0);
+				result = isFundamentalType(type) && !is_reference && pointer_depth == 0;
 				break;
 
 			case TypeTraitKind::IsObject:
@@ -10441,27 +10433,18 @@ private:
 
 			case TypeTraitKind::IsScalar:
 				// __is_scalar - arithmetic, pointer, enum, member pointer, or nullptr
-				result = ((type == Type::Bool || type == Type::Char ||
-				          type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				          type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
-				          type == Type::UnsignedLong || type == Type::UnsignedLongLong ||
-				          type == Type::Float || type == Type::Double || type == Type::LongDouble ||
+				result = (isArithmeticType(type) ||
 				          type == Type::Enum || type == Type::Nullptr ||
 				          type == Type::MemberObjectPointer || type == Type::MemberFunctionPointer ||
 				          pointer_depth > 0)
-				          && !is_reference);
+				          && !is_reference;
 				break;
 
 			case TypeTraitKind::IsCompound:
 				// __is_compound - array, function, pointer, reference, class, union, enum, member pointer
 				// Basically anything that's not fundamental
-				result = !((type == Type::Void || type == Type::Nullptr ||
-				           type == Type::Bool || type == Type::Char ||
-				           type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				           type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
-				           type == Type::UnsignedLong || type == Type::UnsignedLongLong ||
-				           type == Type::Float || type == Type::Double || type == Type::LongDouble)
-				           && !is_reference && pointer_depth == 0);
+				// Branchless: use bitwise NOT and AND to avoid branching
+				result = !(isFundamentalType(type) && !is_reference && pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsBaseOf:
