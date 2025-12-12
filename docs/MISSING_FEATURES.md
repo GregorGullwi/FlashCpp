@@ -18,7 +18,8 @@ This document tracks missing C++20 features in FlashCpp. Features are organized 
 **Known Limitations:**
 - Partial specialization member aliases have a code generator issue with pointer types (parsing works correctly)
 - Some advanced template features (SFINAE, some metaprogramming patterns) not yet implemented
-- C++20 concepts/requires clauses not yet supported
+- C++20 concepts: Basic literal constraints work, but complex concept expressions not yet supported
+- Pack expansion in member declarations not yet implemented
 
 ## Completed Features ✅
 
@@ -84,14 +85,15 @@ All documented in **Completed Features** section above.
 **Implemented**:
 - ✅ Variadic templates (basic support)
 - ✅ Template template parameters (partial support)
+- ✅ C++20 Concepts (literal constraint evaluation: `requires true`, `requires false`)
 
 **Not Implemented**:
 - ❌ Perfect forwarding (needs testing)
 - ❌ SFINAE (Substitution Failure Is Not An Error)
-- ❌ C++20 Concepts and requires clauses
+- ❌ Complex concept expressions (e.g., `requires std::integral<T>`)
 - ❌ Pack expansion in member declarations
 
-**Priority**: Low for basic standard library support. SFINAE requires sophisticated template instantiation logic. Concepts are a C++20 feature not critical for most headers.
+**Priority**: Low for basic standard library support. SFINAE requires sophisticated template instantiation logic. Complex concepts require full expression evaluation in constraints.
 
 ---
 
@@ -108,21 +110,36 @@ Templates in namespaces can now be instantiated with fully-qualified names (e.g.
 
 ### C++20 Concepts and Requires Clauses
 
-**Status**: ❌ **NOT IMPLEMENTED**  
-**Test Case**: `tests/concept_error_test_fail.cpp`
+**Status**: ✅ **PARTIALLY IMPLEMENTED**  
+**Test Case**: `tests/concept_error_test_fail.cpp` (correctly fails with constraint error)
 
 **Description**: C++20 concepts allow constraining template parameters with compile-time predicates.
 
-**Example**:
+**What Works**:
+- ✅ Parsing concept declarations (`template<typename T> concept Name = ...;`)
+- ✅ Parsing requires clauses on function templates
+- ✅ Evaluating literal constraints (`requires true`, `requires false`)
+- ✅ Proper error messages when constraints are not satisfied
+
+**Example that works**:
 ```cpp
 template<typename T>
-requires std::integral<T>
-T add(T a, T b) { return a + b; }
+requires false
+T bad_constraint(T x) { return x; }
+
+int main() {
+    int x = bad_constraint(5);  // Error: constraint not satisfied
+}
 ```
 
-**Impact**: Medium priority. Many modern C++20 codebases use concepts, but most standard library headers work without them. Required for full C++20 compliance.
+**Not Yet Implemented**:
+- Complex concept expressions (e.g., `requires std::integral<T>`)
+- Requires expressions with type requirements
+- Concept composition (conjunction, disjunction)
 
-**Workaround**: Use traditional SFINAE or static_assert for type constraints.
+**Impact**: Low-Medium priority. Basic literal constraints work. Complex concept expressions needed for full C++20 compliance and modern library usage.
+
+**Workaround**: Use `requires true` or `requires false` for simple cases. Use SFINAE or static_assert for complex constraints.
 
 ---
 
@@ -223,9 +240,10 @@ All critical parsing features for standard library headers are complete! This in
 - Advanced template features: SFINAE not implemented
 
 ### Not Yet Implemented ❌
-- C++20 Concepts and requires clauses
+- Complex concept expressions (basic literal constraints work)
 - Pack expansion in member declarations  
 - constinit enforcement (parsed but not validated)
+- SFINAE (Substitution Failure Is Not An Error)
 
 ### All Parsing Complete! ✅
 All critical parsing features for C++20 standard library header support have been implemented. The remaining work is primarily in:
