@@ -18593,7 +18593,9 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	return saved_position.success();
 }
 
-// Helper: Parse member template keyword - detects and dispatches to alias or function template parser
+// Helper: Parse member template keyword - performs lookahead to detect whether 'template' introduces
+// a member template alias or member function template, then dispatches to the appropriate parser.
+// This eliminates code duplication across regular struct, full specialization, and partial specialization parsing.
 ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access) {
 	// Look ahead to determine if this is a template alias or template function
 	SaveHandle lookahead_pos = save_token_position();
