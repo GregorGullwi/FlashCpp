@@ -13,7 +13,8 @@ Standard headers like `<type_traits>` and `<utility>` are now **fully viable** a
 
 **Recent updates**:
 - **2025-12-12 09:50 UTC**: Added 13 new compiler intrinsics including `__is_reference`, `__is_arithmetic`, `__is_convertible`, `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`, `__is_bounded_array`, `__is_unbounded_array`, and more. Total: 35+ intrinsics!
-- **2025-12-12 09:04 UTC**: Namespace-qualified template instantiation is now **COMPLETE**. Templates in namespaces can be instantiated and their members accessed using qualified names like `std::Template<Args>::member`.
+- **2025-12-12 09:04 UTC**: Namespace-qualified template instantiation is now **COMPLETE**.
+- **Note**: Member template aliases (Priority 8.5) are implemented in `main` branch but NOT in `pre-flight`. This may be needed for full `<type_traits>` support.
 
 Completed features:
 - ✅ Conversion operators, non-type template parameters, template specialization inheritance
@@ -311,6 +312,53 @@ struct Container {
 
 ---
 
+## Priority 8.5: Member Template Aliases (NOT IMPLEMENTED ❌)
+
+**Status**: ❌ **MISSING** - This feature exists in `main` branch but not in `pre-flight`  
+**Test Case**: `tests/test_member_template_alias_check.cpp` (fails to compile)  
+**Implemented in**: `main` branch commits a2a564c through d32120a
+
+### Problem
+
+The standard library uses template aliases as members of structs/classes. This pattern is common in `<type_traits>` and other headers:
+
+```cpp
+struct TypeTraits {
+    template<typename T>
+    using Ptr = T*;  // Member template alias
+};
+
+int main() {
+    TypeTraits::Ptr<int> p;  // Should work but doesn't in pre-flight
+}
+```
+
+### Current Status in pre-flight Branch
+
+**NOT IMPLEMENTED** - The parser does not recognize the `template<typename T> using` pattern inside struct/class definitions. Attempting to compile code with member template aliases results in:
+```
+error: Unexpected token in type specifier: 'using'
+```
+
+### Status in main Branch
+
+**COMPLETE** - This feature was fully implemented in `main` branch with:
+- Parser support for member template aliases (commit 8948a10)
+- Registration and qualified name handling
+- Full instantiation support (commit d32120a)
+
+### Required For
+
+- `<type_traits>` - Uses member template aliases in various trait implementations
+- `<utility>` - May use member template aliases
+- Modern C++ codebases that follow standard library patterns
+
+### Note
+
+This feature is **available in the main branch** but has not been merged to `pre-flight` yet. If standard library support is needed in the `pre-flight` branch, this feature should be cherry-picked or merged from `main`.
+
+---
+
 ## Priority 9: Complex Preprocessor Expressions
 
 **Status**: ⚠️ **NON-BLOCKING** - Causes warnings but doesn't fail compilation  
@@ -560,15 +608,22 @@ Additionally, the CodeGen's `generateQualifiedIdentifierIr` function only handle
 - ✅ **Priority 7**: Type alias access from template specializations (both full and partial specializations)
 - ✅ **Priority 8**: Out-of-class static member definitions in templates
 - ✅ **Priority 8b**: Implicit constructor generation for derived classes
+- ❌ **Priority 8.5**: Member template aliases (**Available in main branch, not in pre-flight**)
+- ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
+- ⚠️ **Priority 10**: Advanced template features (partial support)
 - ✅ **Priority 11**: **Namespace-qualified template instantiation** (**FIXED 2025-12-12**)
 - Basic preprocessor support for standard headers
 - GCC/Clang builtin type macros (`__SIZE_TYPE__`, etc.)
 - Preprocessor arithmetic and bitwise operators
 - `__attribute__` and `noexcept` parsing
 
+### Potential Issues ⚠️
+
+- **Member template aliases (Priority 8.5)**: This feature is implemented and working in the `main` branch but is NOT present in the `pre-flight` branch. Standard library headers like `<type_traits>` may use member template aliases. If full standard library support is required in `pre-flight`, this feature should be merged from `main`.
+
 ### Critical Blockers ❌
 
-**None!** All critical blocking features have been implemented.
+**None for basic functionality!** All critical blocking features for basic C++ compilation have been implemented in `pre-flight`.
 
 ### Remaining Missing Features ❌
 
