@@ -12,16 +12,17 @@ This document tracks missing C++20 features that prevent FlashCpp from compiling
 Standard headers like `<type_traits>` and `<utility>` are now **fully viable** as all blocking language features have been implemented. The preprocessor handles most standard headers correctly, and all critical parser/semantic features are complete.
 
 **Recent updates**:
+- **2025-12-12 11:06 UTC**: Member template aliases (Priority 8.5) are now **COMPLETE** - cherry-picked from `main` branch.
 - **2025-12-12 09:50 UTC**: Added 13 new compiler intrinsics including `__is_reference`, `__is_arithmetic`, `__is_convertible`, `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`, `__is_bounded_array`, `__is_unbounded_array`, and more. Total: 35+ intrinsics!
 - **2025-12-12 09:04 UTC**: Namespace-qualified template instantiation is now **COMPLETE**.
-- **Note**: Member template aliases (Priority 8.5) are implemented in `main` branch but NOT in `pre-flight`. This may be needed for full `<type_traits>` support.
 
 Completed features:
 - ✅ Conversion operators, non-type template parameters, template specialization inheritance
 - ✅ Reference members, anonymous template parameters, type alias access from specializations
 - ✅ Out-of-class static member definitions, implicit constructor generation for derived classes
 - ✅ Namespace-qualified template instantiation
-- ✅ **35+ compiler intrinsics for type traits (NEW!)**
+- ✅ **Member template aliases** (NEW!)
+- ✅ **35+ compiler intrinsics for type traits**
 
 **No workarounds needed!** Standard library headers can now be used with fully-qualified names like `std::vector`, `std::is_same<T, U>`, etc.
 
@@ -312,11 +313,11 @@ struct Container {
 
 ---
 
-## Priority 8.5: Member Template Aliases (NOT IMPLEMENTED ❌)
+## Priority 8.5: Member Template Aliases (COMPLETE ✅)
 
-**Status**: ❌ **MISSING** - This feature exists in `main` branch but not in `pre-flight`  
-**Test Case**: `tests/test_member_template_alias_check.cpp` (fails to compile)  
-**Implemented in**: `main` branch commits a2a564c through d32120a
+**Status**: ✅ **COMPLETE** - Parsing and instantiation both working  
+**Test Case**: `tests/test_member_template_alias.cpp`  
+**Implemented in**: Cherry-picked from `main` branch commits a2a564c through d32120a
 
 ### Problem
 
@@ -329,33 +330,33 @@ struct TypeTraits {
 };
 
 int main() {
-    TypeTraits::Ptr<int> p;  // Should work but doesn't in pre-flight
+    TypeTraits::Ptr<int> p;  // Now works!
 }
 ```
 
-### Current Status in pre-flight Branch
+### Current Status
 
-**NOT IMPLEMENTED** - The parser does not recognize the `template<typename T> using` pattern inside struct/class definitions. Attempting to compile code with member template aliases results in:
-```
-error: Unexpected token in type specifier: 'using'
-```
+**COMPLETE** ✅ - Member template aliases are now fully functional for pointer types and regular types. Reference types have a pre-existing runtime issue in the compiler that affects all references (not specific to template aliases).
 
-### Status in main Branch
+### Implementation
 
-**COMPLETE** - This feature was fully implemented in `main` branch with:
-- Parser support for member template aliases (commit 8948a10)
-- Registration and qualified name handling
-- Full instantiation support (commit d32120a)
+- `parse_member_template_alias()` in Parser.cpp (lines ~18525+)
+- Template keyword handling in struct parsing (lines ~3131+) with lookahead to distinguish from member function templates
+- Uses existing `TemplateAliasNode` AST node type
+- Instantiation uses existing alias template logic
+
+### Progress
+
+- ✅ **Parsing**: Successfully parse member template aliases in struct/class definitions
+- ✅ **Registration**: Register member template aliases with qualified names (e.g., `Container::Ptr`)
+- ✅ **Instantiation**: Working correctly for pointers and types
+- ⚠️ **Known limitation**: Reference aliases have the same pre-existing runtime issue as direct reference members
 
 ### Required For
 
 - `<type_traits>` - Uses member template aliases in various trait implementations
 - `<utility>` - May use member template aliases
 - Modern C++ codebases that follow standard library patterns
-
-### Note
-
-This feature is **available in the main branch** but has not been merged to `pre-flight` yet. If standard library support is needed in the `pre-flight` branch, this feature should be cherry-picked or merged from `main`.
 
 ---
 
@@ -612,6 +613,7 @@ Additionally, the CodeGen's `generateQualifiedIdentifierIr` function only handle
 - ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
 - ⚠️ **Priority 10**: Advanced template features (partial support)
 - ✅ **Priority 11**: **Namespace-qualified template instantiation** (**FIXED 2025-12-12**)
+- ✅ **Priority 8.5**: **Member template aliases** (**COMPLETE 2025-12-12** - cherry-picked from `main`)
 - Basic preprocessor support for standard headers
 - GCC/Clang builtin type macros (`__SIZE_TYPE__`, etc.)
 - Preprocessor arithmetic and bitwise operators
@@ -619,11 +621,11 @@ Additionally, the CodeGen's `generateQualifiedIdentifierIr` function only handle
 
 ### Potential Issues ⚠️
 
-- **Member template aliases (Priority 8.5)**: This feature is implemented and working in the `main` branch but is NOT present in the `pre-flight` branch. Standard library headers like `<type_traits>` may use member template aliases. If full standard library support is required in `pre-flight`, this feature should be merged from `main`.
+None identified. All critical blocking features have been implemented.
 
 ### Critical Blockers ❌
 
-**None for basic functionality!** All critical blocking features for basic C++ compilation have been implemented in `pre-flight`.
+**None for basic functionality!** All critical blocking features for basic C++ compilation have been implemented.
 
 ### Remaining Missing Features ❌
 
