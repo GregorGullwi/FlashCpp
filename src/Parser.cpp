@@ -6718,17 +6718,13 @@ ParseResult Parser::parse_type_specifier()
 					// Check if the next token is '<', indicating template arguments for the member
 					if (peek_token().has_value() && peek_token()->value() == "<") {
 						// First try looking up with the instantiated name
-						// Use StringBuilder for efficient string building
-						StringBuilder member_alias_builder;
-						std::string_view member_alias_name = member_alias_builder.append(qualified_type_name).append("::").append(member_name).preview();
-						auto member_alias_opt = gTemplateRegistry.lookup_alias_template(member_alias_name);
+						// Note: qualified_type_name already includes ::member_name from line 6689
+						auto member_alias_opt = gTemplateRegistry.lookup_alias_template(qualified_type_name);
 						
-						// Keep a copy for error messages before resetting
-						std::string member_alias_name_str;
-						if (!member_alias_opt.has_value()) {
-							member_alias_name_str = std::string(member_alias_name);
-						}
-						member_alias_builder.reset();
+						FLASH_LOG_FORMAT(Parser, Debug, "Looking up member alias: {} -> {}", qualified_type_name, member_alias_opt.has_value() ? "found" : "not found");
+						
+						// Keep a copy for error messages
+						std::string member_alias_name_str = std::string(qualified_type_name);
 						
 						// If not found, check if this instantiation came from a partial specialization pattern
 						if (!member_alias_opt.has_value()) {
@@ -6749,6 +6745,8 @@ ParseResult Parser::parse_type_specifier()
 						if (!member_alias_opt.has_value()) {
 							std::string_view base_template_name = instantiated_name;
 							
+							FLASH_LOG_FORMAT(Parser, Debug, "Trying progressive stripping from: {}", base_template_name);
+							
 							// Try progressively stripping '_suffix' patterns until we find a match
 							while (!member_alias_opt.has_value() && !base_template_name.empty()) {
 								size_t underscore_pos = base_template_name.find_last_of('_');
@@ -6764,6 +6762,7 @@ ParseResult Parser::parse_type_specifier()
 								StringBuilder base_builder;
 								std::string_view base_member_alias_name = base_builder.append(base_template_name).append("::").append(member_name).preview();
 								member_alias_opt = gTemplateRegistry.lookup_alias_template(base_member_alias_name);
+								FLASH_LOG_FORMAT(Parser, Debug, "Trying base name: {} -> {}", base_member_alias_name, member_alias_opt.has_value() ? "found" : "not found");
 								base_builder.reset();
 							}
 						}
@@ -6809,6 +6808,8 @@ ParseResult Parser::parse_type_specifier()
 									bool is_rval_ref = instantiated_type.is_rvalue_reference();
 									CVQualifier cv_qual = instantiated_type.cv_qualifier();
 									
+									FLASH_LOG_FORMAT(Parser, Debug, "Member template alias instantiation: param_name={}, ptr_depth={}", param_name, ptr_depth);
+									
 									// Get the size in bits for the argument type
 									unsigned char size_bits = 0;
 									if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
@@ -6821,6 +6822,8 @@ ParseResult Parser::parse_type_specifier()
 										// Use standard type sizes
 										size_bits = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
 									}
+									
+									FLASH_LOG_FORMAT(Parser, Debug, "Before substitution - arg.base_type={}, size_bits={}", static_cast<int>(arg.base_type), size_bits);
 									
 									// Create new type with substituted base type
 									instantiated_type = TypeSpecifierNode(
@@ -6840,6 +6843,9 @@ ParseResult Parser::parse_type_specifier()
 									} else if (is_ref) {
 										instantiated_type.set_lvalue_reference(true);  // lvalue ref
 									}
+									
+									FLASH_LOG_FORMAT(Parser, Debug, "After substitution - instantiated_type: type={}, ptr_depth={}, size={}", 
+										static_cast<int>(instantiated_type.type()), instantiated_type.pointer_depth(), instantiated_type.size_in_bits());
 								}
 							}
 							
