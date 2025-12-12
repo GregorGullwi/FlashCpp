@@ -4906,10 +4906,12 @@ private:
 	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
 		// Check if this is a scoped enum value (e.g., Direction::North)
 		const auto& namespaces = qualifiedIdNode.namespaces();
-		if (namespaces.size() == 1) {
+		if (namespaces.size() >= 1) {
+			// The struct/enum name is the last namespace component
+			std::string struct_or_enum_name(namespaces.back());
+			
 			// Could be EnumName::EnumeratorName
-			std::string enum_name(namespaces[0]);
-			auto type_it = gTypesByName.find(enum_name);
+			auto type_it = gTypesByName.find(struct_or_enum_name);
 			if (type_it != gTypesByName.end() && type_it->second->isEnum()) {
 				const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
 				if (enum_info && enum_info->is_scoped) {
@@ -4921,8 +4923,8 @@ private:
 				}
 			}
 
-			// Check if this is a static member access (e.g., StructName::static_member)
-			auto struct_type_it = gTypesByName.find(namespaces[0]);
+			// Check if this is a static member access (e.g., StructName::static_member or ns::StructName::static_member)
+			auto struct_type_it = gTypesByName.find(struct_or_enum_name);
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
