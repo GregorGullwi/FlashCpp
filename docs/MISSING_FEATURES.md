@@ -386,9 +386,19 @@ int main() {
 
 **Parsing Bug (FIXED)**: The parser wasn't checking if identifiers after `::` were templates before attempting `<>` parsing. Fixed by adding template lookup check in Parser.cpp:10846-10905.
 
-**Codegen Bug (REMAINING)**: After successful parsing, codegen crashes at Parser.cpp:12656 when calling `result->is<ExpressionNode>()` on the parsed qualified template instantiation. The `std::bad_any_cast` indicates the ASTNode type doesn't match what's expected.
+**Codegen Bug (REMAINING)**: After successful parsing, codegen hangs when processing `ExpressionNode(QualifiedIdentifierNode)` for instantiated templates. The hang occurs because the node represents the template name path rather than the instantiated type, causing codegen to enter an infinite loop or fail to resolve the type.
 
-**Investigation Needed**: The template instantiation function (`try_instantiate_class_template`) returns `std::nullopt` on success, but the parsing code was checking backwards (treating `nullopt` as failure). This has been fixed, but there's still a type mismatch when the instantiated template result is used in expression contexts.
+**Investigation Needed**: The template instantiation function (`try_instantiate_class_template`) returns `std::nullopt` on success, and the parsing code now correctly interprets this. However, after successful instantiation, the parser creates an `ExpressionNode` containing a `QualifiedIdentifierNode` which represents the template name (`ns::S`) rather than the instantiated type (`S_int`). This causes codegen to hang (likely infinite loop or unable to resolve the node type).
+
+**Architectural Issue**: The problem is that `QualifiedIdentifierNode` is designed to represent a name lookup path, not an instantiated template type. When codegen processes `ExpressionNode(QualifiedIdentifierNode(ns::S))`, it doesn't know that this should actually reference the instantiated type `S_int` from the type registry.
+
+**Proper Fix Options**:
+1. Create a new node type (e.g., `InstantiatedTemplateNode`) that carries the instantiated type information
+2. Modify the parser to resolve the instantiated type name (`S_int`) and create an `IdentifierNode` with that name instead
+3. Enhance `QualifiedIdentifierNode` to optionally carry template instantiation metadata
+4. Change approach entirely: don't create nodes during parsing, let codegen/IR handle template instantiation
+
+Each option has trade-offs and requires careful consideration to avoid breaking existing template functionality that works with non-qualified names.
 
 ### Parsing Fix (Commit dbf7fa8, updated)
 
