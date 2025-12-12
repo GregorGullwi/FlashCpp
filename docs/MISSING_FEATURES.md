@@ -9,17 +9,22 @@ This document tracks missing C++20 features in FlashCpp. Features are organized 
 
 **Status Update (2025-12-12)**: All critical parsing features for standard library headers are complete! 643 tests pass (642 successful, 11 expected failures).
 
+**Recent Discoveries:**
+- ✅ C++20 concepts partially implemented (literal constraints work, error reporting functional)
+- ✅ constinit enforcement fully working (validates constant expressions)
+- ✅ All previously documented parsing features confirmed working
+
 **Recent Achievements:**
 - ✅ Member template alias instantiation working for full and partial specializations
 - ✅ 36+ compiler intrinsics implemented for type traits support
 - ✅ Namespace-qualified template instantiation
 - ✅ All core C++20 language features needed for parsing headers
 
-**Known Limitations:**
-- Partial specialization member aliases have a code generator issue with pointer types (parsing works correctly)
-- Some advanced template features (SFINAE, some metaprogramming patterns) not yet implemented
-- C++20 concepts: Basic literal constraints work, but complex concept expressions not yet supported
-- Pack expansion in member declarations not yet implemented
+**Remaining Work:**
+- Complex concept expressions (basic concepts work)
+- Pack expansion in member declarations
+- SFINAE (Substitution Failure Is Not An Error)
+- Code generation bug: pointer types in partial specialization member aliases
 
 ## Completed Features ✅
 
@@ -106,14 +111,31 @@ Templates in namespaces can now be instantiated with fully-qualified names (e.g.
 
 ---
 
-## Newly Discovered Missing Features
+## Recently Verified Working Features
+
+These features were previously thought to be incomplete but are actually fully or partially implemented:
+
+### constinit Enforcement
+
+**Status**: ✅ **IMPLEMENTED**  
+**Test Case**: `tests/test_constinit_fail.cpp` (correctly fails with error)
+
+**Description**: The `constinit` specifier requires variables to be initialized with constant expressions. The compiler parses and enforces this requirement.
+
+**What Works**:
+- ✅ Parsing `constinit` keyword
+- ✅ Validating that initializers are constant expressions
+- ✅ Proper error messages when validation fails
+- ✅ Distinction between `constexpr` and `constinit` semantics
+
+**Implementation**: See `src/Parser.cpp` lines 2259-2294.
+
+---
 
 ### C++20 Concepts and Requires Clauses
 
 **Status**: ✅ **PARTIALLY IMPLEMENTED**  
 **Test Case**: `tests/concept_error_test_fail.cpp` (correctly fails with constraint error)
-
-**Description**: C++20 concepts allow constraining template parameters with compile-time predicates.
 
 **What Works**:
 - ✅ Parsing concept declarations (`template<typename T> concept Name = ...;`)
@@ -121,27 +143,14 @@ Templates in namespaces can now be instantiated with fully-qualified names (e.g.
 - ✅ Evaluating literal constraints (`requires true`, `requires false`)
 - ✅ Proper error messages when constraints are not satisfied
 
-**Example that works**:
-```cpp
-template<typename T>
-requires false
-T bad_constraint(T x) { return x; }
-
-int main() {
-    int x = bad_constraint(5);  // Error: constraint not satisfied
-}
-```
-
 **Not Yet Implemented**:
 - Complex concept expressions (e.g., `requires std::integral<T>`)
 - Requires expressions with type requirements
 - Concept composition (conjunction, disjunction)
 
-**Impact**: Low-Medium priority. Basic literal constraints work. Complex concept expressions needed for full C++20 compliance and modern library usage.
-
-**Workaround**: Use `requires true` or `requires false` for simple cases. Use SFINAE or static_assert for complex constraints.
-
 ---
+
+## Remaining Missing Features
 
 ### Pack Expansion in Member Declarations
 
@@ -158,28 +167,9 @@ struct Tuple {
 };
 ```
 
-**Impact**: Medium priority. Required for implementing `std::tuple` and similar variadic containers from scratch. Most standard library implementations use different techniques.
-
 **Current Support**: Variadic templates work for function parameters and template parameters, but not for struct member expansion.
 
----
-
-### constinit Enforcement
-
-**Status**: ⚠️ **PARSING ONLY**  
-**Test Case**: `tests/test_constinit_fail.cpp`
-
-**Description**: The `constinit` specifier requires variables to be initialized with constant expressions. Currently parsed but not enforced.
-
-**Example**:
-```cpp
-int runtime_func() { return 42; }
-constinit int x = runtime_func();  // Should fail but doesn't
-```
-
-**Impact**: Low priority. `constinit` is a C++20 feature for ensuring compile-time initialization. Most code uses `constexpr` instead.
-
-**Current Behavior**: Parser accepts `constinit` keyword but doesn't validate that initializers are constant expressions.
+**Impact**: Medium priority. Required for implementing `std::tuple` and similar variadic containers from scratch. Most standard library implementations use different techniques.
 
 ---
 
@@ -233,24 +223,24 @@ All critical parsing features for standard library headers are complete! This in
 - Namespace-qualified template instantiation
 - Reference members in structs
 - Anonymous template parameters
+- C++20 concepts (literal constraints)
+- constinit enforcement
 
 ### Known Issues ⚠️
 - Partial specialization member aliases: Code generator bug with pointer types (parsing works)
 - Complex preprocessor expressions: Non-blocking warnings
-- Advanced template features: SFINAE not implemented
 
 ### Not Yet Implemented ❌
 - Complex concept expressions (basic literal constraints work)
 - Pack expansion in member declarations  
-- constinit enforcement (parsed but not validated)
 - SFINAE (Substitution Failure Is Not An Error)
 
 ### All Parsing Complete! ✅
 All critical parsing features for C++20 standard library header support have been implemented. The remaining work is primarily in:
 1. Code generation optimizations (e.g., pointer type handling in partial specializations)
 2. Advanced template metaprogramming (SFINAE)
-3. C++20 concept support
-4. Semantic validation (constinit, consteval)
+3. Complex concept expression evaluation
+4. Pack expansion in member variable declarations
 
 ---
 
