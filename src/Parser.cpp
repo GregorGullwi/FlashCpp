@@ -240,7 +240,11 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
 
 std::optional<Token> Parser::consume_token() {
     std::optional<Token> token = peek_token();
-    current_token_.emplace(lexer_.next_token());
+    Token next = lexer_.next_token();
+    FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'", 
+        token.has_value() ? std::string(token->value()) : "N/A",
+        std::string(next.value()));
+    current_token_.emplace(next);
     return token;
 }
 
@@ -7927,11 +7931,22 @@ ParseResult Parser::parse_block()
 		return ParseResult::error("Expected '{' for block", *current_token_);
 	}
 
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_block: Entered block. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 
 	while (!consume_punctuator("}")) {
 		// Parse statements or declarations
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: About to parse_statement_or_declaration. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		ParseResult parse_result = parse_statement_or_declaration();
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: parse_statement_or_declaration returned. is_error={}, current_token={}, peek={}", 
+			parse_result.is_error(),
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		if (parse_result.is_error())
 			return parse_result;
 
@@ -7962,6 +7977,11 @@ ParseResult Parser::parse_statement_or_declaration()
 			*current_token_);
 	}
 	const Token& current_token = current_token_opt.value();
+
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_statement_or_declaration: current_token={}, type={}", 
+		std::string(current_token.value()),
+		current_token.type() == Token::Type::Keyword ? "Keyword" : 
+		current_token.type() == Token::Type::Identifier ? "Identifier" : "Other");
 
 	// Handle nested blocks
 	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
@@ -8033,6 +8053,8 @@ ParseResult Parser::parse_statement_or_declaration()
 		auto keyword_iter = keyword_parsing_functions.find(current_token.value());
 		if (keyword_iter != keyword_parsing_functions.end()) {
 			// Call the appropriate parsing function
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_statement_or_declaration: Found keyword '{}', calling handler", 
+				std::string(current_token.value()));
 			return (this->*(keyword_iter->second))();
 		}
 
@@ -8861,7 +8883,14 @@ ParseResult Parser::parse_return_statement()
 			current_token_opt.value_or(Token()));
 	}
 	Token return_token = current_token_opt.value();
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to consume 'return'. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	consume_token(); // Consume the 'return' keyword
+
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: Consumed 'return'. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 
 	// Parse the return expression (if any)
 	ParseResult return_expr_result;
@@ -8869,6 +8898,9 @@ ParseResult Parser::parse_return_statement()
 	if (!next_token_opt.has_value() ||
 		(next_token_opt.value().type() != Token::Type::Punctuator ||
 			next_token_opt.value().value() != ";")) {
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to parse_expression. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		return_expr_result = parse_expression();
 		if (return_expr_result.is_error()) {
 			return return_expr_result;
