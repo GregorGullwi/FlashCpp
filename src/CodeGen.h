@@ -10279,6 +10279,19 @@ private:
 		        type == Type::MemberFunctionPointer);
 	}
 
+	bool isArithmeticType(Type type) const {
+		// Branchless: arithmetic types are Bool(1) through LongDouble(14)
+		// Using range check instead of multiple comparisons
+		return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &
+		       (static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
+	}
+
+	bool isFundamentalType(Type type) const {
+		// Branchless: fundamental types are Void(0), Nullptr(28), or arithmetic types Bool(1) through LongDouble(14)
+		// Using bitwise OR of conditions for branchless evaluation
+		return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
+	}
+
 	std::vector<IrOperand> generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// Type traits evaluate to a compile-time boolean constant
 		bool result = false;
@@ -10398,6 +10411,42 @@ private:
 				result = (type == Type::Function && !is_reference && pointer_depth == 0);
 				break;
 
+			case TypeTraitKind::IsReference:
+				// __is_reference - lvalue reference OR rvalue reference
+				result = is_reference | is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsArithmetic:
+				// __is_arithmetic - integral or floating point
+				result = isArithmeticType(type) & !is_reference & (pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsFundamental:
+				// __is_fundamental - void, nullptr_t, arithmetic types
+				result = isFundamentalType(type) & !is_reference & (pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsObject:
+				// __is_object - not function, not reference, not void
+				result = (type != Type::Function) & (type != Type::Void) & !is_reference & !is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsScalar:
+				// __is_scalar - arithmetic, pointer, enum, member pointer, or nullptr
+				result = (isArithmeticType(type) |
+			          (type == Type::Enum) | (type == Type::Nullptr) |
+			          (type == Type::MemberObjectPointer) | (type == Type::MemberFunctionPointer) |
+			          (pointer_depth > 0))
+			          & !is_reference;
+				break;
+
+			case TypeTraitKind::IsCompound:
+				// __is_compound - array, function, pointer, reference, class, union, enum, member pointer
+				// Basically anything that's not fundamental
+				// Branchless: use bitwise NOT and AND to avoid branching
+				result = !(isFundamentalType(type) & !is_reference & (pointer_depth == 0));
+				break;
+
 			case TypeTraitKind::IsBaseOf:
 				// __is_base_of(Base, Derived) - Check if Base is a base class of Derived
 				if (traitNode.has_second_type()) {
@@ -10452,6 +10501,65 @@ private:
 						         type_spec.is_array() == second_spec.is_array() &&
 						         type_spec.is_const() == second_spec.is_const() &&
 						         type_spec.is_volatile() == second_spec.is_volatile());
+					}
+				}
+				break;
+
+			case TypeTraitKind::IsConvertible:
+				// __is_convertible(From, To) - Check if From can be converted to To
+				if (traitNode.has_second_type()) {
+					const ASTNode& second_type_node = traitNode.second_type_node();
+					if (second_type_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
+						const TypeSpecifierNode& from_spec = type_spec;
+						
+						Type from_type = from_spec.type();
+						Type to_type = to_spec.type();
+						bool from_is_ref = from_spec.is_reference();
+						bool to_is_ref = to_spec.is_reference();
+						size_t from_ptr_depth = from_spec.pointer_depth();
+						size_t to_ptr_depth = to_spec.pointer_depth();
+						
+						// Same type is always convertible
+						if (from_type == to_type && from_is_ref == to_is_ref && 
+						    from_ptr_depth == to_ptr_depth && 
+						    from_spec.type_index() == to_spec.type_index()) {
+							result = true;
+						}
+						// Arithmetic types are generally convertible to each other
+						else if (isArithmeticType(from_type) && isArithmeticType(to_type) &&
+						         !from_is_ref && !to_is_ref && 
+						         from_ptr_depth == 0 && to_ptr_depth == 0) {
+							result = true;
+						}
+						// Pointers with same depth and compatible types
+						else if (from_ptr_depth > 0 && to_ptr_depth > 0 && 
+						         from_ptr_depth == to_ptr_depth && !from_is_ref && !to_is_ref) {
+							// Pointer convertibility (same type or derived-to-base)
+							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
+						}
+						// nullptr_t is convertible to any pointer type
+						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+							result = true;
+						}
+						// Derived to base conversion for class types
+						else if (from_type == Type::Struct && to_type == Type::Struct &&
+						         !from_is_ref && !to_is_ref && 
+						         from_ptr_depth == 0 && to_ptr_depth == 0 &&
+						         from_spec.type_index() < gTypeInfo.size() &&
+						         to_spec.type_index() < gTypeInfo.size()) {
+							// Check if from_type is derived from to_type
+							const TypeInfo& from_info = gTypeInfo[from_spec.type_index()];
+							const StructTypeInfo* from_struct = from_info.getStructInfo();
+							if (from_struct) {
+								for (const auto& base_class : from_struct->base_classes) {
+									if (base_class.type_index == to_spec.type_index()) {
+										result = true;
+										break;
+									}
+								}
+							}
+						}
 					}
 				}
 				break;
@@ -10624,6 +10732,47 @@ private:
 						result = is_pod;
 					}
 				}
+				break;
+
+			case TypeTraitKind::IsConst:
+				// __is_const - checks if type has const qualifier
+				result = type_spec.is_const();
+				break;
+
+			case TypeTraitKind::IsVolatile:
+				// __is_volatile - checks if type has volatile qualifier
+				result = type_spec.is_volatile();
+				break;
+
+			case TypeTraitKind::IsSigned:
+				// __is_signed - checks if integral type is signed
+				result = ((type == Type::Char) |  // char is signed on most platforms
+			          (type == Type::Short) | (type == Type::Int) |
+			          (type == Type::Long) | (type == Type::LongLong))
+			          & !is_reference & (pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsUnsigned:
+				// __is_unsigned - checks if integral type is unsigned
+				result = ((type == Type::Bool) |  // bool is considered unsigned
+			          (type == Type::UnsignedChar) | (type == Type::UnsignedShort) |
+			          (type == Type::UnsignedInt) | (type == Type::UnsignedLong) |
+			          (type == Type::UnsignedLongLong))
+			          & !is_reference & (pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsBoundedArray:
+				// __is_bounded_array - array with known bound (e.g., int[10])
+				// Check if it's an array and the size is known
+				result = type_spec.is_array() & (type_spec.array_size() > 0) &
+			         !is_reference & (pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsUnboundedArray:
+				// __is_unbounded_array - array with unknown bound (e.g., int[])
+				// Check if it's an array and the size is unknown (0 or negative)
+				result = type_spec.is_array() & (type_spec.array_size() <= 0) &
+			         !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsConstructible:

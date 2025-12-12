@@ -10352,122 +10352,94 @@ ParseResult Parser::parse_primary_expression()
 
 		// Normalize __builtin_ prefix to __ prefix for easier matching
 		// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
-		std::string normalized_name;
+		// Use string_view to avoid allocation - substr is essentially free with string_view
+		std::string_view normalized_view = trait_name;
+		std::string builtin_normalized; // Only used if we need to normalize __builtin_ prefix
 		if (trait_name.starts_with("__builtin_")) {
-			normalized_name = "__" + std::string(trait_name.substr(10)); // Remove "builtin_" part
-			trait_name = normalized_name;
+			builtin_normalized = "__" + std::string(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
+			normalized_view = builtin_normalized;
 		}
 
-		// Determine the trait kind and if it's a binary or variadic trait
-		TypeTraitKind kind;
-		bool is_binary_trait = false;
-		bool is_variadic_trait = false;
-		bool is_no_arg_trait = false;
+		// Lookup trait info using a static table
+		struct TraitInfo {
+			TypeTraitKind kind;
+			bool is_binary;
+			bool is_variadic;
+			bool is_no_arg;
+		};
 		
-		// Primary type categories
-		if (trait_name == "__is_void") {
-			kind = TypeTraitKind::IsVoid;
-		} else if (trait_name == "__is_nullptr") {
-			kind = TypeTraitKind::IsNullptr;
-		} else if (trait_name == "__is_integral") {
-			kind = TypeTraitKind::IsIntegral;
-		} else if (trait_name == "__is_floating_point") {
-			kind = TypeTraitKind::IsFloatingPoint;
-		} else if (trait_name == "__is_array") {
-			kind = TypeTraitKind::IsArray;
-		} else if (trait_name == "__is_pointer") {
-			kind = TypeTraitKind::IsPointer;
-		} else if (trait_name == "__is_lvalue_reference") {
-			kind = TypeTraitKind::IsLvalueReference;
-		} else if (trait_name == "__is_rvalue_reference") {
-			kind = TypeTraitKind::IsRvalueReference;
-		} else if (trait_name == "__is_member_object_pointer") {
-			kind = TypeTraitKind::IsMemberObjectPointer;
-		} else if (trait_name == "__is_member_function_pointer") {
-			kind = TypeTraitKind::IsMemberFunctionPointer;
-		} else if (trait_name == "__is_enum") {
-			kind = TypeTraitKind::IsEnum;
-		} else if (trait_name == "__is_union") {
-			kind = TypeTraitKind::IsUnion;
-		} else if (trait_name == "__is_class") {
-			kind = TypeTraitKind::IsClass;
-		} else if (trait_name == "__is_function") {
-			kind = TypeTraitKind::IsFunction;
-		} else if (trait_name == "__is_base_of") {
-			// Type relationship: binary trait taking two types
-			kind = TypeTraitKind::IsBaseOf;
-			is_binary_trait = true;
-		} else if (trait_name == "__is_same") {
-			// Type relationship: binary trait taking two types
-			kind = TypeTraitKind::IsSame;
-			is_binary_trait = true;
-		} else if (trait_name == "__is_polymorphic") {
+		static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
+			// Primary type categories
+			{"__is_void", {TypeTraitKind::IsVoid, false, false, false}},
+			{"__is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
+			{"__is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
+			{"__is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
+			{"__is_array", {TypeTraitKind::IsArray, false, false, false}},
+			{"__is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
+			{"__is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
+			{"__is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
+			{"__is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
+			{"__is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
+			{"__is_enum", {TypeTraitKind::IsEnum, false, false, false}},
+			{"__is_union", {TypeTraitKind::IsUnion, false, false, false}},
+			{"__is_class", {TypeTraitKind::IsClass, false, false, false}},
+			{"__is_function", {TypeTraitKind::IsFunction, false, false, false}},
+			// Composite type categories
+			{"__is_reference", {TypeTraitKind::IsReference, false, false, false}},
+			{"__is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
+			{"__is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
+			{"__is_object", {TypeTraitKind::IsObject, false, false, false}},
+			{"__is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
+			{"__is_compound", {TypeTraitKind::IsCompound, false, false, false}},
+			// Type relationships (binary traits)
+			{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
+			{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
+			{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
 			// Type properties
-			kind = TypeTraitKind::IsPolymorphic;
-		} else if (trait_name == "__is_final") {
-			kind = TypeTraitKind::IsFinal;
-		} else if (trait_name == "__is_abstract") {
-			kind = TypeTraitKind::IsAbstract;
-		} else if (trait_name == "__is_empty") {
-			kind = TypeTraitKind::IsEmpty;
-		} else if (trait_name == "__is_standard_layout") {
-			kind = TypeTraitKind::IsStandardLayout;
-		} else if (trait_name == "__has_unique_object_representations") {
-			kind = TypeTraitKind::HasUniqueObjectRepresentations;
-		} else if (trait_name == "__is_trivially_copyable") {
-			kind = TypeTraitKind::IsTriviallyCopyable;
-		} else if (trait_name == "__is_trivial") {
-			kind = TypeTraitKind::IsTrivial;
-		} else if (trait_name == "__is_pod") {
-			kind = TypeTraitKind::IsPod;
-		}
-		// Constructibility traits (variadic)
-		else if (trait_name == "__is_constructible") {
-			kind = TypeTraitKind::IsConstructible;
-			is_variadic_trait = true;
-		} else if (trait_name == "__is_trivially_constructible") {
-			kind = TypeTraitKind::IsTriviallyConstructible;
-			is_variadic_trait = true;
-		} else if (trait_name == "__is_nothrow_constructible") {
-			kind = TypeTraitKind::IsNothrowConstructible;
-			is_variadic_trait = true;
-		}
-		// Assignability traits (binary)
-		else if (trait_name == "__is_assignable") {
-			kind = TypeTraitKind::IsAssignable;
-			is_binary_trait = true;
-		} else if (trait_name == "__is_trivially_assignable") {
-			kind = TypeTraitKind::IsTriviallyAssignable;
-			is_binary_trait = true;
-		} else if (trait_name == "__is_nothrow_assignable") {
-			kind = TypeTraitKind::IsNothrowAssignable;
-			is_binary_trait = true;
-		}
-		// Destructibility traits (unary)
-		else if (trait_name == "__is_destructible") {
-			kind = TypeTraitKind::IsDestructible;
-		} else if (trait_name == "__is_trivially_destructible") {
-			kind = TypeTraitKind::IsTriviallyDestructible;
-		} else if (trait_name == "__is_nothrow_destructible") {
-			kind = TypeTraitKind::IsNothrowDestructible;
-		}
-		// C++20 layout compatibility traits (binary)
-		else if (trait_name == "__is_layout_compatible") {
-			kind = TypeTraitKind::IsLayoutCompatible;
-			is_binary_trait = true;
-		} else if (trait_name == "__is_pointer_interconvertible_base_of") {
-			kind = TypeTraitKind::IsPointerInterconvertibleBaseOf;
-			is_binary_trait = true;
-		}
-		// Special traits
-		else if (trait_name == "__underlying_type") {
-			kind = TypeTraitKind::UnderlyingType;
-		} else if (trait_name == "__is_constant_evaluated") {
-			kind = TypeTraitKind::IsConstantEvaluated;
-			is_no_arg_trait = true;
-		} else {
+			{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
+			{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
+			{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
+			{"__is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
+			{"__is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
+			{"__has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
+			{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
+			{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
+			{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
+			{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
+			{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
+			{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
+			{"__is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
+			{"__is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
+			{"__is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
+			// Constructibility traits (variadic)
+			{"__is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
+			{"__is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
+			{"__is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
+			// Assignability traits (binary)
+			{"__is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
+			{"__is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
+			{"__is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
+			// Destructibility traits
+			{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
+			{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
+			{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
+			// C++20 layout compatibility traits (binary)
+			{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
+			{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
+			// Special traits
+			{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
+			{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
+		};
+
+		auto it = trait_map.find(normalized_view);
+		if (it == trait_map.end()) {
 			return ParseResult::error("Unknown type trait intrinsic", trait_token);
 		}
+
+		TypeTraitKind kind = it->second.kind;
+		bool is_binary_trait = it->second.is_binary;
+		bool is_variadic_trait = it->second.is_variadic;
+		bool is_no_arg_trait = it->second.is_no_arg;
 
 		if (!consume_punctuator("(")) {
 			return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
@@ -10511,6 +10483,36 @@ ParseResult Parser::parse_primary_expression()
 				}
 			}
 
+			// Parse array specifications ([N] or [])
+			if (peek_token().has_value() && peek_token()->value() == "[") {
+				consume_token();  // consume '['
+				
+				// Check for array size expression or empty brackets
+				std::optional<size_t> array_size_val;
+				if (peek_token().has_value() && peek_token()->value() != "]") {
+					// Parse array size expression
+					ParseResult size_result = parse_expression();
+					if (size_result.is_error()) {
+						return ParseResult::error("Expected array size expression", *current_token_);
+					}
+					
+					// Try to evaluate the array size as a constant expression
+					if (size_result.node().has_value()) {
+						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+						if (eval_result.success) {
+							array_size_val = static_cast<size_t>(eval_result.as_int());
+						}
+					}
+				}
+				
+				if (!consume_punctuator("]")) {
+					return ParseResult::error("Expected ']' after array size", *current_token_);
+				}
+				
+				type_spec.set_array(true, array_size_val);
+			}
+
 			if (is_variadic_trait) {
 				// Variadic trait: parse comma-separated additional types
 				std::vector<ASTNode> additional_types;
@@ -10536,6 +10538,32 @@ ParseResult Parser::parse_primary_expression()
 							consume_token();
 							arg_type_spec.set_reference(false);  // lvalue reference
 						}
+					}
+					
+					// Parse array specifications ([N] or []) for variadic trait additional args
+					std::optional<size_t> array_size_val;
+					if (peek_token().has_value() && peek_token()->value() == "[") {
+						consume_token();  // consume '['
+						
+						if (peek_token().has_value() && peek_token()->value() != "]") {
+							ParseResult size_result = parse_expression();
+							if (size_result.is_error()) {
+								return ParseResult::error("Expected array size expression", *current_token_);
+							}
+							if (size_result.node().has_value()) {
+								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+								if (eval_result.success) {
+									array_size_val = static_cast<size_t>(eval_result.as_int());
+								}
+							}
+						}
+						
+						if (!consume_punctuator("]")) {
+							return ParseResult::error("Expected ']' after array size", *current_token_);
+						}
+						
+						arg_type_spec.set_array(true, array_size_val);
 					}
 					
 					additional_types.push_back(*arg_type_result.node());
@@ -10573,6 +10601,32 @@ ParseResult Parser::parse_primary_expression()
 						consume_token();
 						second_type_spec.set_reference(false);  // lvalue reference
 					}
+				}
+
+				// Parse array specifications ([N] or []) for binary trait second type
+				std::optional<size_t> array_size_val;
+				if (peek_token().has_value() && peek_token()->value() == "[") {
+					consume_token();  // consume '['
+					
+					if (peek_token().has_value() && peek_token()->value() != "]") {
+						ParseResult size_result = parse_expression();
+						if (size_result.is_error()) {
+							return ParseResult::error("Expected array size expression", *current_token_);
+						}
+						if (size_result.node().has_value()) {
+							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+							if (eval_result.success) {
+								array_size_val = static_cast<size_t>(eval_result.as_int());
+							}
+						}
+					}
+					
+					if (!consume_punctuator("]")) {
+						return ParseResult::error("Expected ']' after array size", *current_token_);
+					}
+					
+					second_type_spec.set_array(true, array_size_val);
 				}
 
 				if (!consume_punctuator(")")) {

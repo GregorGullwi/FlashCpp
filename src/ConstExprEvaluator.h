@@ -2340,6 +2340,18 @@ public:
 		return EvalResult::error("Array variable is not initialized with an array initializer");
 	}
 
+	// Helper functions for branchless type checking
+	static bool isArithmeticType(Type type) {
+		// Branchless: arithmetic types are Bool(1) through LongDouble(14)
+		return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &
+		       (static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
+	}
+
+	static bool isFundamentalType(Type type) {
+		// Branchless: fundamental types are Void(0), Nullptr(28), or arithmetic types
+		return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
+	}
+
 	// Evaluate type trait expressions (e.g., __is_void(int), __is_constant_evaluated())
 	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		// Handle __is_constant_evaluated() specially - it returns true during constexpr evaluation
@@ -2401,6 +2413,62 @@ public:
 
 			case TypeTraitKind::IsArray:
 				result = type_spec.is_array() && !is_reference && pointer_depth == 0;
+				break;
+
+			case TypeTraitKind::IsReference:
+				result = is_reference | is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsArithmetic:
+				result = isArithmeticType(type) & !is_reference & (pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsFundamental:
+				result = isFundamentalType(type) & !is_reference & (pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsObject:
+				result = (type != Type::Function) & (type != Type::Void) & !is_reference & !is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsScalar:
+				result = (isArithmeticType(type) ||
+				          type == Type::Enum || type == Type::Nullptr ||
+				          type == Type::MemberObjectPointer || type == Type::MemberFunctionPointer ||
+				          pointer_depth > 0)
+				          && !is_reference;
+				break;
+
+			case TypeTraitKind::IsCompound:
+				result = !(isFundamentalType(type) & !is_reference & (pointer_depth == 0));
+				break;
+
+			case TypeTraitKind::IsConst:
+				result = type_spec.is_const();
+				break;
+
+			case TypeTraitKind::IsVolatile:
+				result = type_spec.is_volatile();
+				break;
+
+			case TypeTraitKind::IsSigned:
+				result = ((type == Type::Char || type == Type::Short || type == Type::Int ||
+				          type == Type::Long || type == Type::LongLong)
+				          && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsUnsigned:
+				result = ((type == Type::Bool || type == Type::UnsignedChar || type == Type::UnsignedShort ||
+				          type == Type::UnsignedInt || type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+				          && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsBoundedArray:
+				result = type_spec.is_array() & (type_spec.array_size() > 0) & !is_reference & (pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsUnboundedArray:
+				result = type_spec.is_array() & (type_spec.array_size() <= 0) & !is_reference & (pointer_depth == 0);
 				break;
 
 			// Add more type traits as needed
