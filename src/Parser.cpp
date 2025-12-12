@@ -18439,6 +18439,10 @@ ParseResult Parser::parse_template_function_declaration_body(
 	std::optional<ASTNode> requires_clause,
 	ASTNode& out_template_node
 ) {
+	// Save position for template declaration re-parsing (needed for SFINAE)
+	// This position is at the start of the return type, before parse_type_and_name()
+	SaveHandle declaration_start = save_token_position();
+	
 	// Parse the function declaration (type and name)
 	auto type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
@@ -18515,10 +18519,13 @@ ParseResult Parser::parse_template_function_declaration_body(
 		// Just a declaration, consume the semicolon
 		consume_token();
 	} else if (peek_token().has_value() && peek_token()->value() == "{") {
-		// Has a body - save position at the '{'
+		// Has a body - save positions for re-parsing during instantiation
 		SaveHandle body_start = save_token_position();
 		
-		// Store the body position in the function declaration so we can re-parse it later
+		// Store both declaration and body positions for SFINAE support
+		// Declaration position: for re-parsing return type with template parameters
+		// Body position: for re-parsing function body with template parameters
+		func_decl.set_template_declaration_position(declaration_start);
 		func_decl.set_template_body_position(body_start);
 		
 		// Skip over the body (skip_balanced_braces consumes the '{' and everything up to the matching '}')
@@ -19510,31 +19517,134 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
 	                    orig_decl.identifier_token().file_index());
 
-	// Create return type - substitute template parameters if needed
+	// Create return type - re-parse declaration if available (for SFINAE)
 	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
 	
-	// Use the new substitution helper to handle complex types (const T&, T*, etc.)
-	auto [return_type_enum, return_type_index] = substitute_template_parameter(
-		orig_return_type, template_params, template_args_as_type_args
-	);
-
-	// NOTE: SFINAE limitation discovered - return types are stored as placeholders in template declarations
-	// Only function bodies are re-parsed during instantiation, not declarations
-	// This means dependent return types like "typename enable_if<condition>::type" cannot be fully
-	// validated during instantiation. Complete SFINAE same-name overload support would require:
-	// 1. Re-parsing function declarations during instantiation, OR
-	// 2. Storing and evaluating dependent type expressions, OR  
-	// 3. Implementing auto return type deduction from function bodies
-	//
-	// For now, SFINAE works for different function names or when return types don't depend on
-	// template parameters in complex ways.
-
-	ASTNode return_type = emplace_node<TypeSpecifierNode>(
-		return_type_enum,
-		TypeQualifier::None,
-		get_type_size_bits(return_type_enum),
-		Token()
-	);
+	ASTNode return_type;
+	Token func_name_token = orig_decl.identifier_token();
+	
+	// Check if we have a saved declaration position for re-parsing (SFINAE support)
+	// Only re-parse if the return type appears to be template-dependent (contains _unknown)
+	bool should_reparse = func_decl.has_template_declaration_position();
+	if (should_reparse && orig_return_type.type() == Type::UserDefined && 
+	    orig_return_type.type_index() < gTypeInfo.size()) {
+		const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
+		// Only re-parse if the type contains _unknown (template-dependent placeholder)
+		should_reparse = (orig_type_info.name_.find("_unknown") != std::string::npos);
+	} else {
+		should_reparse = false;
+	}
+	
+	if (should_reparse) {
+		FLASH_LOG(Templates, Debug, "Re-parsing function declaration for SFINAE validation");
+		
+		// Save current position
+		SaveHandle current_pos = save_token_position();
+		
+		// Restore to the declaration start
+		restore_lexer_position_only(func_decl.template_declaration_position());
+		
+		// Add template parameters to the type system temporarily
+		FlashCpp::TemplateParameterScope template_scope;
+		std::vector<std::string_view> param_names;
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			}
+		}
+		
+		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
+			std::string_view param_name = param_names[i];
+			const TemplateTypeArg& arg = template_args_as_type_args[i];
+			
+			// Add this template parameter -> concrete type mapping
+			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
+			gTypesByName.emplace(type_info.name_, &type_info);
+			template_scope.addParameter(&type_info);
+		}
+		
+		// Re-parse the return type with template parameters in scope
+		auto return_type_result = parse_type_specifier();
+		
+		// Restore position
+		restore_lexer_position_only(current_pos);
+		
+		if (return_type_result.is_error()) {
+			// SFINAE: Return type parsing failed - this is a substitution failure
+			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type parsing failed: {}", return_type_result.error_message());
+			return std::nullopt;  // Substitution failure - try next overload
+		}
+		
+		if (!return_type_result.node().has_value()) {
+			FLASH_LOG(Templates, Debug, "SFINAE: Return type parsing returned no node");
+			return std::nullopt;
+		}
+		
+		return_type = *return_type_result.node();
+		
+		// SFINAE: Validate that the parsed type actually exists in the type system
+		// This catches cases like "typename enable_if<false>::type" where parsing succeeds
+		// but the type doesn't actually have a ::type member
+		//
+		// NOTE: This validation is limited - it can detect simple cases where the type
+		// name contains "_unknown" (template-dependent placeholder), but cannot evaluate
+		// complex constant expressions like "is_int<T>::value" in template arguments.
+		// Full SFINAE support would require implementing constant expression evaluation
+		// during template instantiation.
+		if (return_type.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = return_type.as<TypeSpecifierNode>();
+			
+			if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+				
+				// Check for placeholder/unknown types that indicate failed resolution
+				if (type_info.name_.find("_unknown") != std::string::npos) {
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", type_info.name_);
+					return std::nullopt;  // Substitution failure
+				}
+			}
+		}
+		
+		// Now we need to re-parse the function name after the return type
+		// Parse type_and_name to get both
+		restore_lexer_position_only(func_decl.template_declaration_position());
+		
+		// Add template parameters back
+		FlashCpp::TemplateParameterScope template_scope2;
+		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
+			std::string_view param_name = param_names[i];
+			const TemplateTypeArg& arg = template_args_as_type_args[i];
+			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
+			gTypesByName.emplace(type_info.name_, &type_info);
+			template_scope2.addParameter(&type_info);
+		}
+		
+		auto type_and_name_result = parse_type_and_name();
+		restore_lexer_position_only(current_pos);
+		
+		if (type_and_name_result.is_error() || !type_and_name_result.node().has_value()) {
+			FLASH_LOG(Templates, Debug, "SFINAE: Function name parsing failed");
+			return std::nullopt;
+		}
+		
+		// Extract the function name token from the parsed result
+		if (type_and_name_result.node()->is<DeclarationNode>()) {
+			func_name_token = type_and_name_result.node()->as<DeclarationNode>().identifier_token();
+		}
+		
+	} else {
+		// Fallback: Use simple substitution (old behavior)
+		auto [return_type_enum, return_type_index] = substitute_template_parameter(
+			orig_return_type, template_params, template_args_as_type_args
+		);
+		
+		return_type = emplace_node<TypeSpecifierNode>(
+			return_type_enum,
+			TypeQualifier::None,
+			get_type_size_bits(return_type_enum),
+			Token()
+		);
+	}
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());

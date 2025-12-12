@@ -42,16 +42,21 @@ using enable_if_t = typename enable_if<B, T>::type;
 - ✅ 36+ compiler intrinsics for type traits
 
 **Recent updates**:
-- **2025-12-12 20:15 UTC**: **INVESTIGATION** - Discovered template architecture limitation: return types stored as placeholders, only bodies re-parsed during instantiation. Full SFINAE same-name overload support requires deeper changes to template system.
+- **2025-12-12 20:40 UTC**: **IMPLEMENTATION** - Added declaration position tracking and re-parsing infrastructure. Partial support for dependent return types. Template-dependent types with `_unknown` markers can trigger SFINAE. Full support requires constant expression evaluation.
+- **2025-12-12 20:15 UTC**: **INVESTIGATION** - Discovered template architecture limitation: return types stored as placeholders, only bodies re-parsed during instantiation.
 - **2025-12-12 20:10 UTC**: **PROGRESS** - Multi-overload template lookup implemented for SFINAE. Compiler now tries all template overloads with same name.
 - **2025-12-12 19:30 UTC**: **MAJOR** - SFINAE support confirmed working! 6 new test cases pass.
 - **2025-12-12 15:45 UTC**: Member template alias instantiation working for full specializations
 - **2025-12-12 13:47 UTC**: Added `template` keyword handler to specialization parsing
 - **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic. Total: 36+ intrinsics!
 
-**Known limitation**: Function overload resolution with same name and different SFINAE conditions - **PARTIAL IMPLEMENTATION** (commit 23ebe3f+). Multi-overload lookup implemented, but return type validation limited by template system architecture.
+**Known limitation**: Function overload resolution with same name and different SFINAE conditions - **PARTIAL IMPLEMENTATION**. Multi-overload lookup, SFINAE context, and declaration re-parsing implemented. Limitation: constant expressions in template arguments (e.g., `is_int<T>::value`) not evaluated during instantiation.
 
-**Architecture finding**: Template function declarations store return types as placeholders. During instantiation, only function bodies are re-parsed, not declarations. Full SFINAE same-name overload support would require re-parsing declarations or implementing dependent type expression evaluation.
+**Architecture status**: 
+- ✅ Declaration position tracking added to FunctionDeclarationNode
+- ✅ Re-parsing infrastructure for template declarations  
+- ✅ SFINAE-aware error handling
+- ⏸️ Constant expression evaluation during template instantiation (required for full support)
 
 **Next steps**: Consider auto return type deduction or declaration re-parsing for complete SFINAE support.
 

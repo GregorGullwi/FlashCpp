@@ -1341,6 +1341,15 @@ public:
 	bool has_template_body_position() const { return has_template_body_; }
 	SaveHandle template_body_position() const { return template_body_position_handle_; }
 
+	// Template declaration position support (for re-parsing function declarations during instantiation)
+	// Needed for SFINAE: re-parse return type with substituted template parameters
+	void set_template_declaration_position(SaveHandle handle) {
+		has_template_declaration_ = true;
+		template_declaration_position_handle_ = handle;
+	}
+	bool has_template_declaration_position() const { return has_template_declaration_; }
+	SaveHandle template_declaration_position() const { return template_declaration_position_handle_; }
+
 	// Variadic function support (functions with ... ellipsis parameter)
 	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
 	bool is_variadic() const { return is_variadic_; }
@@ -1376,10 +1385,12 @@ private:
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	bool has_template_body_ = false;
+	bool has_template_declaration_ = false;  // True if template declaration position is saved (for SFINAE re-parsing)
 	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
 	CallingConvention calling_convention_ = CallingConvention::Default;  // Calling convention (__cdecl, __stdcall, etc.)
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body (from Parser::save_token_position())
+	SaveHandle template_declaration_position_handle_;  // Handle to saved position for template declaration (for SFINAE)
 	bool is_constexpr_;
 	bool is_constinit_;
 	bool is_consteval_;
