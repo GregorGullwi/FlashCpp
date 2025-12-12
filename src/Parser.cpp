@@ -10895,9 +10895,8 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::success(*result);
 				}
 				
-				// Use the qualified identifier node as the result
-				result = emplace_node<ExpressionNode>(qualified_node.as<QualifiedIdentifierNode>());
-				return ParseResult::success(*result);
+				// Template instantiation succeeded
+				// Don't return early - let it fall through to normal lookup which will find the instantiated type
 			}
 			// Not a template - let it fall through to be parsed as operator<
 		}
