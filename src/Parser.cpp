@@ -3130,52 +3130,9 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Check for 'template' keyword - could be member function template or member template alias
 			if (keyword == "template") {
-				// Look ahead to determine if this is a template alias or template function
-				// Save position to restore if needed
-				SaveHandle lookahead_pos = save_token_position();
-				
-				consume_token(); // consume 'template'
-				
-				// Skip template parameter list to find what comes after
-				bool is_template_alias = false;
-				if (peek_token().has_value() && peek_token()->value() == "<") {
-					consume_token(); // consume '<'
-					
-					// Skip template parameters by counting angle brackets
-					int angle_bracket_depth = 1;
-					while (angle_bracket_depth > 0 && peek_token().has_value()) {
-						if (peek_token()->value() == "<") {
-							angle_bracket_depth++;
-						} else if (peek_token()->value() == ">") {
-							angle_bracket_depth--;
-						}
-						consume_token();
-					}
-					
-					// Now check what comes after the template parameters
-					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-						std::string_view next_keyword = peek_token()->value();
-						if (next_keyword == "using") {
-							is_template_alias = true;
-						}
-					}
-				}
-				
-				// Restore position before calling the appropriate parser
-				restore_token_position(lookahead_pos);
-				
-				if (is_template_alias) {
-					// This is a member template alias
-					auto template_result = parse_member_template_alias(struct_ref, current_access);
-					if (template_result.is_error()) {
-						return template_result;
-					}
-				} else {
-					// This is a member function template
-					auto template_result = parse_member_function_template(struct_ref, current_access);
-					if (template_result.is_error()) {
-						return template_result;
-					}
+				auto template_result = parse_member_template_or_function(struct_ref, current_access);
+				if (template_result.is_error()) {
+					return template_result;
 				}
 				continue;
 			}
@@ -6751,6 +6708,142 @@ ParseResult Parser::parse_type_specifier()
 								type_info->type_, type_info->type_index_, type_size, type_name_token, cv_qualifier));
 						}
 					}
+					
+					// Check if this might be a member template alias (e.g., Template<int>::type<Args>)
+					std::string_view member_name = qualified_node.identifier_token().value();
+					
+					// Check if the next token is '<', indicating template arguments for the member
+					if (peek_token().has_value() && peek_token()->value() == "<") {
+						// First try looking up with the instantiated name
+						// Use StringBuilder for efficient string building
+						StringBuilder member_alias_builder;
+						std::string_view member_alias_name = member_alias_builder.append(qualified_type_name).append("::").append(member_name).preview();
+						auto member_alias_opt = gTemplateRegistry.lookup_alias_template(member_alias_name);
+						
+						// Keep a copy for error messages before resetting
+						std::string member_alias_name_str;
+						if (!member_alias_opt.has_value()) {
+							member_alias_name_str = std::string(member_alias_name);
+						}
+						member_alias_builder.reset();
+						
+						// If not found, check if this instantiation came from a partial specialization pattern
+						if (!member_alias_opt.has_value()) {
+							auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(instantiated_name);
+							if (pattern_name_opt.has_value()) {
+								// This instantiation came from a partial specialization
+								// Look up the member alias from the pattern
+								StringBuilder pattern_builder;
+								std::string_view pattern_member_alias_name = pattern_builder.append(*pattern_name_opt).append("::").append(member_name).preview();
+								member_alias_opt = gTemplateRegistry.lookup_alias_template(pattern_member_alias_name);
+								pattern_builder.reset();
+							}
+						}
+						
+						// If still not found, try with the base template name (for non-partial-spec cases)
+						// Instantiated names have patterns like "ClassName_int" or "ClassName_int_1"
+						// We need to find the original template name by progressively stripping suffixes
+						if (!member_alias_opt.has_value()) {
+							std::string_view base_template_name = instantiated_name;
+							
+							// Try progressively stripping '_suffix' patterns until we find a match
+							while (!member_alias_opt.has_value() && !base_template_name.empty()) {
+								size_t underscore_pos = base_template_name.find_last_of('_');
+								if (underscore_pos == std::string_view::npos) {
+									break;  // No more underscores to strip
+								}
+								
+								base_template_name = base_template_name.substr(0, underscore_pos);
+								if (base_template_name.empty()) {
+									break;
+								}
+								
+								StringBuilder base_builder;
+								std::string_view base_member_alias_name = base_builder.append(base_template_name).append("::").append(member_name).preview();
+								member_alias_opt = gTemplateRegistry.lookup_alias_template(base_member_alias_name);
+								base_builder.reset();
+							}
+						}
+						
+						if (member_alias_opt.has_value()) {
+							const TemplateAliasNode& alias_node = member_alias_opt->as<TemplateAliasNode>();
+							
+							// Parse template arguments for the member alias
+							auto member_template_args = parse_explicit_template_arguments();
+							if (!member_template_args.has_value()) {
+								return ParseResult::error("Failed to parse template arguments for member template alias: " + member_alias_name_str, type_name_token);
+							}
+							
+							// Instantiate the member template alias with the provided arguments
+							TypeSpecifierNode instantiated_type = alias_node.target_type_node();
+							const auto& template_params = alias_node.template_parameters();
+							const auto& param_names = alias_node.template_param_names();
+							
+							// Perform substitution for template parameters in the target type
+							for (size_t i = 0; i < member_template_args->size() && i < param_names.size(); ++i) {
+								const auto& arg = (*member_template_args)[i];
+								std::string_view param_name = param_names[i];
+								
+								// Check if the target type refers to this template parameter
+								bool is_template_param = false;
+								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
+									const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
+									if (ti.name_ == param_name) {
+										is_template_param = true;
+									}
+								}
+								
+								if (is_template_param) {
+									// The target type is using this template parameter
+									if (arg.is_value) {
+										FLASH_LOG(Parser, Error, "Non-type template arguments not supported in member template aliases yet");
+										return ParseResult::error("Non-type template arguments not supported in member template aliases", type_name_token);
+									}
+									
+									// Save pointer/reference modifiers from target type
+									size_t ptr_depth = instantiated_type.pointer_depth();
+									bool is_ref = instantiated_type.is_reference();
+									bool is_rval_ref = instantiated_type.is_rvalue_reference();
+									CVQualifier cv_qual = instantiated_type.cv_qualifier();
+									
+									// Get the size in bits for the argument type
+									unsigned char size_bits = 0;
+									if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
+										// Look up the struct size from type_index
+										if (arg.type_index < gTypeInfo.size()) {
+											const TypeInfo& ti = gTypeInfo[arg.type_index];
+											size_bits = static_cast<unsigned char>(ti.type_size_);
+										}
+									} else {
+										// Use standard type sizes
+										size_bits = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
+									}
+									
+									// Create new type with substituted base type
+									instantiated_type = TypeSpecifierNode(
+										arg.base_type,
+										arg.type_index,
+										size_bits,
+										Token(),  // No token for instantiated type
+										cv_qual
+									);
+									
+									// Reapply pointer/reference modifiers from target type
+									for (size_t p = 0; p < ptr_depth; ++p) {
+										instantiated_type.add_pointer_level(CVQualifier::None);
+									}
+									if (is_rval_ref) {
+										instantiated_type.set_reference(true);  // rvalue ref
+									} else if (is_ref) {
+										instantiated_type.set_lvalue_reference(true);  // lvalue ref
+									}
+								}
+							}
+							
+							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
+						}
+					}
+					
 					// If we're in a template body and the instantiated name contains "_unknown",
 					// this is likely a template-dependent nested type that can't be resolved yet
 					if (parsing_template_body_ && instantiated_name.find("_unknown") != std::string::npos) {
@@ -15974,6 +16067,13 @@ ParseResult Parser::parse_template_declaration() {
 							return alias_result;
 						}
 						continue;
+					} else if (peek_token()->value() == "template") {
+						// Handle member function template or member template alias
+						auto template_result = parse_member_template_or_function(struct_ref, current_access);
+						if (template_result.is_error()) {
+							return template_result;
+						}
+						continue;
 					} else if (peek_token()->value() == "static") {
 						// Handle static members: static const int size = 10;
 						consume_token(); // consume "static"
@@ -16844,6 +16944,13 @@ ParseResult Parser::parse_template_declaration() {
 						auto alias_result = parse_member_type_alias("typedef", nullptr, current_access);
 						if (alias_result.is_error()) {
 							return alias_result;
+						}
+						continue;
+					} else if (peek_token()->value() == "template") {
+						// Handle member function template or member template alias
+						auto template_result = parse_member_template_or_function(struct_ref, current_access);
+						if (template_result.is_error()) {
+							return template_result;
 						}
 						continue;
 					}
@@ -18622,6 +18729,52 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	return saved_position.success();
 }
 
+// Helper: Parse member template keyword - performs lookahead to detect whether 'template' introduces
+// a member template alias or member function template, then dispatches to the appropriate parser.
+// This eliminates code duplication across regular struct, full specialization, and partial specialization parsing.
+ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access) {
+	// Look ahead to determine if this is a template alias or template function
+	SaveHandle lookahead_pos = save_token_position();
+	
+	consume_token(); // consume 'template'
+	
+	// Skip template parameter list to find what comes after
+	bool is_template_alias = false;
+	if (peek_token().has_value() && peek_token()->value() == "<") {
+		consume_token(); // consume '<'
+		
+		// Skip template parameters by counting angle brackets
+		int angle_bracket_depth = 1;
+		while (angle_bracket_depth > 0 && peek_token().has_value()) {
+			if (peek_token()->value() == "<") {
+				angle_bracket_depth++;
+			} else if (peek_token()->value() == ">") {
+				angle_bracket_depth--;
+			}
+			consume_token();
+		}
+		
+		// Now check what comes after the template parameters
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view next_keyword = peek_token()->value();
+			if (next_keyword == "using") {
+				is_template_alias = true;
+			}
+		}
+	}
+	
+	// Restore position before calling the appropriate parser
+	restore_token_position(lookahead_pos);
+	
+	if (is_template_alias) {
+		// This is a member template alias
+		return parse_member_template_alias(struct_node, access);
+	} else {
+		// This is a member function template
+		return parse_member_function_template(struct_node, access);
+	}
+}
+
 // Parse explicit template arguments: <int, float, ...>
 // Returns a vector of types if successful, nullopt otherwise
 std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
@@ -20047,6 +20200,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		const StructDeclarationNode& pattern_struct = pattern_node.as<StructDeclarationNode>();
 		FLASH_LOG(Templates, Debug, "Pattern struct name: ", pattern_struct.name());
+		
+		// Register the mapping from instantiated name to pattern name
+		// This allows member alias lookup to find the correct specialization
+		gTemplateRegistry.register_instantiation_pattern(instantiated_name, pattern_struct.name());
 		
 		// Get template parameters from the pattern (partial specialization), NOT the primary template
 		// The pattern stores its own template parameters (e.g., <typename First, typename... Rest>)

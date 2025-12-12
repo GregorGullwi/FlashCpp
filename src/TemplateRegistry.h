@@ -765,10 +765,25 @@ public:
 		alias_templates_.clear();
 		variable_templates_.clear();
 		deduction_guides_.clear();
+		instantiation_to_pattern_.clear();
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
 	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
+	
+	// Register mapping from instantiated name to pattern name (for partial specializations)
+	void register_instantiation_pattern(std::string_view instantiated_name, std::string_view pattern_name) {
+		instantiation_to_pattern_[std::string(instantiated_name)] = std::string(pattern_name);
+	}
+	
+	// Look up which pattern was used for an instantiation
+	std::optional<std::string_view> get_instantiation_pattern(std::string_view instantiated_name) const {
+		auto it = instantiation_to_pattern_.find(instantiated_name);
+		if (it != instantiation_to_pattern_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
 
 private:
 	// Map from template name to template declaration nodes - supports multiple overloads (supports heterogeneous lookup)
@@ -797,6 +812,11 @@ private:
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
+	
+	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
+	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
+	// This allows looking up member aliases from the correct specialization
+	std::unordered_map<std::string, std::string, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
 };
 
 // Global template registry
