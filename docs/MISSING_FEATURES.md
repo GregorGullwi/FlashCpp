@@ -171,8 +171,8 @@ Supports `template<typename T> Type ClassName<T>::member = value;` pattern. Temp
 **Test Cases**: 
 - `tests/test_member_template_alias.cpp` (passes) - Regular classes
 - `tests/test_member_alias_in_spec_parse_only.cpp` (passes) - Parsing in specializations
-- `tests/test_member_alias_in_full_spec.cpp` (compile fails - usage not implemented yet)
-- `tests/test_member_alias_in_partial_spec.cpp` (compile fails - usage not implemented yet)
+- `tests/test_member_alias_in_full_spec_fail.cpp` (expected fail - usage not implemented yet)
+- `tests/test_member_alias_in_partial_spec_fail.cpp` (expected fail - usage not implemented yet)
 
 ### Solution Implemented (2025-12-12 13:47 UTC)
 
@@ -199,7 +199,7 @@ Both handlers mirror the existing logic from regular struct parsing (lines 3131-
 
 ### Known Limitation
 
-**Usage** of member template aliases (e.g., `MyClass<false>::type<int, double>`) requires template instantiation support, which is a separate feature not yet implemented. The tests `test_member_alias_in_full_spec.cpp` and `test_member_alias_in_partial_spec.cpp` fail at **usage** time with "Unknown nested type" errors, not at **parsing** time.
+**Usage** of member template aliases (e.g., `MyClass<false>::type<int, double>`) requires template instantiation support, which is a separate feature not yet implemented. The tests `test_member_alias_in_full_spec_fail.cpp` and `test_member_alias_in_partial_spec_fail.cpp` fail at **usage** time with "Unknown nested type" errors, not at **parsing** time.
 
 The test `test_member_alias_in_spec_parse_only.cpp` demonstrates that parsing works correctly - it defines member template aliases in specializations without trying to use them.
 
@@ -243,8 +243,8 @@ Templates in namespaces can now be instantiated with fully-qualified names (e.g.
 
 All 643 tests: 641 pass, 2 expected failures (usage, not parsing). Key test files:
 - `test_member_alias_in_spec_parse_only.cpp` - **NEW**: Verifies member template alias **parsing** works in specializations (PASSES)
-- `test_member_alias_in_full_spec.cpp` - Tests member template alias **usage** in full specializations (expected fail - usage not implemented)
-- `test_member_alias_in_partial_spec.cpp` - Tests member template alias **usage** in partial specializations (expected fail - usage not implemented)
+- `test_member_alias_in_full_spec_fail.cpp` - Tests member template alias **usage** in full specializations (expected fail - usage not implemented)
+- `test_member_alias_in_partial_spec_fail.cpp` - Tests member template alias **usage** in partial specializations (expected fail - usage not implemented)
 - `test_member_template_alias.cpp` - Tests member template aliases in regular classes (PASSES)
 - `test_namespace_template_instantiation.cpp`, `test_is_aggregate_simple.cpp`, `test_is_aggregate_with_if.cpp`
 - `test_bool_conditional_bug.cpp` - Verifies bool conditionals work correctly in if statements
