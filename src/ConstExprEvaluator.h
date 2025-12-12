@@ -2343,8 +2343,8 @@ public:
 	// Helper functions for branchless type checking
 	static bool isArithmeticType(Type type) {
 		// Branchless: arithmetic types are Bool(1) through LongDouble(14)
-		return static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool) &&
-		       static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble);
+		return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &
+		       (static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
 	}
 
 	static bool isFundamentalType(Type type) {
@@ -2416,19 +2416,19 @@ public:
 				break;
 
 			case TypeTraitKind::IsReference:
-				result = is_reference || is_rvalue_reference;
+				result = is_reference | is_rvalue_reference;
 				break;
 
 			case TypeTraitKind::IsArithmetic:
-				result = isArithmeticType(type) && !is_reference && pointer_depth == 0;
+				result = isArithmeticType(type) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsFundamental:
-				result = isFundamentalType(type) && !is_reference && pointer_depth == 0;
+				result = isFundamentalType(type) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsObject:
-				result = (type != Type::Function && type != Type::Void && !is_reference && !is_rvalue_reference);
+				result = (type != Type::Function) & (type != Type::Void) & !is_reference & !is_rvalue_reference;
 				break;
 
 			case TypeTraitKind::IsScalar:
@@ -2440,7 +2440,7 @@ public:
 				break;
 
 			case TypeTraitKind::IsCompound:
-				result = !(isFundamentalType(type) && !is_reference && pointer_depth == 0);
+				result = !(isFundamentalType(type) & !is_reference & (pointer_depth == 0));
 				break;
 
 			case TypeTraitKind::IsConst:
@@ -2464,11 +2464,11 @@ public:
 				break;
 
 			case TypeTraitKind::IsBoundedArray:
-				result = type_spec.is_array() && type_spec.array_size() > 0 && !is_reference && pointer_depth == 0;
+				result = type_spec.is_array() & (type_spec.array_size() > 0) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnboundedArray:
-				result = type_spec.is_array() && type_spec.array_size() <= 0 && !is_reference && pointer_depth == 0;
+				result = type_spec.is_array() & (type_spec.array_size() <= 0) & !is_reference & (pointer_depth == 0);
 				break;
 
 			// Add more type traits as needed

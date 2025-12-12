@@ -10282,8 +10282,8 @@ private:
 	bool isArithmeticType(Type type) const {
 		// Branchless: arithmetic types are Bool(1) through LongDouble(14)
 		// Using range check instead of multiple comparisons
-		return static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool) &&
-		       static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble);
+		return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &
+		       (static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
 	}
 
 	bool isFundamentalType(Type type) const {
@@ -10413,38 +10413,38 @@ private:
 
 			case TypeTraitKind::IsReference:
 				// __is_reference - lvalue reference OR rvalue reference
-				result = is_reference || is_rvalue_reference;
+				result = is_reference | is_rvalue_reference;
 				break;
 
 			case TypeTraitKind::IsArithmetic:
 				// __is_arithmetic - integral or floating point
-				result = isArithmeticType(type) && !is_reference && pointer_depth == 0;
+				result = isArithmeticType(type) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsFundamental:
 				// __is_fundamental - void, nullptr_t, arithmetic types
-				result = isFundamentalType(type) && !is_reference && pointer_depth == 0;
+				result = isFundamentalType(type) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsObject:
 				// __is_object - not function, not reference, not void
-				result = (type != Type::Function && type != Type::Void && !is_reference && !is_rvalue_reference);
+				result = (type != Type::Function) & (type != Type::Void) & !is_reference & !is_rvalue_reference;
 				break;
 
 			case TypeTraitKind::IsScalar:
 				// __is_scalar - arithmetic, pointer, enum, member pointer, or nullptr
-				result = (isArithmeticType(type) ||
-				          type == Type::Enum || type == Type::Nullptr ||
-				          type == Type::MemberObjectPointer || type == Type::MemberFunctionPointer ||
-				          pointer_depth > 0)
-				          && !is_reference;
+				result = (isArithmeticType(type) |
+			          (type == Type::Enum) | (type == Type::Nullptr) |
+			          (type == Type::MemberObjectPointer) | (type == Type::MemberFunctionPointer) |
+			          (pointer_depth > 0))
+			          & !is_reference;
 				break;
 
 			case TypeTraitKind::IsCompound:
 				// __is_compound - array, function, pointer, reference, class, union, enum, member pointer
 				// Basically anything that's not fundamental
 				// Branchless: use bitwise NOT and AND to avoid branching
-				result = !(isFundamentalType(type) && !is_reference && pointer_depth == 0);
+				result = !(isFundamentalType(type) & !is_reference & (pointer_depth == 0));
 				break;
 
 			case TypeTraitKind::IsBaseOf:
@@ -10746,33 +10746,33 @@ private:
 
 			case TypeTraitKind::IsSigned:
 				// __is_signed - checks if integral type is signed
-				result = ((type == Type::Char ||  // char is signed on most platforms
-				          type == Type::Short || type == Type::Int || 
-				          type == Type::Long || type == Type::LongLong)
-				          && !is_reference && pointer_depth == 0);
+				result = ((type == Type::Char) |  // char is signed on most platforms
+			          (type == Type::Short) | (type == Type::Int) |
+			          (type == Type::Long) | (type == Type::LongLong))
+			          & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnsigned:
 				// __is_unsigned - checks if integral type is unsigned
-				result = ((type == Type::Bool ||  // bool is considered unsigned
-				          type == Type::UnsignedChar || type == Type::UnsignedShort ||
-				          type == Type::UnsignedInt || type == Type::UnsignedLong ||
-				          type == Type::UnsignedLongLong)
-				          && !is_reference && pointer_depth == 0);
+				result = ((type == Type::Bool) |  // bool is considered unsigned
+			          (type == Type::UnsignedChar) | (type == Type::UnsignedShort) |
+			          (type == Type::UnsignedInt) | (type == Type::UnsignedLong) |
+			          (type == Type::UnsignedLongLong))
+			          & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsBoundedArray:
 				// __is_bounded_array - array with known bound (e.g., int[10])
 				// Check if it's an array and the size is known
-				result = type_spec.is_array() && type_spec.array_size() > 0 && 
-				         !is_reference && pointer_depth == 0;
+				result = type_spec.is_array() & (type_spec.array_size() > 0) &
+			         !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnboundedArray:
 				// __is_unbounded_array - array with unknown bound (e.g., int[])
 				// Check if it's an array and the size is unknown (0 or negative)
-				result = type_spec.is_array() && type_spec.array_size() <= 0 && 
-				         !is_reference && pointer_depth == 0;
+				result = type_spec.is_array() & (type_spec.array_size() <= 0) &
+			         !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsConstructible:
