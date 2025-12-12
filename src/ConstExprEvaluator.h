@@ -2403,6 +2403,83 @@ public:
 				result = type_spec.is_array() && !is_reference && pointer_depth == 0;
 				break;
 
+			case TypeTraitKind::IsReference:
+				result = is_reference || is_rvalue_reference;
+				break;
+
+			case TypeTraitKind::IsArithmetic:
+				result = ((type == Type::Bool || type == Type::Char ||
+				          type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				          type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
+				          type == Type::UnsignedLong || type == Type::UnsignedLongLong ||
+				          type == Type::Float || type == Type::Double || type == Type::LongDouble)
+				          && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsFundamental:
+				result = ((type == Type::Void || type == Type::Nullptr ||
+				          type == Type::Bool || type == Type::Char ||
+				          type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				          type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
+				          type == Type::UnsignedLong || type == Type::UnsignedLongLong ||
+				          type == Type::Float || type == Type::Double || type == Type::LongDouble)
+				          && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsObject:
+				result = (type != Type::Function && type != Type::Void && !is_reference && !is_rvalue_reference);
+				break;
+
+			case TypeTraitKind::IsScalar:
+				result = ((type == Type::Bool || type == Type::Char ||
+				          type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				          type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
+				          type == Type::UnsignedLong || type == Type::UnsignedLongLong ||
+				          type == Type::Float || type == Type::Double || type == Type::LongDouble ||
+				          type == Type::Enum || type == Type::Nullptr ||
+				          type == Type::MemberObjectPointer || type == Type::MemberFunctionPointer ||
+				          pointer_depth > 0)
+				          && !is_reference);
+				break;
+
+			case TypeTraitKind::IsCompound:
+				result = !((type == Type::Void || type == Type::Nullptr ||
+				           type == Type::Bool || type == Type::Char ||
+				           type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
+				           type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
+				           type == Type::UnsignedLong || type == Type::UnsignedLongLong ||
+				           type == Type::Float || type == Type::Double || type == Type::LongDouble)
+				           && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsConst:
+				result = type_spec.is_const();
+				break;
+
+			case TypeTraitKind::IsVolatile:
+				result = type_spec.is_volatile();
+				break;
+
+			case TypeTraitKind::IsSigned:
+				result = ((type == Type::Char || type == Type::Short || type == Type::Int ||
+				          type == Type::Long || type == Type::LongLong)
+				          && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsUnsigned:
+				result = ((type == Type::Bool || type == Type::UnsignedChar || type == Type::UnsignedShort ||
+				          type == Type::UnsignedInt || type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+				          && !is_reference && pointer_depth == 0);
+				break;
+
+			case TypeTraitKind::IsBoundedArray:
+				result = type_spec.is_array() && type_spec.array_size() > 0 && !is_reference && pointer_depth == 0;
+				break;
+
+			case TypeTraitKind::IsUnboundedArray:
+				result = type_spec.is_array() && type_spec.array_size() <= 0 && !is_reference && pointer_depth == 0;
+				break;
+
 			// Add more type traits as needed
 			// For now, other type traits return false during constexpr evaluation
 			default:

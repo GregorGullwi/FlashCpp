@@ -10414,6 +10414,10 @@ ParseResult Parser::parse_primary_expression()
 			// Type relationship: binary trait taking two types
 			kind = TypeTraitKind::IsSame;
 			is_binary_trait = true;
+		} else if (trait_name == "__is_convertible") {
+			// Type relationship: binary trait taking two types
+			kind = TypeTraitKind::IsConvertible;
+			is_binary_trait = true;
 		} else if (trait_name == "__is_polymorphic") {
 			// Type properties
 			kind = TypeTraitKind::IsPolymorphic;
@@ -10433,6 +10437,20 @@ ParseResult Parser::parse_primary_expression()
 			kind = TypeTraitKind::IsTrivial;
 		} else if (trait_name == "__is_pod") {
 			kind = TypeTraitKind::IsPod;
+		}
+		// Type property traits (unary)
+		else if (trait_name == "__is_const") {
+			kind = TypeTraitKind::IsConst;
+		} else if (trait_name == "__is_volatile") {
+			kind = TypeTraitKind::IsVolatile;
+		} else if (trait_name == "__is_signed") {
+			kind = TypeTraitKind::IsSigned;
+		} else if (trait_name == "__is_unsigned") {
+			kind = TypeTraitKind::IsUnsigned;
+		} else if (trait_name == "__is_bounded_array") {
+			kind = TypeTraitKind::IsBoundedArray;
+		} else if (trait_name == "__is_unbounded_array") {
+			kind = TypeTraitKind::IsUnboundedArray;
 		}
 		// Constructibility traits (variadic)
 		else if (trait_name == "__is_constructible") {
@@ -10524,6 +10542,36 @@ ParseResult Parser::parse_primary_expression()
 				}
 			}
 
+			// Parse array specifications ([N] or [])
+			if (peek_token().has_value() && peek_token()->value() == "[") {
+				consume_token();  // consume '['
+				
+				// Check for array size expression or empty brackets
+				std::optional<size_t> array_size_val;
+				if (peek_token().has_value() && peek_token()->value() != "]") {
+					// Parse array size expression
+					ParseResult size_result = parse_expression();
+					if (size_result.is_error()) {
+						return ParseResult::error("Expected array size expression", *current_token_);
+					}
+					
+					// Try to evaluate the array size as a constant expression
+					if (size_result.node().has_value()) {
+						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+						if (eval_result.success) {
+							array_size_val = static_cast<size_t>(eval_result.as_int());
+						}
+					}
+				}
+				
+				if (!consume_punctuator("]")) {
+					return ParseResult::error("Expected ']' after array size", *current_token_);
+				}
+				
+				type_spec.set_array(true, array_size_val);
+			}
+
 			if (is_variadic_trait) {
 				// Variadic trait: parse comma-separated additional types
 				std::vector<ASTNode> additional_types;
@@ -10549,6 +10597,32 @@ ParseResult Parser::parse_primary_expression()
 							consume_token();
 							arg_type_spec.set_reference(false);  // lvalue reference
 						}
+					}
+					
+					// Parse array specifications ([N] or []) for variadic trait additional args
+					std::optional<size_t> array_size_val;
+					if (peek_token().has_value() && peek_token()->value() == "[") {
+						consume_token();  // consume '['
+						
+						if (peek_token().has_value() && peek_token()->value() != "]") {
+							ParseResult size_result = parse_expression();
+							if (size_result.is_error()) {
+								return ParseResult::error("Expected array size expression", *current_token_);
+							}
+							if (size_result.node().has_value()) {
+								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+								if (eval_result.success) {
+									array_size_val = static_cast<size_t>(eval_result.as_int());
+								}
+							}
+						}
+						
+						if (!consume_punctuator("]")) {
+							return ParseResult::error("Expected ']' after array size", *current_token_);
+						}
+						
+						arg_type_spec.set_array(true, array_size_val);
 					}
 					
 					additional_types.push_back(*arg_type_result.node());
@@ -10586,6 +10660,32 @@ ParseResult Parser::parse_primary_expression()
 						consume_token();
 						second_type_spec.set_reference(false);  // lvalue reference
 					}
+				}
+
+				// Parse array specifications ([N] or []) for binary trait second type
+				std::optional<size_t> array_size_val;
+				if (peek_token().has_value() && peek_token()->value() == "[") {
+					consume_token();  // consume '['
+					
+					if (peek_token().has_value() && peek_token()->value() != "]") {
+						ParseResult size_result = parse_expression();
+						if (size_result.is_error()) {
+							return ParseResult::error("Expected array size expression", *current_token_);
+						}
+						if (size_result.node().has_value()) {
+							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+							if (eval_result.success) {
+								array_size_val = static_cast<size_t>(eval_result.as_int());
+							}
+						}
+					}
+					
+					if (!consume_punctuator("]")) {
+						return ParseResult::error("Expected ']' after array size", *current_token_);
+					}
+					
+					second_type_spec.set_array(true, array_size_val);
 				}
 
 				if (!consume_punctuator(")")) {
