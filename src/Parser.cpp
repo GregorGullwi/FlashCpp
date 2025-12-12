@@ -10848,17 +10848,18 @@ ParseResult Parser::parse_primary_expression()
 		// Skip this if we're already parsing a template body to avoid infinite recursion
 		std::optional<std::vector<TemplateTypeArg>> template_args;
 		if (!parsing_template_body_ && current_token_.has_value() && current_token_->value() == "<") {
-			// Build the qualified name from namespaces
-			std::string qualified_name;
+			// Build the qualified name from namespaces using StringBuilder
+			StringBuilder qualified_name_builder;
 			for (const auto& ns : qual_id.namespaces()) {
-				qualified_name += std::string(ns) + "::";
+				qualified_name_builder.append(ns).append("::");
 			}
-			qualified_name += std::string(qual_id.name());
+			qualified_name_builder.append(qual_id.name());
+			std::string_view qualified_name = qualified_name_builder.preview();
 			
 			// Check if this identifier is a registered template
-			std::string simple_name(qual_id.name());
 			if (gTemplateRegistry.lookupTemplate(qualified_name).has_value() || 
-			    gTemplateRegistry.lookupTemplate(simple_name).has_value()) {
+			    gTemplateRegistry.lookupTemplate(qual_id.name()).has_value()) {
+				qualified_name_builder.reset();
 				// Yes, this is a template - parse template arguments
 				template_args = parse_explicit_template_arguments();
 				if (!template_args.has_value()) {
@@ -10868,13 +10869,13 @@ ParseResult Parser::parse_primary_expression()
 				// Try to instantiate the template with these arguments
 				// Note: try_instantiate_class_template returns nullopt on success (type registered in gTypesByName)
 				// Try class template instantiation first (for struct/class templates)
-				auto instantiation_result = try_instantiate_class_template(simple_name, *template_args);
+				auto instantiation_result = try_instantiate_class_template(qual_id.name(), *template_args);
 				if (instantiation_result.has_value()) {
 					// Simple name failed, try with qualified name
 					instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
 					if (instantiation_result.has_value()) {
 						// Class instantiation didn't work, try function template
-						instantiation_result = try_instantiate_template_explicit(simple_name, *template_args);
+						instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
 						if (instantiation_result.has_value()) {
 							instantiation_result = try_instantiate_template_explicit(qualified_name, *template_args);
 							if (instantiation_result.has_value()) {
@@ -10897,6 +10898,8 @@ ParseResult Parser::parse_primary_expression()
 				
 				// Template instantiation succeeded
 				// Don't return early - let it fall through to normal lookup which will find the instantiated type
+			} else {
+				qualified_name_builder.reset();
 			}
 			// Not a template - let it fall through to be parsed as operator<
 		}
@@ -11081,27 +11084,30 @@ ParseResult Parser::parse_primary_expression()
 			// Look up the qualified identifier (either the template name or instantiated template)
 			if (template_args.has_value()) {
 				// Try to instantiate the template with namespace qualification
-				// Build the qualified template name for lookup
-				std::string qualified_template_name;
+				// Build the qualified template name for lookup using StringBuilder
+				StringBuilder qualified_template_name_builder;
 				for (const auto& ns : namespaces) {
-					qualified_template_name += std::string(ns.c_str()) + "::";
+					qualified_template_name_builder.append(ns.c_str()).append("::");
 				}
-				qualified_template_name += std::string(final_identifier.value());
+				qualified_template_name_builder.append(final_identifier.value());
+				std::string_view qualified_template_name = qualified_template_name_builder.preview();
 				
-				FLASH_LOG(Parser, Debug, "Looking up template '{}' with {} template arguments", qualified_template_name, template_args->size());
+				FLASH_LOG_FORMAT(Parser, Debug, "Looking up template '{}' with {} template arguments", qualified_template_name, template_args->size());
 				
 				// Try to instantiate as class template with qualified name first
 				auto instantiated = try_instantiate_class_template(qualified_template_name, *template_args);
 				
 				// If that didn't work, try with simple name (for backward compatibility)
 				if (!instantiated.has_value()) {
-					FLASH_LOG(Parser, Debug, "Qualified name lookup failed, trying simple name '{}'", final_identifier.value());
+					FLASH_LOG_FORMAT(Parser, Debug, "Qualified name lookup failed, trying simple name '{}'", final_identifier.value());
 					instantiated = try_instantiate_class_template(final_identifier.value(), *template_args);
 				}
 				
+				qualified_template_name_builder.reset();
+				
 				if (instantiated.has_value()) {
 					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
-					FLASH_LOG(Parser, Debug, "Successfully instantiated class template: {}", inst_struct.name());
+					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", inst_struct.name());
 					
 					// Look up the instantiated template
 					identifierType = gSymbolTable.lookup(inst_struct.name());
@@ -17540,12 +17546,13 @@ ParseResult Parser::parse_template_declaration() {
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
 		auto namespace_path = gSymbolTable.build_current_namespace_path();
 		if (!namespace_path.empty()) {
-			std::string qualified_name;
+			StringBuilder qualified_name_builder;
 			for (const auto& ns : namespace_path) {
-				qualified_name += std::string(ns) + "::";
+				qualified_name_builder.append(ns).append("::");
 			}
-			qualified_name += std::string(simple_name);
-			FLASH_LOG(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
+			qualified_name_builder.append(simple_name);
+			std::string_view qualified_name = qualified_name_builder.commit();
+			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
 			gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
 		}
 
