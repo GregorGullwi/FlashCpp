@@ -1719,9 +1719,17 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		return type_and_name_result;
 	}
 
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name succeeded. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+
 	// Check for out-of-line member function definition: ClassName::functionName(...)
 	// Pattern: ReturnType ClassName::functionName(...) { ... }
 	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: Got decl_node, identifier={}. About to check for '::', current_token={}, peek={}", 
+		std::string(decl_node.identifier_token().value()),
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	if (peek_token().has_value() && peek_token()->value() == "::") {
 		// This is an out-of-line member function definition
 		consume_token();  // consume '::'
@@ -1895,8 +1903,15 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	// First, try to parse as a function definition
 	// Save position before attempting function parse so we can backtrack if it's actually a variable
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to try parse_function_declaration. current_token={}, peek={}", 
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	SaveHandle before_function_parse = save_token_position();
 	ParseResult function_definition_result = parse_function_declaration(decl_node, attr_info.calling_convention);
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_declaration returned. is_error={}, current_token={}, peek={}", 
+		function_definition_result.is_error(),
+		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	if (!function_definition_result.is_error()) {
 		// Successfully parsed as function - discard saved position
 		discard_saved_token(before_function_parse);
@@ -1919,7 +1934,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// For free functions: noexcept is applied, const/volatile/&/&&/override/final are ignored
 		FlashCpp::MemberQualifiers member_quals;
 		FlashCpp::FunctionSpecifiers func_specs;
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse_function_trailing_specifiers. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_trailing_specifiers returned. is_error={}, current_token={}, peek={}", 
+			specs_result.is_error(),
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		if (specs_result.is_error()) {
 			return specs_result;
 		}
@@ -2044,6 +2066,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		// Is only function declaration
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: Checking for ';' vs function body. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		if (consume_punctuator(";")) {
 			// Return the function declaration node (needed for templates)
 			if (auto func_node = function_definition_result.node()) {
@@ -2053,6 +2078,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		// Add function parameters to the symbol table within a function scope (Phase 3: RAII)
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse function body. current_token={}, peek={}", 
+			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
 
 		// Set current function pointer for __func__, __PRETTY_FUNCTION__
@@ -2072,6 +2100,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// Note: trailing specifiers were already skipped after parse_function_declaration()
 
 			// Parse function body
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to call parse_block. current_token={}, peek={}", 
+				current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+				peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 			auto block_result = parse_block();
 			if (block_result.is_error()) {
 				current_function_ = nullptr;
