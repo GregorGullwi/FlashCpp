@@ -6850,6 +6850,16 @@ ParseResult Parser::parse_type_specifier()
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							Type::UserDefined, 0, 0, type_name_token, cv_qualifier));
 					}
+					
+					// SFINAE: If we're in a substitution context and can't find the nested type,
+					// this is a substitution failure, not a hard error
+					if (in_sfinae_context_) {
+						FLASH_LOG_FORMAT(Parser, Debug, "SFINAE: Substitution failure - unknown nested type: {}", qualified_type_name);
+						// Return a placeholder type that will cause instantiation to fail
+						// The caller (try_instantiate_single_template) will catch this and try the next overload
+						return ParseResult::error("SFINAE substitution failure: " + qualified_type_name, type_name_token);
+					}
+					
 					return ParseResult::error("Unknown nested type: " + qualified_type_name, type_name_token);
 				}
 				
@@ -19197,21 +19207,71 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		return std::nullopt;
 	}
 
-	// Look up the template in the registry
-	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-	if (!template_opt.has_value()) {
+	// Look up ALL templates with this name (for SFINAE support with same-name overloads)
+	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(template_name);
+	if (!all_templates || all_templates->empty()) {
 		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
 		recursion_depth--;
-		return std::nullopt;  // No template with this name
+		return std::nullopt;
 	}
 
-	const ASTNode& template_node = *template_opt;
-	if (!template_node.is<TemplateFunctionDeclarationNode>()) {
-		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' is not a function template");
-		recursion_depth--;
-		return std::nullopt;  // Not a function template
+	FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Found {} template overload(s) for '{}'", 
+		recursion_depth, all_templates->size(), template_name);
+
+	// Try each template overload in order
+	// For SFINAE: If instantiation fails due to substitution errors, silently skip to next overload
+	for (size_t overload_idx = 0; overload_idx < all_templates->size(); ++overload_idx) {
+		const ASTNode& template_node = (*all_templates)[overload_idx];
+		
+		if (!template_node.is<TemplateFunctionDeclarationNode>()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Skipping overload {} - not a function template", 
+				recursion_depth, overload_idx);
+			continue;
+		}
+
+		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Trying template overload {} for '{}'", 
+			recursion_depth, overload_idx, template_name);
+
+		// Enable SFINAE context for this instantiation attempt
+		bool prev_sfinae_context = in_sfinae_context_;
+		in_sfinae_context_ = true;
+
+		// Try to instantiate this specific template
+		std::optional<ASTNode> result = try_instantiate_single_template(
+			template_node, template_name, arg_types, recursion_depth);
+
+		// Restore SFINAE context
+		in_sfinae_context_ = prev_sfinae_context;
+
+		if (result.has_value()) {
+			// Success! Return this instantiation
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Successfully instantiated overload {} for '{}'", 
+				recursion_depth, overload_idx, template_name);
+			recursion_depth--;
+			return result;
+		}
+
+		// Instantiation failed - try next overload (SFINAE)
+		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Overload {} failed substitution, trying next", 
+			recursion_depth, overload_idx);
 	}
 
+	// All overloads failed
+	FLASH_LOG_FORMAT(Templates, Error, "[depth={}]: All {} template overload(s) failed for '{}'", 
+		recursion_depth, all_templates->size(), template_name);
+	recursion_depth--;
+	return std::nullopt;
+}
+
+// Helper function: Try to instantiate a specific template node
+// This contains the core instantiation logic extracted from try_instantiate_template
+// Returns nullopt if instantiation fails (for SFINAE)
+std::optional<ASTNode> Parser::try_instantiate_single_template(
+	const ASTNode& template_node, 
+	std::string_view template_name, 
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int& recursion_depth)
+{
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const std::vector<ASTNode>& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
@@ -19232,7 +19292,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	}
 
 	if (arg_types.empty() && !all_variadic) {
-		recursion_depth--;
 		return std::nullopt;  // No arguments to deduce from
 	}
 
@@ -19286,7 +19345,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 									if (deduced_type != Type::Invalid) {
 										deduced_type_args.push_back(deduced_type);
 									} else {
-										recursion_depth--;
+
 										return std::nullopt;
 									}
 									
@@ -19297,27 +19356,27 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 								arg_index++;
 							} else {
 								FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' not found");
-								recursion_depth--;
+
 								return std::nullopt;
 							}
 						} else {
 							FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Could not extract template name from '", instantiated_name, "'");
-							recursion_depth--;
+
 							return std::nullopt;
 						}
 					} else {
 						FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Invalid type index ", static_cast<int>(type_index));
-						recursion_depth--;
+
 						return std::nullopt;
 					}
 				} else {
 					FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template template parameter requires struct argument, got type ", static_cast<int>(arg_type.type()));
-					recursion_depth--;
+
 					return std::nullopt;
 				}
 			} else {
 				FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Not enough arguments to deduce template template parameter");
-				recursion_depth--;
+
 				return std::nullopt;
 			}
 		} else if (param.kind() == TemplateParameterKind::Type) {
@@ -19350,7 +19409,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			// Non-type parameter - not yet supported in deduction
 			// TODO: Implement non-type parameter deduction
 			FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
-			recursion_depth--;
+
 			return std::nullopt;
 		}
 	}
@@ -19371,7 +19430,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found existing instantiation, returning it");
-		recursion_depth--;
+
 		return *existing_inst;  // Return existing instantiation
 	}
 
@@ -19441,7 +19500,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
 			
 			// Don't create instantiation - constraint failed
-			recursion_depth--;
+
 			return std::nullopt;
 		}
 	}
@@ -19676,7 +19735,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// Add to top-level AST so it gets visited by the code generator
 	ast_nodes_.push_back(new_func_node);
 
-	recursion_depth--;
+
 	return new_func_node;
 }
 
