@@ -2,20 +2,19 @@
 
 This document tracks missing C++20 features that prevent FlashCpp from compiling standard library headers. Features are listed in priority order based on their blocking impact.
 
-**Last Updated**: 2025-12-12 (12:15 UTC)  
+**Last Updated**: 2025-12-12 (13:01 UTC)  
 **Test Reference**: `tests/test_real_std_headers_fail.cpp`
 
 ## Summary
 
-**Status Update (2025-12-12 12:15 UTC)**: **EXCELLENT PROGRESS!** Standard library support continues to improve with 36+ compiler intrinsics now fully implemented, including all critical type traits needed for `<type_traits>`.
+**Status Update (2025-12-12 13:01 UTC)**: **EXCELLENT PROGRESS!** Standard library support continues to improve with 36+ compiler intrinsics now fully implemented, including all critical type traits needed for `<type_traits>`.
 
 Standard headers like `<type_traits>` and `<utility>` are now **fully viable** as all blocking language features have been implemented. The preprocessor handles most standard headers correctly, and all critical parser/semantic features are complete.
 
 **Recent updates**:
+- **2025-12-12 13:01 UTC**: Verified bool conditionals work correctly - no bool bug exists. All 639 tests pass.
 - **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic for aggregate type detection. Total: 36+ intrinsics!
 - **2025-12-12 11:06 UTC**: Member template aliases (Priority 8.5) are now **COMPLETE** - cherry-picked from `main` branch.
-- **2025-12-12 09:50 UTC**: Added 13 new compiler intrinsics including `__is_reference`, `__is_arithmetic`, `__is_convertible`, `__is_const`, `__is_volatile`, `__is_signed`, `__is_unsigned`, `__is_bounded_array`, `__is_unbounded_array`, and more.
-- **2025-12-12 09:04 UTC**: Namespace-qualified template instantiation is now **COMPLETE**.
 
 Completed features:
 - ✅ Conversion operators, non-type template parameters, template specialization inheritance
@@ -29,7 +28,7 @@ Completed features:
 
 ## Completed Features ✅
 
-**All completed features maintain backward compatibility - all 638 existing tests continue to pass.**
+**All completed features maintain backward compatibility - all 639 passing tests continue to pass (640 total tests including expected failures).**
 
 ### Core Language Features (Priorities 1-8, 11)
 1. **Conversion Operators** - User-defined conversion operators (`operator T()`) with static member access
@@ -214,8 +213,9 @@ Templates in namespaces can now be instantiated with fully-qualified names (e.g.
 
 ## Testing Strategy
 
-All 638 tests pass. Key test files:
-- `test_namespace_template_instantiation.cpp`, `test_is_aggregate_simple.cpp`
+All 639 tests pass. Key test files:
+- `test_namespace_template_instantiation.cpp`, `test_is_aggregate_simple.cpp`, `test_is_aggregate_with_if.cpp`
+- `test_bool_conditional_bug.cpp` - Verifies bool conditionals work correctly in if statements
 - `test_full_spec_inherit.cpp`, `test_partial_spec_inherit.cpp`
 - `test_type_alias_from_specialization.cpp`, `test_anonymous_template_params.cpp`
 - `test_is_same_intrinsic.cpp`, `test_new_intrinsics.cpp`
@@ -281,13 +281,7 @@ All 638 tests pass. Key test files:
 
 ### Potential Issues ⚠️
 
-**Bool Conditional Bug (Discovered 2025-12-12)**:
-- **Issue**: Bool values stored in variables are evaluated incorrectly in conditional expressions (`if`, ternary operator)
-- **Symptom**: `bool test = false;` prints as 0 but evaluates as true in `if (test)` or ternary
-- **Impact**: Medium - affects boolean logic in conditionals
-- **Workaround**: Use ternary operator in arithmetic expressions instead of direct conditionals
-- **Example Test**: See `test_is_aggregate_simple.cpp` for workaround pattern
-- **Status**: Needs investigation in code generation for bool conditional evaluation
+**None discovered!** All 639 tests pass. Boolean conditionals, intrinsics, and all core features work correctly.
 
 ### Critical Blockers ❌
 

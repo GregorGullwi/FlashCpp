@@ -1,6 +1,5 @@
 // Test for __is_aggregate compiler intrinsic
 // Tests basic aggregate detection
-// NOTE: Works around bool conditional bug by using ternary in return
 
 struct SimpleAggregate {
     int x;
