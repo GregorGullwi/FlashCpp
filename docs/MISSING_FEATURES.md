@@ -167,12 +167,12 @@ Supports `template<typename T> Type ClassName<T>::member = value;` pattern. Temp
 
 ## Priority 8.5: Member Template Aliases (COMPLETE ✅)
 
-**Status**: ✅ **COMPLETE** - Parsing works in all contexts (regular classes, full specializations, partial specializations)  
+**Status**: 🔄 **IN PROGRESS** - Parsing complete, implementing instantiation/usage support  
 **Test Cases**: 
 - `tests/test_member_template_alias.cpp` (passes) - Regular classes
 - `tests/test_member_alias_in_spec_parse_only.cpp` (passes) - Parsing in specializations
-- `tests/test_member_alias_in_full_spec_fail.cpp` (expected fail - usage not implemented yet)
-- `tests/test_member_alias_in_partial_spec_fail.cpp` (expected fail - usage not implemented yet)
+- `tests/test_member_alias_in_full_spec_fail.cpp` (expected fail - usage being implemented)
+- `tests/test_member_alias_in_partial_spec_fail.cpp` (expected fail - usage being implemented)
 
 ### Solution Implemented (2025-12-12 13:47 UTC)
 
@@ -197,15 +197,26 @@ Both handlers mirror the existing logic from regular struct parsing (lines 3131-
 - ✅ Member template aliases parse in partial template specializations
 - ✅ Parser correctly registers all member template aliases (visible in debug logs)
 
-### Known Limitation
+### Implementation Status (2025-12-12 15:28 UTC)
 
-**Usage** of member template aliases (e.g., `MyClass<false>::type<int, double>`) requires template instantiation support, which is a separate feature not yet implemented. The tests `test_member_alias_in_full_spec_fail.cpp` and `test_member_alias_in_partial_spec_fail.cpp` fail at **usage** time with "Unknown nested type" errors, not at **parsing** time.
+**Phase 1: Parsing** ✅ COMPLETE
+- Member template aliases parse correctly in all contexts
 
-The test `test_member_alias_in_spec_parse_only.cpp` demonstrates that parsing works correctly - it defines member template aliases in specializations without trying to use them.
+**Phase 2: Instantiation/Usage** 🔄 IN PROGRESS
+Implementing support for using member template aliases (e.g., `MyClass<false>::type<int, double>`).
 
-### Impact
+**Implementation Plan:**
+1. Modify qualified identifier parsing to detect member template aliases
+2. Parse template arguments after `::` for member aliases
+3. Implement instantiation with parameter substitution
+4. Handle nested lookups in template specializations
 
-This fix unblocks `<type_traits>` parsing. The header can now be parsed successfully up to the point where it tries to **use** member template aliases, which is beyond the scope of parsing.
+**Current Error:** When attempting `__conditional<true>::type<int, double>`, parser:
+- ✅ Successfully instantiates `__conditional<true>` to `__conditional_1`
+- ✅ Recognizes `::type` as a nested identifier
+- ❌ Fails with "Unknown nested type" because `type` is a template alias, not a regular nested type
+
+**Target:** Make tests `test_member_alias_in_full_spec_fail.cpp` and `test_member_alias_in_partial_spec_fail.cpp` pass.
 
 ---
 
