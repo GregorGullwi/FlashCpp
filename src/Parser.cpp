@@ -1028,9 +1028,14 @@ ParseResult Parser::parse_type_and_name() {
     // Function pointers have the pattern: type (*identifier)(params)
     // We need to check for '(' followed by '*' to detect this
     if (peek_token().has_value() && peek_token()->value() == "(") {
+        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Found '(' - checking for function pointer. current_token={}", 
+            current_token_.has_value() ? std::string(current_token_->value()) : "N/A");
         // Save position in case this isn't a function pointer or reference declarator
         SaveHandle saved_pos = save_token_position();
         consume_token(); // consume '('
+        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: After consuming '(', current_token={}, peek={}", 
+            current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+            peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 
         // Check if next token is '*' (function pointer pattern) or '&' (reference to array pattern)
         if (peek_token().has_value() && peek_token()->value() == "*") {
@@ -1124,7 +1129,12 @@ ParseResult Parser::parse_type_and_name() {
             }
         } else {
             // Not a function pointer or reference declarator, restore and continue with regular parsing
+            FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Not a function pointer, restoring. Before restore: current_token={}", 
+                current_token_.has_value() ? std::string(current_token_->value()) : "N/A");
             restore_token_position(saved_pos);
+            FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: After restore: current_token={}, peek={}", 
+                current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
         }
     }
 
@@ -1317,15 +1327,20 @@ ParseResult Parser::parse_type_and_name() {
     } else {
         // Regular identifier (or unnamed parameter)
         // Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
+        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}", 
+            current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+            peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
         if (peek_token().has_value()) {
             auto next = peek_token()->value();
             if (next == "," || next == ")" || next == "=" || next == "[") {
                 // This is an unnamed parameter - create a synthetic empty identifier
+                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
                 identifier_token = Token(Token::Type::Identifier, "",
                                         current_token_->line(), current_token_->column(),
                                         current_token_->file_index());
             } else {
                 // Regular identifier
+                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consuming token as identifier, peek={}", std::string(next));
                 auto id_token = consume_token();
                 if (!id_token) {
                     return ParseResult::error("Expected identifier token", Token());
@@ -1334,6 +1349,10 @@ ParseResult Parser::parse_type_and_name() {
                     return ParseResult::error("Expected identifier token", *id_token);
                 }
                 identifier_token = *id_token;
+                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consumed identifier={}, now current_token={}, peek={}", 
+                    std::string(identifier_token.value()),
+                    current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                    peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
             }
         } else {
             return ParseResult::error("Expected identifier or end of parameter", Token());
