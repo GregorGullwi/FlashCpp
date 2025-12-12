@@ -3130,52 +3130,9 @@ ParseResult Parser::parse_struct_declaration()
 
 			// Check for 'template' keyword - could be member function template or member template alias
 			if (keyword == "template") {
-				// Look ahead to determine if this is a template alias or template function
-				// Save position to restore if needed
-				SaveHandle lookahead_pos = save_token_position();
-				
-				consume_token(); // consume 'template'
-				
-				// Skip template parameter list to find what comes after
-				bool is_template_alias = false;
-				if (peek_token().has_value() && peek_token()->value() == "<") {
-					consume_token(); // consume '<'
-					
-					// Skip template parameters by counting angle brackets
-					int angle_bracket_depth = 1;
-					while (angle_bracket_depth > 0 && peek_token().has_value()) {
-						if (peek_token()->value() == "<") {
-							angle_bracket_depth++;
-						} else if (peek_token()->value() == ">") {
-							angle_bracket_depth--;
-						}
-						consume_token();
-					}
-					
-					// Now check what comes after the template parameters
-					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-						std::string_view next_keyword = peek_token()->value();
-						if (next_keyword == "using") {
-							is_template_alias = true;
-						}
-					}
-				}
-				
-				// Restore position before calling the appropriate parser
-				restore_token_position(lookahead_pos);
-				
-				if (is_template_alias) {
-					// This is a member template alias
-					auto template_result = parse_member_template_alias(struct_ref, current_access);
-					if (template_result.is_error()) {
-						return template_result;
-					}
-				} else {
-					// This is a member function template
-					auto template_result = parse_member_function_template(struct_ref, current_access);
-					if (template_result.is_error()) {
-						return template_result;
-					}
+				auto template_result = parse_member_template_or_function(struct_ref, current_access);
+				if (template_result.is_error()) {
+					return template_result;
 				}
 				continue;
 			}
@@ -15976,51 +15933,9 @@ ParseResult Parser::parse_template_declaration() {
 						continue;
 					} else if (peek_token()->value() == "template") {
 						// Handle member function template or member template alias
-						// Look ahead to determine which one
-						SaveHandle lookahead_pos = save_token_position();
-						
-						consume_token(); // consume 'template'
-						
-						// Skip template parameter list to find what comes after
-						bool is_template_alias = false;
-						if (peek_token().has_value() && peek_token()->value() == "<") {
-							consume_token(); // consume '<'
-							
-							// Skip template parameters by counting angle brackets
-							int angle_bracket_depth = 1;
-							while (angle_bracket_depth > 0 && peek_token().has_value()) {
-								if (peek_token()->value() == "<") {
-									angle_bracket_depth++;
-								} else if (peek_token()->value() == ">") {
-									angle_bracket_depth--;
-								}
-								consume_token();
-							}
-							
-							// Now check what comes after the template parameters
-							if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-								std::string_view next_keyword = peek_token()->value();
-								if (next_keyword == "using") {
-									is_template_alias = true;
-								}
-							}
-						}
-						
-						// Restore position before calling the appropriate parser
-						restore_token_position(lookahead_pos);
-						
-						if (is_template_alias) {
-							// This is a member template alias
-							auto template_result = parse_member_template_alias(struct_ref, current_access);
-							if (template_result.is_error()) {
-								return template_result;
-							}
-						} else {
-							// This is a member function template
-							auto template_result = parse_member_function_template(struct_ref, current_access);
-							if (template_result.is_error()) {
-								return template_result;
-							}
+						auto template_result = parse_member_template_or_function(struct_ref, current_access);
+						if (template_result.is_error()) {
+							return template_result;
 						}
 						continue;
 					} else if (peek_token()->value() == "static") {
@@ -16897,51 +16812,9 @@ ParseResult Parser::parse_template_declaration() {
 						continue;
 					} else if (peek_token()->value() == "template") {
 						// Handle member function template or member template alias
-						// Look ahead to determine which one
-						SaveHandle lookahead_pos = save_token_position();
-						
-						consume_token(); // consume 'template'
-						
-						// Skip template parameter list to find what comes after
-						bool is_template_alias = false;
-						if (peek_token().has_value() && peek_token()->value() == "<") {
-							consume_token(); // consume '<'
-							
-							// Skip template parameters by counting angle brackets
-							int angle_bracket_depth = 1;
-							while (angle_bracket_depth > 0 && peek_token().has_value()) {
-								if (peek_token()->value() == "<") {
-									angle_bracket_depth++;
-								} else if (peek_token()->value() == ">") {
-									angle_bracket_depth--;
-								}
-								consume_token();
-							}
-							
-							// Now check what comes after the template parameters
-							if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-								std::string_view next_keyword = peek_token()->value();
-								if (next_keyword == "using") {
-									is_template_alias = true;
-								}
-							}
-						}
-						
-						// Restore position before calling the appropriate parser
-						restore_token_position(lookahead_pos);
-						
-						if (is_template_alias) {
-							// This is a member template alias
-							auto template_result = parse_member_template_alias(struct_ref, current_access);
-							if (template_result.is_error()) {
-								return template_result;
-							}
-						} else {
-							// This is a member function template
-							auto template_result = parse_member_function_template(struct_ref, current_access);
-							if (template_result.is_error()) {
-								return template_result;
-							}
+						auto template_result = parse_member_template_or_function(struct_ref, current_access);
+						if (template_result.is_error()) {
+							return template_result;
 						}
 						continue;
 					}
@@ -18718,6 +18591,50 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
 	return saved_position.success();
+}
+
+// Helper: Parse member template keyword - detects and dispatches to alias or function template parser
+ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access) {
+	// Look ahead to determine if this is a template alias or template function
+	SaveHandle lookahead_pos = save_token_position();
+	
+	consume_token(); // consume 'template'
+	
+	// Skip template parameter list to find what comes after
+	bool is_template_alias = false;
+	if (peek_token().has_value() && peek_token()->value() == "<") {
+		consume_token(); // consume '<'
+		
+		// Skip template parameters by counting angle brackets
+		int angle_bracket_depth = 1;
+		while (angle_bracket_depth > 0 && peek_token().has_value()) {
+			if (peek_token()->value() == "<") {
+				angle_bracket_depth++;
+			} else if (peek_token()->value() == ">") {
+				angle_bracket_depth--;
+			}
+			consume_token();
+		}
+		
+		// Now check what comes after the template parameters
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view next_keyword = peek_token()->value();
+			if (next_keyword == "using") {
+				is_template_alias = true;
+			}
+		}
+	}
+	
+	// Restore position before calling the appropriate parser
+	restore_token_position(lookahead_pos);
+	
+	if (is_template_alias) {
+		// This is a member template alias
+		return parse_member_template_alias(struct_node, access);
+	} else {
+		// This is a member function template
+		return parse_member_function_template(struct_node, access);
+	}
 }
 
 // Parse explicit template arguments: <int, float, ...>
