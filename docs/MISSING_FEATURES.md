@@ -167,12 +167,12 @@ Supports `template<typename T> Type ClassName<T>::member = value;` pattern. Temp
 
 ## Priority 8.5: Member Template Aliases (COMPLETE ✅)
 
-**Status**: 🔄 **IN PROGRESS** - Parsing complete, implementing instantiation/usage support  
+**Status**: 🔄 **IN PROGRESS** - Parsing complete, instantiation working for full specializations  
 **Test Cases**: 
 - `tests/test_member_template_alias.cpp` (passes) - Regular classes
 - `tests/test_member_alias_in_spec_parse_only.cpp` (passes) - Parsing in specializations
-- `tests/test_member_alias_in_full_spec_fail.cpp` (expected fail - usage being implemented)
-- `tests/test_member_alias_in_partial_spec_fail.cpp` (expected fail - usage being implemented)
+- `tests/test_member_alias_in_full_spec.cpp` (NOW PASSES! 🎉)
+- `tests/test_member_alias_in_partial_spec_fail.cpp` (expected fail - partial spec instantiation needs more work)
 
 ### Solution Implemented (2025-12-12 13:47 UTC)
 
@@ -197,26 +197,28 @@ Both handlers mirror the existing logic from regular struct parsing (lines 3131-
 - ✅ Member template aliases parse in partial template specializations
 - ✅ Parser correctly registers all member template aliases (visible in debug logs)
 
-### Implementation Status (2025-12-12 15:28 UTC)
+### Implementation Status (2025-12-12 15:38 UTC)
 
 **Phase 1: Parsing** ✅ COMPLETE
 - Member template aliases parse correctly in all contexts
 
-**Phase 2: Instantiation/Usage** 🔄 IN PROGRESS
-Implementing support for using member template aliases (e.g., `MyClass<false>::type<int, double>`).
+**Phase 2: Instantiation/Usage** 🔄 PARTIAL
+Member template alias instantiation now works for full specializations!
 
-**Implementation Plan:**
-1. Modify qualified identifier parsing to detect member template aliases
-2. Parse template arguments after `::` for member aliases
-3. Implement instantiation with parameter substitution
-4. Handle nested lookups in template specializations
+**Implemented:**
+1. ✅ Modified qualified identifier parsing to detect member template aliases
+2. ✅ Parse template arguments after `::` for member aliases  
+3. ✅ Implement instantiation with parameter substitution for full specializations
+4. ✅ Handle nested lookups by stripping instantiation suffixes to find base template
 
-**Current Error:** When attempting `__conditional<true>::type<int, double>`, parser:
-- ✅ Successfully instantiates `__conditional<true>` to `__conditional_1`
-- ✅ Recognizes `::type` as a nested identifier
-- ❌ Fails with "Unknown nested type" because `type` is a template alias, not a regular nested type
+**Working:** `__conditional<true>::type<int, double>` correctly resolves to `int`
 
-**Target:** Make tests `test_member_alias_in_full_spec_fail.cpp` and `test_member_alias_in_partial_spec_fail.cpp` pass.
+**Still TODO:**
+- Partial specialization instantiation (requires mapping instantiated names to specialization patterns)
+
+**Test Results:**
+- ✅ `test_member_alias_in_full_spec.cpp` - NOW PASSES!
+- ❌ `test_member_alias_in_partial_spec_fail.cpp` - Needs partial spec support
 
 ---
 
@@ -254,8 +256,8 @@ Templates in namespaces can now be instantiated with fully-qualified names (e.g.
 
 All 643 tests: 641 pass, 2 expected failures (usage, not parsing). Key test files:
 - `test_member_alias_in_spec_parse_only.cpp` - **NEW**: Verifies member template alias **parsing** works in specializations (PASSES)
-- `test_member_alias_in_full_spec_fail.cpp` - Tests member template alias **usage** in full specializations (expected fail - usage not implemented)
-- `test_member_alias_in_partial_spec_fail.cpp` - Tests member template alias **usage** in partial specializations (expected fail - usage not implemented)
+- `test_member_alias_in_full_spec.cpp` - Tests member template alias **usage** in full specializations (NOW PASSES!)
+- `test_member_alias_in_partial_spec_fail.cpp` - Tests member template alias **usage** in partial specializations (expected fail - partial spec support not yet implemented)
 - `test_member_template_alias.cpp` - Tests member template aliases in regular classes (PASSES)
 - `test_namespace_template_instantiation.cpp`, `test_is_aggregate_simple.cpp`, `test_is_aggregate_with_if.cpp`
 - `test_bool_conditional_bug.cpp` - Verifies bool conditionals work correctly in if statements
