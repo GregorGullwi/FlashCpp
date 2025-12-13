@@ -197,3 +197,16 @@ int test_covariant_const_pointer() {
     return ptr->val + ptr->extra_val;  // Expected: 20
 }
 
+int main() {
+    int result = 0;
+    result += test_basic_covariant();           // Expected: 30
+    result += test_covariant_via_base_pointer(); // Expected: 15
+    result += test_multilevel_covariant();       // Expected: 10
+    result += test_covariant_reference();        // Expected: 125
+    result += test_covariant_reference_via_base(); // Expected: 30
+    result += test_vehicle_covariant();          // Expected: 6
+    result += test_covariant_const_pointer();    // Expected: 20
+    // Total: 236, return 236 % 256 = 236
+    return result;
+}
+
