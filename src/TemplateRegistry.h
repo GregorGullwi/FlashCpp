@@ -1184,6 +1184,21 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		}, expr_variant);
 	}
 	
+	// For BoolLiteralNode (true/false keywords parsed as boolean literals)
+	if (constraint_expr.is<BoolLiteralNode>()) {
+		const auto& literal = constraint_expr.as<BoolLiteralNode>();
+		bool value = literal.value();
+		
+		if (!value) {
+			return ConstraintEvaluationResult::failure(
+				"constraint not satisfied: literal constraint is false",
+				"false",
+				"use 'true' or a valid concept expression"
+			);
+		}
+		return ConstraintEvaluationResult::success();
+	}
+	
 	// For boolean literals (true/false), evaluate directly
 	if (constraint_expr.is<NumericLiteralNode>()) {
 		const auto& literal = constraint_expr.as<NumericLiteralNode>();
