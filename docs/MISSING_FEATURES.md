@@ -594,18 +594,8 @@ All critical template features for standard library header support have been imp
 - ✅ 36+ compiler intrinsics for type traits
 - ✅ All core C++20 language features needed for headers
 
-**Remaining work:**
-- None for core template features!
-- Minor: Floating-point codegen bug (separate from template functionality)
-- ✅ Member template aliases in all contexts
-- ✅ Template specialization inheritance
-- ✅ Namespace-qualified template instantiation
-- ✅ 36+ compiler intrinsics for type traits
-- ✅ All core C++20 language features needed for headers
-
-**Remaining work:**
-- Function overload resolution with same-name SFINAE functions
-- Pack expansion in function calls (variadic templates)
+**Outstanding Issue:**
+- Minor floating-point codegen bug in IRConverter.h (separate from template functionality)
 
 ---
 
