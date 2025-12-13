@@ -17031,14 +17031,16 @@ ParseResult Parser::parse_template_declaration() {
 						continue;
 					} else if (peek_token()->value() == "using") {
 						// Handle type alias inside partial specialization: using _Type = T;
-						auto alias_result = parse_member_type_alias("using", nullptr, current_access);
+						FLASH_LOG(Parser, Debug, "Parsing 'using' type alias in partial specialization");
+						auto alias_result = parse_member_type_alias("using", &struct_ref, current_access);
 						if (alias_result.is_error()) {
 							return alias_result;
 						}
+						FLASH_LOG(Parser, Debug, "After parsing type alias, struct has ", struct_ref.type_aliases().size(), " aliases");
 						continue;
 					} else if (peek_token()->value() == "typedef") {
 						// Handle typedef inside partial specialization: typedef T _Type;
-						auto alias_result = parse_member_type_alias("typedef", nullptr, current_access);
+						auto alias_result = parse_member_type_alias("typedef", &struct_ref, current_access);
 						if (alias_result.is_error()) {
 							return alias_result;
 						}
@@ -21172,6 +21174,70 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			struct_info->finalize();
 		}
 		struct_type_info.setStructInfo(std::move(struct_info));
+		
+		// Register type aliases from the pattern with qualified names
+		for (const auto& type_alias : pattern_struct.type_aliases()) {
+			// Build the qualified name: enable_if_true_int::type
+			std::string_view qualified_alias_name = StringBuilder()
+				.append(instantiated_name)
+				.append("::")
+				.append(type_alias.alias_name)
+				.commit();
+			
+			// Check if already registered
+			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
+				continue;  // Already registered
+			}
+			
+			// Get the type information from the alias
+			const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+			
+			FLASH_LOG(Templates, Debug, "Processing type alias '", type_alias.alias_name, 
+				"' with original type=", static_cast<int>(alias_type_spec.type()), 
+				", type_index=", alias_type_spec.type_index());
+			
+			// For partial specializations, we may need to substitute template parameters
+			// For example, if pattern has "using type = T;" and we're instantiating with int,
+			// we need to substitute T -> int
+			Type substituted_type = alias_type_spec.type();
+			TypeIndex substituted_type_index = alias_type_spec.type_index();
+			size_t substituted_size = alias_type_spec.size_in_bits();
+			
+			// Check if the alias type is a template parameter that needs substitution
+			if (alias_type_spec.type() == Type::UserDefined && !template_args.empty()) {
+				// Try to find this type name in template parameters
+				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+					if (template_params[i].is<TemplateParameterNode>()) {
+						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+						// Check if the alias type matches this template parameter
+						// For now, assume single template parameter (T) - enhance later for multi-param
+						if (i == 0) {  // First template parameter
+							// Substitute with the concrete type from template_args
+							substituted_type = template_args[i].base_type;
+							substituted_type_index = template_args[i].type_index;
+							substituted_size = getBasicTypeSizeInBits(substituted_type);
+							FLASH_LOG(Templates, Debug, "Substituting template parameter with type=", 
+								static_cast<int>(substituted_type), ", type_index=", substituted_type_index);
+							break;
+						}
+					}
+				}
+			}
+			
+			// Register the type alias globally with its qualified name
+			auto& alias_type_info = gTypeInfo.emplace_back(
+				std::string(qualified_alias_name),
+				substituted_type,
+				gTypeInfo.size()
+			);
+			alias_type_info.type_index_ = substituted_type_index;
+			alias_type_info.type_size_ = substituted_size;
+			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			
+			FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name, 
+				" -> type=", static_cast<int>(substituted_type), 
+				", type_index=", substituted_type_index);
+		}
 		
 		// Create an AST node for the instantiated struct so member functions can be code-generated
 		auto instantiated_struct = emplace_node<StructDeclarationNode>(
