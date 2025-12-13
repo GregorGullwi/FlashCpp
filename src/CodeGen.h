@@ -443,9 +443,8 @@ public:
 							op.init_data.push_back(0);
 						}
 					} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-						const auto& num_lit = std::get<NumericLiteralNode>(init_expr);
 						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '", 
-						          qualified_name, "' - literal value: ", num_lit.value());
+						          qualified_name, "'");
 						// Evaluate the initializer expression
 						auto init_operands = visitExpressionNode(init_expr);
 						// Convert to raw bytes
@@ -453,7 +452,7 @@ public:
 							unsigned long long value = 0;
 							if (std::holds_alternative<unsigned long long>(init_operands[2])) {
 								value = std::get<unsigned long long>(init_operands[2]);
-								FLASH_LOG(Codegen, Debug, "  Extracted value: ", value);
+								FLASH_LOG(Codegen, Debug, "  Extracted uint64 value: ", value);
 							} else if (std::holds_alternative<double>(init_operands[2])) {
 								double d = std::get<double>(init_operands[2]);
 								std::memcpy(&value, &d, sizeof(double));
