@@ -19034,35 +19034,41 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 			// Expression is not a numeric literal - try to evaluate it as a constant expression
 			// This handles cases like is_int<T>::value where the expression needs evaluation
-			FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant");
-			auto const_value = try_evaluate_constant_expression(*expr_result.node());
-			if (const_value.has_value()) {
-				// Successfully evaluated as a constant expression
-				template_args.emplace_back(*const_value, Type::Int);  // Assume int type for now
-				discard_saved_token(arg_saved_pos);
-				
-				// Check for ',' or '>' after the expression
-				if (!peek_token().has_value()) {
+			// IMPORTANT: Only evaluate during template instantiation (SFINAE context), not during
+			// template declaration when template parameters are not yet instantiated
+			if (in_sfinae_context_) {
+				FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant (in SFINAE context)");
+				auto const_value = try_evaluate_constant_expression(*expr_result.node());
+				if (const_value.has_value()) {
+					// Successfully evaluated as a constant expression
+					template_args.emplace_back(*const_value, Type::Int);  // Assume int type for now
+					discard_saved_token(arg_saved_pos);
+					
+					// Check for ',' or '>' after the expression
+					if (!peek_token().has_value()) {
+						restore_token_position(saved_pos);
+						last_failed_template_arg_parse_handle_ = saved_pos;
+						return std::nullopt;
+					}
+
+					if (peek_token()->value() == ">") {
+						consume_token(); // consume '>'
+						break;
+					}
+
+					if (peek_token()->value() == ",") {
+						consume_token(); // consume ','
+						continue;
+					}
+
+					// Unexpected token after expression
+					FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments unexpected token after constant expression");
 					restore_token_position(saved_pos);
 					last_failed_template_arg_parse_handle_ = saved_pos;
 					return std::nullopt;
 				}
-
-				if (peek_token()->value() == ">") {
-					consume_token(); // consume '>'
-					break;
-				}
-
-				if (peek_token()->value() == ",") {
-					consume_token(); // consume ','
-					continue;
-				}
-
-				// Unexpected token after expression
-				FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments unexpected token after constant expression");
-				restore_token_position(saved_pos);
-				last_failed_template_arg_parse_handle_ = saved_pos;
-				return std::nullopt;
+			} else {
+				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (not in SFINAE context - during template declaration)");
 			}
 
 			// Expression is not a numeric literal or evaluable constant - fall through to type parsing
