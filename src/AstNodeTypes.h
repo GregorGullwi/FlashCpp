@@ -127,6 +127,7 @@ enum class Type : int_fast16_t {
 	MemberFunctionPointer,
 	MemberObjectPointer,  // Pointer to data member: int MyClass::*
 	Nullptr,              // nullptr_t type
+	Template,             // Nested template param
 	Invalid,
 };
 

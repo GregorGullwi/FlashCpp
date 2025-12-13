@@ -6691,7 +6691,7 @@ ParseResult Parser::parse_type_specifier()
 					// This will be resolved during instantiation of the containing template
 					
 					// Look up the TypeInfo for the template parameter
-					auto type_it = gTypesByName.find(std::string(type_name));
+					auto type_it = gTypesByName.find(type_name);
 					if (type_it != gTypesByName.end()) {
 						TypeIndex type_idx = type_it->second - &gTypeInfo[0];
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
@@ -15616,7 +15616,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name_, &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
