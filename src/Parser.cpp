@@ -74,6 +74,7 @@ static unsigned char getBasicTypeSizeInBits(Type type) {
 		case Type::UnsignedLongLong: return 64;
 		case Type::Float: return 32;
 		case Type::Double: return 64;
+		case Type::LongDouble: return 128;  // x86-64 long double is 80-bit but padded to 128-bit
 		case Type::Void: return 0;
 		default:
 			// Should not be called for user-defined types
