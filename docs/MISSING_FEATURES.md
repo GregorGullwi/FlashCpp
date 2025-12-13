@@ -2,37 +2,17 @@
 
 This document tracks missing C++20 features that prevent FlashCpp from compiling standard library headers. Features are listed in priority order based on their blocking impact.
 
-**Last Updated**: 2025-12-12 (19:30 UTC)  
+**Last Updated**: 2025-12-13 (14:55 UTC)  
 **Test Reference**: `tests/test_real_std_headers_fail.cpp`
 
 ## Summary
 
-**Status Update (2025-12-12 19:30 UTC)**: **SFINAE SUPPORT CONFIRMED!** FlashCpp has working SFINAE (Substitution Failure Is Not An Error) support for template metaprogramming!
+**Status Update (2025-12-13 14:55 UTC)**: **Perfect Forwarding (std::forward) COMPLETE!** FlashCpp now properly preserves reference types during template instantiation for perfect forwarding.
 
-Key achievements:
-```cpp
-// SFINAE pattern works correctly!
-template<bool B, typename T = void>
-struct enable_if {};
+**Recent update:**
+- **2025-12-13 14:55 UTC**: **COMPLETE** - Perfect forwarding (`std::forward`) implementation fixed to preserve lvalue/rvalue reference types during template instantiation. Template argument deduction now uses full `TypeSpecifierNode` to maintain reference information.
 
-template<typename T>
-struct enable_if<true, T> {
-    using type = T;
-};
-
-// Function enabled only for specific types
-template<typename T>
-typename enable_if<is_int<T>::value, int>::type
-only_for_int(T val) {
-    return val + 100;
-}
-
-// Modern C++14 style also works
-template<bool B, typename T = void>
-using enable_if_t = typename enable_if<B, T>::type;
-```
-
-**Implementation complete:**
+**Previously completed:**
 - ✅ SFINAE template pattern recognition (6 comprehensive test cases)
 - ✅ enable_if and enable_if_t patterns
 - ✅ Type trait integration with SFINAE
@@ -40,16 +20,13 @@ using enable_if_t = typename enable_if<B, T>::type;
 - ✅ Missing member access handling (enable_if<false>::type gracefully fails)
 - ✅ Member template aliases in all contexts
 - ✅ 36+ compiler intrinsics for type traits
+- ✅ Perfect forwarding with std::forward (2 test cases)
 
 **Recent updates**:
-- **2025-12-12 21:50 UTC**: **INFRASTRUCTURE** - Added try_evaluate_constant_expression() for template argument evaluation. Framework in place for evaluating expressions like `is_int<T>::value`. Full implementation requires constant expression evaluator with template instantiation and static member value lookup.
-- **2025-12-12 20:40 UTC**: **IMPLEMENTATION** - Added declaration position tracking and re-parsing infrastructure. Partial support for dependent return types. Template-dependent types with `_unknown` markers can trigger SFINAE.
-- **2025-12-12 20:15 UTC**: **INVESTIGATION** - Discovered template architecture limitation: return types stored as placeholders, only bodies re-parsed during instantiation.
-- **2025-12-12 20:10 UTC**: **PROGRESS** - Multi-overload template lookup implemented for SFINAE. Compiler now tries all template overloads with same name.
+- **2025-12-13 14:55 UTC**: **COMPLETE** - Perfect forwarding implementation fixed. Template argument deduction now preserves reference types (lvalue/rvalue) using `makeTypeSpecifier` instead of `makeType`. Fixed type size calculation for Struct types. Tests: `test_std_forward.cpp`, `test_std_forward_observable.cpp` - both PASS.
+- **2025-12-12 21:50 UTC**: **INFRASTRUCTURE** - Added try_evaluate_constant_expression() for template argument evaluation.
+- **2025-12-12 20:40 UTC**: **IMPLEMENTATION** - Added declaration position tracking and re-parsing infrastructure.
 - **2025-12-12 19:30 UTC**: **MAJOR** - SFINAE support confirmed working! 6 new test cases pass.
-- **2025-12-12 15:45 UTC**: Member template alias instantiation working for full specializations
-- **2025-12-12 13:47 UTC**: Added `template` keyword handler to specialization parsing
-- **2025-12-12 12:15 UTC**: Added `__is_aggregate` intrinsic. Total: 36+ intrinsics!
 
 **Known limitation**: Function overload resolution with same name and different SFINAE conditions - **EXTENSIVE INFRASTRUCTURE IN PLACE**. Remaining work: full constant expression evaluator.
 
@@ -74,7 +51,7 @@ using enable_if_t = typename enable_if<B, T>::type;
 
 **All completed features maintain backward compatibility - all 649 passing tests continue to pass (654 total tests including 5 SFINAE tests).**
 
-### Core Language Features (Priorities 1-8.5, 10, 11)
+### Core Language Features (Priorities 1-8.5, 10, 10b, 11)
 1. **Conversion Operators** - User-defined conversion operators (`operator T()`) with static member access
 2. **Non-Type Template Parameters** - `template<typename T, T v>` patterns with dependent types  
 3. **Template Specialization Inheritance** - Both partial and full specializations inherit from base classes
@@ -83,9 +60,10 @@ using enable_if_t = typename enable_if<B, T>::type;
 6. **Out-of-Class Static Member Definitions** - Template static member variables defined outside class
 7. **Reference Members in Structs** - Reference-type members (`int&`, `char&`, `short&`, `struct&`)
 8. **Implicit Constructor Generation** - Smart handling of base class constructor calls in derived classes
-8.5. **Member Template Aliases** - Template aliases inside classes, full specializations, and partial specializations (`template<typename T> using type = T;`)
-10. **SFINAE** - Substitution Failure Is Not An Error for template metaprogramming (6 comprehensive test cases)
-11. **Namespace-Qualified Template Instantiation** - Templates in namespaces with qualified member access (`std::Template<Args>::member`)
+8.5. **Member Template Aliases** - Template aliases inside classes, full specializations, and partial specializations
+10. **SFINAE** - Substitution Failure Is Not An Error for template metaprogramming (6 test cases)
+10b. **Perfect Forwarding** - `std::forward` preserves reference types (lvalue/rvalue) during template instantiation (2 test cases)
+11. **Namespace-Qualified Template Instantiation** - Templates in namespaces with qualified member access
 
 *For detailed implementation notes and test cases, see git history or previous versions of this document.*
 
@@ -390,14 +368,49 @@ modern_style(T val) {
 
 ---
 
-## Priority 10b: Advanced Template Features
+## Priority 10b: Perfect Forwarding (std::forward) ✅
 
-**Status**: ⚠️ **PARTIAL SUPPORT**
+**Status**: ✅ **COMPLETE** - Perfect forwarding implementation working correctly  
+**Test Cases**: 
+- `tests/test_std_forward.cpp` - Basic std::forward usage (PASSES)
+- `tests/test_std_forward_observable.cpp` - Observable forwarding behavior with lvalue/rvalue detection (PASSES)
 
-- ✅ Variadic templates (basic support)
-- ✅ Template template parameters (partial support)
-- ✅ SFINAE (working - see Priority 10 above)
-- ⚠️ Perfect forwarding (needs testing)
+### Implementation (2025-12-13 14:55 UTC)
+
+Perfect forwarding (`std::forward`) now correctly preserves reference types during template instantiation.
+
+**What was fixed:**
+1. Template argument deduction now uses `TemplateArgument::makeTypeSpecifier()` instead of `makeType()` to preserve full type information including references
+2. Type size calculation properly handles Struct types by checking `Type::Bool` to `Type::Void` range
+3. Reference collapsing works correctly for forwarding references (`T&&` parameters)
+
+**How it works:**
+```cpp
+template<typename T>
+void forward_to_consume(T&& arg) {
+    consume(std::forward<T>(arg));  // Preserves lvalue/rvalue-ness
+}
+
+Widget w1(42);
+forward_to_consume(w1);  // T deduced as Widget&, preserves lvalue
+```
+
+When `forward_to_consume` is called with an lvalue `w1`:
+- Template parameter `T` is deduced as `Widget&` (with reference)
+- Parameter type `T&&` becomes `Widget& &&` which collapses to `Widget&`
+- `std::forward<Widget&>(arg)` preserves it as an lvalue reference
+
+**Implementation details:**
+- Modified `try_instantiate_single_template()` at line 19831 to use `makeTypeSpecifier()`
+- Modified template argument conversion at line 19887 to preserve `TypeSpecifierNode` information
+- Fixed type size calculation at lines 20029 and 20092 to handle non-basic types
+
+### Required For
+
+- Perfect forwarding in template functions
+- `std::forward` implementation in standard library
+- Efficient parameter passing without copies
+- Universal references (forwarding references)
 
 ---
 
@@ -528,8 +541,8 @@ All known parsing blockers have been resolved. The remaining work is in function
 
 - ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
 - ⚠️ **Function overload resolution**: Same-name template functions with different SFINAE conditions
-- ⚠️ **Perfect forwarding**: Needs testing
-- ⚠️ **Template Instantiation**: Using member template aliases (instantiation, not parsing)
+- ⚠️ **Variadic templates**: Basic support exists, pack expansion in function calls needs work
+- ⚠️ **Template template parameters**: Partial support exists
 
 ### In Progress 🔄
 
@@ -540,7 +553,8 @@ All known parsing blockers have been resolved. The remaining work is in function
 All critical template features for standard library header support have been implemented!
 
 - ✅ SFINAE (Substitution Failure Is Not An Error) - 6 test cases
-- ✅ Member template aliases in all contexts (regular, full specialization, partial specialization)
+- ✅ Perfect forwarding (`std::forward`) - 2 test cases
+- ✅ Member template aliases in all contexts
 - ✅ Template specialization inheritance
 - ✅ Namespace-qualified template instantiation
 - ✅ 36+ compiler intrinsics for type traits
@@ -548,7 +562,7 @@ All critical template features for standard library header support have been imp
 
 **Remaining work:**
 - Function overload resolution with same-name SFINAE functions
-- Perfect forwarding validation
+- Pack expansion in function calls (variadic templates)
 
 ---
 
