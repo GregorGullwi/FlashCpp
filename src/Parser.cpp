@@ -21568,6 +21568,36 @@ if (struct_type_info.getStructInfo()) {
 			type_spec, template_params, template_args_to_use
 		);
 
+		// WORKAROUND: If member type is a Struct that is actually a template (not an instantiation),
+		// try to instantiate it with the current template arguments.
+		// This handles cases like:
+		//   template<typename T> struct TC { T val; };
+		//   template<typename T> struct TD { TC<T> c; }; 
+		// where TC<T> is stored as just "TC" (Struct type) without the <T> information.
+		// We assume TC should be instantiated with the same args as the containing template.
+		if (member_type == Type::Struct && member_type_index < gTypeInfo.size()) {
+			const TypeInfo& member_type_info = gTypeInfo[member_type_index];
+			
+			// Check if this struct has a StructInfo with size 0 (likely a template, not instantiation)
+			if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
+				// This might be a template. Try to instantiate it.
+				std::string_view member_struct_name = member_type_info.name_;
+				
+				// Try to instantiate with the current template arguments
+				// This assumes the member template has compatible parameters
+				auto inst_result = try_instantiate_class_template(member_struct_name, template_args_to_use);
+				
+				// If instantiation succeeded, look up the instantiated type
+				std::string_view inst_name_view = get_instantiated_class_name(member_struct_name, template_args_to_use);
+				std::string inst_name(inst_name_view);
+				auto inst_type_it = gTypesByName.find(inst_name);
+				if (inst_type_it != gTypesByName.end()) {
+					// Update member_type_index to point to the instantiated type
+					member_type_index = inst_type_it->second->type_index_;
+				}
+			}
+		}
+
 		// Handle array size substitution for non-type template parameters
 		std::optional<ASTNode> substituted_array_size;
 		if (decl.is_array()) {
