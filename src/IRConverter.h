@@ -10018,6 +10018,18 @@ private:
 			unsigned long long rhs_value = std::get<unsigned long long>(op.rhs.value);
 			// MOV RAX, imm64
 			emitMovImm64(X64Register::RAX, rhs_value);
+		} else if (std::holds_alternative<double>(op.rhs.value)) {
+			// RHS is a floating-point immediate value
+			double double_value = std::get<double>(op.rhs.value);
+			// Allocate an XMM register and load the double into it
+			source_reg = allocateXMMRegisterWithSpilling();
+			// Convert double to uint64_t bit representation
+			uint64_t bits;
+			std::memcpy(&bits, &double_value, sizeof(bits));
+			// Load bits into a general-purpose register first
+			emitMovImm64(X64Register::RAX, bits);
+			// Move from RAX to XMM register using movq instruction
+			emitMovqGprToXmm(X64Register::RAX, source_reg);
 		}
 		
 		// Store source register to LHS stack location
