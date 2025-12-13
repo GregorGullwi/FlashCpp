@@ -18881,8 +18881,8 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 
 // Evaluate constant expressions for template arguments
 // Handles cases like is_int<T>::value where T is substituted
-// Returns the integer value if successful, nullopt otherwise
-std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& expr_node) {
+// Returns pair of (value, type) if successful, nullopt otherwise
+std::optional<std::pair<int64_t, Type>> Parser::try_evaluate_constant_expression(const ASTNode& expr_node) {
 	if (!expr_node.is<ExpressionNode>()) {
 		FLASH_LOG(Templates, Debug, "Not an ExpressionNode");
 		return std::nullopt;
@@ -18896,7 +18896,7 @@ std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& e
 	// Handle boolean literals directly
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
 		const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-		return lit.value() ? 1 : 0;
+		return std::make_pair(lit.value() ? 1 : 0, Type::Bool);
 	}
 	
 	// Handle numeric literals directly
@@ -18904,9 +18904,9 @@ std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& e
 		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 		const auto& val = lit.value();
 		if (std::holds_alternative<unsigned long long>(val)) {
-			return static_cast<int64_t>(std::get<unsigned long long>(val));
+			return std::make_pair(static_cast<int64_t>(std::get<unsigned long long>(val)), lit.type());
 		} else if (std::holds_alternative<double>(val)) {
-			return static_cast<int64_t>(std::get<double>(val));
+			return std::make_pair(static_cast<int64_t>(std::get<double>(val)), lit.type());
 		}
 	}
 	
@@ -19165,7 +19165,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
-					template_args.emplace_back(*const_value, Type::Int);  // Assume int type for now
+					template_args.emplace_back(const_value->first, const_value->second);
 					discard_saved_token(arg_saved_pos);
 					
 					// Check for ',' or '>' after the expression
