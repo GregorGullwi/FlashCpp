@@ -120,6 +120,7 @@ for base in "${TEST_FILES[@]}"; do
             LINK_OK+=("$base")
             
             # Check for expected return value and run the executable
+            # Extract EXPECTED_RETURN value using pattern: // EXPECTED_RETURN: <number>
             expected_return=$(grep -E "^\s*//\s*EXPECTED_RETURN:\s*[0-9]+" "$f" | head -1 | sed -E 's/.*EXPECTED_RETURN:\s*([0-9]+).*/\1/')
             
             if [ -n "$expected_return" ]; then

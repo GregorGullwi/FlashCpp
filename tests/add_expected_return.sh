@@ -29,19 +29,41 @@ if grep -q "EXPECTED_RETURN:" "$TEST_FILE"; then
     fi
 fi
 
+# Determine compiler path
+COMPILER="${FLASHCPP_COMPILER:-./x64/Debug/FlashCpp}"
+if [ ! -f "$COMPILER" ]; then
+    echo "Error: FlashCpp compiler not found at $COMPILER"
+    echo "Set FLASHCPP_COMPILER environment variable or ensure ./x64/Debug/FlashCpp exists"
+    exit 1
+fi
+
+# Determine linker to use (prefer clang++, fallback to g++)
+LINKER="${FLASHCPP_LINKER:-}"
+if [ -z "$LINKER" ]; then
+    if command -v clang++ > /dev/null 2>&1; then
+        LINKER="clang++"
+    elif command -v g++ > /dev/null 2>&1; then
+        LINKER="g++"
+    else
+        echo "Error: No C++ linker found (clang++ or g++)"
+        echo "Set FLASHCPP_LINKER environment variable"
+        exit 1
+    fi
+fi
+
 # Compile the test
 BASE_NAME=$(basename "$TEST_FILE" .cpp)
 OBJ_FILE="${BASE_NAME}.obj"
 EXE_FILE="/tmp/${BASE_NAME}_exe"
 
-echo "Compiling $TEST_FILE..."
-if ! ./x64/Debug/FlashCpp "$TEST_FILE" -o "$OBJ_FILE" > /dev/null 2>&1; then
+echo "Compiling $TEST_FILE with $COMPILER..."
+if ! "$COMPILER" "$TEST_FILE" -o "$OBJ_FILE" > /dev/null 2>&1; then
     echo "Error: Failed to compile $TEST_FILE"
     exit 1
 fi
 
-echo "Linking..."
-if ! clang++ -no-pie -o "$EXE_FILE" "$OBJ_FILE" -lstdc++ -lc > /dev/null 2>&1; then
+echo "Linking with $LINKER..."
+if ! "$LINKER" -no-pie -o "$EXE_FILE" "$OBJ_FILE" -lstdc++ -lc > /dev/null 2>&1; then
     echo "Error: Failed to link $OBJ_FILE"
     rm -f "$OBJ_FILE"
     exit 1

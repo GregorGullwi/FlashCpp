@@ -244,21 +244,29 @@ foreach ($file in $referenceFiles) {
                 # Check for expected return value and run the executable
                 $expectedReturnMatch = $sourceContent | Select-String -Pattern '^\s*//\s*EXPECTED_RETURN:\s*(\d+)' | Select-Object -First 1
                 
-                if ($expectedReturnMatch) {
-                    $expectedReturn = [int]$expectedReturnMatch.Matches.Groups[1].Value
-                    
-                    # Run the executable and check return value
-                    & ".\$exeFile" > $null 2>&1
-                    $actualReturn = $LASTEXITCODE
-                    
-                    if ($actualReturn -eq $expectedReturn) {
-                        Write-Host "OK (returned $actualReturn)"
-                        $runSuccess += $file.Name
+                if ($expectedReturnMatch -and $expectedReturnMatch.Matches.Count -gt 0) {
+                    $matchGroups = $expectedReturnMatch.Matches[0].Groups
+                    if ($matchGroups.Count -gt 1 -and $matchGroups[1].Value) {
+                        $expectedReturn = [int]$matchGroups[1].Value
+                        
+                        # Run the executable and check return value
+                        & ".\$exeFile" > $null 2>&1
+                        $actualReturn = $LASTEXITCODE
+                        
+                        if ($actualReturn -eq $expectedReturn) {
+                            Write-Host "OK (returned $actualReturn)"
+                            $runSuccess += $file.Name
+                        }
+                        else {
+                            Write-Host ""
+                            Write-Host "[$currentFile/$totalFiles] $($file.Name) - [RUN FAILED] Expected return: $expectedReturn, got: $actualReturn" -ForegroundColor Red
+                            $runFailed += $file.Name
+                        }
                     }
                     else {
-                        Write-Host ""
-                        Write-Host "[$currentFile/$totalFiles] $($file.Name) - [RUN FAILED] Expected return: $expectedReturn, got: $actualReturn" -ForegroundColor Red
-                        $runFailed += $file.Name
+                        # Invalid match, treat as no expected return
+                        Write-Host "OK"
+                        $runSuccess += $file.Name
                     }
                 }
                 else {

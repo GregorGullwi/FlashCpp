@@ -127,13 +127,27 @@ The script will:
 3. Run the executable and capture the return value
 4. Prompt you to add (or update) the EXPECTED_RETURN annotation
 
+#### Environment Variables
+
+The helper script supports the following environment variables:
+
+- `FLASHCPP_COMPILER`: Path to the FlashCpp compiler (default: `./x64/Debug/FlashCpp`)
+- `FLASHCPP_LINKER`: C++ linker to use (default: auto-detect `clang++` or `g++`)
+
+Example with custom paths:
+```bash
+export FLASHCPP_COMPILER=/path/to/FlashCpp
+export FLASHCPP_LINKER=g++
+./add_expected_return.sh tests/test_my_feature.cpp
+```
+
 This makes it easy to add annotations to many test files quickly and accurately.
 
 Example:
 ```bash
 $ ./add_expected_return.sh tests/test_arithmetic.cpp
-Compiling tests/test_arithmetic.cpp...
-Linking...
+Compiling tests/test_arithmetic.cpp with ./x64/Debug/FlashCpp...
+Linking with clang++...
 Running executable...
 Return value: 7
 Add EXPECTED_RETURN: 7 to the file? (y/n) y
