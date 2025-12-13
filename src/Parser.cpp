@@ -105,8 +105,19 @@ static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg
 	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
 	if (arg.type_specifier.has_value()) {
 		const auto& type_spec = arg.type_specifier.value();
-		if (type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
-			return gTypeInfo[type_spec.type_index()].type_size_;
+		// Try type_index first
+		size_t type_index = type_spec.type_index();
+		if (type_index > 0 && type_index < gTypeInfo.size()) {
+			unsigned char size = gTypeInfo[type_index].type_size_;
+			if (size > 0) {
+				return size;
+			}
+			// For template struct instantiations (e.g., "TC_int"), look up by name
+			const std::string& type_name = gTypeInfo[type_index].name_;
+			auto it = gTypesByName.find(type_name);
+			if (it != gTypesByName.end() && it->second->type_size_ > 0) {
+				return it->second->type_size_;
+			}
 		}
 	}
 	return 0;  // Will be resolved during member access
@@ -2690,6 +2701,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
+			// Update type_size_ from the finalized struct's total size
+			if (struct_type_info.getStructInfo()) {
+				struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+			}
 			
 			// Parse the typedef alias name
 			auto alias_token = consume_token();
@@ -4864,6 +4879,10 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
+	// Update type_size_ from the finalized struct's total size
+	if (struct_type_info.getStructInfo()) {
+		struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+	}
 
 	// If this is a nested class, also register it with its qualified name
 	if (struct_ref.is_nested()) {
@@ -21824,6 +21843,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
+	
+	// Update type_size_ from the finalized struct's total size
+	if (struct_type_info.getStructInfo()) {
+		struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+	}
 
 	// Register member template aliases with the instantiated name
 	// Member template aliases were registered during parsing with the primary template name (e.g., "__conditional::type")
