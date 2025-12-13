@@ -1219,15 +1219,21 @@ private:
 			param_info.type = param_type.type();
 			param_info.size_in_bits = static_cast<int>(param_type.size_in_bits());
 			
-			// References are treated like pointers in the IR (they're both addresses)
+			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
-			if (param_type.is_reference()) {
-				pointer_depth += 1;  // Add 1 for reference (ABI treats it as an additional pointer level)
+			if (param_type.is_lvalue_reference()) {
+				pointer_depth += 1;  // Add 1 for lvalue reference (ABI treats it as an additional pointer level)
 			}
+			// Note: Rvalue references (T&&) are tracked separately via is_rvalue_reference flag.
+			// While lvalue references are always implemented as pointers at the ABI level,
+			// rvalue references in the context of perfect forwarding can receive values directly
+			// when bound to temporaries/literals. The pointer_depth increment is omitted to allow
+			// this direct value passing, while the is_rvalue_reference flag enables proper handling
+			// in both the caller (materialization + address-taking) and callee (dereferencing).
 			param_info.pointer_depth = pointer_depth;
 			param_info.name = std::string(param_decl.identifier_token().value());
-			param_info.is_reference = param_type.is_reference();
-			param_info.is_rvalue_reference = param_type.is_rvalue_reference();
+			param_info.is_reference = param_type.is_reference();  // Tracks ANY reference (lvalue or rvalue)
+			param_info.is_rvalue_reference = param_type.is_rvalue_reference();  // Specific rvalue ref flag
 			param_info.cv_qualifier = param_type.cv_qualifier();
 
 			func_decl_op.parameters.push_back(std::move(param_info));
