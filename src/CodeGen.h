@@ -443,8 +443,9 @@ public:
 							op.init_data.push_back(0);
 						}
 					} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+						const auto& num_lit = std::get<NumericLiteralNode>(init_expr);
 						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '", 
-						          qualified_name, "'");
+						          qualified_name, "' - literal value: ", num_lit.value());
 						// Evaluate the initializer expression
 						auto init_operands = visitExpressionNode(init_expr);
 						// Convert to raw bytes
@@ -452,14 +453,19 @@ public:
 							unsigned long long value = 0;
 							if (std::holds_alternative<unsigned long long>(init_operands[2])) {
 								value = std::get<unsigned long long>(init_operands[2]);
+								FLASH_LOG(Codegen, Debug, "  Extracted value: ", value);
 							} else if (std::holds_alternative<double>(init_operands[2])) {
 								double d = std::get<double>(init_operands[2]);
 								std::memcpy(&value, &d, sizeof(double));
+								FLASH_LOG(Codegen, Debug, "  Extracted double value: ", d);
 							}
 							size_t byte_count = op.size_in_bits / 8;
 							for (size_t i = 0; i < byte_count; ++i) {
 								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 							}
+							FLASH_LOG(Codegen, Debug, "  Wrote ", byte_count, " bytes to init_data");
+						} else {
+							FLASH_LOG(Codegen, Debug, "  WARNING: init_operands.size() = ", init_operands.size(), " (expected >= 3)");
 						}
 					} else if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
 						FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '", 
