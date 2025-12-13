@@ -56,6 +56,28 @@ static constexpr CallingConventionMapping calling_convention_map[] = {
 	{"__clrcall"sv, CallingConvention::Clrcall}
 };
 
+// Helper function to get type size in bits for basic types
+// Used when creating TypeInfo for template parameter substitution
+static unsigned char getBasicTypeSize(Type type) {
+	switch (type) {
+		case Type::Bool: return 8;
+		case Type::Char: return 8;
+		case Type::UnsignedChar: return 8;
+		case Type::Short: return 16;
+		case Type::UnsignedShort: return 16;
+		case Type::Int: return 32;
+		case Type::UnsignedInt: return 32;
+		case Type::Long: return 64;
+		case Type::UnsignedLong: return 64;
+		case Type::LongLong: return 64;
+		case Type::UnsignedLongLong: return 64;
+		case Type::Float: return 32;
+		case Type::Double: return 64;
+		case Type::Void: return 0;
+		default: return 0;  // For user-defined types, structs, etc.
+	}
+}
+
 // Helper function to find all local variable declarations in an AST node
 static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<std::string>& var_names) {
 	if (node.is<VariableDeclarationNode>()) {
@@ -19351,6 +19373,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			Type concrete_type = template_args[i].type_value;
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			type_info.type_size_ = getBasicTypeSize(concrete_type);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
@@ -19818,6 +19841,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			
 			// Add this template parameter -> concrete type mapping
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
+			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
+			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
+			// instead of staying as UserDefined, which would cause toString() to return "unknown"
+			type_info.type_size_ = getBasicTypeSize(arg.base_type);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);
 		}
@@ -19874,6 +19901,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			std::string_view param_name = param_names[i];
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
+			// Set type_size_ so parse_type_specifier treats this as a typedef
+			type_info.type_size_ = getBasicTypeSize(arg.base_type);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope2.addParameter(&type_info);
 		}
@@ -20032,6 +20061,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			Type concrete_type = template_args[i].type_value;
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			type_info.type_size_ = getBasicTypeSize(concrete_type);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
@@ -22590,6 +22620,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		Type concrete_type = template_args[i].type_value;
 
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+		type_info.type_size_ = getBasicTypeSize(concrete_type);
 		gTypesByName.emplace(type_info.name_, &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
@@ -22962,6 +22993,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+		type_info.type_size_ = getBasicTypeSize(concrete_type);
 		gTypesByName.emplace(type_info.name_, &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
