@@ -3075,6 +3075,24 @@ ParseResult Parser::parse_struct_declaration()
 			
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
 			
+			// Check if any template arguments are dependent
+			bool has_dependent_args = false;
+			for (const auto& arg : template_args) {
+				if (arg.is_dependent) {
+					has_dependent_args = true;
+					break;
+				}
+			}
+			
+			// If template arguments are dependent, we're inside a template declaration
+			// Don't try to instantiate or resolve the base class yet
+			if (has_dependent_args) {
+				FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
+				// Skip base class resolution for now
+				// The base class will be resolved when this template is instantiated
+				continue;  // Skip to next base class or exit loop
+			}
+			
 			// Check if the base class is a template
 			auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
 			if (template_entry) {
@@ -15999,6 +16017,24 @@ ParseResult Parser::parse_template_declaration() {
 						
 						std::vector<TemplateTypeArg> template_args = *template_args_opt;
 						
+						// Check if any template arguments are dependent
+						bool has_dependent_args = false;
+						for (const auto& arg : template_args) {
+							if (arg.is_dependent) {
+								has_dependent_args = true;
+								break;
+							}
+						}
+						
+						// If template arguments are dependent, we're inside a template declaration
+						// Don't try to instantiate or resolve the base class yet
+						if (has_dependent_args) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
+							// Skip base class resolution for now
+							// The base class will be resolved when this template is instantiated
+							continue;  // Skip to next base class or exit loop
+						}
+						
 						// Check if the base class is a template
 						auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
 						if (template_entry) {
@@ -16827,6 +16863,24 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						std::vector<TemplateTypeArg> template_args = *template_args_opt;
+						
+						// Check if any template arguments are dependent
+						bool has_dependent_args = false;
+						for (const auto& arg : template_args) {
+							if (arg.is_dependent) {
+								has_dependent_args = true;
+								break;
+							}
+						}
+						
+						// If template arguments are dependent, we're inside a template declaration
+						// Don't try to instantiate or resolve the base class yet
+						if (has_dependent_args) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
+							// Skip base class resolution for now
+							// The base class will be resolved when this template is instantiated
+							continue;  // Skip to next base class or exit loop
+						}
 						
 						// Check if the base class is a template
 						auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
