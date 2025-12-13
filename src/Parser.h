@@ -368,6 +368,10 @@ private:
         bool parsing_template_body_ = false;
         std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
         
+        // Track if we're in SFINAE context (template argument substitution)
+        // When true, type resolution errors should be treated as substitution failures instead of hard errors
+        bool in_sfinae_context_ = false;
+        
         // Track if current scope has parameter packs (enables fold expression parsing)
         bool has_parameter_packs_ = false;
 
@@ -488,10 +492,19 @@ private:
             ASTNode& out_template_node);
         ParseResult parse_template_parameter_list(std::vector<ASTNode>& out_params);  // NEW: Parse template parameter list
         ParseResult parse_template_parameter();  // NEW: Parse a single template parameter
+        // Simple struct to hold constant expression evaluation results
+        // Public members are intentional for this lightweight data structure
+        struct ConstantValue {
+                int64_t value;
+                Type type;
+        };
+        
         ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
         ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
         std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
+        std::optional<ConstantValue> try_evaluate_constant_expression(const ASTNode& expr_node);  // NEW: Evaluate constant expressions for template arguments (e.g., is_int<T>::value)
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
+        std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);  // Helper: Try to instantiate a specific template node (for SFINAE)
         std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types);  // NEW: Instantiate with explicit args
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate class template
         std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, const ASTNode& spec_node);  // Instantiate full specialization

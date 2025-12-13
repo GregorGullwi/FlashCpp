@@ -43,6 +43,9 @@ struct TemplateTypeArg {
 	// For variadic templates (parameter packs)
 	bool is_pack;  // true if this represents a parameter pack (typename... Args)
 	
+	// For dependent types (types that depend on template parameters)
+	bool is_dependent;  // true if this type depends on uninstantiated template parameters
+	
 	TemplateTypeArg()
 		: base_type(Type::Invalid)
 		, type_index(0)
@@ -52,7 +55,8 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_value(false)
 		, value(0)
-		, is_pack(false) {}
+		, is_pack(false)
+		, is_dependent(false) {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
@@ -63,7 +67,8 @@ struct TemplateTypeArg {
 		, cv_qualifier(type_spec.cv_qualifier())
 		, is_value(false)
 		, value(0)
-		, is_pack(false) {}
+		, is_pack(false)
+		, is_dependent(false) {}
 
 	// Constructor for non-type template parameters
 	explicit TemplateTypeArg(int64_t val)
@@ -75,7 +80,8 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_value(true)
 		, value(val)
-		, is_pack(false) {}
+		, is_pack(false)
+		, is_dependent(false) {}
 	
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, Type type)
@@ -87,7 +93,8 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_value(true)
 		, value(val)
-		, is_pack(false) {}
+		, is_pack(false)
+		, is_dependent(false) {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		return base_type == other.base_type &&
@@ -109,7 +116,12 @@ struct TemplateTypeArg {
 	// Get string representation for mangling
 	std::string toString() const {
 		if (is_value) {
-			// For values, just return the value as string
+			// For boolean values, use "true" or "false" instead of "1" or "0"
+			// This is important for template specialization matching
+			if (base_type == Type::Bool) {
+				return value != 0 ? "true" : "false";
+			}
+			// For non-boolean values, return the numeric value as string
 			return std::to_string(value);
 		}
 
@@ -316,6 +328,8 @@ struct TemplatePattern {
 		param_substitutions.clear();
 	
 		// Check each pattern argument against the corresponding concrete argument
+		// Track template parameter index separately from pattern argument index
+		size_t param_index = 0;  // Tracks which template parameter we're binding
 		for (size_t i = 0; i < pattern_args.size(); ++i) {
 			const TemplateTypeArg& pattern_arg = pattern_args[i];
 			
@@ -324,8 +338,8 @@ struct TemplatePattern {
 			if (i >= concrete_args.size()) {
 				// This should only happen for the variadic pack parameter
 				// Check if this pattern position corresponds to a variadic pack
-				if (i < template_params.size() && template_params[i].is<TemplateParameterNode>()) {
-					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+				if (param_index < template_params.size() && template_params[param_index].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& param = template_params[param_index].as<TemplateParameterNode>();
 					if (param.is_variadic()) {
 						// Empty pack is valid - continue without error
 						continue;
@@ -336,6 +350,8 @@ struct TemplatePattern {
 			}
 			
 			const TemplateTypeArg& concrete_arg = concrete_args[i];
+		
+			FLASH_LOG(Templates, Trace, "Matching pattern arg[", i, "] against concrete arg[", i, "]");
 		
 			// Find the template parameter name for this pattern position
 			// The pattern_arg contains the type from the pattern (e.g., T for pattern T&)
@@ -352,15 +368,19 @@ struct TemplatePattern {
 		
 			// Check if modifiers match
 			if (pattern_arg.is_reference != concrete_arg.is_reference) {
+				FLASH_LOG(Templates, Trace, "  FAILED: is_reference mismatch");
 				return false;
 			}
 			if (pattern_arg.is_rvalue_reference != concrete_arg.is_rvalue_reference) {
+				FLASH_LOG(Templates, Trace, "  FAILED: is_rvalue_reference mismatch");
 				return false;
 			}
 			if (pattern_arg.pointer_depth != concrete_arg.pointer_depth) {
+				FLASH_LOG(Templates, Trace, "  FAILED: pointer_depth mismatch");
 				return false;
 			}
 			if (pattern_arg.cv_qualifier != concrete_arg.cv_qualifier) {
+				FLASH_LOG(Templates, Trace, "  FAILED: cv_qualifier mismatch");
 				return false;
 			}
 		
@@ -375,31 +395,67 @@ struct TemplatePattern {
 			// Find which template parameter this pattern arg refers to
 			// base_type == Type::UserDefined (15) means it's a template parameter reference
 			if (pattern_arg.base_type != Type::UserDefined) {
-				// This is a concrete type in the pattern (e.g., partial specialization Container<int, T>)
-				// The concrete type must match exactly
+				// This is a concrete type or value in the pattern
+				// (e.g., partial specialization Container<int, T> or enable_if<true, T>)
+				// The concrete type/value must match exactly
+				FLASH_LOG(Templates, Trace, "  Pattern arg[", i, "]: concrete type/value check");
+				FLASH_LOG(Templates, Trace, "    pattern_arg.base_type=", static_cast<int>(pattern_arg.base_type), 
+				          " concrete_arg.base_type=", static_cast<int>(concrete_arg.base_type));
+				FLASH_LOG(Templates, Trace, "    pattern_arg.is_value=", pattern_arg.is_value, 
+				          " concrete_arg.is_value=", concrete_arg.is_value);
+				if (pattern_arg.is_value && concrete_arg.is_value) {
+					FLASH_LOG(Templates, Trace, "    pattern_arg.value=", pattern_arg.value, 
+					          " concrete_arg.value=", concrete_arg.value);
+				}
 				if (pattern_arg.base_type != concrete_arg.base_type) {
+					FLASH_LOG(Templates, Trace, "    FAILED: base types don't match");
 					return false;
 				}
-				continue;  // No substitution needed for concrete types
+				// For non-type template parameters, also check the value matches
+				if (pattern_arg.is_value && concrete_arg.is_value) {
+					if (pattern_arg.value != concrete_arg.value) {
+						FLASH_LOG(Templates, Trace, "    FAILED: values don't match");
+						return false;  // Different values - no match
+					}
+				} else if (pattern_arg.is_value != concrete_arg.is_value) {
+					FLASH_LOG(Templates, Trace, "    FAILED: is_value flags don't match");
+					return false;  // One is value, one is type - no match
+				}
+				FLASH_LOG(Templates, Trace, "    SUCCESS: concrete type/value matches");
+				continue;  // No substitution needed for concrete types/values - don't increment param_index
 			}
 		
 			// Find the template parameter name for this pattern arg
-			// Use the position to match with the corresponding template parameter
-			if (i >= template_params.size()) {
-				return false;  // More pattern args than template parameters - invalid pattern
-			}
-			
+			// First, try to get the name from the pattern arg's type_index (for reused parameters)
+			// For is_same<T, T>, both pattern args point to the same TypeInfo for T
 			std::string param_name;
 			bool found_param = false;
-		
-			if (template_params[i].is<TemplateParameterNode>()) {
-				const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
-				param_name = std::string(template_param.name());
+			
+			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
+				const TypeInfo& param_type_info = gTypeInfo[pattern_arg.type_index];
+				param_name = std::string(param_type_info.name_);
 				found_param = true;
+				FLASH_LOG(Templates, Trace, "  Found parameter name '", param_name, "' from pattern_arg.type_index=", pattern_arg.type_index);
 			}
-		
+			
 			if (!found_param) {
-				return false;  // Template parameter at position i is not a TemplateParameterNode
+				// Fallback: use param_index to get the template parameter
+				// This is needed when type_index isn't set properly
+				if (param_index >= template_params.size()) {
+					FLASH_LOG(Templates, Trace, "  FAILED: param_index ", param_index, " >= template_params.size() ", template_params.size());
+					return false;  // More template params needed than available - invalid pattern
+				}
+				
+				if (template_params[param_index].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& template_param = template_params[param_index].as<TemplateParameterNode>();
+					param_name = std::string(template_param.name());
+					found_param = true;
+				}
+			
+				if (!found_param) {
+					FLASH_LOG(Templates, Trace, "  FAILED: Template parameter at param_index ", param_index, " is not a TemplateParameterNode");
+					return false;  // Template parameter at position param_index is not a TemplateParameterNode
+				}
 			}
 		
 			// Check if we've already seen this parameter
@@ -409,12 +465,17 @@ struct TemplatePattern {
 			if (it != param_substitutions.end()) {
 				// Parameter already bound - check consistency of BASE TYPE only
 				if (it->second.base_type != concrete_arg.base_type) {
+					FLASH_LOG(Templates, Trace, "  FAILED: Inconsistent substitution for parameter ", param_name);
 					return false;  // Inconsistent substitution (different base types)
 				}
-				// Modifiers can differ! (e.g., T* and T both bind to T=int)
+				FLASH_LOG(Templates, Trace, "  SUCCESS: Reused parameter ", param_name, " - consistency check passed");
+				// Don't increment param_index - we reused an existing parameter binding
 			} else {
 				// Bind this parameter to the concrete type
 				param_substitutions[param_name] = concrete_arg;
+				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", param_name, " to concrete type");
+				// Increment param_index since we bound a new template parameter
+				++param_index;
 			}
 		}
 	
@@ -1133,6 +1194,21 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			ASTNode inner_ast_node(const_cast<T*>(&inner));
 			return evaluateConstraint(inner_ast_node, template_args, template_param_names);
 		}, expr_variant);
+	}
+	
+	// For BoolLiteralNode (true/false keywords parsed as boolean literals)
+	if (constraint_expr.is<BoolLiteralNode>()) {
+		const auto& literal = constraint_expr.as<BoolLiteralNode>();
+		bool value = literal.value();
+		
+		if (!value) {
+			return ConstraintEvaluationResult::failure(
+				"constraint not satisfied: literal constraint is false",
+				"false",
+				"use 'true' or a valid concept expression"
+			);
+		}
+		return ConstraintEvaluationResult::success();
 	}
 	
 	// For boolean literals (true/false), evaluate directly
