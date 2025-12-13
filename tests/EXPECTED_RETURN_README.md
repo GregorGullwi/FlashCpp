@@ -112,6 +112,34 @@ To gradually add expected return values to existing tests:
 3. Add the `// EXPECTED_RETURN: <value>` comment at the top of the file
 4. Run the test to verify it passes
 
+### Using the Helper Script
+
+For convenience, you can use the `add_expected_return.sh` helper script:
+
+```bash
+cd tests
+./add_expected_return.sh test_my_feature.cpp
+```
+
+The script will:
+1. Compile the test file with FlashCpp
+2. Link the resulting object file
+3. Run the executable and capture the return value
+4. Prompt you to add (or update) the EXPECTED_RETURN annotation
+
+This makes it easy to add annotations to many test files quickly and accurately.
+
+Example:
+```bash
+$ ./add_expected_return.sh tests/test_arithmetic.cpp
+Compiling tests/test_arithmetic.cpp...
+Linking...
+Running executable...
+Return value: 7
+Add EXPECTED_RETURN: 7 to the file? (y/n) y
+Added EXPECTED_RETURN: 7 to tests/test_arithmetic.cpp
+```
+
 ## CI Integration
 
 Both GitHub Actions workflows (Windows and Ubuntu) automatically run these test scripts on every commit. Tests that return incorrect values will cause the CI build to fail, ensuring code quality.
