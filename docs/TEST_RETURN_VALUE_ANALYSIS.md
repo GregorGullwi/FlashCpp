@@ -54,7 +54,7 @@ All three cause segmentation faults in the compiler.
 - None! All return value tests are now passing.
 
 ### Crashing Tests
-- `test_covariant_return.cpp` - Compiler hangs (infinite loop in parsing/codegen) ✗
+- ~~`test_covariant_return.cpp` - Compiler hangs (infinite loop in parsing/codegen)~~ **PARTIALLY FIXED** - Added main function and fixed infinite loop, but compiler now fails with error due to symbol table issue (see Fix 2 below) ⚠️
 
 ### Correctly Failing Tests (Expected to Fail Compilation)
 - `test_lambda_mismatched_returns_fail.cpp` - Correctly reports error: "Lambda has inconsistent return types" ✓
@@ -63,10 +63,33 @@ All three cause segmentation faults in the compiler.
 ## Priority for Fixes
 
 1. **~~High Priority:~~ COMPLETED** - ~~Fix the sign extension issue for struct member returns (affects 3 tests)~~ Fixed 32-bit immediate loading optimization
-2. **Low Priority:** Investigate covariant return type hang (complex feature with 200 lines, causes infinite loop - likely edge case)
+2. **~~Medium Priority:~~ PARTIALLY COMPLETED** - ~~Investigate covariant return type hang~~ Fixed infinite loop, but symbol table issue remains
 3. **~~Medium Priority:~~ COMPLETED** - ~~Fix lambda/function mismatched return type crashes~~ These tests are working correctly - they properly detect and report errors
+4. **Medium Priority:** Fix pointer member access symbol table lookup issue (affects any test using `ptr->member` pattern)
 
 ## Investigation Notes
+
+### Covariant Return Type Investigation (December 2024)
+
+**Problem:** The file `test_covariant_return.cpp` was missing a `main()` function and caused the compiler to hang indefinitely.
+
+**Root Causes Found:**
+1. Missing `main()` function - test file had only helper functions
+2. Infinite loop in `visitReturnStatementNode` when expression evaluation fails
+3. Missing `MemberAccessNode` handling in `get_expression_type()`  
+4. Symbol table lookup failure for local pointer variables in member access expressions
+
+**Investigation Process:**
+Through systematic testing with progressively simpler test cases, discovered the hang occurs specifically when:
+- Using `->` operator on a pointer to access struct members
+- The pointer is returned from a function (even non-virtual functions)
+- The member access result is used in a return statement
+
+Example failing code:
+```cpp
+Dog* ptr = d.getSelf();  // Works fine
+return ptr->breed;        // Causes hang/error
+```
 
 ### Sign Extension Issue Details
 
@@ -107,3 +130,62 @@ Need to run under debugger or with verbose logging to understand where the crash
 - Updated function argument loading logic (lines 5695-5706) to check `arg.size_in_bits` and call appropriate emit function
 
 **Impact:** Generates more compact and efficient code for 32-bit integer arguments, matching what clang/gcc produce.
+
+### Fix 2: Prevent Infinite Loop on Return Statement Expression Evaluation Failure (Commit a08cccf)
+
+**Problem:** When `visitExpressionNode` returns an empty vector due to an error (e.g., symbol not found), the code in `visitReturnStatementNode` tries to access `operands[2]` without bounds checking. This causes undefined behavior that manifested as an infinite loop or crash.
+
+**Solution:** Added bounds checking before accessing the operands array:
+```cpp
+// Check if operands is non-empty before accessing
+if (operands.empty()) {
+    FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed");
+    return;
+}
+```
+
+**Code Changes:**
+- Added bounds check in `src/CodeGen.h` at line ~2275 in `visitReturnStatementNode`
+- Added `MemberAccessNode` case in `src/Parser.cpp` in `get_expression_type()` function to properly handle member access expressions
+
+**Impact:** Compiler now fails gracefully with a clear error message instead of hanging indefinitely. This makes debugging much easier and prevents the compiler from appearing to freeze.
+
+### Fix 3: Added MemberAccessNode Type Deduction (Commit a08cccf)
+
+**Problem:** The `get_expression_type()` function in Parser.cpp didn't handle `MemberAccessNode`, causing it to return `std::nullopt` for expressions like `ptr->member`. This contributed to type resolution failures.
+
+**Solution:** Added case to handle `MemberAccessNode` by:
+1. Getting the type of the object being accessed
+2. Looking up the struct type information
+3. Finding the member in the struct
+4. Returning the member's type
+
+**Code Changes:**
+- Added `MemberAccessNode` handling in `get_expression_type()` in `src/Parser.cpp`
+
+**Impact:** Improves type deduction for member access expressions, though the symbol table lookup issue in codegen still needs to be resolved.
+
+## Remaining Issues
+
+### Pointer Member Access Symbol Table Lookup Failure
+
+**File:** `src/CodeGen.h`, `generateMemberAccessIr` (around line 9644)
+
+**Problem:** When generating code for `ptr->member` where `ptr` is a local variable, the code path for handling pointer dereference requires the operand to be an `IdentifierNode` and looks it up in the symbol table. However, the lookup fails even for variables declared in the same function.
+
+**Current Behavior:** Compiler logs error "pointer 'ptr' not found in symbol table" and fails gracefully.
+
+**Possible Root Causes:**
+1. Symbol table timing issue - symbols might be looked up before they're inserted
+2. The code is too restrictive - it only handles `IdentifierNode` operands, but should support any expression that evaluates to a pointer (e.g., function calls like `getPointer()->member`)
+
+**Recommended Fix:** Modify `generateMemberAccessIr` to evaluate the pointer expression using `visitExpressionNode()` instead of requiring it to be a simple identifier. This would:
+- Support complex pointer expressions (function calls, nested member access, etc.)
+- Avoid direct symbol table lookups that may have timing issues
+- Be consistent with how other expression types are handled in the codebase
+
+**Test Cases Affected:**
+- `test_covariant_return.cpp` - Now has main function but fails due to this issue
+- Any code using pattern: `ptr->member` where ptr is a local variable
+
+**Workaround:** Use dereference and dot operator instead: `(*ptr).member`
