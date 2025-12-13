@@ -18816,7 +18816,72 @@ std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& e
 		}
 	}
 	
-	// Handle member access expressions (e.g., is_int<double>::value)
+	// Handle qualified identifier expressions (e.g., is_int<double>::value)
+	// This is the most common case for template member access in C++
+	if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+		const QualifiedIdentifierNode& qualified_id = std::get<QualifiedIdentifierNode>(expr);
+		
+		// The qualified identifier represents something like "is_int<double>::value"
+		// We need to extract: type_name = "is_int<double>" and member_name = "value"
+		// The full_name() gives us the complete qualified name
+		std::string full_qualified_name = qualified_id.full_name();
+		
+		// Find the last :: to split type name from member name
+		size_t last_scope_pos = full_qualified_name.rfind("::");
+		if (last_scope_pos == std::string::npos) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Qualified identifier '{}' has no scope separator", full_qualified_name);
+			return std::nullopt;
+		}
+		
+		std::string_view type_name(full_qualified_name.data(), last_scope_pos);
+		std::string_view member_name(full_qualified_name.data() + last_scope_pos + 2, 
+		                              full_qualified_name.size() - last_scope_pos - 2);
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating constant expression: {}::{}", type_name, member_name);
+		
+		// Look up the type - it should be an instantiated template class
+		auto type_it = gTypesByName.find(type_name);
+		if (type_it == gTypesByName.end()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system", type_name);
+			return std::nullopt;
+		}
+		
+		const TypeInfo* type_info = type_it->second;
+		if (!type_info->isStruct()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Type {} is not a struct", type_name);
+			return std::nullopt;
+		}
+		
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
+		if (!struct_info) {
+			FLASH_LOG(Templates, Debug, "Could not get struct info");
+			return std::nullopt;
+		}
+		
+		// Look for the static member with the given name
+		std::string member_name_str(member_name);  // Convert string_view to string
+		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_str);
+		if (!static_member) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
+			return std::nullopt;
+		}
+		
+		// Check if it has an initializer
+		if (!static_member->initializer.has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Static member {}::{} has no initializer", type_name, member_name);
+			return std::nullopt;
+		}
+		
+		// Evaluate the initializer - it should be a constant expression
+		// For type traits, this is typically a bool literal (true/false)
+		const ASTNode& init_node = *static_member->initializer;
+		
+		// Recursively evaluate the initializer
+		return try_evaluate_constant_expression(init_node);
+	}
+	
+	// Handle member access expressions (e.g., obj.member or obj->member)
+	// Less common for template constant expressions but included for completeness
 	if (std::holds_alternative<MemberAccessNode>(expr)) {
 		const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
 		std::string_view member_name = member_access.member_name();
@@ -18919,8 +18984,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
-		// Use parse_expression() to handle complex expressions like is_int<T>::value
-		auto expr_result = parse_expression();
+		auto expr_result = parse_primary_expression();
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
