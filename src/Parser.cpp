@@ -57,8 +57,9 @@ static constexpr CallingConventionMapping calling_convention_map[] = {
 };
 
 // Helper function to get type size in bits for basic types
+// Helper function to get the size in bits for basic types
 // Used when creating TypeInfo for template parameter substitution
-static unsigned char getBasicTypeSize(Type type) {
+static unsigned char getBasicTypeSizeInBits(Type type) {
 	switch (type) {
 		case Type::Bool: return 8;
 		case Type::Char: return 8;
@@ -74,7 +75,10 @@ static unsigned char getBasicTypeSize(Type type) {
 		case Type::Float: return 32;
 		case Type::Double: return 64;
 		case Type::Void: return 0;
-		default: return 0;  // For user-defined types, structs, etc.
+		default:
+			// Should not be called for user-defined types
+			assert(false && "getBasicTypeSizeInBits called for non-basic type");
+			return 0;
 	}
 }
 
@@ -18881,8 +18885,7 @@ std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& e
 		}
 		
 		// Look for the static member with the given name
-		std::string member_name_str(member_name);  // Convert string_view to string
-		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_str);
+		const StructStaticMember* static_member = struct_info->findStaticMember(member_name);
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
@@ -18945,8 +18948,7 @@ std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& e
 		}
 		
 		// Look for the static member with the given name
-		std::string member_name_str(member_name);  // Convert string_view to string
-		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_str);
+		const StructStaticMember* static_member = struct_info->findStaticMember(member_name);
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
@@ -19373,7 +19375,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			Type concrete_type = template_args[i].type_value;
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-			type_info.type_size_ = getBasicTypeSize(concrete_type);
+			type_info.type_size_ = getBasicTypeSizeInBits(concrete_type);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
@@ -19844,7 +19846,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
 			// instead of staying as UserDefined, which would cause toString() to return "unknown"
-			type_info.type_size_ = getBasicTypeSize(arg.base_type);
+			type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);
 		}
@@ -19902,7 +19904,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef
-			type_info.type_size_ = getBasicTypeSize(arg.base_type);
+			type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope2.addParameter(&type_info);
 		}
@@ -20061,7 +20063,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			Type concrete_type = template_args[i].type_value;
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-			type_info.type_size_ = getBasicTypeSize(concrete_type);
+			type_info.type_size_ = getBasicTypeSizeInBits(concrete_type);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
@@ -22620,7 +22622,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		Type concrete_type = template_args[i].type_value;
 
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-		type_info.type_size_ = getBasicTypeSize(concrete_type);
+		type_info.type_size_ = getBasicTypeSizeInBits(concrete_type);
 		gTypesByName.emplace(type_info.name_, &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
@@ -22993,7 +22995,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-		type_info.type_size_ = getBasicTypeSize(concrete_type);
+		type_info.type_size_ = getBasicTypeSizeInBits(concrete_type);
 		gTypesByName.emplace(type_info.name_, &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}

@@ -562,7 +562,7 @@ struct StructTypeInfo {
 	}
 
 	// Find static member by name
-	const StructStaticMember* findStaticMember(const std::string& name) const {
+	const StructStaticMember* findStaticMember(std::string_view name) const {
 		for (const auto& static_member : static_members) {
 			if (static_member.name == name) {
 				return &static_member;
