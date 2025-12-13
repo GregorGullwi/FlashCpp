@@ -19828,12 +19828,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					template_args.push_back(TemplateArgument::makeType(deduced_type));
 					deduced_type_args.erase(deduced_type_args.begin());
 				} else if (arg_index < arg_types.size()) {
-					template_args.push_back(TemplateArgument::makeType(arg_types[arg_index].type()));
+					// Store full TypeSpecifierNode to preserve reference info for perfect forwarding
+					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[arg_index]));
 					arg_index++;
 				} else {
 					// Not enough arguments to deduce all template parameters
 					// Fall back to first argument for remaining parameters
-					template_args.push_back(TemplateArgument::makeType(arg_types[0].type()));
+					// Store full TypeSpecifierNode to preserve reference info
+					template_args.push_back(TemplateArgument::makeTypeSpecifier(arg_types[0]));
 				}
 			}
 		} else {
@@ -19887,8 +19889,23 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	for (const auto& arg : template_args) {
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			TemplateTypeArg type_arg;
-			type_arg.base_type = arg.type_value;
-			type_arg.type_index = 0;  // Simple types don't have an index
+			
+			// If we have a full type_specifier, use it to preserve all type information
+			// This is critical for perfect forwarding (T&& parameters)
+			if (arg.type_specifier.has_value()) {
+				const TypeSpecifierNode& type_spec = arg.type_specifier.value();
+				type_arg.base_type = type_spec.type();
+				type_arg.type_index = type_spec.type_index();
+				type_arg.is_reference = type_spec.is_lvalue_reference();
+				type_arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+				type_arg.pointer_depth = type_spec.pointer_depth();
+				type_arg.cv_qualifier = type_spec.cv_qualifier();
+			} else {
+				// Fallback to legacy behavior for backward compatibility
+				type_arg.base_type = arg.type_value;
+				type_arg.type_index = 0;  // Simple types don't have an index
+			}
+			
 			template_args_as_type_args.push_back(type_arg);
 		}
 		// Note: Template and value arguments aren't used in type substitution
@@ -20008,11 +20025,16 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
 			// instead of staying as UserDefined, which would cause toString() to return "unknown"
-			// Only call getBasicTypeSizeInBits for basic types
-			if (arg.base_type != Type::UserDefined) {
+			// Only call getBasicTypeSizeInBits for basic types (Bool through Void)
+			if (arg.base_type >= Type::Bool && arg.base_type <= Type::Void) {
 				type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
 			} else {
-				type_info.type_size_ = 0;  // UserDefined types resolved later
+				// For Struct, UserDefined, and other non-basic types, use type_index to get size
+				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+					type_info.type_size_ = gTypeInfo[arg.type_index].type_size_;
+				} else {
+					type_info.type_size_ = 0;  // Will be resolved later
+				}
 			}
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);
@@ -20071,11 +20093,16 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef
-			// Only call getBasicTypeSizeInBits for basic types
-			if (arg.base_type != Type::UserDefined) {
+			// Only call getBasicTypeSizeInBits for basic types (Bool through Void)
+			if (arg.base_type >= Type::Bool && arg.base_type <= Type::Void) {
 				type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
 			} else {
-				type_info.type_size_ = 0;  // UserDefined types resolved later
+				// For Struct, UserDefined, and other non-basic types, use type_index to get size
+				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+					type_info.type_size_ = gTypeInfo[arg.type_index].type_size_;
+				} else {
+					type_info.type_size_ = 0;  // Will be resolved later
+				}
 			}
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope2.addParameter(&type_info);
