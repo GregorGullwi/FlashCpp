@@ -390,17 +390,30 @@ struct TemplatePattern {
 				// This is a concrete type or value in the pattern
 				// (e.g., partial specialization Container<int, T> or enable_if<true, T>)
 				// The concrete type/value must match exactly
+				FLASH_LOG(Templates, Trace, "  Pattern arg[", i, "]: concrete type/value check");
+				FLASH_LOG(Templates, Trace, "    pattern_arg.base_type=", static_cast<int>(pattern_arg.base_type), 
+				          " concrete_arg.base_type=", static_cast<int>(concrete_arg.base_type));
+				FLASH_LOG(Templates, Trace, "    pattern_arg.is_value=", pattern_arg.is_value, 
+				          " concrete_arg.is_value=", concrete_arg.is_value);
+				if (pattern_arg.is_value && concrete_arg.is_value) {
+					FLASH_LOG(Templates, Trace, "    pattern_arg.value=", pattern_arg.value, 
+					          " concrete_arg.value=", concrete_arg.value);
+				}
 				if (pattern_arg.base_type != concrete_arg.base_type) {
+					FLASH_LOG(Templates, Trace, "    FAILED: base types don't match");
 					return false;
 				}
 				// For non-type template parameters, also check the value matches
 				if (pattern_arg.is_value && concrete_arg.is_value) {
 					if (pattern_arg.value != concrete_arg.value) {
+						FLASH_LOG(Templates, Trace, "    FAILED: values don't match");
 						return false;  // Different values - no match
 					}
 				} else if (pattern_arg.is_value != concrete_arg.is_value) {
+					FLASH_LOG(Templates, Trace, "    FAILED: is_value flags don't match");
 					return false;  // One is value, one is type - no match
 				}
+				FLASH_LOG(Templates, Trace, "    SUCCESS: concrete type/value matches");
 				continue;  // No substitution needed for concrete types/values
 			}
 		

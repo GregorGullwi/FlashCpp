@@ -20901,17 +20901,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FLASH_LOG(Templates, Debug, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
 		for (const auto& member_decl : pattern_struct.members()) {
 			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-			FLASH_LOG(Templates, Debug, "Copying member: ", decl.identifier_token().value());
-			// Log the default initializer if present
-			if (member_decl.default_initializer.has_value()) {
-				const ExpressionNode& init_expr = *member_decl.default_initializer;
-				if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-					const auto& num_lit = std::get<NumericLiteralNode>(init_expr);
-					if (std::holds_alternative<unsigned long long>(num_lit.value())) {
-						FLASH_LOG(Templates, Debug, "  Has initializer with value: ", std::get<unsigned long long>(num_lit.value()));
-					}
-				}
-			}
+			FLASH_LOG(Templates, Debug, "Copying member: ", decl.identifier_token().value(), 
+			          " has_initializer=", member_decl.default_initializer.has_value());
 			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 			
 			// For pattern specializations, member types need substitution!
