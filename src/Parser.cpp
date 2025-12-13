@@ -82,6 +82,34 @@ static unsigned char getBasicTypeSizeInBits(Type type) {
 	}
 }
 
+// Helper function to safely get type size - handles both basic types and UserDefined types
+// For UserDefined types, tries to look up size from type registry via type_index
+static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_index) {
+	if (type != Type::UserDefined) {
+		return getBasicTypeSizeInBits(type);
+	}
+	// For UserDefined types, look up size from type registry
+	if (type_index > 0 && type_index < gTypeInfo.size()) {
+		return gTypeInfo[type_index].type_size_;
+	}
+	return 0;  // Will be resolved during member access
+}
+
+// Helper function to safely get type size from TemplateArgument
+static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
+	if (arg.type_value != Type::UserDefined) {
+		return getBasicTypeSizeInBits(arg.type_value);
+	}
+	// For UserDefined types, try to extract size from type_specifier
+	if (arg.type_specifier.has_value()) {
+		const auto& type_spec = arg.type_specifier.value();
+		if (type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
+			return gTypeInfo[type_spec.type_index()].type_size_;
+		}
+	}
+	return 0;  // Will be resolved during member access
+}
+
 // Helper function to find all local variable declarations in an AST node
 static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<std::string>& var_names) {
 	if (node.is<VariableDeclarationNode>()) {
@@ -19475,7 +19503,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			Type concrete_type = template_args[i].type_value;
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-			type_info.type_size_ = getBasicTypeSizeInBits(concrete_type);
+			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
@@ -19946,7 +19974,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
 			// instead of staying as UserDefined, which would cause toString() to return "unknown"
-			type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
+			// Only call getBasicTypeSizeInBits for basic types
+			if (arg.base_type != Type::UserDefined) {
+				type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
+			} else {
+				type_info.type_size_ = 0;  // UserDefined types resolved later
+			}
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);
 		}
@@ -20004,7 +20037,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef
-			type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
+			// Only call getBasicTypeSizeInBits for basic types
+			if (arg.base_type != Type::UserDefined) {
+				type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
+			} else {
+				type_info.type_size_ = 0;  // UserDefined types resolved later
+			}
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope2.addParameter(&type_info);
 		}
@@ -20163,7 +20201,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			Type concrete_type = template_args[i].type_value;
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-			type_info.type_size_ = getBasicTypeSizeInBits(concrete_type);
+			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
 			gTypesByName.emplace(type_info.name_, &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
@@ -21247,7 +21285,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
 									substituted_type = concrete_arg.base_type;
 									substituted_type_index = concrete_arg.type_index;
-									substituted_size = getBasicTypeSizeInBits(substituted_type);
+									// Only call getBasicTypeSizeInBits for basic types
+									if (substituted_type != Type::UserDefined) {
+										substituted_size = getBasicTypeSizeInBits(substituted_type);
+									} else {
+										// For UserDefined types, look up the size from the type registry
+										substituted_size = 0;
+										if (substituted_type_index < gTypeInfo.size()) {
+											substituted_size = gTypeInfo[substituted_type_index].type_size_;
+										}
+									}
 									FLASH_LOG(Templates, Debug, "Substituted template parameter '", 
 										template_params[param_idx].as<TemplateParameterNode>().name(), 
 										"' at pattern position ", pattern_idx, " with type=", static_cast<int>(substituted_type));
@@ -22825,7 +22872,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		Type concrete_type = template_args[i].type_value;
 
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-		type_info.type_size_ = getBasicTypeSizeInBits(concrete_type);
+		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
 		gTypesByName.emplace(type_info.name_, &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
@@ -23198,7 +23245,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
-		type_info.type_size_ = getBasicTypeSizeInBits(concrete_type);
+		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
 		gTypesByName.emplace(type_info.name_, &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
