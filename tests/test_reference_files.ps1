@@ -239,9 +239,35 @@ foreach ($file in $referenceFiles) {
             $linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
 
             if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
-                Write-Host "OK"
                 $linkSuccess += $file.Name
-                # Clean up after successful link
+                
+                # Check for expected return value and run the executable
+                $expectedReturnMatch = $sourceContent | Select-String -Pattern '^\s*//\s*EXPECTED_RETURN:\s*(\d+)' | Select-Object -First 1
+                
+                if ($expectedReturnMatch) {
+                    $expectedReturn = [int]$expectedReturnMatch.Matches.Groups[1].Value
+                    
+                    # Run the executable and check return value
+                    & ".\$exeFile" > $null 2>&1
+                    $actualReturn = $LASTEXITCODE
+                    
+                    if ($actualReturn -eq $expectedReturn) {
+                        Write-Host "OK (returned $actualReturn)"
+                        $runSuccess += $file.Name
+                    }
+                    else {
+                        Write-Host ""
+                        Write-Host "[$currentFile/$totalFiles] $($file.Name) - [RUN FAILED] Expected return: $expectedReturn, got: $actualReturn" -ForegroundColor Red
+                        $runFailed += $file.Name
+                    }
+                }
+                else {
+                    # No expected return value specified
+                    Write-Host "OK"
+                    $runSuccess += $file.Name
+                }
+                
+                # Clean up after running
                 Remove-Item $exeFile -Force -ErrorAction SilentlyContinue
                 Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue
             }
@@ -399,6 +425,10 @@ Write-Host "  Linking (of successfully compiled files):"
 Write-Host "    Success: $($linkSuccess.Count)" -ForegroundColor Green
 Write-Host "    Failed:  $($linkFailed.Count)" -ForegroundColor Red
 Write-Host ""
+Write-Host "  Running (of successfully linked files):"
+Write-Host "    Success: $($runSuccess.Count)" -ForegroundColor Green
+Write-Host "    Failed:  $($runFailed.Count)" -ForegroundColor Red
+Write-Host ""
 Write-Host "_fail Tests (expected to fail compilation):"
 Write-Host "  Failed as expected: $($failTestSuccess.Count)" -ForegroundColor Green
 Write-Host "  Unexpectedly passed: $($failTestFailed.Count)" -ForegroundColor Red
@@ -461,6 +491,14 @@ if ($linkFailed.Count -gt 0) {
     }
 }
 
+if ($runFailed.Count -gt 0) {
+    Write-Host "=== Files that returned wrong value ===" -ForegroundColor Red
+    $runFailed | Sort-Object | ForEach-Object {
+        Write-Host "  - $_"
+    }
+    Write-Host ""
+}
+
 
 if ($failTestFailed.Count -gt 0) {
     Write-Host "=== _fail files that unexpectedly succeeded ===" -ForegroundColor Red
@@ -499,13 +537,16 @@ if ($compileFailed.Count -gt 0) {
 if ($linkFailed.Count -gt 0) {
     $failureReasons += "Some files did not link successfully"
 }
+if ($runFailed.Count -gt 0) {
+    $failureReasons += "Some files returned wrong values"
+}
 
 if ($failureReasons.Count -gt 0) {
     $exitCode = 1
     Write-Host "RESULT: FAILED - $($failureReasons -join '; ')" -ForegroundColor Red
 }
 else {
-    Write-Host "RESULT: SUCCESS - All files compiled and linked successfully!" -ForegroundColor Green
+    Write-Host "RESULT: SUCCESS - All files compiled, linked, and ran successfully!" -ForegroundColor Green
     Write-Host "                  All _fail tests failed as expected!" -ForegroundColor Green
 }
 

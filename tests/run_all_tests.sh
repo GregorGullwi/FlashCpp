@@ -45,6 +45,8 @@ declare -a COMPILE_OK=()
 declare -a COMPILE_FAIL=()
 declare -a LINK_OK=()
 declare -a LINK_FAIL=()
+declare -a RUN_OK=()
+declare -a RUN_FAIL=()
 declare -a FAIL_OK=()
 declare -a FAIL_BAD=()
 
@@ -116,8 +118,30 @@ for base in "${TEST_FILES[@]}"; do
         
         if [ $link_exit_code -eq 0 ]; then
             LINK_OK+=("$base")
+            
+            # Check for expected return value and run the executable
+            expected_return=$(grep -E "^\s*//\s*EXPECTED_RETURN:\s*[0-9]+" "$f" | head -1 | sed -E 's/.*EXPECTED_RETURN:\s*([0-9]+).*/\1/')
+            
+            if [ -n "$expected_return" ]; then
+                # Run the executable and check return value
+                "$exe" > /dev/null 2>&1
+                actual_return=$?
+                
+                if [ "$actual_return" -eq "$expected_return" ]; then
+                    RUN_OK+=("$base")
+                    echo "OK (returned $actual_return)" >&2
+                else
+                    RUN_FAIL+=("$base")
+                    echo "" >&2
+                    echo -e "${RED}[RUN FAIL]${NC} $base - Expected return: $expected_return, got: $actual_return"
+                fi
+            else
+                # No expected return value specified
+                RUN_OK+=("$base")
+                echo "OK" >&2
+            fi
+            
             rm -f "$exe"
-            echo "OK" >&2
         else
             # Check if this is an expected link failure
             if contains "$base" "${EXPECTED_LINK_FAIL[@]}"; then
@@ -200,14 +224,13 @@ if [ ${#FAIL_FILES[@]} -gt 0 ]; then
     done
 fi
 
-# Summary
-echo ""
 echo "========================"
 echo "SUMMARY"
 echo "========================"
 echo "Total: $TOTAL files tested"
 printf "Compile: ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#COMPILE_OK[@]}" "${#COMPILE_FAIL[@]}"
 printf "Link:    ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#LINK_OK[@]}" "${#LINK_FAIL[@]}"
+printf "Run:     ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#RUN_OK[@]}" "${#RUN_FAIL[@]}"
 [ ${#FAIL_FILES[@]} -gt 0 ] && printf "_fail:   ${GREEN}%d correct${NC} / ${RED}%d wrong${NC}\n" "${#FAIL_OK[@]}" "${#FAIL_BAD[@]}"
 
 # Show failures
@@ -222,13 +245,18 @@ if [ ${#LINK_FAIL[@]} -gt 0 ]; then
     echo "  (vtables, constructors, exceptions, etc.)"
 fi
 
+if [ ${#RUN_FAIL[@]} -gt 0 ]; then
+    echo -e "\n${RED}Run failures (${#RUN_FAIL[@]}) - returned wrong value:${NC}"
+    printf '  %s\n' "${RUN_FAIL[@]}"
+fi
+
 [ ${#FAIL_BAD[@]} -gt 0 ] && {
     echo -e "\n${RED}_fail files that passed:${NC}"
     printf '  %s\n' "${FAIL_BAD[@]}"
 }
 
 echo ""
-if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ]; then
+if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#RUN_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ]; then
     echo -e "${GREEN}RESULT: SUCCESS${NC}"
     exit 0
 else
