@@ -8679,7 +8679,9 @@ private:
 					// DEBUG removed
 					
 					// Get type of argument - for literals, use the literal type
-					if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
+					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
+						arg_types.push_back(Type::Bool);
+					} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
 						// DEBUG removed
 						arg_types.push_back(lit.type());
@@ -8913,7 +8915,9 @@ private:
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 						
 						// Get type of argument
-						if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
+						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
+							template_args.push_back(TemplateArgument::makeType(Type::Bool));
+						} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
 							template_args.push_back(TemplateArgument::makeType(lit.type()));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
