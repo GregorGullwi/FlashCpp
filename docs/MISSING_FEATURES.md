@@ -26,8 +26,8 @@ This document tracks missing C++20 features that prevent FlashCpp from compiling
 - ✅ Pack expansion in function calls (integer types work, floating-point has known codegen issue)
 
 **Recent updates**:
-- **2025-12-13 16:00 UTC**: **PACK EXPANSION FIX** - Fixed rvalue reference parameter handling in `CodeGen.h`. Changed line 1224 from `is_reference()` to `is_lvalue_reference()` to avoid incorrectly adding pointer level to rvalue reference parameters. Pack expansion now works for integer types. Known issue: floating-point arguments have uninitialized register bug (separate codegen issue).
-- **2025-12-13 16:00 UTC**: **SFINAE CLARIFICATION** - SFINAE same-name overload resolution already works! Functions with same name but different template arguments are distinguished via name mangling (e.g., `process_int` vs `process_double`). Test `test_sfinae_same_name_overload.cpp` passes.
+- **2025-12-13 16:01 UTC**: **SFINAE CLARIFICATION** - SFINAE same-name overload resolution already works! Functions with same name but different template arguments are distinguished via name mangling (e.g., `process_int` vs `process_double`). Test `test_sfinae_same_name_overload.cpp` passes.
+- **2025-12-13 16:00 UTC**: **PACK EXPANSION FIX** - Fixed rvalue reference parameter handling in `CodeGen.h`. Changed line 1224 from `is_reference()` to `is_lvalue_reference()` to avoid incorrectly adding pointer level to rvalue reference parameters. Pack expansion now works for integer types. Known issue: floating-point arguments have uninitialized xmm8 register in generated assembly (bug in IRConverter.h's register allocation for double assignments).
 - **2025-12-13 14:55 UTC**: **COMPLETE** - Perfect forwarding implementation fixed. Template argument deduction now preserves reference types (lvalue/rvalue) using `makeTypeSpecifier` instead of `makeType`. Fixed type size calculation for Struct types. Tests: `test_std_forward.cpp`, `test_std_forward_observable.cpp` - both PASS.
 - **2025-12-12 21:50 UTC**: **INFRASTRUCTURE** - Added try_evaluate_constant_expression() for template argument evaluation.
 - **2025-12-12 20:40 UTC**: **IMPLEMENTATION** - Added declaration position tracking and re-parsing infrastructure.
@@ -574,7 +574,7 @@ All known parsing blockers have been resolved.
 - ⚠️ **Priority 9**: Complex preprocessor expressions (non-blocking warnings)
 - ⚠️ **Variadic templates**: Basic support exists, some advanced patterns may need work
 - ⚠️ **Template template parameters**: Partial support exists
-- ⚠️ **Floating-point code generation**: Uninitialized register bug in IRConverter.h (affects pack expansion with doubles)
+- ⚠️ **Floating-point code generation**: Uninitialized xmm8 register bug when assigning double literals (assembly uses `movsd %xmm8,-0x38(%rbp)` without initializing xmm8). Issue occurs in register allocation during IR-to-assembly conversion. See `test_pack_expansion_simple.cpp` for reproduction - IR correctly shows `assign %5 = 3.14` but codegen fails.
 
 ### In Progress 🔄
 
@@ -595,7 +595,7 @@ All critical template features for standard library header support have been imp
 - ✅ All core C++20 language features needed for headers
 
 **Outstanding Issue:**
-- Minor floating-point codegen bug in IRConverter.h (separate from template functionality)
+- Minor floating-point codegen bug: uninitialized xmm8 register in assembly generation (IRConverter.h register allocation)
 
 ---
 

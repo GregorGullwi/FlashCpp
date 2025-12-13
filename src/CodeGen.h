@@ -1232,8 +1232,8 @@ private:
 			// in both the caller (materialization + address-taking) and callee (dereferencing).
 			param_info.pointer_depth = pointer_depth;
 			param_info.name = std::string(param_decl.identifier_token().value());
-			param_info.is_reference = param_type.is_reference();
-			param_info.is_rvalue_reference = param_type.is_rvalue_reference();
+			param_info.is_reference = param_type.is_reference();  // Tracks ANY reference (lvalue or rvalue)
+			param_info.is_rvalue_reference = param_type.is_rvalue_reference();  // Specific rvalue ref flag
 			param_info.cv_qualifier = param_type.cv_qualifier();
 
 			func_decl_op.parameters.push_back(std::move(param_info));
