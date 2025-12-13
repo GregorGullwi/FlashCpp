@@ -116,7 +116,12 @@ struct TemplateTypeArg {
 	// Get string representation for mangling
 	std::string toString() const {
 		if (is_value) {
-			// For values, just return the value as string
+			// For boolean values, use "true" or "false" instead of "1" or "0"
+			// This is important for template specialization matching
+			if (base_type == Type::Bool) {
+				return value != 0 ? "true" : "false";
+			}
+			// For other values, just return the value as string
 			return std::to_string(value);
 		}
 
