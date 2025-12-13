@@ -387,12 +387,21 @@ struct TemplatePattern {
 			// Find which template parameter this pattern arg refers to
 			// base_type == Type::UserDefined (15) means it's a template parameter reference
 			if (pattern_arg.base_type != Type::UserDefined) {
-				// This is a concrete type in the pattern (e.g., partial specialization Container<int, T>)
-				// The concrete type must match exactly
+				// This is a concrete type or value in the pattern
+				// (e.g., partial specialization Container<int, T> or enable_if<true, T>)
+				// The concrete type/value must match exactly
 				if (pattern_arg.base_type != concrete_arg.base_type) {
 					return false;
 				}
-				continue;  // No substitution needed for concrete types
+				// For non-type template parameters, also check the value matches
+				if (pattern_arg.is_value && concrete_arg.is_value) {
+					if (pattern_arg.value != concrete_arg.value) {
+						return false;  // Different values - no match
+					}
+				} else if (pattern_arg.is_value != concrete_arg.is_value) {
+					return false;  // One is value, one is type - no match
+				}
+				continue;  // No substitution needed for concrete types/values
 			}
 		
 			// Find the template parameter name for this pattern arg
