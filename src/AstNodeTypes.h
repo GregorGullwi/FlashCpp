@@ -1188,6 +1188,18 @@ private:
 	Token identifier_;
 };
 
+class BoolLiteralNode {
+public:
+	explicit BoolLiteralNode(Token identifier, bool value) : identifier_(identifier), value_(value) {}
+
+	bool value() const { return value_; }
+	std::string_view token() const { return identifier_.value(); }
+
+private:
+	Token identifier_;
+	bool value_;
+};
+
 class BinaryOperatorNode {
 public:
 	explicit BinaryOperatorNode(Token identifier, ASTNode lhs_node,
@@ -2637,7 +2649,7 @@ private:
 	Token token_;                  // Token for error reporting
 };
 
-using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
+using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode>;

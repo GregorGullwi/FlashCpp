@@ -11572,7 +11572,10 @@ ParseResult Parser::parse_primary_expression()
 					
 						std::visit([&](const auto& inner) {
 							using T = std::decay_t<decltype(inner)>;
-							if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+							if constexpr (std::is_same_v<T, BoolLiteralNode>) {
+								arg_type = Type::Bool;
+								// Boolean literals are rvalues
+							} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 								arg_type = inner.type();
 								// Literals are rvalues
 							} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
@@ -11942,7 +11945,9 @@ ParseResult Parser::parse_primary_expression()
 								
 								std::visit([&](const auto& inner) {
 									using T = std::decay_t<decltype(inner)>;
-									if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+									if constexpr (std::is_same_v<T, BoolLiteralNode>) {
+										arg_type = Type::Bool;
+									} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 										arg_type = inner.type();
 									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 										arg_type = Type::Char;  // const char*
@@ -12732,8 +12737,7 @@ ParseResult Parser::parse_primary_expression()
 			 (current_token_->value() == "true"sv || current_token_->value() == "false"sv)) {
 		// Handle bool literals
 		bool value = (current_token_->value() == "true");
-		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
-			static_cast<unsigned long long>(value), Type::Bool, TypeQualifier::None, 8));
+		result = emplace_node<ExpressionNode>(BoolLiteralNode(*current_token_, value));
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "nullptr"sv) {
@@ -14935,7 +14939,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 
 	// Handle different expression types
-	if (std::holds_alternative<NumericLiteralNode>(expr)) {
+	if (std::holds_alternative<BoolLiteralNode>(expr)) {
+		const auto& literal = std::get<BoolLiteralNode>(expr);
+		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+	}
+	else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 		const auto& literal = std::get<NumericLiteralNode>(expr);
 		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits());
 	}
@@ -18885,6 +18893,12 @@ std::optional<int64_t> Parser::try_evaluate_constant_expression(const ASTNode& e
 	// Log what variant we have
 	FLASH_LOG_FORMAT(Templates, Debug, "Expression variant index: {}", expr.index());
 	
+	// Handle boolean literals directly
+	if (std::holds_alternative<BoolLiteralNode>(expr)) {
+		const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+		return lit.value() ? 1 : 0;
+	}
+	
 	// Handle numeric literals directly
 	if (std::holds_alternative<NumericLiteralNode>(expr)) {
 		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
@@ -19064,8 +19078,40 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// First, try to parse an expression (for non-type template parameters)
 		auto expr_result = parse_primary_expression();
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
-			// Successfully parsed an expression - check if it's a numeric literal
+			// Successfully parsed an expression - check if it's a boolean or numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
+			
+			// Handle boolean literals (true/false)
+			if (std::holds_alternative<BoolLiteralNode>(expr)) {
+				const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+				template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+				discard_saved_token(arg_saved_pos);
+				
+				// Check for ',' or '>' after the boolean literal
+				if (!peek_token().has_value()) {
+					restore_token_position(saved_pos);
+					last_failed_template_arg_parse_handle_ = saved_pos;
+					return std::nullopt;
+				}
+
+				if (peek_token()->value() == ">") {
+					consume_token(); // consume '>'
+					break;
+				}
+
+				if (peek_token()->value() == ",") {
+					consume_token(); // consume ','
+					continue;
+				}
+
+				// Unexpected token after boolean literal
+				FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments unexpected token after boolean literal");
+				restore_token_position(saved_pos);
+				last_failed_template_arg_parse_handle_ = saved_pos;
+				return std::nullopt;
+			}
+			
+			// Handle numeric literals
 			if (std::holds_alternative<NumericLiteralNode>(expr)) {
 				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 				const auto& val = lit.value();
