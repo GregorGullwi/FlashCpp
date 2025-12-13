@@ -127,6 +127,7 @@ enum class Type : int_fast16_t {
 	MemberFunctionPointer,
 	MemberObjectPointer,  // Pointer to data member: int MyClass::*
 	Nullptr,              // nullptr_t type
+	Template,             // Nested template param
 	Invalid,
 };
 
@@ -562,7 +563,7 @@ struct StructTypeInfo {
 	}
 
 	// Find static member by name
-	const StructStaticMember* findStaticMember(const std::string& name) const {
+	const StructStaticMember* findStaticMember(std::string_view name) const {
 		for (const auto& static_member : static_members) {
 			if (static_member.name == name) {
 				return &static_member;
@@ -1188,6 +1189,18 @@ private:
 	Token identifier_;
 };
 
+class BoolLiteralNode {
+public:
+	explicit BoolLiteralNode(Token identifier, bool value) : identifier_(identifier), value_(value) {}
+
+	bool value() const { return value_; }
+	std::string_view token() const { return identifier_.value(); }
+
+private:
+	Token identifier_;
+	bool value_;
+};
+
 class BinaryOperatorNode {
 public:
 	explicit BinaryOperatorNode(Token identifier, ASTNode lhs_node,
@@ -1341,6 +1354,15 @@ public:
 	bool has_template_body_position() const { return has_template_body_; }
 	SaveHandle template_body_position() const { return template_body_position_handle_; }
 
+	// Template declaration position support (for re-parsing function declarations during instantiation)
+	// Needed for SFINAE: re-parse return type with substituted template parameters
+	void set_template_declaration_position(SaveHandle handle) {
+		has_template_declaration_ = true;
+		template_declaration_position_handle_ = handle;
+	}
+	bool has_template_declaration_position() const { return has_template_declaration_; }
+	SaveHandle template_declaration_position() const { return template_declaration_position_handle_; }
+
 	// Variadic function support (functions with ... ellipsis parameter)
 	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
 	bool is_variadic() const { return is_variadic_; }
@@ -1376,10 +1398,12 @@ private:
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	bool has_template_body_ = false;
+	bool has_template_declaration_ = false;  // True if template declaration position is saved (for SFINAE re-parsing)
 	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
 	Linkage linkage_;  // Linkage specification (C, C++, or None)
 	CallingConvention calling_convention_ = CallingConvention::Default;  // Calling convention (__cdecl, __stdcall, etc.)
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body (from Parser::save_token_position())
+	SaveHandle template_declaration_position_handle_;  // Handle to saved position for template declaration (for SFINAE)
 	bool is_constexpr_;
 	bool is_constinit_;
 	bool is_consteval_;
@@ -2626,7 +2650,7 @@ private:
 	Token token_;                  // Token for error reporting
 };
 
-using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode,
+using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode>;

@@ -442,6 +442,16 @@ public:
 						for (size_t i = 0; i < byte_count; ++i) {
 							op.init_data.push_back(0);
 						}
+					} else if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+						const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
+						FLASH_LOG(Codegen, Debug, "Processing BoolLiteralNode initializer for static member '", 
+						          qualified_name, "' value=", bool_lit.value() ? "true" : "false");
+						unsigned long long value = bool_lit.value() ? 1ULL : 0ULL;
+						size_t byte_count = op.size_in_bits / 8;
+						for (size_t i = 0; i < byte_count; ++i) {
+							op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+						}
+						FLASH_LOG(Codegen, Debug, "  Wrote ", byte_count, " bytes to init_data");
 					} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '", 
 						          qualified_name, "'");
@@ -452,14 +462,19 @@ public:
 							unsigned long long value = 0;
 							if (std::holds_alternative<unsigned long long>(init_operands[2])) {
 								value = std::get<unsigned long long>(init_operands[2]);
+								FLASH_LOG(Codegen, Debug, "  Extracted uint64 value: ", value);
 							} else if (std::holds_alternative<double>(init_operands[2])) {
 								double d = std::get<double>(init_operands[2]);
 								std::memcpy(&value, &d, sizeof(double));
+								FLASH_LOG(Codegen, Debug, "  Extracted double value: ", d);
 							}
 							size_t byte_count = op.size_in_bits / 8;
 							for (size_t i = 0; i < byte_count; ++i) {
 								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 							}
+							FLASH_LOG(Codegen, Debug, "  Wrote ", byte_count, " bytes to init_data");
+						} else {
+							FLASH_LOG(Codegen, Debug, "  WARNING: init_operands.size() = ", init_operands.size(), " (expected >= 3)");
 						}
 					} else if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
 						FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '", 
@@ -4366,6 +4381,12 @@ private:
 			const auto& expr = std::get<QualifiedIdentifierNode>(exprNode);
 			return generateQualifiedIdentifierIr(expr);
 		}
+		else if (std::holds_alternative<BoolLiteralNode>(exprNode)) {
+			const auto& expr = std::get<BoolLiteralNode>(exprNode);
+			// Convert boolean to integer for IR (true=1, false=0)
+			// Return format: [type, size_in_bits, value, 0ULL]
+			return { Type::Bool, 8, expr.value() ? 1ULL : 0ULL, 0ULL };
+		}
 		else if (std::holds_alternative<NumericLiteralNode>(exprNode)) {
 			const auto& expr = std::get<NumericLiteralNode>(exprNode);
 			return generateNumericLiteralIr(expr);
@@ -8264,6 +8285,8 @@ private:
 							} else {
 								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
 							}
+					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
+						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
 						} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 							const auto& literal = std::get<NumericLiteralNode>(arg_expr);
 							arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None, 
@@ -8656,7 +8679,9 @@ private:
 					// DEBUG removed
 					
 					// Get type of argument - for literals, use the literal type
-					if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
+					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
+						arg_types.push_back(Type::Bool);
+					} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
 						// DEBUG removed
 						arg_types.push_back(lit.type());
@@ -8890,7 +8915,9 @@ private:
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 						
 						// Get type of argument
-						if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
+						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
+							template_args.push_back(TemplateArgument::makeType(Type::Bool));
+						} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
 							template_args.push_back(TemplateArgument::makeType(lit.type()));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
@@ -8951,6 +8978,8 @@ private:
 								} else {
 									arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
 								}
+					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
+						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
 							} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 								const auto& literal = std::get<NumericLiteralNode>(arg_expr);
 								arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None, 

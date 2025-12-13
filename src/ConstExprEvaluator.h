@@ -155,6 +155,10 @@ public:
 		const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 
 		// Check what type of expression it is
+		if (std::holds_alternative<BoolLiteralNode>(expr)) {
+			return EvalResult::from_bool(std::get<BoolLiteralNode>(expr).value());
+		}
+
 		if (std::holds_alternative<NumericLiteralNode>(expr)) {
 			return evaluate_numeric_literal(std::get<NumericLiteralNode>(expr));
 		}
