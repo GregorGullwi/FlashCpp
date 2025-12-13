@@ -85,10 +85,11 @@ static unsigned char getBasicTypeSizeInBits(Type type) {
 // Helper function to safely get type size - handles both basic types and UserDefined types
 // For UserDefined types, tries to look up size from type registry via type_index
 static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_index) {
-	if (type != Type::UserDefined) {
+	// Check if this is a basic type that getBasicTypeSizeInBits can handle
+	if (type >= Type::Bool && type <= Type::Void) {
 		return getBasicTypeSizeInBits(type);
 	}
-	// For UserDefined types, look up size from type registry
+	// For UserDefined and other types (Template, etc), look up size from type registry
 	if (type_index > 0 && type_index < gTypeInfo.size()) {
 		return gTypeInfo[type_index].type_size_;
 	}
@@ -97,10 +98,11 @@ static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_inde
 
 // Helper function to safely get type size from TemplateArgument
 static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
-	if (arg.type_value != Type::UserDefined) {
+	// Check if this is a basic type that getBasicTypeSizeInBits can handle
+	if (arg.type_value >= Type::Bool && arg.type_value <= Type::Void) {
 		return getBasicTypeSizeInBits(arg.type_value);
 	}
-	// For UserDefined types, try to extract size from type_specifier
+	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
 	if (arg.type_specifier.has_value()) {
 		const auto& type_spec = arg.type_specifier.value();
 		if (type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
