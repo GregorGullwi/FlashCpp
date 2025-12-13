@@ -4886,6 +4886,21 @@ private:
 	}
 
 	// Helper to generate and emit MOV reg, imm64
+	void emitMovImm32(X64Register destinationRegister, uint32_t immediate_value) {
+		// MOV r32, imm32 (zero-extends to 64-bit in x64 mode)
+		// REX.B prefix needed if destination is R8-R15 (for lower 32-bit access)
+		uint8_t reg_encoding = static_cast<uint8_t>(destinationRegister);
+		if (reg_encoding >= 8) {
+			textSectionData.push_back(0x41); // REX.B for R8-R15
+		}
+		// MOV r32, imm32 opcode (0xB8 + lower 3 bits of register encoding)
+		textSectionData.push_back(0xB8 + (reg_encoding & 0x07));
+		// Encode the 32-bit immediate value (little-endian)
+		for (int j = 0; j < 4; ++j) {
+			textSectionData.push_back(static_cast<uint8_t>((immediate_value >> (j * 8)) & 0xFF));
+		}
+	}
+
 	void emitMovImm64(X64Register destinationRegister, uint64_t immediate_value) {
 		// REX prefix: REX.W for 64-bit operation, REX.B if destination is R8-R15
 		uint8_t rex_prefix = 0x48; // REX.W
@@ -5681,7 +5696,15 @@ private:
 				if (std::holds_alternative<unsigned long long>(arg.value)) {
 					// Load immediate directly into target register
 					unsigned long long value = std::get<unsigned long long>(arg.value);
-					emitMovImm64(target_reg, value);
+					// Use 32-bit mov for 32-bit arguments (automatically zero-extends to 64-bit)
+					// This ensures proper handling of signed 32-bit values like -1
+					if (arg.size_in_bits == 32) {
+						// Cast to uint32_t truncates to lower 32 bits (intended behavior)
+						// For signed values like -1 (0xFFFFFFFFFFFFFFFF), this gives 0xFFFFFFFF
+						emitMovImm32(target_reg, static_cast<uint32_t>(value));
+					} else {
+						emitMovImm64(target_reg, value);
+					}
 				} else if (std::holds_alternative<TempVar>(arg.value)) {
 					// Load from stack
 					const auto& temp_var = std::get<TempVar>(arg.value);
