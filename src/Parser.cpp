@@ -5654,6 +5654,10 @@ ParseResult Parser::parse_typedef_declaration()
 
 		// Store struct info
 		struct_type_info.setStructInfo(std::move(struct_info));
+		// Update type_size_ from the finalized struct's total size
+		if (struct_type_info.getStructInfo()) {
+			struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+		}
 
 		// Create type specifier for the struct
 		type_spec = TypeSpecifierNode(
@@ -6277,6 +6281,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			auto struct_info = std::make_unique<StructTypeInfo>(type_name_str, AccessSpecifier::Public);
 			struct_info->total_size = type_it->second / 8; // Convert bits to bytes
 			type_info.setStructInfo(std::move(struct_info));
+if (type_info.getStructInfo()) {
+	type_info.type_size_ = type_info.getStructInfo()->total_size;
+}
 			
 			gTypesByName.emplace(type_info.name_, &type_info);
 			FLASH_LOG(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", type_name_str, type_it->second);
@@ -16123,6 +16130,9 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Set struct info now that base classes are added
 			struct_type_info.setStructInfo(std::move(struct_info));
+if (struct_type_info.getStructInfo()) {
+	struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+}
 
 			// Expect opening brace
 			if (!consume_punctuator("{")) {
@@ -17502,6 +17512,9 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
+if (struct_type_info.getStructInfo()) {
+	struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+}
 			
 			// Parse delayed function bodies for partial specialization member functions
 			SaveHandle position_after_struct = save_token_position();
@@ -20756,6 +20769,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	FLASH_LOG(Templates, Debug, "Full spec has constructor: ", has_constructor ? "yes" : "no, needs default");
 	
 	struct_type_info.setStructInfo(std::move(struct_info));
+	if (struct_type_info.getStructInfo()) {
+		struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+	}
 	
 	return std::nullopt;  // Return nullopt since we don't need to add anything to AST
 }
@@ -21231,6 +21247,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			struct_info->finalize();
 		}
 		struct_type_info.setStructInfo(std::move(struct_info));
+if (struct_type_info.getStructInfo()) {
+	struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+}
 		
 		// Register type aliases from the pattern with qualified names
 		// We need the pattern_args to map template parameters to template arguments
@@ -21794,6 +21813,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Register the nested class in the type system
 			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size());
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
+if (nested_type_info.getStructInfo()) {
+	nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
+}
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 		}
 	}
