@@ -349,6 +349,8 @@ struct TemplatePattern {
 			
 			const TemplateTypeArg& concrete_arg = concrete_args[i];
 		
+			FLASH_LOG(Templates, Trace, "Matching pattern arg[", i, "] against concrete arg[", i, "]");
+		
 			// Find the template parameter name for this pattern position
 			// The pattern_arg contains the type from the pattern (e.g., T for pattern T&)
 			// We need to check if the base types match and the modifiers match
@@ -364,15 +366,19 @@ struct TemplatePattern {
 		
 			// Check if modifiers match
 			if (pattern_arg.is_reference != concrete_arg.is_reference) {
+				FLASH_LOG(Templates, Trace, "  FAILED: is_reference mismatch");
 				return false;
 			}
 			if (pattern_arg.is_rvalue_reference != concrete_arg.is_rvalue_reference) {
+				FLASH_LOG(Templates, Trace, "  FAILED: is_rvalue_reference mismatch");
 				return false;
 			}
 			if (pattern_arg.pointer_depth != concrete_arg.pointer_depth) {
+				FLASH_LOG(Templates, Trace, "  FAILED: pointer_depth mismatch");
 				return false;
 			}
 			if (pattern_arg.cv_qualifier != concrete_arg.cv_qualifier) {
+				FLASH_LOG(Templates, Trace, "  FAILED: cv_qualifier mismatch");
 				return false;
 			}
 		
