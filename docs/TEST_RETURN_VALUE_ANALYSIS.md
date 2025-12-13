@@ -166,13 +166,13 @@ if (operands.empty()) {
 
 ## Remaining Issues
 
-### ~~Pointer Member Access Symbol Table Lookup Failure~~ (FIXED - Commit [TBD])
+### ~~Pointer Member Access Symbol Table Lookup Failure~~ (FIXED - Commit e11e8e4)
 
 **File:** `src/CodeGen.h`, `generateMemberAccessIr` (around line 9644)
 
 **Problem:** When generating code for `ptr->member` where `ptr` is a local variable, the code path for handling pointer dereference required the operand to be an `IdentifierNode` and looked it up in the symbol table. However, the lookup failed even for variables declared in the same function.
 
-**Solution (Commit [TBD]):** Modified `generateMemberAccessIr` to evaluate the pointer expression using `visitExpressionNode()` instead of requiring it to be a simple identifier. This approach:
+**Solution (Commit e11e8e4):** Modified `generateMemberAccessIr` to evaluate the pointer expression using `visitExpressionNode()` instead of requiring it to be a simple identifier. This approach:
 - Supports any expression that evaluates to a pointer (simple identifiers, function calls, nested member access, etc.)
 - Avoids direct symbol table lookups that had timing issues
 - Is consistent with how other expression types are handled in the codebase
