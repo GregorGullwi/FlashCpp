@@ -15189,6 +15189,39 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			return target_type_node.as<TypeSpecifierNode>();
 		}
 	}
+	else if (std::holds_alternative<MemberAccessNode>(expr)) {
+		// For member access expressions like obj.member or (*ptr).member
+		const auto& member_access = std::get<MemberAccessNode>(expr);
+		const ASTNode& object_node = member_access.object();
+		std::string_view member_name = member_access.member_name();
+		
+		// Get the type of the object
+		auto object_type_opt = get_expression_type(object_node);
+		if (!object_type_opt.has_value()) {
+			return std::nullopt;
+		}
+		
+		const TypeSpecifierNode& object_type = *object_type_opt;
+		
+		// Handle struct/class member access
+		if (object_type.type() == Type::Struct || object_type.type() == Type::UserDefined) {
+			size_t struct_type_index = object_type.type_index();
+			if (struct_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[struct_type_index];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info) {
+					// Look up the member
+					const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+					if (member) {
+						// Return the member's type
+						TypeSpecifierNode member_type(member->type, TypeQualifier::None, member->size * 8);
+						member_type.set_type_index(member->type_index);
+						return member_type;
+					}
+				}
+			}
+		}
+	}
 	// Add more cases as needed
 
 	return std::nullopt;

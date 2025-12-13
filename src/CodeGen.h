@@ -2271,6 +2271,13 @@ private:
 			
 			// Create ReturnOp with the return value
 			ReturnOp ret_op;
+			
+			// Check if operands is non-empty before accessing
+			if (operands.empty()) {
+				FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed");
+				return;
+			}
+			
 			// Extract IrValue from operand[2] - it could be various types
 			if (std::holds_alternative<unsigned long long>(operands[2])) {
 				ret_op.return_value = std::get<unsigned long long>(operands[2]);
