@@ -1,3 +1,4 @@
+// EXPECTED_RETURN: 60
 int main() {
     int a = 10;
     int b = 20;
