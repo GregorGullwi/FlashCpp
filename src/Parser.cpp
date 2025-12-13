@@ -17031,12 +17031,10 @@ ParseResult Parser::parse_template_declaration() {
 						continue;
 					} else if (peek_token()->value() == "using") {
 						// Handle type alias inside partial specialization: using _Type = T;
-						FLASH_LOG(Parser, Debug, "Parsing 'using' type alias in partial specialization");
 						auto alias_result = parse_member_type_alias("using", &struct_ref, current_access);
 						if (alias_result.is_error()) {
 							return alias_result;
 						}
-						FLASH_LOG(Parser, Debug, "After parsing type alias, struct has ", struct_ref.type_aliases().size(), " aliases");
 						continue;
 					} else if (peek_token()->value() == "typedef") {
 						// Handle typedef inside partial specialization: typedef T _Type;
@@ -21176,6 +21174,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		struct_type_info.setStructInfo(std::move(struct_info));
 		
 		// Register type aliases from the pattern with qualified names
+		// We need the pattern_args to map template parameters to template arguments
+		std::vector<TemplateTypeArg> pattern_args;
+		auto patterns_it_for_alias = gTemplateRegistry.specialization_patterns_.find(std::string(template_name));
+		if (patterns_it_for_alias != gTemplateRegistry.specialization_patterns_.end()) {
+			for (const auto& pattern : patterns_it_for_alias->second) {
+				if (&pattern.specialized_node.as<StructDeclarationNode>() == &pattern_struct) {
+					pattern_args = pattern.pattern_args;
+					break;
+				}
+			}
+		}
+		
 		for (const auto& type_alias : pattern_struct.type_aliases()) {
 			// Build the qualified name: enable_if_true_int::type
 			std::string_view qualified_alias_name = StringBuilder()
@@ -21192,10 +21202,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Get the type information from the alias
 			const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 			
-			FLASH_LOG(Templates, Debug, "Processing type alias '", type_alias.alias_name, 
-				"' with original type=", static_cast<int>(alias_type_spec.type()), 
-				", type_index=", alias_type_spec.type_index());
-			
 			// For partial specializations, we may need to substitute template parameters
 			// For example, if pattern has "using type = T;" and we're instantiating with int,
 			// we need to substitute T -> int
@@ -21204,24 +21210,54 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			size_t substituted_size = alias_type_spec.size_in_bits();
 			
 			// Check if the alias type is a template parameter that needs substitution
-			if (alias_type_spec.type() == Type::UserDefined && !template_args.empty()) {
-				// Try to find this type name in template parameters
-				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-					if (template_params[i].is<TemplateParameterNode>()) {
-						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-						// Check if the alias type matches this template parameter
-						// For now, assume single template parameter (T) - enhance later for multi-param
-						if (i == 0) {  // First template parameter
-							// Substitute with the concrete type from template_args
-							substituted_type = template_args[i].base_type;
-							substituted_type_index = template_args[i].type_index;
-							substituted_size = getBasicTypeSizeInBits(substituted_type);
-							FLASH_LOG(Templates, Debug, "Substituting template parameter with type=", 
-								static_cast<int>(substituted_type), ", type_index=", substituted_type_index);
-							break;
+			if (alias_type_spec.type() == Type::UserDefined && !template_args.empty() && !pattern_args.empty()) {
+				// The alias_type_spec.type_index() identifies which template parameter this is
+				// We need to find which pattern_arg corresponds to this template parameter,
+				// then map to the corresponding template_arg
+				
+				// For enable_if<true, T>:
+				// - pattern_args = [true (is_value=true), T (is_value=false, is_dependent=true)]
+				// - template_params = [T] (template parameter at index 0)
+				// - template_args = [true (is_value=true), int (is_value=false)]
+				// - The alias "using type = T" has T which is template_params[0]
+				// - T appears at pattern_args[1]
+				// - So we substitute with template_args[1] = int
+				
+				// Find which template parameter index this alias type corresponds to
+				for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
+					if (template_params[param_idx].is<TemplateParameterNode>()) {
+						// Find which pattern_arg position this template parameter appears at
+						for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
+							const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
+							
+							// Check if this pattern_arg is a template parameter (not a concrete value/type)
+							if (!pattern_arg.is_value && pattern_arg.is_dependent) {
+								// This is a template parameter position
+								// Check if it's the parameter we're looking for
+								// We can match by counting dependent parameters
+								size_t dependent_param_index = 0;
+								for (size_t i = 0; i < pattern_idx; ++i) {
+									if (!pattern_args[i].is_value && pattern_args[i].is_dependent) {
+										dependent_param_index++;
+									}
+								}
+								
+								if (dependent_param_index == param_idx) {
+									// Found it! Substitute with template_args[pattern_idx]
+									const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
+									substituted_type = concrete_arg.base_type;
+									substituted_type_index = concrete_arg.type_index;
+									substituted_size = getBasicTypeSizeInBits(substituted_type);
+									FLASH_LOG(Templates, Debug, "Substituted template parameter '", 
+										template_params[param_idx].as<TemplateParameterNode>().name(), 
+										"' at pattern position ", pattern_idx, " with type=", static_cast<int>(substituted_type));
+									goto substitution_done;
+								}
+							}
 						}
 					}
 				}
+				substitution_done:;
 			}
 			
 			// Register the type alias globally with its qualified name
