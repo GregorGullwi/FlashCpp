@@ -350,7 +350,7 @@ process(3.14);   // Calls process_double
 
 ### Known Limitations
 
-1. ⚠️ **Complex nested template arguments** - Very deeply nested template argument expressions may have parsing issues. Keep expressions reasonably simple.
+⚠️ **Complex nested template arguments** - Very deeply nested template argument expressions may have parsing issues. Keep expressions reasonably simple.
 
 ### Implementation Notes
 

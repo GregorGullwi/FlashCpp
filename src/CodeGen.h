@@ -1219,7 +1219,7 @@ private:
 			param_info.type = param_type.type();
 			param_info.size_in_bits = static_cast<int>(param_type.size_in_bits());
 			
-			// References are treated like pointers in the IR (they're both addresses at the ABI level)
+			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
 			if (param_type.is_lvalue_reference()) {
 				pointer_depth += 1;  // Add 1 for lvalue reference (ABI treats it as an additional pointer level)
