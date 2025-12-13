@@ -426,24 +426,36 @@ struct TemplatePattern {
 			}
 		
 			// Find the template parameter name for this pattern arg
-			// Use param_index (not i) to match with the corresponding template parameter
-			if (param_index >= template_params.size()) {
-				FLASH_LOG(Templates, Trace, "  FAILED: param_index ", param_index, " >= template_params.size() ", template_params.size());
-				return false;  // More template params needed than available - invalid pattern
-			}
-			
+			// First, try to get the name from the pattern arg's type_index (for reused parameters)
+			// For is_same<T, T>, both pattern args point to the same TypeInfo for T
 			std::string param_name;
 			bool found_param = false;
-		
-			if (template_params[param_index].is<TemplateParameterNode>()) {
-				const TemplateParameterNode& template_param = template_params[param_index].as<TemplateParameterNode>();
-				param_name = std::string(template_param.name());
+			
+			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
+				const TypeInfo& param_type_info = gTypeInfo[pattern_arg.type_index];
+				param_name = std::string(param_type_info.name_);
 				found_param = true;
+				FLASH_LOG(Templates, Trace, "  Found parameter name '", param_name, "' from pattern_arg.type_index=", pattern_arg.type_index);
 			}
-		
+			
 			if (!found_param) {
-				FLASH_LOG(Templates, Trace, "  FAILED: Template parameter at param_index ", param_index, " is not a TemplateParameterNode");
-				return false;  // Template parameter at position param_index is not a TemplateParameterNode
+				// Fallback: use param_index to get the template parameter
+				// This is needed when type_index isn't set properly
+				if (param_index >= template_params.size()) {
+					FLASH_LOG(Templates, Trace, "  FAILED: param_index ", param_index, " >= template_params.size() ", template_params.size());
+					return false;  // More template params needed than available - invalid pattern
+				}
+				
+				if (template_params[param_index].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& template_param = template_params[param_index].as<TemplateParameterNode>();
+					param_name = std::string(template_param.name());
+					found_param = true;
+				}
+			
+				if (!found_param) {
+					FLASH_LOG(Templates, Trace, "  FAILED: Template parameter at param_index ", param_index, " is not a TemplateParameterNode");
+					return false;  // Template parameter at position param_index is not a TemplateParameterNode
+				}
 			}
 		
 			// Check if we've already seen this parameter
@@ -456,15 +468,15 @@ struct TemplatePattern {
 					FLASH_LOG(Templates, Trace, "  FAILED: Inconsistent substitution for parameter ", param_name);
 					return false;  // Inconsistent substitution (different base types)
 				}
-				// Modifiers can differ! (e.g., T* and T both bind to T=int)
+				FLASH_LOG(Templates, Trace, "  SUCCESS: Reused parameter ", param_name, " - consistency check passed");
+				// Don't increment param_index - we reused an existing parameter binding
 			} else {
 				// Bind this parameter to the concrete type
 				param_substitutions[param_name] = concrete_arg;
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", param_name, " to concrete type");
+				// Increment param_index since we bound a new template parameter
+				++param_index;
 			}
-			
-			// Increment param_index since we successfully bound a template parameter
-			++param_index;
 		}
 	
 		return true;  // All patterns matched
