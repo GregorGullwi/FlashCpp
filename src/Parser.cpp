@@ -15214,6 +15214,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
 					if (member) {
 						// Return the member's type
+						// member->size is in bytes, TypeSpecifierNode expects bits
 						TypeSpecifierNode member_type(member->type, TypeQualifier::None, member->size * 8);
 						member_type.set_type_index(member->type_index);
 						return member_type;

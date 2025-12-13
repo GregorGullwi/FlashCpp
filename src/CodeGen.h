@@ -2272,9 +2272,9 @@ private:
 			// Create ReturnOp with the return value
 			ReturnOp ret_op;
 			
-			// Check if operands is non-empty before accessing
-			if (operands.empty()) {
-				FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed");
+			// Check if operands has at least 3 elements before accessing
+			if (operands.size() < 3) {
+				FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed or returned insufficient operands");
 				return;
 			}
 			
