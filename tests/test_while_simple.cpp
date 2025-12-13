@@ -1,3 +1,4 @@
+// EXPECTED_RETURN: 45
 int test_basic_while() {
     int sum = 0;
     int i = 0;

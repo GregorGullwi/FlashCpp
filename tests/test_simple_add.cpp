@@ -1,3 +1,4 @@
+// EXPECTED_RETURN: 30
 // Simple test to verify basic compilation still works
 int add(int a, int b) {
     return a + b;
