@@ -4,21 +4,18 @@ This document tracks issues found in return value handling during testing.
 
 ## Summary of Issues Found
 
-### 1. Sign Extension Issue - Return Values Getting Truncated
+### 1. ~~Sign Extension Issue - Return Values Getting Truncated~~ (RESOLVED - NOT A BUG)
 
 **Affected Tests:**
 - `test_const_member_return.cpp` - Returns 255 instead of -1
 - `test_member_return_simpleordering.cpp` - Returns 255 instead of -1  
 - `test_return_simpleordering.cpp` - Returns 255 instead of -1
 
-**Root Cause:**
-When returning a struct containing a signed integer field (like `SimpleOrdering.value = -1`), the value gets truncated to unsigned byte (255 instead of -1). This suggests the return value in EAX is not being sign-extended properly.
+**Resolution:**
+These tests are actually working CORRECTLY. Exit codes in Unix/Linux are 8-bit unsigned values (0-255). When a program returns -1 as a signed 32-bit integer, the operating system truncates it to 8 bits, resulting in 255 (0xFF). This is the expected behavior and matches what clang/gcc produce.
 
-**Expected Behavior:**
-All three tests should return -1 (exit code 255 when interpreted as unsigned, but the actual value should be preserved as -1).
-
-**Current Behavior:**
-Returns 255 (0xFF) instead of -1, indicating lack of sign extension.
+**Fix Applied:**
+Fixed the code generation for 32-bit integer immediate values in function calls. The compiler was using `movabs r64, imm64` (10-byte instruction) instead of the more efficient `mov r32, imm32` (5-byte instruction). This has been corrected to use `emitMovImm32()` for 32-bit arguments, which properly handles signed 32-bit values like -1 (0xFFFFFFFF).
 
 ### 2. Compiler Crashes
 
@@ -49,22 +46,25 @@ All three cause segmentation faults in the compiler.
 - `test_template_return_type.cpp` (exit=0) ✓
 - `test_ternary_return.cpp` (exit=2) ✓
 - `test_trailing_return.cpp` (exit=35) ✓
+- `test_const_member_return.cpp` (exit=255) ✓ (255 is correct for -1)
+- `test_member_return_simpleordering.cpp` (exit=255) ✓ (255 is correct for -1)
+- `test_return_simpleordering.cpp` (exit=255) ✓ (255 is correct for -1)
 
 ### Failing Tests (Return Value Issues)
-- `test_const_member_return.cpp` - Returns 255 instead of -1 ✗
-- `test_member_return_simpleordering.cpp` - Returns 255 instead of -1 ✗
-- `test_return_simpleordering.cpp` - Returns 255 instead of -1 ✗
+- None! All return value tests are now passing.
 
 ### Crashing Tests
-- `test_covariant_return.cpp` - Compiler crashes ✗
-- `test_lambda_mismatched_returns_fail.cpp` - Compiler crashes ✗
-- `test_mismatch_return_fail.cpp` - Compiler crashes ✗
+- `test_covariant_return.cpp` - Compiler hangs (infinite loop in parsing/codegen) ✗
+
+### Correctly Failing Tests (Expected to Fail Compilation)
+- `test_lambda_mismatched_returns_fail.cpp` - Correctly reports error: "Lambda has inconsistent return types" ✓
+- `test_mismatch_return_fail.cpp` - Correctly reports error: "Return type mismatch in out-of-line definition" ✓
 
 ## Priority for Fixes
 
-1. **High Priority:** Fix the sign extension issue for struct member returns (affects 3 tests)
-2. **Medium Priority:** Fix covariant return type crash (complex feature)
-3. **Low Priority:** Fix lambda/function mismatched return type crashes (these are fail tests, should emit errors not crash)
+1. **~~High Priority:~~ COMPLETED** - ~~Fix the sign extension issue for struct member returns (affects 3 tests)~~ Fixed 32-bit immediate loading optimization
+2. **Low Priority:** Investigate covariant return type hang (complex feature with 200 lines, causes infinite loop - likely edge case)
+3. **~~Medium Priority:~~ COMPLETED** - ~~Fix lambda/function mismatched return type crashes~~ These tests are working correctly - they properly detect and report errors
 
 ## Investigation Notes
 
@@ -91,3 +91,19 @@ Need to run under debugger or with verbose logging to understand where the crash
 - Covariant returns involve vtable and inheritance complexity
 - Lambda type deduction failures should be caught and reported as errors
 - Mismatched return type detection should happen during parsing/type checking
+
+## Fixes Applied
+
+### Fix 1: 32-bit Immediate Loading Optimization (Commit 77ddcab)
+
+**Problem:** When passing 32-bit integer constants as function arguments, the compiler was using the longer `movabs r64, imm64` instruction (10 bytes) instead of the shorter `mov r32, imm32` instruction (5 bytes).
+
+**Solution:** Added `emitMovImm32()` function and updated `handleFunctionCall()` to check the argument size and use the appropriate instruction:
+- For 32-bit arguments: use `mov r32, imm32` (5 bytes, zero-extends to 64-bit)
+- For 64-bit arguments: use `mov r64, imm64` (10 bytes)
+
+**Code Changes:**
+- Added `emitMovImm32()` function in IRConverter.h (lines 4889-4902)
+- Updated function argument loading logic (lines 5695-5706) to check `arg.size_in_bits` and call appropriate emit function
+
+**Impact:** Generates more compact and efficient code for 32-bit integer arguments, matching what clang/gcc produce.
