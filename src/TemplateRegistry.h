@@ -43,6 +43,9 @@ struct TemplateTypeArg {
 	// For variadic templates (parameter packs)
 	bool is_pack;  // true if this represents a parameter pack (typename... Args)
 	
+	// For dependent types (types that depend on template parameters)
+	bool is_dependent;  // true if this type depends on uninstantiated template parameters
+	
 	TemplateTypeArg()
 		: base_type(Type::Invalid)
 		, type_index(0)
@@ -52,7 +55,8 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_value(false)
 		, value(0)
-		, is_pack(false) {}
+		, is_pack(false)
+		, is_dependent(false) {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
@@ -63,7 +67,8 @@ struct TemplateTypeArg {
 		, cv_qualifier(type_spec.cv_qualifier())
 		, is_value(false)
 		, value(0)
-		, is_pack(false) {}
+		, is_pack(false)
+		, is_dependent(false) {}
 
 	// Constructor for non-type template parameters
 	explicit TemplateTypeArg(int64_t val)
@@ -75,7 +80,8 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_value(true)
 		, value(val)
-		, is_pack(false) {}
+		, is_pack(false)
+		, is_dependent(false) {}
 	
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, Type type)
@@ -87,7 +93,8 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_value(true)
 		, value(val)
-		, is_pack(false) {}
+		, is_pack(false)
+		, is_dependent(false) {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		return base_type == other.base_type &&

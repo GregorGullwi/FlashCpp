@@ -19121,6 +19121,46 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Create TemplateTypeArg from the fully parsed type
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
+		
+		// Check if this type is dependent (contains template parameters)
+		// A type is dependent if:
+		// 1. Its type name is in current_template_param_names_ (it IS a template parameter), AND
+		//    we're NOT in SFINAE context (during SFINAE, template params are substituted)
+		// 2. Its type name contains "_unknown" (composite type with template parameters)
+		// 3. It's a UserDefined type with type_index=0 (placeholder)
+		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
+		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
+		if (type_node.type() == Type::UserDefined) {
+			// Check if the type name contains "_unknown" or is a template parameter
+			TypeIndex idx = type_node.type_index();
+			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, idx={}, gTypeInfo.size()={}", idx, gTypeInfo.size());
+			if (idx < gTypeInfo.size()) {
+				std::string_view type_name = gTypeInfo[idx].name_;
+				FLASH_LOG_FORMAT(Templates, Debug, "Type name: {}", type_name);
+				
+				// Check if this is a template parameter name
+				// During SFINAE context (re-parsing), template parameters are substituted with concrete types
+				// so we should NOT mark them as dependent
+				bool is_template_param = false;
+				if (!in_sfinae_context_) {
+					for (const auto& param_name : current_template_param_names_) {
+						if (type_name == param_name) {
+							is_template_param = true;
+							break;
+						}
+					}
+				}
+				
+				if (is_template_param || type_name.find("_unknown") != std::string_view::npos) {
+					arg.is_dependent = true;
+					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
+				}
+			} else if (idx == 0) {
+				arg.is_dependent = true;
+				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
+			}
+		}
+		
 		template_args.push_back(arg);
 		if (out_type_nodes) {
 			out_type_nodes->push_back(*type_result.node());
@@ -20530,6 +20570,17 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 }
 
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
+	// Check if any template arguments are dependent (contain template parameters)
+	// If so, we cannot instantiate the template yet - it's a dependent type
+	for (const auto& arg : template_args) {
+		if (arg.is_dependent) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Skipping instantiation of {} - template arguments are dependent", template_name);
+			// Return success (nullopt) but don't actually instantiate
+			// The type will be resolved during actual template instantiation
+			return std::nullopt;
+		}
+	}
+	
 	// Helper lambda to substitute template parameters in static member initializers
 	// Used in multiple places within this function
 	auto substitute_template_param_in_initializer = [this](
