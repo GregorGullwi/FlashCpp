@@ -77,7 +77,7 @@ for f in tests/*.cpp; do
     [[ "$base" == *"_fail.cpp" ]] && continue
     
     # Check if file has main function
-    if grep -q '\bint\s\+main\s*(' "$f" || grep -q '\bvoid\s\+main\s*(' "$f"; then
+    if grep -q '\bint[[:space:]]\+main[[:space:]]*(' "$f" || grep -q '\bvoid[[:space:]]\+main[[:space:]]*(' "$f"; then
         TEST_FILES+=("$base")
     fi
 done
@@ -123,7 +123,8 @@ for base in "${TEST_FILES[@]}"; do
     fi
     
     # Link
-    link_output=$(clang++ -no-pie -o "$exe" "$obj" -lstdc++ -lc 2>&1)
+    LINKER="${CXX:-clang++}"
+    link_output=$($LINKER -no-pie -o "$exe" "$obj" -lstdc++ -lc 2>&1)
     link_exit=$?
     
     if [ $link_exit -ne 0 ]; then
