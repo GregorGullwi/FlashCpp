@@ -121,7 +121,7 @@ struct TemplateTypeArg {
 			if (base_type == Type::Bool) {
 				return value != 0 ? "true" : "false";
 			}
-			// For other values, just return the value as string
+			// For non-boolean values, return the numeric value as string
 			return std::to_string(value);
 		}
 
