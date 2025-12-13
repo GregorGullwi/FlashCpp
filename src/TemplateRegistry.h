@@ -328,6 +328,8 @@ struct TemplatePattern {
 		param_substitutions.clear();
 	
 		// Check each pattern argument against the corresponding concrete argument
+		// Track template parameter index separately from pattern argument index
+		size_t param_index = 0;  // Tracks which template parameter we're binding
 		for (size_t i = 0; i < pattern_args.size(); ++i) {
 			const TemplateTypeArg& pattern_arg = pattern_args[i];
 			
@@ -336,8 +338,8 @@ struct TemplatePattern {
 			if (i >= concrete_args.size()) {
 				// This should only happen for the variadic pack parameter
 				// Check if this pattern position corresponds to a variadic pack
-				if (i < template_params.size() && template_params[i].is<TemplateParameterNode>()) {
-					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+				if (param_index < template_params.size() && template_params[param_index].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& param = template_params[param_index].as<TemplateParameterNode>();
 					if (param.is_variadic()) {
 						// Empty pack is valid - continue without error
 						continue;
@@ -420,26 +422,28 @@ struct TemplatePattern {
 					return false;  // One is value, one is type - no match
 				}
 				FLASH_LOG(Templates, Trace, "    SUCCESS: concrete type/value matches");
-				continue;  // No substitution needed for concrete types/values
+				continue;  // No substitution needed for concrete types/values - don't increment param_index
 			}
 		
 			// Find the template parameter name for this pattern arg
-			// Use the position to match with the corresponding template parameter
-			if (i >= template_params.size()) {
-				return false;  // More pattern args than template parameters - invalid pattern
+			// Use param_index (not i) to match with the corresponding template parameter
+			if (param_index >= template_params.size()) {
+				FLASH_LOG(Templates, Trace, "  FAILED: param_index ", param_index, " >= template_params.size() ", template_params.size());
+				return false;  // More template params needed than available - invalid pattern
 			}
 			
 			std::string param_name;
 			bool found_param = false;
 		
-			if (template_params[i].is<TemplateParameterNode>()) {
-				const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+			if (template_params[param_index].is<TemplateParameterNode>()) {
+				const TemplateParameterNode& template_param = template_params[param_index].as<TemplateParameterNode>();
 				param_name = std::string(template_param.name());
 				found_param = true;
 			}
 		
 			if (!found_param) {
-				return false;  // Template parameter at position i is not a TemplateParameterNode
+				FLASH_LOG(Templates, Trace, "  FAILED: Template parameter at param_index ", param_index, " is not a TemplateParameterNode");
+				return false;  // Template parameter at position param_index is not a TemplateParameterNode
 			}
 		
 			// Check if we've already seen this parameter
@@ -449,13 +453,18 @@ struct TemplatePattern {
 			if (it != param_substitutions.end()) {
 				// Parameter already bound - check consistency of BASE TYPE only
 				if (it->second.base_type != concrete_arg.base_type) {
+					FLASH_LOG(Templates, Trace, "  FAILED: Inconsistent substitution for parameter ", param_name);
 					return false;  // Inconsistent substitution (different base types)
 				}
 				// Modifiers can differ! (e.g., T* and T both bind to T=int)
 			} else {
 				// Bind this parameter to the concrete type
 				param_substitutions[param_name] = concrete_arg;
+				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", param_name, " to concrete type");
 			}
+			
+			// Increment param_index since we successfully bound a template parameter
+			++param_index;
 		}
 	
 		return true;  // All patterns matched
