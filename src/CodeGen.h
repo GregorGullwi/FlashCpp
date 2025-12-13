@@ -1221,9 +1221,11 @@ private:
 			
 			// References are treated like pointers in the IR (they're both addresses)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
-			if (param_type.is_reference()) {
-				pointer_depth += 1;  // Add 1 for reference (ABI treats it as an additional pointer level)
+			if (param_type.is_lvalue_reference()) {
+				pointer_depth += 1;  // Add 1 for lvalue reference (ABI treats it as an additional pointer level)
 			}
+			// Note: Rvalue references are tracked separately via is_rvalue_reference flag
+			// They don't need pointer_depth increment as they're handled differently
 			param_info.pointer_depth = pointer_depth;
 			param_info.name = std::string(param_decl.identifier_token().value());
 			param_info.is_reference = param_type.is_reference();
