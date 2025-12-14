@@ -4246,9 +4246,17 @@ private:
 		uint16_t shadow_stack_space = 0;
 		uint16_t outgoing_args_space = 0;  // Space for largest outgoing function call
 	};
+	struct VariableInfo {
+		int offset = 0;        // Stack offset from RBP
+		int size_in_bits = 0;  // Size in bits
+	};
+
 	struct StackVariableScope
 	{
 		int scope_stack_space = 0;
+		std::unordered_map<SafeStringKey, VariableInfo> variables;  // Maps variable name to offset and size
+		
+		// Legacy accessors for compatibility during transition
 		std::unordered_map<SafeStringKey, int> identifier_offset;  // SafeStringKey accepts both string and string_view
 		std::unordered_map<SafeStringKey, int> identifier_size;    // Size in bits of each variable
 	};
@@ -4447,6 +4455,9 @@ private:
 			// Allocate space for the variable
 			stack_offset = aligned_offset - (local_var.size_in_bits / 8);
 
+			// Store both offset and size in unified structure
+			var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits});
+			// Also update legacy maps for compatibility
 			var_scope.identifier_offset.insert_or_assign(local_var.var_name, stack_offset);
 			var_scope.identifier_size.insert_or_assign(local_var.var_name, local_var.size_in_bits);
 		}
@@ -7737,6 +7748,13 @@ private:
 		}
 		
 		const auto& current_scope = variable_scopes.back();
+		// Try new unified structure first
+		auto var_it = current_scope.variables.find(var_name);
+		if (var_it != current_scope.variables.end()) {
+			return var_it->second.size_in_bits;
+		}
+		
+		// Fall back to legacy map for compatibility
 		auto size_it = current_scope.identifier_size.find(var_name);
 		if (size_it != current_scope.identifier_size.end()) {
 			return size_it->second;
