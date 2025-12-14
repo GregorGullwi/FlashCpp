@@ -4372,6 +4372,62 @@ private:
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							}
 						}
+					} else {
+						// Struct has no constructor, but may have default member initializers
+						// Generate member initialization code for structs with default member initializers
+						const StructTypeInfo& struct_info = *type_info.struct_info_;
+						if (struct_info.hasDefaultMemberInitializers() && !has_rvalue_initializer && !node.initializer()) {
+							// Generate member stores for each member with a default initializer
+							for (const StructMember& member : struct_info.members) {
+								if (member.default_initializer.has_value()) {
+									// Evaluate the default initializer expression
+									const ASTNode& init_expr = *member.default_initializer;
+									std::vector<IrOperand> init_operands;
+									if (init_expr.is<ExpressionNode>()) {
+										init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+									} else if (init_expr.is<InitializerListNode>()) {
+										// Handle braced initializer like {10}
+										const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+										const auto& initializers = init_list.initializers();
+										if (!initializers.empty() && initializers[0].is<ExpressionNode>()) {
+											init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
+										}
+									} else {
+										// Unsupported initializer type - skip this member
+										continue;
+									}
+
+									if (init_operands.size() >= 3) {
+										// Extract value from init_operands[2]
+										IrValue member_value;
+										if (std::holds_alternative<TempVar>(init_operands[2])) {
+											member_value = std::get<TempVar>(init_operands[2]);
+										} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+											member_value = std::get<unsigned long long>(init_operands[2]);
+										} else if (std::holds_alternative<double>(init_operands[2])) {
+											member_value = std::get<double>(init_operands[2]);
+										} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+											member_value = std::get<std::string_view>(init_operands[2]);
+										} else {
+											member_value = 0ULL;  // fallback
+										}
+
+										MemberStoreOp member_store;
+										member_store.value.type = member.type;
+										member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+										member_store.value.value = member_value;
+										member_store.object = decl.identifier_token().value();
+										member_store.member_name = std::string_view(member.name);
+										member_store.offset = static_cast<int>(member.offset);
+										member_store.is_reference = member.is_reference;
+										member_store.is_rvalue_reference = member.is_rvalue_reference;
+										member_store.struct_type_info = nullptr;
+
+										ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), decl.identifier_token()));
+									}
+								}
+							}
+						}
 					}
 				}
 				
