@@ -8233,12 +8233,7 @@ ParseResult Parser::parse_statement_or_declaration()
 
 	// Handle nested blocks
 	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
-		// Enter a new scope for the nested block
-		gSymbolTable.enter_scope(ScopeType::Block);
-		ParseResult block_result = parse_block();
-		// Exit the scope after parsing the block
-		gSymbolTable.exit_scope();
-		return block_result;
+		return parse_block();
 	}
 
 	if (current_token.type() == Token::Type::Keyword) {
@@ -8519,6 +8514,11 @@ ParseResult Parser::parse_variable_declaration()
 		// This preserves the is_constexpr flag and initializer for constant expression evaluation
 		const Token& identifier_token = decl.identifier_token();
 		if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
+			// Check if this might be a shadowing attempt (same name in what appears to be a nested context)
+			// Note: Currently nested blocks share the same scope, so shadowing is reported as redefinition
+			FLASH_LOG(Parser, Warning, "Variable '", identifier_token.value(), 
+					  "' redeclared in the same scope. If you intended to shadow an outer variable, "
+					  "note that nested block scopes currently share the same namespace.");
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
 		}
 
