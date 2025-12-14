@@ -4250,6 +4250,7 @@ private:
 	{
 		int scope_stack_space = 0;
 		std::unordered_map<SafeStringKey, int> identifier_offset;  // SafeStringKey accepts both string and string_view
+		std::unordered_map<SafeStringKey, int> identifier_size;    // Size in bits of each variable
 	};
 
 	struct ReferenceInfo {
@@ -4447,6 +4448,7 @@ private:
 			stack_offset = aligned_offset - (local_var.size_in_bits / 8);
 
 			var_scope.identifier_offset.insert_or_assign(local_var.var_name, stack_offset);
+			var_scope.identifier_size.insert_or_assign(local_var.var_name, local_var.size_in_bits);
 		}
 
 		// Calculate space needed for TempVars
@@ -4454,6 +4456,11 @@ private:
 		int temp_var_space = static_cast<int>(temp_var_sizes.size()) * 8;
 
 		// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
+
+		// Store TempVar sizes in identifier_size for later use during code generation
+		for (const auto& [temp_var_name, size_bits] : temp_var_sizes) {
+			var_scope.identifier_size.insert_or_assign(temp_var_name, size_bits);
+		}
 
 		// Calculate total stack space needed
 		func_stack_space.temp_vars_size = temp_var_space;  // TempVar space (added to total separately)
@@ -7780,6 +7787,14 @@ private:
 					
 					if (it != current_scope.identifier_offset.end()) {
 						int var_offset = it->second;
+						
+						// Get the actual size of the variable being returned
+						int var_size = ret_op.return_size;  // Default to return type size
+						auto size_it = current_scope.identifier_size.find(temp_var_name);
+						if (size_it != current_scope.identifier_size.end()) {
+							var_size = size_it->second;  // Use actual variable size
+						}
+						
 						if (is_float_return) {
 							// Load floating-point value into XMM0
 							bool is_float = (ret_op.return_size == 32);
@@ -7798,20 +7813,30 @@ private:
 							}
 							else {
 								// Load from stack using RBP-relative addressing
-								emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
+								// Use actual variable size for proper zero/sign extension
+								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 							}
 						}
 					} else {
 						// Value not in identifier_offset - use fallback offset calculation
 						int var_offset = getStackOffsetFromTempVar(return_var);
+						
+						// Get the actual size of the variable being returned
+						int var_size = ret_op.return_size;  // Default to return type size
+						auto size_it = current_scope.identifier_size.find(temp_var_name);
+						if (size_it != current_scope.identifier_size.end()) {
+							var_size = size_it->second;  // Use actual variable size
+						}
+						
 						if (is_float_return) {
 							// Load floating-point value into XMM0
 							bool is_float = (ret_op.return_size == 32);
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 						} else {
 							// Load integer/pointer value into RAX
-							emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
+							// Use actual variable size for proper zero/sign extension
+							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 						}
 					}
@@ -7824,6 +7849,13 @@ private:
 					if (it != current_scope.identifier_offset.end()) {
 						int var_offset = it->second;
 						
+						// Get the actual size of the variable being returned
+						int var_size = ret_op.return_size;  // Default to return type size
+						auto size_it = current_scope.identifier_size.find(var_name);
+						if (size_it != current_scope.identifier_size.end()) {
+							var_size = size_it->second;  // Use actual variable size
+						}
+						
 						// Check if return type is float/double
 						bool is_float_return = ret_op.return_type.has_value() && 
 						                        is_floating_point_type(ret_op.return_type.value());
@@ -7834,7 +7866,8 @@ private:
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 						} else {
 							// Load integer/pointer value into RAX
-							emitMovFromFrameBySize(X64Register::RAX, var_offset, ret_op.return_size);
+							// Use actual variable size for proper zero/sign extension
+							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 						}
 					}
