@@ -5883,72 +5883,135 @@ private:
 		// Look up the struct type once for use in both loops
 		auto struct_type_it = gTypesByName.find(struct_name);
 
-		// Extract parameter types for overload resolution
-		std::vector<TypeSpecifierNode> parameter_types;
-		for (size_t i = 0; i < num_params; ++i) {
-			const TypedValue& arg = ctor_op.arguments[i];
-			Type paramType = arg.type;
-			int paramSize = arg.size_in_bits;
-			TypeIndex arg_type_index = arg.type_index;
-			bool arg_is_reference = arg.is_reference;  // Check if marked as reference
-			
-			// Build TypeSpecifierNode for this parameter
-			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(paramSize), Token{});
-			
-			// If the argument is marked as a reference, set it as such
-			if (arg_is_reference) {
-				param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
-			}
-			
-			// For copy/move constructors: if parameter is the same struct type, it should be a reference
-			// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
-			// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
-			bool is_same_struct_type = false;
-			if (struct_type_it != gTypesByName.end() && arg_type_index != 0) {
-				is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
-			}
-			
-			if (num_params == 1 && paramType == Type::Struct && is_same_struct_type) {
-				// This is likely a copy constructor - determine the actual CV qualifier
-				// Look up struct type to find the copy constructor signature
-				auto type_it = gTypesByName.find(struct_name);
-				if (type_it != gTypesByName.end()) {
-					TypeIndex struct_type_index = type_it->second->type_index_;
-					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-					
-					// Default to const reference (standard implicit copy constructor)
-					CVQualifier copy_ctor_cv = CVQualifier::Const;
-					
-					// Check if there's an explicit copy constructor with a different signature
-					if (struct_info) {
-						const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
-						if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-							const auto& ctor_node = copy_ctor->function_decl.as<ConstructorDeclarationNode>();
-							const auto& params = ctor_node.parameter_nodes();
-							if (params.size() == 1 && params[0].is<DeclarationNode>()) {
-								const auto& param_decl = params[0].as<DeclarationNode>();
-								if (param_decl.type_node().is<TypeSpecifierNode>()) {
-									const auto& ctor_param_type = param_decl.type_node().as<TypeSpecifierNode>();
-									copy_ctor_cv = ctor_param_type.cv_qualifier();
-								}
-							}
+		// Find the actual constructor to get the correct parameter types
+		// This is more reliable than trying to infer from argument types
+		const ConstructorDeclarationNode* actual_ctor = nullptr;
+		if (struct_type_it != gTypesByName.end()) {
+			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+			if (struct_info) {
+				// Look for a constructor with matching number of parameters
+				for (const auto& func : struct_info->member_functions) {
+					if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+						const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+						const auto& params = ctor_node.parameter_nodes();
+						if (params.size() == num_params) {
+							actual_ctor = &ctor_node;
+							break;
 						}
 					}
-					
-					param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(paramSize), Token{}, copy_ctor_cv);
-					param_type.set_reference(false);  // set_reference(false) creates an lvalue reference (not rvalue)
 				}
-			} else if (paramType == Type::Struct && arg_type_index != 0) {
-				// Not a copy constructor, but still a struct parameter - set the type_index
-				param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(paramSize), Token{});
-				// Also preserve the reference flag if it was set
+			}
+		}
+
+		// Extract parameter types for overload resolution
+		std::vector<TypeSpecifierNode> parameter_types;
+		
+		// If we found the actual constructor, use its parameter types directly
+		if (actual_ctor) {
+			const auto& ctor_params = actual_ctor->parameter_nodes();
+			for (size_t i = 0; i < num_params && i < ctor_params.size(); ++i) {
+				if (ctor_params[i].is<DeclarationNode>()) {
+					const auto& param_decl = ctor_params[i].as<DeclarationNode>();
+					if (param_decl.type_node().is<TypeSpecifierNode>()) {
+						const auto& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+						parameter_types.push_back(param_type_spec);
+						continue;
+					}
+				}
+				// Fallback: if we can't get the param type, create a default one
+				const TypedValue& arg = ctor_op.arguments[i];
+				parameter_types.push_back(TypeSpecifierNode(arg.type, TypeQualifier::None, static_cast<unsigned char>(arg.size_in_bits), Token{}));
+			}
+		} else {
+			// Fallback to old logic: infer from argument types
+			for (size_t i = 0; i < num_params; ++i) {
+				const TypedValue& arg = ctor_op.arguments[i];
+				Type paramType = arg.type;
+				int paramSize = arg.size_in_bits;
+				TypeIndex arg_type_index = arg.type_index;
+				bool arg_is_reference = arg.is_reference;  // Check if marked as reference
+				int arg_pointer_depth = arg.pointer_depth;
+				CVQualifier arg_cv_qualifier = arg.cv_qualifier;
+				
+				// Build TypeSpecifierNode for this parameter
+				// For pointers, use the base type size, not the pointer size (64 bits)
+				int actual_size = paramSize;
+				if (arg_pointer_depth > 0) {
+					// This is a pointer - set size to pointee type size
+					// For basic types, use getBasicTypeSizeInBits
+					unsigned char basic_size = getBasicTypeSizeInBits(paramType);
+					if (basic_size > 0) {
+						actual_size = basic_size;
+					}
+					// For struct types, keep the size as-is (basic_size will be 0)
+				}
+				
+				TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
+				
+				// Add pointer levels
+				for (int p = 0; p < arg_pointer_depth; ++p) {
+					param_type.add_pointer_level(CVQualifier::None);
+				}
+				
+				// If the argument is marked as a reference, set it as such
 				if (arg_is_reference) {
 					param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
 				}
-			}
-			
-			parameter_types.push_back(param_type);
-		}
+				
+				// For copy/move constructors: if parameter is the same struct type, it should be a reference
+				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
+				// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
+				bool is_same_struct_type = false;
+				if (struct_type_it != gTypesByName.end() && arg_type_index != 0) {
+					is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
+				}
+				
+				if (num_params == 1 && paramType == Type::Struct && is_same_struct_type && !arg_is_reference) {
+					// This is likely a copy constructor, but arg_is_reference wasn't set
+					// Determine the actual CV qualifier from the constructor signature
+					auto type_it = gTypesByName.find(struct_name);
+					if (type_it != gTypesByName.end()) {
+						TypeIndex struct_type_index = type_it->second->type_index_;
+						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+						
+						// Default to const reference (standard implicit copy constructor)
+						CVQualifier copy_ctor_cv = CVQualifier::Const;
+						
+						// Check if there's an explicit copy constructor with a different signature
+						if (struct_info) {
+							const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
+							if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+								const auto& ctor_node = copy_ctor->function_decl.as<ConstructorDeclarationNode>();
+								const auto& params = ctor_node.parameter_nodes();
+								if (params.size() == 1 && params[0].is<DeclarationNode>()) {
+									const auto& param_decl = params[0].as<DeclarationNode>();
+									if (param_decl.type_node().is<TypeSpecifierNode>()) {
+										const auto& ctor_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+										copy_ctor_cv = ctor_param_type.cv_qualifier();
+									}
+								}
+							}
+						}
+						
+						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv);
+						param_type.set_reference(false);  // set_reference(false) creates an lvalue reference (not rvalue)
+					}
+				} else if (paramType == Type::Struct && arg_type_index != 0) {
+					// Not a copy constructor, but still a struct parameter - set the type_index
+					param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
+					// Add pointer levels (rebuild after creating with type_index)
+					for (int p = 0; p < arg_pointer_depth; ++p) {
+						param_type.add_pointer_level(CVQualifier::None);
+					}
+					// Also preserve the reference flag if it was set
+					if (arg_is_reference) {
+						param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
+					}
+				}
+				
+				parameter_types.push_back(param_type);
+			}  // End of fallback for loop
+		}  // End of if (actual_ctor) else block
 
 		// Load parameters into registers
 		for (size_t i = 0; i < num_params && i < 3; ++i) { // Max 3 additional params (RCX is 'this')
