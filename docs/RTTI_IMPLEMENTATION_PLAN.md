@@ -92,8 +92,8 @@ Each class with virtual functions gets a type_info object that:
 **Tasks:**
 1. Add function to `ElfFileWriter.h`: `create_type_string_symbol()`
    ```cpp
-   std::string create_type_string_symbol(const std::string& class_name, 
-                                          const std::string& mangled_name);
+   std::string_view create_type_string_symbol(std::string_view class_name, 
+                                          std::string_view mangled_name);
    ```
 
 2. For each class with virtual functions:
@@ -127,8 +127,8 @@ Each class with virtual functions gets a type_info object that:
 **Tasks:**
 1. Add function to `ElfFileWriter.h`: `create_class_type_info()`
    ```cpp
-   std::string create_class_type_info(const StructTypeInfo* struct_info,
-                                       const std::string& mangled_name);
+   std::string_view create_class_type_info(const StructTypeInfo* struct_info,
+                                        std::string_view mangled_name);
    ```
 
 2. For classes with no base classes:
