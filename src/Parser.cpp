@@ -8765,9 +8765,32 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return ParseResult::success(init_list_node);
 	}
 
-	// Handle struct brace initialization
+	// Handle scalar type brace initialization (C++11): int x = {10};
+	// For scalar types, braced initializer should have exactly one element
 	if (type_specifier.type() != Type::Struct) {
-		return ParseResult::error("Brace initializers only supported for struct and array types", *current_token_);
+		// Parse the single initializer expression
+		ParseResult init_expr_result = parse_expression(2);
+		if (init_expr_result.is_error()) {
+			return init_expr_result;
+		}
+
+		if (!init_expr_result.node().has_value()) {
+			return ParseResult::error("Expected initializer expression", *current_token_);
+		}
+
+		// For scalar types, only allow a single initializer (no comma)
+		// Check if there's a comma (which would be an error for scalar types)
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+			return ParseResult::error("Too many initializers for scalar type", *current_token_);
+		}
+
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		}
+
+		// For scalar types, unwrap the expression from the brace initializer
+		// Return the expression directly instead of an InitializerListNode
+		return ParseResult::success(*init_expr_result.node());
 	}
 
 	TypeIndex type_index = type_specifier.type_index();
