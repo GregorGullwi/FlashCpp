@@ -2197,7 +2197,7 @@ private:
 					// Build destructor call: Base::~Base(this)
 					DestructorCallOp dtor_op;
 					dtor_op.struct_name = base_type_info.name_;
-					dtor_op.object = std::string_view("this");
+					dtor_op.object = std::string("this");
 
 					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), node.name_token()));
 				}
@@ -2552,14 +2552,9 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Visit loop body
+		// Always call visit() to let visitBlockNode handle scope creation if needed
 		auto body_stmt = node.get_body_statement();
-		if (body_stmt.is<BlockNode>()) {
-			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-				visit(statement);
-			});
-		} else {
-			visit(body_stmt);
-		}
+		visit(body_stmt);
 
 		// Loop increment label (for continue statements)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
@@ -2626,14 +2621,9 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Visit loop body
+		// Always call visit() to let visitBlockNode handle scope creation if needed
 		auto body_stmt = node.get_body_statement();
-		if (body_stmt.is<BlockNode>()) {
-			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-				visit(statement);
-			});
-		} else {
-			visit(body_stmt);
-		}
+		visit(body_stmt);
 
 		// Branch back to loop start (re-evaluate condition)
 		BranchOp branch_to_start;
@@ -2675,14 +2665,9 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Visit loop body
+		// Always call visit() to let visitBlockNode handle scope creation if needed
 		auto body_stmt = node.get_body_statement();
-		if (body_stmt.is<BlockNode>()) {
-			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-				visit(statement);
-			});
-		} else {
-			visit(body_stmt);
-		}
+		visit(body_stmt);
 
 		// Condition check label (for continue statements)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_condition_label}, Token()));
@@ -11744,7 +11729,7 @@ private:
 				// Generate destructor call
 				DestructorCallOp dtor_op;
 				dtor_op.struct_name = it->struct_name;
-				dtor_op.object = std::string_view(it->variable_name);
+				dtor_op.object = it->variable_name;  // Use std::string directly
 				ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 			}
 			scope_stack_.pop_back();
