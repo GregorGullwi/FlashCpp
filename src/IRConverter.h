@@ -7730,6 +7730,21 @@ private:
 		}
 	}
 
+	// Helper function to get the actual size of a variable for proper zero/sign-extension
+	int getActualVariableSize(std::string_view var_name, int default_size) const {
+		if (variable_scopes.empty()) {
+			return default_size;
+		}
+		
+		const auto& current_scope = variable_scopes.back();
+		auto size_it = current_scope.identifier_size.find(var_name);
+		if (size_it != current_scope.identifier_size.end()) {
+			return size_it->second;
+		}
+		
+		return default_size;
+	}
+
 	void handleReturn(const IrInstruction& instruction) {
 		if (variable_scopes.empty()) {
 			FLASH_LOG(Codegen, Error, "FATAL [handleReturn]: variable_scopes is EMPTY!");
@@ -7789,11 +7804,7 @@ private:
 						int var_offset = it->second;
 						
 						// Get the actual size of the variable being returned
-						int var_size = ret_op.return_size;  // Default to return type size
-						auto size_it = current_scope.identifier_size.find(temp_var_name);
-						if (size_it != current_scope.identifier_size.end()) {
-							var_size = size_it->second;  // Use actual variable size
-						}
+						int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 						
 						if (is_float_return) {
 							// Load floating-point value into XMM0
@@ -7823,11 +7834,7 @@ private:
 						int var_offset = getStackOffsetFromTempVar(return_var);
 						
 						// Get the actual size of the variable being returned
-						int var_size = ret_op.return_size;  // Default to return type size
-						auto size_it = current_scope.identifier_size.find(temp_var_name);
-						if (size_it != current_scope.identifier_size.end()) {
-							var_size = size_it->second;  // Use actual variable size
-						}
+						int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 						
 						if (is_float_return) {
 							// Load floating-point value into XMM0
@@ -7850,11 +7857,7 @@ private:
 						int var_offset = it->second;
 						
 						// Get the actual size of the variable being returned
-						int var_size = ret_op.return_size;  // Default to return type size
-						auto size_it = current_scope.identifier_size.find(var_name);
-						if (size_it != current_scope.identifier_size.end()) {
-							var_size = size_it->second;  // Use actual variable size
-						}
+						int var_size = getActualVariableSize(var_name, ret_op.return_size);
 						
 						// Check if return type is float/double
 						bool is_float_return = ret_op.return_type.has_value() && 
