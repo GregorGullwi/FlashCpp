@@ -10351,13 +10351,16 @@ private:
 			// Allocate a second register for the index
 			X64Register index_reg = allocateRegisterWithSpilling();
 
+			// Calculate index size in bytes from size_in_bits
+			int index_size_bytes = op.index.size_in_bits / 8;
+
 			if (is_array_pointer) {
 				// Array is a pointer/temp var
 				auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, 8); // Load 64-bit index
+				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, index_size_bytes);
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 				emitAddRegs(textSectionData, base_reg, index_reg);
 				if (is_floating_point) {
@@ -10367,7 +10370,7 @@ private:
 				}
 			} else {
 				// Array is a regular variable
-				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, 8); // Load 64-bit index
+				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, index_size_bytes);
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 					
 				int64_t combined_offset = array_base_offset + member_offset;
@@ -10392,6 +10395,9 @@ private:
 			// Allocate a second register for the index
 			X64Register index_reg = allocateRegisterWithSpilling();
 
+			// Calculate index size in bytes from size_in_bits
+			int index_size_bytes = op.index.size_in_bits / 8;
+
 			if (is_array_pointer) {
 				auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
@@ -10402,7 +10408,7 @@ private:
 			}
 				
 			// Load index into index_reg
-			emitLoadFromFrame(textSectionData, index_reg, index_var_offset, 8); // Load 64-bit index
+			emitLoadFromFrame(textSectionData, index_reg, index_var_offset, index_size_bytes);
 				
 			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 			emitAddRegs(textSectionData, base_reg, index_reg);
