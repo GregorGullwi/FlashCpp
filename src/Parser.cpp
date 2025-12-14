@@ -8233,7 +8233,12 @@ ParseResult Parser::parse_statement_or_declaration()
 
 	// Handle nested blocks
 	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
-		return parse_block();
+		// Enter a new scope for the nested block
+		gSymbolTable.enter_scope(ScopeType::Block);
+		ParseResult block_result = parse_block();
+		// Exit the scope after parsing the block
+		gSymbolTable.exit_scope();
+		return block_result;
 	}
 
 	if (current_token.type() == Token::Type::Keyword) {
