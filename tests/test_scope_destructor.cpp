@@ -33,17 +33,17 @@ int main() {
     printf("Simulating loop iterations\n");
     {
         printf("Iteration 0\n");
-        ScopedObject obj(10);
+        ScopedObject obj10(10);
         printf("End of iteration 0\n");
     }
     {
         printf("Iteration 1\n");
-        ScopedObject obj(11);
+        ScopedObject obj11(11);
         printf("End of iteration 1\n");
     }
     {
         printf("Iteration 2\n");
-        ScopedObject obj(12);
+        ScopedObject obj12(12);
         printf("End of iteration 2\n");
     }
     printf("Loop simulation finished\n");
