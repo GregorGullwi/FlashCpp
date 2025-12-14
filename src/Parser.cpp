@@ -8765,9 +8765,22 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return ParseResult::success(init_list_node);
 	}
 
-	// Handle scalar type brace initialization (C++11): int x = {10};
-	// For scalar types, braced initializer should have exactly one element
+	// Handle scalar type brace initialization (C++11): int x = {10}; or int x{};
+	// For scalar types, braced initializer should have exactly one element or be empty (value initialization)
 	if (type_specifier.type() != Type::Struct) {
+		// Check if this is an empty brace initializer: int x{};
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+			// Empty braces mean value initialization (zero for scalar types)
+			consume_token(); // consume '}'
+			
+			// Create a zero literal of the appropriate type
+			Token zero_token(Token::Type::Literal, "0", 0, 0, 0);
+			auto zero_expr = emplace_node<ExpressionNode>(
+				NumericLiteralNode(zero_token, 0ULL, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.type()))
+			);
+			return ParseResult::success(zero_expr);
+		}
+		
 		// Parse the single initializer expression with precedence > comma operator (precedence 1)
 		// This prevents comma from being treated as an operator in initializer lists
 		ParseResult init_expr_result = parse_expression(2);
