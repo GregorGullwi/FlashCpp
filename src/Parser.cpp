@@ -8496,7 +8496,7 @@ ParseResult Parser::parse_variable_declaration()
 	TypeSpecifierNode& type_specifier = first_decl.type_node().as<TypeSpecifierNode>();
 
 	// Helper lambda to create a single variable declaration
-	auto create_var_decl = [&](DeclarationNode& decl, std::optional<ASTNode> init_expr) -> ASTNode {
+	auto create_var_decl = [&](DeclarationNode& decl, std::optional<ASTNode> init_expr) -> ParseResult {
 
 		// Create and return a VariableDeclarationNode with storage class
 		ASTNode var_decl_node = emplace_node<VariableDeclarationNode>(
@@ -8513,9 +8513,11 @@ ParseResult Parser::parse_variable_declaration()
 		// Add the VariableDeclarationNode to the symbol table
 		// This preserves the is_constexpr flag and initializer for constant expression evaluation
 		const Token& identifier_token = decl.identifier_token();
-		gSymbolTable.insert(identifier_token.value(), var_decl_node);
+		if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
+			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+		}
 
-		return var_decl_node;
+		return ParseResult::success(var_decl_node);
 	};
 
 	// Process the first declaration
@@ -8644,7 +8646,11 @@ ParseResult Parser::parse_variable_declaration()
 		auto [block_node, block_ref] = create_node_ref(BlockNode());
 
 		// Add the first declaration to the block
-		block_ref.add_statement_node(create_var_decl(first_decl, first_init_expr));
+		ParseResult first_result = create_var_decl(first_decl, first_init_expr);
+		if (first_result.is_error()) {
+			return first_result;
+		}
+		block_ref.add_statement_node(*first_result.node());
 
 		// Parse additional declarations
 		while (consume_punctuator(",")) {
@@ -8685,7 +8691,11 @@ ParseResult Parser::parse_variable_declaration()
 			}
 
 			// Add this declaration to the block
-			block_ref.add_statement_node(create_var_decl(new_decl, init_expr));
+			ParseResult decl_result = create_var_decl(new_decl, init_expr);
+			if (decl_result.is_error()) {
+				return decl_result;
+			}
+			block_ref.add_statement_node(*decl_result.node());
 		}
 
 		// Return the block containing all declarations
@@ -8693,7 +8703,7 @@ ParseResult Parser::parse_variable_declaration()
 	}
 	else {
 		// Single declaration - return it directly
-		return ParseResult::success(create_var_decl(first_decl, first_init_expr));
+		return create_var_decl(first_decl, first_init_expr);
 	}
 }
 
