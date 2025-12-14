@@ -460,13 +460,7 @@ Create test files in `tests/` directory:
 
 ### Current Bugs to Fix
 
-1. **Reference Binding Constructor Call** (`test_covariant_return.cpp`, line 126)
-   - Bug: `Base& base_ref = d;` generates call to `Base::Base(Derived)`
-   - Expected: Direct reference binding, no constructor call
-   - Impact: Linker error for non-existent copy constructor
-   - Fix: Update reference initialization codegen in `visitVariableDeclarationNode`
-
-2. **Null RTTI Pointers in Vtables**
+1. **Null RTTI Pointers in Vtables**
    - Bug: Vtables have null at offset -8 instead of type info pointer
    - Impact: Runtime RTTI operations will crash
    - Fix: Phase 5 implementation
