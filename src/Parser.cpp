@@ -8775,10 +8775,19 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			
 			// Create a zero literal of the appropriate type
 			Token zero_token(Token::Type::Literal, "0", 0, 0, 0);
-			auto zero_expr = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0ULL, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.type()))
-			);
-			return ParseResult::success(zero_expr);
+			
+			// Use 0.0 for floating point types, 0ULL for integral types
+			if (type_specifier.type() == Type::Double || type_specifier.type() == Type::Float) {
+				auto zero_expr = emplace_node<ExpressionNode>(
+					NumericLiteralNode(zero_token, 0.0, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.type()))
+				);
+				return ParseResult::success(zero_expr);
+			} else {
+				auto zero_expr = emplace_node<ExpressionNode>(
+					NumericLiteralNode(zero_token, 0ULL, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.type()))
+				);
+				return ParseResult::success(zero_expr);
+			}
 		}
 		
 		// Parse the single initializer expression with precedence > comma operator (precedence 1)
@@ -22345,9 +22354,45 @@ if (nested_type_info.getStructInfo()) {
 						instantiated_name
 					);
 					
-					// Copy parameters
+					// Substitute and copy parameters
 					for (const auto& param : ctor_decl.parameter_nodes()) {
-						new_ctor_ref.add_parameter_node(param);
+						if (param.is<DeclarationNode>()) {
+							const DeclarationNode& param_decl = param.as<DeclarationNode>();
+							const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+							// Substitute parameter type
+							auto [param_type, param_type_index] = substitute_template_parameter(
+								param_type_spec, template_params, template_args_to_use
+							);
+
+							// Create substituted parameter type
+							TypeSpecifierNode substituted_param_type(
+								param_type,
+								param_type_spec.qualifier(),
+								get_type_size_bits(param_type),
+								param_decl.identifier_token()
+							);
+							substituted_param_type.set_type_index(param_type_index);
+
+							// Copy pointer levels and reference qualifiers
+							for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+								substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+							}
+							if (param_type_spec.is_rvalue_reference()) {
+								substituted_param_type.set_reference(true);
+							} else if (param_type_spec.is_reference()) {
+								substituted_param_type.set_reference(false);
+							}
+
+							auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+							auto substituted_param_decl = emplace_node<DeclarationNode>(
+								substituted_param_type_node, param_decl.identifier_token()
+							);
+							new_ctor_ref.add_parameter_node(substituted_param_decl);
+						} else {
+							// Non-declaration parameter, copy as-is
+							new_ctor_ref.add_parameter_node(param);
+						}
 					}
 					
 					// Copy other properties
