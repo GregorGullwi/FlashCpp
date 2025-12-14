@@ -4391,14 +4391,18 @@ private:
 										const auto& initializers = init_list.initializers();
 										if (!initializers.empty() && initializers[0].is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
+										} else {
+											// Empty or non-expression initializer - skip this member
+											continue;
 										}
 									} else {
 										// Unsupported initializer type - skip this member
 										continue;
 									}
 
+									// Verify we have valid operands before calling toTypedValue
 									if (init_operands.size() >= 3) {
-										// Use toTypedValue helper to extract the value (same pattern as lines 3983, 4156)
+										// Use toTypedValue helper to extract the value (same pattern as line 4156)
 										TypedValue init_value = toTypedValue(init_operands);
 
 										MemberStoreOp member_store;
