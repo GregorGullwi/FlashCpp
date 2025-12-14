@@ -22162,7 +22162,8 @@ if (nested_type_info.getStructInfo()) {
 							param_type,
 							param_type_spec.qualifier(),
 							get_type_size_bits(param_type),
-							param_decl.identifier_token()
+							param_decl.identifier_token(),
+							param_type_spec.cv_qualifier()  // Preserve const/volatile qualifiers
 						);
 						substituted_param_type.set_type_index(param_type_index);
 
@@ -22370,7 +22371,8 @@ if (nested_type_info.getStructInfo()) {
 								param_type,
 								param_type_spec.qualifier(),
 								get_type_size_bits(param_type),
-								param_decl.identifier_token()
+								param_decl.identifier_token(),
+								param_type_spec.cv_qualifier()  // Preserve const/volatile qualifiers
 							);
 							substituted_param_type.set_type_index(param_type_index);
 
