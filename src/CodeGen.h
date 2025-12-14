@@ -4398,24 +4398,11 @@ private:
 									}
 
 									if (init_operands.size() >= 3) {
-										// Extract value from init_operands[2]
-										IrValue member_value;
-										if (std::holds_alternative<TempVar>(init_operands[2])) {
-											member_value = std::get<TempVar>(init_operands[2]);
-										} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-											member_value = std::get<unsigned long long>(init_operands[2]);
-										} else if (std::holds_alternative<double>(init_operands[2])) {
-											member_value = std::get<double>(init_operands[2]);
-										} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-											member_value = std::get<std::string_view>(init_operands[2]);
-										} else {
-											member_value = 0ULL;  // fallback
-										}
+										// Use toTypedValue helper to extract the value (same pattern as lines 3983, 4156)
+										TypedValue init_value = toTypedValue(init_operands);
 
 										MemberStoreOp member_store;
-										member_store.value.type = member.type;
-										member_store.value.size_in_bits = static_cast<int>(member.size * 8);
-										member_store.value.value = member_value;
+										member_store.value = std::move(init_value);
 										member_store.object = decl.identifier_token().value();
 										member_store.member_name = std::string_view(member.name);
 										member_store.offset = static_cast<int>(member.offset);
