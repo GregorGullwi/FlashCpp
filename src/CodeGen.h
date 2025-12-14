@@ -4815,10 +4815,11 @@ private:
 			if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
-				// Just return it as a pointer (64 bits).
+				// Just return it as a pointer (64 bits on x64 architecture).
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-					return { type_node.type(), 64, identifierNode.name(), 0ULL };
+					constexpr int POINTER_SIZE_BITS = 64;  // x64 pointer size
+					return { type_node.type(), POINTER_SIZE_BITS, identifierNode.name(), 0ULL };
 				}
 				
 				// For non-array references, we need to dereference to get the value
