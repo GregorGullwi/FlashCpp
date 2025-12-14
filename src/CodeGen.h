@@ -616,6 +616,49 @@ public:
 					}
 				}
 				
+				// Initialize members with default initializers
+				for (const auto& member : struct_info->members) {
+					if (member.default_initializer.has_value()) {
+						const ASTNode& init_node = member.default_initializer.value();
+						if (init_node.has_value() && init_node.is<ExpressionNode>()) {
+							// Use the default member initializer
+							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							// Extract just the value (third element of init_operands)
+							// Verify we have at least 3 elements before accessing
+							if (init_operands.size() < 3) {
+								FLASH_LOG(Codegen, Warning, "Default initializer expression returned fewer than 3 operands");
+								continue;
+							}
+							
+							IrValue member_value;
+							if (std::holds_alternative<TempVar>(init_operands[2])) {
+								member_value = std::get<TempVar>(init_operands[2]);
+							} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+								member_value = std::get<unsigned long long>(init_operands[2]);
+							} else if (std::holds_alternative<double>(init_operands[2])) {
+								member_value = std::get<double>(init_operands[2]);
+							} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
+								member_value = std::get<std::string_view>(init_operands[2]);
+							} else {
+								member_value = 0ULL;  // fallback
+							}
+							
+							MemberStoreOp member_store;
+							member_store.value.type = member.type;
+							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+							member_store.value.value = member_value;
+							member_store.object = std::string_view("this");
+							member_store.member_name = std::string_view(member.name);
+							member_store.offset = static_cast<int>(member.offset);
+							member_store.is_reference = member.is_reference;
+							member_store.is_rvalue_reference = member.is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
+							
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), Token()));
+						}
+					}
+				}
+				
 				// Emit return
 				ReturnOp ret_op;
 				// ReturnOp fields: return_value (optional), return_type (optional), return_size

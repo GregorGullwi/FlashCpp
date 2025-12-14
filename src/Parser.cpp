@@ -8765,9 +8765,31 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return ParseResult::success(init_list_node);
 	}
 
-	// Handle scalar type brace initialization (C++11): int x = {10};
-	// For scalar types, braced initializer should have exactly one element
+	// Handle scalar type brace initialization (C++11): int x = {10}; or int x{};
+	// For scalar types, braced initializer should have exactly one element or be empty (value initialization)
 	if (type_specifier.type() != Type::Struct) {
+		// Check if this is an empty brace initializer: int x{};
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+			// Empty braces mean value initialization (zero for scalar types)
+			consume_token(); // consume '}'
+			
+			// Create a zero literal of the appropriate type
+			Token zero_token(Token::Type::Literal, "0", 0, 0, 0);
+			
+			// Use 0.0 for floating point types, 0ULL for integral types
+			if (type_specifier.type() == Type::Double || type_specifier.type() == Type::Float) {
+				auto zero_expr = emplace_node<ExpressionNode>(
+					NumericLiteralNode(zero_token, 0.0, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.type()))
+				);
+				return ParseResult::success(zero_expr);
+			} else {
+				auto zero_expr = emplace_node<ExpressionNode>(
+					NumericLiteralNode(zero_token, 0ULL, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.type()))
+				);
+				return ParseResult::success(zero_expr);
+			}
+		}
+		
 		// Parse the single initializer expression with precedence > comma operator (precedence 1)
 		// This prevents comma from being treated as an operator in initializer lists
 		ParseResult init_expr_result = parse_expression(2);
@@ -20905,6 +20927,44 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	};
 	
+	// Helper lambda to substitute template parameters in member default initializers
+	// Handles both TemplateParameterReferenceNode and IdentifierNode
+	auto substitute_default_initializer = [&](
+		const std::optional<ASTNode>& default_init,
+		const std::vector<TemplateTypeArg>& args,
+		const std::vector<ASTNode>& params) -> std::optional<ASTNode> {
+		if (!default_init.has_value()) {
+			return std::nullopt;
+		}
+		
+		const ASTNode& init_node = default_init.value();
+		if (!init_node.is<ExpressionNode>()) {
+			return default_init;  // Return as-is if not an expression
+		}
+		
+		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+		std::string_view param_name_to_substitute;
+		
+		// Check if the initializer is a template parameter reference or identifier
+		if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
+			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
+			param_name_to_substitute = tparam_ref.param_name();
+		} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
+			const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
+			param_name_to_substitute = ident.name();
+		}
+		
+		// Try to substitute if we found a parameter name
+		if (!param_name_to_substitute.empty()) {
+			auto substituted = substitute_template_param_in_initializer(param_name_to_substitute, args, params);
+			if (substituted.has_value()) {
+				return substituted;
+			}
+		}
+		
+		return default_init;  // Return original if no substitution was performed
+	};
+	
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -21113,6 +21173,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			bool is_ref_member = type_spec.is_reference();
 			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+			
+			// Substitute template parameters in default member initializers
+			std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
+				member_decl.default_initializer, template_args, template_params);
+			
 			struct_info->addMember(
 				std::string(decl.identifier_token().value()),
 				member_type,
@@ -21120,7 +21185,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_size,
 				member_alignment,
 				member_decl.access,
-				member_decl.default_initializer,
+				substituted_default_initializer,
 				is_ref_member,
 				is_rvalue_ref_member,
 				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0
@@ -21827,6 +21892,10 @@ if (struct_type_info.getStructInfo()) {
 			referenced_size_bits = get_type_size_bits(member_type);
 		}
 	
+		// Substitute template parameters in default member initializers
+		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
+			member_decl.default_initializer, template_args_to_use, template_params);
+	
 		struct_info->addMember(
 			std::string(decl.identifier_token().value()),
 			member_type,
@@ -21834,7 +21903,7 @@ if (struct_type_info.getStructInfo()) {
 			member_size,
 			member_alignment,
 			member_decl.access,
-			member_decl.default_initializer,
+			substituted_default_initializer,
 			is_ref_member,
 			is_rvalue_ref_member,
 			referenced_size_bits
@@ -22093,7 +22162,8 @@ if (nested_type_info.getStructInfo()) {
 							param_type,
 							param_type_spec.qualifier(),
 							get_type_size_bits(param_type),
-							param_decl.identifier_token()
+							param_decl.identifier_token(),
+							param_type_spec.cv_qualifier()  // Preserve const/volatile qualifiers
 						);
 						substituted_param_type.set_type_index(param_type_index);
 
@@ -22285,9 +22355,46 @@ if (nested_type_info.getStructInfo()) {
 						instantiated_name
 					);
 					
-					// Copy parameters
+					// Substitute and copy parameters
 					for (const auto& param : ctor_decl.parameter_nodes()) {
-						new_ctor_ref.add_parameter_node(param);
+						if (param.is<DeclarationNode>()) {
+							const DeclarationNode& param_decl = param.as<DeclarationNode>();
+							const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+							// Substitute parameter type
+							auto [param_type, param_type_index] = substitute_template_parameter(
+								param_type_spec, template_params, template_args_to_use
+							);
+
+							// Create substituted parameter type
+							TypeSpecifierNode substituted_param_type(
+								param_type,
+								param_type_spec.qualifier(),
+								get_type_size_bits(param_type),
+								param_decl.identifier_token(),
+								param_type_spec.cv_qualifier()  // Preserve const/volatile qualifiers
+							);
+							substituted_param_type.set_type_index(param_type_index);
+
+							// Copy pointer levels and reference qualifiers
+							for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+								substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+							}
+							if (param_type_spec.is_rvalue_reference()) {
+								substituted_param_type.set_reference(true);
+							} else if (param_type_spec.is_reference()) {
+								substituted_param_type.set_reference(false);
+							}
+
+							auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+							auto substituted_param_decl = emplace_node<DeclarationNode>(
+								substituted_param_type_node, param_decl.identifier_token()
+							);
+							new_ctor_ref.add_parameter_node(substituted_param_decl);
+						} else {
+							// Non-declaration parameter, copy as-is
+							new_ctor_ref.add_parameter_node(param);
+						}
 					}
 					
 					// Copy other properties
@@ -22303,8 +22410,11 @@ if (nested_type_info.getStructInfo()) {
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_definition(substituted_body);
 					
-					// Add the substituted constructor to the instantiated struct
+					// Add the substituted constructor to the instantiated struct AST node
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
+					
+					// Also add to struct_info so it can be found during codegen
+					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ", 
 					          ctor_decl.name(), ": ", e.what());
@@ -22320,6 +22430,9 @@ if (nested_type_info.getStructInfo()) {
 					mem_func.function_declaration,
 					mem_func.access
 				);
+				
+				// Also add to struct_info so it can be found during codegen
+				struct_info_ptr->addConstructor(mem_func.function_declaration, mem_func.access);
 			}
 		} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
 			const DestructorDeclarationNode& dtor_decl = mem_func.function_declaration.as<DestructorDeclarationNode>();
@@ -22827,6 +22940,19 @@ if (nested_type_info.getStructInfo()) {
 	}
 
 	FLASH_LOG(Templates, Debug, "About to return instantiated_struct for ", instantiated_name);
+	
+	// Check if the template class has any constructors
+	// If not, mark that we need to generate a default one for the instantiation
+	bool has_constructor = false;
+	for (const auto& mem_func : class_decl.member_functions()) {
+		if (mem_func.is_constructor) {
+			has_constructor = true;
+			break;
+		}
+	}
+	struct_info_ptr->needs_default_constructor = !has_constructor;
+	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", has_constructor, 
+	          ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
 	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
