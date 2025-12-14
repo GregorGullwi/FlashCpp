@@ -8209,6 +8209,8 @@ ParseResult Parser::parse_statement_or_declaration()
 
 	// Handle nested blocks
 	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
+		// Create a new scope for the nested block
+		FlashCpp::SymbolTableScope nested_scope(ScopeType::Block);
 		return parse_block();
 	}
 
