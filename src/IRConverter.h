@@ -6140,7 +6140,7 @@ private:
 			const TempVar temp_var = std::get<TempVar>(dtor_op.object);
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
-			std::string_view var_name = std::get<std::string_view>(dtor_op.object);
+			const std::string& var_name = std::get<std::string>(dtor_op.object);
 			object_offset = variable_scopes.back().variables[var_name].offset;
 		}
 

@@ -713,7 +713,7 @@ struct ConstructorCallOp {
 // Destructor call (invoke destructor on object)
 struct DestructorCallOp {
 	std::string struct_name;                         // Name of struct/class
-	std::variant<std::string_view, TempVar> object;  // Object instance ('this' or temp)
+	std::variant<std::string, TempVar> object;       // Object instance ('this' or temp)
 };
 
 // Virtual function call through vtable
@@ -1718,9 +1718,9 @@ public:
 			const DestructorCallOp& op = getTypedPayload<DestructorCallOp>();
 			oss << "destructor_call " << op.struct_name << " %";
 
-			// Object can be either string_view or TempVar
-			if (std::holds_alternative<std::string_view>(op.object))
-				oss << std::get<std::string_view>(op.object);
+			// Object can be either string or TempVar
+			if (std::holds_alternative<std::string>(op.object))
+				oss << std::get<std::string>(op.object);
 			else if (std::holds_alternative<TempVar>(op.object))
 				oss << std::get<TempVar>(op.object).var_number;
 		}

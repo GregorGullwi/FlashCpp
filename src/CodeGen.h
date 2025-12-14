@@ -2197,7 +2197,7 @@ private:
 					// Build destructor call: Base::~Base(this)
 					DestructorCallOp dtor_op;
 					dtor_op.struct_name = base_type_info.name_;
-					dtor_op.object = std::string_view("this");
+					dtor_op.object = std::string("this");
 
 					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), node.name_token()));
 				}
@@ -11744,7 +11744,7 @@ private:
 				// Generate destructor call
 				DestructorCallOp dtor_op;
 				dtor_op.struct_name = it->struct_name;
-				dtor_op.object = std::string_view(it->variable_name);
+				dtor_op.object = it->variable_name;  // Use std::string directly
 				ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 			}
 			scope_stack_.pop_back();
