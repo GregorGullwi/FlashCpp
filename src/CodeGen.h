@@ -4377,12 +4377,38 @@ private:
 						// Generate member initialization code for structs with default member initializers
 						const StructTypeInfo& struct_info = *type_info.struct_info_;
 						if (struct_info.hasDefaultMemberInitializers() && !has_rvalue_initializer && !node.initializer()) {
-							// Generate member stores for each member with a default initializer
-							for (const StructMember& member : struct_info.members) {
-								if (member.default_initializer.has_value()) {
-									// Evaluate the default initializer expression
-									const ASTNode& init_expr = *member.default_initializer;
-									std::vector<IrOperand> init_operands;
+							// For template instantiations, check if the primary template has a constructor
+							// Template instantiations don't copy constructors to struct_info immediately
+							// (they're instantiated on-demand), so we need to check the template definition
+							bool template_has_constructor = false;
+							std::string_view struct_name = type_info.name_;
+							size_t underscore_pos = struct_name.find('_');
+							if (underscore_pos != std::string_view::npos) {
+								// This might be a template instantiation like "Simple_int"
+								// Extract the template name (everything before the first underscore)
+								std::string_view possible_template_name = struct_name.substr(0, underscore_pos);
+								auto template_opt = gTemplateRegistry.lookupTemplate(possible_template_name);
+								if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+									const TemplateClassDeclarationNode& template_class = template_opt->as<TemplateClassDeclarationNode>();
+									const StructDeclarationNode& class_decl = template_class.class_decl_node();
+									// Check if the template has any constructors defined
+									for (const auto& mem_func : class_decl.member_functions()) {
+										if (mem_func.is_constructor) {
+											template_has_constructor = true;
+											break;
+										}
+									}
+								}
+							}
+							
+							// Only generate default member initializers if the template doesn't have a constructor
+							if (!template_has_constructor) {
+								// Generate member stores for each member with a default initializer
+								for (const StructMember& member : struct_info.members) {
+									if (member.default_initializer.has_value()) {
+										// Evaluate the default initializer expression
+										const ASTNode& init_expr = *member.default_initializer;
+										std::vector<IrOperand> init_operands;
 									if (init_expr.is<ExpressionNode>()) {
 										init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 									} else if (init_expr.is<InitializerListNode>()) {
@@ -4418,6 +4444,7 @@ private:
 									}
 								}
 							}
+							}  // end if (!template_has_constructor)
 						}
 					}
 				}
