@@ -22350,8 +22350,11 @@ if (nested_type_info.getStructInfo()) {
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_definition(substituted_body);
 					
-					// Add the substituted constructor to the instantiated struct
+					// Add the substituted constructor to the instantiated struct AST node
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
+					
+					// Also add to struct_info so it can be found during codegen
+					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ", 
 					          ctor_decl.name(), ": ", e.what());
@@ -22367,6 +22370,9 @@ if (nested_type_info.getStructInfo()) {
 					mem_func.function_declaration,
 					mem_func.access
 				);
+				
+				// Also add to struct_info so it can be found during codegen
+				struct_info_ptr->addConstructor(mem_func.function_declaration, mem_func.access);
 			}
 		} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
 			const DestructorDeclarationNode& dtor_decl = mem_func.function_declaration.as<DestructorDeclarationNode>();
@@ -22875,10 +22881,10 @@ if (nested_type_info.getStructInfo()) {
 
 	FLASH_LOG(Templates, Debug, "About to return instantiated_struct for ", instantiated_name);
 	
-	// Check if the instantiated struct has any constructors
-	// If not, mark that we need to generate a default one
+	// Check if the template class has any constructors
+	// If not, mark that we need to generate a default one for the instantiation
 	bool has_constructor = false;
-	for (const auto& mem_func : struct_info_ptr->member_functions) {
+	for (const auto& mem_func : class_decl.member_functions()) {
 		if (mem_func.is_constructor) {
 			has_constructor = true;
 			break;
