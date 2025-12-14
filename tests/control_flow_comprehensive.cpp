@@ -19,8 +19,8 @@ int test_for_in_if_statement() {
             sum += i;
         }
     } else {
-        for (int i = 0; i < 3; i++) {
-            sum += i * 2;
+        for (int j = 0; j < 3; j++) {
+            sum += j * 2;
         }
     }
     return sum; // Should be 10 (0+1+2+3+4)

@@ -12,8 +12,8 @@ int main() {
     }
 	
     int sum = 0;
-    for (const int& x : arr) {
-        sum = sum + x;
+    for (const int& y : arr) {
+        sum = sum + y;
     }
 
     return sum; // Expected: 600 (100+200+300)
