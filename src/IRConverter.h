@@ -3780,24 +3780,24 @@ private:
 		ctx.result_physical_reg = X64Register::Count;
 		if (std::holds_alternative<std::string_view>(bin_op.lhs.value)) {
 			auto lhs_var_op = std::get<std::string_view>(bin_op.lhs.value);
-			auto lhs_var_id = variable_scopes.back().identifier_offset.find(lhs_var_op);
-			if (lhs_var_id != variable_scopes.back().identifier_offset.end()) {
-				if (auto var_reg = regAlloc.tryGetStackVariableRegister(lhs_var_id->second); var_reg.has_value()) {
+			auto lhs_var_id = variable_scopes.back().variables.find(lhs_var_op);
+			if (lhs_var_id != variable_scopes.back().variables.end()) {
+				if (auto var_reg = regAlloc.tryGetStackVariableRegister(lhs_var_id->second.offset); var_reg.has_value()) {
 					ctx.result_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
 				}
 				else {
-					assert(variable_scopes.back().scope_stack_space <= lhs_var_id->second);
+					assert(variable_scopes.back().scope_stack_space <= lhs_var_id->second.offset);
 
 					if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
 						ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 						bool is_float = (operand_type == Type::Float);
-						auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second, is_float);
+						auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
 						// For integers, use regular MOV
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second, ctx.operand_size_in_bits);
+						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second.offset, ctx.operand_size_in_bits);
 						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 					}
 				}
@@ -3916,24 +3916,24 @@ private:
 		ctx.rhs_physical_reg = X64Register::Count;
 		if (std::holds_alternative<std::string_view>(bin_op.rhs.value)) {
 			auto rhs_var_op = std::get<std::string_view>(bin_op.rhs.value);
-			auto rhs_var_id = variable_scopes.back().identifier_offset.find(rhs_var_op);
-			if (rhs_var_id != variable_scopes.back().identifier_offset.end()) {
-				if (auto var_reg = regAlloc.tryGetStackVariableRegister(rhs_var_id->second); var_reg.has_value()) {
+			auto rhs_var_id = variable_scopes.back().variables.find(rhs_var_op);
+			if (rhs_var_id != variable_scopes.back().variables.end()) {
+				if (auto var_reg = regAlloc.tryGetStackVariableRegister(rhs_var_id->second.offset); var_reg.has_value()) {
 					ctx.rhs_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
 				}
 				else {
-					assert(variable_scopes.back().scope_stack_space <= rhs_var_id->second);
+					assert(variable_scopes.back().scope_stack_space <= rhs_var_id->second.offset);
 
 					if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
 						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling();
 						bool is_float = (operand_type == Type::Float);
-						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second, is_float);
+						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
 						// For integers, use regular MOV
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second, ctx.operand_size_in_bits);
+						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, ctx.operand_size_in_bits);
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 					}
 				}
@@ -4095,7 +4095,7 @@ private:
 		if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			const TempVar temp_var = std::get<TempVar>(ctx.result_value.value);
 			const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
-			variable_scopes.back().identifier_offset[temp_var.name()] = stack_offset;
+			variable_scopes.back().variables[temp_var.name()].offset = stack_offset;
 			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
 			if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
 				// IMPORTANT: Before reassigning this register to the result TempVar's offset,
@@ -4131,7 +4131,7 @@ private:
 		// Determine the final destination of the result (register or memory)
 		if (std::holds_alternative<std::string_view>(ctx.result_value.value)) {
 			// If the result is a named variable, find its stack offset
-			int final_result_offset = variable_scopes.back().identifier_offset[std::get<std::string_view>(ctx.result_value.value)];
+			int final_result_offset = variable_scopes.back().variables[std::get<std::string_view>(ctx.result_value.value)].offset;
 
 			// Store the computed result from actual_source_reg to memory
 			if (is_float_type) {
@@ -4255,10 +4255,6 @@ private:
 	{
 		int scope_stack_space = 0;
 		std::unordered_map<SafeStringKey, VariableInfo> variables;  // Maps variable name to offset and size
-		
-		// Legacy accessors for compatibility during transition
-		std::unordered_map<SafeStringKey, int> identifier_offset;  // SafeStringKey accepts both string and string_view
-		std::unordered_map<SafeStringKey, int> identifier_size;    // Size in bits of each variable
 	};
 
 	struct ReferenceInfo {
@@ -4457,9 +4453,6 @@ private:
 
 			// Store both offset and size in unified structure
 			var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits});
-			// Also update legacy maps for compatibility
-			var_scope.identifier_offset.insert_or_assign(local_var.var_name, stack_offset);
-			var_scope.identifier_size.insert_or_assign(local_var.var_name, local_var.size_in_bits);
 		}
 
 		// Calculate space needed for TempVars
@@ -4468,9 +4461,11 @@ private:
 
 		// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
 
-		// Store TempVar sizes in identifier_size for later use during code generation
+		// Store TempVar sizes for later use during code generation
+		// TempVars will have their offsets set when actually allocated via getStackOffsetFromTempVar
 		for (const auto& [temp_var_name, size_bits] : temp_var_sizes) {
-			var_scope.identifier_size.insert_or_assign(temp_var_name, size_bits);
+			// Initialize with placeholder offset (0), actual offset set later
+			var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{0, size_bits});
 		}
 
 		// Calculate total stack space needed
@@ -4500,13 +4495,13 @@ private:
 	// 
 	// This function also:
 	// - Extends scope_stack_space if the offset exceeds current tracked allocation
-	// - Registers the TempVar in identifier_offset for consistent subsequent lookups
+	// - Registers the TempVar in variables for consistent subsequent lookups
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
-			auto it = variable_scopes.back().identifier_offset.find(tempVar.name());
-			if (it != variable_scopes.back().identifier_offset.end()) {
-				return it->second;  // Use pre-allocated offset
+			auto it = variable_scopes.back().variables.find(tempVar.name());
+			if (it != variable_scopes.back().variables.end()) {
+				return it->second.offset;  // Use pre-allocated offset
 			}
 		}
 		// Allocate TempVars sequentially after named_vars + shadow space
@@ -4528,9 +4523,9 @@ private:
 			variable_scopes.back().scope_stack_space = offset;
 		}
 		
-		// Register the TempVar's offset in identifier_offset map so subsequent lookups
+		// Register the TempVar's offset in variables map so subsequent lookups
 		// return the same offset even if scope_stack_space changes
-		variable_scopes.back().identifier_offset[tempVar.name()] = offset;
+		variable_scopes.back().variables[tempVar.name()].offset = offset;
 		
 		return offset;
 	}
@@ -5467,7 +5462,7 @@ private:
 			
 			// Get result offset
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number);
-			variable_scopes.back().identifier_offset[call_op.result.name()] = result_offset;
+			variable_scopes.back().variables[call_op.result.name()].offset = result_offset;
 			
 			// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
 			// To prevent loadTypedValueIntoRegister from clobbering parameter registers,
@@ -5572,7 +5567,7 @@ private:
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						} else if (std::holds_alternative<std::string_view>(arg.value)) {
 							std::string_view var_name = std::get<std::string_view>(arg.value);
-							int var_offset = variable_scopes.back().identifier_offset[var_name];
+							int var_offset = variable_scopes.back().variables[var_name].offset;
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						}
@@ -5655,7 +5650,7 @@ private:
 				if (should_pass_address && std::holds_alternative<std::string_view>(arg.value)) {
 					// Load ADDRESS of object using LEA instead of value
 					std::string_view object_name = std::get<std::string_view>(arg.value);
-					int object_offset = variable_scopes.back().identifier_offset[object_name];
+					int object_offset = variable_scopes.back().variables[object_name].offset;
 					emitLEAFromFrame(textSectionData, target_reg, object_offset);
 					continue;
 				}
@@ -5754,7 +5749,7 @@ private:
 				} else if (std::holds_alternative<std::string_view>(arg.value)) {
 					// Load variable
 					std::string_view var_name = std::get<std::string_view>(arg.value);
-					int var_offset = variable_scopes.back().identifier_offset[var_name];
+					int var_offset = variable_scopes.back().variables[var_name].offset;
 					if (is_float_arg) {
 						// For floating-point, use movsd/movss into XMM register
 						bool is_float = (arg.type == Type::Float);
@@ -5855,11 +5850,11 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(ctor_op.object);
-			auto it = variable_scopes.back().identifier_offset.find(var_name);
-			if (it == variable_scopes.back().identifier_offset.end()) {
-				throw std::runtime_error("Constructor call: variable not found in identifier_offset map: " + std::string(var_name));
+			auto it = variable_scopes.back().variables.find(var_name);
+			if (it == variable_scopes.back().variables.end()) {
+				throw std::runtime_error("Constructor call: variable not found in variables map: " + std::string(var_name));
 			}
-			object_offset = it->second;
+			object_offset = it->second.offset;
 		}
 
 		// Check if the object is 'this' (a pointer that needs to be reloaded)
@@ -6017,9 +6012,9 @@ private:
 			} else if (std::holds_alternative<std::string_view>(paramValue)) {
 				// Load from variable
 				std::string_view var_name = std::get<std::string_view>(paramValue);
-				auto it = variable_scopes.back().identifier_offset.find(var_name);
-				if (it != variable_scopes.back().identifier_offset.end()) {
-					int param_offset = it->second;
+				auto it = variable_scopes.back().variables.find(var_name);
+				if (it != variable_scopes.back().variables.end()) {
+					int param_offset = it->second.offset;
 					if (is_reference_param) {
 						// For reference parameters, load address (LEA)
 						// LEA target_reg, [RBP + param_offset]
@@ -6083,7 +6078,7 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(dtor_op.object);
-			object_offset = variable_scopes.back().identifier_offset[var_name];
+			object_offset = variable_scopes.back().variables[var_name].offset;
 		}
 
 		// Load the address of the object into RCX (first parameter - 'this' pointer)
@@ -6134,7 +6129,7 @@ private:
 		assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
 		const TempVar& result_var = std::get<TempVar>(op.result.value);
 		int result_offset = getStackOffsetFromTempVar(result_var);
-		variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
+		variable_scopes.back().variables[result_var.name()].offset = result_offset;
 
 		// Get object offset
 		int object_offset = 0;
@@ -6143,7 +6138,7 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(op.object);
-			object_offset = variable_scopes.back().identifier_offset[var_name];
+			object_offset = variable_scopes.back().variables[var_name].offset;
 		}
 
 		// Virtual call sequence:
@@ -6180,7 +6175,7 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(op.object);
-			object_offset = variable_scopes.back().identifier_offset[var_name];
+			object_offset = variable_scopes.back().variables[var_name].offset;
 		}
 
 		emitLeaFromFrame(X64Register::RCX, object_offset);
@@ -6259,12 +6254,12 @@ private:
 			// Count is an identifier (variable name) - load from stack
 			std::string_view count_name = std::get<std::string_view>(op.count);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(count_name);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(count_name);
+			if (it == current_scope.variables.end()) {
 				assert(false && "Array size variable not found in scope");
 				return;
 			}
-			int count_offset = it->second;
+			int count_offset = it->second.offset;
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},
 				SizedStackSlot{count_offset, 64, false}  // size_t is 64-bit unsigned
@@ -6329,12 +6324,12 @@ private:
 		} else if (std::holds_alternative<std::string_view>(op.pointer)) {
 			std::string_view var_name = std::get<std::string_view>(op.pointer);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(var_name);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(var_name);
+			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
 			}
-			ptr_offset = it->second;
+			ptr_offset = it->second.offset;
 		} else {
 			assert(false && "HeapFree pointer must be TempVar or std::string_view");
 			return;
@@ -6371,12 +6366,12 @@ private:
 		} else if (std::holds_alternative<std::string_view>(op.pointer)) {
 			std::string_view var_name = std::get<std::string_view>(op.pointer);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(var_name);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(var_name);
+			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
 			}
-			ptr_offset = it->second;
+			ptr_offset = it->second.offset;
 		} else {
 			assert(false && "HeapFreeArray pointer must be TempVar or std::string_view");
 			return;
@@ -6412,12 +6407,12 @@ private:
 			// Address is an identifier (variable name) - load from stack
 			std::string_view address_name = std::get<std::string_view>(op.address);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(address_name);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(address_name);
+			if (it == current_scope.variables.end()) {
 				assert(false && "Placement address variable not found in scope");
 				return;
 			}
-			int address_offset = it->second;
+			int address_offset = it->second.offset;
 			emitMovFromFrame(X64Register::RAX, address_offset);
 		} else if (std::holds_alternative<unsigned long long>(op.address)) {
 			// Address is a constant - load immediate value
@@ -6765,8 +6760,8 @@ private:
 
 		Type var_type = op.type;
 		StackVariableScope& current_scope = variable_scopes.back();
-		auto var_it = current_scope.identifier_offset.find(var_name_str);
-		assert(var_it != current_scope.identifier_offset.end());
+		auto var_it = current_scope.variables.find(var_name_str);
+		assert(var_it != current_scope.variables.end());
 
 		bool is_reference = op.is_reference;
 		bool is_rvalue_reference = op.is_rvalue_reference;
@@ -6774,12 +6769,12 @@ private:
 		bool is_initialized = op.initializer.has_value();
 
 		if (is_reference) {
-			reference_stack_info_[var_it->second] = ReferenceInfo{
+			reference_stack_info_[var_it->second.offset] = ReferenceInfo{
 				.value_type = var_type,
 				.value_size_bits = op.size_in_bits,
 				.is_rvalue_reference = is_rvalue_reference
 			};
-			int32_t dst_offset = var_it->second;
+			int32_t dst_offset = var_it->second.offset;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
 			if (is_initialized) {
@@ -6794,9 +6789,9 @@ private:
 					pointer_initialized = true;
 				} else if (std::holds_alternative<std::string_view>(init.value)) {
 					auto rvalue_var_name = std::get<std::string_view>(init.value);
-					auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
-					if (src_it != current_scope.identifier_offset.end()) {
-						emitLeaFromFrame(pointer_reg, src_it->second);
+					auto src_it = current_scope.variables.find(rvalue_var_name);
+					if (src_it != current_scope.variables.end()) {
+						emitLeaFromFrame(pointer_reg, src_it->second.offset);
 						pointer_initialized = true;
 					}
 				}
@@ -6817,7 +6812,7 @@ private:
 		X64Register allocated_reg_val = X64Register::RAX; // Default
 
 		if (is_initialized) {
-			auto dst_offset = var_it->second;
+			auto dst_offset = var_it->second.offset;
 			const TypedValue& init = op.initializer.value();
 
 			// Check if the initializer is a literal value
@@ -6884,16 +6879,16 @@ private:
 					src_offset = getStackOffsetFromTempVar(temp_var);
 				} else if (std::holds_alternative<std::string_view>(init.value)) {
 					auto rvalue_var_name = std::get<std::string_view>(init.value);
-					auto src_it = current_scope.identifier_offset.find(rvalue_var_name);
-					if (src_it == current_scope.identifier_offset.end()) {
+					auto src_it = current_scope.variables.find(rvalue_var_name);
+					if (src_it == current_scope.variables.end()) {
 						FLASH_LOG(Codegen, Error, "Variable '", rvalue_var_name, "' not found in symbol table");
 						FLASH_LOG(Codegen, Error, "Available variables in current scope:");
-						for (const auto& [name, offset] : current_scope.identifier_offset) {
-							FLASH_LOG(Codegen, Error, "  - ", name, " at offset ", offset);
+						for (const auto& [name, var_info] : current_scope.variables) {
+							FLASH_LOG(Codegen, Error, "  - ", name, " at var_info.offset ");
 						}
 					}
-					assert(src_it != current_scope.identifier_offset.end());
-					src_offset = src_it->second;
+					assert(src_it != current_scope.variables.end());
+					src_offset = src_it->second.offset;
 				}
 
 				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
@@ -6961,7 +6956,7 @@ private:
 			} else {
 				CodeView::VariableLocation loc;
 				loc.type = CodeView::VariableLocation::STACK_RELATIVE;
-				loc.offset = var_it->second;
+				loc.offset = var_it->second.offset;
 				loc.start_offset = start_offset;
 				loc.length = 100; // Placeholder
 				loc.register_code = 0;
@@ -7366,7 +7361,7 @@ private:
 		if (!struct_name.empty()) {
 			// 'this' is passed in RCX (first parameter register)
 			int this_offset = -8;  // First parameter slot
-			variable_scopes.back().identifier_offset["this"] = this_offset;
+			variable_scopes.back().variables["this"].offset = this_offset;
 
 			// Add 'this' parameter to debug information
 			writer.add_function_parameter("this", 0x603, this_offset);  // 0x603 = T_64PVOID (pointer type)
@@ -7426,7 +7421,7 @@ private:
 				}
 
 				auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + FunctionDeclLayout::PARAM_NAME);
-				variable_scopes.back().identifier_offset[param_name] = offset;
+				variable_scopes.back().variables[param_name].offset = offset;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
@@ -7528,7 +7523,7 @@ private:
 					offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
 				}
 
-				variable_scopes.back().identifier_offset[param.name] = offset;
+				variable_scopes.back().variables[param.name].offset = offset;
 
 				// Track reference parameters
 				if (param.is_reference) {
@@ -7710,8 +7705,8 @@ private:
 				}
 				
 				// Register special variables for va_list structure and register save area
-				variable_scopes.back().identifier_offset["__varargs_va_list_struct__"] = va_list_struct_base;
-				variable_scopes.back().identifier_offset["__varargs_reg_save_area__"] = reg_save_area_base;
+				variable_scopes.back().variables["__varargs_va_list_struct__"].offset = va_list_struct_base;
+				variable_scopes.back().variables["__varargs_reg_save_area__"].offset = reg_save_area_base;
 				
 				// Initialize the va_list structure fields directly in the function prologue
 				// This avoids IR complexity with pointer arithmetic and dereferencing
@@ -7748,16 +7743,9 @@ private:
 		}
 		
 		const auto& current_scope = variable_scopes.back();
-		// Try new unified structure first
 		auto var_it = current_scope.variables.find(var_name);
 		if (var_it != current_scope.variables.end()) {
 			return var_it->second.size_in_bits;
-		}
-		
-		// Fall back to legacy map for compatibility
-		auto size_it = current_scope.identifier_size.find(var_name);
-		if (size_it != current_scope.identifier_size.end()) {
-			return size_it->second;
 		}
 		
 		return default_size;
@@ -7812,14 +7800,14 @@ private:
 					auto return_var = std::get<TempVar>(ret_val);
 					auto temp_var_name = return_var.name();
 					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.identifier_offset.find(temp_var_name);
+					auto it = current_scope.variables.find(temp_var_name);
 					
 					// Check if return type is float/double
 					bool is_float_return = ret_op.return_type.has_value() && 
 					                        is_floating_point_type(ret_op.return_type.value());
 					
-					if (it != current_scope.identifier_offset.end()) {
-						int var_offset = it->second;
+					if (it != current_scope.variables.end()) {
+						int var_offset = it->second.offset;
 						
 						// Get the actual size of the variable being returned
 						int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
@@ -7848,7 +7836,7 @@ private:
 							}
 						}
 					} else {
-						// Value not in identifier_offset - use fallback offset calculation
+						// Value not in variables - use fallback offset calculation
 						int var_offset = getStackOffsetFromTempVar(return_var);
 						
 						// Get the actual size of the variable being returned
@@ -7870,9 +7858,9 @@ private:
 					// Handle named variable
 					std::string_view var_name = std::get<std::string_view>(ret_val);
 					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.identifier_offset.find(var_name);
-					if (it != current_scope.identifier_offset.end()) {
-						int var_offset = it->second;
+					auto it = current_scope.variables.find(var_name);
+					if (it != current_scope.variables.end()) {
+						int var_offset = it->second.offset;
 						
 						// Get the actual size of the variable being returned
 						int var_size = getActualVariableSize(var_name, ret_op.return_size);
@@ -7979,7 +7967,7 @@ private:
 		StackVariableScope& current_scope = variable_scopes.back();
 		current_scope.current_stack_offset -= sizeInBytes;  // Move to next slot (going more negative)
 		int stack_offset = current_scope.current_stack_offset;
-		current_scope.identifier_offset[instruction.getOperandAs<std::string_view>(2)] = stack_offset;*/
+		current_scope.variables[instruction.getOperandAs<std::string_view>(2)].offset = stack_offset;*/
 	}
 
 	void handleAdd(const IrInstruction& instruction) {
@@ -8337,9 +8325,9 @@ private:
 			}
 		} else if (std::holds_alternative<std::string_view>(result_operand)) {
 			auto result_var_name = std::get<std::string_view>(result_operand);
-			auto var_id = variable_scopes.back().identifier_offset.find(result_var_name);
-			if (var_id != variable_scopes.back().identifier_offset.end()) {
-				auto store_opcodes = generatePtrMovToFrame(result_physical_reg, var_id->second);
+			auto var_id = variable_scopes.back().variables.find(result_var_name);
+			if (var_id != variable_scopes.back().variables.end()) {
+				auto store_opcodes = generatePtrMovToFrame(result_physical_reg, var_id->second.offset);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 			}
 		}
@@ -8663,18 +8651,18 @@ private:
 			}
 		} else if (instruction.isOperandType<std::string_view>(operand_index)) {
 			auto var_name = instruction.getOperandAs<std::string_view>(operand_index);
-			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
-			if (var_id != variable_scopes.back().identifier_offset.end()) {
-				if (auto ref_it = reference_stack_info_.find(var_id->second); ref_it != reference_stack_info_.end()) {
+			auto var_id = variable_scopes.back().variables.find(var_name);
+			if (var_id != variable_scopes.back().variables.end()) {
+				if (auto ref_it = reference_stack_info_.find(var_id->second.offset); ref_it != reference_stack_info_.end()) {
 					reg = allocateRegisterWithSpilling();
-					loadValueFromReferenceSlot(var_id->second, ref_it->second, reg);
+					loadValueFromReferenceSlot(var_id->second.offset, ref_it->second, reg);
 					return reg;
 				}
-				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second); reg_opt.has_value()) {
+				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
 					reg = reg_opt.value();
 				} else {
 					reg = allocateRegisterWithSpilling();
-					auto mov_opcodes = generatePtrMovFromFrame(reg, var_id->second);
+					auto mov_opcodes = generatePtrMovFromFrame(reg, var_id->second.offset);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), 
 						mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					regAlloc.flushSingleDirtyRegister(reg);
@@ -8710,21 +8698,21 @@ private:
 			}
 		} else if (std::holds_alternative<std::string_view>(typed_value.value)) {
 			auto var_name = std::get<std::string_view>(typed_value.value);
-			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
-			if (var_id != variable_scopes.back().identifier_offset.end()) {
-				if (auto ref_it = reference_stack_info_.find(var_id->second); ref_it != reference_stack_info_.end()) {
+			auto var_id = variable_scopes.back().variables.find(var_name);
+			if (var_id != variable_scopes.back().variables.end()) {
+				if (auto ref_it = reference_stack_info_.find(var_id->second.offset); ref_it != reference_stack_info_.end()) {
 					reg = allocateRegisterWithSpilling();
-					loadValueFromReferenceSlot(var_id->second, ref_it->second, reg);
+					loadValueFromReferenceSlot(var_id->second.offset, ref_it->second, reg);
 					return reg;
 				}
-				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second); reg_opt.has_value()) {
+				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
 					reg = reg_opt.value();
 				} else {
 					reg = allocateRegisterWithSpilling();
 					// Use size-aware loading: source (stack slot) -> destination (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{var_id->second, typed_value.size_in_bits, is_signed}  // source: sized stack slot
+						SizedStackSlot{var_id->second.offset, typed_value.size_in_bits, is_signed}  // source: sized stack slot
 					);
 					regAlloc.flushSingleDirtyRegister(reg);
 				}
@@ -8749,9 +8737,9 @@ private:
 	std::optional<int32_t> findIdentifierStackOffset(std::string_view name) const {
 		for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
 			const auto& scope = *scope_it;
-			auto found = scope.identifier_offset.find(name);
-			if (found != scope.identifier_offset.end()) {
-				return found->second;
+			auto found = scope.variables.find(name);
+			if (found != scope.variables.end()) {
+				return found->second.offset;
 			}
 		}
 		return std::nullopt;
@@ -9000,21 +8988,21 @@ private:
 	bool loadAddressForOperand(const IrInstruction& instruction, size_t operand_index, X64Register target_reg) {
 		if (instruction.isOperandType<std::string_view>(operand_index)) {
 			auto name = instruction.getOperandAs<std::string_view>(operand_index);
-			auto it = variable_scopes.back().identifier_offset.find(name);
-			if (it == variable_scopes.back().identifier_offset.end()) {
+			auto it = variable_scopes.back().variables.find(name);
+			if (it == variable_scopes.back().variables.end()) {
 				return false;
 			}
-			auto lea = generateLeaFromFrame(target_reg, it->second);
+			auto lea = generateLeaFromFrame(target_reg, it->second.offset);
 			textSectionData.insert(textSectionData.end(), lea.op_codes.begin(), lea.op_codes.begin() + lea.size_in_bytes);
 			return true;
 		}
 		if (instruction.isOperandType<std::string>(operand_index)) {
 			auto name = instruction.getOperandAs<std::string>(operand_index);
-			auto it = variable_scopes.back().identifier_offset.find(name);
-			if (it == variable_scopes.back().identifier_offset.end()) {
+			auto it = variable_scopes.back().variables.find(name);
+			if (it == variable_scopes.back().variables.end()) {
 				return false;
 			}
-			auto lea = generateLeaFromFrame(target_reg, it->second);
+			auto lea = generateLeaFromFrame(target_reg, it->second.offset);
 			textSectionData.insert(textSectionData.end(), lea.op_codes.begin(), lea.op_codes.begin() + lea.size_in_bytes);
 			return true;
 		}
@@ -9248,10 +9236,10 @@ private:
 			auto var_name = std::get<std::string_view>(unary_op.value.value);
 		
 			// Check if it's a local variable first
-			auto var_id = variable_scopes.back().identifier_offset.find(var_name);
-			if (var_id != variable_scopes.back().identifier_offset.end()) {
+			auto var_id = variable_scopes.back().variables.find(var_name);
+			if (var_id != variable_scopes.back().variables.end()) {
 				// It's a local variable on the stack - use the correct size
-				auto stack_offset = var_id->second;
+				auto stack_offset = var_id->second.offset;
 				emitMovFromFrameBySize(result_physical_reg, stack_offset, size_in_bits);
 			} else {
 				// It's a global variable - this shouldn't happen for unary ops on locals
@@ -9498,15 +9486,15 @@ private:
 			}
 		} else if (std::holds_alternative<std::string_view>(op.from.value)) {
 			auto var_name = std::get<std::string_view>(op.from.value);
-			auto var_it = variable_scopes.back().identifier_offset.find(var_name);
-			assert(var_it != variable_scopes.back().identifier_offset.end() && "Variable not found in identifier_offset");
+			auto var_it = variable_scopes.back().variables.find(var_name);
+			assert(var_it != variable_scopes.back().variables.end() && "Variable not found in variables");
 			// Check if the value is already in an XMM register
-			if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->second); existing_reg.has_value()) {
+			if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->second.offset); existing_reg.has_value()) {
 				source_xmm = existing_reg.value();
 			} else {
 				source_xmm = allocateXMMRegisterWithSpilling();
 				bool is_float = (op.from.type == Type::Float);
-				emitFloatMovFromFrame(source_xmm, var_it->second, is_float);
+				emitFloatMovFromFrame(source_xmm, var_it->second.offset, is_float);
 			}
 		}
 
@@ -9595,11 +9583,11 @@ private:
 			emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 		} else if (std::holds_alternative<std::string_view>(op.from.value)) {
 			auto var_name = std::get<std::string_view>(op.from.value);
-			auto var_it = variable_scopes.back().identifier_offset.find(var_name);
-			assert(var_it != variable_scopes.back().identifier_offset.end());
+			auto var_it = variable_scopes.back().variables.find(var_name);
+			assert(var_it != variable_scopes.back().variables.end());
 			source_xmm = allocateXMMRegisterWithSpilling();
 			bool is_float = (op.from.type == Type::Float);
-			emitFloatMovFromFrame(source_xmm, var_it->second, is_float);
+			emitFloatMovFromFrame(source_xmm, var_it->second.offset, is_float);
 		}
 
 		// Allocate result XMM register
@@ -9866,9 +9854,9 @@ private:
 
 			if (std::holds_alternative<std::string_view>(op.lhs.value)) {
 				std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
-				auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
-				if (it != variable_scopes.back().identifier_offset.end()) {
-					lhs_offset = it->second;
+				auto it = variable_scopes.back().variables.find(lhs_var_name);
+				if (it != variable_scopes.back().variables.end()) {
+					lhs_offset = it->second.offset;
 				}
 			} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
 				TempVar lhs_var = std::get<TempVar>(op.lhs.value);
@@ -9919,9 +9907,9 @@ private:
 
 			if (std::holds_alternative<std::string_view>(op.lhs.value)) {
 				std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
-				auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
-				if (it != variable_scopes.back().identifier_offset.end()) {
-					lhs_offset = it->second;
+				auto it = variable_scopes.back().variables.find(lhs_var_name);
+				if (it != variable_scopes.back().variables.end()) {
+					lhs_offset = it->second.offset;
 				}
 			} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
 				TempVar lhs_var = std::get<TempVar>(op.lhs.value);
@@ -9937,9 +9925,9 @@ private:
 			int32_t rhs_offset = -1;
 			if (std::holds_alternative<std::string_view>(op.rhs.value)) {
 				std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
-				auto it = variable_scopes.back().identifier_offset.find(rhs_var_name);
-				if (it != variable_scopes.back().identifier_offset.end()) {
-					rhs_offset = it->second;
+				auto it = variable_scopes.back().variables.find(rhs_var_name);
+				if (it != variable_scopes.back().variables.end()) {
+					rhs_offset = it->second.offset;
 				}
 			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
 				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
@@ -10012,11 +10000,11 @@ private:
 
 		if (std::holds_alternative<std::string_view>(op.lhs.value)) {
 			std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
-			auto it = variable_scopes.back().identifier_offset.find(lhs_var_name);
-			if (it != variable_scopes.back().identifier_offset.end()) {
-				lhs_offset = it->second;
+			auto it = variable_scopes.back().variables.find(lhs_var_name);
+			if (it != variable_scopes.back().variables.end()) {
+				lhs_offset = it->second.offset;
 			} else {
-				FLASH_LOG(Codegen, Error, "String LHS variable '", lhs_var_name, "' not found in identifier_offset map");
+				FLASH_LOG(Codegen, Error, "String LHS variable '", lhs_var_name, "' not found in variables map");
 			}
 		} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
 			TempVar lhs_var = std::get<TempVar>(op.lhs.value);
@@ -10054,9 +10042,9 @@ private:
 		// Load RHS value into a register
 		if (std::holds_alternative<std::string_view>(op.rhs.value)) {
 			std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
-			auto it = variable_scopes.back().identifier_offset.find(rhs_var_name);
-			if (it != variable_scopes.back().identifier_offset.end()) {
-				int32_t rhs_offset = it->second;
+			auto it = variable_scopes.back().variables.find(rhs_var_name);
+			if (it != variable_scopes.back().variables.end()) {
+				int32_t rhs_offset = it->second.offset;
 				
 				if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
@@ -10352,10 +10340,10 @@ private:
 				object_name = array_name_view.substr(0, dot_pos);
 				member_name = array_name_view.substr(dot_pos + 1);
 				// Update array_base_offset to point to the object
-				array_base_offset = variable_scopes.back().identifier_offset[object_name];
+				array_base_offset = variable_scopes.back().variables[object_name].offset;
 			} else {
 				// Regular array/pointer - get offset directly
-				array_base_offset = variable_scopes.back().identifier_offset[array_name_view];
+				array_base_offset = variable_scopes.back().variables[array_name_view].offset;
 			}
 		}
 			
@@ -10439,9 +10427,9 @@ private:
 		} else if (std::holds_alternative<std::string_view>(op.index.value)) {
 			// Variable index stored as identifier name
 			std::string index_var_name_str = std::string(std::get<std::string_view>(op.index.value));
-			auto index_it = variable_scopes.back().identifier_offset.find(index_var_name_str);
-			assert(index_it != variable_scopes.back().identifier_offset.end() && "Index variable not found");
-			int64_t index_var_offset = index_it->second;
+			auto index_it = variable_scopes.back().variables.find(index_var_name_str);
+			assert(index_it != variable_scopes.back().variables.end() && "Index variable not found");
+			int64_t index_var_offset = index_it->second.offset;
 			
 			// Allocate a second register for the index
 			X64Register index_reg = allocateRegisterWithSpilling();
@@ -10498,7 +10486,7 @@ private:
 			int64_t array_base_offset = 0;
 			if (std::holds_alternative<std::string_view>(op.array)) {
 				std::string_view array_name = std::get<std::string_view>(op.array);
-				array_base_offset = variable_scopes.back().identifier_offset[array_name];
+				array_base_offset = variable_scopes.back().variables[array_name].offset;
 			} else if (std::holds_alternative<TempVar>(op.array)) {
 				TempVar array_temp = std::get<TempVar>(op.array);
 				array_base_offset = getStackOffsetFromTempVar(array_temp);
@@ -10629,7 +10617,7 @@ private:
 			
 			// Get array base offset
 			std::string_view lookup_name = is_member_array ? object_name : array_name_view;
-			array_base_offset = variable_scopes.back().identifier_offset[lookup_name];
+			array_base_offset = variable_scopes.back().variables[lookup_name].offset;
 			
 			// Handle constant vs variable index
 			if (std::holds_alternative<unsigned long long>(op.index.value)) {
@@ -10703,7 +10691,7 @@ private:
 		// Add string literal to .rdata and get symbol
 		std::string_view symbol_name = writer.add_string_literal(op.content);
 		int64_t stack_offset = getStackOffsetFromTempVar(result_var);
-		variable_scopes.back().identifier_offset[result_var.name()] = stack_offset;
+		variable_scopes.back().variables[result_var.name()].offset = stack_offset;
 
 		// LEA RAX, [RIP + symbol] with relocation
 		uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
@@ -10729,8 +10717,8 @@ private:
 		// Get object base offset
 		if (std::holds_alternative<std::string_view>(op.object)) {
 			std::string_view object_name = std::get<std::string_view>(op.object);
-			auto it = current_scope.identifier_offset.find(object_name);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(object_name);
+			if (it == current_scope.variables.end()) {
 				// Not found in local scope - check if it's a global variable
 				bool found_global = false;
 				for (const auto& global : global_variables_) {
@@ -10746,7 +10734,7 @@ private:
 					return;
 				}
 			} else {
-				object_base_offset = it->second;
+				object_base_offset = it->second.offset;
 
 				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
 				if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
@@ -10782,9 +10770,9 @@ private:
 		// Get the result variable's stack offset (needed for both paths)
 		auto result_var = std::get<TempVar>(op.result.value);
 		int32_t result_offset;
-		auto it = current_scope.identifier_offset.find(result_var.name());
-		if (it != current_scope.identifier_offset.end()) {
-			result_offset = it->second;
+		auto it = current_scope.variables.find(result_var.name());
+		if (it != current_scope.variables.end()) {
+			result_offset = it->second.offset;
 		} else {
 			// Allocate stack space for the result TempVar
 			result_offset = allocateStackSlotForTempVar(result_var.var_number);
@@ -10875,7 +10863,7 @@ private:
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 				regAlloc.release(temp_reg);
-				variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
+				variable_scopes.back().variables[result_var.name()].offset = result_offset;
 				return;
 			} else {
 				// For integers: use standard integer load
@@ -10934,8 +10922,8 @@ private:
 		// Store the result - but keep it in the register for subsequent operations
 		regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
 		
-		// Add the TempVar to identifier_offset so it can be found later
-		variable_scopes.back().identifier_offset[result_var.name()] = result_offset;
+		// Add the TempVar to variables so it can be found later
+		variable_scopes.back().variables[result_var.name()].offset = result_offset;
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
@@ -10953,12 +10941,12 @@ private:
 			
 			if (std::holds_alternative<std::string_view>(op.object)) {
 				std::string_view object_name = std::get<std::string_view>(op.object);
-				auto it = current_scope.identifier_offset.find(object_name);
-				if (it == current_scope.identifier_offset.end()) {
+				auto it = current_scope.variables.find(object_name);
+				if (it == current_scope.variables.end()) {
 					assert(false && "Struct object not found in scope");
 					return;
 				}
-				object_base_offset = it->second;
+				object_base_offset = it->second.offset;
 			}
 			
 			// Load vtable address using LEA with relocation
@@ -11045,12 +11033,12 @@ private:
 					}
 				} else if (is_variable) {
 					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.identifier_offset.find(variable_name);
-					if (it == current_scope.identifier_offset.end()) {
+					auto it = current_scope.variables.find(variable_name);
+					if (it == current_scope.variables.end()) {
 						assert(false && "Variable not found in scope");
 						return;
 					}
-					int32_t value_offset = it->second;
+					int32_t value_offset = it->second.offset;
 					emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
 				} else {
 					auto value_var = std::get<TempVar>(op.value.value);
@@ -11127,12 +11115,12 @@ private:
 			}
 			
 			// Not a global - look in local scope
-			auto it = current_scope.identifier_offset.find(object_name);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(object_name);
+			if (it == current_scope.variables.end()) {
 				assert(false && "Struct object not found in scope");
 				return;
 			}
-			object_base_offset = it->second;
+			object_base_offset = it->second.offset;
 
 			// Check if this is the 'this' pointer or a reference parameter
 			if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
@@ -11169,9 +11157,9 @@ private:
 			if (is_variable) {
 				// Check if this variable is itself a reference (e.g., reference parameter)
 				const StackVariableScope& current_scope = variable_scopes.back();
-				auto it = current_scope.identifier_offset.find(variable_name);
-				if (it != current_scope.identifier_offset.end()) {
-					int32_t var_offset = it->second;
+				auto it = current_scope.variables.find(variable_name);
+				if (it != current_scope.variables.end()) {
+					int32_t var_offset = it->second.offset;
 					// Check if this stack variable is a reference
 					auto ref_it = reference_stack_info_.find(var_offset);
 					if (ref_it != reference_stack_info_.end()) {
@@ -11223,12 +11211,12 @@ private:
 			// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
 			// This will be handled separately below
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(variable_name);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(variable_name);
+			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
 			}
-			int32_t value_offset = it->second;
+			int32_t value_offset = it->second.offset;
 			emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
 		} else {
 			auto value_var = std::get<TempVar>(op.value.value);
@@ -11290,12 +11278,12 @@ private:
 					return;
 				}
 
-				auto it = current_scope.identifier_offset.find(operand_str);
-				if (it == current_scope.identifier_offset.end()) {
+				auto it = current_scope.variables.find(operand_str);
+				if (it == current_scope.variables.end()) {
 					assert(false && "Variable not found in scope");
 					return;
 				}
-				var_offset = it->second;
+				var_offset = it->second.offset;
 			}
 
 			// Calculate the address: LEA RAX, [RBP + offset]
@@ -11344,12 +11332,12 @@ private:
 			}
 
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(operand_str);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(operand_str);
+			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
 			}
-			var_offset = it->second;
+			var_offset = it->second.offset;
 		}
 
 		// Calculate the address: LEA RAX, [RBP + offset]
@@ -11391,18 +11379,18 @@ private:
 				}
 			} else {
 				std::string_view var_name = std::get<std::string_view>(op.pointer);
-				auto it = current_scope.identifier_offset.find(var_name);
-				if (it == current_scope.identifier_offset.end()) {
+				auto it = current_scope.variables.find(var_name);
+				if (it == current_scope.variables.end()) {
 					assert(false && "Pointer variable not found");
 					return;
 				}
 				
 				// Check if the variable is already in a register
-				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(it->second); reg_opt.has_value()) {
+				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(it->second.offset); reg_opt.has_value()) {
 					ptr_reg = reg_opt.value();
 				} else {
 					ptr_reg = allocateRegisterWithSpilling();
-					emitMovFromFrame(ptr_reg, it->second);
+					emitMovFromFrame(ptr_reg, it->second.offset);
 				}
 			}
 
@@ -11581,12 +11569,12 @@ private:
 			emitMovFromFrame(ptr_reg, temp_offset);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(op.pointer);
-			auto it = current_scope.identifier_offset.find(var_name);
-			if (it == current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(var_name);
+			if (it == current_scope.variables.end()) {
 				assert(false && "Pointer variable not found in DereferenceStore");
 				return;
 			}
-			emitMovFromFrame(ptr_reg, it->second);
+			emitMovFromFrame(ptr_reg, it->second.offset);
 		}
 		
 		// Allocate a second register for the value - must be different from ptr_reg
@@ -11604,11 +11592,11 @@ private:
 			);
 		} else if (std::holds_alternative<std::string_view>(op.value.value)) {
 			std::string_view var_name = std::get<std::string_view>(op.value.value);
-			auto it = current_scope.identifier_offset.find(var_name);
-			if (it != current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(var_name);
+			if (it != current_scope.variables.end()) {
 				emitMovFromFrameSized(
 					SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
-					SizedStackSlot{static_cast<int32_t>(it->second), value_size, isSignedType(op.value.type)}
+					SizedStackSlot{static_cast<int32_t>(it->second.offset), value_size, isSignedType(op.value.type)}
 				);
 			}
 		}
@@ -11644,13 +11632,13 @@ private:
 		} else if (std::holds_alternative<std::string_view>(condition_value)) {
 			auto var_name = std::get<std::string_view>(condition_value);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.identifier_offset.find(var_name);
-			if (it != current_scope.identifier_offset.end()) {
+			auto it = current_scope.variables.find(var_name);
+			if (it != current_scope.variables.end()) {
 				// Check if variable is already in a register
-				if (auto reg = regAlloc.tryGetStackVariableRegister(it->second); reg.has_value()) {
+				if (auto reg = regAlloc.tryGetStackVariableRegister(it->second.offset); reg.has_value()) {
 					condition_reg = reg.value();
 				} else {
-					emitMovFromFrameBySize(X64Register::RAX, it->second, 32);
+					emitMovFromFrameBySize(X64Register::RAX, it->second.offset, 32);
 					condition_reg = X64Register::RAX;
 				}
 			}
@@ -11751,7 +11739,7 @@ private:
 
 		// Get result offset
 		int result_offset = getStackOffsetFromTempVar(op.result);
-		variable_scopes.back().identifier_offset[op.result.name()] = result_offset;
+		variable_scopes.back().variables[op.result.name()].offset = result_offset;
 
 		// Load function pointer into RAX
 		X64Register func_ptr_reg;
@@ -11763,7 +11751,7 @@ private:
 		} else {
 			// Function pointer is a variable name
 			std::string_view var_name = std::get<std::string_view>(op.function_pointer);
-			int func_ptr_offset = variable_scopes.back().identifier_offset[var_name];
+			int func_ptr_offset = variable_scopes.back().variables[var_name].offset;
 			func_ptr_reg = X64Register::RAX;
 			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 		}
@@ -11794,7 +11782,7 @@ private:
 				}
 			} else if (std::holds_alternative<std::string_view>(arg.value)) {
 				std::string_view var_name = std::get<std::string_view>(arg.value);
-				int arg_offset = variable_scopes.back().identifier_offset[var_name];
+				int arg_offset = variable_scopes.back().variables[var_name].offset;
 				if (is_float_arg) {
 					bool is_float = (argType == Type::Float);
 					auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
