@@ -696,7 +696,8 @@ struct StructTypeInfo {
 	}
 
 	bool hasConstructor() const {
-		return findDefaultConstructor() != nullptr;
+		// Check for explicit constructors OR if we need to generate a trivial default constructor
+		return findDefaultConstructor() != nullptr || needs_default_constructor;
 	}
 
 	bool hasCopyConstructor() const {
