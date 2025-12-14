@@ -4463,9 +4463,10 @@ private:
 
 		// Store TempVar sizes for later use during code generation
 		// TempVars will have their offsets set when actually allocated via getStackOffsetFromTempVar
+		// Use INT_MIN as a sentinel value to indicate "not yet allocated"
 		for (const auto& [temp_var_name, size_bits] : temp_var_sizes) {
-			// Initialize with placeholder offset (0), actual offset set later
-			var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{0, size_bits});
+			// Initialize with sentinel offset (INT_MIN), actual offset set later
+			var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{INT_MIN, size_bits});
 		}
 
 		// Calculate total stack space needed
@@ -4500,8 +4501,8 @@ private:
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
 			auto it = variable_scopes.back().variables.find(tempVar.name());
-			if (it != variable_scopes.back().variables.end()) {
-				return it->second.offset;  // Use pre-allocated offset
+			if (it != variable_scopes.back().variables.end() && it->second.offset != INT_MIN) {
+				return it->second.offset;  // Use pre-allocated offset (if it's been properly set)
 			}
 		}
 		// Allocate TempVars sequentially after named_vars + shadow space
@@ -6144,9 +6145,10 @@ private:
 			object_offset = variable_scopes.back().variables[var_name].offset;
 		}
 
-		// Load the address of the object into RCX (first parameter - 'this' pointer)
-		// LEA RCX, [RBP + object_offset]
-		emitLeaFromFrame(X64Register::RCX, object_offset);
+		// Load the address of the object into the first parameter register ('this' pointer)
+		// Use platform-specific register: RDI on Linux, RCX on Windows
+		X64Register this_reg = getIntParamReg<TWriterClass>(0);
+		emitLeaFromFrame(this_reg, object_offset);
 
 		// Generate the call instruction
 		// For nested classes, split "Outer::Inner" into class="Outer" and function="~Inner"
