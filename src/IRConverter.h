@@ -4179,7 +4179,7 @@ private:
 					}
 				}
 				// Result is already in the correct register, no move needed
-				// Can release source register since value is in another register
+				// Can release source register since result is now tracked in the destination register
 				should_release_source = true;
 			}
 			else {
@@ -4199,7 +4199,7 @@ private:
 					emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
 				}
 				// For integer types: Don't store to memory - keep the value in the register for subsequent operations
-				// DON'T release the source register because we're keeping the value there
+				// DON'T release the source register for integer temps - keeping value in register for optimization
 				should_release_source = false;
 			}
 
