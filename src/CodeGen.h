@@ -4811,7 +4811,17 @@ private:
 
 			// Check if this is a reference parameter - if so, we need to dereference it
 			// Reference parameters hold an address, and we need to load the value from that address
+			// EXCEPT for array references, where the reference IS the array pointer
 			if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
+				// already holds the array address directly. We don't dereference it.
+				// Just return it as a pointer (64 bits).
+				if (type_node.is_array()) {
+					// Return the array reference as a 64-bit pointer
+					return { type_node.type(), 64, identifierNode.name(), 0ULL };
+				}
+				
+				// For non-array references, we need to dereference to get the value
 				TempVar result_temp = var_counter.next();
 				DereferenceOp deref_op;
 				deref_op.result = result_temp;
