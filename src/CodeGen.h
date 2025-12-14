@@ -4165,7 +4165,8 @@ private:
 
 		// If this is a struct type with a constructor, generate a constructor call
 		// IMPORTANT: Only for non-pointer struct types. Pointers are just addresses, no constructor needed.
-		if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0) {
+		// IMPORTANT: References also don't need constructor calls - they just bind to existing objects
+		if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
 			TypeIndex type_index = type_node.type_index();
 			if (type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index];
