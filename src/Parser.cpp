@@ -8514,11 +8514,9 @@ ParseResult Parser::parse_variable_declaration()
 		// This preserves the is_constexpr flag and initializer for constant expression evaluation
 		const Token& identifier_token = decl.identifier_token();
 		if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
-			// Check if this might be a shadowing attempt (same name in what appears to be a nested context)
-			// Note: Currently nested blocks share the same scope, so shadowing is reported as redefinition
+			// Duplicate variable declaration in the same scope
 			FLASH_LOG(Parser, Warning, "Variable '", identifier_token.value(), 
-					  "' redeclared in the same scope. If you intended to shadow an outer variable, "
-					  "note that nested block scopes currently share the same namespace.");
+					  "' is being redeclared in the same scope");
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
 		}
 
