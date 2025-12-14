@@ -20905,6 +20905,44 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	};
 	
+	// Helper lambda to substitute template parameters in member default initializers
+	// Handles both TemplateParameterReferenceNode and IdentifierNode
+	auto substitute_default_initializer = [&](
+		const std::optional<ASTNode>& default_init,
+		const std::vector<TemplateTypeArg>& args,
+		const std::vector<ASTNode>& params) -> std::optional<ASTNode> {
+		if (!default_init.has_value()) {
+			return std::nullopt;
+		}
+		
+		const ASTNode& init_node = default_init.value();
+		if (!init_node.is<ExpressionNode>()) {
+			return default_init;  // Return as-is if not an expression
+		}
+		
+		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+		std::string_view param_name_to_substitute;
+		
+		// Check if the initializer is a template parameter reference or identifier
+		if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
+			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
+			param_name_to_substitute = tparam_ref.param_name();
+		} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
+			const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
+			param_name_to_substitute = ident.name();
+		}
+		
+		// Try to substitute if we found a parameter name
+		if (!param_name_to_substitute.empty()) {
+			auto substituted = substitute_template_param_in_initializer(param_name_to_substitute, args, params);
+			if (substituted.has_value()) {
+				return substituted;
+			}
+		}
+		
+		return default_init;  // Return original if no substitution was performed
+	};
+	
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -21115,32 +21153,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
 			
 			// Substitute template parameters in default member initializers
-			std::optional<ASTNode> substituted_default_initializer = member_decl.default_initializer;
-			if (member_decl.default_initializer.has_value()) {
-				const ASTNode& init_node = member_decl.default_initializer.value();
-				if (init_node.is<ExpressionNode>()) {
-					const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-					
-					std::string_view param_name_to_substitute;
-					
-					// Check if the initializer is a template parameter reference or identifier
-					if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
-						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
-						param_name_to_substitute = tparam_ref.param_name();
-					} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
-						const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
-						param_name_to_substitute = ident.name();
-					}
-					
-					// Try to substitute if we found a parameter name
-					if (!param_name_to_substitute.empty()) {
-						auto substituted = substitute_template_param_in_initializer(param_name_to_substitute, template_args, template_params);
-						if (substituted.has_value()) {
-							substituted_default_initializer = substituted;
-						}
-					}
-				}
-			}
+			std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
+				member_decl.default_initializer, template_args, template_params);
 			
 			struct_info->addMember(
 				std::string(decl.identifier_token().value()),
@@ -21857,42 +21871,8 @@ if (struct_type_info.getStructInfo()) {
 		}
 	
 		// Substitute template parameters in default member initializers
-		std::optional<ASTNode> substituted_default_initializer = member_decl.default_initializer;
-		if (member_decl.default_initializer.has_value()) {
-			const ASTNode& init_node = member_decl.default_initializer.value();
-			FLASH_LOG_FORMAT(Templates, Debug, "Member {} has default initializer, checking for substitution", decl.identifier_token().value());
-			if (init_node.is<ExpressionNode>()) {
-				const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-				
-				std::string_view param_name_to_substitute;
-				
-				// Check if the initializer is a template parameter reference
-				if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
-					const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
-					param_name_to_substitute = tparam_ref.param_name();
-					FLASH_LOG_FORMAT(Templates, Debug, "Found template parameter reference: {}", param_name_to_substitute);
-				} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
-					const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
-					param_name_to_substitute = ident.name();
-					FLASH_LOG_FORMAT(Templates, Debug, "Found identifier: {}", param_name_to_substitute);
-				} else {
-					FLASH_LOG(Templates, Debug, "Default initializer is neither TemplateParameterReferenceNode nor IdentifierNode");
-				}
-				
-				// Try to substitute if we found a parameter name
-				if (!param_name_to_substitute.empty()) {
-					auto substituted = substitute_template_param_in_initializer(param_name_to_substitute, template_args_to_use, template_params);
-					if (substituted.has_value()) {
-						substituted_default_initializer = substituted;
-						FLASH_LOG(Templates, Debug, "Successfully substituted template parameter in default initializer");
-					} else {
-						FLASH_LOG(Templates, Debug, "Failed to substitute template parameter in default initializer");
-					}
-				}
-			} else {
-				FLASH_LOG(Templates, Debug, "Default initializer is not an ExpressionNode");
-			}
-		}
+		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
+			member_decl.default_initializer, template_args_to_use, template_params);
 	
 		struct_info->addMember(
 			std::string(decl.identifier_token().value()),

@@ -624,6 +624,12 @@ public:
 							// Use the default member initializer
 							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							// Extract just the value (third element of init_operands)
+							// Verify we have at least 3 elements before accessing
+							if (init_operands.size() < 3) {
+								FLASH_LOG(Codegen, Warning, "Default initializer expression returned fewer than 3 operands");
+								continue;
+							}
+							
 							IrValue member_value;
 							if (std::holds_alternative<TempVar>(init_operands[2])) {
 								member_value = std::get<TempVar>(init_operands[2]);
