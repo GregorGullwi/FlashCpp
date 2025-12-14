@@ -314,9 +314,10 @@ static std::string cv_qualifier_to_string(CVQualifier cv) {
 }
 
 // Helper function to get base type string
-static std::string type_to_string(Type type, TypeQualifier qualifier) {
-    std::string result;
+static const std::string& type_to_string(Type type, TypeQualifier qualifier) {
+    static std::string result;
 
+    result.clear();
     // Add sign qualifier if present
     if (qualifier == TypeQualifier::Unsigned) {
         result += "unsigned ";
@@ -350,6 +351,7 @@ static std::string type_to_string(Type type, TypeQualifier qualifier) {
         case Type::MemberFunctionPointer: result += "member_function_pointer"; break;
         case Type::MemberObjectPointer: result += "member_object_pointer"; break;
         case Type::Nullptr: result += "nullptr_t"; break;
+        case Type::Template: result += "template"; break;
         case Type::Invalid: result += "invalid"; break;
     }
 
