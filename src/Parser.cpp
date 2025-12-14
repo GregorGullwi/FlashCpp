@@ -8768,7 +8768,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// Handle scalar type brace initialization (C++11): int x = {10};
 	// For scalar types, braced initializer should have exactly one element
 	if (type_specifier.type() != Type::Struct) {
-		// Parse the single initializer expression
+		// Parse the single initializer expression with precedence > comma operator (precedence 1)
+		// This prevents comma from being treated as an operator in initializer lists
 		ParseResult init_expr_result = parse_expression(2);
 		if (init_expr_result.is_error()) {
 			return init_expr_result;
@@ -8779,8 +8780,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		}
 
 		// For scalar types, only allow a single initializer (no comma)
-		// Check if there's a comma (which would be an error for scalar types)
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+		auto next = peek_token();
+		if (next.has_value() && next->type() == Token::Type::Punctuator && next->value() == ",") {
 			return ParseResult::error("Too many initializers for scalar type", *current_token_);
 		}
 
