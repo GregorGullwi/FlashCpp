@@ -12979,6 +12979,8 @@ private:
 		
 		// Get constructor parameter types for reference handling
 		const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
+		FLASH_LOG_FORMAT(Codegen, Debug, "[CTOR] Constructor {} found, num_params={}, num_args={}", 
+			matching_ctor ? "WAS" : "NOT", ctor_params.size(), num_args);
 
 		// Generate IR for constructor arguments and add them to ctor_op.arguments
 		size_t arg_index = 0;
@@ -12987,6 +12989,11 @@ private:
 			const TypeSpecifierNode* param_type = nullptr;
 			if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
 				param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				FLASH_LOG_FORMAT(Codegen, Debug, "[CTOR_ARG] arg {}: param_type found, ptr_depth={}, is_ref={}, cv={}", 
+					arg_index, param_type->pointer_depth(), param_type->is_reference(), static_cast<int>(param_type->cv_qualifier()));
+			} else {
+				FLASH_LOG_FORMAT(Codegen, Debug, "[CTOR_ARG] arg {}: param_type NOT found (ctor_params.size()={})", 
+					arg_index, ctor_params.size());
 			}
 			
 			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
@@ -13021,6 +13028,7 @@ private:
 							tv.size_in_bits = 64;  // Pointer size
 							tv.value = addr_var;
 							tv.is_reference = true;  // Mark as reference parameter
+							tv.cv_qualifier = param_type->cv_qualifier();  // Set CV qualifier from parameter
 						}
 					} else {
 						// Not a simple identifier or not found - use as-is
@@ -13029,6 +13037,27 @@ private:
 				} else {
 					// Not a reference parameter or not an identifier - use as-is
 					tv = toTypedValue(argumentIrOperands);
+				}
+				
+				// If we have parameter type information, use it to set pointer depth and CV qualifiers
+				if (param_type) {
+					tv.pointer_depth = static_cast<int>(param_type->pointer_depth());
+					// For pointer types, also extract CV qualifiers from pointer levels
+					if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
+						// Use CV qualifier from the first pointer level (T* const -> const)
+						// For now, we'll use the main CV qualifier
+						if (!tv.is_reference) {
+							tv.cv_qualifier = param_type->cv_qualifier();
+						}
+					}
+					// For reference types, use the CV qualifier
+					if (param_type->is_reference() || param_type->is_rvalue_reference()) {
+						tv.cv_qualifier = param_type->cv_qualifier();
+					}
+					// Also update type_index if it's a struct type
+					if (param_type->type() == Type::Struct && param_type->type_index() != 0) {
+						tv.type_index = param_type->type_index();
+					}
 				}
 				
 				ctor_op.arguments.push_back(std::move(tv));

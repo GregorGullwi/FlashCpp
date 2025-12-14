@@ -5891,9 +5891,45 @@ private:
 			int paramSize = arg.size_in_bits;
 			TypeIndex arg_type_index = arg.type_index;
 			bool arg_is_reference = arg.is_reference;  // Check if marked as reference
+			int arg_pointer_depth = arg.pointer_depth;
+			CVQualifier arg_cv_qualifier = arg.cv_qualifier;
+			
+			FLASH_LOG_FORMAT(Codegen, Debug, "[CTOR_CALL] arg {}: type={}, size={}, ptr_depth={}, is_ref={}, cv_qual={}", 
+				i, static_cast<int>(paramType), paramSize, arg_pointer_depth, arg_is_reference, static_cast<int>(arg_cv_qualifier));
 			
 			// Build TypeSpecifierNode for this parameter
-			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(paramSize), Token{});
+			// For pointers, use the base type size, not the pointer size (64 bits)
+			int actual_size = paramSize;
+			if (arg_pointer_depth > 0) {
+				// This is a pointer - set size to pointee type size
+				// For basic types, we can infer the size from the type
+				switch (paramType) {
+					case Type::Bool: actual_size = 8; break;
+					case Type::Char:
+					case Type::UnsignedChar: actual_size = 8; break;
+					case Type::Short:
+					case Type::UnsignedShort: actual_size = 16; break;
+					case Type::Int:
+					case Type::UnsignedInt: actual_size = 32; break;
+					case Type::Long:
+					case Type::UnsignedLong:
+					case Type::LongLong:
+					case Type::UnsignedLongLong: actual_size = 64; break;
+					case Type::Float: actual_size = 32; break;
+					case Type::Double:
+					case Type::LongDouble: actual_size = 64; break;
+					default:
+						// For struct types, keep the size as-is
+						break;
+				}
+			}
+			
+			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
+			
+			// Add pointer levels
+			for (int p = 0; p < arg_pointer_depth; ++p) {
+				param_type.add_pointer_level(CVQualifier::None);
+			}
 			
 			// If the argument is marked as a reference, set it as such
 			if (arg_is_reference) {
@@ -5908,9 +5944,9 @@ private:
 				is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 			}
 			
-			if (num_params == 1 && paramType == Type::Struct && is_same_struct_type) {
-				// This is likely a copy constructor - determine the actual CV qualifier
-				// Look up struct type to find the copy constructor signature
+			if (num_params == 1 && paramType == Type::Struct && is_same_struct_type && !arg_is_reference) {
+				// This is likely a copy constructor, but arg_is_reference wasn't set
+				// Determine the actual CV qualifier from the constructor signature
 				auto type_it = gTypesByName.find(struct_name);
 				if (type_it != gTypesByName.end()) {
 					TypeIndex struct_type_index = type_it->second->type_index_;
@@ -5935,12 +5971,16 @@ private:
 						}
 					}
 					
-					param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(paramSize), Token{}, copy_ctor_cv);
+					param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv);
 					param_type.set_reference(false);  // set_reference(false) creates an lvalue reference (not rvalue)
 				}
 			} else if (paramType == Type::Struct && arg_type_index != 0) {
 				// Not a copy constructor, but still a struct parameter - set the type_index
-				param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(paramSize), Token{});
+				param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
+				// Add pointer levels (rebuild after creating with type_index)
+				for (int p = 0; p < arg_pointer_depth; ++p) {
+					param_type.add_pointer_level(CVQualifier::None);
+				}
 				// Also preserve the reference flag if it was set
 				if (arg_is_reference) {
 					param_type.set_reference(false);  // set_reference(false) creates an lvalue reference

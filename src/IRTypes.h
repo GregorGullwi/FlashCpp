@@ -565,6 +565,8 @@ struct TypedValue {
 	bool is_reference = false;  // True if this should be passed by reference (address)
 	bool is_signed = false;     // True for signed types (use MOVSX), false for unsigned (use MOVZX)
 	TypeIndex type_index = 0;   // Index into gTypeInfo for struct/enum types (0 = not set)
+	int pointer_depth = 0;      // Number of pointer indirection levels (0 = not a pointer, 1 = T*, 2 = T**, etc.)
+	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifier for references (const, volatile, etc.)
 };
 
 // Helper function to print TypedValue
