@@ -5339,9 +5339,6 @@ private:
 				return { element_type, 64, addr_var, 0ULL };
 			}
 		}
-
-		std::vector<IrOperand> operandIrOperands;
-		bool operandHandledAsIdentifier = false;
 		
 		// Helper lambda to generate member increment/decrement IR
 		// Returns the result operands, or empty if not applicable
@@ -5506,6 +5503,8 @@ private:
 			}
 		}
 		
+		std::vector<IrOperand> operandIrOperands;
+		bool operandHandledAsIdentifier = false;
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {

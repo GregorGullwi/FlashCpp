@@ -463,7 +463,12 @@ private:
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context) {
 		// Constructor calls like float(3.14), int(100), double(2.718)
 		// These are essentially type conversions/casts in constant expressions
-		
+		// Get the argument(s) - for basic type conversions, should have exactly 1 argument
+		const auto& args = ctor_call.arguments();
+		if (args.size() != 1) {
+			return EvalResult::error("Constructor call must have exactly 1 argument for constant evaluation");
+		}
+
 		// Get the target type
 		const ASTNode& type_node = ctor_call.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -471,49 +476,7 @@ private:
 		}
 		
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		Type target_type = type_spec.type();
-		
-		// Get the argument(s) - for basic type conversions, should have exactly 1 argument
-		const auto& args = ctor_call.arguments();
-		if (args.size() != 1) {
-			return EvalResult::error("Constructor call must have exactly 1 argument for constant evaluation");
-		}
-		
-		// Evaluate the argument
-		const ASTNode& arg = args[0];
-		auto arg_result = evaluate(arg, context);
-		if (!arg_result.success) {
-			return arg_result;
-		}
-		
-		// Convert to target type
-		switch (target_type) {
-			case Type::Bool:
-				return EvalResult::from_bool(arg_result.as_bool());
-			
-			case Type::Char:
-			case Type::Short:
-			case Type::Int:
-			case Type::Long:
-			case Type::LongLong:
-				return EvalResult::from_int(arg_result.as_int());
-			
-			case Type::UnsignedChar:
-			case Type::UnsignedShort:
-			case Type::UnsignedInt:
-			case Type::UnsignedLong:
-			case Type::UnsignedLongLong:
-				// For unsigned types, convert to unsigned
-				return EvalResult::from_uint(static_cast<unsigned long long>(arg_result.as_int()));
-			
-			case Type::Float:
-			case Type::Double:
-			case Type::LongDouble:
-				return EvalResult::from_double(arg_result.as_double());
-			
-		default:
-			return EvalResult::error("Unsupported type in constructor call for constant evaluation");
-		}
+		return evaluate_expr_node(type_spec.type(), args[0], context, "Unsupported type in constructor call for constant evaluation");
 	}
 
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context) {
@@ -526,10 +489,12 @@ private:
 		}
 		
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		Type target_type = type_spec.type();
 		
 		// Evaluate the expression being cast
-		const ASTNode& expr = cast_node.expr();
+		return evaluate_expr_node(type_spec.type(), cast_node.expr(), context, "Unsupported type in static_cast for constant evaluation");
+	}
+
+	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr) {
 		auto expr_result = evaluate(expr, context);
 		if (!expr_result.success) {
 			return expr_result;
@@ -561,7 +526,7 @@ private:
 				return EvalResult::from_double(expr_result.as_double());
 			
 			default:
-				return EvalResult::error("Unsupported type in static_cast for constant evaluation");
+				return EvalResult::error(invalidTypeErrorStr);
 		}
 	}
 
