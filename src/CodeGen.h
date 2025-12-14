@@ -2271,6 +2271,13 @@ private:
 			
 			// Create ReturnOp with the return value
 			ReturnOp ret_op;
+			
+			// Check if operands has at least 3 elements before accessing
+			if (operands.size() < 3) {
+				FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed or returned insufficient operands");
+				return;
+			}
+			
 			// Extract IrValue from operand[2] - it could be various types
 			if (std::holds_alternative<unsigned long long>(operands[2])) {
 				ret_op.return_value = std::get<unsigned long long>(operands[2]);
@@ -9632,89 +9639,98 @@ private:
 					FLASH_LOG(Codegen, Error, "dereference operand is not an expression");
 					return {};
 				}
-
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
-				if (!std::holds_alternative<IdentifierNode>(operand_expr)) {
-					FLASH_LOG(Codegen, Error, "dereference operand is not an identifier");
-					return {};
-				}
-
-				const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
-				std::string_view ptr_name = ptr_ident.name();
 				
 				// Special handling for 'this' in lambdas with [this] or [*this] capture
-				if (ptr_name == "this" && !current_lambda_closure_type_.empty() && 
-				    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
-					// We're in a lambda that captured [this] or [*this]
-					// Check which kind of capture it is
-					auto capture_kind_it = current_lambda_capture_kinds_.find("this");
-					if (capture_kind_it != current_lambda_capture_kinds_.end() && 
-					    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
-						// [*this] capture: load from the copied object in __copy_this
-						TempVar copy_this_ref = var_counter.next();
-						MemberLoadOp load_copy_this;
-						load_copy_this.result.value = copy_this_ref;
-						load_copy_this.result.type = Type::Struct;
-						load_copy_this.result.size_in_bits = 64;  // Pointer size
-						load_copy_this.object = "this"sv;  // Lambda's this (the closure)
-						load_copy_this.member_name = "__copy_this"sv;
-						load_copy_this.offset = -1;
-						load_copy_this.is_reference = false;
-						load_copy_this.is_rvalue_reference = false;
-						load_copy_this.struct_type_info = nullptr;
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
-						
-						// Use this as the base (it's a struct value, not a pointer)
-						base_object = copy_this_ref;
-						base_type = Type::Struct;
-						base_type_index = current_lambda_enclosing_struct_type_index_;
-					} else {
-						// [this] capture: load the pointer from __this
-						TempVar this_ptr = var_counter.next();
-						MemberLoadOp load_this;
-						load_this.result.value = this_ptr;
-						load_this.result.type = Type::Void;
-						load_this.result.size_in_bits = 64;
-						load_this.object = "this"sv;  // Lambda's this (the closure)
-						load_this.member_name = "__this"sv;
-						load_this.offset = -1;
-						load_this.is_reference = false;
-						load_this.is_rvalue_reference = false;
-						load_this.struct_type_info = nullptr;
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
-						
-						// Use this loaded pointer as the base
-						base_object = this_ptr;
-						base_type = Type::Struct;
-						base_type_index = current_lambda_enclosing_struct_type_index_;
+				// Check this first before evaluating the expression
+				bool is_lambda_this = false;
+				if (std::holds_alternative<IdentifierNode>(operand_expr)) {
+					const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
+					std::string_view ptr_name = ptr_ident.name();
+					
+					if (ptr_name == "this" && !current_lambda_closure_type_.empty() && 
+					    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
+						is_lambda_this = true;
+						// We're in a lambda that captured [this] or [*this]
+						// Check which kind of capture it is
+						auto capture_kind_it = current_lambda_capture_kinds_.find("this");
+						if (capture_kind_it != current_lambda_capture_kinds_.end() && 
+						    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
+							// [*this] capture: load from the copied object in __copy_this
+							TempVar copy_this_ref = var_counter.next();
+							MemberLoadOp load_copy_this;
+							load_copy_this.result.value = copy_this_ref;
+							load_copy_this.result.type = Type::Struct;
+							load_copy_this.result.size_in_bits = 64;  // Pointer size
+							load_copy_this.object = "this"sv;  // Lambda's this (the closure)
+							load_copy_this.member_name = "__copy_this"sv;
+							load_copy_this.offset = -1;
+							load_copy_this.is_reference = false;
+							load_copy_this.is_rvalue_reference = false;
+							load_copy_this.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
+							
+							// Use this as the base (it's a struct value, not a pointer)
+							base_object = copy_this_ref;
+							base_type = Type::Struct;
+							base_type_index = current_lambda_enclosing_struct_type_index_;
+						} else {
+							// [this] capture: load the pointer from __this
+							TempVar this_ptr = var_counter.next();
+							MemberLoadOp load_this;
+							load_this.result.value = this_ptr;
+							load_this.result.type = Type::Void;
+							load_this.result.size_in_bits = 64;
+							load_this.object = "this"sv;  // Lambda's this (the closure)
+							load_this.member_name = "__this"sv;
+							load_this.offset = -1;
+							load_this.is_reference = false;
+							load_this.is_rvalue_reference = false;
+							load_this.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
+							
+							// Use this loaded pointer as the base
+							base_object = this_ptr;
+							base_type = Type::Struct;
+							base_type_index = current_lambda_enclosing_struct_type_index_;
+						}
 					}
-				} else {
-					// Normal pointer handling
-
-				// Look up the pointer in the symbol table
-				const std::optional<ASTNode> symbol = symbol_table.lookup(ptr_name);
-				if (!symbol.has_value() || !symbol->is<DeclarationNode>()) {
-					FLASH_LOG(Codegen, Error, "pointer '", ptr_name, "' not found in symbol table");
-					return {};
 				}
-
-				const DeclarationNode& ptr_decl = symbol->as<DeclarationNode>();
-				const TypeSpecifierNode& ptr_type = ptr_decl.type_node().as<TypeSpecifierNode>();
-
-				// Verify this is a pointer to a struct type
-				if (ptr_type.pointer_depth() == 0) {
-					FLASH_LOG(Codegen, Error, "member access '->' on non-pointer type '", ptr_name, "'");
-					return {};
-				}
-
-				if (ptr_type.type() != Type::Struct && ptr_type.type() != Type::UserDefined) {
-					FLASH_LOG(Codegen, Error, "member access '->' on pointer to non-struct type '", ptr_name, "'");
-					return {};
-				}
-
-				base_object = ptr_name;
-				base_type = ptr_type.type();
-				base_type_index = ptr_type.type_index();
+				
+				if (!is_lambda_this) {
+					// Normal pointer handling - evaluate the pointer expression
+					// This supports any expression that evaluates to a pointer:
+					// - Simple identifiers (ptr)
+					// - Function calls (getPtr())
+					// - Nested member access (obj.ptr_member)
+					// etc.
+					auto pointer_operands = visitExpressionNode(operand_expr);
+					if (pointer_operands.empty() || pointer_operands.size() < 3) {
+						FLASH_LOG(Codegen, Error, "Failed to evaluate pointer expression for member access");
+						return {};
+					}
+					
+					// Extract type information from the evaluated expression
+					Type pointer_type = std::get<Type>(pointer_operands[0]);
+					
+					// Get the type_index if available (for struct pointers)
+					size_t pointer_type_index = 0;
+					if (pointer_operands.size() >= 4 && std::holds_alternative<unsigned long long>(pointer_operands[3])) {
+						pointer_type_index = static_cast<size_t>(std::get<unsigned long long>(pointer_operands[3]));
+					}
+					
+					// The pointer value can be a string_view (identifier name) or TempVar (expression result)
+					if (std::holds_alternative<std::string_view>(pointer_operands[2])) {
+						base_object = std::get<std::string_view>(pointer_operands[2]);
+					} else if (std::holds_alternative<TempVar>(pointer_operands[2])) {
+						base_object = std::get<TempVar>(pointer_operands[2]);
+					} else {
+						FLASH_LOG(Codegen, Error, "Pointer expression result has unsupported value type");
+						return {};
+					}
+					
+					base_type = pointer_type;
+					base_type_index = pointer_type_index;
 				}
 			}
 			else {

@@ -174,6 +174,7 @@ $expectedLinkFailures = @(
     # Self-contained ABI tests (link on Linux but fail on Windows)
     "test_mixed_abi.cpp"
     "test_linux_abi.cpp"  # Tests 6 integer params (Linux ABI specific)
+    "test_covariant_return.cpp"  # Needs RTTI (typeinfo) and has incorrect copy constructor call for reference binding
     "test_full_spec_inherit.cpp"          # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
     "test_full_spec_inherit_simple.cpp"   # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
 )
