@@ -241,6 +241,12 @@ foreach ($file in $referenceFiles) {
             if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
                 Write-Host "OK"
                 $linkSuccess += $file.Name
+				
+				if ($totalFiles -eq 1) {
+					$runOutput = & .\$exeFile 2>&1
+					$exitCode = $LASTEXITCODE
+					Write-Host "TEST RESULT: Exit code $exitCode" -ForegroundColor Yellow
+				}
                 # Clean up after successful link
                 Remove-Item $exeFile -Force -ErrorAction SilentlyContinue
                 Remove-Item $ilkFile -Force -ErrorAction SilentlyContinue
