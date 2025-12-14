@@ -57,32 +57,8 @@ static constexpr CallingConventionMapping calling_convention_map[] = {
 };
 
 // Helper function to get type size in bits for basic types
-// Helper function to get the size in bits for basic types
-// Used when creating TypeInfo for template parameter substitution
-static unsigned char getBasicTypeSizeInBits(Type type) {
-	switch (type) {
-		case Type::Bool: return 8;
-		case Type::Char: return 8;
-		case Type::UnsignedChar: return 8;
-		case Type::Short: return 16;
-		case Type::UnsignedShort: return 16;
-		case Type::Int: return 32;
-		case Type::UnsignedInt: return 32;
-		case Type::Long: return 64;
-		case Type::UnsignedLong: return 64;
-		case Type::LongLong: return 64;
-		case Type::UnsignedLongLong: return 64;
-		case Type::Float: return 32;
-		case Type::Double: return 64;
-		case Type::LongDouble: return 128;  // x86-64 long double is 80-bit but padded to 128-bit
-		case Type::Void: return 0;
-		default:
-			// Should not be called for user-defined types
-			assert(false && "getBasicTypeSizeInBits called for non-basic type");
-			return 0;
-	}
-}
-
+// Helper function to get the size in bits for a type (including struct types)
+// Used for runtime type size queries when TypeInfo is already populated
 // Helper function to safely get type size - handles both basic types and UserDefined types
 // For UserDefined types, tries to look up size from type registry via type_index
 static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_index) {

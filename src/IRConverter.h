@@ -5938,26 +5938,12 @@ private:
 				int actual_size = paramSize;
 				if (arg_pointer_depth > 0) {
 					// This is a pointer - set size to pointee type size
-					// For basic types, we can infer the size from the type
-					switch (paramType) {
-						case Type::Bool: actual_size = 8; break;
-						case Type::Char:
-						case Type::UnsignedChar: actual_size = 8; break;
-						case Type::Short:
-						case Type::UnsignedShort: actual_size = 16; break;
-						case Type::Int:
-						case Type::UnsignedInt: actual_size = 32; break;
-						case Type::Long:
-						case Type::UnsignedLong:
-						case Type::LongLong:
-						case Type::UnsignedLongLong: actual_size = 64; break;
-						case Type::Float: actual_size = 32; break;
-						case Type::Double:
-						case Type::LongDouble: actual_size = 64; break;
-						default:
-							// For struct types, keep the size as-is
-							break;
+					// For basic types, use getBasicTypeSizeInBits
+					unsigned char basic_size = getBasicTypeSizeInBits(paramType);
+					if (basic_size > 0) {
+						actual_size = basic_size;
 					}
+					// For struct types, keep the size as-is (basic_size will be 0)
 				}
 				
 				TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
