@@ -21113,6 +21113,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			bool is_ref_member = type_spec.is_reference();
 			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+			
+			// Substitute template parameters in default member initializers
+			std::optional<ASTNode> substituted_default_initializer = member_decl.default_initializer;
+			if (member_decl.default_initializer.has_value()) {
+				const ASTNode& init_node = member_decl.default_initializer.value();
+				if (init_node.is<ExpressionNode>()) {
+					const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+					
+					std::string_view param_name_to_substitute;
+					
+					// Check if the initializer is a template parameter reference or identifier
+					if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
+						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
+						param_name_to_substitute = tparam_ref.param_name();
+					} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
+						const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
+						param_name_to_substitute = ident.name();
+					}
+					
+					// Try to substitute if we found a parameter name
+					if (!param_name_to_substitute.empty()) {
+						auto substituted = substitute_template_param_in_initializer(param_name_to_substitute, template_args, template_params);
+						if (substituted.has_value()) {
+							substituted_default_initializer = substituted;
+						}
+					}
+				}
+			}
+			
 			struct_info->addMember(
 				std::string(decl.identifier_token().value()),
 				member_type,
@@ -21120,7 +21149,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_size,
 				member_alignment,
 				member_decl.access,
-				member_decl.default_initializer,
+				substituted_default_initializer,
 				is_ref_member,
 				is_rvalue_ref_member,
 				(is_ref_member || is_rvalue_ref_member) ? get_type_size_bits(member_type) : 0
@@ -21827,6 +21856,44 @@ if (struct_type_info.getStructInfo()) {
 			referenced_size_bits = get_type_size_bits(member_type);
 		}
 	
+		// Substitute template parameters in default member initializers
+		std::optional<ASTNode> substituted_default_initializer = member_decl.default_initializer;
+		if (member_decl.default_initializer.has_value()) {
+			const ASTNode& init_node = member_decl.default_initializer.value();
+			FLASH_LOG_FORMAT(Templates, Debug, "Member {} has default initializer, checking for substitution", decl.identifier_token().value());
+			if (init_node.is<ExpressionNode>()) {
+				const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+				
+				std::string_view param_name_to_substitute;
+				
+				// Check if the initializer is a template parameter reference
+				if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
+					const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
+					param_name_to_substitute = tparam_ref.param_name();
+					FLASH_LOG_FORMAT(Templates, Debug, "Found template parameter reference: {}", param_name_to_substitute);
+				} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
+					const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
+					param_name_to_substitute = ident.name();
+					FLASH_LOG_FORMAT(Templates, Debug, "Found identifier: {}", param_name_to_substitute);
+				} else {
+					FLASH_LOG(Templates, Debug, "Default initializer is neither TemplateParameterReferenceNode nor IdentifierNode");
+				}
+				
+				// Try to substitute if we found a parameter name
+				if (!param_name_to_substitute.empty()) {
+					auto substituted = substitute_template_param_in_initializer(param_name_to_substitute, template_args_to_use, template_params);
+					if (substituted.has_value()) {
+						substituted_default_initializer = substituted;
+						FLASH_LOG(Templates, Debug, "Successfully substituted template parameter in default initializer");
+					} else {
+						FLASH_LOG(Templates, Debug, "Failed to substitute template parameter in default initializer");
+					}
+				}
+			} else {
+				FLASH_LOG(Templates, Debug, "Default initializer is not an ExpressionNode");
+			}
+		}
+	
 		struct_info->addMember(
 			std::string(decl.identifier_token().value()),
 			member_type,
@@ -21834,7 +21901,7 @@ if (struct_type_info.getStructInfo()) {
 			member_size,
 			member_alignment,
 			member_decl.access,
-			member_decl.default_initializer,
+			substituted_default_initializer,
 			is_ref_member,
 			is_rvalue_ref_member,
 			referenced_size_bits
@@ -22827,6 +22894,19 @@ if (nested_type_info.getStructInfo()) {
 	}
 
 	FLASH_LOG(Templates, Debug, "About to return instantiated_struct for ", instantiated_name);
+	
+	// Check if the instantiated struct has any constructors
+	// If not, mark that we need to generate a default one
+	bool has_constructor = false;
+	for (const auto& mem_func : struct_info_ptr->member_functions) {
+		if (mem_func.is_constructor) {
+			has_constructor = true;
+			break;
+		}
+	}
+	struct_info_ptr->needs_default_constructor = !has_constructor;
+	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", has_constructor, 
+	          ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
 	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
