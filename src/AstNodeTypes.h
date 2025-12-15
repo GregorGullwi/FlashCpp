@@ -277,6 +277,18 @@ struct StructMember {
 		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),
 		  default_initializer(std::move(init)) {}
 	
+	// StringHandle constructor - Phase 7A
+	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
+	            AccessSpecifier acc = AccessSpecifier::Public,
+	            std::optional<ASTNode> init = std::nullopt,
+	            bool is_ref = false,
+	            bool is_rvalue_ref = false,
+	            size_t ref_size_bits = 0)
+		: name(n), type(t), type_index(tidx), offset(off), size(sz),
+		  referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
+		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),
+		  default_initializer(std::move(init)) {}
+	
 	std::string_view getName() const {
 		if (std::holds_alternative<std::string>(name)) {
 			return std::get<std::string>(name);
@@ -313,6 +325,12 @@ struct StructMemberFunction {
 	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
 	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
 		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
+		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
+	
+	// StringHandle constructor - Phase 7A
+	StructMemberFunction(StringHandle n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
+	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
+		: name(n), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
 		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
 	
 	std::string_view getName() const {
@@ -464,6 +482,12 @@ struct StructStaticMember {
 		: name(std::move(n)), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
 		  initializer(init), is_const(is_const_val) {}
 	
+	// StringHandle constructor - Phase 7A
+	StructStaticMember(StringHandle n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
+	                   std::optional<ASTNode> init = std::nullopt, bool is_const_val = false)
+		: name(n), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
+		  initializer(init), is_const(is_const_val) {}
+	
 	std::string_view getName() const {
 		if (std::holds_alternative<std::string>(name)) {
 			return std::get<std::string>(name);
@@ -550,9 +574,47 @@ struct StructTypeInfo {
 		alignment = std::max(alignment, effective_alignment);
 	}
 
+	// StringHandle overload for addMember - Phase 7A
+	void addMember(StringHandle member_name, Type member_type, TypeIndex type_index,
+	               size_t member_size, size_t member_alignment, AccessSpecifier access,
+	               std::optional<ASTNode> default_initializer,
+	               bool is_reference,
+	               bool is_rvalue_reference,
+	               size_t referenced_size_bits) {
+		// Apply pack alignment if specified
+		size_t effective_alignment = member_alignment;
+		if (pack_alignment > 0 && pack_alignment < member_alignment) {
+			effective_alignment = pack_alignment;
+		}
+
+		// Calculate offset with effective alignment
+		size_t offset = is_union ? 0 : ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
+
+		if (!referenced_size_bits) {
+			referenced_size_bits = member_size * 8;
+		}
+		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
+			              access, std::move(default_initializer), is_reference, is_rvalue_reference,
+			              referenced_size_bits);
+
+		// Update struct size and alignment
+		total_size = offset + member_size;
+		alignment = std::max(alignment, effective_alignment);
+	}
+
 	void addMemberFunction(std::string_view function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
 	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
 		auto& func = member_functions.emplace_back(std::string(function_name), function_decl, access, false, false);
+		func.is_virtual = is_virtual;
+		func.is_pure_virtual = is_pure_virtual;
+		func.is_override = is_override;
+		func.is_final = is_final;
+	}
+
+	// StringHandle overload for addMemberFunction - Phase 7A
+	void addMemberFunction(StringHandle function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
+	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
+		auto& func = member_functions.emplace_back(function_name, function_decl, access, false, false);
 		func.is_virtual = is_virtual;
 		func.is_pure_virtual = is_pure_virtual;
 		func.is_override = is_override;
@@ -636,6 +698,12 @@ struct StructTypeInfo {
 		static_members.push_back(StructStaticMember(std::string(name), type, type_index, size, alignment, access, initializer, is_const));
 	}
 
+	// StringHandle overload for addStaticMember - Phase 7A
+	void addStaticMember(StringHandle name, Type type, TypeIndex type_index, size_t size, size_t alignment,
+	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, bool is_const = false) {
+		static_members.push_back(StructStaticMember(name, type, type_index, size, alignment, access, initializer, is_const));
+	}
+
 	// Find member recursively through base classes
 	const StructMember* findMemberRecursive(std::string_view member_name) const;
 	
@@ -660,9 +728,31 @@ struct StructTypeInfo {
 		return nullptr;
 	}
 
+	// StringHandle overload for findMember - Phase 7A
+	const StructMember* findMember(StringHandle name) const {
+		std::string_view name_view = StringTable::getStringView(name);
+		for (const auto& member : members) {
+			if (member.getName() == name_view) {
+				return &member;
+			}
+		}
+		return nullptr;
+	}
+
 	const StructMemberFunction* findMemberFunction(std::string_view name) const {
 		for (const auto& func : member_functions) {
 			if (func.getName() == name) {
+				return &func;
+			}
+		}
+		return nullptr;
+	}
+
+	// StringHandle overload for findMemberFunction - Phase 7A
+	const StructMemberFunction* findMemberFunction(StringHandle name) const {
+		std::string_view name_view = StringTable::getStringView(name);
+		for (const auto& func : member_functions) {
+			if (func.getName() == name_view) {
 				return &func;
 			}
 		}
@@ -674,12 +764,30 @@ struct StructTypeInfo {
 		friend_functions_.push_back(std::string(func_name));
 	}
 
+	// StringHandle overload for addFriendFunction - Phase 7A
+	void addFriendFunction(StringHandle func_name) {
+		friend_functions_.push_back(std::string(StringTable::getStringView(func_name)));
+	}
+
 	void addFriendClass(std::string_view class_name) {
 		friend_classes_.push_back(std::string(class_name));
 	}
 
+	// StringHandle overload for addFriendClass - Phase 7A
+	void addFriendClass(StringHandle class_name) {
+		friend_classes_.push_back(std::string(StringTable::getStringView(class_name)));
+	}
+
 	void addFriendMemberFunction(std::string_view class_name, std::string_view func_name) {
 		friend_member_functions_.emplace_back(std::string(class_name), std::string(func_name));
+	}
+
+	// StringHandle overload for addFriendMemberFunction - Phase 7A
+	void addFriendMemberFunction(StringHandle class_name, StringHandle func_name) {
+		friend_member_functions_.emplace_back(
+			std::string(StringTable::getStringView(class_name)),
+			std::string(StringTable::getStringView(func_name))
+		);
 	}
 
 	bool isFriendFunction(std::string_view func_name) const {
@@ -690,10 +798,27 @@ struct StructTypeInfo {
 		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name) != friend_classes_.end();
 	}
 
+	// StringHandle overload for isFriendClass - Phase 7A
+	bool isFriendClass(StringHandle class_name) const {
+		std::string_view class_name_view = StringTable::getStringView(class_name);
+		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name_view) != friend_classes_.end();
+	}
+
 	bool isFriendMemberFunction(std::string_view class_name, std::string_view func_name) const {
 		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
 		                       [class_name, func_name](const auto& pair) {
 		                           return pair.first == class_name && pair.second == func_name;
+		                       });
+		return it != friend_member_functions_.end();
+	}
+
+	// StringHandle overload for isFriendMemberFunction - Phase 7A
+	bool isFriendMemberFunction(StringHandle class_name, StringHandle func_name) const {
+		std::string_view class_name_view = StringTable::getStringView(class_name);
+		std::string_view func_name_view = StringTable::getStringView(func_name);
+		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
+		                       [class_name_view, func_name_view](const auto& pair) {
+		                           return pair.first == class_name_view && pair.second == func_name_view;
 		                       });
 		return it != friend_member_functions_.end();
 	}
@@ -842,6 +967,10 @@ struct Enumerator {
 	Enumerator(std::string n, long long v)
 		: name(std::move(n)), value(v) {}
 	
+	// StringHandle constructor - Phase 7A
+	Enumerator(StringHandle n, long long v)
+		: name(n), value(v) {}
+	
 	std::string_view getName() const {
 		if (std::holds_alternative<std::string>(name)) {
 			return std::get<std::string>(name);
@@ -874,6 +1003,11 @@ struct EnumTypeInfo {
 		enumerators.emplace_back(std::string(enumerator_name), value);
 	}
 
+	// StringHandle overload for addEnumerator - Phase 7A
+	void addEnumerator(StringHandle enumerator_name, long long value) {
+		enumerators.emplace_back(enumerator_name, value);
+	}
+
 	const Enumerator* findEnumerator(std::string_view name_str) const {
 		for (const auto& enumerator : enumerators) {
 			if (enumerator.getName() == name_str) {
@@ -883,7 +1017,24 @@ struct EnumTypeInfo {
 		return nullptr;
 	}
 
+	// StringHandle overload for findEnumerator - Phase 7A
+	const Enumerator* findEnumerator(StringHandle name_str) const {
+		std::string_view name_view = StringTable::getStringView(name_str);
+		for (const auto& enumerator : enumerators) {
+			if (enumerator.getName() == name_view) {
+				return &enumerator;
+			}
+		}
+		return nullptr;
+	}
+
 	long long getEnumeratorValue(std::string_view name_str) const {
+		const Enumerator* e = findEnumerator(name_str);
+		return e ? e->value : 0;
+	}
+
+	// StringHandle overload for getEnumeratorValue - Phase 7A
+	long long getEnumeratorValue(StringHandle name_str) const {
 		const Enumerator* e = findEnumerator(name_str);
 		return e ? e->value : 0;
 	}
@@ -1761,6 +1912,10 @@ struct BaseInitializer {
 	BaseInitializer(std::string name, std::vector<ASTNode> args)
 		: base_class_name(std::move(name)), arguments(std::move(args)) {}
 	
+	// StringHandle constructor - Phase 7A
+	BaseInitializer(StringHandle name, std::vector<ASTNode> args)
+		: base_class_name(name), arguments(std::move(args)) {}
+	
 	std::string_view getBaseClassName() const {
 		if (std::holds_alternative<std::string>(base_class_name)) {
 			return std::get<std::string>(base_class_name);
@@ -1804,6 +1959,11 @@ public:
 
 	void add_base_initializer(std::string base_name, std::vector<ASTNode> args) {
 		base_initializers_.emplace_back(std::move(base_name), std::move(args));
+	}
+
+	// StringHandle overload for add_base_initializer - Phase 7A
+	void add_base_initializer(StringHandle base_name, std::vector<ASTNode> args) {
+		base_initializers_.emplace_back(base_name, std::move(args));
 	}
 
 	void set_delegating_initializer(std::vector<ASTNode> args) {
