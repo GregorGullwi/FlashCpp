@@ -22393,7 +22393,7 @@ if (nested_type_info.getStructInfo()) {
 						new_ctor_ref.add_member_initializer(init.member_name, init.initializer_expr);
 					}
 					for (const auto& init : ctor_decl.base_initializers()) {
-						new_ctor_ref.add_base_initializer(init.base_class_name, init.arguments);
+						new_ctor_ref.add_base_initializer(std::string(init.getBaseClassName()), init.arguments);
 					}
 					if (ctor_decl.delegating_initializer().has_value()) {
 						new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
