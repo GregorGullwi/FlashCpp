@@ -274,6 +274,14 @@ private:
 	}
 };
 
+// Stream output operator for StringHandle
+inline std::ostream& operator<<(std::ostream& os, const StringHandle& handle) {
+	if (handle.isValid()) {
+		os << StringTable::getStringView(handle);
+	}
+	return os;
+}
+
 // Hash specialization for StringHandle (for use in unordered_map/set)
 namespace std {
 	template<>
