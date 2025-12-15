@@ -4136,18 +4136,34 @@ private:
 			// If the result is a named variable, find its stack offset
 			int final_result_offset = variable_scopes.back().variables[std::get<std::string_view>(ctx.result_value.value)].offset;
 
-			// Store the computed result from actual_source_reg to memory
-			if (is_float_type) {
-				// Use SSE movss/movsd for float/double
-				bool is_single_precision = (ctx.result_value.type == Type::Float);
-				auto store_opcodes = generateFloatMovToFrame(actual_source_reg, final_result_offset, is_single_precision);
-				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			// Check if this is a reference - if so, we need to store through the pointer
+			auto ref_it = reference_stack_info_.find(final_result_offset);
+			if (ref_it != reference_stack_info_.end()) {
+				// This is a reference - load the pointer, then store the value through it
+				X64Register ptr_reg = allocateRegisterWithSpilling();
+				// Load the pointer into the register
+				auto load_ptr = generatePtrMovFromFrame(ptr_reg, final_result_offset);
+				textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
+				int value_size_bits = ref_it->second.value_size_bits;
+				int value_size_bytes = value_size_bits / 8;
+				emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
+				regAlloc.release(ptr_reg);
 			} else {
-				emitMovToFrameSized(
-					SizedRegister{actual_source_reg, 64, false},  // source: 64-bit register
-					SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
-				);
+				// Not a reference, store normally
+				// Store the computed result from actual_source_reg to memory
+				if (is_float_type) {
+					// Use SSE movss/movsd for float/double
+					bool is_single_precision = (ctx.result_value.type == Type::Float);
+					auto store_opcodes = generateFloatMovToFrame(actual_source_reg, final_result_offset, is_single_precision);
+					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				} else {
+					emitMovToFrameSized(
+						SizedRegister{actual_source_reg, 64, false},  // source: 64-bit register
+						SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+					);
+				}
 			}
 			// For named variables, we can release the source register since the value is now in memory
 			should_release_source = true;
@@ -4156,51 +4172,67 @@ private:
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
 			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op);
 			
-			// IMPORTANT: Clear any stale register mappings for this stack variable BEFORE checking
-			// This prevents using an old register value that was from a previous unrelated operation
-			for (size_t i = 0; i < regAlloc.registers.size(); ++i) {
-				auto& r = regAlloc.registers[i];
-				if (r.stackVariableOffset == res_stack_var_addr && r.reg != actual_source_reg) {
-					r.stackVariableOffset = INT_MIN; // Clear the mapping
-					r.isDirty = false;
-				}
-			}
-			
-			if (auto res_reg = regAlloc.tryGetStackVariableRegister(res_stack_var_addr); res_reg.has_value()) {
-				if (res_reg != actual_source_reg) {
-					if (is_float_type) {
-						// For float types, use SSE mov instructions for register-to-register moves
-						// TODO: Implement SSE register-to-register moves if needed
-						// For now, assert false since we shouldn't hit this path with current code
-						assert(false && "Float register-to-register move not yet implemented");
-					} else {
-						auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits / 8);
-						textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
+			// Check if this is a reference - if so, we need to store through the pointer
+			auto ref_it = reference_stack_info_.find(res_stack_var_addr);
+			if (ref_it != reference_stack_info_.end()) {
+				// This is a reference - load the pointer, then store the value through it
+				X64Register ptr_reg = allocateRegisterWithSpilling();
+				// Load the pointer into the register
+				emitMovFromFrame(ptr_reg, res_stack_var_addr);
+				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
+				int value_size_bits = ref_it->second.value_size_bits;
+				int value_size_bytes = value_size_bits / 8;
+				emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
+				regAlloc.release(ptr_reg);
+				should_release_source = true;
+			} else {
+				// Not a reference, handle as before
+				// IMPORTANT: Clear any stale register mappings for this stack variable BEFORE checking
+				// This prevents using an old register value that was from a previous unrelated operation
+				for (size_t i = 0; i < regAlloc.registers.size(); ++i) {
+					auto& r = regAlloc.registers[i];
+					if (r.stackVariableOffset == res_stack_var_addr && r.reg != actual_source_reg) {
+						r.stackVariableOffset = INT_MIN; // Clear the mapping
+						r.isDirty = false;
 					}
 				}
-				// Result is already in the correct register, no move needed
-				// Can release source register since result is now tracked in the destination register
-				should_release_source = true;
-			}
-			else {
-				// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
-				// NOTE: The flushing of old register values is now handled in setupAndLoadArithmeticOperation
-				// before the register is reassigned to the result TempVar's offset.
 				
-				// Tell the register allocator that this register now holds this temp variable
-				assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
-				regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits);
-				
-				// For floating-point types, we MUST write to memory immediately because the register
-				// allocator doesn't properly track XMM registers across all operations.
-				// Without this, subsequent loads from the stack location will read garbage.
-				if (is_float_type) {
-					bool is_single_precision = (ctx.result_value.type == Type::Float);
-					emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
+				if (auto res_reg = regAlloc.tryGetStackVariableRegister(res_stack_var_addr); res_reg.has_value()) {
+					if (res_reg != actual_source_reg) {
+						if (is_float_type) {
+							// For float types, use SSE mov instructions for register-to-register moves
+							// TODO: Implement SSE register-to-register moves if needed
+							// For now, assert false since we shouldn't hit this path with current code
+							assert(false && "Float register-to-register move not yet implemented");
+						} else {
+							auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits / 8);
+							textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
+						}
+					}
+					// Result is already in the correct register, no move needed
+					// Can release source register since result is now tracked in the destination register
+					should_release_source = true;
 				}
-				// For integer types: Don't store to memory - keep the value in the register for subsequent operations
-				// DON'T release the source register for integer temps - keeping value in register for optimization
-				should_release_source = false;
+				else {
+					// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
+					// NOTE: The flushing of old register values is now handled in setupAndLoadArithmeticOperation
+					// before the register is reassigned to the result TempVar's offset.
+					
+					// Tell the register allocator that this register now holds this temp variable
+					assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
+					regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits);
+					
+					// For floating-point types, we MUST write to memory immediately because the register
+					// allocator doesn't properly track XMM registers across all operations.
+					// Without this, subsequent loads from the stack location will read garbage.
+					if (is_float_type) {
+						bool is_single_precision = (ctx.result_value.type == Type::Float);
+						emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
+					}
+					// For integer types: Don't store to memory - keep the value in the register for subsequent operations
+					// DON'T release the source register for integer temps - keeping value in register for optimization
+					should_release_source = false;
+				}
 			}
 
 		}
