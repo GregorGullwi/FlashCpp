@@ -3412,7 +3412,7 @@ ParseResult Parser::parse_struct_declaration()
 					
 					// Also register in StructTypeInfo
 					struct_info->member_functions.emplace_back(
-						std::string(decl_node.identifier_token().value()),
+						StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
 						member_func_node,
 						current_access,
 						false,  // is_virtual

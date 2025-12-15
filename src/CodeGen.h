@@ -4045,7 +4045,7 @@ private:
 									// Determine the initial value
 									IrValue member_value;
 									// Check if this member has an initializer
-									std::string member_name_str(member.getName());
+									std::string member_name_str(StringTable::getStringView(member.getName()));
 									if (member_values.count(member_name_str)) {
 										const ASTNode& init_expr = *member_values[member_name_str];
 										std::vector<IrOperand> init_operands;
@@ -5487,7 +5487,7 @@ private:
 							auto kind_it = current_lambda_capture_kinds_.find(var_name_str);
 							bool is_reference = (kind_it != current_lambda_capture_kinds_.end() &&
 							                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
-							return generateMemberIncDec("this", member->getName(), member, is_reference, 
+							return generateMemberIncDec("this", StringTable::getStringView(member->getName()), member, is_reference, 
 							                            unaryOperatorNode.get_token());
 						}
 					}
@@ -6367,8 +6367,9 @@ private:
 						int member_offset = 0;
 						const StructMember* member_info = nullptr;
 					
+						StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
 						for (const auto& member : struct_info->members) {
-							if (member.getName() == final_member_name) {
+							if (member.getName() == final_member_name_handle) {
 								member_offset = static_cast<int>(member.offset);  // Already in bytes
 								member_info = &member;
 								found_member = true;
@@ -8050,7 +8051,7 @@ private:
 														function_name = matched_func_decl->mangled_name();
 													} else if (matched_func_decl->linkage() != Linkage::C) {
 														// Generate mangled name with base class name
-														function_name = generateMangledNameForCall(*matched_func_decl, base_struct_info->getName());
+														function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
 													}
 													return; // Stop searching once found
 												}
@@ -8683,8 +8684,9 @@ private:
 			if (struct_info) {
 				// Find the member function in the struct
 				std::string_view func_name = func_decl_node.identifier_token().value();
+			StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 				for (const auto& member_func : struct_info->member_functions) {
-					if (member_func.getName() == func_name) {
+					if (member_func.getName() == func_name_handle) {
 						called_member_func = &member_func;
 						if (member_func.is_virtual) {
 							is_virtual_call = true;
@@ -8697,7 +8699,7 @@ private:
 				// If not found as member function, check if it's a function pointer data member
 				if (!called_member_func) {
 					for (const auto& member : struct_info->members) {
-						if (member.getName() == func_name && member.type == Type::FunctionPointer) {
+						if (member.getName() == func_name_handle && member.type == Type::FunctionPointer) {
 							// This is a call through a function pointer member!
 							// Generate an indirect call instead of a member function call
 							// TODO: Get actual return type from function signature stored in member's TypeSpecifierNode
@@ -9021,7 +9023,7 @@ private:
 			// Check if this is a member function - use struct_info to determine
 			if (struct_info) {
 				// For nested classes, we need the fully qualified name from TypeInfo
-				std::string_view struct_name = struct_info->getName();
+				std::string_view struct_name = StringTable::getStringView(struct_info->getName());
 				auto type_it = gTypesByName.find(std::string(struct_name));
 				if (type_it != gTypesByName.end()) {
 					struct_name = type_it->second->name();
@@ -10003,7 +10005,7 @@ private:
 			std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name() << "'\n";
 			std::cerr << "  available members:\n";
 			for (const auto& m : struct_info->members) {
-				std::cerr << "    - " << m.getName() << "\n";
+				std::cerr << "    - " << StringTable::getStringView(m.getName()) << "\n";
 			}
 			return {};
 		}
@@ -10018,9 +10020,9 @@ private:
 			} else if (member->access == AccessSpecifier::Protected) {
 				std::cerr << "protected";
 			}
-			std::cerr << " member '" << member_name << "' of '" << struct_info->getName() << "'";
+			std::cerr << " member '" << member_name << "' of '" << StringTable::getStringView(struct_info->getName()) << "'";
 			if (current_context) {
-				std::cerr << " from '" << current_context->getName() << "'";
+				std::cerr << " from '" << StringTable::getStringView(current_context->getName()) << "'";
 			}
 			std::cerr << "\n";
 			return {};
@@ -11624,7 +11626,7 @@ private:
 					const TypeInfo& type_info = gTypeInfo[type_idx];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						type_name = struct_info->getName();
+						type_name = StringTable::getStringView(struct_info->getName());
 					}
 				}
 			}
@@ -11683,7 +11685,7 @@ private:
 				const TypeInfo& type_info = gTypeInfo[type_idx];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
-					target_type_name = struct_info->getName();
+					target_type_name = StringTable::getStringView(struct_info->getName());
 				}
 			}
 		}
@@ -12065,7 +12067,7 @@ private:
 							}
 							
 							member_store.object = closure_var_name;
-							member_store.member_name = std::string_view(member->getName());
+							member_store.member_name = StringTable::getStringView(member->getName());
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
 							member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -12146,7 +12148,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = addr_temp;
 							member_store.object = closure_var_name;  // Already a persistent string_view
-							member_store.member_name = std::string_view(member->getName());
+							member_store.member_name = StringTable::getStringView(member->getName());
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
 							member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -12193,7 +12195,7 @@ private:
 						}
 						
 						member_store.object = closure_var_name;  // Already a persistent string_view
-						member_store.member_name = std::string_view(member->getName());
+						member_store.member_name = StringTable::getStringView(member->getName());
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.is_reference = member->is_reference;
 						member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -12268,7 +12270,7 @@ private:
 				
 				// Create StructMemberFunction and add to struct
 				StructMemberFunction member_func(
-					"operator()",
+					StringTable::getOrInternStringHandle("operator()"),
 					func_decl_ast,
 					AccessSpecifier::Public,
 					false,  // is_constructor

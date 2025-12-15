@@ -7458,11 +7458,11 @@ private:
 								if (base_type.isStruct()) {
 									const StructTypeInfo* base_struct = base_type.getStructInfo();
 									if (base_struct) {
-										vtable_info.base_class_names.push_back(std::string(base_struct->getName()));
+										vtable_info.base_class_names.push_back(std::string(StringTable::getStringView(base_struct->getName())));
 										
 										// Add detailed base class info
 										ObjectFileWriter::BaseClassDescriptorInfo bci;
-										bci.name = std::string(base_struct->getName());
+										bci.name = std::string(StringTable::getStringView(base_struct->getName()));
 										bci.num_contained_bases = static_cast<uint32_t>(base_struct->base_classes.size());
 										bci.offset = static_cast<uint32_t>(base.offset);
 										bci.is_virtual = base.is_virtual;
@@ -7484,7 +7484,7 @@ private:
 					// Phase 4: Use helper
 					std::string_view unmangled_func_name = func_decl.getFunctionName();
 					for (const auto& func : struct_info->member_functions) {
-						if (func.getName() == unmangled_func_name) {
+						if (func.getName() == StringTable::getOrInternStringHandle(unmangled_func_name)) {
 							member_func = &func;
 							break;
 						}
@@ -12485,7 +12485,7 @@ private:
 					// User-defined class type
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						typeinfo_symbol = writer.get_or_create_class_typeinfo(struct_info->getName());
+						typeinfo_symbol = writer.get_or_create_class_typeinfo(StringTable::getStringView(struct_info->getName()));
 					}
 				} else {
 					// Built-in type
