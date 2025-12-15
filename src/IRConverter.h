@@ -3036,43 +3036,11 @@ inline void emitMOVToFrame(std::vector<uint8_t>& textSectionData, X64Register re
 	}
 }
 
-// SafeStringKey wrapper that stores data as std::string internally
-// but accepts both std::string and std::string_view, preventing dangling pointers
-class SafeStringKey {
-	std::string data_;
-public:
-	SafeStringKey() = default;
-	SafeStringKey(const std::string& s) : data_(s) {}
-	SafeStringKey(std::string_view sv) : data_(sv) {}
-	SafeStringKey(const char* s) : data_(s) {}
-	SafeStringKey(const SafeStringKey& other) = default;
-	SafeStringKey(SafeStringKey&& other) noexcept = default;
-	
-	SafeStringKey& operator=(const SafeStringKey& other) = default;
-	SafeStringKey& operator=(SafeStringKey&& other) noexcept = default;
-	
-	~SafeStringKey() = default;
-	
-	operator std::string_view() const { return data_; }
-	const std::string& str() const { return data_; }
-	
-	bool operator==(const SafeStringKey& other) const { return data_ == other.data_; }
-	bool operator!=(const SafeStringKey& other) const { return data_ != other.data_; }
-	bool operator<(const SafeStringKey& other) const { return data_ < other.data_; }
-	
-	friend struct std::hash<SafeStringKey>;
-	friend std::ostream& operator<<(std::ostream& os, const SafeStringKey& key) {
-		return os << key.data_;
-	}
-};
-
-// Hash support for std::unordered_map
-template<>
-struct std::hash<SafeStringKey> {
-	size_t operator()(const SafeStringKey& key) const {
-		return std::hash<std::string>{}(key.data_);
-	}
-};
+// Phase 5: SafeStringKey removed - replaced with StringHandle throughout backend
+// StringHandle provides superior performance:
+// - No string allocations (32 bytes → 4 bytes)
+// - No runtime hashing (pre-computed O(1) hash retrieval)
+// - Integer-based comparisons instead of string comparisons
 
 template<class TWriterClass = ObjectFileWriter>
 class IrToObjConverter {
@@ -3786,7 +3754,7 @@ private:
 		ctx.result_physical_reg = X64Register::Count;
 		if (std::holds_alternative<std::string_view>(bin_op.lhs.value)) {
 			auto lhs_var_op = std::get<std::string_view>(bin_op.lhs.value);
-			auto lhs_var_id = variable_scopes.back().variables.find(lhs_var_op);
+			auto lhs_var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(lhs_var_op));
 			if (lhs_var_id != variable_scopes.back().variables.end()) {
 				if (auto var_reg = regAlloc.tryGetStackVariableRegister(lhs_var_id->second.offset); var_reg.has_value()) {
 					ctx.result_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
@@ -3851,7 +3819,7 @@ private:
 						if (!var_name.empty() && var_name[0] == '%') {
 							var_name = var_name.substr(1);
 						}
-						auto named_var_it = variable_scopes.back().variables.find(var_name);
+						auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 						if (named_var_it != variable_scopes.back().variables.end()) {
 							int32_t named_offset = named_var_it->second.offset;
 							ref_it = reference_stack_info_.find(named_offset);
@@ -3954,7 +3922,7 @@ private:
 		ctx.rhs_physical_reg = X64Register::Count;
 		if (std::holds_alternative<std::string_view>(bin_op.rhs.value)) {
 			auto rhs_var_op = std::get<std::string_view>(bin_op.rhs.value);
-			auto rhs_var_id = variable_scopes.back().variables.find(rhs_var_op);
+			auto rhs_var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_op));
 			if (rhs_var_id != variable_scopes.back().variables.end()) {
 				if (auto var_reg = regAlloc.tryGetStackVariableRegister(rhs_var_id->second.offset); var_reg.has_value()) {
 					ctx.rhs_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
@@ -4019,7 +3987,7 @@ private:
 						if (!var_name.empty() && var_name[0] == '%') {
 							var_name = var_name.substr(1);
 						}
-						auto named_var_it = variable_scopes.back().variables.find(var_name);
+						auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 						if (named_var_it != variable_scopes.back().variables.end()) {
 							int32_t named_offset = named_var_it->second.offset;
 							ref_it = reference_stack_info_.find(named_offset);
@@ -4153,7 +4121,7 @@ private:
 		if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			const TempVar temp_var = std::get<TempVar>(ctx.result_value.value);
 			const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
-			variable_scopes.back().variables[temp_var.name()].offset = stack_offset;
+			variable_scopes.back().variables[StringTable::getOrInternStringHandle(temp_var.name())].offset = stack_offset;
 			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
 			if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
 				// IMPORTANT: Before reassigning this register to the result TempVar's offset,
@@ -4191,8 +4159,8 @@ private:
 
 		// Determine the final destination of the result (register or memory)
 		if (std::holds_alternative<std::string_view>(ctx.result_value.value)) {
-			// If the result is a named variable, find its stack offset
-			int final_result_offset = variable_scopes.back().variables[std::get<std::string_view>(ctx.result_value.value)].offset;
+			// If the result is a named variable, find its stack offset - Phase 5: Convert to StringHandle
+			int final_result_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(std::get<std::string_view>(ctx.result_value.value))].offset;
 
 			// Check if this is a reference - if so, we need to store through the pointer
 			auto ref_it = reference_stack_info_.find(final_result_offset);
@@ -4354,7 +4322,7 @@ private:
 	struct StackVariableScope
 	{
 		int scope_stack_space = 0;
-		std::unordered_map<SafeStringKey, VariableInfo> variables;  // Maps variable name to offset and size
+		std::unordered_map<StringHandle, VariableInfo> variables;  // Phase 5: StringHandle for integer-based lookups
 	};
 
 	struct ReferenceInfo {
@@ -4372,14 +4340,14 @@ private:
 		}
 
 		struct VarDecl {
-			std::string_view var_name{};  // OK to use string_view here - local variable, doesn't outlive IR
+			StringHandle var_name{};  // Phase 5: StringHandle for efficient storage
 			int size_in_bits{};
 			size_t alignment{};  // Custom alignment from alignas(n), 0 = use natural alignment
 		};
 		std::vector<VarDecl> local_vars;
 
 		// Track TempVar sizes from instructions that produce them
-		std::unordered_map<SafeStringKey, int> temp_var_sizes;  // SafeStringKey accepts both string and string_view
+		std::unordered_map<StringHandle, int> temp_var_sizes;  // Phase 5: StringHandle for integer-based lookups
 		
 		// Track maximum outgoing call argument space needed
 		size_t max_outgoing_arg_bytes = 0;
@@ -4443,7 +4411,8 @@ private:
 				}
 				
 				func_stack_space.named_vars_size += (total_size_bits / 8);
-				local_vars.push_back(VarDecl{ .var_name = var_name, .size_in_bits = total_size_bits, .alignment = custom_alignment });
+				// Phase 5: Store StringHandle directly for efficient variable tracking
+				local_vars.push_back(VarDecl{ .var_name = StringTable::getOrInternStringHandle(var_name), .size_in_bits = total_size_bits, .alignment = custom_alignment });
 			}
 			else {
 				// Track TempVars and their sizes from typed payloads or legacy operand format
@@ -4456,29 +4425,33 @@ private:
 						if (const BinaryOp* bin_op = std::any_cast<BinaryOp>(&instruction.getTypedPayload())) {
 							if (std::holds_alternative<TempVar>(bin_op->result)) {
 								auto temp_var = std::get<TempVar>(bin_op->result);
-								// Use LHS size for result (works for arithmetic and comparisons)
-								temp_var_sizes[temp_var.name()] = bin_op->lhs.size_in_bits;
+								// Phase 5: Convert temp var name to StringHandle
+								temp_var_sizes[StringTable::getOrInternStringHandle(temp_var.name())] = bin_op->lhs.size_in_bits;
 								handled_by_typed_payload = true;
 							}
 						}
 						// Try CallOp (function calls)
 						else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-							temp_var_sizes[call_op->result.name()] = call_op->return_size_in_bits;
+							// Phase 5: Convert temp var name to StringHandle
+							temp_var_sizes[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits;
 							handled_by_typed_payload = true;
 						}
 						// Try ArrayAccessOp (array element load)
 						else if (const ArrayAccessOp* array_op = std::any_cast<ArrayAccessOp>(&instruction.getTypedPayload())) {
-							temp_var_sizes[array_op->result.name()] = array_op->element_size_in_bits;
+							// Phase 5: Convert temp var name to StringHandle
+							temp_var_sizes[StringTable::getOrInternStringHandle(array_op->result.name())] = array_op->element_size_in_bits;
 							handled_by_typed_payload = true;
 						}
 						// Try ArrayElementAddressOp (get address of array element)
 						else if (const ArrayElementAddressOp* addr_op = std::any_cast<ArrayElementAddressOp>(&instruction.getTypedPayload())) {
-							temp_var_sizes[addr_op->result.name()] = 64; // Pointer is always 64-bit
+							// Phase 5: Convert temp var name to StringHandle
+							temp_var_sizes[StringTable::getOrInternStringHandle(addr_op->result.name())] = 64; // Pointer is always 64-bit
 							handled_by_typed_payload = true;
 						}
 						// Try DereferenceOp (for dereferencing pointers/references)
 						else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
-							temp_var_sizes[deref_op->result.name()] = deref_op->pointee_size_in_bits;
+							// Phase 5: Convert temp var name to StringHandle
+							temp_var_sizes[StringTable::getOrInternStringHandle(deref_op->result.name())] = deref_op->pointee_size_in_bits;
 							handled_by_typed_payload = true;
 						}
 						// Try AssignmentOp (for materializing literals to temporaries)
@@ -4486,13 +4459,15 @@ private:
 							// Track the LHS TempVar if it's a TempVar
 							if (std::holds_alternative<TempVar>(assign_op->lhs.value)) {
 								auto temp_var = std::get<TempVar>(assign_op->lhs.value);
-								temp_var_sizes[temp_var.name()] = assign_op->lhs.size_in_bits;
+								// Phase 5: Convert temp var name to StringHandle
+								temp_var_sizes[StringTable::getOrInternStringHandle(temp_var.name())] = assign_op->lhs.size_in_bits;
 								handled_by_typed_payload = true;
 							}
 						}
 						// Try AddressOfOp (for taking address of temporaries)
 						else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
-							temp_var_sizes[addr_of_op->result.name()] = 64; // Pointer is always 64-bit
+							// Phase 5: Convert temp var name to StringHandle
+							temp_var_sizes[StringTable::getOrInternStringHandle(addr_of_op->result.name())] = 64; // Pointer is always 64-bit
 							handled_by_typed_payload = true;
 						}
 						// Add more payload types here as they produce TempVars
@@ -4514,7 +4489,7 @@ private:
 				    instruction.isOperandType<int>(2)) {
 					auto temp_var = instruction.getOperandAs<TempVar>(0);
 					int size_in_bits = instruction.getOperandAs<int>(2);
-					temp_var_sizes[temp_var.name()] = size_in_bits;
+					temp_var_sizes[StringTable::getOrInternStringHandle(temp_var.name())] = size_in_bits;
 				}
 			}
 		}
@@ -4593,7 +4568,7 @@ private:
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
-			auto it = variable_scopes.back().variables.find(tempVar.name());
+			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(tempVar.name()));
 			FLASH_LOG(Codegen, Debug, "getStackOffsetFromTempVar: Looking up '", tempVar.name(), "'");
 			if (it != variable_scopes.back().variables.end() && it->second.offset != INT_MIN) {
 				FLASH_LOG(Codegen, Debug, "  Found with valid offset: ", it->second.offset);
@@ -4640,7 +4615,7 @@ private:
 		
 		// Register the TempVar's offset in variables map so subsequent lookups
 		// return the same offset even if scope_stack_space changes
-		variable_scopes.back().variables[tempVar.name()].offset = offset;
+		variable_scopes.back().variables[StringTable::getOrInternStringHandle(tempVar.name())].offset = offset;
 		
 		return offset;
 	}
@@ -5577,7 +5552,7 @@ private:
 			
 			// Get result offset
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number);
-			variable_scopes.back().variables[call_op.result.name()].offset = result_offset;
+			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
 			// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
 			// To prevent loadTypedValueIntoRegister from clobbering parameter registers,
@@ -5682,7 +5657,7 @@ private:
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						} else if (std::holds_alternative<std::string_view>(arg.value)) {
 							std::string_view var_name = std::get<std::string_view>(arg.value);
-							int var_offset = variable_scopes.back().variables[var_name].offset;
+							int var_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(var_name)].offset;
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						}
@@ -5765,7 +5740,7 @@ private:
 				if (should_pass_address && std::holds_alternative<std::string_view>(arg.value)) {
 					// Load ADDRESS of object using LEA instead of value
 					std::string_view object_name = std::get<std::string_view>(arg.value);
-					int object_offset = variable_scopes.back().variables[object_name].offset;
+					int object_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(object_name)].offset;
 					emitLEAFromFrame(textSectionData, target_reg, object_offset);
 					continue;
 				}
@@ -5864,7 +5839,7 @@ private:
 				} else if (std::holds_alternative<std::string_view>(arg.value)) {
 					// Load variable
 					std::string_view var_name = std::get<std::string_view>(arg.value);
-					int var_offset = variable_scopes.back().variables[var_name].offset;
+					int var_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(var_name)].offset;
 					if (is_float_arg) {
 						// For floating-point, use movsd/movss into XMM register
 						bool is_float = (arg.type == Type::Float);
@@ -5965,7 +5940,7 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(ctor_op.object);
-			auto it = variable_scopes.back().variables.find(var_name);
+			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (it == variable_scopes.back().variables.end()) {
 				throw std::runtime_error("Constructor call: variable not found in variables map: " + std::string(var_name));
 			}
@@ -6190,7 +6165,7 @@ private:
 			} else if (std::holds_alternative<std::string_view>(paramValue)) {
 				// Load from variable
 				std::string_view var_name = std::get<std::string_view>(paramValue);
-				auto it = variable_scopes.back().variables.find(var_name);
+				auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 				if (it != variable_scopes.back().variables.end()) {
 					int param_offset = it->second.offset;
 					if (is_reference_param) {
@@ -6256,7 +6231,7 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			const std::string& var_name = std::get<std::string>(dtor_op.object);
-			object_offset = variable_scopes.back().variables[var_name].offset;
+			object_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(var_name)].offset;
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
@@ -6308,7 +6283,7 @@ private:
 		assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
 		const TempVar& result_var = std::get<TempVar>(op.result.value);
 		int result_offset = getStackOffsetFromTempVar(result_var);
-		variable_scopes.back().variables[result_var.name()].offset = result_offset;
+		variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
 
 		// Get object offset
 		int object_offset = 0;
@@ -6317,7 +6292,7 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(op.object);
-			object_offset = variable_scopes.back().variables[var_name].offset;
+			object_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(var_name)].offset;
 		}
 
 		// Virtual call sequence:
@@ -6354,7 +6329,7 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(op.object);
-			object_offset = variable_scopes.back().variables[var_name].offset;
+			object_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(var_name)].offset;
 		}
 
 		emitLeaFromFrame(X64Register::RCX, object_offset);
@@ -6433,7 +6408,7 @@ private:
 			// Count is an identifier (variable name) - load from stack
 			std::string_view count_name = std::get<std::string_view>(op.count);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(count_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(count_name));
 			if (it == current_scope.variables.end()) {
 				assert(false && "Array size variable not found in scope");
 				return;
@@ -6503,7 +6478,7 @@ private:
 		} else if (std::holds_alternative<std::string_view>(op.pointer)) {
 			std::string_view var_name = std::get<std::string_view>(op.pointer);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(var_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
@@ -6545,7 +6520,7 @@ private:
 		} else if (std::holds_alternative<std::string_view>(op.pointer)) {
 			std::string_view var_name = std::get<std::string_view>(op.pointer);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(var_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
@@ -6586,7 +6561,7 @@ private:
 			// Address is an identifier (variable name) - load from stack
 			std::string_view address_name = std::get<std::string_view>(op.address);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(address_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(address_name));
 			if (it == current_scope.variables.end()) {
 				assert(false && "Placement address variable not found in scope");
 				return;
@@ -6939,7 +6914,7 @@ private:
 
 		Type var_type = op.type;
 		StackVariableScope& current_scope = variable_scopes.back();
-		auto var_it = current_scope.variables.find(var_name_str);
+		auto var_it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name_str));
 		assert(var_it != current_scope.variables.end());
 
 		bool is_reference = op.is_reference;
@@ -6997,7 +6972,7 @@ private:
 				} else if (std::holds_alternative<std::string_view>(init.value)) {
 					auto rvalue_var_name = std::get<std::string_view>(init.value);
 					
-					auto src_it = current_scope.variables.find(rvalue_var_name);
+					auto src_it = current_scope.variables.find(StringTable::getOrInternStringHandle(rvalue_var_name));
 					if (src_it != current_scope.variables.end()) {
 						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", rvalue_var_name, "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
 						// Check if source is a reference
@@ -7104,12 +7079,13 @@ private:
 					src_offset = getStackOffsetFromTempVar(temp_var);
 				} else if (std::holds_alternative<std::string_view>(init.value)) {
 					auto rvalue_var_name = std::get<std::string_view>(init.value);
-					auto src_it = current_scope.variables.find(rvalue_var_name);
+					auto src_it = current_scope.variables.find(StringTable::getOrInternStringHandle(rvalue_var_name));
 					if (src_it == current_scope.variables.end()) {
 						FLASH_LOG(Codegen, Error, "Variable '", rvalue_var_name, "' not found in symbol table");
 						FLASH_LOG(Codegen, Error, "Available variables in current scope:");
 						for (const auto& [name, var_info] : current_scope.variables) {
-							FLASH_LOG(Codegen, Error, "  - ", name, " at var_info.offset ");
+							// Phase 5: Convert StringHandle to string_view for logging
+							FLASH_LOG(Codegen, Error, "  - ", StringTable::getStringView(name), " at var_info.offset ");
 						}
 					}
 					assert(src_it != current_scope.variables.end());
@@ -7588,7 +7564,7 @@ private:
 		if (!struct_name.empty()) {
 			// 'this' is passed in RCX (first parameter register)
 			int this_offset = -8;  // First parameter slot
-			variable_scopes.back().variables["this"].offset = this_offset;
+			variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
 
 			// Add 'this' parameter to debug information
 			writer.add_function_parameter("this", 0x603, this_offset);  // 0x603 = T_64PVOID (pointer type)
@@ -7648,7 +7624,7 @@ private:
 				}
 
 				auto param_name = instruction.getOperandAs<std::string_view>(paramIndex + FunctionDeclLayout::PARAM_NAME);
-				variable_scopes.back().variables[param_name].offset = offset;
+				variable_scopes.back().variables[StringTable::getOrInternStringHandle(param_name)].offset = offset;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
@@ -7751,7 +7727,7 @@ private:
 				}
 
 				// Phase 4: Use helper to get param name for map key
-				variable_scopes.back().variables[SafeStringKey(param.getName())].offset = offset;
+				variable_scopes.back().variables[StringTable::getOrInternStringHandle(param.getName())].offset = offset;
 
 				// Track reference parameters
 				if (param.is_reference) {
@@ -7936,8 +7912,8 @@ private:
 				}
 				
 				// Register special variables for va_list structure and register save area
-				variable_scopes.back().variables["__varargs_va_list_struct__"].offset = va_list_struct_base;
-				variable_scopes.back().variables["__varargs_reg_save_area__"].offset = reg_save_area_base;
+				variable_scopes.back().variables[StringTable::getOrInternStringHandle("__varargs_va_list_struct__")].offset = va_list_struct_base;
+				variable_scopes.back().variables[StringTable::getOrInternStringHandle("__varargs_reg_save_area__")].offset = reg_save_area_base;
 				
 				// Initialize the va_list structure fields directly in the function prologue
 				// This avoids IR complexity with pointer arithmetic and dereferencing
@@ -7974,7 +7950,7 @@ private:
 		}
 		
 		const auto& current_scope = variable_scopes.back();
-		auto var_it = current_scope.variables.find(var_name);
+		auto var_it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 		if (var_it != current_scope.variables.end()) {
 			return var_it->second.size_in_bits;
 		}
@@ -8031,7 +8007,7 @@ private:
 					auto return_var = std::get<TempVar>(ret_val);
 					auto temp_var_name = return_var.name();
 					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.variables.find(temp_var_name);
+					auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(temp_var_name));
 					
 					// Check if return type is float/double
 					bool is_float_return = ret_op.return_type.has_value() && 
@@ -8103,7 +8079,7 @@ private:
 					// Handle named variable
 					std::string_view var_name = std::get<std::string_view>(ret_val);
 					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.variables.find(var_name);
+					auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 					if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
 						
@@ -8584,7 +8560,7 @@ private:
 			}
 		} else if (std::holds_alternative<std::string_view>(result_operand)) {
 			auto result_var_name = std::get<std::string_view>(result_operand);
-			auto var_id = variable_scopes.back().variables.find(result_var_name);
+			auto var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(result_var_name));
 			if (var_id != variable_scopes.back().variables.end()) {
 				auto store_opcodes = generatePtrMovToFrame(result_physical_reg, var_id->second.offset);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
@@ -8910,7 +8886,7 @@ private:
 			}
 		} else if (instruction.isOperandType<std::string_view>(operand_index)) {
 			auto var_name = instruction.getOperandAs<std::string_view>(operand_index);
-			auto var_id = variable_scopes.back().variables.find(var_name);
+			auto var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (var_id != variable_scopes.back().variables.end()) {
 				if (auto ref_it = reference_stack_info_.find(var_id->second.offset); ref_it != reference_stack_info_.end()) {
 					reg = allocateRegisterWithSpilling();
@@ -8957,7 +8933,7 @@ private:
 			}
 		} else if (std::holds_alternative<std::string_view>(typed_value.value)) {
 			auto var_name = std::get<std::string_view>(typed_value.value);
-			auto var_id = variable_scopes.back().variables.find(var_name);
+			auto var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (var_id != variable_scopes.back().variables.end()) {
 				if (auto ref_it = reference_stack_info_.find(var_id->second.offset); ref_it != reference_stack_info_.end()) {
 					reg = allocateRegisterWithSpilling();
@@ -8996,7 +8972,7 @@ private:
 	std::optional<int32_t> findIdentifierStackOffset(std::string_view name) const {
 		for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
 			const auto& scope = *scope_it;
-			auto found = scope.variables.find(name);
+			auto found = scope.variables.find(StringTable::getOrInternStringHandle(name));
 			if (found != scope.variables.end()) {
 				return found->second.offset;
 			}
@@ -9247,7 +9223,7 @@ private:
 	bool loadAddressForOperand(const IrInstruction& instruction, size_t operand_index, X64Register target_reg) {
 		if (instruction.isOperandType<std::string_view>(operand_index)) {
 			auto name = instruction.getOperandAs<std::string_view>(operand_index);
-			auto it = variable_scopes.back().variables.find(name);
+			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(name));
 			if (it == variable_scopes.back().variables.end()) {
 				return false;
 			}
@@ -9257,7 +9233,7 @@ private:
 		}
 		if (instruction.isOperandType<std::string>(operand_index)) {
 			auto name = instruction.getOperandAs<std::string>(operand_index);
-			auto it = variable_scopes.back().variables.find(name);
+			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(name));
 			if (it == variable_scopes.back().variables.end()) {
 				return false;
 			}
@@ -9495,7 +9471,7 @@ private:
 			auto var_name = std::get<std::string_view>(unary_op.value.value);
 		
 			// Check if it's a local variable first
-			auto var_id = variable_scopes.back().variables.find(var_name);
+			auto var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (var_id != variable_scopes.back().variables.end()) {
 				// It's a local variable on the stack - use the correct size
 				auto stack_offset = var_id->second.offset;
@@ -9745,7 +9721,7 @@ private:
 			}
 		} else if (std::holds_alternative<std::string_view>(op.from.value)) {
 			auto var_name = std::get<std::string_view>(op.from.value);
-			auto var_it = variable_scopes.back().variables.find(var_name);
+			auto var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			assert(var_it != variable_scopes.back().variables.end() && "Variable not found in variables");
 			// Check if the value is already in an XMM register
 			if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->second.offset); existing_reg.has_value()) {
@@ -9842,7 +9818,7 @@ private:
 			emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 		} else if (std::holds_alternative<std::string_view>(op.from.value)) {
 			auto var_name = std::get<std::string_view>(op.from.value);
-			auto var_it = variable_scopes.back().variables.find(var_name);
+			auto var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			assert(var_it != variable_scopes.back().variables.end());
 			source_xmm = allocateXMMRegisterWithSpilling();
 			bool is_float = (op.from.type == Type::Float);
@@ -10115,7 +10091,7 @@ private:
 
 			if (std::holds_alternative<std::string_view>(op.lhs.value)) {
 				std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
-				auto it = variable_scopes.back().variables.find(lhs_var_name);
+				auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(lhs_var_name));
 				if (it != variable_scopes.back().variables.end()) {
 					lhs_offset = it->second.offset;
 				}
@@ -10168,7 +10144,7 @@ private:
 
 			if (std::holds_alternative<std::string_view>(op.lhs.value)) {
 				std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
-				auto it = variable_scopes.back().variables.find(lhs_var_name);
+				auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(lhs_var_name));
 				if (it != variable_scopes.back().variables.end()) {
 					lhs_offset = it->second.offset;
 				}
@@ -10186,7 +10162,7 @@ private:
 			int32_t rhs_offset = -1;
 			if (std::holds_alternative<std::string_view>(op.rhs.value)) {
 				std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
-				auto it = variable_scopes.back().variables.find(rhs_var_name);
+				auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
 				if (it != variable_scopes.back().variables.end()) {
 					rhs_offset = it->second.offset;
 				}
@@ -10261,7 +10237,7 @@ private:
 
 		if (std::holds_alternative<std::string_view>(op.lhs.value)) {
 			std::string_view lhs_var_name = std::get<std::string_view>(op.lhs.value);
-			auto it = variable_scopes.back().variables.find(lhs_var_name);
+			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(lhs_var_name));
 			if (it != variable_scopes.back().variables.end()) {
 				lhs_offset = it->second.offset;
 			} else {
@@ -10318,7 +10294,7 @@ private:
 				var_name = var_name.substr(1);
 				FLASH_LOG(Codegen, Debug, "After removing %, name: '", var_name, "'");
 			}
-			auto named_var_it = variable_scopes.back().variables.find(var_name);
+			auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (named_var_it != variable_scopes.back().variables.end()) {
 				int32_t named_offset = named_var_it->second.offset;
 				FLASH_LOG(Codegen, Debug, "Found in named vars at offset: ", named_offset);
@@ -10343,7 +10319,7 @@ private:
 			if (std::holds_alternative<std::string_view>(op.rhs.value)) {
 				std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
 				FLASH_LOG(Codegen, Debug, "Reference assignment: LHS is ref, RHS is string_view: '", rhs_var_name, "'");
-				auto it = variable_scopes.back().variables.find(rhs_var_name);
+				auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
 				if (it != variable_scopes.back().variables.end()) {
 					int32_t rhs_offset = it->second.offset;
 					// Check if RHS is itself a pointer or reference
@@ -10412,7 +10388,7 @@ private:
 		// Load RHS value into a register
 		if (std::holds_alternative<std::string_view>(op.rhs.value)) {
 			std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
-			auto it = variable_scopes.back().variables.find(rhs_var_name);
+			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
 			if (it != variable_scopes.back().variables.end()) {
 				int32_t rhs_offset = it->second.offset;
 				
@@ -10456,7 +10432,7 @@ private:
 				// Only try to match if this looks like it could be a named variable
 				// (not a pure temporary like "temp_10")
 				if (!var_name.empty() && var_name.find("temp_") != 0) {
-					auto named_var_it = variable_scopes.back().variables.find(var_name);
+					auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 					if (named_var_it != variable_scopes.back().variables.end()) {
 						int32_t named_offset = named_var_it->second.offset;
 						rhs_ref_it = reference_stack_info_.find(named_offset);
@@ -10586,8 +10562,8 @@ private:
 
 		// Track label positions for later resolution
 		std::string label_name_str(label_name);
-		if (label_positions_.find(label_name_str) == label_positions_.end()) {
-			label_positions_[label_name_str] = label_offset;
+		if (label_positions_.find(StringTable::getOrInternStringHandle(label_name_str)) == label_positions_.end()) {
+			label_positions_[StringTable::getOrInternStringHandle(label_name_str)] = label_offset;
 		}
 
 		// Flush all dirty registers at label boundaries to ensure correct state
@@ -10621,7 +10597,7 @@ private:
 		textSectionData.push_back(0x00);
 
 		// Record this branch for later patching
-		pending_branches_.push_back({target_label, patch_position});
+		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
 	}
 
 	void handleLoopBegin(const IrInstruction& instruction) {
@@ -10632,8 +10608,9 @@ private:
 		std::string_view loop_end_label = op.loop_end_label;
 		std::string_view loop_increment_label = op.loop_increment_label;
 		
-		// Push loop context onto stack for break/continue handling
-		loop_context_stack_.push_back({loop_end_label, loop_increment_label});
+		// Push loop context onto stack for break/continue handling - Phase 5: Convert to StringHandle
+		loop_context_stack_.push_back({StringTable::getOrInternStringHandle(loop_end_label), 
+		                                StringTable::getOrInternStringHandle(loop_increment_label)});
 
 		// Flush all dirty registers at loop boundaries
 		flushAllDirtyRegisters();
@@ -10755,10 +10732,10 @@ private:
 				object_name = array_name_view.substr(0, dot_pos);
 				member_name = array_name_view.substr(dot_pos + 1);
 				// Update array_base_offset to point to the object
-				array_base_offset = variable_scopes.back().variables[object_name].offset;
+				array_base_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(object_name)].offset;
 			} else {
 				// Regular array/pointer - get offset directly
-				array_base_offset = variable_scopes.back().variables[array_name_view].offset;
+				array_base_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(array_name_view)].offset;
 			}
 		}
 			
@@ -10845,7 +10822,7 @@ private:
 		} else if (std::holds_alternative<std::string_view>(op.index.value)) {
 			// Variable index stored as identifier name
 			std::string index_var_name_str = std::string(std::get<std::string_view>(op.index.value));
-			auto index_it = variable_scopes.back().variables.find(index_var_name_str);
+			auto index_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(index_var_name_str));
 			assert(index_it != variable_scopes.back().variables.end() && "Index variable not found");
 			int64_t index_var_offset = index_it->second.offset;
 			
@@ -10907,7 +10884,7 @@ private:
 			int64_t array_base_offset = 0;
 			if (std::holds_alternative<std::string_view>(op.array)) {
 				std::string_view array_name = std::get<std::string_view>(op.array);
-				array_base_offset = variable_scopes.back().variables[array_name].offset;
+				array_base_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(array_name)].offset;
 			} else if (std::holds_alternative<TempVar>(op.array)) {
 				TempVar array_temp = std::get<TempVar>(op.array);
 				array_base_offset = getStackOffsetFromTempVar(array_temp);
@@ -11038,7 +11015,7 @@ private:
 			
 			// Get array base offset
 			std::string_view lookup_name = is_member_array ? object_name : array_name_view;
-			array_base_offset = variable_scopes.back().variables[lookup_name].offset;
+			array_base_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(lookup_name)].offset;
 			
 			// Handle constant vs variable index
 			if (std::holds_alternative<unsigned long long>(op.index.value)) {
@@ -11112,7 +11089,7 @@ private:
 		// Add string literal to .rdata and get symbol
 		std::string_view symbol_name = writer.add_string_literal(op.content);
 		int64_t stack_offset = getStackOffsetFromTempVar(result_var);
-		variable_scopes.back().variables[result_var.name()].offset = stack_offset;
+		variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = stack_offset;
 
 		// LEA RAX, [RIP + symbol] with relocation
 		uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
@@ -11138,7 +11115,7 @@ private:
 		// Get object base offset
 		if (std::holds_alternative<std::string_view>(op.object)) {
 			std::string_view object_name = std::get<std::string_view>(op.object);
-			auto it = current_scope.variables.find(object_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(object_name));
 			if (it == current_scope.variables.end()) {
 				// Not found in local scope - check if it's a global variable
 				bool found_global = false;
@@ -11191,7 +11168,7 @@ private:
 		// Get the result variable's stack offset (needed for both paths)
 		auto result_var = std::get<TempVar>(op.result.value);
 		int32_t result_offset;
-		auto it = current_scope.variables.find(result_var.name());
+		auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(result_var.name()));
 		if (it != current_scope.variables.end()) {
 			result_offset = it->second.offset;
 		} else {
@@ -11284,7 +11261,7 @@ private:
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 				regAlloc.release(temp_reg);
-				variable_scopes.back().variables[result_var.name()].offset = result_offset;
+				variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
 				return;
 			} else {
 				// For integers: use standard integer load
@@ -11344,7 +11321,7 @@ private:
 		regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
 		
 		// Add the TempVar to variables so it can be found later
-		variable_scopes.back().variables[result_var.name()].offset = result_offset;
+		variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
@@ -11362,7 +11339,7 @@ private:
 			
 			if (std::holds_alternative<std::string_view>(op.object)) {
 				std::string_view object_name = std::get<std::string_view>(op.object);
-				auto it = current_scope.variables.find(object_name);
+				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(object_name));
 				if (it == current_scope.variables.end()) {
 					assert(false && "Struct object not found in scope");
 					return;
@@ -11454,7 +11431,7 @@ private:
 					}
 				} else if (is_variable) {
 					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.variables.find(variable_name);
+					auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(variable_name));
 					if (it == current_scope.variables.end()) {
 						assert(false && "Variable not found in scope");
 						return;
@@ -11536,7 +11513,7 @@ private:
 			}
 			
 			// Not a global - look in local scope
-			auto it = current_scope.variables.find(object_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(object_name));
 			if (it == current_scope.variables.end()) {
 				assert(false && "Struct object not found in scope");
 				return;
@@ -11578,7 +11555,7 @@ private:
 			if (is_variable) {
 				// Check if this variable is itself a reference (e.g., reference parameter)
 				const StackVariableScope& current_scope = variable_scopes.back();
-				auto it = current_scope.variables.find(variable_name);
+				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(variable_name));
 				if (it != current_scope.variables.end()) {
 					int32_t var_offset = it->second.offset;
 					// Check if this stack variable is a reference
@@ -11632,7 +11609,7 @@ private:
 			// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
 			// This will be handled separately below
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(variable_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(variable_name));
 			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
@@ -11699,7 +11676,7 @@ private:
 					return;
 				}
 
-				auto it = current_scope.variables.find(operand_str);
+				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(operand_str));
 				if (it == current_scope.variables.end()) {
 					assert(false && "Variable not found in scope");
 					return;
@@ -11753,7 +11730,7 @@ private:
 			}
 
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(operand_str);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(operand_str));
 			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
@@ -11800,7 +11777,7 @@ private:
 				}
 			} else {
 				std::string_view var_name = std::get<std::string_view>(op.pointer);
-				auto it = current_scope.variables.find(var_name);
+				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 				if (it == current_scope.variables.end()) {
 					assert(false && "Pointer variable not found");
 					return;
@@ -11990,7 +11967,7 @@ private:
 			emitMovFromFrame(ptr_reg, temp_offset);
 		} else {
 			std::string_view var_name = std::get<std::string_view>(op.pointer);
-			auto it = current_scope.variables.find(var_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (it == current_scope.variables.end()) {
 				assert(false && "Pointer variable not found in DereferenceStore");
 				return;
@@ -12013,7 +11990,7 @@ private:
 			);
 		} else if (std::holds_alternative<std::string_view>(op.value.value)) {
 			std::string_view var_name = std::get<std::string_view>(op.value.value);
-			auto it = current_scope.variables.find(var_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (it != current_scope.variables.end()) {
 				emitMovFromFrameSized(
 					SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
@@ -12054,7 +12031,7 @@ private:
 		} else if (std::holds_alternative<std::string_view>(condition_value)) {
 			auto var_name = std::get<std::string_view>(condition_value);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(var_name);
+			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (it != current_scope.variables.end()) {
 				// Check if variable is already in a register
 				if (auto reg = regAlloc.tryGetStackVariableRegister(it->second.offset); reg.has_value()) {
@@ -12082,7 +12059,7 @@ private:
 
 		// Check if then_label is a backward reference (already defined)
 		// This happens in do-while loops where we jump back to the start when true
-		bool then_is_backward = label_positions_.find(std::string(then_label)) != label_positions_.end();
+		bool then_is_backward = label_positions_.find(StringTable::getOrInternStringHandle(then_label)) != label_positions_.end();
 		
 		if (then_is_backward) {
 			// For do-while: then_label is backward (jump to loop start), else_label is forward (fall through to end)
@@ -12096,7 +12073,7 @@ private:
 			textSectionData.push_back(0x00);
 			textSectionData.push_back(0x00);
 
-			pending_branches_.push_back({then_label, then_patch_position});
+			pending_branches_.push_back({StringTable::getOrInternStringHandle(then_label), then_patch_position});
 			// Fall through to else block (loop end)
 		} else {
 			// For while/if: then_label is forward (fall through to body), else_label is forward (jump to end)
@@ -12110,7 +12087,7 @@ private:
 			textSectionData.push_back(0x00);
 			textSectionData.push_back(0x00);
 
-			pending_branches_.push_back({else_label, else_patch_position});
+			pending_branches_.push_back({StringTable::getOrInternStringHandle(else_label), else_patch_position});
 			// Fall through to then block
 		}
 	}
@@ -12163,7 +12140,7 @@ private:
 
 		// Get result offset
 		int result_offset = getStackOffsetFromTempVar(op.result);
-		variable_scopes.back().variables[op.result.name()].offset = result_offset;
+		variable_scopes.back().variables[StringTable::getOrInternStringHandle(op.result.name())].offset = result_offset;
 
 		// Load function pointer into RAX
 		X64Register func_ptr_reg;
@@ -12175,7 +12152,7 @@ private:
 		} else {
 			// Function pointer is a variable name
 			std::string_view var_name = std::get<std::string_view>(op.function_pointer);
-			int func_ptr_offset = variable_scopes.back().variables[var_name].offset;
+			int func_ptr_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(var_name)].offset;
 			func_ptr_reg = X64Register::RAX;
 			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 		}
@@ -12206,7 +12183,7 @@ private:
 				}
 			} else if (std::holds_alternative<std::string_view>(arg.value)) {
 				std::string_view var_name = std::get<std::string_view>(arg.value);
-				int arg_offset = variable_scopes.back().variables[var_name].offset;
+				int arg_offset = variable_scopes.back().variables[StringTable::getOrInternStringHandle(var_name)].offset;
 				if (is_float_arg) {
 					bool is_float = (argType == Type::Float);
 					auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
@@ -12932,9 +12909,10 @@ private:
 	void patchBranches() {
 		// Patch all pending branch instructions with correct offsets
 		for (const auto& branch : pending_branches_) {
-			auto label_it = label_positions_.find(std::string(branch.target_label));
+			auto label_it = label_positions_.find(branch.target_label);
 			if (label_it == label_positions_.end()) {
-				FLASH_LOG(Codegen, Error, "Label not found: ", branch.target_label);
+				// Phase 5: Convert StringHandle to string_view for logging
+				FLASH_LOG(Codegen, Error, "Label not found: ", StringTable::getStringView(branch.target_label));
 				continue;
 			}
 
@@ -12997,18 +12975,18 @@ private:
 	std::vector<PendingFunctionInfo> pending_functions_;
 	std::vector<StackVariableScope> variable_scopes;
 
-	// Control flow tracking
+	// Control flow tracking - Phase 5: Use StringHandle for efficient label tracking
 	struct PendingBranch {
-		SafeStringKey target_label;
+		StringHandle target_label;
 		uint32_t patch_position; // Position in textSectionData where the offset needs to be written
 	};
-	std::unordered_map<SafeStringKey, uint32_t> label_positions_;
+	std::unordered_map<StringHandle, uint32_t> label_positions_;
 	std::vector<PendingBranch> pending_branches_;
 
-	// Loop context tracking for break/continue
+	// Loop context tracking for break/continue - Phase 5: Use StringHandle
 	struct LoopContext {
-		SafeStringKey loop_end_label;       // Label to jump to for break
-		SafeStringKey loop_increment_label; // Label to jump to for continue
+		StringHandle loop_end_label;       // Label to jump to for break
+		StringHandle loop_increment_label; // Label to jump to for continue
 	};
 	std::vector<LoopContext> loop_context_stack_;
 
