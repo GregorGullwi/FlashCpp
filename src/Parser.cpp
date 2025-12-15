@@ -2540,7 +2540,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 			
 			// Create StructTypeInfo
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), is_class ? AccessSpecifier::Private : AccessSpecifier::Public);
+			auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(struct_name), is_class ? AccessSpecifier::Private : AccessSpecifier::Public);
 			
 			// Expect opening brace
 			if (!consume_punctuator("{")) {
@@ -2766,7 +2766,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Create enum type info
-			auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name), is_scoped);
+			auto enum_info = std::make_unique<EnumTypeInfo>(StringTable::getOrInternStringHandle(enum_name), is_scoped);
 			
 			// Determine underlying type
 			Type underlying_type = Type::Int;
@@ -3040,7 +3040,7 @@ ParseResult Parser::parse_struct_declaration()
 	struct_parsing_context_stack_.push_back({struct_name, &struct_ref});
 
 	// Create StructTypeInfo early so we can add base classes to it
-	auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), struct_ref.default_access());
+	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(struct_name), struct_ref.default_access());
 	struct_info->is_union = is_union;
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
@@ -5040,7 +5040,7 @@ ParseResult Parser::parse_enum_declaration()
 	}
 
 	// Create enum type info
-	auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name), is_scoped);
+	auto enum_info = std::make_unique<EnumTypeInfo>(StringTable::getOrInternStringHandle(enum_name), is_scoped);
 
 	// Determine underlying type (default is int)
 	Type underlying_type = Type::Int;
@@ -5363,7 +5363,7 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Create enum type info
-		auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name_for_typedef), is_scoped);
+		auto enum_info = std::make_unique<EnumTypeInfo>(StringTable::getOrInternStringHandle(enum_name_for_typedef), is_scoped);
 
 		// Determine underlying type (default is int)
 		Type underlying_type = Type::Int;
@@ -5476,7 +5476,7 @@ ParseResult Parser::parse_typedef_declaration()
 		struct_parsing_context_stack_.push_back({struct_name_for_typedef, &struct_ref});
 
 		// Create StructTypeInfo
-		auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name_for_typedef), AccessSpecifier::Public);
+		auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(struct_name_for_typedef), AccessSpecifier::Public);
 
 		// Apply pack alignment from #pragma pack
 		size_t pack_alignment = context_.getCurrentPackAlignment();
@@ -6280,7 +6280,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			type_info.type_size_ = type_it->second; // Set the size in bits
 			
 			// Create a minimal StructTypeInfo so it's recognized as a struct
-			auto struct_info = std::make_unique<StructTypeInfo>(type_name_str, AccessSpecifier::Public);
+			auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(type_name_str), AccessSpecifier::Public);
 			struct_info->total_size = type_it->second / 8; // Convert bits to bytes
 			type_info.setStructInfo(std::move(struct_info));
 if (type_info.getStructInfo()) {
@@ -14369,7 +14369,7 @@ ParseResult Parser::parse_lambda_expression() {
     const auto& lambda_captures = lambda.captures();
 
     TypeInfo& closure_type = add_struct_type(closure_name);
-    auto closure_struct_info = std::make_unique<StructTypeInfo>(closure_name, AccessSpecifier::Public);
+    auto closure_struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(closure_name), AccessSpecifier::Public);
 
     // For non-capturing lambdas, create a 1-byte struct (like Clang does)
     if (lambda_captures.empty()) {
@@ -16131,7 +16131,7 @@ ParseResult Parser::parse_template_declaration() {
 			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 
 			// Create struct info for tracking members - required before parsing static members
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), struct_ref.default_access());
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -16987,7 +16987,7 @@ if (struct_type_info.getStructInfo()) {
 			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 			
 			// Create StructTypeInfo for this specialization
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), struct_ref.default_access());
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -20771,7 +20771,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	
 	// Create TypeInfo for the specialization
 	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
-	auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), spec_struct.default_access());
+	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access());
 	
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {
@@ -21078,7 +21078,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Create struct type info first
 		TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
-		auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), pattern_struct.default_access());
+		auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), pattern_struct.default_access());
 		
 		// Handle base classes from the pattern
 		// Base classes need to be instantiated with concrete template arguments
@@ -21753,7 +21753,7 @@ if (struct_type_info.getStructInfo()) {
 	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
 	
 	// Create StructTypeInfo
-	auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), AccessSpecifier::Public);
+	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), AccessSpecifier::Public);
 
 	// Copy members from the template, substituting template parameters with concrete types
 	for (const auto& member_decl : class_decl.members()) {
@@ -21966,7 +21966,7 @@ if (struct_type_info.getStructInfo()) {
 			std::string qualified_name = std::string(instantiated_name) + "::" + std::string(nested_struct.name());
 			
 			// Create a new StructTypeInfo for the nested class
-			auto nested_struct_info = std::make_unique<StructTypeInfo>(qualified_name, nested_struct.default_access());
+			auto nested_struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(qualified_name), nested_struct.default_access());
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
