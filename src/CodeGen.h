@@ -410,7 +410,7 @@ public:
 				}
 
 				// Build the qualified name for deduplication
-				std::string qualified_name = std::string(type_name) + "::" + std::string(static_member.getName());
+				std::string qualified_name = std::string(type_name) + "::" + std::string(StringTable::getStringView(static_member.getName()));
 				
 				// Skip if already emitted
 				if (emitted_static_members_.count(qualified_name) > 0) {
@@ -736,7 +736,7 @@ private:
 		}
 
 		// Check if accessing class is a friend class of the member owner
-		if (accessing_struct && member_owner_struct->isFriendClass(std::string(accessing_struct->getName()))) {
+		if (accessing_struct && member_owner_struct->isFriendClass(std::string(StringTable::getStringView(accessing_struct->getName())))) {
 			return true;
 		}
 
@@ -881,7 +881,7 @@ private:
 		}
 
 		// Check if accessing class is a friend class of the member owner
-		if (accessing_struct && member_owner_struct->isFriendClass(std::string(accessing_struct->getName()))) {
+		if (accessing_struct && member_owner_struct->isFriendClass(std::string(StringTable::getStringView(accessing_struct->getName())))) {
 			return true;
 		}
 
@@ -1532,7 +1532,7 @@ private:
 							// Build the qualified name for deduplication using type_info->name()
 							// This ensures consistency with generateStaticMemberDeclarations() which uses
 							// the type name from gTypesByName iterator (important for template instantiations)
-							std::string qualified_name = std::string(type_info->name()) + "::" + std::string(static_member.getName());
+							std::string qualified_name = std::string(type_info->name()) + "::" + std::string(StringTable::getStringView(static_member.getName()));
 							
 							// Skip if already emitted
 							if (emitted_static_members_.count(qualified_name) > 0) {
@@ -1729,7 +1729,7 @@ private:
 					// Check if there's an explicit base initializer
 					const BaseInitializer* base_init = nullptr;
 					for (const auto& init : node.base_initializers()) {
-						if (init.getBaseClassName() == base.name) {
+						if (init.getBaseClassName() == StringTable::getOrInternStringHandle(base.name)) {
 							base_init = &init;
 							break;
 						}
@@ -1981,7 +1981,7 @@ private:
 						// Determine the initial value
 						IrValue member_value;
 						// Check for explicit initializer first (highest precedence)
-						auto explicit_it = explicit_inits.find(std::string(member.getName()));
+						auto explicit_it = explicit_inits.find(std::string(StringTable::getStringView(member.getName())));
 						if (explicit_it != explicit_inits.end()) {
 							// Special handling for reference members initialized with reference variables/parameters
 							// When initializing a reference member (int& ref) with a reference parameter (int& r),
@@ -4033,7 +4033,7 @@ private:
 									} else {
 										// Positional initializer - map to member by index
 										if (positional_index < struct_info.members.size()) {
-											const std::string& member_name = std::string(struct_info.members[positional_index].getName());
+											const std::string member_name = std::string(StringTable::getStringView(struct_info.members[positional_index].getName()));
 											member_values[member_name] = &initializers[i];
 											positional_index++;
 										}
@@ -4868,7 +4868,7 @@ private:
 					const TypeInfo& type_info = gTypeInfo[enum_type_index];
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
-						long long enum_value = enum_info->getEnumeratorValue(std::string(identifierNode.name()));
+						long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(identifierNode.name()));
 						// Return the enum value as a constant (using the underlying type)
 						return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
 						         static_cast<unsigned long long>(enum_value) };
@@ -5062,7 +5062,7 @@ private:
 				const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
 				if (enum_info && enum_info->is_scoped) {
 					// This is a scoped enum - look up the enumerator value
-					long long enum_value = enum_info->getEnumeratorValue(std::string(qualifiedIdNode.name()));
+					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
 					return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
 					         static_cast<unsigned long long>(enum_value) };
@@ -5087,7 +5087,7 @@ private:
 						// The owner_struct is the struct that actually defines the static member
 						// (could be a base class)
 						StringBuilder qualified_name_sb;
-						qualified_name_sb.append(owner_struct->getName());
+						qualified_name_sb.append(StringTable::getStringView(owner_struct->getName()));
 						qualified_name_sb.append("::");
 						qualified_name_sb.append(qualifiedIdNode.name());
 						op.global_name = qualified_name_sb.commit();
@@ -6434,7 +6434,7 @@ private:
 										TempVar ret_var = var_counter.next();
 										std::vector<IrOperand> call_operands;
 										call_operands.emplace_back(ret_var);
-										call_operands.emplace_back(std::string(copy_assign_op->getName()));  // "operator="
+										call_operands.emplace_back(std::string(StringTable::getStringView(copy_assign_op->getName())));  // "operator="
 
 										// Add 'this' pointer (the LHS object)
 										call_operands.emplace_back(lhs_type.type());
@@ -8776,7 +8776,7 @@ private:
 		// Check if this is a member function template that needs instantiation
 		if (struct_info) {
 			std::string_view func_name = func_decl_node.identifier_token().value();
-			std::string qualified_template_name = std::string(struct_info->getName()) + "::" + std::string(func_name);
+			std::string qualified_template_name = std::string(StringTable::getStringView(struct_info->getName())) + "::" + std::string(func_name);
 			
 			// DEBUG removed
 			
@@ -8927,7 +8927,7 @@ private:
 							TemplateInstantiationInfo inst_info;
 							inst_info.qualified_template_name = qualified_template_name;
 							inst_info.mangled_name = std::string(mangled_func_name);
-							inst_info.struct_name = std::string(struct_info->getName());
+							inst_info.struct_name = std::string(StringTable::getStringView(struct_info->getName()));
 							for (const auto& arg_type : arg_types) {
 								inst_info.template_args.push_back(arg_type);
 							}
@@ -8956,7 +8956,7 @@ private:
 			std::string_view current_function = getCurrentFunctionName();
 			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context, current_function)) {
 				std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
-				std::string context_str = current_context ? (std::string(" from '") + std::string(current_context->getName()) + "'") : "";
+				std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
 				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(), 
 				          "' of '", struct_info->getName(), "'", context_str);
 				assert(false && "Access control violation");
@@ -9967,7 +9967,7 @@ private:
 			// Static members are accessed using qualified names (OwnerClassName::memberName)
 			// Use the owner_struct name, not the current struct, to get the correct qualified name
 			StringBuilder qualified_name_sb;
-			qualified_name_sb.append(owner_struct->getName());
+			qualified_name_sb.append(StringTable::getStringView(owner_struct->getName()));
 			qualified_name_sb.append("::");
 			qualified_name_sb.append(member_name);
 			std::string_view qualified_name = qualified_name_sb.commit();

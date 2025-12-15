@@ -1714,8 +1714,9 @@ public:
 		
 		// Find the intermediate member's type from the struct's member list
 		const StructMember* intermediate_member_info = nullptr;
+		StringHandle intermediate_member_handle = StringTable::getOrInternStringHandle(intermediate_member);
 		for (const auto& member : base_struct_info->members) {
-			if (member.getName() == intermediate_member) {
+			if (member.getName() == intermediate_member_handle) {
 				intermediate_member_info = &member;
 				break;
 			}
