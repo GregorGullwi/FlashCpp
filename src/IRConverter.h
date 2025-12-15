@@ -6928,6 +6928,9 @@ private:
 
 		FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", offset=", var_it->second.offset);
 
+		// Store mapping from variable name to offset for reference lookups
+		variable_name_to_offset_[var_name_str] = var_it->second.offset;
+
 		if (is_reference) {
 			reference_stack_info_[var_it->second.offset] = ReferenceInfo{
 				.value_type = var_type,
@@ -10380,22 +10383,27 @@ private:
 			// Check if RHS is a reference - if so, dereference it
 			auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
 			
-			// If not found with TempVar offset, try looking up by name
-			if (rhs_ref_it == reference_stack_info_.end()) {
+			// If not found with TempVar offset, try looking up by checking all reference entries
+			// This handles the case where TempVar offset differs from named variable offset
+			if (rhs_ref_it == reference_stack_info_.end() && !reference_stack_info_.empty()) {
+				// Try to find the variable name and look it up
 				std::string_view var_name = rhs_var.name();
-				// Remove the '%' prefix if present
-				if (!var_name.empty() && var_name[0] == '%') {
-					var_name = var_name.substr(1);
-				}
-				auto named_var_it = variable_scopes.back().variables.find(var_name);
-				if (named_var_it != variable_scopes.back().variables.end()) {
-					int32_t named_offset = named_var_it->second.offset;
-					rhs_ref_it = reference_stack_info_.find(named_offset);
-					if (rhs_ref_it != reference_stack_info_.end()) {
-						// Found it! Update rhs_offset to use the named variable offset
-						rhs_offset = named_offset;
+				// TempVar names are like "temp_5", but we want to check if any named variable
+				// in the variables map has a corresponding reference
+				for (const auto& [ref_offset, ref_info] : reference_stack_info_) {
+					// Check if this reference offset corresponds to a named variable
+					// that might match our TempVar
+					for (const auto& [name, var_info] : variable_scopes.back().variables) {
+						if (var_info.offset == ref_offset && var_info.offset != rhs_offset) {
+							// Found a named variable with a reference at a different offset
+							// Update rhs_offset to use this offset instead
+							rhs_offset = ref_offset;
+							rhs_ref_it = reference_stack_info_.find(rhs_offset);
+							goto found_reference;
+						}
 					}
 				}
+				found_reference:;
 			}
 			
 			if (rhs_ref_it != reference_stack_info_.end()) {
@@ -12969,6 +12977,8 @@ private:
 
 	// Track which stack offsets hold references (parameters or locals)
 	std::unordered_map<int32_t, ReferenceInfo> reference_stack_info_;
+	// Map from variable names to their offsets (for reference lookup by name)
+	std::unordered_map<std::string, int32_t> variable_name_to_offset_;
 
 	// Track if dynamic_cast runtime helpers need to be emitted
 	bool needs_dynamic_cast_runtime_ = false;
