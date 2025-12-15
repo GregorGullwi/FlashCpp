@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iostream>
 #include <charconv>
+#include <type_traits>
 
 class Chunk {
 public:
@@ -92,6 +93,16 @@ public:
     char* getChunkPointer(size_t chunk_idx, size_t offset) const {
         assert(chunk_idx < chunks_.size() && "Invalid chunk index");
         return chunks_[chunk_idx]->data_.data() + offset;
+    }
+
+    // StringTable support - allocate and initialize string with metadata
+    // This is safer than raw reinterpret_cast in user code
+    template<typename MetadataType>
+    MetadataType* allocateWithMetadata(size_t content_size) {
+        static_assert(std::is_standard_layout_v<MetadataType>, "Metadata must be standard layout");
+        size_t total_size = sizeof(MetadataType) + content_size;
+        char* ptr = allocate(total_size);
+        return new (ptr) MetadataType();  // Placement new for safety
     }
 
 private:

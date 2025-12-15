@@ -157,3 +157,80 @@ std::unordered_map<StringHandle, VariableInfo> variables;
 ### Phase 6: Cleanup & Optimization
 1.  **Remove Legacy Code**: Delete any old string helper functions.
 2.  **Optimize Hash Map**: Consider replacing `std::unordered_map<StringHandle, ...>` with a flat vector or more optimized integer map if profiling shows it's still hot.
+
+## StringBuilder Migration Strategy
+
+The current codebase uses `StringBuilder` (in `ChunkedString.h`) extensively for creating persistent string_views. Here's how to migrate to the new StringTable system:
+
+### Current StringBuilder Usage Pattern
+```cpp
+// Current pattern: StringBuilder creates persistent string_view
+std::string_view persistent_name = StringBuilder()
+    .append(qualified_name)
+    .commit();
+```
+
+### Migration Options
+
+#### Option 1: Direct Replacement (Recommended for new code)
+Replace StringBuilder with StringTable::createStringHandle for new code:
+
+```cpp
+// New pattern: Direct string handle creation
+StringHandle name_handle = StringTable::createStringHandle(qualified_name);
+// Later when string_view is needed:
+std::string_view name = StringTable::getStringView(name_handle);
+```
+
+#### Option 2: StringBuilder Returns StringHandle
+Enhance StringBuilder to optionally return StringHandle:
+
+```cpp
+class StringBuilder {
+    // Add new method
+    StringHandle commitAsHandle() {
+        std::string_view sv = commit();
+        return StringTable::createStringHandle(sv);
+    }
+};
+
+// Usage
+StringHandle handle = StringBuilder().append(name).commitAsHandle();
+```
+
+#### Option 3: Gradual Migration (For existing code)
+1. **Phase 3-4**: Keep StringBuilder as-is, but intern the results
+   ```cpp
+   std::string_view temp = StringBuilder().append(name).commit();
+   StringHandle handle = StringTable::getOrInternStringHandle(temp);
+   ```
+
+2. **Phase 5-6**: Replace StringBuilder calls with direct StringTable usage
+   - Search for `StringBuilder()` patterns
+   - Replace with `StringTable::createStringHandle()` or `getOrInternStringHandle()`
+   - Benefits: Deduplication, smaller handles
+
+### Migration Checklist
+- [ ] Phase 3: Add `commitAsHandle()` method to StringBuilder
+- [ ] Phase 3-4: Update new code to use StringHandle directly
+- [ ] Phase 5: Audit existing StringBuilder usage (search for `.commit()`)
+- [ ] Phase 5: Replace StringBuilder with StringTable where appropriate:
+  - Lambda names (`CodeGen.h:940`, etc.)
+  - Qualified variable names (`CodeGen.h:423`, `CodeGen.h:1543`)
+  - Any persistent string_view that could benefit from deduplication
+- [ ] Phase 6: Consider deprecating StringBuilder for string interning use cases
+- [ ] Phase 6: Keep StringBuilder for temporary string building (if needed)
+
+### Key Differences
+| Feature | StringBuilder | StringTable |
+|---------|---------------|-------------|
+| Output | `std::string_view` | `StringHandle` (32-bit) |
+| Deduplication | No | Yes (via `getOrInternStringHandle`) |
+| Hash caching | No | Yes (stored in metadata) |
+| Memory overhead | String only | String + 12 bytes metadata |
+| Use case | Temporary string building | Persistent identifiers, variable names |
+
+### Recommendation
+- **Keep StringBuilder** for temporary string construction within a function
+- **Use StringTable** for persistent identifiers, variable names, and any strings that need to be stored in IR
+- This provides best of both: flexible string building + efficient storage

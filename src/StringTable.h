@@ -13,7 +13,7 @@
  * 
  * This file implements a zero-allocation string handling system that replaces
  * std::string/std::string_view with compact 32-bit handles. Benefits:
- * - Reduces IrOperand size from ~40 bytes to ~16 bytes
+ * - Reduces IrOperand size significantly
  * - Eliminates string copying and hashing during variable lookups
  * - Provides O(1) string reconstruction via handle
  */
@@ -153,13 +153,11 @@ public:
 	 * caching the last chunk index or using a more sophisticated data structure.
 	 */
 	static StringHandle createStringHandle(std::string_view str) {
-		// Calculate total allocation size: metadata + content + null terminator
-		size_t total_size = StringMetadata::SIZE + str.size() + 1;
-		
-		// Allocate memory (may create new chunk if needed)
-		char* ptr = gChunkedStringAllocator.allocate(total_size);
+		// Allocate using safe placement new
+		StringMetadata* metadata = gChunkedStringAllocator.allocateWithMetadata<StringMetadata>(str.size() + 1);
 		
 		// Find which chunk contains the allocated pointer (safe from race conditions)
+		char* ptr = reinterpret_cast<char*>(metadata);
 		size_t chunk_idx = gChunkedStringAllocator.findChunkIndex(ptr);
 		assert(chunk_idx != SIZE_MAX && "Allocated pointer must be in a valid chunk");
 		
@@ -167,8 +165,7 @@ public:
 		char* chunk_start = gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
 		size_t offset = ptr - chunk_start;
 
-		// Write metadata using struct
-		StringMetadata* metadata = reinterpret_cast<StringMetadata*>(ptr);
+		// Initialize metadata
 		metadata->hash = hashString(str);
 		metadata->length = static_cast<uint32_t>(str.size());
 		
