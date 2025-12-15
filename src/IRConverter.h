@@ -10579,7 +10579,7 @@ private:
 		// Label instruction: mark a position in code for jumps
 			assert(instruction.hasTypedPayload() && "Label instruction must use typed payload");
 		const auto& label_op = instruction.getTypedPayload<LabelOp>();
-		std::string_view label_name = label_op.label_name;
+		std::string_view label_name = label_op.getLabelName();  // Phase 4: Use helper
 
 		// Store the current code offset for this label
 		uint32_t label_offset = static_cast<uint32_t>(textSectionData.size());
@@ -10603,7 +10603,8 @@ private:
 	// Unconditional branch: jmp label
 	assert(instruction.hasTypedPayload() && "Branch instruction must use typed payload");
 	const auto& branch_op = instruction.getTypedPayload<BranchOp>();
-	std::string_view target_label = branch_op.target_label;		// Flush all dirty registers before branching
+	std::string_view target_label = branch_op.getTargetLabel();  // Phase 4: Use helper
+		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
 
 		// Generate JMP instruction (E9 + 32-bit relative offset)
@@ -12030,8 +12031,9 @@ private:
 		assert(instruction.hasTypedPayload() && "ConditionalBranch instruction must use typed payload");
 		const auto& cond_branch_op = instruction.getTypedPayload<CondBranchOp>();
 		IrValue condition_value = cond_branch_op.condition.value;
-	std::string_view then_label = cond_branch_op.label_true;
-	std::string_view else_label = cond_branch_op.label_false;		// Flush all dirty registers before branching
+	std::string_view then_label = cond_branch_op.getLabelTrue();   // Phase 4: Use helper
+	std::string_view else_label = cond_branch_op.getLabelFalse();  // Phase 4: Use helper
+		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
 
 		// Load condition value into a register

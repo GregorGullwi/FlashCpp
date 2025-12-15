@@ -598,9 +598,26 @@ struct BinaryOp {
 
 // Conditional branch (If)
 struct CondBranchOp {
-	std::string_view label_true;     // 16 bytes
-	std::string_view label_false;    // 16 bytes
+	std::variant<std::string_view, StringHandle> label_true;     // Phase 4: Migrating to StringHandle
+	std::variant<std::string_view, StringHandle> label_false;    // Phase 4: Migrating to StringHandle
 	TypedValue condition;            // 40 bytes (value + type)
+	
+	// Helper methods
+	std::string_view getLabelTrue() const {
+		if (std::holds_alternative<std::string_view>(label_true)) {
+			return std::get<std::string_view>(label_true);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(label_true));
+		}
+	}
+	
+	std::string_view getLabelFalse() const {
+		if (std::holds_alternative<std::string_view>(label_false)) {
+			return std::get<std::string_view>(label_false);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(label_false));
+		}
+	}
 };
 
 // Function call
@@ -639,12 +656,30 @@ struct MemberStoreOp {
 
 // Label definition
 struct LabelOp {
-	std::string_view label_name;
+	std::variant<std::string_view, StringHandle> label_name;  // Phase 4: Migrating to StringHandle
+	
+	// Helper to get label_name as string_view
+	std::string_view getLabelName() const {
+		if (std::holds_alternative<std::string_view>(label_name)) {
+			return std::get<std::string_view>(label_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(label_name));
+		}
+	}
 };
 
 // Unconditional branch
 struct BranchOp {
-	std::string_view target_label;
+	std::variant<std::string_view, StringHandle> target_label;  // Phase 4: Migrating to StringHandle
+	
+	// Helper to get target_label as string_view
+	std::string_view getTargetLabel() const {
+		if (std::holds_alternative<std::string_view>(target_label)) {
+			return std::get<std::string_view>(target_label);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(target_label));
+		}
+	}
 };
 
 // Return statement
@@ -1416,7 +1451,7 @@ public:
 		case IrOpcode::Branch:
 		{
 			const auto& op = getTypedPayload<BranchOp>();
-			oss << "br label %" << op.target_label;
+			oss << "br label %" << op.getTargetLabel();  // Phase 4: Use helper
 		}
 		break;
 		
@@ -1435,15 +1470,15 @@ public:
 				oss << '%' << std::get<std::string_view>(val);
 			}
 		
-			oss << ", label %" << op.label_true;
-			oss << ", label %" << op.label_false;
+			oss << ", label %" << op.getLabelTrue();   // Phase 4: Use helper
+			oss << ", label %" << op.getLabelFalse();  // Phase 4: Use helper
 		}
 		break;
 		
 		case IrOpcode::Label:
 		{
 			const auto& op = getTypedPayload<LabelOp>();
-			oss << op.label_name << ":";
+			oss << op.getLabelName() << ":";  // Phase 4: Use helper
 		}
 		break;
 		
@@ -2186,7 +2221,7 @@ public:
 		case IrOpcode::TryBegin:
 		{
 			const auto& op = getTypedPayload<BranchOp>();
-			oss << "try_begin @" << op.target_label;
+			oss << "try_begin @" << op.getTargetLabel();  // Phase 4: Use helper
 		}
 		break;
 
