@@ -578,8 +578,8 @@ public:
 				// Use the pattern from visitConstructorDeclarationNode
 				// Create function declaration for constructor
 				FunctionDeclOp ctor_decl_op;
-				ctor_decl_op.function_name = std::string(type_info->name_);
-				ctor_decl_op.struct_name = std::string(type_info->name_);
+				ctor_decl_op.function_name = std::string(type_info->name());
+				ctor_decl_op.struct_name = std::string(type_info->name());
 				ctor_decl_op.return_type = Type::Void;
 				ctor_decl_op.return_size_in_bits = 0;
 				ctor_decl_op.return_pointer_depth = 0;
@@ -590,11 +590,11 @@ public:
 				TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 				std::vector<TypeSpecifierNode> empty_params;  // Explicit type to avoid ambiguity
 				ctor_decl_op.mangled_name = generateMangledNameForCall(
-					type_info->name_,
+					type_info->name(),
 					void_type,
 					empty_params,  // no parameters
 					false,  // not variadic
-					type_info->name_  // parent class name
+					type_info->name()  // parent class name
 				);
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
@@ -608,7 +608,7 @@ public:
 						const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
 						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
 							ConstructorCallOp call_op;
-							call_op.struct_name = std::string(base_type_it->second->name_);
+							call_op.struct_name = std::string(base_type_it->second->name());
 							call_op.object = std::string_view("this");
 							// No arguments for default constructor
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
@@ -1229,7 +1229,7 @@ private:
 			// Try to get the fully qualified name from TypeInfo (for nested classes)
 			auto type_it = gTypesByName.find(node.parent_struct_name());
 			if (type_it != gTypesByName.end()) {
-				struct_name_for_function = type_it->second->name_;
+				struct_name_for_function = type_it->second->name();
 			} else {
 				struct_name_for_function = node.parent_struct_name();
 			}
@@ -1466,7 +1466,7 @@ private:
 		// For nested classes, we need to use the fully qualified name from TypeInfo
 		auto type_it = gTypesByName.find(std::string(struct_name));
 		if (type_it != gTypesByName.end()) {
-			current_struct_name_ = std::string(type_it->second->name_);
+			current_struct_name_ = std::string(type_it->second->name());
 		} else {
 			current_struct_name_ = std::string(struct_name);
 		}
@@ -1529,10 +1529,10 @@ private:
 					const StructTypeInfo* struct_info = type_info->getStructInfo();
 					if (struct_info) {
 						for (const auto& static_member : struct_info->static_members) {
-							// Build the qualified name for deduplication using type_info->name_
+							// Build the qualified name for deduplication using type_info->name()
 							// This ensures consistency with generateStaticMemberDeclarations() which uses
 							// the type name from gTypesByName iterator (important for template instantiations)
-							std::string qualified_name = type_info->name_ + "::" + static_member.name;
+							std::string qualified_name = std::string(type_info->name()) + "::" + static_member.name;
 							
 							// Skip if already emitted
 							if (emitted_static_members_.count(qualified_name) > 0) {
@@ -1743,7 +1743,7 @@ private:
 
 					// Build constructor call: Base::Base(this, args...)
 					ConstructorCallOp ctor_op;
-					ctor_op.struct_name = base_type_info.name_;
+					ctor_op.struct_name = base_type_info.name();
 					ctor_op.object = std::string_view("this");
 
 					// Add constructor arguments from base initializer
@@ -1851,7 +1851,7 @@ private:
 							// For copy constructors, pass 'other' as the copy source (cast to base class reference)
 							// For move constructors, pass 'other' as the move source
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = std::string(base_type_info.name_);
+							ctor_op.struct_name = std::string(base_type_info.name());
 							ctor_op.object = std::string_view("this");  // 'this' pointer (base subobject is at offset 0 for now)
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
@@ -2196,7 +2196,7 @@ private:
 
 					// Build destructor call: Base::~Base(this)
 					DestructorCallOp dtor_op;
-					dtor_op.struct_name = base_type_info.name_;
+					dtor_op.struct_name = base_type_info.name();
 					dtor_op.object = std::string("this");
 
 					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), node.name_token()));
@@ -3846,7 +3846,7 @@ private:
 
 							// Check if this is an abstract class (only for non-pointer types)
 							if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
-								FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name_, "'");
+								FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
 								assert(false && "Cannot instantiate abstract class");
 							}
 
@@ -3915,7 +3915,7 @@ private:
 							if (has_matching_constructor) {
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = type_info.name_;
+								ctor_op.struct_name = type_info.name();
 								ctor_op.object = decl.identifier_token().value();
 
 								// Get constructor parameter types for reference handling
@@ -4094,7 +4094,7 @@ private:
 							if (struct_info.hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
-									type_info.name_
+									std::string(type_info.name())
 								);
 							}
 						}
@@ -4247,12 +4247,12 @@ private:
 				if (type_info.struct_info_) {
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
-						FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name_, "'");
+						FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
 						assert(false && "Cannot instantiate abstract class");
 					}
 
 					if (type_info.struct_info_->hasConstructor()) {
-						FLASH_LOG(Codegen, Debug, "Struct ", type_info.name_, " has constructor");
+						FLASH_LOG(Codegen, Debug, "Struct ", type_info.name(), " has constructor");
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"
 						// Skip if the variable was already initialized with an rvalue (function return)
 						bool has_copy_init = false;
@@ -4280,7 +4280,7 @@ private:
 
 						if (has_direct_ctor_call && direct_ctor) {
 							// Direct constructor call like S s(x) - process its arguments directly
-							FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info.name_);
+							FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info.name());
 							// Find the matching constructor to get parameter types for reference handling
 							const ConstructorDeclarationNode* matching_ctor = nullptr;
 							size_t num_args = 0;
@@ -4317,7 +4317,7 @@ private:
 							
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = std::string(type_info.name_);
+							ctor_op.struct_name = std::string(type_info.name());
 							ctor_op.object = decl.identifier_token().value();
 							
 							// Get constructor parameter types for reference handling
@@ -4405,7 +4405,7 @@ private:
 						} else if (has_copy_init) {
 							// Generate copy constructor call
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = std::string(type_info.name_);
+							ctor_op.struct_name = std::string(type_info.name());
 							ctor_op.object = decl.identifier_token().value();
 
 							// Add initializer as copy constructor parameter
@@ -4438,7 +4438,7 @@ private:
 							if (needs_default_ctor_call) {
 								// Generate default constructor call
 								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = std::string(type_info.name_);
+								ctor_op.struct_name = std::string(type_info.name());
 								ctor_op.object = decl.identifier_token().value();
 								
 								// If the constructor has parameters with default values, generate the default arguments
@@ -4474,7 +4474,7 @@ private:
 				if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
 					registerVariableWithDestructor(
 						std::string(decl.identifier_token().value()),
-						type_info.name_
+						std::string(type_info.name())
 					);
 				}
 			}
@@ -6790,7 +6790,7 @@ private:
 								return_type_node,
 								param_types,
 								false, // not variadic
-								type_info.name_
+								type_info.name()
 							);
 							
 							// Create the call operation
@@ -9023,7 +9023,7 @@ private:
 				std::string_view struct_name = struct_info->name;
 				auto type_it = gTypesByName.find(std::string(struct_name));
 				if (type_it != gTypesByName.end()) {
-					struct_name = type_it->second->name_;
+					struct_name = type_it->second->name();
 				}
 				std::string qualified_template_name = std::string(struct_name) + "::" + std::string(func_name);
 				
@@ -9944,7 +9944,7 @@ private:
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (const auto& ti : gTypeInfo) {
 				if (ti.type_ == Type::Struct && ti.getStructInfo()) {
-					std::cerr << "    - " << ti.name_ << " (type_index=" << ti.type_index_ << ")\n";
+					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_ << ")\n";
 				}
 			}
 			std::cerr << "  Available types in gTypesByName:\n";
@@ -9971,7 +9971,7 @@ private:
 			qualified_name_sb.append(member_name);
 			std::string_view qualified_name = qualified_name_sb.commit();
 			
-			FLASH_LOG(Codegen, Debug, "Static member access: ", member_name, " in struct ", type_info->name_, " owned by ", owner_struct->name, " -> qualified_name: ", qualified_name);
+			FLASH_LOG(Codegen, Debug, "Static member access: ", member_name, " in struct ", type_info->name(), " owned by ", owner_struct->name, " -> qualified_name: ", qualified_name);
 			
 			// Create a temporary variable for the result
 			TempVar result_var = var_counter.next();
@@ -9999,7 +9999,7 @@ private:
 		const StructMember* member = struct_info->findMemberRecursive(member_name);
 
 		if (!member) {
-			std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name_ << "'\n";
+			std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name() << "'\n";
 			std::cerr << "  available members:\n";
 			for (const auto& m : struct_info->members) {
 				std::cerr << "    - " << m.name << "\n";
@@ -11338,14 +11338,14 @@ private:
 					if (type_info.struct_info_) {
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
-							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name_ << "'\n";
+							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
 							assert(false && "Cannot instantiate abstract class");
 						}
 
 						if (type_info.struct_info_->hasAnyConstructor()) {
 							// Generate constructor call on the placement address
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = type_info.name_;
+							ctor_op.struct_name = type_info.name();
 							ctor_op.object = result_var;
 							
 							// Add constructor arguments
@@ -11405,14 +11405,14 @@ private:
 					if (type_info.struct_info_) {
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
-							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name_ << "'\n";
+							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
 							assert(false && "Cannot instantiate abstract class");
 						}
 
 						if (type_info.struct_info_->hasAnyConstructor()) {
 							// Generate constructor call on the newly allocated object
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = type_info.name_;
+							ctor_op.struct_name = type_info.name();
 							ctor_op.object = result_var;
 
 							// Add constructor arguments
@@ -12965,14 +12965,14 @@ private:
 		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
 			// If type_index is set, use it
 			if (type_spec.type_index() != 0) {
-				constructor_name = gTypeInfo[type_spec.type_index()].name_;
+				constructor_name = gTypeInfo[type_spec.type_index()].name();
 			} else {
 				// Otherwise, use the token value (the identifier name)
 				constructor_name = std::string(type_spec.token().value());
 			}
 		} else {
 			// For basic types, constructors might not exist, but we can handle them as value construction
-			constructor_name = gTypeInfo[type_spec.type_index()].name_;
+			constructor_name = gTypeInfo[type_spec.type_index()].name();
 		}
 
 		// Create a temporary variable for the result (the constructed object)

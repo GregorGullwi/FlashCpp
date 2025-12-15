@@ -433,7 +433,7 @@ struct TemplatePattern {
 			
 			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
 				const TypeInfo& param_type_info = gTypeInfo[pattern_arg.type_index];
-				param_name = std::string(param_type_info.name_);
+				param_name = std::string(param_type_info.name());
 				found_param = true;
 				FLASH_LOG(Templates, Trace, "  Found parameter name '", param_name, "' from pattern_arg.type_index=", pattern_arg.type_index);
 			}
