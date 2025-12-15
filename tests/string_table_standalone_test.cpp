@@ -7,6 +7,7 @@
 #include <cassert>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 // Define the global allocator here for standalone testing
 ChunkedStringAllocator gChunkedStringAllocator;

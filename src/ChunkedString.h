@@ -75,6 +75,19 @@ public:
         return chunks_.size(); 
     }
 
+    // StringTable support - find which chunk contains a pointer
+    // Returns the chunk index, or SIZE_MAX if pointer not found
+    size_t findChunkIndex(const char* ptr) const {
+        for (size_t i = 0; i < chunks_.size(); ++i) {
+            const char* chunk_start = chunks_[i]->data_.data();
+            const char* chunk_end = chunk_start + chunks_[i]->data_.size();
+            if (ptr >= chunk_start && ptr < chunk_end) {
+                return i;
+            }
+        }
+        return SIZE_MAX;  // Not found
+    }
+
     // StringTable support - resolve chunk index and offset to pointer
     char* getChunkPointer(size_t chunk_idx, size_t offset) const {
         assert(chunk_idx < chunks_.size() && "Invalid chunk index");

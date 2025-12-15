@@ -26,6 +26,13 @@
  * [23...0]  (24 bits) : Byte Offset within chunk (up to 16MB addressable per chunk)
  */
 struct StringHandle {
+	// Bit layout constants
+	static constexpr uint32_t CHUNK_INDEX_BITS = 8;
+	static constexpr uint32_t OFFSET_BITS = 24;
+	static constexpr uint32_t MAX_CHUNK_INDEX = (1u << CHUNK_INDEX_BITS) - 1;  // 255
+	static constexpr uint32_t MAX_OFFSET = (1u << OFFSET_BITS) - 1;  // 16MB - 1
+	static constexpr uint32_t OFFSET_MASK = MAX_OFFSET;
+	
 	uint32_t handle = 0;  // Packed: chunk_index (high 8 bits) + offset (low 24 bits)
 
 	// Default constructor creates invalid handle
@@ -33,20 +40,20 @@ struct StringHandle {
 
 	// Construct from chunk index and offset
 	explicit StringHandle(uint32_t chunk_idx, uint32_t offset) {
-		assert(chunk_idx < 256 && "Chunk index must fit in 8 bits");
-		assert(offset < (1 << 24) && "Offset must fit in 24 bits");
+		assert(chunk_idx <= MAX_CHUNK_INDEX && "Chunk index must fit in 8 bits");
+		assert(offset <= MAX_OFFSET && "Offset must fit in 24 bits");
 		// Add 1 to offset so that handle 0 is reserved as invalid
-		handle = (chunk_idx << 24) | (offset + 1);
+		handle = (chunk_idx << OFFSET_BITS) | (offset + 1);
 	}
 
 	// Extract chunk index (high 8 bits)
 	uint32_t chunkIndex() const {
-		return handle >> 24;
+		return handle >> OFFSET_BITS;
 	}
 
 	// Extract offset (low 24 bits) - subtract 1 to get actual offset
 	uint32_t offset() const {
-		return (handle & 0x00FFFFFF) - 1;
+		return (handle & OFFSET_MASK) - 1;
 	}
 
 	// Validity check - handle 0 is reserved as invalid
@@ -114,9 +121,13 @@ public:
 		// Allocate memory (may create new chunk if needed)
 		char* ptr = gChunkedStringAllocator.allocate(total_size);
 		
-		// Get chunk index and calculate offset AFTER allocation
-		size_t chunk_idx = gChunkedStringAllocator.getChunkIndex();
-		size_t offset = ptr - gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
+		// Find which chunk contains the allocated pointer (safe from race conditions)
+		size_t chunk_idx = gChunkedStringAllocator.findChunkIndex(ptr);
+		assert(chunk_idx != SIZE_MAX && "Allocated pointer must be in a valid chunk");
+		
+		// Calculate offset within that chunk
+		char* chunk_start = gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
+		size_t offset = ptr - chunk_start;
 
 		// Write metadata and content
 		uint64_t hash = hashString(str);
