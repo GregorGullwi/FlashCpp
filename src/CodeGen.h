@@ -418,14 +418,14 @@ public:
 				}
 				emitted_static_members_.insert(qualified_name);
 
-				// Create a persistent string_view for the var_name using StringBuilder
-				// (string_view in GlobalVariableDeclOp would dangle if we used local std::string)
-				std::string_view persistent_name = StringBuilder().append(qualified_name).commit();
+				// Phase 3: Use StringTable to create StringHandle (replaces StringBuilder)
+				// StringHandle is interned and deduplicates identical names
+				StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 
 				GlobalVariableDeclOp op;
 				op.type = static_member.type;
 				op.size_in_bits = static_cast<int>(static_member.size * 8);
-				op.var_name = persistent_name;
+				op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
 				// Check if static member has an initializer
 				op.is_initialized = static_member.initializer.has_value();
@@ -1540,14 +1540,14 @@ private:
 							}
 							emitted_static_members_.insert(qualified_name);
 
-							// Create a persistent string_view for the var_name using StringBuilder
-							// (string_view in GlobalVariableDeclOp would dangle if we used local std::string)
-							std::string_view persistent_name = StringBuilder().append(qualified_name).commit();
+							// Phase 3: Use StringTable to create StringHandle (replaces StringBuilder)
+							// StringHandle is interned and deduplicates identical names
+							StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 
 							GlobalVariableDeclOp op;
 							op.type = static_member.type;
 							op.size_in_bits = static_cast<int>(static_member.size * 8);
-							op.var_name = persistent_name;
+							op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
 							// Check if static member has an initializer
 							op.is_initialized = static_member.initializer.has_value();
@@ -3542,20 +3542,22 @@ private:
 					sb.append(decl.identifier_token().value());
 				}
 			}
-			std::string_view var_name = sb.commit();
+			std::string_view var_name_view = sb.commit();
+			// Phase 3: Intern the string using StringTable
+			StringHandle var_name = StringTable::getOrInternStringHandle(var_name_view);
 
 			// Store mapping from simple name to mangled name for later lookups
 			// This is needed for anonymous namespace variables
 			std::string simple_name(decl.identifier_token().value());
-			if (var_name != simple_name) {
-				global_variable_names_[simple_name] = std::string(var_name);
+			if (var_name_view != simple_name) {
+				global_variable_names_[simple_name] = std::string(var_name_view);
 			}
 
 			// Create GlobalVariableDeclOp
 			GlobalVariableDeclOp op;
 			op.type = type_node.type();
 			op.size_in_bits = static_cast<int>(type_node.size_in_bits());
-			op.var_name = var_name;
+			op.var_name = var_name;  // Phase 3: Now using StringHandle
 			op.element_count = 1;  // Default for scalars
 			
 			// Helper to append a value as raw bytes in little-endian format
@@ -3685,7 +3687,7 @@ private:
 			// (The parser already added it to the symbol table)
 			if (is_static_local) {
 				StaticLocalInfo info;
-				info.mangled_name = std::string(var_name);
+				info.mangled_name = std::string(StringTable::getStringView(var_name));  // Convert StringHandle to string
 				info.type = type_node.type();
 				info.size_in_bits = static_cast<int>(type_node.size_in_bits());
 				static_local_names_[std::string(decl.identifier_token().value())] = info;

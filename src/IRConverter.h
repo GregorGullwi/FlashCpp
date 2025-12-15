@@ -6832,7 +6832,7 @@ private:
 
 		// Store global variable info for later use
 		GlobalVariableInfo global_info;
-		global_info.name = op.var_name;
+		global_info.name = op.getVarName();  // Use helper to get string_view from variant
 		global_info.type = op.type;
 		global_info.is_initialized = op.is_initialized;
 		global_info.size_in_bytes = (op.size_in_bits / 8) * op.element_count;

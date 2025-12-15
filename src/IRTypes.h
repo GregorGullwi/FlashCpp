@@ -866,10 +866,19 @@ struct VariableDeclOp {
 struct GlobalVariableDeclOp {
 	Type type = Type::Void;
 	int size_in_bits = 0;          // Size of one element in bits
-	std::string_view var_name;
+	std::variant<std::string_view, StringHandle> var_name;  // Support both for gradual migration
 	bool is_initialized = false;
 	size_t element_count = 1;       // Number of elements (1 for scalars, N for arrays)
 	std::vector<char> init_data;    // Raw bytes for initialized data
+	
+	// Helper to get var_name as string_view regardless of storage type
+	std::string_view getVarName() const {
+		if (std::holds_alternative<std::string_view>(var_name)) {
+			return std::get<std::string_view>(var_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(var_name));
+		}
+	}
 };
 
 // Heap allocation (new operator)
@@ -2044,7 +2053,7 @@ public:
 		case IrOpcode::GlobalVariableDecl:
 		{
 			const GlobalVariableDeclOp& op = getTypedPayload<GlobalVariableDeclOp>();
-			std::string_view var_name = op.var_name;
+			std::string_view var_name = op.getVarName();  // Use helper for backward compatibility
 			
 			oss << "global_var ";
 			auto type_info = gNativeTypes.find(op.type);
