@@ -2661,8 +2661,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					}
 				}
 				
+				// Phase 7B: Intern member name and use StringHandle overload
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info->addMember(
-					std::string(decl.identifier_token().value()),
+					member_name_handle,
 					member_type_spec.type(),
 					member_type_spec.type_index(),
 					member_size_in_bits,
@@ -2815,7 +2817,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				
 				auto enumerator_node = emplace_node<EnumeratorNode>(*enumerator_name_token, enumerator_value);
 				enum_ref.add_enumerator(enumerator_node);
-				enum_info->addEnumerator(std::string(enumerator_name_token->value()), value);
+				// Phase 7B: Intern enumerator name and use StringHandle overload
+				StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name_token->value());
+				enum_info->addEnumerator(enumerator_name_handle, value);
 				
 				// For unscoped enums, add to current scope
 				if (!is_scoped) {
@@ -3258,13 +3262,20 @@ ParseResult Parser::parse_struct_declaration()
 					// Add to StructTypeInfo
 					const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
 					if (friend_decl.kind() == FriendKind::Class) {
-						struct_info->addFriendClass(std::string(friend_decl.name()));
+						// Phase 7B: Intern friend class name and use StringHandle overload
+						StringHandle friend_class_name_handle = StringTable::getOrInternStringHandle(friend_decl.name());
+						struct_info->addFriendClass(friend_class_name_handle);
 					} else if (friend_decl.kind() == FriendKind::Function) {
-						struct_info->addFriendFunction(std::string(friend_decl.name()));
+						// Phase 7B: Intern friend function name and use StringHandle overload
+						StringHandle friend_func_name_handle = StringTable::getOrInternStringHandle(friend_decl.name());
+						struct_info->addFriendFunction(friend_func_name_handle);
 					} else if (friend_decl.kind() == FriendKind::MemberFunction) {
+						// Phase 7B: Intern names and use StringHandle overload
+						StringHandle friend_class_name_handle = StringTable::getOrInternStringHandle(friend_decl.class_name());
+						StringHandle friend_func_name_handle = StringTable::getOrInternStringHandle(friend_decl.name());
 						struct_info->addFriendMemberFunction(
-							std::string(friend_decl.class_name()),
-							std::string(friend_decl.name()));
+							friend_class_name_handle,
+							friend_func_name_handle);
 					}
 				}
 
@@ -3442,8 +3453,10 @@ ParseResult Parser::parse_struct_declaration()
 				size_t static_member_alignment = get_type_alignment(type_spec.type(), static_member_size);
 
 				// Add to struct's static members
+				// Phase 7B: Intern static member name and use StringHandle overload
+				StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info->addStaticMember(
-					std::string(decl.identifier_token().value()),
+					static_member_name_handle,
 					type_spec.type(),
 					type_spec.type_index(),
 					static_member_size,
@@ -4326,8 +4339,10 @@ ParseResult Parser::parse_struct_declaration()
 			referenced_size_bits = referenced_size_bits ? referenced_size_bits : (type_spec.size_in_bits());
 			member_alignment = sizeof(void*);
 		}
+		// Phase 7B: Intern member name and use StringHandle overload
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 		struct_info->addMember(
-			std::string(decl.identifier_token().value()),
+			member_name_handle,
 			type_spec.type(),
 			type_spec.type_index(),
 			member_size,
@@ -4417,8 +4432,10 @@ ParseResult Parser::parse_struct_declaration()
 			const DeclarationNode& decl = func.decl_node();
 
 			// Add member function to struct type info
+			// Phase 7B: Intern function name and use StringHandle overload
+			StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 			struct_info->addMemberFunction(
-				std::string(decl.identifier_token().value()),
+				func_name_handle,
 				func_decl.function_declaration,
 				func_decl.access,
 				func_decl.is_virtual,
@@ -5083,7 +5100,9 @@ ParseResult Parser::parse_enum_declaration()
 		enum_ref.add_enumerator(enumerator_node);
 
 		// Add enumerator to enum type info
-		enum_info->addEnumerator(std::string(enumerator_name), value);
+		// Phase 7B: Intern enumerator name and use StringHandle overload
+		StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name);
+		enum_info->addEnumerator(enumerator_name_handle, value);
 
 		// For unscoped enums, add enumerator to current scope as a constant
 		// This allows unscoped enum values to be used without qualification
@@ -5399,7 +5418,9 @@ ParseResult Parser::parse_typedef_declaration()
 			// Add enumerator
 			auto enumerator_node = emplace_node<EnumeratorNode>(*enumerator_name_token, enumerator_value);
 			enum_ref.add_enumerator(enumerator_node);
-			enum_info->addEnumerator(std::string(enumerator_name_token->value()), value);
+			// Phase 7B: Intern enumerator name and use StringHandle overload
+			StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name_token->value());
+			enum_info->addEnumerator(enumerator_name_handle, value);
 
 			// For unscoped enums, add enumerator to current scope as a constant
 			// This allows unscoped enum values to be used without qualification
@@ -5614,8 +5635,10 @@ ParseResult Parser::parse_typedef_declaration()
 				referenced_size_bits = referenced_size_bits ? referenced_size_bits : member_type_spec.size_in_bits();
 				member_alignment = sizeof(void*);
 			}
+			// Phase 7B: Intern member name and use StringHandle overload
+			StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 			struct_info->addMember(
-				std::string(decl.identifier_token().value()),
+				member_name_handle,
 				member_type_spec.type(),
 				member_type_spec.type_index(),
 				member_size,
@@ -7911,7 +7934,9 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 						for (const auto& base : delayed.struct_node->base_classes()) {
 							if (base.name == init_name) {
 								is_base_init = true;
-								delayed.ctor_node->add_base_initializer(std::string(init_name), std::move(init_args));
+								// Phase 7B: Intern base class name and use StringHandle overload
+								StringHandle base_name_handle = StringTable::getOrInternStringHandle(init_name);
+								delayed.ctor_node->add_base_initializer(base_name_handle, std::move(init_args));
 								break;
 							}
 						}
@@ -14365,8 +14390,10 @@ ParseResult Parser::parse_lambda_expression() {
                 TypeSpecifierNode ptr_type(Type::Void, TypeQualifier::None, 64);
                 ptr_type.add_pointer_level();  // Make it a void*
                 
+                // Phase 7B: Intern special member name and use StringHandle overload
+                StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
                 closure_struct_info->addMember(
-                    "__this",           // Special member name for captured this
+                    this_member_handle,  // Special member name for captured this
                     Type::Void,         // Base type (will be treated as pointer)
                     0,                  // No type index
                     8,                  // Pointer size on x64
@@ -14392,8 +14419,10 @@ ParseResult Parser::parse_lambda_expression() {
                         const TypeInfo* enclosing_type = type_it->second;
                         const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
                         if (enclosing_struct) {
+                            // Phase 7B: Intern special member name and use StringHandle overload
+                            StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
                             closure_struct_info->addMember(
-                                "__copy_this",                      // Special member name for copied this
+                                copy_this_member_handle,            // Special member name for copied this
                                 Type::Struct,                       // Struct type
                                 enclosing_type->type_index_,        // Type index of enclosing struct
                                 enclosing_struct->total_size,       // Size of the entire struct
@@ -14507,8 +14536,10 @@ ParseResult Parser::parse_lambda_expression() {
 					}
 				}
 			}
+			// Phase 7B: Intern capture variable name and use StringHandle overload
+			StringHandle var_name_handle = StringTable::getOrInternStringHandle(var_name);
 			closure_struct_info->addMember(
-				std::string(var_name),
+				var_name_handle,
 				member_type,
 				type_index,
 				member_size,
@@ -16336,8 +16367,10 @@ if (struct_type_info.getStructInfo()) {
 						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 						// Register the static member
+						// Phase 7B: Intern static member name and use StringHandle overload
+						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 						struct_type_info.getStructInfo()->addStaticMember(
-							std::string(decl.identifier_token().value()),
+							static_member_name_handle,
 							type_spec.type(),
 							type_spec.type_index(),
 							member_size,
@@ -16748,8 +16781,10 @@ if (struct_type_info.getStructInfo()) {
 					referenced_size_bits = referenced_size_bits ? referenced_size_bits : type_spec.size_in_bits();
 					member_alignment = sizeof(void*);
 				}
+				// Phase 7B: Intern member name and use StringHandle overload
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info_ptr->addMember(
-					std::string(decl.identifier_token().value()),
+					member_name_handle,
 					type_spec.type(),
 					type_spec.type_index(),
 					member_size,
@@ -16783,8 +16818,10 @@ if (struct_type_info.getStructInfo()) {
 					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& decl = func_decl.decl_node();
 
+					// Phase 7B: Intern function name and use StringHandle overload
+					StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 					struct_info_ptr->addMemberFunction(
-						std::string(decl.identifier_token().value()),
+						func_name_handle,
 						member_func_decl.function_declaration,
 						member_func_decl.access,
 						member_func_decl.is_virtual,
@@ -17151,8 +17188,10 @@ if (struct_type_info.getStructInfo()) {
 						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 						// Register the static member
+						// Phase 7B: Intern static member name and use StringHandle overload
+						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 						struct_info->addStaticMember(
-							std::string(decl.identifier_token().value()),
+							static_member_name_handle,
 							type_spec.type(),
 							type_spec.type_index(),
 							member_size,
@@ -17532,8 +17571,10 @@ if (struct_type_info.getStructInfo()) {
 				
 				bool is_ref_member = type_spec.is_reference();
 				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+				// Phase 7B: Intern member name and use StringHandle overload
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info->addMember(
-					std::string(decl.identifier_token().value()),
+					member_name_handle,
 					type_spec.type(),
 					type_spec.type_index(),
 					member_size,
@@ -17565,8 +17606,10 @@ if (struct_type_info.getStructInfo()) {
 					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& decl = func_decl.decl_node();
 					
+					// Phase 7B: Intern function name and use StringHandle overload
+					StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 					struct_info->addMemberFunction(
-						std::string(decl.identifier_token().value()),
+						func_name_handle,
 						member_func_decl.function_declaration,
 						member_func_decl.access,
 						member_func_decl.is_virtual,
@@ -20747,8 +20790,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		}
 		size_t member_alignment = get_type_alignment(member_type, member_size);
 		
+		// Phase 7B: Intern member name and use StringHandle overload
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 		struct_info->addMember(
-			std::string(decl.identifier_token().value()),
+			member_name_handle,
 			member_type,
 			member_type_index,
 			member_size,
@@ -20849,8 +20894,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				new_func.set_definition(*orig_func.get_definition());
 			}
 			
+			// Phase 7B: Intern function name and use StringHandle overload
+			StringHandle func_name_handle = StringTable::getOrInternStringHandle(orig_func.decl_node().identifier_token().value());
 			struct_info->addMemberFunction(
-				std::string(orig_func.decl_node().identifier_token().value()),
+				func_name_handle,
 				new_func_node,
 				mem_func.access,
 				mem_func.is_virtual,
@@ -21169,8 +21216,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 				member_decl.default_initializer, template_args, template_params);
 			
+			// Phase 7B: Intern member name and use StringHandle overload
+			StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 			struct_info->addMember(
-				std::string(decl.identifier_token().value()),
+				member_name_handle,
 				member_type,
 				member_type_index,
 				member_size,
@@ -21222,8 +21271,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// The key issue is that member functions need parent_struct_name set correctly
 				
 				// Just add the function as-is to the struct info and AST
+				// Phase 7B: Intern function name and use StringHandle overload
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(orig_decl.identifier_token().value());
 				struct_info->addMemberFunction(
-					std::string(orig_decl.identifier_token().value()),
+					func_name_handle,
 					mem_func.function_declaration,
 					mem_func.access,
 					mem_func.is_virtual,
@@ -21370,8 +21421,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					
+					// Phase 7B: Intern static member name and use StringHandle overload
+					StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(static_member.getName());
 					struct_info->addStaticMember(
-						std::string(static_member.getName()),
+						static_member_name_handle,
 						static_member.type,
 						static_member.type_index,
 						static_member.size,
@@ -21887,8 +21940,10 @@ if (struct_type_info.getStructInfo()) {
 		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 			member_decl.default_initializer, template_args_to_use, template_params);
 	
+		// Phase 7B: Intern member name and use StringHandle overload
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 		struct_info->addMember(
-			std::string(decl.identifier_token().value()),
+			member_name_handle,
 			member_type,
 			member_type_index,
 			member_size,
@@ -21971,8 +22026,10 @@ if (struct_type_info.getStructInfo()) {
 				
 				bool is_ref_member = substituted_type_spec.is_reference();
 				bool is_rvalue_ref_member = substituted_type_spec.is_rvalue_reference();
+				// Phase 7B: Intern member name and use StringHandle overload
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				nested_struct_info->addMember(
-					std::string(decl.identifier_token().value()),
+					member_name_handle,
 					substituted_type_spec.type(),
 					substituted_type_spec.type_index(),
 					member_size,
@@ -22211,8 +22268,10 @@ if (nested_type_info.getStructInfo()) {
 				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
 				
 				// Also add to struct_info so it can be found during codegen
+				// Phase 7B: Intern function name and use StringHandle overload
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info_ptr->addMemberFunction(
-					std::string(decl.identifier_token().value()),
+					func_name_handle,
 					new_func_node,
 					mem_func.access,
 					mem_func.is_virtual,
@@ -22310,8 +22369,10 @@ if (nested_type_info.getStructInfo()) {
 				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
 				
 				// Also add to struct_info so it can be found during codegen
+				// Phase 7B: Intern function name and use StringHandle overload
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info_ptr->addMemberFunction(
-					std::string(decl.identifier_token().value()),
+					func_name_handle,
 					new_func_node,
 					mem_func.access,
 					mem_func.is_virtual,
@@ -22393,7 +22454,9 @@ if (nested_type_info.getStructInfo()) {
 						new_ctor_ref.add_member_initializer(init.member_name, init.initializer_expr);
 					}
 					for (const auto& init : ctor_decl.base_initializers()) {
-						new_ctor_ref.add_base_initializer(std::string(init.getBaseClassName()), init.arguments);
+						// Phase 7B: Intern base class name and use StringHandle overload
+						StringHandle base_name_handle = StringTable::getOrInternStringHandle(init.getBaseClassName());
+						new_ctor_ref.add_base_initializer(base_name_handle, init.arguments);
 					}
 					if (ctor_decl.delegating_initializer().has_value()) {
 						new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
@@ -22630,8 +22693,10 @@ if (nested_type_info.getStructInfo()) {
 			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
 			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 			
+			// Phase 7B: Intern static member name and use StringHandle overload
+			StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(out_of_line_var.member_name);
 			struct_info_ptr->addStaticMember(
-				std::string(out_of_line_var.member_name),
+				static_member_name_handle,
 				type_spec.type(),
 				type_spec.type_index(),
 				member_size,
@@ -22775,8 +22840,10 @@ if (nested_type_info.getStructInfo()) {
 				}
 				
 				// Use struct_info_ptr instead of struct_info (which was moved)
+				// Phase 7B: Intern static member name and use StringHandle overload
+				StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(static_member.getName());
 				struct_info_ptr->addStaticMember(
-					std::string(static_member.getName()),
+					static_member_name_handle,
 					static_member.type,
 					static_member.type_index,
 					static_member.size,
