@@ -736,7 +736,7 @@ private:
 		}
 
 		// Check if accessing class is a friend class of the member owner
-		if (accessing_struct && member_owner_struct->isFriendClass(accessing_struct->name)) {
+		if (accessing_struct && member_owner_struct->isFriendClass(std::string(accessing_struct->getName()))) {
 			return true;
 		}
 
@@ -881,7 +881,7 @@ private:
 		}
 
 		// Check if accessing class is a friend class of the member owner
-		if (accessing_struct && member_owner_struct->isFriendClass(accessing_struct->name)) {
+		if (accessing_struct && member_owner_struct->isFriendClass(std::string(accessing_struct->getName()))) {
 			return true;
 		}
 
@@ -5086,7 +5086,7 @@ private:
 						// The owner_struct is the struct that actually defines the static member
 						// (could be a base class)
 						StringBuilder qualified_name_sb;
-						qualified_name_sb.append(owner_struct->name);
+						qualified_name_sb.append(owner_struct->getName());
 						qualified_name_sb.append("::");
 						qualified_name_sb.append(qualifiedIdNode.name());
 						op.global_name = qualified_name_sb.commit();
@@ -8049,7 +8049,7 @@ private:
 														function_name = matched_func_decl->mangled_name();
 													} else if (matched_func_decl->linkage() != Linkage::C) {
 														// Generate mangled name with base class name
-														function_name = generateMangledNameForCall(*matched_func_decl, base_struct_info->name);
+														function_name = generateMangledNameForCall(*matched_func_decl, base_struct_info->getName());
 													}
 													return; // Stop searching once found
 												}
@@ -8775,7 +8775,7 @@ private:
 		// Check if this is a member function template that needs instantiation
 		if (struct_info) {
 			std::string_view func_name = func_decl_node.identifier_token().value();
-			std::string qualified_template_name = std::string(struct_info->name) + "::" + std::string(func_name);
+			std::string qualified_template_name = std::string(struct_info->getName()) + "::" + std::string(func_name);
 			
 			// DEBUG removed
 			
@@ -8926,7 +8926,7 @@ private:
 							TemplateInstantiationInfo inst_info;
 							inst_info.qualified_template_name = qualified_template_name;
 							inst_info.mangled_name = std::string(mangled_func_name);
-							inst_info.struct_name = std::string(struct_info->name);
+							inst_info.struct_name = std::string(struct_info->getName());
 							for (const auto& arg_type : arg_types) {
 								inst_info.template_args.push_back(arg_type);
 							}
@@ -8955,9 +8955,9 @@ private:
 			std::string_view current_function = getCurrentFunctionName();
 			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context, current_function)) {
 				std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
-				std::string context_str = current_context ? (std::string(" from '") + current_context->name + "'") : "";
+				std::string context_str = current_context ? (std::string(" from '") + std::string(current_context->getName()) + "'") : "";
 				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->name, 
-				          "' of '", struct_info->name, "'", context_str);
+				          "' of '", struct_info->getName(), "'", context_str);
 				assert(false && "Access control violation");
 				return { Type::Int, 32, TempVar{0} };
 			}
@@ -9020,7 +9020,7 @@ private:
 			// Check if this is a member function - use struct_info to determine
 			if (struct_info) {
 				// For nested classes, we need the fully qualified name from TypeInfo
-				std::string_view struct_name = struct_info->name;
+				std::string_view struct_name = struct_info->getName();
 				auto type_it = gTypesByName.find(std::string(struct_name));
 				if (type_it != gTypesByName.end()) {
 					struct_name = type_it->second->name();
@@ -9966,12 +9966,12 @@ private:
 			// Static members are accessed using qualified names (OwnerClassName::memberName)
 			// Use the owner_struct name, not the current struct, to get the correct qualified name
 			StringBuilder qualified_name_sb;
-			qualified_name_sb.append(owner_struct->name);
+			qualified_name_sb.append(owner_struct->getName());
 			qualified_name_sb.append("::");
 			qualified_name_sb.append(member_name);
 			std::string_view qualified_name = qualified_name_sb.commit();
 			
-			FLASH_LOG(Codegen, Debug, "Static member access: ", member_name, " in struct ", type_info->name(), " owned by ", owner_struct->name, " -> qualified_name: ", qualified_name);
+			FLASH_LOG(Codegen, Debug, "Static member access: ", member_name, " in struct ", type_info->name(), " owned by ", owner_struct->getName(), " -> qualified_name: ", qualified_name);
 			
 			// Create a temporary variable for the result
 			TempVar result_var = var_counter.next();
@@ -10017,9 +10017,9 @@ private:
 			} else if (member->access == AccessSpecifier::Protected) {
 				std::cerr << "protected";
 			}
-			std::cerr << " member '" << member_name << "' of '" << struct_info->name << "'";
+			std::cerr << " member '" << member_name << "' of '" << struct_info->getName() << "'";
 			if (current_context) {
-				std::cerr << " from '" << current_context->name << "'";
+				std::cerr << " from '" << current_context->getName() << "'";
 			}
 			std::cerr << "\n";
 			return {};
@@ -11623,7 +11623,7 @@ private:
 					const TypeInfo& type_info = gTypeInfo[type_idx];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						type_name = struct_info->name;
+						type_name = struct_info->getName();
 					}
 				}
 			}
@@ -11682,7 +11682,7 @@ private:
 				const TypeInfo& type_info = gTypeInfo[type_idx];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
-					target_type_name = struct_info->name;
+					target_type_name = struct_info->getName();
 				}
 			}
 		}

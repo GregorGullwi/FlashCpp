@@ -451,7 +451,7 @@ struct StructStaticMember {
 
 // Struct type information
 struct StructTypeInfo {
-	std::string name;
+	std::variant<std::string, StringHandle> name;
 	std::vector<StructMember> members;
 	std::vector<StructStaticMember> static_members;  // Static members
 	std::vector<StructMemberFunction> member_functions;
@@ -488,6 +488,14 @@ struct StructTypeInfo {
 
 	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
 		: name(std::move(n)), default_access(default_acc), is_union(union_type) {}
+	
+	std::string_view getName() const {
+		if (std::holds_alternative<std::string>(name)) {
+			return std::get<std::string>(name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(name));
+		}
+	}
 
 	void addMember(const std::string& member_name, Type member_type, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access,
@@ -528,11 +536,11 @@ struct StructTypeInfo {
 	}
 
 	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		member_functions.emplace_back(name, constructor_decl, access, true, false);
+		member_functions.emplace_back(std::string(getName()), constructor_decl, access, true, false);
 	}
 
 	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public, bool is_virtual = false) {
-		auto& dtor = member_functions.emplace_back("~" + name, destructor_decl, access, false, true, false, "");
+		auto& dtor = member_functions.emplace_back("~" + std::string(getName()), destructor_decl, access, false, true, false, "");
 		dtor.is_virtual = is_virtual;
 	}
 
@@ -687,9 +695,9 @@ struct StructTypeInfo {
 	// Get fully qualified name (e.g., "Outer::Inner")
 	std::string getQualifiedName() const {
 		if (enclosing_class_) {
-			return enclosing_class_->getQualifiedName() + "::" + name;
+			return enclosing_class_->getQualifiedName() + "::" + std::string(getName());
 		}
-		return name;
+		return std::string(getName());
 	}
 
 	// Find default constructor (no parameters)
