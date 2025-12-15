@@ -111,11 +111,11 @@ public:
 		// Calculate total allocation size: hash + length + content + null
 		size_t total_size = 8 + 4 + str.size() + 1;
 		
-		// Get chunk index before allocation
-		size_t chunk_idx = gChunkedStringAllocator.getChunkIndex();
-		
-		// Allocate memory
+		// Allocate memory (may create new chunk if needed)
 		char* ptr = gChunkedStringAllocator.allocate(total_size);
+		
+		// Get chunk index and calculate offset AFTER allocation
+		size_t chunk_idx = gChunkedStringAllocator.getChunkIndex();
 		size_t offset = ptr - gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
 
 		// Write metadata and content

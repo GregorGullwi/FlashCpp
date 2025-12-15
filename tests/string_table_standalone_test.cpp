@@ -1,14 +1,15 @@
-// Test file for StringTable functionality
-// This tests the string interning system for FlashCpp
+// Standalone test for StringTable functionality
+// This tests the string interning system in isolation
 
+#include "../src/ChunkedString.h"
 #include "../src/StringTable.h"
 #include <iostream>
 #include <cassert>
 #include <string>
 #include <unordered_map>
 
-// Global allocator (declared extern, defined in src/Parser.cpp)
-extern ChunkedStringAllocator gChunkedStringAllocator;
+// Define the global allocator here for standalone testing
+ChunkedStringAllocator gChunkedStringAllocator;
 
 void test_string_handle_creation() {
 	std::cout << "Test: StringHandle creation and round-trip... ";
@@ -117,11 +118,33 @@ void test_handle_as_map_key() {
 	
 	test_map[h1] = 100;
 	test_map[h2] = 200;
-	test_map[h3] = 300;  // Should overwrite or create new entry depending on handle equality
+	test_map[h3] = 300;  // Should create new entry (different handle)
 	
 	assert(test_map.size() == 3 && "Map should handle StringHandle keys");
 	assert(test_map[h1] == 100 && "Should retrieve correct value");
 	assert(test_map[h2] == 200 && "Should retrieve correct value");
+	
+	std::cout << "PASSED\n";
+}
+
+void test_chunk_boundary() {
+	std::cout << "Test: Allocation across chunk boundary... ";
+	
+	// This test verifies the race condition fix
+	// Create strings that might cause chunk allocation
+	std::vector<StringHandle> handles;
+	for (int i = 0; i < 100; ++i) {
+		std::string str = "test_string_number_" + std::to_string(i) + "_with_extra_padding_to_consume_space";
+		handles.push_back(StringTable::createStringHandle(str));
+	}
+	
+	// Verify all handles are valid and strings can be retrieved
+	for (size_t i = 0; i < handles.size(); ++i) {
+		assert(handles[i].isValid() && "All handles should be valid");
+		std::string_view retrieved = StringTable::getStringView(handles[i]);
+		std::string expected = "test_string_number_" + std::to_string(i) + "_with_extra_padding_to_consume_space";
+		assert(retrieved == expected && "Retrieved string should match");
+	}
 	
 	std::cout << "PASSED\n";
 }
@@ -136,6 +159,7 @@ int main() {
 	test_long_string();
 	test_special_characters();
 	test_handle_as_map_key();
+	test_chunk_boundary();
 	
 	std::cout << "\n=== All tests PASSED ===\n";
 	return 0;
