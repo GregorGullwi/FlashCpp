@@ -3801,23 +3801,10 @@ private:
 							// This is a reference - load the pointer first, then dereference
 							ctx.result_physical_reg = allocateRegisterWithSpilling();
 							// Load the pointer into the register
-							auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
-							textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+							emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
 							// Now dereference: load from [register + 0]
-							int value_size_bits = ref_it->second.value_size_bits;
-							OpCodeWithSize deref_opcodes;
-							if (value_size_bits == 64) {
-								deref_opcodes = generateMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0);
-							} else if (value_size_bits == 32) {
-								deref_opcodes = generateMovFromMemory32(ctx.result_physical_reg, ctx.result_physical_reg, 0);
-							} else if (value_size_bits == 16) {
-								deref_opcodes = generateMovFromMemory16(ctx.result_physical_reg, ctx.result_physical_reg, 0);
-							} else if (value_size_bits == 8) {
-								deref_opcodes = generateMovFromMemory8(ctx.result_physical_reg, ctx.result_physical_reg, 0);
-							} else {
-								assert(false && "Unsupported reference value size");
-							}
-							textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0, value_size_bytes);
 						} else {
 							// Not a reference, load normally
 							// For integers, use regular MOV
@@ -3963,23 +3950,10 @@ private:
 							// This is a reference - load the pointer first, then dereference
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 							// Load the pointer into the register
-							auto load_ptr = generatePtrMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
-							textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+							emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
 							// Now dereference: load from [register + 0]
-							int value_size_bits = ref_it->second.value_size_bits;
-							OpCodeWithSize deref_opcodes;
-							if (value_size_bits == 64) {
-								deref_opcodes = generateMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-							} else if (value_size_bits == 32) {
-								deref_opcodes = generateMovFromMemory32(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-							} else if (value_size_bits == 16) {
-								deref_opcodes = generateMovFromMemory16(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-							} else if (value_size_bits == 8) {
-								deref_opcodes = generateMovFromMemory8(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-							} else {
-								assert(false && "Unsupported reference value size");
-							}
-							textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
 						} else {
 							// Not a reference, load normally
 							// For integers, use regular MOV
@@ -4018,20 +3992,8 @@ private:
 						// Load the pointer into the register
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 						// Now dereference: load from [register + 0]
-						int value_size_bits = ref_it->second.value_size_bits;
-						OpCodeWithSize deref_opcodes;
-						if (value_size_bits == 64) {
-							deref_opcodes = generateMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-						} else if (value_size_bits == 32) {
-							deref_opcodes = generateMovFromMemory32(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-						} else if (value_size_bits == 16) {
-							deref_opcodes = generateMovFromMemory16(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-						} else if (value_size_bits == 8) {
-							deref_opcodes = generateMovFromMemory8(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-						} else {
-							assert(false && "Unsupported reference value size");
-						}
-						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+						int value_size_bytes = ref_it->second.value_size_bits / 8;
+						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
@@ -6967,22 +6929,15 @@ private:
 					pointer_initialized = true;
 				} else if (std::holds_alternative<std::string_view>(init.value)) {
 					auto rvalue_var_name = std::get<std::string_view>(init.value);
-					// Check for special __range_begin_ and __range_end_ names
-					bool is_range_iterator = false;
-					if (rvalue_var_name.size() >= 15 && rvalue_var_name.substr(0, 15) == "__range_begin_") {
-						is_range_iterator = true;
-					} else if (rvalue_var_name.size() >= 13 && rvalue_var_name.substr(0, 13) == "__range_end_") {
-						is_range_iterator = true;
-					}
 					
 					auto src_it = current_scope.variables.find(rvalue_var_name);
 					if (src_it != current_scope.variables.end()) {
 						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", rvalue_var_name, "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
 						// Check if source is a reference
 						auto src_ref_it = reference_stack_info_.find(src_it->second.offset);
-						if (src_ref_it != reference_stack_info_.end() || is_range_iterator) {
-							// Source is a reference or known pointer - copy the pointer value
-							FLASH_LOG(Codegen, Debug, "Using MOV (reference or range iterator)");
+						if (src_ref_it != reference_stack_info_.end()) {
+							// Source is a reference - copy the pointer value
+							FLASH_LOG(Codegen, Debug, "Using MOV (source is reference)");
 							emitMovFromFrame(pointer_reg, src_it->second.offset);
 						} else if (init.size_in_bits == 64 && 
 						           (init.type == Type::Long || init.type == Type::Int || 
