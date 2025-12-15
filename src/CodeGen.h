@@ -410,7 +410,9 @@ public:
 				}
 
 				// Build the qualified name for deduplication
-				std::string qualified_name = std::string(type_name) + "::" + std::string(StringTable::getStringView(static_member.getName()));
+				StringBuilder qualified_name_sb;
+				qualified_name_sb.append(type_name).append("::").append(StringTable::getStringView(static_member.getName()));
+				std::string qualified_name(qualified_name_sb.commit());
 				
 				// Skip if already emitted
 				if (emitted_static_members_.count(qualified_name) > 0) {
@@ -648,7 +650,7 @@ public:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = StringTable::getStringView(member.getName());
+							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -736,7 +738,7 @@ private:
 		}
 
 		// Check if accessing class is a friend class of the member owner
-		if (accessing_struct && member_owner_struct->isFriendClass(std::string(StringTable::getStringView(accessing_struct->getName())))) {
+		if (accessing_struct && member_owner_struct->isFriendClass(accessing_struct->getName())) {
 			return true;
 		}
 
@@ -881,7 +883,7 @@ private:
 		}
 
 		// Check if accessing class is a friend class of the member owner
-		if (accessing_struct && member_owner_struct->isFriendClass(std::string(StringTable::getStringView(accessing_struct->getName())))) {
+		if (accessing_struct && member_owner_struct->isFriendClass(accessing_struct->getName())) {
 			return true;
 		}
 
@@ -1059,7 +1061,7 @@ private:
 		load_op.result.type = Type::Struct;
 		load_op.result.size_in_bits = static_cast<int>(copy_this_member->size * 8);
 		load_op.object = std::string_view("this");  // Lambda's this (the closure)
-		load_op.member_name = std::string_view("__copy_this");
+		load_op.member_name = StringTable::getOrInternStringHandle("__copy_this");
 		load_op.offset = static_cast<int>(copy_this_member->offset);
 		load_op.is_reference = false;
 		load_op.is_rvalue_reference = false;
@@ -1082,7 +1084,7 @@ private:
 		load_op.result.type = Type::Void;
 		load_op.result.size_in_bits = 64;
 		load_op.object = std::string_view("this");  // Lambda's this (the closure)
-		load_op.member_name = std::string_view("__this");
+		load_op.member_name = StringTable::getOrInternStringHandle("__this");
 		load_op.offset = -1;  // Will be resolved during IR conversion
 		load_op.is_reference = false;
 		load_op.is_rvalue_reference = false;
@@ -1353,7 +1355,7 @@ private:
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
 							member_load.object = std::string_view("other");  // Load from 'other' parameter
-							member_load.member_name = StringTable::getStringView(member.getName());
+							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
 							member_load.is_rvalue_reference = member.is_rvalue_reference;
@@ -1368,7 +1370,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = StringTable::getStringView(member.getName());
+							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1532,7 +1534,9 @@ private:
 							// Build the qualified name for deduplication using type_info->name()
 							// This ensures consistency with generateStaticMemberDeclarations() which uses
 							// the type name from gTypesByName iterator (important for template instantiations)
-							std::string qualified_name = std::string(type_info->name()) + "::" + std::string(StringTable::getStringView(static_member.getName()));
+							StringBuilder qualified_name_sb;
+							qualified_name_sb.append(type_info->name()).append("::").append(StringTable::getStringView(static_member.getName()));
+							std::string qualified_name(qualified_name_sb.commit());
 							
 							// Skip if already emitted
 							if (emitted_static_members_.count(qualified_name) > 0) {
@@ -1785,7 +1789,7 @@ private:
 					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
 					MemberStoreOp vptr_store;
 					vptr_store.object = std::string_view("this");
-					vptr_store.member_name = "__vptr";  // Virtual pointer (synthetic member)
+					vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");  // Virtual pointer (synthetic member)
 					vptr_store.offset = 0;  // vptr is always at offset 0
 					vptr_store.struct_type_info = struct_type_info;  // Use TypeInfo pointer
 					vptr_store.is_reference = false;
@@ -1874,7 +1878,7 @@ private:
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
 							member_load.object = "other"sv;  // Load from 'other' parameter
-							member_load.member_name = StringTable::getStringView(member.getName());
+							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
 							member_load.is_rvalue_reference = member.is_rvalue_reference;
@@ -1889,7 +1893,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = "this"sv;
-							member_store.member_name = StringTable::getStringView(member.getName());
+							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1955,7 +1959,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = StringTable::getStringView(member.getName());
+							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -2078,7 +2082,7 @@ private:
 						member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 						member_store.value.value = member_value;
 						member_store.object = std::string_view("this");
-						member_store.member_name = StringTable::getStringView(member.getName());
+						member_store.member_name = member.getName();
 						member_store.offset = static_cast<int>(member.offset);
 						member_store.is_reference = member.is_reference;
 						member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -4022,6 +4026,7 @@ private:
 							} else {
 								// No constructor - use direct member initialization
 								// Build a map of member names to initializer expressions
+								// TODO Phase 9: Convert member_values to use StringHandle key after init_list.member_name() is updated
 								std::unordered_map<std::string, const ASTNode*> member_values;
 								size_t positional_index = 0;
 
@@ -4081,7 +4086,7 @@ private:
 									member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 									member_store.value.value = member_value;
 									member_store.object = decl.identifier_token().value();
-									member_store.member_name = StringTable::getStringView(member.getName());
+									member_store.member_name = member.getName();
 									member_store.offset = static_cast<int>(member.offset);
 									member_store.is_reference = member.is_reference;
 									member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -4637,7 +4642,7 @@ private:
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					// Find the member
-					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
+					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
 					if (member) {
 						// Check if this is a by-reference capture
 						auto kind_it = current_lambda_capture_kinds_.find(var_name_str);
@@ -4653,7 +4658,7 @@ private:
 							member_load.result.type = member->type;  // Base type (e.g., Int)
 							member_load.result.size_in_bits = 64;  // pointer size in bits
 							member_load.object = std::string_view("this");
-							member_load.member_name = StringTable::getStringView(member->getName());
+							member_load.member_name = member->getName();
 							member_load.offset = static_cast<int>(member->offset);
 							member_load.is_reference = member->is_reference;
 							member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4691,7 +4696,7 @@ private:
 							member_load.result.type = member->type;
 							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 							member_load.object = std::string_view("this");  // implicit this pointer
-							member_load.member_name = StringTable::getStringView(member->getName());
+							member_load.member_name = member->getName();
 							member_load.offset = static_cast<int>(member->offset);
 							member_load.is_reference = member->is_reference;
 							member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4761,7 +4766,7 @@ private:
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					// Check if this identifier is a member of the struct
-					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
+					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
 					if (member) {
 						// This is a member variable access - generate MemberAccess IR with implicit 'this'
 						TempVar result_temp = var_counter.next();
@@ -4770,7 +4775,7 @@ private:
 						member_load.result.type = member->type;
 						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 						member_load.object = std::string_view("this");  // implicit this pointer
-						member_load.member_name = StringTable::getStringView(member->getName());
+						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(member->offset);
 						member_load.is_reference = member->is_reference;
 						member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4782,7 +4787,7 @@ private:
 					}
 					
 					// Check if this identifier is a static member
-					const StructStaticMember* static_member = struct_info->findStaticMember(var_name_str);
+					const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(var_name_str));
 					if (static_member) {
 						// This is a static member access - generate GlobalLoad IR
 						// Static members are stored as globals with qualified names
@@ -4822,7 +4827,7 @@ private:
 			if (enclosing_type_info && enclosing_type_info->getStructInfo()) {
 				const StructTypeInfo* enclosing_struct = enclosing_type_info->getStructInfo();
 				// Check if this identifier is a member of the enclosing struct
-				const StructMember* member = enclosing_struct->findMemberRecursive(var_name_str);
+				const StructMember* member = enclosing_struct->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
 				if (member) {
 					// This is an implicit member access through [*this] capture
 					// Use helper to load __copy_this, then access the member from it
@@ -4834,7 +4839,7 @@ private:
 						member_load.result.type = member->type;
 						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 						member_load.object = *copy_this_temp;  // The __copy_this object
-						member_load.member_name = StringTable::getStringView(member->getName());
+						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(member->offset);
 						member_load.is_reference = member->is_reference;
 						member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -5075,7 +5080,7 @@ private:
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
 					// Look for static member recursively (checks base classes too)
-					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(qualifiedIdNode.name());
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					if (static_member && owner_struct) {
 						// This is a static member access - generate GlobalLoad
 						TempVar result_temp = var_counter.next();
@@ -5393,7 +5398,7 @@ private:
 				member_load.result.type = member->type;
 				member_load.result.size_in_bits = 64;  // pointer
 				member_load.object = object_name;
-				member_load.member_name = member_name;
+				member_load.member_name = StringTable::getOrInternStringHandle(member_name);
 				member_load.offset = static_cast<int>(member->offset);
 				member_load.is_reference = true;
 				member_load.is_rvalue_reference = false;
@@ -5437,7 +5442,7 @@ private:
 				member_load.result.type = member->type;
 				member_load.result.size_in_bits = member_size_bits;
 				member_load.object = object_name;
-				member_load.member_name = member_name;
+				member_load.member_name = StringTable::getOrInternStringHandle(member_name);
 				member_load.offset = static_cast<int>(member->offset);
 				member_load.is_reference = false;
 				member_load.is_rvalue_reference = false;
@@ -5457,7 +5462,7 @@ private:
 				// Store back to member
 				MemberStoreOp store_op;
 				store_op.object = object_name;
-				store_op.member_name = member_name;
+				store_op.member_name = StringTable::getOrInternStringHandle(member_name);
 				store_op.offset = static_cast<int>(member->offset);
 				store_op.value = { member->type, member_size_bits, result_var };
 				store_op.is_reference = false;
@@ -5482,7 +5487,7 @@ private:
 					auto type_it = gTypesByName.find(current_lambda_closure_type_);
 					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-						const StructMember* member = struct_info->findMemberRecursive(var_name_str);
+						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
 						if (member) {
 							auto kind_it = current_lambda_capture_kinds_.find(var_name_str);
 							bool is_reference = (kind_it != current_lambda_capture_kinds_.end() &&
@@ -5525,7 +5530,7 @@ private:
 									if (type_index < gTypeInfo.size()) {
 										const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
 										if (struct_info) {
-											const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+											const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
 											if (member) {
 												return generateMemberIncDec(object_name, member_name, member, false,
 												                            member_access.member_token());
@@ -6022,7 +6027,7 @@ private:
 										const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 										
 										if (struct_info) {
-											const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+											const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
 											if (member) {
 												// Get index information
 												auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
@@ -6233,7 +6238,7 @@ private:
 							return { Type::Int, 32, TempVar{0} };
 						}
 
-						const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
 						if (!member) {
 							// Error: member not found
 							return { Type::Int, 32, TempVar{0} };
@@ -6272,7 +6277,7 @@ private:
 							load_ref.result.type = member->type;
 							load_ref.result.size_in_bits = 64;  // Pointer is always 64-bit
 							load_ref.object = object_name;
-							load_ref.member_name = member_name;
+							load_ref.member_name = StringTable::getOrInternStringHandle(member_name);
 							load_ref.offset = static_cast<int>(member->offset);
 							load_ref.is_reference = true;  // Load the pointer value
 							load_ref.is_rvalue_reference = member->is_rvalue_reference;
@@ -6307,7 +6312,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = member_value;
 							member_store.object = object_name;
-							member_store.member_name = member_name;
+							member_store.member_name = StringTable::getOrInternStringHandle(member_name);
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
 							member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -6385,7 +6390,7 @@ private:
 						// Create MemberStore operation using the nested object's temp var
 						MemberStoreOp member_store;
 						member_store.object = nested_object_temp;
-						member_store.member_name = final_member_name;
+						member_store.member_name = StringTable::getOrInternStringHandle(final_member_name);
 						member_store.offset = member_offset;
 						member_store.is_reference = member_info->is_reference;
 						member_store.is_rvalue_reference = member_info->is_rvalue_reference;
@@ -6476,7 +6481,7 @@ private:
 				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 					if (struct_info) {
-						const StructMember* member = struct_info->findMemberRecursive(std::string(lhs_name));
+						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(lhs_name)));
 						if (member) {
 						// This is an assignment to a member variable: member = value
 						// Generate MemberStore instead of regular Assignment
@@ -6510,7 +6515,7 @@ private:
 						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 						member_store.value.value = member_value;
 						member_store.object = std::string_view("this");  // implicit this pointer
-						member_store.member_name = lhs_name;
+						member_store.member_name = StringTable::getOrInternStringHandle(lhs_name);
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.is_reference = member->is_reference;
 						member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -6553,7 +6558,7 @@ private:
 							auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
 							if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
 								const StructTypeInfo* struct_info = closure_type_it->second->getStructInfo();
-								const StructMember* member = struct_info->findMemberRecursive(lhs_name_str);
+								const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(lhs_name_str));
 								if (member) {
 									// First, load the pointer from the closure member
 									TempVar ptr_temp = var_counter.next();
@@ -6562,7 +6567,7 @@ private:
 									member_load.result.type = member->type;
 									member_load.result.size_in_bits = 64;  // pointer size
 									member_load.object = std::string_view("this");
-									member_load.member_name = StringTable::getStringView(member->getName());
+									member_load.member_name = member->getName();
 									member_load.offset = static_cast<int>(member->offset);
 									member_load.is_reference = member->is_reference;
 									member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -8684,7 +8689,7 @@ private:
 			if (struct_info) {
 				// Find the member function in the struct
 				std::string_view func_name = func_decl_node.identifier_token().value();
-			StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.getName() == func_name_handle) {
 						called_member_func = &member_func;
@@ -8728,7 +8733,7 @@ private:
 								member_load.object = object_name;
 							}
 							
-							member_load.member_name = func_name;  // Member name
+							member_load.member_name = StringTable::getOrInternStringHandle(func_name);  // Member name
 							member_load.offset = static_cast<int>(member.offset);  // Member offset
 							member_load.is_reference = member.is_reference;
 							member_load.is_rvalue_reference = member.is_rvalue_reference;
@@ -8778,8 +8783,9 @@ private:
 		// Check if this is a member function template that needs instantiation
 		if (struct_info) {
 			std::string_view func_name = func_decl_node.identifier_token().value();
-			std::string qualified_template_name = std::string(StringTable::getStringView(struct_info->getName())) + "::" + std::string(func_name);
-			
+			StringBuilder qualified_name_sb;
+			qualified_name_sb.append(StringTable::getStringView(struct_info->getName())).append("::").append(func_name);
+			std::string qualified_template_name(qualified_name_sb.commit());
 			// DEBUG removed
 			
 			// Look up if this is a template
@@ -9472,7 +9478,7 @@ private:
 								const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 								
 								if (struct_info) {
-									const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+									const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
 									if (member) {
 										// Get index expression
 										auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
@@ -9777,7 +9783,7 @@ private:
 							load_copy_this.result.type = Type::Struct;
 							load_copy_this.result.size_in_bits = 64;  // Pointer size
 							load_copy_this.object = "this"sv;  // Lambda's this (the closure)
-							load_copy_this.member_name = "__copy_this"sv;
+							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							load_copy_this.offset = -1;
 							load_copy_this.is_reference = false;
 							load_copy_this.is_rvalue_reference = false;
@@ -9796,7 +9802,7 @@ private:
 							load_this.result.type = Type::Void;
 							load_this.result.size_in_bits = 64;
 							load_this.object = "this"sv;  // Lambda's this (the closure)
-							load_this.member_name = "__this"sv;
+							load_this.member_name = StringTable::getOrInternStringHandle("__this");
 							load_this.offset = -1;
 							load_this.is_reference = false;
 							load_this.is_rvalue_reference = false;
@@ -9963,7 +9969,7 @@ private:
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
 		
 		// FIRST check if this is a static member (can be accessed via instance in C++)
-		auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name);
+		auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(member_name));
 		if (static_member) {
 			// This is a static member! Access it via GlobalLoad instead of MemberLoad
 			// Static members are accessed using qualified names (OwnerClassName::memberName)
@@ -9999,7 +10005,7 @@ private:
 		}
 		
 		// Use recursive lookup to find instance members in base classes as well
-		const StructMember* member = struct_info->findMemberRecursive(member_name);
+		const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(member_name));
 
 		if (!member) {
 			std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name() << "'\n";
@@ -10044,7 +10050,7 @@ private:
 			member_load.object = std::get<TempVar>(base_object);
 		}
 
-		member_load.member_name = member_name;
+		member_load.member_name = StringTable::getOrInternStringHandle(member_name);
 		member_load.offset = static_cast<int>(member->offset);
 	
 		// Add reference metadata (required for proper handling of reference members)
@@ -10419,7 +10425,7 @@ private:
 
 		// Find the member
 		std::string_view member_name = offsetofNode.member_name();
-		const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+		const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
 		if (!member) {
 			assert(false && "Member not found in struct");
 			return {};
@@ -11619,7 +11625,7 @@ private:
 			const auto& type_node = typeidNode.operand().as<TypeSpecifierNode>();
 
 			// Get type information
-			std::string type_name;
+			std::string_view type_name;
 			if (type_node.type() == Type::Struct) {
 				TypeIndex type_idx = type_node.type_index();
 				if (type_idx < gTypeInfo.size()) {
@@ -11985,7 +11991,7 @@ private:
 							store_this.value.size_in_bits = 64;
 							store_this.value.value = TempVar(1);
 							store_this.object = closure_var_name;
-							store_this.member_name = "__this"sv;
+							store_this.member_name = StringTable::getOrInternStringHandle("__this");
 							store_this.offset = static_cast<int>(member->offset);
 							store_this.is_reference = false;
 							store_this.is_rvalue_reference = false;
@@ -12008,7 +12014,7 @@ private:
 							store_copy_this.value.size_in_bits = 64;
 							store_copy_this.value.value = TempVar(1);  // 'this' pointer
 							store_copy_this.object = closure_var_name;
-							store_copy_this.member_name = "__copy_this"sv;
+							store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							store_copy_this.offset = static_cast<int>(member->offset);
 							store_copy_this.is_reference = false;
 							store_copy_this.is_rvalue_reference = false;
@@ -12067,7 +12073,7 @@ private:
 							}
 							
 							member_store.object = closure_var_name;
-							member_store.member_name = StringTable::getStringView(member->getName());
+							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
 							member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -12102,7 +12108,7 @@ private:
 									member_load.result.type = orig_type.type();  // Use original type (pointer semantics handled by IR converter)
 									member_load.result.size_in_bits = 64;  // Pointer size
 									member_load.object = std::string_view("this");  // "this" is a string literal
-									member_load.member_name = var_name;  // Already a persistent string_view from AST
+									member_load.member_name = StringTable::getOrInternStringHandle(var_name);  // Intern to StringHandle
 									
 									// Look up the offset from the enclosing lambda's struct
 									int enclosing_offset = -1;
@@ -12148,7 +12154,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = addr_temp;
 							member_store.object = closure_var_name;  // Already a persistent string_view
-							member_store.member_name = StringTable::getStringView(member->getName());
+							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
 							member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -12168,7 +12174,7 @@ private:
 							member_load.result.type = member->type;
 							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 							member_load.object = std::string_view("this");  // "this" is a string literal
-							member_load.member_name = var_name;  // Already a persistent string_view from AST
+							member_load.member_name = StringTable::getOrInternStringHandle(var_name);  // Intern to StringHandle
 							
 							// Look up the offset from the enclosing lambda's struct
 							int enclosing_offset = -1;
@@ -12195,7 +12201,7 @@ private:
 						}
 						
 						member_store.object = closure_var_name;  // Already a persistent string_view
-						member_store.member_name = StringTable::getStringView(member->getName());
+						member_store.member_name = member->getName();
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.is_reference = member->is_reference;
 						member_store.is_rvalue_reference = member->is_rvalue_reference;

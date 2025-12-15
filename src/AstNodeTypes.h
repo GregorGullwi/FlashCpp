@@ -610,10 +610,9 @@ struct StructTypeInfo {
 	}
 
 	// Find static member by name
-	const StructStaticMember* findStaticMember(std::string_view name) const {
-		StringHandle name_handle = StringTable::getOrInternStringHandle(name);
+	const StructStaticMember* findStaticMember(StringHandle name) const {
 		for (const auto& static_member : static_members) {
-			if (static_member.getName() == name_handle) {
+			if (static_member.getName() == name) {
 				return &static_member;
 			}
 		}
@@ -627,11 +626,11 @@ struct StructTypeInfo {
 	}
 
 	// Find member recursively through base classes
-	const StructMember* findMemberRecursive(std::string_view member_name) const;
+	const StructMember* findMemberRecursive(StringHandle member_name) const;
 	
 	// Find static member recursively through base classes
 	// Returns a pair of the static member and the StructTypeInfo that defines it
-	std::pair<const StructStaticMember*, const StructTypeInfo*> findStaticMemberRecursive(std::string_view member_name) const;
+	std::pair<const StructStaticMember*, const StructTypeInfo*> findStaticMemberRecursive(StringHandle member_name) const;
 
 	void set_custom_alignment(size_t align) {
 		custom_alignment = align;
@@ -746,11 +745,14 @@ struct StructTypeInfo {
 	}
 
 	// Get fully qualified name (e.g., "Outer::Inner")
-	std::string getQualifiedName() const {
+	StringHandle getQualifiedName() const {
+		StringBuilder sb;
 		if (enclosing_class_) {
-			return enclosing_class_->getQualifiedName() + "::" + std::string(StringTable::getStringView(getName()));
+			sb.append(StringTable::getStringView(enclosing_class_->getQualifiedName()));
+			sb.append("::");
 		}
-		return std::string(StringTable::getStringView(getName()));
+		sb.append(StringTable::getStringView(getName()));
+		return StringTable::getOrInternStringHandle(sb.commit());
 	}
 
 	// Find default constructor (no parameters)

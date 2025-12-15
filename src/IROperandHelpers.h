@@ -287,7 +287,7 @@ inline bool parseMemberLoadOp(const IrInstruction& inst, MemberLoadOp& out) {
 	}
 
 	if (!inst.isOperandType<std::string_view>(4)) return false;
-	out.member_name = inst.getOperandAs<std::string_view>(4);
+	out.member_name = StringTable::getOrInternStringHandle(inst.getOperandAs<std::string_view>(4));
 
 	if (!inst.isOperandType<int>(5)) return false;
 	out.offset = inst.getOperandAs<int>(5);

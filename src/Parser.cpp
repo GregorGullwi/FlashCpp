@@ -11813,7 +11813,7 @@ ParseResult Parser::parse_primary_expression()
 
 							if (base_struct_info) {
 								// Check if the identifier is a member of the base class (recursively)
-								const StructMember* member = base_struct_info->findMemberRecursive(std::string(idenfifier_token.value()));
+								const StructMember* member = base_struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
 								if (member) {
 									// This is an inherited member variable! Transform it into this->member
 									Token this_token(Token::Type::Keyword, "this",
@@ -11845,7 +11845,7 @@ ParseResult Parser::parse_primary_expression()
 						if (struct_info) {
 							// FIRST check static members (these don't use this->)
 							// Use findStaticMemberRecursive to also search base classes
-							auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(idenfifier_token.value());
+							auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 							if (static_member) {
 								// Found static member! Create a simple identifier node
 								// Static members are accessed directly, not via this->
@@ -11882,7 +11882,7 @@ ParseResult Parser::parse_primary_expression()
 							}
 							
 							// Also check base class members
-							const StructMember* member = struct_info->findMemberRecursive(std::string(idenfifier_token.value()));
+							const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
 							if (member) {
 								// This is an inherited member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this",
@@ -15279,7 +15279,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
 					// Look up the member
-					const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
 					if (member) {
 						// Return the member's type
 						// member->size is in bytes, TypeSpecifierNode expects bits
@@ -19132,7 +19132,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		
 		// Look for the static member with the given name
-		const StructStaticMember* static_member = struct_info->findStaticMember(member_name);
+		const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(member_name));
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
@@ -19195,7 +19195,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		
 		// Look for the static member with the given name
-		const StructStaticMember* static_member = struct_info->findStaticMember(member_name);
+		const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(member_name));
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
