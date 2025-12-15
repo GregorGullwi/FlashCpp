@@ -23,10 +23,30 @@
  * 
  * Memory layout for each interned string:
  * [StringMetadata][String Content (N bytes)][\0]
+ * 
+ * IMPORTANT: This struct MUST be exactly 12 bytes for correctness:
+ * 
+ * 1. getContent() uses pointer arithmetic (this + 1) to locate string data
+ *    immediately after the metadata. If the struct size changes, this breaks.
+ * 
+ * 2. StringHandle stores byte offsets assuming metadata is always 12 bytes.
+ *    When resolving a handle, we do: chunk_base + offset to get the metadata pointer.
+ *    The string content is then at: metadata + 12 bytes.
+ * 
+ * 3. The struct naturally fits in 12 bytes (uint64_t + uint32_t = 8 + 4 = 12)
+ *    without padding, but we use #pragma pack(1) to guarantee this on all compilers
+ *    (GCC, Clang, MSVC) and prevent the compiler from adding padding for alignment.
+ * 
+ * Why not use alignment padding?
+ * - We allocate these structs sequentially in a chunk allocator with variable-length
+ *   strings following each metadata block. Padding would waste memory and break
+ *   our offset calculations.
  */
+#pragma pack(push, 1)
 struct StringMetadata {
-	uint64_t hash;    // Pre-computed FNV-1a hash
-	uint32_t length;  // String length in bytes
+	uint64_t hash;    // Pre-computed FNV-1a hash (8 bytes)
+	uint32_t length;  // String length in bytes (4 bytes)
+	                  // Total: 12 bytes
 	
 	// Convenience methods
 	const char* getContent() const {
@@ -38,9 +58,10 @@ struct StringMetadata {
 	}
 	
 	static constexpr size_t SIZE = sizeof(uint64_t) + sizeof(uint32_t);  // 12 bytes
-} __attribute__((packed));
+};
+#pragma pack(pop)
 
-static_assert(sizeof(StringMetadata) == 12, "StringMetadata must be 12 bytes (packed)");
+static_assert(sizeof(StringMetadata) == 12, "StringMetadata must be 12 bytes for pointer arithmetic in getContent()");
 
 /**
  * @brief Lightweight 32-bit handle representing a string in the global allocator
