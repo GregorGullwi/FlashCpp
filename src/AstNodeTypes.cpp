@@ -766,13 +766,14 @@ void StructTypeInfo::buildVTable() {
             // Itanium C++ ABI: _ZTV + length + name
             // e.g., class "Base" -> "_ZTV4Base"
             vtable_sb.append("_ZTV");
-            vtable_sb.append(static_cast<uint64_t>(name.size()));
-            vtable_sb.append(name);
+            std::string_view name_sv = getName();
+            vtable_sb.append(static_cast<uint64_t>(name_sv.size()));
+            vtable_sb.append(name_sv);
         } else {
             // MSVC: ??_7 + name + @@6B@
             // e.g., class "Base" -> "??_7Base@@6B@"
             vtable_sb.append("??_7");
-            vtable_sb.append(name);
+            vtable_sb.append(getName());
             vtable_sb.append("@@6B@");
         }
         
@@ -872,10 +873,11 @@ void StructTypeInfo::buildRTTI() {
     static std::vector<MSVCBaseClassDescriptor> bcd_storage;
 
     // Create mangled and demangled names
-    std::string mangled_name = ".?AV" + name + "@@";  // MSVC-style mangling for classes
+    std::string name_str(getName());
+    std::string mangled_name = ".?AV" + name_str + "@@";  // MSVC-style mangling for classes
 
     // Allocate RTTI info
-    rtti_storage.emplace_back(mangled_name.c_str(), name.c_str(), base_classes.size());
+    rtti_storage.emplace_back(mangled_name.c_str(), name_str.c_str(), base_classes.size());
     rtti_info = &rtti_storage.back();
 
     // Build ??_R0 - Type Descriptor
@@ -1005,7 +1007,8 @@ void StructTypeInfo::buildRTTI() {
     // Create Itanium-style mangled name
     // Itanium uses length-prefixed names: "3Foo" for class Foo
     StringBuilder builder;
-    builder.append(name.length()).append(name);
+    std::string_view name_sv = getName();
+    builder.append(name_sv.length()).append(name_sv);
     std::string_view itanium_mangled = builder.commit();
     
     // Allocate permanent storage for the name string (persists for program lifetime)

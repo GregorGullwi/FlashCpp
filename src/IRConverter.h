@@ -7458,11 +7458,11 @@ private:
 								if (base_type.isStruct()) {
 									const StructTypeInfo* base_struct = base_type.getStructInfo();
 									if (base_struct) {
-										vtable_info.base_class_names.push_back(base_struct->name);
+										vtable_info.base_class_names.push_back(std::string(base_struct->getName()));
 										
 										// Add detailed base class info
 										ObjectFileWriter::BaseClassDescriptorInfo bci;
-										bci.name = base_struct->name;
+										bci.name = std::string(base_struct->getName());
 										bci.num_contained_bases = static_cast<uint32_t>(base_struct->base_classes.size());
 										bci.offset = static_cast<uint32_t>(base.offset);
 										bci.is_virtual = base.is_virtual;
@@ -12485,7 +12485,7 @@ private:
 					// User-defined class type
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						typeinfo_symbol = writer.get_or_create_class_typeinfo(struct_info->name);
+						typeinfo_symbol = writer.get_or_create_class_typeinfo(struct_info->getName());
 					}
 				} else {
 					// Built-in type
