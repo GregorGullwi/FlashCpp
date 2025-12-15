@@ -6850,7 +6850,7 @@ private:
 		const GlobalLoadOp& op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
 		
 		TempVar result_temp = std::get<TempVar>(op.result.value);
-		std::string global_name(op.global_name);
+		std::string global_name(op.getGlobalName());  // Phase 4: Use helper
 		int size_in_bits = op.result.size_in_bits;
 		Type result_type = op.result.type;
 		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);

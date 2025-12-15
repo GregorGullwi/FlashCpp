@@ -834,8 +834,17 @@ struct ConversionOp {
 // Global variable load
 struct GlobalLoadOp {
 	TypedValue result;           // Result with type, size, and temp var
-	std::string_view global_name;  // Name of global variable (from source token or StringBuilder)
+	std::variant<std::string_view, StringHandle> global_name;  // Phase 4: Name of global variable
 	bool is_array = false;       // If true, load address (LEA) instead of value (MOV)
+	
+	// Helper to get global_name as string_view
+	std::string_view getGlobalName() const {
+		if (std::holds_alternative<std::string_view>(global_name)) {
+			return std::get<std::string_view>(global_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(global_name));
+		}
+	}
 };
 
 // Function address (get address of a function)
@@ -2076,7 +2085,7 @@ public:
 			} else if (std::holds_alternative<std::string_view>(op.result.value)) {
 				oss << '%' << std::get<std::string_view>(op.result.value);
 			}
-			oss << " = global_load @" << op.global_name;
+			oss << " = global_load @" << op.getGlobalName();  // Phase 4: Use helper
 		}
 		break;
 		

@@ -4888,13 +4888,12 @@ private:
 				op.result.value = result_temp;
 				
 				// Check if this global has a mangled name (e.g., anonymous namespace variable)
-				// Phase 4: Using StringHandle for lookup
-				StringHandle simple_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
-				auto it = global_variable_names_.find(simple_name_handle);
+				std::string simple_name(identifierNode.name());
+				auto it = global_variable_names_.find(simple_name);
 				if (it != global_variable_names_.end()) {
-					op.global_name = it->second;  // Use mangled StringHandle
+					op.global_name = it->second;  // Use mangled name
 				} else {
-					op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
+					op.global_name = identifierNode.name();  // Use simple name
 				}
 				
 				op.is_array = is_array_type;  // Arrays need LEA to get address
@@ -4974,13 +4973,12 @@ private:
 				op.result.value = result_temp;
 				
 				// Check if this global has a mangled name (e.g., anonymous namespace variable)
-				// Phase 4: Using StringHandle for lookup
-				StringHandle simple_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
-				auto it = global_variable_names_.find(simple_name_handle);
+				std::string simple_name(identifierNode.name());
+				auto it = global_variable_names_.find(simple_name);
 				if (it != global_variable_names_.end()) {
-					op.global_name = it->second;  // Use mangled StringHandle
+					op.global_name = it->second;  // Use mangled name
 				} else {
-					op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
+					op.global_name = identifierNode.name();  // Use simple name
 				}
 				
 				op.is_array = is_array_type;  // Arrays need LEA to get address
@@ -5300,16 +5298,15 @@ private:
 		std::vector<IrOperand> irOperands;
 
 		auto tryBuildIdentifierOperand = [&](const IdentifierNode& identifier, std::vector<IrOperand>& out) -> bool {
-			// Phase 4: Using StringHandle for lookup
-			StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
+			std::string identifier_name(identifier.name());
 
 			// Static local variables are stored as globals with mangled names
-			auto static_local_it = static_local_names_.find(identifier_handle);
+			auto static_local_it = static_local_names_.find(identifier_name);
 			if (static_local_it != static_local_names_.end()) {
 				out.clear();
 				out.emplace_back(static_local_it->second.type);
 				out.emplace_back(static_cast<int>(static_local_it->second.size_in_bits));
-				out.emplace_back(static_local_it->second.mangled_name);  // Already a StringHandle
+				out.emplace_back(static_local_it->second.mangled_name);
 				return true;
 			}
 
