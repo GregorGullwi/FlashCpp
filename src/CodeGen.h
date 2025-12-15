@@ -378,7 +378,7 @@ public:
 					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
 					if (std::holds_alternative<SizeofPackNode>(expr)) {
 						// This is an uninstantiated template - skip
-						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.name, 
+						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
 						          "' with unsubstituted sizeof... in type '", type_name, "'");
 						continue;
 					}
@@ -386,7 +386,7 @@ public:
 						// Template parameter not substituted - this is a template pattern, not an instantiation
 						// Skip it (instantiated versions will have NumericLiteralNode instead)
 						const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
-						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.name, 
+						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
 						          "' with unsubstituted template parameter '", tparam.param_name(), 
 						          "' in type '", type_name, "'");
 						continue;
@@ -401,7 +401,7 @@ public:
 						auto symbol = global_symbol_table_->lookup(id.name());
 						if (!symbol.has_value()) {
 							// Not found in global symbol table - likely a template parameter
-							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.name, 
+							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
 							          "' with identifier initializer '", id.name(), 
 							          "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
 							continue;
@@ -410,7 +410,7 @@ public:
 				}
 
 				// Build the qualified name for deduplication
-				std::string qualified_name = std::string(type_name) + "::" + static_member.name;
+				std::string qualified_name = std::string(type_name) + "::" + std::string(static_member.getName());
 				
 				// Skip if already emitted
 				if (emitted_static_members_.count(qualified_name) > 0) {
@@ -1532,7 +1532,7 @@ private:
 							// Build the qualified name for deduplication using type_info->name()
 							// This ensures consistency with generateStaticMemberDeclarations() which uses
 							// the type name from gTypesByName iterator (important for template instantiations)
-							std::string qualified_name = std::string(type_info->name()) + "::" + static_member.name;
+							std::string qualified_name = std::string(type_info->name()) + "::" + std::string(static_member.getName());
 							
 							// Skip if already emitted
 							if (emitted_static_members_.count(qualified_name) > 0) {
@@ -4652,7 +4652,7 @@ private:
 							member_load.result.type = member->type;  // Base type (e.g., Int)
 							member_load.result.size_in_bits = 64;  // pointer size in bits
 							member_load.object = std::string_view("this");
-							member_load.member_name = std::string_view(member->name);
+							member_load.member_name = std::string_view(member->getName());
 							member_load.offset = static_cast<int>(member->offset);
 							member_load.is_reference = member->is_reference;
 							member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4690,7 +4690,7 @@ private:
 							member_load.result.type = member->type;
 							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 							member_load.object = std::string_view("this");  // implicit this pointer
-							member_load.member_name = std::string_view(member->name);
+							member_load.member_name = std::string_view(member->getName());
 							member_load.offset = static_cast<int>(member->offset);
 							member_load.is_reference = member->is_reference;
 							member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4769,7 +4769,7 @@ private:
 						member_load.result.type = member->type;
 						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 						member_load.object = std::string_view("this");  // implicit this pointer
-						member_load.member_name = std::string_view(member->name);
+						member_load.member_name = std::string_view(member->getName());
 						member_load.offset = static_cast<int>(member->offset);
 						member_load.is_reference = member->is_reference;
 						member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4833,7 +4833,7 @@ private:
 						member_load.result.type = member->type;
 						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 						member_load.object = *copy_this_temp;  // The __copy_this object
-						member_load.member_name = std::string_view(member->name);
+						member_load.member_name = std::string_view(member->getName());
 						member_load.offset = static_cast<int>(member->offset);
 						member_load.is_reference = member->is_reference;
 						member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -5486,7 +5486,7 @@ private:
 							auto kind_it = current_lambda_capture_kinds_.find(var_name_str);
 							bool is_reference = (kind_it != current_lambda_capture_kinds_.end() &&
 							                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
-							return generateMemberIncDec("this", member->name, member, is_reference, 
+							return generateMemberIncDec("this", member->getName(), member, is_reference, 
 							                            unaryOperatorNode.get_token());
 						}
 					}
@@ -6560,7 +6560,7 @@ private:
 									member_load.result.type = member->type;
 									member_load.result.size_in_bits = 64;  // pointer size
 									member_load.object = std::string_view("this");
-									member_load.member_name = std::string_view(member->name);
+									member_load.member_name = std::string_view(member->getName());
 									member_load.offset = static_cast<int>(member->offset);
 									member_load.is_reference = member->is_reference;
 									member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -12064,7 +12064,7 @@ private:
 							}
 							
 							member_store.object = closure_var_name;
-							member_store.member_name = std::string_view(member->name);
+							member_store.member_name = std::string_view(member->getName());
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
 							member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -12145,7 +12145,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = addr_temp;
 							member_store.object = closure_var_name;  // Already a persistent string_view
-							member_store.member_name = std::string_view(member->name);
+							member_store.member_name = std::string_view(member->getName());
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
 							member_store.is_rvalue_reference = member->is_rvalue_reference;
@@ -12192,7 +12192,7 @@ private:
 						}
 						
 						member_store.object = closure_var_name;  // Already a persistent string_view
-						member_store.member_name = std::string_view(member->name);
+						member_store.member_name = std::string_view(member->getName());
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.is_reference = member->is_reference;
 						member_store.is_rvalue_reference = member->is_rvalue_reference;

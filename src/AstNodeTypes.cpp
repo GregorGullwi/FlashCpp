@@ -714,14 +714,14 @@ void StructTypeInfo::buildVTable() {
         has_vtable = true;
 
         // Get function name for matching
-        const std::string& func_name = func.name;
+        std::string_view func_name = func.getName();
 
         // Check if this function overrides a base class virtual function
         int override_index = -1;
         const StructMemberFunction* base_func_ptr = nullptr;
         for (size_t i = 0; i < vtable.size(); ++i) {
             const StructMemberFunction* base_func = vtable[i];
-            if (base_func != nullptr && base_func->name == func_name) {
+            if (base_func != nullptr && base_func->getName() == func_name) {
                 override_index = static_cast<int>(i);
                 base_func_ptr = base_func;
                 break;
@@ -798,7 +798,7 @@ void StructTypeInfo::updateAbstractFlag() {
 const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_name) const {
     // First, check own members
     for (const auto& member : members) {
-        if (member.name == member_name) {
+        if (member.getName() == member_name) {
             return &member;
         }
     }
@@ -831,7 +831,7 @@ const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_
 std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(std::string_view member_name) const {
     // First, check own static members
     for (const auto& static_member : static_members) {
-        if (static_member.name == member_name) {
+        if (static_member.getName() == member_name) {
             return { &static_member, this };
         }
     }
