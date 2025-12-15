@@ -4594,13 +4594,34 @@ private:
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
 			auto it = variable_scopes.back().variables.find(tempVar.name());
+			FLASH_LOG(Codegen, Debug, "getStackOffsetFromTempVar: Looking up '", tempVar.name(), "'");
 			if (it != variable_scopes.back().variables.end() && it->second.offset != INT_MIN) {
+				FLASH_LOG(Codegen, Debug, "  Found with valid offset: ", it->second.offset);
 				return it->second.offset;  // Use pre-allocated offset (if it's been properly set)
+			}
+			
+			// CRITICAL FIX: If TempVar entry has INT_MIN, check if it corresponds to the most recently
+			// allocated named variable (tracked in handleVariableDecl)
+			// This handles the duplicate entry problem where named variables get both a name entry
+			// and a TempVar entry
+			if (it != variable_scopes.back().variables.end() && it->second.offset == INT_MIN) {
+				FLASH_LOG(Codegen, Debug, "  Found with INT_MIN, last_allocated_variable: '", last_allocated_variable_name_, "', offset: ", last_allocated_variable_offset_);
+				if (!last_allocated_variable_name_.empty() && last_allocated_variable_offset_ != 0) {
+					// Use the last allocated variable's offset for this TempVar
+					// Update the TempVar entry so future lookups are O(1)
+					it->second.offset = last_allocated_variable_offset_;
+					FLASH_LOG(Codegen, Debug, "  Linked '", tempVar.name(), 
+					         "' to named variable '", last_allocated_variable_name_, "' at offset ", last_allocated_variable_offset_);
+					return last_allocated_variable_offset_;
+				}
+			} else {
+				FLASH_LOG(Codegen, Debug, "  Not found in variables map");
 			}
 		}
 		// Allocate TempVars sequentially after named_vars + shadow space
 		// Use next_temp_var_offset_ to track the next available slot
 		// Each TempVar gets 8 bytes (conservative sizing for x64)
+		FLASH_LOG(Codegen, Debug, "  Allocating new offset");
 		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
 		next_temp_var_offset_ += 8;
 		
@@ -6930,6 +6951,10 @@ private:
 
 		// Store mapping from variable name to offset for reference lookups
 		variable_name_to_offset_[var_name_str] = var_it->second.offset;
+
+		// Track the most recently allocated named variable for TempVar linking
+		last_allocated_variable_name_ = var_name_str;
+		last_allocated_variable_offset_ = var_it->second.offset;
 
 		if (is_reference) {
 			reference_stack_info_[var_it->second.offset] = ReferenceInfo{
@@ -12982,6 +13007,10 @@ private:
 
 	// Track if dynamic_cast runtime helpers need to be emitted
 	bool needs_dynamic_cast_runtime_ = false;
+
+	// Track most recently allocated named variable for TempVar linking
+	std::string last_allocated_variable_name_;
+	int32_t last_allocated_variable_offset_ = 0;
 
 	// Prologue patching for stack allocation
 	uint32_t current_function_prologue_offset_ = 0;  // Offset of SUB RSP instruction for patching
