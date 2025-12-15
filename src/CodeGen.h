@@ -3051,13 +3051,20 @@ private:
 		
 		ASTNode init_expr;
 		// For range-based for loops, __range_begin is a pointer to the element
-		// We always need to dereference it to get the actual element value
-		// Whether the loop variable is a reference or value doesn't matter here -
-		// references will bind to the dereferenced object, values will copy it
-		auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
-		init_expr = ASTNode::emplace_node<ExpressionNode>(
-			UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_deref_expr, true)
-		);
+		// For reference loop variables (T& x), use the pointer directly
+		// For value loop variables (T x), dereference to get the value
+		bool loop_var_is_reference = loop_type.is_reference() || loop_type.is_rvalue_reference();
+		
+		if (loop_var_is_reference) {
+			// Reference: bind directly to the iterator pointer (don't dereference)
+			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		} else {
+			// Value: dereference the iterator to get the element value
+			auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			init_expr = ASTNode::emplace_node<ExpressionNode>(
+				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_deref_expr, true)
+			);
+		}
 		
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
