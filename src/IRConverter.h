@@ -4128,6 +4128,9 @@ private:
 		// Check if we're dealing with floating-point types
 		bool is_float_type = (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double);
 
+		// Track whether we should release the source register after storing
+		bool should_release_source = false;
+
 		// Determine the final destination of the result (register or memory)
 		if (std::holds_alternative<std::string_view>(ctx.result_value.value)) {
 			// If the result is a named variable, find its stack offset
@@ -4146,6 +4149,8 @@ private:
 					SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
 				);
 			}
+			// For named variables, we can release the source register since the value is now in memory
+			should_release_source = true;
 		}
 		else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
@@ -4174,6 +4179,8 @@ private:
 					}
 				}
 				// Result is already in the correct register, no move needed
+				// Can release source register since result is now tracked in the destination register
+				should_release_source = true;
 			}
 			else {
 				// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
@@ -4192,6 +4199,8 @@ private:
 					emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
 				}
 				// For integer types: Don't store to memory - keep the value in the register for subsequent operations
+				// DON'T release the source register for integer temps - keeping value in register for optimization
+				should_release_source = false;
 			}
 
 		}
@@ -4199,7 +4208,7 @@ private:
 			assert(false && "Unhandled destination type");
 		}
 
-		if (source_reg != X64Register::Count) {
+		if (source_reg != X64Register::Count && should_release_source) {
 			regAlloc.release(source_reg);
 		}
 	}
