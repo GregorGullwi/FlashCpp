@@ -834,16 +834,24 @@ struct StructTypeInfo {
 
 // Enumerator information
 struct Enumerator {
-	std::string name;
+	std::variant<std::string, StringHandle> name;
 	long long value;  // Enumerator value (always an integer)
 
 	Enumerator(std::string n, long long v)
 		: name(std::move(n)), value(v) {}
+	
+	std::string_view getName() const {
+		if (std::holds_alternative<std::string>(name)) {
+			return std::get<std::string>(name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(name));
+		}
+	}
 };
 
 // Enum type information
 struct EnumTypeInfo {
-	std::string name;
+	std::variant<std::string, StringHandle> name;
 	bool is_scoped;                  // true for enum class, false for enum
 	Type underlying_type;            // Underlying type (default: int)
 	unsigned char underlying_size;   // Size in bits of underlying type
@@ -851,22 +859,30 @@ struct EnumTypeInfo {
 
 	EnumTypeInfo(std::string n, bool scoped = false, Type underlying = Type::Int, unsigned char size = 32)
 		: name(std::move(n)), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
+	
+	std::string_view getName() const {
+		if (std::holds_alternative<std::string>(name)) {
+			return std::get<std::string>(name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(name));
+		}
+	}
 
 	void addEnumerator(const std::string& enumerator_name, long long value) {
 		enumerators.emplace_back(enumerator_name, value);
 	}
 
-	const Enumerator* findEnumerator(const std::string& name) const {
+	const Enumerator* findEnumerator(const std::string& name_str) const {
 		for (const auto& enumerator : enumerators) {
-			if (enumerator.name == name) {
+			if (enumerator.getName() == name_str) {
 				return &enumerator;
 			}
 		}
 		return nullptr;
 	}
 
-	long long getEnumeratorValue(const std::string& name) const {
-		const Enumerator* e = findEnumerator(name);
+	long long getEnumeratorValue(const std::string& name_str) const {
+		const Enumerator* e = findEnumerator(name_str);
 		return e ? e->value : 0;
 	}
 };
