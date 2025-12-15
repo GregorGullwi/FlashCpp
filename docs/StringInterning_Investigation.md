@@ -29,11 +29,8 @@ struct StringHandle {
     uint32_t handle; // Packed ID: Chunk Index (high bits) + Offset (low bits)
     
     // Example Bit Layout:
-    // [31...24] (8 bits) : Chunk Index (supports up to 256 chunks)
-    // [23...0]  (24 bits): Byte Offset within that chunk (up to 16MB per chunk)
-    
-    // Note: Default chunk size is 64MB, but we limit addressable space to 16MB
-    // to fit in 24 bits. This is acceptable as most strings are small.
+    // [31...26] (6 bits) : Chunk Index (supports up to 64 chunks)
+    // [25...0]  (26 bits): Byte Offset within that chunk (up to 64MB per chunk)
     
     // Hash support for use in unordered_map
     size_t hash() const noexcept;
@@ -113,18 +110,20 @@ std::unordered_map<StringHandle, VariableInfo> variables;
     - Add `char* getChunkPointer(size_t chunk_idx, size_t offset) const` - resolves handle to pointer
     - Add `size_t getChunkCount() const` - returns total number of chunks
 2.  **Create `StringTable.h`**: Implement `StringHandle` struct and StringTable API.
-    - Define `StringHandle` with 32-bit packed representation
+    - Define `StringHandle` with 32-bit packed representation (6-bit chunk index + 26-bit offset)
+    - Define `StringMetadata` struct to replace magic numbers
     - Implement FNV-1a hash function for strings
     - Implement `createStringHandle(std::string_view str)` - allocates new string with metadata
     - Implement `getOrInternStringHandle(std::string_view str)` - intern or return existing
     - Implement `getStringView(StringHandle h)` - O(1) reconstruction
     - Implement `getHash(StringHandle h)` - O(1) retrieval
     - Add `std::hash<StringHandle>` specialization
-3.  **Unit Test**: Create tests in `tests/` directory to verify:
+3.  **Unit Test**: Create tests in `tests/internal/` directory to verify:
     - Handle round-trip to string works correctly
     - Interning deduplicates identical strings
     - Different strings get different handles
     - Hash values are consistent
+    - **Run before each commit**: `clang++ -std=c++20 -I src tests/internal/string_table_standalone_test.cpp -o /tmp/test && /tmp/test`
 
 ### Phase 2: Variable Naming Update (TempVar)
 *Goal: Clean up TempVar generation before the big refactor.*

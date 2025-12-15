@@ -582,7 +582,6 @@ inline void printTypedValue(std::ostringstream& oss, const TypedValue& typedValu
 	else if (std::holds_alternative<std::string_view>(typedValue.value))
 		oss << '%' << std::get<std::string_view>(typedValue.value);
 	else if (std::holds_alternative<StringHandle>(typedValue.value)) {
-		// Resolve StringHandle to string_view for printing
 		StringHandle handle = std::get<StringHandle>(typedValue.value);
 		oss << '%' << StringTable::getStringView(handle);
 	}

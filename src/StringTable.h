@@ -19,23 +19,47 @@
  */
 
 /**
+ * @brief Metadata stored before each string in the chunk allocator
+ * 
+ * Memory layout for each interned string:
+ * [StringMetadata][String Content (N bytes)][\0]
+ */
+struct StringMetadata {
+	uint64_t hash;    // Pre-computed FNV-1a hash
+	uint32_t length;  // String length in bytes
+	
+	// Convenience methods
+	const char* getContent() const {
+		return reinterpret_cast<const char*>(this + 1);
+	}
+	
+	char* getContent() {
+		return reinterpret_cast<char*>(this + 1);
+	}
+	
+	static constexpr size_t SIZE = sizeof(uint64_t) + sizeof(uint32_t);  // 12 bytes
+} __attribute__((packed));
+
+static_assert(sizeof(StringMetadata) == 12, "StringMetadata must be 12 bytes (packed)");
+
+/**
  * @brief Lightweight 32-bit handle representing a string in the global allocator
  * 
  * Memory layout:
- * [31...24] (8 bits)  : Chunk Index (supports up to 256 chunks)
- * [23...0]  (24 bits) : Byte Offset within chunk (up to 16MB addressable per chunk)
+ * [31...26] (6 bits)  : Chunk Index (supports up to 64 chunks)
+ * [25...0]  (26 bits) : Byte Offset within chunk (up to 64MB addressable per chunk)
  */
 struct StringHandle {
 	// Bit layout constants
-	static constexpr uint32_t CHUNK_INDEX_BITS = 8;
-	static constexpr uint32_t OFFSET_BITS = 24;
-	static constexpr uint32_t MAX_CHUNK_INDEX = (1u << CHUNK_INDEX_BITS) - 1;  // 255
-	static constexpr uint32_t MAX_OFFSET = (1u << OFFSET_BITS) - 1;  // 16777215 bytes (~16MB)
+	static constexpr uint32_t CHUNK_INDEX_BITS = 6;
+	static constexpr uint32_t OFFSET_BITS = 26;
+	static constexpr uint32_t MAX_CHUNK_INDEX = (1u << CHUNK_INDEX_BITS) - 1;  // 63
+	static constexpr uint32_t MAX_OFFSET = (1u << OFFSET_BITS) - 1;  // 67108863 bytes (64MB)
 	static constexpr uint32_t OFFSET_MASK = MAX_OFFSET;
 	
 	// Note: We add 1 to offset in constructor to reserve handle 0 as invalid,
 	// which means the actual usable offset range is [0, MAX_OFFSET - 1]
-	static constexpr uint32_t MAX_USABLE_OFFSET = MAX_OFFSET - 1;  // 16777214 bytes
+	static constexpr uint32_t MAX_USABLE_OFFSET = MAX_OFFSET - 1;  // 67108862 bytes
 	
 	uint32_t handle = 0;  // Packed: chunk_index (high 8 bits) + offset (low 24 bits)
 
@@ -129,8 +153,8 @@ public:
 	 * caching the last chunk index or using a more sophisticated data structure.
 	 */
 	static StringHandle createStringHandle(std::string_view str) {
-		// Calculate total allocation size: hash + length + content + null
-		size_t total_size = 8 + 4 + str.size() + 1;
+		// Calculate total allocation size: metadata + content + null terminator
+		size_t total_size = StringMetadata::SIZE + str.size() + 1;
 		
 		// Allocate memory (may create new chunk if needed)
 		char* ptr = gChunkedStringAllocator.allocate(total_size);
@@ -143,15 +167,15 @@ public:
 		char* chunk_start = gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
 		size_t offset = ptr - chunk_start;
 
-		// Write metadata and content
-		uint64_t hash = hashString(str);
-		std::memcpy(ptr, &hash, 8);
+		// Write metadata using struct
+		StringMetadata* metadata = reinterpret_cast<StringMetadata*>(ptr);
+		metadata->hash = hashString(str);
+		metadata->length = static_cast<uint32_t>(str.size());
 		
-		uint32_t length = static_cast<uint32_t>(str.size());
-		std::memcpy(ptr + 8, &length, 4);
-		
-		std::memcpy(ptr + 12, str.data(), str.size());
-		ptr[12 + str.size()] = '\0';  // Null terminator
+		// Write string content after metadata
+		char* content = metadata->getContent();
+		std::memcpy(content, str.data(), str.size());
+		content[str.size()] = '\0';  // Null terminator
 
 		return StringHandle(static_cast<uint32_t>(chunk_idx), static_cast<uint32_t>(offset));
 	}
@@ -188,12 +212,9 @@ public:
 			handle.offset()
 		);
 
-		// Read length from metadata
-		uint32_t length;
-		std::memcpy(&length, ptr + 8, 4);
-
-		// Return string_view pointing to content
-		return std::string_view(ptr + 12, length);
+		// Access metadata using struct
+		const StringMetadata* metadata = reinterpret_cast<const StringMetadata*>(ptr);
+		return std::string_view(metadata->getContent(), metadata->length);
 	}
 
 	/**
@@ -207,10 +228,9 @@ public:
 			handle.offset()
 		);
 
-		// Read hash from metadata
-		uint64_t hash;
-		std::memcpy(&hash, ptr, 8);
-		return hash;
+		// Access hash from metadata using struct
+		const StringMetadata* metadata = reinterpret_cast<const StringMetadata*>(ptr);
+		return metadata->hash;
 	}
 
 	/**
