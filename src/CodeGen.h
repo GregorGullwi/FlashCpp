@@ -648,7 +648,7 @@ public:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = member.getName();
+							member_store.member_name = StringTable::getStringView(member.getName());
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1353,7 +1353,7 @@ private:
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
 							member_load.object = std::string_view("other");  // Load from 'other' parameter
-							member_load.member_name = member.getName();
+							member_load.member_name = StringTable::getStringView(member.getName());
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
 							member_load.is_rvalue_reference = member.is_rvalue_reference;
@@ -1368,7 +1368,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = member.getName();
+							member_store.member_name = StringTable::getStringView(member.getName());
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1874,7 +1874,7 @@ private:
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
 							member_load.object = "other"sv;  // Load from 'other' parameter
-							member_load.member_name = member.getName();
+							member_load.member_name = StringTable::getStringView(member.getName());
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
 							member_load.is_rvalue_reference = member.is_rvalue_reference;
@@ -1889,7 +1889,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = "this"sv;
-							member_store.member_name = member.getName();
+							member_store.member_name = StringTable::getStringView(member.getName());
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1955,7 +1955,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = member.getName();
+							member_store.member_name = StringTable::getStringView(member.getName());
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -2078,7 +2078,7 @@ private:
 						member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 						member_store.value.value = member_value;
 						member_store.object = std::string_view("this");
-						member_store.member_name = member.getName();
+						member_store.member_name = StringTable::getStringView(member.getName());
 						member_store.offset = static_cast<int>(member.offset);
 						member_store.is_reference = member.is_reference;
 						member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -4081,7 +4081,7 @@ private:
 									member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 									member_store.value.value = member_value;
 									member_store.object = decl.identifier_token().value();
-									member_store.member_name = member.getName();
+									member_store.member_name = StringTable::getStringView(member.getName());
 									member_store.offset = static_cast<int>(member.offset);
 									member_store.is_reference = member.is_reference;
 									member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -4653,7 +4653,7 @@ private:
 							member_load.result.type = member->type;  // Base type (e.g., Int)
 							member_load.result.size_in_bits = 64;  // pointer size in bits
 							member_load.object = std::string_view("this");
-							member_load.member_name = std::string_view(member->getName());
+							member_load.member_name = StringTable::getStringView(member->getName());
 							member_load.offset = static_cast<int>(member->offset);
 							member_load.is_reference = member->is_reference;
 							member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4691,7 +4691,7 @@ private:
 							member_load.result.type = member->type;
 							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 							member_load.object = std::string_view("this");  // implicit this pointer
-							member_load.member_name = std::string_view(member->getName());
+							member_load.member_name = StringTable::getStringView(member->getName());
 							member_load.offset = static_cast<int>(member->offset);
 							member_load.is_reference = member->is_reference;
 							member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4770,7 +4770,7 @@ private:
 						member_load.result.type = member->type;
 						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 						member_load.object = std::string_view("this");  // implicit this pointer
-						member_load.member_name = std::string_view(member->getName());
+						member_load.member_name = StringTable::getStringView(member->getName());
 						member_load.offset = static_cast<int>(member->offset);
 						member_load.is_reference = member->is_reference;
 						member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -4834,7 +4834,7 @@ private:
 						member_load.result.type = member->type;
 						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 						member_load.object = *copy_this_temp;  // The __copy_this object
-						member_load.member_name = std::string_view(member->getName());
+						member_load.member_name = StringTable::getStringView(member->getName());
 						member_load.offset = static_cast<int>(member->offset);
 						member_load.is_reference = member->is_reference;
 						member_load.is_rvalue_reference = member->is_rvalue_reference;
@@ -6561,7 +6561,7 @@ private:
 									member_load.result.type = member->type;
 									member_load.result.size_in_bits = 64;  // pointer size
 									member_load.object = std::string_view("this");
-									member_load.member_name = std::string_view(member->getName());
+									member_load.member_name = StringTable::getStringView(member->getName());
 									member_load.offset = static_cast<int>(member->offset);
 									member_load.is_reference = member->is_reference;
 									member_load.is_rvalue_reference = member->is_rvalue_reference;

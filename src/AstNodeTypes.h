@@ -545,13 +545,12 @@ struct StructTypeInfo {
 	}
 
 	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		StringHandle ctor_name = StringTable::getOrInternStringHandle(getName());
-		member_functions.emplace_back(ctor_name, constructor_decl, access, true, false);
+		member_functions.emplace_back(getName(), constructor_decl, access, true, false);
 	}
 
 	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public, bool is_virtual = false) {
 		StringBuilder sb;
-		sb.append('~').append(getName());
+		sb.append('~').append(StringTable::getStringView(getName()));
 		StringHandle dtor_name_handle = StringTable::getOrInternStringHandle(sb.commit());
 		auto& dtor = member_functions.emplace_back(dtor_name_handle, destructor_decl, access, false, true, false, "");
 		dtor.is_virtual = is_virtual;
@@ -612,8 +611,9 @@ struct StructTypeInfo {
 
 	// Find static member by name
 	const StructStaticMember* findStaticMember(std::string_view name) const {
+		StringHandle name_handle = StringTable::getOrInternStringHandle(name);
 		for (const auto& static_member : static_members) {
-			if (static_member.getName() == name) {
+			if (static_member.getName() == name_handle) {
 				return &static_member;
 			}
 		}
@@ -642,8 +642,9 @@ struct StructTypeInfo {
 	}
 
 	const StructMember* findMember(std::string_view name) const {
+		StringHandle name_handle = StringTable::getOrInternStringHandle(name);
 		for (const auto& member : members) {
-			if (member.getName() == name) {
+			if (member.getName() == name_handle) {
 				return &member;
 			}
 		}
@@ -654,9 +655,7 @@ struct StructTypeInfo {
 	const StructMember* findMember(StringHandle name) const {
 		for (const auto& member : members) {
 			// Compare by handle directly for O(1) comparison
-			if (std::holds_alternative<StringHandle>(member.name) && std::get<StringHandle>(member.name) == name) {
-				return &member;
-			} else if (std::holds_alternative<std::string>(member.name) && member.getName() == StringTable::getStringView(name)) {
+			if (member.getName() == name) {
 				return &member;
 			}
 		}
@@ -749,9 +748,9 @@ struct StructTypeInfo {
 	// Get fully qualified name (e.g., "Outer::Inner")
 	std::string getQualifiedName() const {
 		if (enclosing_class_) {
-			return enclosing_class_->getQualifiedName() + "::" + std::string(getName());
+			return enclosing_class_->getQualifiedName() + "::" + std::string(StringTable::getStringView(getName()));
 		}
-		return std::string(getName());
+		return std::string(StringTable::getStringView(getName()));
 	}
 
 	// Find default constructor (no parameters)

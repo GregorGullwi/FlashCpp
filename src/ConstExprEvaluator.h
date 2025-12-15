@@ -1515,8 +1515,9 @@ public:
 		
 		// Member not found in initializer list - check for default member initializers
 		// Look through the struct's member declarations
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 		for (const auto& member : struct_info->members) {
-			if (member.getName() == member_name && member.default_initializer.has_value()) {
+			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
 				// Found a default member initializer
 				return evaluate(member.default_initializer.value(), context);
 			}
@@ -1567,8 +1568,9 @@ public:
 		}
 		
 		// Check for default member initializer
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 		for (const auto& member : struct_info->members) {
-			if (member.getName() == member_name && member.default_initializer.has_value()) {
+			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
 				return member.default_initializer.value();
 			}
 		}

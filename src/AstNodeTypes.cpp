@@ -714,7 +714,7 @@ void StructTypeInfo::buildVTable() {
         has_vtable = true;
 
         // Get function name for matching
-        std::string_view func_name = func.getName();
+        StringHandle func_name = func.getName();
 
         // Check if this function overrides a base class virtual function
         int override_index = -1;
@@ -766,14 +766,14 @@ void StructTypeInfo::buildVTable() {
             // Itanium C++ ABI: _ZTV + length + name
             // e.g., class "Base" -> "_ZTV4Base"
             vtable_sb.append("_ZTV");
-            std::string_view name_sv = getName();
+            std::string_view name_sv = StringTable::getStringView(getName());
             vtable_sb.append(static_cast<uint64_t>(name_sv.size()));
             vtable_sb.append(name_sv);
         } else {
             // MSVC: ??_7 + name + @@6B@
             // e.g., class "Base" -> "??_7Base@@6B@"
             vtable_sb.append("??_7");
-            vtable_sb.append(getName());
+            vtable_sb.append(StringTable::getStringView(getName()));
             vtable_sb.append("@@6B@");
         }
         
@@ -797,8 +797,9 @@ void StructTypeInfo::updateAbstractFlag() {
 // Find member recursively through base classes
 const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_name) const {
     // First, check own members
+    StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
     for (const auto& member : members) {
-        if (member.getName() == member_name) {
+        if (member.getName() == member_name_handle) {
             return &member;
         }
     }
@@ -817,7 +818,7 @@ const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_
             if (base_member) {
                 // Found in base class - need to return adjusted member
                 // Note: We can't modify the base_member, so we use a thread_local static
-                static thread_local StructMember adjusted_member("", Type::Void, 0, 0, 0, 0);
+                static thread_local StructMember adjusted_member(StringHandle(), Type::Void, 0, 0, 0, 0);
                 adjusted_member = *base_member;
                 adjusted_member.offset += base.offset;  // Adjust offset by base class offset
                 return &adjusted_member;
@@ -830,8 +831,9 @@ const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_
 
 std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(std::string_view member_name) const {
     // First, check own static members
+    StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
     for (const auto& static_member : static_members) {
-        if (static_member.getName() == member_name) {
+        if (static_member.getName() == member_name_handle) {
             return { &static_member, this };
         }
     }
@@ -873,7 +875,7 @@ void StructTypeInfo::buildRTTI() {
     static std::vector<MSVCBaseClassDescriptor> bcd_storage;
 
     // Create mangled and demangled names
-    std::string name_str(getName());
+    std::string name_str(StringTable::getStringView(getName()));
     std::string mangled_name = ".?AV" + name_str + "@@";  // MSVC-style mangling for classes
 
     // Allocate RTTI info
@@ -1007,7 +1009,7 @@ void StructTypeInfo::buildRTTI() {
     // Create Itanium-style mangled name
     // Itanium uses length-prefixed names: "3Foo" for class Foo
     StringBuilder builder;
-    std::string_view name_sv = getName();
+    std::string_view name_sv = StringTable::getStringView(getName());
     builder.append(name_sv.length()).append(name_sv);
     std::string_view itanium_mangled = builder.commit();
     
