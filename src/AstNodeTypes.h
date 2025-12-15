@@ -254,7 +254,7 @@ struct FunctionSignature {
 
 // Struct member information
 struct StructMember {
-	std::string name;
+	std::variant<std::string, StringHandle> name;
 	Type type;
 	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.)
 	size_t offset;          // Offset in bytes from start of struct
@@ -276,6 +276,14 @@ struct StructMember {
 		  referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),
 		  default_initializer(std::move(init)) {}
+	
+	std::string_view getName() const {
+		if (std::holds_alternative<std::string>(name)) {
+			return std::get<std::string>(name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(name));
+		}
+	}
 };
 
 // Forward declaration for member function support
@@ -283,7 +291,7 @@ class FunctionDeclarationNode;
 
 // Struct member function information
 struct StructMemberFunction {
-	std::string name;
+	std::variant<std::string, StringHandle> name;
 	ASTNode function_decl;  // FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 	AccessSpecifier access; // Access level (public/protected/private)
 	bool is_constructor;    // True if this is a constructor
@@ -306,6 +314,14 @@ struct StructMemberFunction {
 	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
 		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
 		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
+	
+	std::string_view getName() const {
+		if (std::holds_alternative<std::string>(name)) {
+			return std::get<std::string>(name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(name));
+		}
+	}
 };
 
 // MSVC RTTI structures - multi-component format for runtime compatibility
@@ -434,7 +450,7 @@ struct RTTITypeInfo {
 
 // Static member information
 struct StructStaticMember {
-	std::string name;
+	std::variant<std::string, StringHandle> name;
 	Type type;
 	TypeIndex type_index;   // Index into gTypeInfo for complex types
 	size_t size;            // Size in bytes
@@ -447,6 +463,14 @@ struct StructStaticMember {
 	                   std::optional<ASTNode> init = std::nullopt, bool is_const_val = false)
 		: name(std::move(n)), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
 		  initializer(init), is_const(is_const_val) {}
+	
+	std::string_view getName() const {
+		if (std::holds_alternative<std::string>(name)) {
+			return std::get<std::string>(name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(name));
+		}
+	}
 };
 
 // Struct type information
@@ -599,7 +623,7 @@ struct StructTypeInfo {
 	// Find static member by name
 	const StructStaticMember* findStaticMember(std::string_view name) const {
 		for (const auto& static_member : static_members) {
-			if (static_member.name == name) {
+			if (static_member.getName() == name) {
 				return &static_member;
 			}
 		}
@@ -629,7 +653,7 @@ struct StructTypeInfo {
 
 	const StructMember* findMember(const std::string& name) const {
 		for (const auto& member : members) {
-			if (member.name == name) {
+			if (member.getName() == name) {
 				return &member;
 			}
 		}
@@ -638,7 +662,7 @@ struct StructTypeInfo {
 
 	const StructMemberFunction* findMemberFunction(const std::string& name) const {
 		for (const auto& func : member_functions) {
-			if (func.name == name) {
+			if (func.getName() == name) {
 				return &func;
 			}
 		}

@@ -1516,7 +1516,7 @@ public:
 		// Member not found in initializer list - check for default member initializers
 		// Look through the struct's member declarations
 		for (const auto& member : struct_info->members) {
-			if (member.name == member_name && member.default_initializer.has_value()) {
+			if (member.getName() == member_name && member.default_initializer.has_value()) {
 				// Found a default member initializer
 				return evaluate(member.default_initializer.value(), context);
 			}
@@ -1568,7 +1568,7 @@ public:
 		
 		// Check for default member initializer
 		for (const auto& member : struct_info->members) {
-			if (member.name == member_name && member.default_initializer.has_value()) {
+			if (member.getName() == member_name && member.default_initializer.has_value()) {
 				return member.default_initializer.value();
 			}
 		}
@@ -1713,7 +1713,7 @@ public:
 		// Find the intermediate member's type from the struct's member list
 		const StructMember* intermediate_member_info = nullptr;
 		for (const auto& member : base_struct_info->members) {
-			if (member.name == intermediate_member) {
+			if (member.getName() == intermediate_member) {
 				intermediate_member_info = &member;
 				break;
 			}
@@ -1781,7 +1781,7 @@ public:
 		
 		// Check for default member initializer
 		for (const auto& member : inner_struct_info->members) {
-			if (member.name == final_member_name && member.default_initializer.has_value()) {
+			if (member.getName() == final_member_name && member.default_initializer.has_value()) {
 				return evaluate(member.default_initializer.value(), context);
 			}
 		}
@@ -1900,7 +1900,7 @@ public:
 		const FunctionDeclarationNode* actual_func = nullptr;
 		for (const auto& member_func : struct_info->member_functions) {
 			if (member_func.is_constructor || member_func.is_destructor) continue;
-			if (member_func.name != func_name) continue;
+			if (member_func.getName() != func_name) continue;
 			
 			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 				actual_func = &member_func.function_decl.as<FunctionDeclarationNode>();
@@ -2103,10 +2103,10 @@ public:
 		
 		// Also check for default member initializers for members not in the initializer list
 		for (const auto& member : struct_info->members) {
-			if (member_bindings.find(member.name) == member_bindings.end() && member.default_initializer.has_value()) {
+			if (member_bindings.find(std::string(member.getName())) == member_bindings.end() && member.default_initializer.has_value()) {
 				auto default_result = evaluate(member.default_initializer.value(), context);
 				if (default_result.success) {
-					std::string_view name_view(member.name);
+					std::string_view name_view(member.getName());
 					member_bindings[name_view] = default_result;
 				}
 			}

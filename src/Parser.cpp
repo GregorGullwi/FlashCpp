@@ -1846,7 +1846,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Search for existing member function declaration with the same name
 		StructMemberFunction* existing_member = nullptr;
 		for (auto& member : struct_info->member_functions) {
-			if (member.name == function_name_token.value()) {
+			if (member.getName() == function_name_token.value()) {
 				existing_member = &member;
 				break;
 			}
@@ -7744,7 +7744,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 				if (!base_struct_info) continue;
 				for (const auto& member_func : base_struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-						gSymbolTable.insert(std::string_view(member_func.name), member_func.function_decl);
+						gSymbolTable.insert(member_func.getName(), member_func.function_decl);
 					}
 				}
 				for (const auto& nested_base : base_struct_info->base_classes) {
@@ -8845,7 +8845,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// Validate member name exists in struct
 			bool member_found = false;
 			for (const auto& member : struct_info.members) {
-				if (member.name == member_name) {
+				if (member.getName() == member_name) {
 					member_found = true;
 					break;
 				}
@@ -11840,7 +11840,7 @@ ParseResult Parser::parse_primary_expression()
 							
 							// Check instance members (these use this->)
 							for (const auto& member : struct_info->members) {
-								if (member.name == idenfifier_token.value()) {
+								if (member.getName() == idenfifier_token.value()) {
 									// This is a member variable! Transform it into this->member
 									Token this_token(Token::Type::Keyword, "this",
 									                 idenfifier_token.line(), idenfifier_token.column(),
@@ -13050,7 +13050,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 							if (struct_info) {
 								std::string_view member_name = member_access->member_name();
 								for (const auto& member : struct_info->members) {
-									if (member.name == member_name) {
+									if (member.getName() == member_name) {
 										if (member.type == Type::FunctionPointer) {
 											is_function_pointer_call = true;
 										}
@@ -20770,7 +20770,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		const StructTypeInfo* spec_struct_info = spec_type_it->second->getStructInfo();
 		if (spec_struct_info) {
 			for (const auto& static_member : spec_struct_info->static_members) {
-				FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.name);
+				FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
 				struct_info->static_members.push_back(static_member);
 			}
 		}
@@ -21243,7 +21243,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (pattern_struct_info) {
 				FLASH_LOG(Templates, Debug, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
 				for (const auto& static_member : pattern_struct_info->static_members) {
-					FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.name);
+					FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
 					
 					// Check if initializer contains sizeof...(pack_name) and substitute with pack size
 					std::optional<ASTNode> substituted_initializer = static_member.initializer;
@@ -21371,7 +21371,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					
 					struct_info->addStaticMember(
-						static_member.name,
+						std::string(static_member.getName()),
 						static_member.type,
 						static_member.type_index,
 						static_member.size,
@@ -22776,7 +22776,7 @@ if (nested_type_info.getStructInfo()) {
 				
 				// Use struct_info_ptr instead of struct_info (which was moved)
 				struct_info_ptr->addStaticMember(
-					static_member.name,
+					std::string(static_member.getName()),
 					static_member.type,
 					static_member.type_index,
 					static_member.size,
