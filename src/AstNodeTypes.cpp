@@ -795,11 +795,10 @@ void StructTypeInfo::updateAbstractFlag() {
 }
 
 // Find member recursively through base classes
-const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_name) const {
+const StructMember* StructTypeInfo::findMemberRecursive(StringHandle member_name) const {
     // First, check own members
-    StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
     for (const auto& member : members) {
-        if (member.getName() == member_name_handle) {
+        if (member.getName() == member_name) {
             return &member;
         }
     }
@@ -829,11 +828,10 @@ const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_
     return nullptr;  // Not found
 }
 
-std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(std::string_view member_name) const {
+std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(StringHandle member_name) const {
     // First, check own static members
-    StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
     for (const auto& static_member : static_members) {
-        if (static_member.getName() == member_name_handle) {
+        if (static_member.getName() == member_name) {
             return { &static_member, this };
         }
     }
@@ -1008,19 +1006,28 @@ void StructTypeInfo::buildRTTI() {
     
     // Create Itanium-style mangled name
     // Itanium uses length-prefixed names: "3Foo" for class Foo
-    StringBuilder builder;
     std::string_view name_sv = StringTable::getStringView(getName());
-    builder.append(name_sv.length()).append(name_sv);
-    std::string_view itanium_mangled = builder.commit();
+    
+    // Calculate required size for "LENGTH" + name + null terminator
+    size_t length_digits = std::to_string(name_sv.length()).length();
+    size_t total_size = length_digits + name_sv.length() + 1;
     
     // Allocate permanent storage for the name string (persists for program lifetime)
-    char* itanium_name = (char*)malloc(itanium_mangled.length() + 1);
+    char* itanium_name = (char*)malloc(total_size);
     if (!itanium_name) {
         // Allocation failed - Itanium RTTI won't be available
         return;
     }
-    strncpy(itanium_name, itanium_mangled.data(), itanium_mangled.length());
-    itanium_name[itanium_mangled.length()] = '\0';  // Ensure null termination
+    
+    // Write length prefix and name directly to buffer
+    int written = snprintf(itanium_name, total_size, "%zu%.*s", 
+                          name_sv.length(), 
+                          static_cast<int>(name_sv.length()), 
+                          name_sv.data());
+    if (written < 0 || static_cast<size_t>(written) >= total_size) {
+        free(itanium_name);
+        return;
+    }
     itanium_name_storage.push_back(itanium_name);
     
     if (base_classes.empty()) {

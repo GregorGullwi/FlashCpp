@@ -644,7 +644,7 @@ struct CallOp {
 struct MemberLoadOp {
 	TypedValue result;                              // The loaded member value (type, size, result_var)
 	std::variant<std::string_view, TempVar> object; // Base object instance
-	std::string_view member_name;                   // Which member to access
+	StringHandle member_name;                       // Which member to access
 	int offset;                                     // Byte offset in struct
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
 	bool is_reference;                              // True if member is declared as T& (describes member declaration, not access)
@@ -655,7 +655,7 @@ struct MemberLoadOp {
 struct MemberStoreOp {
 	TypedValue value;                               // Value to store (type, size, value_var)
 	std::variant<std::string_view, TempVar> object; // Target object instance
-	std::string_view member_name;                   // Which member to store to
+	StringHandle member_name;                       // Which member to store to
 	int offset;                                     // Byte offset in struct
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
 	bool is_reference;                              // True if member is declared as T& (describes member declaration, not access)
