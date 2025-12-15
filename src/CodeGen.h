@@ -12291,8 +12291,8 @@ private:
 	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info) {
 		// Generate function declaration for operator()
 		FunctionDeclOp func_decl_op;
-		func_decl_op.function_name = "operator()";
-		func_decl_op.struct_name = lambda_info.closure_type_name;  // struct name (member function)
+		func_decl_op.function_name = std::string("operator()");  // Phase 4: Variant needs explicit type
+		func_decl_op.struct_name = std::string(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
 		func_decl_op.return_type = lambda_info.return_type;
 		func_decl_op.return_size_in_bits = lambda_info.return_size;
 		func_decl_op.return_pointer_depth = 0;  // pointer depth
@@ -12477,8 +12477,8 @@ private:
 	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info) {
 		// Generate function declaration for __invoke
 		FunctionDeclOp func_decl_op;
-		func_decl_op.function_name = lambda_info.invoke_name;
-		func_decl_op.struct_name = "";  // no struct name (static function)
+		func_decl_op.function_name = std::string(lambda_info.invoke_name);  // Phase 4: Variant needs explicit type
+		func_decl_op.struct_name = std::string("");  // Phase 4: no struct name (static function)
 		func_decl_op.return_type = lambda_info.return_type;
 		func_decl_op.return_size_in_bits = lambda_info.return_size;
 		func_decl_op.return_pointer_depth = 0;  // pointer depth

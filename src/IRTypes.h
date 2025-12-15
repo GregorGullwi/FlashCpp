@@ -622,13 +622,22 @@ struct CondBranchOp {
 
 // Function call
 struct CallOp {
-	std::string function_name;            // 32 bytes
+	std::variant<std::string, StringHandle> function_name;  // Phase 4: Adding StringHandle support
 	std::vector<TypedValue> args;         // 24 bytes (using TypedValue instead of CallArg)
 	TempVar result;                       // 4 bytes
 	Type return_type;                     // 4 bytes
 	int return_size_in_bits;              // 4 bytes
 	bool is_member_function = false;      // 1 byte
 	bool is_variadic = false;             // 1 byte (+ 2 bytes padding)
+	
+	// Helper to get function_name as string_view
+	std::string_view getFunctionName() const {
+		if (std::holds_alternative<std::string>(function_name)) {
+			return std::get<std::string>(function_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(function_name));
+		}
+	}
 };
 
 // Member access (load member from struct/class)
@@ -806,10 +815,19 @@ struct FunctionParam {
 	Type type = Type::Void;
 	int size_in_bits = 0;
 	int pointer_depth = 0;
-	std::string name;
+	std::variant<std::string, StringHandle> name;  // Phase 4: Adding StringHandle support
 	bool is_reference = false;
 	bool is_rvalue_reference = false;
 	CVQualifier cv_qualifier = CVQualifier::None;
+	
+	// Helper to get name as string_view
+	std::string_view getName() const {
+		if (std::holds_alternative<std::string>(name)) {
+			return std::get<std::string>(name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(name));
+		}
+	}
 };
 
 // Function declaration
@@ -817,13 +835,38 @@ struct FunctionDeclOp {
 	Type return_type = Type::Void;
 	int return_size_in_bits = 0;
 	int return_pointer_depth = 0;
-	std::string function_name;
-	std::string struct_name;  // Empty for non-member functions
+	std::variant<std::string, StringHandle> function_name;  // Phase 4: Adding StringHandle support
+	std::variant<std::string, StringHandle> struct_name;  // Phase 4: Empty for non-member functions
 	Linkage linkage = Linkage::None;
 	bool is_variadic = false;
-	std::string_view mangled_name;
+	std::variant<std::string_view, StringHandle> mangled_name;  // Phase 4: Adding StringHandle support
 	std::vector<FunctionParam> parameters;
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)
+	
+	// Helper methods
+	std::string_view getFunctionName() const {
+		if (std::holds_alternative<std::string>(function_name)) {
+			return std::get<std::string>(function_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(function_name));
+		}
+	}
+	
+	std::string_view getStructName() const {
+		if (std::holds_alternative<std::string>(struct_name)) {
+			return std::get<std::string>(struct_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(struct_name));
+		}
+	}
+	
+	std::string_view getMangledName() const {
+		if (std::holds_alternative<std::string_view>(mangled_name)) {
+			return std::get<std::string_view>(mangled_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(mangled_name));
+		}
+	}
 };
 
 // Unary operations (Negate, LogicalNot, BitwiseNot)
@@ -885,15 +928,32 @@ struct GlobalLoadOp {
 // Function address (get address of a function)
 struct FunctionAddressOp {
 	TypedValue result;           // Result with type, size, and temp var (function pointer)
-	std::string_view function_name;  // Function name
-	std::string_view mangled_name;   // Pre-computed mangled name (optional, for lambdas)
+	std::variant<std::string_view, StringHandle> function_name;  // Phase 4: Function name
+	std::variant<std::string_view, StringHandle> mangled_name;   // Phase 4: Pre-computed mangled name (optional, for lambdas)
+	
+	// Helper methods
+	std::string_view getFunctionName() const {
+		if (std::holds_alternative<std::string_view>(function_name)) {
+			return std::get<std::string_view>(function_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(function_name));
+		}
+	}
+	
+	std::string_view getMangledName() const {
+		if (std::holds_alternative<std::string_view>(mangled_name)) {
+			return std::get<std::string_view>(mangled_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(mangled_name));
+		}
+	}
 };
 
 // Variable declaration (local)
 struct VariableDeclOp {
 	Type type = Type::Void;
 	int size_in_bits = 0;
-	std::variant<std::string_view, std::string> var_name;
+	std::variant<std::string_view, std::string, StringHandle> var_name;  // Phase 4: Adding StringHandle support
 	unsigned long long custom_alignment = 0;
 	bool is_reference = false;
 	bool is_rvalue_reference = false;
@@ -904,6 +964,17 @@ struct VariableDeclOp {
 	std::optional<size_t> array_count;
 	// Initializer (if present)
 	std::optional<TypedValue> initializer;
+	
+	// Helper to get var_name as string_view regardless of storage type
+	std::string_view getVarName() const {
+		if (std::holds_alternative<std::string_view>(var_name)) {
+			return std::get<std::string_view>(var_name);
+		} else if (std::holds_alternative<std::string>(var_name)) {
+			return std::get<std::string>(var_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(var_name));
+		}
+	}
 };
 
 // Global variable declaration
@@ -1346,12 +1417,13 @@ public:
 			}
 			oss << op.return_size_in_bits << " ";
 		
-			// Function name
+			// Function name (Phase 4: Use helper)
 			oss << "@";
-			if (!op.mangled_name.empty()) {
-				oss << op.mangled_name;
+			std::string_view mangled = op.getMangledName();
+			if (!mangled.empty()) {
+				oss << mangled;
 			} else {
-				oss << op.function_name;
+				oss << op.getFunctionName();
 			}
 			oss << "(";
 		
@@ -1383,9 +1455,10 @@ public:
 					oss << " " << cvQualifierToString(param.cv_qualifier);
 				}
 			
-				// Name
-				if (!param.name.empty()) {
-					oss << " %" << param.name;
+				// Name (Phase 4: Use helper)
+				std::string_view param_name = param.getName();
+				if (!param_name.empty()) {
+					oss << " %" << param_name;
 				}
 			}
 		
@@ -1396,9 +1469,10 @@ public:
 		
 			oss << ")";
 		
-			// Struct context
-			if (!op.struct_name.empty()) {
-				oss << " [" << op.struct_name << "]";
+			// Struct context (Phase 4: Use helper)
+			std::string_view struct_name_view = op.getStructName();
+			if (!struct_name_view.empty()) {
+				oss << " [" << struct_name_view << "]";
 			}
 		}
 		break;
@@ -1407,8 +1481,8 @@ public:
 		{
 			const auto& op = getTypedPayload<CallOp>();
 	
-			// Result variable
-			oss << '%' << op.result.var_number << " = call @" << op.function_name << "(";
+			// Result variable (Phase 4: Use helper)
+			oss << '%' << op.result.var_number << " = call @" << op.getFunctionName() << "(";
 	
 			// Arguments
 			for (size_t i = 0; i < op.args.size(); ++i) {
@@ -2048,12 +2122,8 @@ public:
 		case IrOpcode::VariableDecl:
 		{
 			const VariableDeclOp& op = getTypedPayload<VariableDeclOp>();
-			oss << "%";
-			if (std::holds_alternative<std::string_view>(op.var_name))
-				oss << std::get<std::string_view>(op.var_name);
-			else
-				oss << std::get<std::string>(op.var_name);
-			oss << " = alloc ";
+			std::string_view var_name = op.getVarName();  // Phase 4: Use helper
+			oss << "%" << var_name << " = alloc ";
 			
 			if (op.is_array && op.array_count.has_value()) {
 				// For arrays, print element type and count: int32[5]
@@ -2074,12 +2144,7 @@ public:
 			}
 			oss << (op.is_reference ? " [&]" : "");
 			if (op.initializer.has_value()) {
-				oss << "\nassign %";
-				if (std::holds_alternative<std::string_view>(op.var_name))
-					oss << std::get<std::string_view>(op.var_name);
-				else
-					oss << std::get<std::string>(op.var_name);
-				oss << " = ";
+				oss << "\nassign %" << var_name << " = ";  // Phase 4: Use var_name
 				const auto& init = op.initializer.value();
 				// Check if operand is a literal value or a variable/TempVar
 				if (std::holds_alternative<unsigned long long>(init.value))
@@ -2142,7 +2207,7 @@ public:
 			} else if (std::holds_alternative<std::string_view>(op.result.value)) {
 				oss << '%' << std::get<std::string_view>(op.result.value);
 			}
-			oss << " = function_address @" << op.function_name;
+			oss << " = function_address @" << op.getFunctionName();  // Phase 4: Use helper
 		}
 		break;
 		

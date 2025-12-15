@@ -4324,8 +4324,9 @@ private:
 				// Extract function name from typed payload
 				const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 				// Use mangled name if available (for member functions like lambda operator()),
-				// otherwise use function_name
-				current_func_name = func_decl.mangled_name.empty() ? func_decl.function_name : func_decl.mangled_name;
+				// otherwise use function_name (Phase 4: Use helpers)
+				std::string_view mangled = func_decl.getMangledName();
+				current_func_name = mangled.empty() ? func_decl.getFunctionName() : mangled;
 				current_func_start = i + 1; // Instructions start after FunctionDecl
 			}
 		}
@@ -4426,15 +4427,8 @@ private:
 			if (instruction.getOpcode() == IrOpcode::VariableDecl) {
 				const VariableDeclOp& op = std::any_cast<const VariableDeclOp&>(instruction.getTypedPayload());
 				auto size_in_bits = op.size_in_bits;
-				// Get variable name as string_view
-				std::string_view var_name;
-				if (std::holds_alternative<std::string_view>(op.var_name)) {
-					var_name = std::get<std::string_view>(op.var_name);
-				} else {
-					// For std::string, create a temporary string to get string_view from
-					// This is safe because we're only using it within this scope
-					var_name = std::get<std::string>(op.var_name);
-				}
+				// Get variable name (Phase 4: Use helper)
+				std::string_view var_name = op.getVarName();
 				size_t custom_alignment = op.custom_alignment;
 
 				bool is_reference = op.is_reference;
@@ -5923,8 +5917,8 @@ private:
 			std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 			textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 			
-			// Add relocation for function name
-			const std::string& mangled_name = call_op.function_name;
+			// Add relocation for function name (Phase 4: Use helper)
+			std::string mangled_name(call_op.getFunctionName());
 			writer.add_relocation(textSectionData.size() - 4, mangled_name);
 			
 			// Invalidate caller-saved registers (function calls clobber them)
@@ -7247,9 +7241,10 @@ private:
 		// Use mangled name if available (for member functions like lambda operator()),
 		// otherwise use function_name. This is important for nested lambdas where multiple
 		// operator() functions would otherwise have the same name.
-		std::string_view func_name = func_decl.mangled_name.empty() ? 
-			func_decl.function_name : func_decl.mangled_name;
-		std::string_view struct_name = func_decl.struct_name;
+		// Phase 4: Use helpers
+		std::string_view mangled = func_decl.getMangledName();
+		std::string_view func_name = mangled.empty() ? func_decl.getFunctionName() : mangled;
+		std::string_view struct_name = func_decl.getStructName();
 		
 		// Construct return type
 		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits));
@@ -7269,7 +7264,7 @@ private:
 		
 		Linkage linkage = func_decl.linkage;
 		bool is_variadic = func_decl.is_variadic;
-		std::string_view mangled_name = func_decl.mangled_name;
+		std::string_view mangled_name = func_decl.getMangledName();  // Phase 4: Use helper
 
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
@@ -7510,7 +7505,8 @@ private:
 					// Check if this function is virtual and add it to the vtable
 					const StructMemberFunction* member_func = nullptr;
 					// Use the unmangled function name for lookup (member_functions store unmangled names)
-					std::string_view unmangled_func_name = func_decl.function_name;
+					// Phase 4: Use helper
+					std::string_view unmangled_func_name = func_decl.getFunctionName();
 					for (const auto& func : struct_info->member_functions) {
 						if (func.name == unmangled_func_name) {
 							member_func = &func;
@@ -7754,7 +7750,8 @@ private:
 					offset = 16 + static_cast<int>(type_specific_index - reg_threshold) * 8;
 				}
 
-				variable_scopes.back().variables[param.name].offset = offset;
+				// Phase 4: Use helper to get param name for map key
+				variable_scopes.back().variables[SafeStringKey(param.getName())].offset = offset;
 
 				// Track reference parameters
 				if (param.is_reference) {
@@ -7780,7 +7777,9 @@ private:
 						default: param_type_index = 0x74; break;
 					}
 				}
-				writer.add_function_parameter(param.name, param_type_index, offset);
+				// Phase 4: Use helper to get param name
+				std::string param_name_str(param.getName());
+				writer.add_function_parameter(param_name_str, param_type_index, offset);
 
 				// Check if parameter fits in a register using separate int/float counters
 				bool use_register = false;
@@ -7807,7 +7806,8 @@ private:
 						regAlloc.allocateSpecific(src_reg, offset);
 					}
 
-					parameters.push_back({param.type, param.size_in_bits, param.name, paramNumber, offset, src_reg, param.pointer_depth, param.is_reference});
+					// Phase 4: Use helper to get param name
+					parameters.push_back({param.type, param.size_in_bits, param.getName(), paramNumber, offset, src_reg, param.pointer_depth, param.is_reference});
 				}
 			}
 		}
@@ -12122,7 +12122,7 @@ private:
 		flushAllDirtyRegisters();
 
 		auto result_var = std::get<TempVar>(op.result.value);
-		std::string_view func_name = op.function_name;
+		std::string_view func_name = op.getFunctionName();  // Phase 4: Use helper
 
 		// Get result offset
 		int result_offset = getStackOffsetFromTempVar(result_var);
@@ -12142,8 +12142,10 @@ private:
 
 		// Add REL32 relocation for the function address (RIP-relative)
 		// All FunctionAddress instructions should now have the mangled name pre-computed
-		assert(!op.mangled_name.empty() && "FunctionAddress instruction missing mangled_name");
-		writer.add_relocation(reloc_position, op.mangled_name, IMAGE_REL_AMD64_REL32);
+		// Phase 4: Use helper
+		std::string_view mangled = op.getMangledName();
+		assert(!mangled.empty() && "FunctionAddress instruction missing mangled_name");
+		writer.add_relocation(reloc_position, mangled, IMAGE_REL_AMD64_REL32);
 
 		// Store RAX to result variable
 		auto store_opcodes = generatePtrMovToFrame(X64Register::RAX, result_offset);
