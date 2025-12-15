@@ -3795,9 +3795,35 @@ private:
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
-						// For integers, use regular MOV
-						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second.offset, ctx.operand_size_in_bits);
+						// Check if this is a reference - if so, we need to dereference it
+						auto ref_it = reference_stack_info_.find(lhs_var_id->second.offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// This is a reference - load the pointer first, then dereference
+							ctx.result_physical_reg = allocateRegisterWithSpilling();
+							// Load the pointer into the register
+							auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
+							textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+							// Now dereference: load from [register + 0]
+							int value_size_bits = ref_it->second.value_size_bits;
+							OpCodeWithSize deref_opcodes;
+							if (value_size_bits == 64) {
+								deref_opcodes = generateMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0);
+							} else if (value_size_bits == 32) {
+								deref_opcodes = generateMovFromMemory32(ctx.result_physical_reg, ctx.result_physical_reg, 0);
+							} else if (value_size_bits == 16) {
+								deref_opcodes = generateMovFromMemory16(ctx.result_physical_reg, ctx.result_physical_reg, 0);
+							} else if (value_size_bits == 8) {
+								deref_opcodes = generateMovFromMemory8(ctx.result_physical_reg, ctx.result_physical_reg, 0);
+							} else {
+								assert(false && "Unsupported reference value size");
+							}
+							textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+						} else {
+							// Not a reference, load normally
+							// For integers, use regular MOV
+							ctx.result_physical_reg = allocateRegisterWithSpilling();
+							emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second.offset, ctx.operand_size_in_bits);
+						}
 						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 					}
 				}
@@ -3931,9 +3957,35 @@ private:
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
-						// For integers, use regular MOV
-						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, ctx.operand_size_in_bits);
+						// Check if this is a reference - if so, we need to dereference it
+						auto ref_it = reference_stack_info_.find(rhs_var_id->second.offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// This is a reference - load the pointer first, then dereference
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							// Load the pointer into the register
+							auto load_ptr = generatePtrMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
+							textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+							// Now dereference: load from [register + 0]
+							int value_size_bits = ref_it->second.value_size_bits;
+							OpCodeWithSize deref_opcodes;
+							if (value_size_bits == 64) {
+								deref_opcodes = generateMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
+							} else if (value_size_bits == 32) {
+								deref_opcodes = generateMovFromMemory32(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
+							} else if (value_size_bits == 16) {
+								deref_opcodes = generateMovFromMemory16(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
+							} else if (value_size_bits == 8) {
+								deref_opcodes = generateMovFromMemory8(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
+							} else {
+								assert(false && "Unsupported reference value size");
+							}
+							textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+						} else {
+							// Not a reference, load normally
+							// For integers, use regular MOV
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, ctx.operand_size_in_bits);
+						}
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 					}
 				}
@@ -10141,6 +10193,68 @@ private:
 			return;
 		}
 
+		// Check if LHS is a reference - if so, we're initializing a reference binding
+		auto lhs_ref_it = reference_stack_info_.find(lhs_offset);
+		if (lhs_ref_it != reference_stack_info_.end()) {
+			// LHS is a reference - we need to store the ADDRESS of RHS, not its value
+			// Exception: if RHS is already a pointer/reference, we want the pointer value itself
+			X64Register addr_reg = X64Register::RAX;
+			
+			// Get address of RHS or pointer value
+			if (std::holds_alternative<std::string_view>(op.rhs.value)) {
+				std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
+				auto it = variable_scopes.back().variables.find(rhs_var_name);
+				if (it != variable_scopes.back().variables.end()) {
+					int32_t rhs_offset = it->second.offset;
+					// Check if RHS is itself a pointer or reference
+					// For pointers and references, we want the VALUE (the pointer), not the address of the variable
+					// For regular values, we want the ADDRESS
+					if (op.rhs.type == Type::Int && op.rhs.size_in_bits == 64) {
+						// This might be a pointer (int64) - check if it's in our temp vars
+						// For now, assume 64-bit ints in references are pointers and load the value
+						emitMovFromFrame(addr_reg, rhs_offset);
+					} else {
+						// Regular value - take its address
+						emitLeaFromFrame(addr_reg, rhs_offset);
+					}
+				} else {
+					FLASH_LOG(Codegen, Error, "RHS variable '", rhs_var_name, "' not found for reference initialization");
+					return;
+				}
+			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
+				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
+				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
+				// Check if RHS itself is a reference - if so, load the pointer value
+				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
+				if (rhs_ref_it != reference_stack_info_.end()) {
+					// RHS is also a reference - just copy the pointer value
+					emitMovFromFrame(addr_reg, rhs_offset);
+				} else if (op.rhs.type == Type::Int && op.rhs.size_in_bits == 64) {
+					// This might be a pointer (int64) - load the value
+					emitMovFromFrame(addr_reg, rhs_offset);
+				} else {
+					// RHS is a regular value - get its address
+					emitLeaFromFrame(addr_reg, rhs_offset);
+				}
+			} else if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
+				// Immediate value can't be bound to a reference (except for const ref to temporary, which we don't support here)
+				FLASH_LOG(Codegen, Error, "Cannot bind reference to immediate value in this context");
+				return;
+			} else {
+				FLASH_LOG(Codegen, Error, "Unsupported RHS type for reference initialization");
+				return;
+			}
+			
+			// Store the address to the reference (LHS)
+			emitMovToFrameSized(
+				SizedRegister{addr_reg, 64, false},  // source: 64-bit register (pointer)
+				SizedStackSlot{lhs_offset, 64, false}  // dest: 64-bit reference (pointer)
+			);
+			
+			return;  // Done with reference assignment
+		}
+
+		// For non-reference LHS, proceed with normal assignment
 		// Get RHS source
 		Type rhs_type = op.rhs.type;
 		X64Register source_reg = X64Register::RAX;
