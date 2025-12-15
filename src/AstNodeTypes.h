@@ -16,6 +16,7 @@
 #include "ChunkedAnyVector.h"
 #include "StackString.h"
 #include "Lexer.h"
+#include "StringTable.h"
 
 // SaveHandle type for parser save/restore operations
 // Matches Parser::SaveHandle typedef in Parser.h
@@ -843,7 +844,7 @@ struct TypeInfo
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
 	TypeInfo(std::string name, Type type, TypeIndex idx) : name_(std::move(name)), type_(type), type_index_(idx) {}
 
-	std::string name_;
+	std::variant<std::string, StringHandle> name_;
 	Type type_;
 	TypeIndex type_index_;
 
@@ -859,7 +860,13 @@ struct TypeInfo
 	// For typedef of pointer types, store the pointer depth
 	size_t pointer_depth_ = 0;
 
-	std::string_view name() { return name_; };
+	std::string_view name() const { 
+		if (std::holds_alternative<std::string>(name_)) {
+			return std::get<std::string>(name_);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(name_));
+		}
+	};
 
 	// Helper methods for struct types
 	bool isStruct() const { return type_ == Type::Struct; }

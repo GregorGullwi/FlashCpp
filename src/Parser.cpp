@@ -92,7 +92,7 @@ static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg
 				return size;
 			}
 			// For template struct instantiations (e.g., "TC_int"), look up by name
-			const std::string& type_name = gTypeInfo[type_index].name_;
+			std::string_view type_name = gTypeInfo[type_index].name();
 			auto it = gTypesByName.find(type_name);
 			if (it != gTypesByName.end() && it->second->type_size_ > 0) {
 				return it->second->type_size_;
@@ -2475,7 +2475,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 		alias_type_info.type_index_ = type_spec.type_index();
 		alias_type_info.type_size_ = type_spec.size_in_bits();
-		gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 		
 		return ParseResult::success();
 	}
@@ -2715,7 +2715,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			return ParseResult::success();
 		}
@@ -2875,7 +2875,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			return ParseResult::success();
 		}
@@ -2937,7 +2937,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
-	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 	
 	return ParseResult::success();
 }
@@ -5720,7 +5720,7 @@ ParseResult Parser::parse_typedef_declaration()
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
-	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
 	// Update the type_node with the modified type_spec (with pointers)
 	type_node = emplace_node<TypeSpecifierNode>(type_spec);
@@ -6080,7 +6080,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
-					gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 				}
 
 				// Return success (no AST node needed for type aliases)
@@ -6264,7 +6264,7 @@ if (type_info.getStructInfo()) {
 	type_info.type_size_ = type_info.getStructInfo()->total_size;
 }
 			
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			FLASH_LOG(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", type_name_str, type_it->second);
 		}
 	}
@@ -6621,7 +6621,7 @@ ParseResult Parser::parse_type_specifier()
 						bool is_template_param = false;
 						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
 							const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
-							if (ti.name_ == param_name) {
+							if (ti.name() == param_name) {
 								is_template_param = true;
 							}
 						}
@@ -6864,7 +6864,7 @@ ParseResult Parser::parse_type_specifier()
 								bool is_template_param = false;
 								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
 									const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
-									if (ti.name_ == param_name) {
+									if (ti.name() == param_name) {
 										is_template_param = true;
 									}
 								}
@@ -9098,7 +9098,7 @@ std::optional<std::string_view> Parser::extract_template_param_name(const TypeSp
 
 	if (type_spec.type_index() < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-		auto it = template_params.find(type_info.name_);
+		auto it = template_params.find(type_info.name());
 		if (it != template_params.end()) {
 			return it->first;
 		}
@@ -13391,7 +13391,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 							if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
 								TypeIndex type_idx = type_spec.type_index();
 								if (type_idx < gTypeInfo.size()) {
-									object_struct_name = gTypeInfo[type_idx].name_;
+									object_struct_name = gTypeInfo[type_idx].name();
 								}
 							}
 						}
@@ -14941,7 +14941,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 		// Look up the type name using type_index
 		if (result_type_index < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[result_type_index];
-			std::string_view type_name = type_info.name_;
+			std::string_view type_name = type_info.name();
 
 			// Try to find which template parameter this is
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -15552,14 +15552,14 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 		case Type::Auto: result += "auto"; break;
 		case Type::Struct:
 			if (type.type_index() < gTypeInfo.size()) {
-				result += std::string(gTypeInfo[type.type_index()].name_);
+				result += std::string(gTypeInfo[type.type_index()].name());
 			} else {
 				result += "struct";
 			}
 			break;
 		case Type::Enum:
 			if (type.type_index() < gTypeInfo.size()) {
-				result += std::string(gTypeInfo[type.type_index()].name_);
+				result += std::string(gTypeInfo[type.type_index()].name());
 			} else {
 				result += "enum";
 			}
@@ -15717,7 +15717,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name_, &type_info);
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
 		}
@@ -18797,7 +18797,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name_, &type_info);
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -18871,7 +18871,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name_, &type_info);
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -19395,7 +19395,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			TypeIndex idx = type_node.type_index();
 			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, idx={}, gTypeInfo.size()={}", idx, gTypeInfo.size());
 			if (idx < gTypeInfo.size()) {
-				std::string_view type_name = gTypeInfo[idx].name_;
+				std::string_view type_name = gTypeInfo[idx].name();
 				FLASH_LOG_FORMAT(Templates, Debug, "Type name: {}", type_name);
 				
 				// Check if this is a template parameter name
@@ -19612,7 +19612,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
@@ -19823,7 +19823,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					TypeIndex type_index = arg_type.type_index();
 					if (type_index < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_index];
-						std::string_view instantiated_name = type_info.name_;
+						std::string_view instantiated_name = type_info.name();
 						
 						// Parse the instantiated name to extract template name and type arguments
 						// Format: template_name_type1_type2_...
@@ -20058,9 +20058,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				should_reparse = true;
 			} else if (orig_return_type.type_index() < gTypeInfo.size()) {
 				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
-				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", orig_type_info.name_);
+				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", orig_type_info.name());
 				// Re-parse if type contains _unknown (template-dependent marker)
-				should_reparse = (orig_type_info.name_.find("_unknown") != std::string::npos);
+				should_reparse = (orig_type_info.name().find("_unknown") != std::string::npos);
 			} else {
 				should_reparse = false;
 			}
@@ -20110,7 +20110,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					type_info.type_size_ = 0;  // Will be resolved later
 				}
 			}
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);
 		}
 		
@@ -20149,8 +20149,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 				
 				// Check for placeholder/unknown types that indicate failed resolution
-				if (type_info.name_.find("_unknown") != std::string::npos) {
-					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", type_info.name_);
+				if (type_info.name().find("_unknown") != std::string::npos) {
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", type_info.name());
 					return std::nullopt;  // Substitution failure
 				}
 			}
@@ -20178,7 +20178,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					type_info.type_size_ = 0;  // Will be resolved later
 				}
 			}
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope2.addParameter(&type_info);
 		}
 		
@@ -20337,7 +20337,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
@@ -20704,7 +20704,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			);
 			alias_type_info.type_index_ = alias_type_spec.type_index();
 			alias_type_info.type_size_ = alias_type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias: ", qualified_alias_name, 
 				" -> type=", static_cast<int>(alias_type_spec.type()), 
@@ -21499,7 +21499,7 @@ if (struct_type_info.getStructInfo()) {
 			);
 			alias_type_info.type_index_ = substituted_type_index;
 			alias_type_info.type_size_ = substituted_size;
-			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name, 
 				" -> type=", static_cast<int>(substituted_type), 
@@ -21725,7 +21725,7 @@ if (struct_type_info.getStructInfo()) {
 			// Check if this struct has a StructInfo with size 0 (likely a template, not instantiation)
 			if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
 				// This might be a template. Try to instantiate it.
-				std::string_view member_struct_name = member_type_info.name_;
+				std::string_view member_struct_name = member_type_info.name();
 				
 				// Try to instantiate with the current template arguments
 				// This assumes the member template has compatible parameters
@@ -21936,7 +21936,7 @@ if (struct_type_info.getStructInfo()) {
 					TypeIndex type_idx = substituted_type_spec.type_index();
 					if (type_idx < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_idx];
-						std::string_view type_name = type_info.name_;
+						std::string_view type_name = type_info.name();
 						
 						// Try to find which template parameter this is
 						for (size_t i = 0; i < template_params.size(); ++i) {
@@ -22015,7 +22015,7 @@ if (nested_type_info.getStructInfo()) {
 			TypeIndex type_idx = alias_type_spec.type_index();
 			if (type_idx < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_idx];
-				std::string_view type_name = type_info.name_;
+				std::string_view type_name = type_info.name();
 				
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -22035,7 +22035,7 @@ if (nested_type_info.getStructInfo()) {
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, gTypeInfo.size());
 		alias_type_info.type_index_ = substituted_type_index;
 		alias_type_info.type_size_ = substituted_size;
-		gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 	}
 
 	// Finalize the struct layout
@@ -23050,7 +23050,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = type_info.name_;
+		std::string_view type_name = type_info.name();
 
 		// Try to find which template parameter this is
 		for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23097,7 +23097,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[param_type_index];
-				std::string_view type_name = type_info.name_;
+				std::string_view type_name = type_info.name();
 
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23156,7 +23156,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
-		gTypesByName.emplace(type_info.name_, &type_info);
+		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -23422,7 +23422,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = type_info.name_;
+		std::string_view type_name = type_info.name();
 
 		// Try to find which template parameter this is
 		for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23469,7 +23469,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[param_type_index];
-				std::string_view type_name = type_info.name_;
+				std::string_view type_name = type_info.name();
 
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23529,7 +23529,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
-		gTypesByName.emplace(type_info.name_, &type_info);
+		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -24210,7 +24210,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Check if this is a user-defined type that matches a template parameter
 		if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-			std::string_view type_name = type_info.name_;
+			std::string_view type_name = type_info.name();
 
 			// Check if this type name matches a template parameter
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {

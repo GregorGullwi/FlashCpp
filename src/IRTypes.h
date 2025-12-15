@@ -885,7 +885,7 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 	// Type and size
 	auto type_info = gNativeTypes.find(op.value.type);
 	if (type_info != gNativeTypes.end()) {
-		oss << type_info->second->name_;
+		oss << type_info->second->name();
 	}
 	oss << op.value.size_in_bits << " ";
 	
@@ -1090,7 +1090,7 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 	// From type and size
 	auto from_type_info = gNativeTypes.find(op.from.type);
 	if (from_type_info != gNativeTypes.end()) {
-		oss << from_type_info->second->name_;
+		oss << from_type_info->second->name();
 	}
 	oss << op.from.size_in_bits << " ";
 	
@@ -1108,7 +1108,7 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 	// To type and size
 	auto to_type_info = gNativeTypes.find(op.to_type);
 	if (to_type_info != gNativeTypes.end()) {
-		oss << to_type_info->second->name_;
+		oss << to_type_info->second->name();
 	}
 	oss << op.to_size;
 	
@@ -1131,7 +1131,7 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	// Type and size (from LHS, but both sides should be same after type promotion)
 	auto type_info = gNativeTypes.find(op.lhs.type);
 	if (type_info != gNativeTypes.end()) {
-		oss << type_info->second->name_;
+		oss << type_info->second->name();
 	}
 	oss << op.lhs.size_in_bits << " ";
 	
@@ -1257,7 +1257,7 @@ public:
 		if (type_info == gNativeTypes.end())
 			return "";
 
-		return type_info->second->name_;
+		return type_info->second->name();
 	}
 
 	template<class TClass>
@@ -1376,7 +1376,7 @@ public:
 				// Return with value
 				auto type_info = gNativeTypes.find(op.return_type.value());
 				if (type_info != gNativeTypes.end()) {
-					oss << type_info->second->name_;
+					oss << type_info->second->name();
 				}
 				oss << op.return_size << " ";
 			
@@ -1410,7 +1410,7 @@ public:
 			// Return type
 			auto ret_type_info = gNativeTypes.find(op.return_type);
 			if (ret_type_info != gNativeTypes.end()) {
-				oss << ret_type_info->second->name_;
+				oss << ret_type_info->second->name();
 			}
 			for (size_t i = 0; i < op.return_pointer_depth; ++i) {
 				oss << "*";
@@ -1436,7 +1436,7 @@ public:
 				// Type
 				auto param_type_info = gNativeTypes.find(param.type);
 				if (param_type_info != gNativeTypes.end()) {
-					oss << param_type_info->second->name_;
+					oss << param_type_info->second->name();
 				}
 				for (size_t j = 0; j < param.pointer_depth; ++j) {
 					oss << "*";
@@ -1493,7 +1493,7 @@ public:
 				// Type and size
 				auto type_info = gNativeTypes.find(arg.type);
 				if (type_info != gNativeTypes.end()) {
-					oss << type_info->second->name_;
+					oss << type_info->second->name();
 				}
 				oss << arg.size_in_bits << " ";
 		
@@ -1517,7 +1517,7 @@ public:
 			oss << " = alloca ";
 			auto type_info = gNativeTypes.find(op.type);
 			if (type_info != gNativeTypes.end())
-				oss << type_info->second->name_;
+				oss << type_info->second->name();
 			oss << op.size_in_bits;
 		}
 		break;
@@ -1748,7 +1748,7 @@ public:
 			// Type and size
 			auto type_info = gNativeTypes.find(op.result.type);
 			if (type_info != gNativeTypes.end()) {
-				oss << type_info->second->name_;
+				oss << type_info->second->name();
 			}
 			oss << op.result.size_in_bits << " ";
 
@@ -1780,7 +1780,7 @@ public:
 			// Type and size
 			auto type_info = gNativeTypes.find(op.value.type);
 			if (type_info != gNativeTypes.end()) {
-				oss << type_info->second->name_;
+				oss << type_info->second->name();
 			}
 			oss << op.value.size_in_bits << " ";
 
@@ -1826,7 +1826,7 @@ public:
 				} else if (arg.type == Type::Struct || arg.type == Type::Enum) {
 					// Try to get the type name from gTypeInfo using type_index
 					if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-						oss << gTypeInfo[arg.type_index].name_;
+						oss << gTypeInfo[arg.type_index].name();
 					} else {
 						oss << (arg.type == Type::Struct ? "struct" : "enum");
 					}
@@ -1869,7 +1869,7 @@ public:
 			// Object type and size
 			auto type_info = gNativeTypes.find(op.object_type);
 			if (type_info != gNativeTypes.end()) {
-				oss << type_info->second->name_;
+				oss << type_info->second->name();
 			}
 			oss << op.object_size << " %";
 			
@@ -1893,7 +1893,7 @@ public:
 					// Type and size
 					auto arg_type_info = gNativeTypes.find(arg.type);
 					if (arg_type_info != gNativeTypes.end()) {
-						oss << arg_type_info->second->name_;
+						oss << arg_type_info->second->name();
 					}
 					oss << arg.size_in_bits << " ";
 				
@@ -2129,13 +2129,13 @@ public:
 				// For arrays, print element type and count: int32[5]
 				auto type_info = gNativeTypes.find(op.type);
 				if (type_info != gNativeTypes.end())
-					oss << type_info->second->name_;
+					oss << type_info->second->name();
 				oss << op.size_in_bits << "[" << op.array_count.value() << "]";
 			} else {
 				// For scalars, print type and size: int32
 				auto type_info = gNativeTypes.find(op.type);
 				if (type_info != gNativeTypes.end())
-					oss << type_info->second->name_;
+					oss << type_info->second->name();
 				oss << op.size_in_bits;
 			}
 			
@@ -2167,7 +2167,7 @@ public:
 			oss << "global_var ";
 			auto type_info = gNativeTypes.find(op.type);
 			if (type_info != gNativeTypes.end())
-				oss << type_info->second->name_;
+				oss << type_info->second->name();
 			oss << op.size_in_bits << " @" << std::string(var_name);
 			if (op.element_count > 1) {
 				oss << "[" << op.element_count << "]";
@@ -2229,7 +2229,7 @@ public:
 				oss << ", ";
 				auto type_info = gNativeTypes.find(arg.type);
 				if (type_info != gNativeTypes.end()) {
-					oss << type_info->second->name_;
+					oss << type_info->second->name();
 				}
 				oss << arg.size_in_bits << " ";
 				if (std::holds_alternative<TempVar>(arg.value)) {
@@ -2261,7 +2261,7 @@ public:
 			// Format: from_type from_size from_value to to_type to_size
 			auto from_type_info = gNativeTypes.find(op.from.type);
 			if (from_type_info != gNativeTypes.end()) {
-				oss << from_type_info->second->name_;
+				oss << from_type_info->second->name();
 			}
 			oss << op.from.size_in_bits << " ";
 			if (std::holds_alternative<TempVar>(op.from.value)) {
@@ -2276,7 +2276,7 @@ public:
 			oss << " to ";
 			auto to_type_info = gNativeTypes.find(op.to_type);
 			if (to_type_info != gNativeTypes.end()) {
-				oss << to_type_info->second->name_;
+				oss << to_type_info->second->name();
 			}
 			oss << op.to_size_in_bits;
 		}

@@ -7314,7 +7314,7 @@ private:
 					
 					// Get type name from gTypeInfo for type descriptor generation
 					if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
-						handler_info.type_name = gTypeInfo[handler.type_index].name_;
+						handler_info.type_name = gTypeInfo[handler.type_index].name();
 					}
 					
 					block_info.catch_handlers.push_back(handler_info);
