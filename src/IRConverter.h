@@ -6926,6 +6926,8 @@ private:
 		bool is_array = op.is_array;
 		bool is_initialized = op.initializer.has_value();
 
+		FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", offset=", var_it->second.offset);
+
 		if (is_reference) {
 			reference_stack_info_[var_it->second.offset] = ReferenceInfo{
 				.value_type = var_type,
@@ -6942,14 +6944,57 @@ private:
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
 					int src_offset = getStackOffsetFromTempVar(temp_var);
-					// Load address of the source variable
-					emitLeaFromFrame(pointer_reg, src_offset);
+					// Check if source is itself a pointer/reference - if so, load the value
+					// Otherwise, take the address
+					auto src_ref_it = reference_stack_info_.find(src_offset);
+					if (src_ref_it != reference_stack_info_.end()) {
+						// Source is a reference - copy the pointer value
+						emitMovFromFrame(pointer_reg, src_offset);
+					} else {
+						// Check if it's a 64-bit value (likely a pointer)
+						// For __range_begin_ and similar, which are int64 pointers
+						bool is_likely_pointer = (init.size_in_bits == 64 && 
+						                          (init.type == Type::Long || init.type == Type::Int || 
+						                           init.type == Type::UnsignedLong || init.type == Type::LongLong));
+						if (is_likely_pointer) {
+							// Load the pointer value
+							emitMovFromFrame(pointer_reg, src_offset);
+						} else {
+							// Load address of the source variable
+							emitLeaFromFrame(pointer_reg, src_offset);
+						}
+					}
 					pointer_initialized = true;
 				} else if (std::holds_alternative<std::string_view>(init.value)) {
 					auto rvalue_var_name = std::get<std::string_view>(init.value);
+					// Check for special __range_begin_ and __range_end_ names
+					bool is_range_iterator = false;
+					if (rvalue_var_name.size() >= 15 && rvalue_var_name.substr(0, 15) == "__range_begin_") {
+						is_range_iterator = true;
+					} else if (rvalue_var_name.size() >= 13 && rvalue_var_name.substr(0, 13) == "__range_end_") {
+						is_range_iterator = true;
+					}
+					
 					auto src_it = current_scope.variables.find(rvalue_var_name);
 					if (src_it != current_scope.variables.end()) {
-						emitLeaFromFrame(pointer_reg, src_it->second.offset);
+						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", rvalue_var_name, "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
+						// Check if source is a reference
+						auto src_ref_it = reference_stack_info_.find(src_it->second.offset);
+						if (src_ref_it != reference_stack_info_.end() || is_range_iterator) {
+							// Source is a reference or known pointer - copy the pointer value
+							FLASH_LOG(Codegen, Debug, "Using MOV (reference or range iterator)");
+							emitMovFromFrame(pointer_reg, src_it->second.offset);
+						} else if (init.size_in_bits == 64 && 
+						           (init.type == Type::Long || init.type == Type::Int || 
+						            init.type == Type::UnsignedLong || init.type == Type::LongLong)) {
+							// 64-bit value, likely a pointer
+							FLASH_LOG(Codegen, Debug, "Using MOV (64-bit type)");
+							emitMovFromFrame(pointer_reg, src_it->second.offset);
+						} else {
+							// Regular value - take its address
+							FLASH_LOG(Codegen, Debug, "Using LEA (regular value)");
+							emitLeaFromFrame(pointer_reg, src_it->second.offset);
+						}
 						pointer_initialized = true;
 					}
 				}
@@ -10195,6 +10240,42 @@ private:
 
 		// Check if LHS is a reference - if so, we're initializing a reference binding
 		auto lhs_ref_it = reference_stack_info_.find(lhs_offset);
+		
+		// Debug: check what type LHS is
+		if (std::holds_alternative<std::string_view>(op.lhs.value)) {
+			FLASH_LOG(Codegen, Debug, "LHS is string_view: '", std::get<std::string_view>(op.lhs.value), "'");
+		} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
+			FLASH_LOG(Codegen, Debug, "LHS is TempVar: '", std::get<TempVar>(op.lhs.value).name(), "'");
+		} else {
+			FLASH_LOG(Codegen, Debug, "LHS is other type");
+		}
+		
+		// If not found with TempVar offset and LHS is a TempVar, try looking up by name
+		if (lhs_ref_it == reference_stack_info_.end() && std::holds_alternative<TempVar>(op.lhs.value)) {
+			TempVar lhs_var = std::get<TempVar>(op.lhs.value);
+			std::string_view var_name = lhs_var.name();
+			FLASH_LOG(Codegen, Debug, "LHS is TempVar with name: '", var_name, "'");
+			// Remove the '%' prefix if present
+			if (!var_name.empty() && var_name[0] == '%') {
+				var_name = var_name.substr(1);
+				FLASH_LOG(Codegen, Debug, "After removing %, name: '", var_name, "'");
+			}
+			auto named_var_it = variable_scopes.back().variables.find(var_name);
+			if (named_var_it != variable_scopes.back().variables.end()) {
+				int32_t named_offset = named_var_it->second.offset;
+				FLASH_LOG(Codegen, Debug, "Found in named vars at offset: ", named_offset);
+				lhs_ref_it = reference_stack_info_.find(named_offset);
+				if (lhs_ref_it != reference_stack_info_.end()) {
+					// Found it! Update lhs_offset to use the named variable offset
+					lhs_offset = named_offset;
+					FLASH_LOG(Codegen, Debug, "Found reference info at named offset!");
+				}
+			} else {
+				FLASH_LOG(Codegen, Debug, "Not found in named vars");
+			}
+		}
+		
+		FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", (lhs_ref_it != reference_stack_info_.end()));
 		if (lhs_ref_it != reference_stack_info_.end()) {
 			// LHS is a reference - we need to store the ADDRESS of RHS, not its value
 			// Exception: if RHS is already a pointer/reference, we want the pointer value itself
@@ -10203,15 +10284,24 @@ private:
 			// Get address of RHS or pointer value
 			if (std::holds_alternative<std::string_view>(op.rhs.value)) {
 				std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
+				FLASH_LOG(Codegen, Debug, "Reference assignment: LHS is ref, RHS is string_view: '", rhs_var_name, "'");
 				auto it = variable_scopes.back().variables.find(rhs_var_name);
 				if (it != variable_scopes.back().variables.end()) {
 					int32_t rhs_offset = it->second.offset;
 					// Check if RHS is itself a pointer or reference
 					// For pointers and references, we want the VALUE (the pointer), not the address of the variable
 					// For regular values, we want the ADDRESS
-					if (op.rhs.type == Type::Int && op.rhs.size_in_bits == 64) {
-						// This might be a pointer (int64) - check if it's in our temp vars
-						// For now, assume 64-bit ints in references are pointers and load the value
+					// Special case: __range_begin_ and __range_end_ are always pointers
+					bool is_range_iterator = false;
+					if (rhs_var_name.size() >= 15 && rhs_var_name.substr(0, 15) == "__range_begin_") {
+						is_range_iterator = true;
+					} else if (rhs_var_name.size() >= 13 && rhs_var_name.substr(0, 13) == "__range_end_") {
+						is_range_iterator = true;
+					}
+					// Pointers are typically stored as 64-bit values (Type::Long or Type::Int with 64 bits)
+					if (is_range_iterator || (op.rhs.size_in_bits == 64 && (op.rhs.type == Type::Int || op.rhs.type == Type::Long || 
+					    op.rhs.type == Type::UnsignedLong || op.rhs.type == Type::LongLong || op.rhs.type == Type::UnsignedLongLong))) {
+						// This is a 64-bit integer type or known pointer - likely a pointer value, load it
 						emitMovFromFrame(addr_reg, rhs_offset);
 					} else {
 						// Regular value - take its address
@@ -10223,14 +10313,16 @@ private:
 				}
 			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
 				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
+				FLASH_LOG(Codegen, Debug, "Reference assignment: LHS is ref, RHS is TempVar: '", rhs_var.name(), "'");
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 				// Check if RHS itself is a reference - if so, load the pointer value
 				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
 				if (rhs_ref_it != reference_stack_info_.end()) {
 					// RHS is also a reference - just copy the pointer value
 					emitMovFromFrame(addr_reg, rhs_offset);
-				} else if (op.rhs.type == Type::Int && op.rhs.size_in_bits == 64) {
-					// This might be a pointer (int64) - load the value
+				} else if (op.rhs.size_in_bits == 64 && (op.rhs.type == Type::Int || op.rhs.type == Type::Long || 
+				           op.rhs.type == Type::UnsignedLong || op.rhs.type == Type::LongLong || op.rhs.type == Type::UnsignedLongLong)) {
+					// This is a 64-bit integer type - likely a pointer value, load it
 					emitMovFromFrame(addr_reg, rhs_offset);
 				} else {
 					// RHS is a regular value - get its address
