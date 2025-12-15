@@ -1729,7 +1729,7 @@ private:
 					// Check if there's an explicit base initializer
 					const BaseInitializer* base_init = nullptr;
 					for (const auto& init : node.base_initializers()) {
-						if (init.base_class_name == base.name) {
+						if (init.getBaseClassName() == base.name) {
 							base_init = &init;
 							break;
 						}

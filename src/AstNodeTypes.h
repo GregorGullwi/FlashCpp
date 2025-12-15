@@ -521,7 +521,7 @@ struct StructTypeInfo {
 		}
 	}
 
-	void addMember(const std::string& member_name, Type member_type, TypeIndex type_index,
+	void addMember(std::string_view member_name, Type member_type, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access,
 	               std::optional<ASTNode> default_initializer,
 	               bool is_reference,
@@ -541,7 +541,7 @@ struct StructTypeInfo {
 		if (!referenced_size_bits) {
 			referenced_size_bits = member_size * 8;
 		}
-		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
+		members.emplace_back(std::string(member_name), member_type, type_index, offset, member_size, effective_alignment,
 			              access, std::move(default_initializer), is_reference, is_rvalue_reference,
 			              referenced_size_bits);
 
@@ -550,9 +550,9 @@ struct StructTypeInfo {
 		alignment = std::max(alignment, effective_alignment);
 	}
 
-	void addMemberFunction(const std::string& function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
+	void addMemberFunction(std::string_view function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
 	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
-		auto& func = member_functions.emplace_back(function_name, function_decl, access, false, false);
+		auto& func = member_functions.emplace_back(std::string(function_name), function_decl, access, false, false);
 		func.is_virtual = is_virtual;
 		func.is_pure_virtual = is_pure_virtual;
 		func.is_override = is_override;
@@ -631,9 +631,9 @@ struct StructTypeInfo {
 	}
 
 	// Add static member
-	void addStaticMember(const std::string& name, Type type, TypeIndex type_index, size_t size, size_t alignment,
+	void addStaticMember(std::string_view name, Type type, TypeIndex type_index, size_t size, size_t alignment,
 	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, bool is_const = false) {
-		static_members.push_back(StructStaticMember(name, type, type_index, size, alignment, access, initializer, is_const));
+		static_members.push_back(StructStaticMember(std::string(name), type, type_index, size, alignment, access, initializer, is_const));
 	}
 
 	// Find member recursively through base classes
@@ -651,7 +651,7 @@ struct StructTypeInfo {
 		pack_alignment = align;
 	}
 
-	const StructMember* findMember(const std::string& name) const {
+	const StructMember* findMember(std::string_view name) const {
 		for (const auto& member : members) {
 			if (member.getName() == name) {
 				return &member;
@@ -660,7 +660,7 @@ struct StructTypeInfo {
 		return nullptr;
 	}
 
-	const StructMemberFunction* findMemberFunction(const std::string& name) const {
+	const StructMemberFunction* findMemberFunction(std::string_view name) const {
 		for (const auto& func : member_functions) {
 			if (func.getName() == name) {
 				return &func;
@@ -670,29 +670,29 @@ struct StructTypeInfo {
 	}
 
 	// Friend declaration support methods
-	void addFriendFunction(const std::string& func_name) {
-		friend_functions_.push_back(func_name);
+	void addFriendFunction(std::string_view func_name) {
+		friend_functions_.push_back(std::string(func_name));
 	}
 
-	void addFriendClass(const std::string& class_name) {
-		friend_classes_.push_back(class_name);
+	void addFriendClass(std::string_view class_name) {
+		friend_classes_.push_back(std::string(class_name));
 	}
 
-	void addFriendMemberFunction(const std::string& class_name, const std::string& func_name) {
-		friend_member_functions_.emplace_back(class_name, func_name);
+	void addFriendMemberFunction(std::string_view class_name, std::string_view func_name) {
+		friend_member_functions_.emplace_back(std::string(class_name), std::string(func_name));
 	}
 
 	bool isFriendFunction(std::string_view func_name) const {
 		return std::find(friend_functions_.begin(), friend_functions_.end(), func_name) != friend_functions_.end();
 	}
 
-	bool isFriendClass(const std::string& class_name) const {
+	bool isFriendClass(std::string_view class_name) const {
 		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name) != friend_classes_.end();
 	}
 
-	bool isFriendMemberFunction(const std::string& class_name, const std::string& func_name) const {
+	bool isFriendMemberFunction(std::string_view class_name, std::string_view func_name) const {
 		auto it = std::find(friend_member_functions_.begin(), friend_member_functions_.end(),
-		                    std::make_pair(class_name, func_name));
+		                    std::make_pair(std::string(class_name), std::string(func_name)));
 		return it != friend_member_functions_.end();
 	}
 
@@ -868,11 +868,11 @@ struct EnumTypeInfo {
 		}
 	}
 
-	void addEnumerator(const std::string& enumerator_name, long long value) {
-		enumerators.emplace_back(enumerator_name, value);
+	void addEnumerator(std::string_view enumerator_name, long long value) {
+		enumerators.emplace_back(std::string(enumerator_name), value);
 	}
 
-	const Enumerator* findEnumerator(const std::string& name_str) const {
+	const Enumerator* findEnumerator(std::string_view name_str) const {
 		for (const auto& enumerator : enumerators) {
 			if (enumerator.getName() == name_str) {
 				return &enumerator;
@@ -881,7 +881,7 @@ struct EnumTypeInfo {
 		return nullptr;
 	}
 
-	long long getEnumeratorValue(const std::string& name_str) const {
+	long long getEnumeratorValue(std::string_view name_str) const {
 		const Enumerator* e = findEnumerator(name_str);
 		return e ? e->value : 0;
 	}
@@ -1753,11 +1753,19 @@ struct MemberInitializer {
 
 // Base class initializer for constructor initializer lists
 struct BaseInitializer {
-	std::string base_class_name;
+	std::variant<std::string, StringHandle> base_class_name;
 	std::vector<ASTNode> arguments;
 
 	BaseInitializer(std::string name, std::vector<ASTNode> args)
 		: base_class_name(std::move(name)), arguments(std::move(args)) {}
+	
+	std::string_view getBaseClassName() const {
+		if (std::holds_alternative<std::string>(base_class_name)) {
+			return std::get<std::string>(base_class_name);
+		} else {
+			return StringTable::getStringView(std::get<StringHandle>(base_class_name));
+		}
+	}
 };
 
 // Delegating constructor initializer (C++11 feature)
