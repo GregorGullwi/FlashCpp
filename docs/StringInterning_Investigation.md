@@ -29,8 +29,16 @@ struct StringHandle {
     uint32_t handle; // Packed ID: Chunk Index (high bits) + Offset (low bits)
     
     // Example Bit Layout:
-    // [31...24] (8 bits) : Chunk Index
-    // [23...0]  (24 bits): Byte Offset within that chunk
+    // [31...24] (8 bits) : Chunk Index (supports up to 256 chunks)
+    // [23...0]  (24 bits): Byte Offset within that chunk (up to 16MB per chunk)
+    
+    // Note: Default chunk size is 64MB, but we limit addressable space to 16MB
+    // to fit in 24 bits. This is acceptable as most strings are small.
+    
+    // Hash support for use in unordered_map
+    size_t hash() const noexcept;
+    bool operator==(const StringHandle& other) const noexcept { return handle == other.handle; }
+    bool operator!=(const StringHandle& other) const noexcept { return handle != other.handle; }
 };
 ```
 
@@ -43,8 +51,15 @@ To support identifying strings by `std::string_view` (which requires length) and
 ```
 *Note: This adds 12 bytes overhead per string, but enables O(1) `string_view` construction and hash retrieval.*
 
+**Hash Function:** We will use FNV-1a (Fowler-Noll-Vo) hash, which is fast, has good distribution, and is simple to implement. Alternative: std::hash on platforms where it's high-quality.
+
 ### 3. Integration with `gChunkedStringAllocator`
-We will wrap `gChunkedStringAllocator` with a helper system that provides the following APIs:
+We will extend `ChunkedStringAllocator` to track chunk indices and wrap it with a StringTable helper system that provides the following APIs:
+
+**Required ChunkedStringAllocator Enhancements:**
+- Add `getChunkIndex()` method to return current chunk index
+- Add `getChunkPointer(index, offset)` to resolve handle to pointer
+- Maintain chunk count for validation
 
 #### Storage & Resolution
 - **`std::string_view getStringView(StringHandle h)`**:
@@ -93,12 +108,23 @@ std::unordered_map<StringHandle, VariableInfo> variables;
 
 ### Phase 1: Infrastructure
 *Goal: Create the StringTable system without breaking existing code.*
-1.  **Modify `gChunkedStringAllocator`**: Ensure it exposes necessary methods for creating handles from offsets/indices.
-2.  **Create `StringTable.h/cpp`**: Implement `StringHandle` struct and the global singleton/static wrapper around `gChunkedStringAllocator`.
-    - Implement the `[Hash][Length]` memory layout logic.
-    - Implement `createStringHandle` and `getOrInternStringHandle`.
-    - Implement `getStringView` and `getHash` resolution functions.
-3.  **Unit Test**: Verify that handles correctly round-trip to strings and that interning deduplicates correctly.
+1.  **Modify `ChunkedString.h`**: Enhance `ChunkedStringAllocator` to expose chunk tracking.
+    - Add `size_t getChunkIndex() const` - returns current chunk index
+    - Add `char* getChunkPointer(size_t chunk_idx, size_t offset) const` - resolves handle to pointer
+    - Add `size_t getChunkCount() const` - returns total number of chunks
+2.  **Create `StringTable.h`**: Implement `StringHandle` struct and StringTable API.
+    - Define `StringHandle` with 32-bit packed representation
+    - Implement FNV-1a hash function for strings
+    - Implement `createStringHandle(std::string_view str)` - allocates new string with metadata
+    - Implement `getOrInternStringHandle(std::string_view str)` - intern or return existing
+    - Implement `getStringView(StringHandle h)` - O(1) reconstruction
+    - Implement `getHash(StringHandle h)` - O(1) retrieval
+    - Add `std::hash<StringHandle>` specialization
+3.  **Unit Test**: Create tests in `tests/` directory to verify:
+    - Handle round-trip to string works correctly
+    - Interning deduplicates identical strings
+    - Different strings get different handles
+    - Hash values are consistent
 
 ### Phase 2: Variable Naming Update (TempVar)
 *Goal: Clean up TempVar generation before the big refactor.*

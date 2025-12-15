@@ -65,11 +65,28 @@ public:
 
     Chunk* current_chunk() { return chunks_.back().get(); }
 
+    // StringTable support - get current chunk index (0-based)
+    size_t getChunkIndex() const { 
+        return chunks_.size() - 1; 
+    }
+
+    // StringTable support - get total number of chunks
+    size_t getChunkCount() const { 
+        return chunks_.size(); 
+    }
+
+    // StringTable support - resolve chunk index and offset to pointer
+    char* getChunkPointer(size_t chunk_idx, size_t offset) const {
+        assert(chunk_idx < chunks_.size() && "Invalid chunk index");
+        return chunks_[chunk_idx]->data_.data() + offset;
+    }
+
 private:
     std::vector<std::unique_ptr<Chunk>> chunks_;
     size_t chunk_size_;
 
     friend class StringBuilder;
+    friend class StringTable;  // For StringTable access to chunks
 };
 
 extern ChunkedStringAllocator gChunkedStringAllocator;
