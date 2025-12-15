@@ -691,8 +691,10 @@ struct StructTypeInfo {
 	}
 
 	bool isFriendMemberFunction(std::string_view class_name, std::string_view func_name) const {
-		auto it = std::find(friend_member_functions_.begin(), friend_member_functions_.end(),
-		                    std::make_pair(std::string(class_name), std::string(func_name)));
+		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
+		                       [class_name, func_name](const auto& pair) {
+		                           return pair.first == class_name && pair.second == func_name;
+		                       });
 		return it != friend_member_functions_.end();
 	}
 
