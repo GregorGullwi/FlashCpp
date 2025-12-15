@@ -1846,7 +1846,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Search for existing member function declaration with the same name
 		StructMemberFunction* existing_member = nullptr;
 		for (auto& member : struct_info->member_functions) {
-			if (member.getName() == function_name_token.value()) {
+			if (member.getName() == StringTable::getOrInternStringHandle(function_name_token.value())) {
 				existing_member = &member;
 				break;
 			}
@@ -7767,7 +7767,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 				if (!base_struct_info) continue;
 				for (const auto& member_func : base_struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-						gSymbolTable.insert(member_func.getName(), member_func.function_decl);
+						gSymbolTable.insert(StringTable::getStringView(member_func.getName()), member_func.function_decl);
 					}
 				}
 				for (const auto& nested_base : base_struct_info->base_classes) {
@@ -8870,7 +8870,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// Validate member name exists in struct
 			bool member_found = false;
 			for (const auto& member : struct_info.members) {
-				if (member.getName() == member_name) {
+				if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
 					member_found = true;
 					break;
 				}
@@ -11865,7 +11865,7 @@ ParseResult Parser::parse_primary_expression()
 							
 							// Check instance members (these use this->)
 							for (const auto& member : struct_info->members) {
-								if (member.getName() == idenfifier_token.value()) {
+								if (member.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
 									// This is a member variable! Transform it into this->member
 									Token this_token(Token::Type::Keyword, "this",
 									                 idenfifier_token.line(), idenfifier_token.column(),
@@ -11955,7 +11955,7 @@ ParseResult Parser::parse_primary_expression()
 									// Check member functions in this base class
 									// StructMemberFunction has function_decl which is an ASTNode
 									for (const auto& member_func : base_struct_info->member_functions) {
-										if (member_func.getName() == idenfifier_token.value()) {
+										if (member_func.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
 											// Found matching member function in base class
 											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 												gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
@@ -13075,7 +13075,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 							if (struct_info) {
 								std::string_view member_name = member_access->member_name();
 								for (const auto& member : struct_info->members) {
-									if (member.getName() == member_name) {
+									if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
 										if (member.type == Type::FunctionPointer) {
 											is_function_pointer_call = true;
 										}
@@ -14586,7 +14586,7 @@ ParseResult Parser::parse_lambda_expression() {
 
     // Add operator() as a member function
     StructMemberFunction operator_call_member(
-        "operator()",
+        StringTable::getOrInternStringHandle("operator()"),
         operator_call_func_node,  // Use the original ASTNode, not a copy
         AccessSpecifier::Public,
         false,  // not constructor
@@ -15176,7 +15176,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						// Look up the member function
 						std::string_view func_name = decl.decl_node().identifier_token().value();
 						for (const auto& member_func : struct_info->member_functions) {
-							if (member_func.getName() == func_name && 
+							if (member_func.getName() == StringTable::getOrInternStringHandle(func_name) && 
 								member_func.function_decl.is<FunctionDeclarationNode>()) {
 								// Found the real function - use its return type
 								const FunctionDeclarationNode& real_func = 
@@ -21422,7 +21422,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					
 					// Phase 7B: Intern static member name and use StringHandle overload
-					StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(static_member.getName());
+					StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
 					struct_info->addStaticMember(
 						static_member_name_handle,
 						static_member.type,
@@ -22455,7 +22455,7 @@ if (nested_type_info.getStructInfo()) {
 					}
 					for (const auto& init : ctor_decl.base_initializers()) {
 						// Phase 7B: Intern base class name and use StringHandle overload
-						StringHandle base_name_handle = StringTable::getOrInternStringHandle(init.getBaseClassName());
+						StringHandle base_name_handle = init.getBaseClassName();
 						new_ctor_ref.add_base_initializer(base_name_handle, init.arguments);
 					}
 					if (ctor_decl.delegating_initializer().has_value()) {
@@ -22841,7 +22841,7 @@ if (nested_type_info.getStructInfo()) {
 				
 				// Use struct_info_ptr instead of struct_info (which was moved)
 				// Phase 7B: Intern static member name and use StringHandle overload
-				StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(static_member.getName());
+				StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
 				struct_info_ptr->addStaticMember(
 					static_member_name_handle,
 					static_member.type,

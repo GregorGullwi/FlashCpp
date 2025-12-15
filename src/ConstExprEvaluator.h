@@ -1783,8 +1783,9 @@ public:
 		}
 		
 		// Check for default member initializer
+		StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
 		for (const auto& member : inner_struct_info->members) {
-			if (member.getName() == final_member_name && member.default_initializer.has_value()) {
+			if (member.getName() == final_member_name_handle && member.default_initializer.has_value()) {
 				return evaluate(member.default_initializer.value(), context);
 			}
 		}
@@ -1901,9 +1902,10 @@ public:
 		
 		// Look up the actual member function in the struct's type info
 		const FunctionDeclarationNode* actual_func = nullptr;
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		for (const auto& member_func : struct_info->member_functions) {
 			if (member_func.is_constructor || member_func.is_destructor) continue;
-			if (member_func.getName() != func_name) continue;
+			if (member_func.getName() != func_name_handle) continue;
 			
 			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 				actual_func = &member_func.function_decl.as<FunctionDeclarationNode>();
@@ -2106,10 +2108,10 @@ public:
 		
 		// Also check for default member initializers for members not in the initializer list
 		for (const auto& member : struct_info->members) {
-			if (member_bindings.find(std::string(member.getName())) == member_bindings.end() && member.default_initializer.has_value()) {
+			std::string_view name_view = StringTable::getStringView(member.getName());
+			if (member_bindings.find(name_view) == member_bindings.end() && member.default_initializer.has_value()) {
 				auto default_result = evaluate(member.default_initializer.value(), context);
 				if (default_result.success) {
-					std::string_view name_view(member.getName());
 					member_bindings[name_view] = default_result;
 				}
 			}
