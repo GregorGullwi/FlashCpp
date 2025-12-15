@@ -640,7 +640,7 @@ public:
 							} else if (std::holds_alternative<double>(init_operands[2])) {
 								member_value = std::get<double>(init_operands[2]);
 							} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-								member_value = std::get<std::string_view>(init_operands[2]);
+								member_value = std::get<StringHandle>(init_operands[2]);
 							} else {
 								member_value = 0ULL;  // fallback
 							}
@@ -1923,7 +1923,7 @@ private:
 									} else if (std::holds_alternative<double>(init_operands[2])) {
 										member_value = std::get<double>(init_operands[2]);
 									} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-										member_value = std::get<std::string_view>(init_operands[2]);
+										member_value = std::get<StringHandle>(init_operands[2]);
 									} else {
 										member_value = 0ULL;  // fallback
 									}
@@ -2028,7 +2028,7 @@ private:
 								} else if (std::holds_alternative<double>(init_operands[2])) {
 									member_value = std::get<double>(init_operands[2]);
 								} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-									member_value = std::get<std::string_view>(init_operands[2]);
+									member_value = std::get<StringHandle>(init_operands[2]);
 								} else {
 									member_value = 0ULL;  // fallback
 								}
@@ -2046,7 +2046,7 @@ private:
 								} else if (std::holds_alternative<double>(init_operands[2])) {
 									member_value = std::get<double>(init_operands[2]);
 								} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-									member_value = std::get<std::string_view>(init_operands[2]);
+									member_value = std::get<StringHandle>(init_operands[2]);
 								} else {
 									member_value = 0ULL;  // fallback
 								}
@@ -2331,7 +2331,7 @@ private:
 			} else if (std::holds_alternative<TempVar>(operands[2])) {
 				ret_op.return_value = std::get<TempVar>(operands[2]);
 			} else if (std::holds_alternative<std::string_view>(operands[2])) {
-				ret_op.return_value = std::get<std::string_view>(operands[2]);
+				ret_op.return_value = std::get<StringHandle>(operands[2]);
 			} else if (std::holds_alternative<double>(operands[2])) {
 				ret_op.return_value = std::get<double>(operands[2]);
 			}
@@ -4069,7 +4069,7 @@ private:
 											} else if (std::holds_alternative<double>(init_operands[2])) {
 												member_value = std::get<double>(init_operands[2]);
 											} else if (std::holds_alternative<std::string_view>(init_operands[2])) {
-												member_value = std::get<std::string_view>(init_operands[2]);
+												member_value = std::get<StringHandle>(init_operands[2]);
 											} else {
 												member_value = 0ULL;  // fallback
 											}
@@ -5367,7 +5367,7 @@ private:
 				
 				// Set array (either variable name or temp)
 				if (std::holds_alternative<std::string_view>(array_operands[2])) {
-					payload.array = std::get<std::string_view>(array_operands[2]);
+					payload.array = std::get<StringHandle>(array_operands[2]);
 				} else if (std::holds_alternative<TempVar>(array_operands[2])) {
 					payload.array = std::get<TempVar>(array_operands[2]);
 				}
@@ -5645,15 +5645,15 @@ private:
 			if (unaryOperatorNode.is_prefix()) {
 				// ++ptr becomes: ptr = ptr + element_size
 				BinaryOp add_op{
-					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<std::string_view>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));					// Store back to the pointer variable
 					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
 						AssignmentOp assign_op;
-						assign_op.result = std::get<std::string_view>(operandIrOperands[2]);
-						assign_op.lhs = { operandType, 64, std::get<std::string_view>(operandIrOperands[2]) };
+						assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+						assign_op.lhs = { operandType, 64, std::get<StringHandle>(operandIrOperands[2]) };
 						assign_op.rhs = { operandType, 64, result_var };
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
@@ -5674,15 +5674,15 @@ private:
 					
 				// ptr = ptr + element_size
 				BinaryOp add_op{
-					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<std::string_view>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));					// Store back to the pointer variable
 					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
 						AssignmentOp assign_op;
-						assign_op.result = std::get<std::string_view>(operandIrOperands[2]);
-						assign_op.lhs = { operandType, 64, std::get<std::string_view>(operandIrOperands[2]) };
+						assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+						assign_op.lhs = { operandType, 64, std::get<StringHandle>(operandIrOperands[2]) };
 						assign_op.rhs = { operandType, 64, result_var };
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
@@ -5745,15 +5745,15 @@ private:
 			if (unaryOperatorNode.is_prefix()) {
 				// --ptr becomes: ptr = ptr - element_size
 				BinaryOp sub_op{
-					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<std::string_view>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), Token()));					// Store back to the pointer variable
 					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
 						AssignmentOp assign_op;
-						assign_op.result = std::get<std::string_view>(operandIrOperands[2]);
-						assign_op.lhs = { operandType, 64, std::get<std::string_view>(operandIrOperands[2]) };
+						assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+						assign_op.lhs = { operandType, 64, std::get<StringHandle>(operandIrOperands[2]) };
 						assign_op.rhs = { operandType, 64, result_var };
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
@@ -5774,15 +5774,15 @@ private:
 					
 				// ptr = ptr - element_size
 				BinaryOp sub_op{
-					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<std::string_view>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { operandType, 64, std::holds_alternative<std::string_view>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), Token()));					// Store back to the pointer variable
 					if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
 						AssignmentOp assign_op;
-						assign_op.result = std::get<std::string_view>(operandIrOperands[2]);
-						assign_op.lhs = { operandType, 64, std::get<std::string_view>(operandIrOperands[2]) };
+						assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
+						assign_op.lhs = { operandType, 64, std::get<StringHandle>(operandIrOperands[2]) };
 						assign_op.rhs = { operandType, 64, result_var };
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
@@ -5810,7 +5810,7 @@ private:
 			
 			// Get the operand - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
-				op.operand = std::get<std::string_view>(operandIrOperands[2]);
+				op.operand = std::get<StringHandle>(operandIrOperands[2]);
 			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
 				op.operand = std::get<TempVar>(operandIrOperands[2]);
 			} else if (std::holds_alternative<std::string>(operandIrOperands[2])) {
@@ -5878,7 +5878,7 @@ private:
 		
 			// Get the pointer operand - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<std::string_view>(operandIrOperands[2])) {
-				op.pointer = std::get<std::string_view>(operandIrOperands[2]);
+				op.pointer = std::get<StringHandle>(operandIrOperands[2]);
 			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
 				op.pointer = std::get<TempVar>(operandIrOperands[2]);
 			} else {
@@ -6082,7 +6082,7 @@ private:
 												} else if (std::holds_alternative<TempVar>(indexIrOperands[2])) {
 													payload.index.value = std::get<TempVar>(indexIrOperands[2]);
 												} else if (std::holds_alternative<std::string_view>(indexIrOperands[2])) {
-													payload.index.value = std::get<std::string_view>(indexIrOperands[2]);
+													payload.index.value = std::get<StringHandle>(indexIrOperands[2]);
 												}
 												
 												// Set value as TypedValue
@@ -6093,7 +6093,7 @@ private:
 												} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
 													payload.value.value = std::get<TempVar>(rhsIrOperands[2]);
 												} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
-													payload.value.value = std::get<std::string_view>(rhsIrOperands[2]);
+													payload.value.value = std::get<StringHandle>(rhsIrOperands[2]);
 												}
 
 												ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), binaryOperatorNode.get_token()));
@@ -6161,7 +6161,7 @@ private:
 				} else if (std::holds_alternative<TempVar>(indexIrOperands[2])) {
 					payload.index.value = std::get<TempVar>(indexIrOperands[2]);
 				} else if (std::holds_alternative<std::string_view>(indexIrOperands[2])) {
-					payload.index.value = std::get<std::string_view>(indexIrOperands[2]);
+					payload.index.value = std::get<StringHandle>(indexIrOperands[2]);
 				}
 				
 				// Set value as TypedValue
@@ -6172,7 +6172,7 @@ private:
 				} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
 					payload.value.value = std::get<TempVar>(rhsIrOperands[2]);
 				} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
-					payload.value.value = std::get<std::string_view>(rhsIrOperands[2]);
+					payload.value.value = std::get<StringHandle>(rhsIrOperands[2]);
 				}
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), binaryOperatorNode.get_token()));
@@ -6257,7 +6257,7 @@ private:
 							} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
 								member_value = std::get<double>(rhsIrOperands[2]);
 							} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
-								member_value = std::get<std::string_view>(rhsIrOperands[2]);
+								member_value = std::get<StringHandle>(rhsIrOperands[2]);
 							} else {
 								member_value = 0ULL;  // fallback
 							}
@@ -6403,7 +6403,7 @@ private:
 						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
 							member_store.value.value = std::get<TempVar>(rhsIrOperands[2]);
 						} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
-							member_store.value.value = std::get<std::string_view>(rhsIrOperands[2]);
+							member_store.value.value = std::get<StringHandle>(rhsIrOperands[2]);
 						}
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
@@ -6501,7 +6501,7 @@ private:
 							} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
 								member_value = std::get<double>(rhsIrOperands[2]);
 							} else if (std::holds_alternative<std::string_view>(rhsIrOperands[2])) {
-								member_value = std::get<std::string_view>(rhsIrOperands[2]);
+								member_value = std::get<StringHandle>(rhsIrOperands[2]);
 							} else {
 								member_value = 0ULL;  // fallback
 							}
@@ -6816,7 +6816,7 @@ private:
 							lhs_arg.size_in_bits = lhsSize;
 							// Convert lhs_value (which can be string_view or TempVar) to IrValue
 							if (std::holds_alternative<std::string_view>(lhs_value)) {
-								lhs_arg.value = IrValue(std::get<std::string_view>(lhs_value));
+								lhs_arg.value = IrValue(std::get<StringHandle>(lhs_value));
 							} else {
 								lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
 							}
@@ -6987,8 +6987,8 @@ private:
 			// Store result back to LHS (must be a variable)
 			if (std::holds_alternative<std::string_view>(lhsIrOperands[2])) {
 				AssignmentOp assign_op;
-				assign_op.result = std::get<std::string_view>(lhsIrOperands[2]);
-				assign_op.lhs = { lhsType, lhsSize, std::get<std::string_view>(lhsIrOperands[2]) };
+				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]) };
 				assign_op.rhs = { lhsType, lhsSize, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
@@ -7015,12 +7015,12 @@ private:
 			if (std::holds_alternative<std::string_view>(lhsIrOperands[2])) {
 				TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
-				assign_op.result = std::get<std::string_view>(lhsIrOperands[2]);
-				assign_op.lhs = { lhsType, lhsSize, std::get<std::string_view>(lhsIrOperands[2]) };
+				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]) };
 				assign_op.rhs = toTypedValue(rhsIrOperands);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
-				return { lhsType, lhsSize, std::get<std::string_view>(lhsIrOperands[2]), 0ULL };
+				return { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]), 0ULL };
 			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
 				TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
@@ -7515,7 +7515,7 @@ private:
 		if (std::holds_alternative<TempVar>(va_list_ir[2])) {
 			va_list_var = std::get<TempVar>(va_list_ir[2]);
 		} else if (std::holds_alternative<std::string_view>(va_list_ir[2])) {
-			va_list_var = std::get<std::string_view>(va_list_ir[2]);
+			va_list_var = std::get<StringHandle>(va_list_ir[2]);
 		} else if (std::holds_alternative<std::string>(va_list_ir[2])) {
 			va_list_var = std::string_view(std::get<std::string>(va_list_ir[2]));
 		} else {
@@ -7540,7 +7540,8 @@ private:
 			} else {
 				// va_list is a variable name - load its value (which is a pointer) into a TempVar
 				va_list_struct_ptr = var_counter.next();
-				std::string_view var_name = std::get<std::string_view>(va_list_var);
+				StringHandle var_name_handle = std::get<StringHandle>(va_list_var);
+			std::string_view var_name = StringTable::getStringView(var_name_handle);
 				
 				// Use Assignment to load the pointer value from the variable
 				AssignmentOp load_pointer;
@@ -7720,7 +7721,7 @@ private:
 			if (std::holds_alternative<TempVar>(va_list_var)) {
 				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
 			} else {
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
 			}
 			assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, next_ptr};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
@@ -7778,7 +7779,7 @@ private:
 			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
 				va_list_var = std::get<TempVar>(arg0_ir[2]);
 			} else if (std::holds_alternative<std::string_view>(arg0_ir[2])) {
-				va_list_var = std::get<std::string_view>(arg0_ir[2]);
+				va_list_var = std::get<StringHandle>(arg0_ir[2]);
 			} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
 				va_list_var = std::string_view(std::get<std::string>(arg0_ir[2]));
 			} else {
@@ -7788,8 +7789,8 @@ private:
 			
 			AssignmentOp final_assign;
 			if (std::holds_alternative<std::string_view>(va_list_var)) {
-				final_assign.result = std::get<std::string_view>(va_list_var);
-				final_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+				final_assign.result = std::get<StringHandle>(va_list_var);
+				final_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
 			} else {
 				final_assign.result = std::get<TempVar>(va_list_var);
 				final_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
@@ -7831,7 +7832,7 @@ private:
 			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
 				va_list_var = std::get<TempVar>(arg0_ir[2]);
 			} else if (std::holds_alternative<std::string_view>(arg0_ir[2])) {
-				va_list_var = std::get<std::string_view>(arg0_ir[2]);
+				va_list_var = std::get<StringHandle>(arg0_ir[2]);
 			} else if (std::holds_alternative<std::string>(arg0_ir[2])) {
 				va_list_var = std::string_view(std::get<std::string>(arg0_ir[2]));
 			} else {
@@ -7841,8 +7842,8 @@ private:
 			
 			AssignmentOp assign_op;
 			if (std::holds_alternative<std::string_view>(va_list_var)) {
-				assign_op.result = std::get<std::string_view>(va_list_var);
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<std::string_view>(va_list_var)};
+				assign_op.result = std::get<StringHandle>(va_list_var);
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
 			} else {
 			}
 			assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
@@ -9533,7 +9534,7 @@ private:
 										} else if (std::holds_alternative<TempVar>(index_operands[2])) {
 											payload.index.value = std::get<TempVar>(index_operands[2]);
 										} else if (std::holds_alternative<std::string_view>(index_operands[2])) {
-											payload.index.value = std::get<std::string_view>(index_operands[2]);
+											payload.index.value = std::get<StringHandle>(index_operands[2]);
 										}
 
 										// Create instruction with typed payload
@@ -9611,7 +9612,7 @@ private:
 		
 		// Set array (either variable name or temp)
 		if (std::holds_alternative<std::string_view>(array_operands[2])) {
-			payload.array = std::get<std::string_view>(array_operands[2]);
+			payload.array = std::get<StringHandle>(array_operands[2]);
 		} else if (std::holds_alternative<TempVar>(array_operands[2])) {
 			payload.array = std::get<TempVar>(array_operands[2]);
 		}
@@ -9627,7 +9628,7 @@ private:
 		} else if (std::holds_alternative<TempVar>(index_operands[2])) {
 			payload.index.value = std::get<TempVar>(index_operands[2]);
 		} else if (std::holds_alternative<std::string_view>(index_operands[2])) {
-			payload.index.value = std::get<std::string_view>(index_operands[2]);
+			payload.index.value = std::get<StringHandle>(index_operands[2]);
 		}
 
 		// Create instruction with typed payload
@@ -9841,7 +9842,7 @@ private:
 					
 					// The pointer value can be a string_view (identifier name) or TempVar (expression result)
 					if (std::holds_alternative<std::string_view>(pointer_operands[2])) {
-						base_object = std::get<std::string_view>(pointer_operands[2]);
+						base_object = std::get<StringHandle>(pointer_operands[2]);
 					} else if (std::holds_alternative<TempVar>(pointer_operands[2])) {
 						base_object = std::get<TempVar>(pointer_operands[2]);
 					} else {
@@ -9948,7 +9949,7 @@ private:
 		if (!type_info || !type_info->getStructInfo()) {
 			std::cerr << "Error: Struct type info not found for type_index=" << base_type_index << "\n";
 			if (std::holds_alternative<std::string_view>(base_object)) {
-				std::cerr << "  Object name: " << std::get<std::string_view>(base_object) << "\n";
+				std::cerr << "  Object name: " << std::get<StringHandle>(base_object) << "\n";
 			}
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (const auto& ti : gTypeInfo) {
@@ -10045,7 +10046,7 @@ private:
 
 		// Add the base object (either string_view or TempVar)
 		if (std::holds_alternative<std::string_view>(base_object)) {
-			member_load.object = std::get<std::string_view>(base_object);
+			member_load.object = std::get<StringHandle>(base_object);
 		} else {
 			member_load.object = std::get<TempVar>(base_object);
 		}
@@ -11332,7 +11333,7 @@ private:
 			} else if (std::holds_alternative<TempVar>(address_operands[2])) {
 				op.address = std::get<TempVar>(address_operands[2]);
 			} else if (std::holds_alternative<std::string_view>(address_operands[2])) {
-				op.address = std::get<std::string_view>(address_operands[2]);
+				op.address = std::get<StringHandle>(address_operands[2]);
 			} else if (std::holds_alternative<double>(address_operands[2])) {
 				op.address = std::get<double>(address_operands[2]);
 			}
@@ -11390,7 +11391,7 @@ private:
 			} else if (std::holds_alternative<TempVar>(size_operands[2])) {
 				op.count = std::get<TempVar>(size_operands[2]);
 			} else if (std::holds_alternative<std::string_view>(size_operands[2])) {
-				op.count = std::get<std::string_view>(size_operands[2]);
+				op.count = std::get<StringHandle>(size_operands[2]);
 			} else if (std::holds_alternative<double>(size_operands[2])) {
 				op.count = std::get<double>(size_operands[2]);
 			}
@@ -11473,7 +11474,7 @@ private:
 		} else if (std::holds_alternative<TempVar>(ptr_operands[2])) {
 			ptr_value = std::get<TempVar>(ptr_operands[2]);
 		} else if (std::holds_alternative<std::string_view>(ptr_operands[2])) {
-			ptr_value = std::get<std::string_view>(ptr_operands[2]);
+			ptr_value = std::get<StringHandle>(ptr_operands[2]);
 		} else if (std::holds_alternative<double>(ptr_operands[2])) {
 			ptr_value = std::get<double>(ptr_operands[2]);
 		}
@@ -11654,7 +11655,7 @@ private:
 			if (std::holds_alternative<TempVar>(expr_operands[2])) {
 				operand_value = std::get<TempVar>(expr_operands[2]);
 			} else if (std::holds_alternative<std::string_view>(expr_operands[2])) {
-				operand_value = std::get<std::string_view>(expr_operands[2]);
+				operand_value = std::get<StringHandle>(expr_operands[2]);
 			} else {
 				// Shouldn't happen - typeid operand should be a variable
 				operand_value = TempVar{0};
@@ -11705,7 +11706,8 @@ private:
 		} else if (std::holds_alternative<std::string_view>(expr_operands[2])) {
 			// For a named variable, load it into a temp first
 			source_ptr = var_counter.next();
-			std::string_view var_name = std::get<std::string_view>(expr_operands[2]);
+			StringHandle var_name_handle = std::get<StringHandle>(expr_operands[2]);
+			std::string_view var_name = StringTable::getStringView(var_name_handle);
 			
 			// Generate assignment to load the variable into the temp
 			AssignmentOp load_op;
@@ -12065,7 +12067,7 @@ private:
 							} else if (std::holds_alternative<double>(init_value)) {
 								member_store.value.value = std::get<double>(init_value);
 							} else if (std::holds_alternative<std::string_view>(init_value)) {
-								member_store.value.value = std::get<std::string_view>(init_value);
+								member_store.value.value = std::get<StringHandle>(init_value);
 							} else {
 								// For other types, skip this capture
 								capture_index++;
