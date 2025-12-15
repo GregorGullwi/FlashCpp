@@ -30,8 +30,12 @@ struct StringHandle {
 	static constexpr uint32_t CHUNK_INDEX_BITS = 8;
 	static constexpr uint32_t OFFSET_BITS = 24;
 	static constexpr uint32_t MAX_CHUNK_INDEX = (1u << CHUNK_INDEX_BITS) - 1;  // 255
-	static constexpr uint32_t MAX_OFFSET = (1u << OFFSET_BITS) - 1;  // 16MB - 1
+	static constexpr uint32_t MAX_OFFSET = (1u << OFFSET_BITS) - 1;  // 16777215 bytes (~16MB)
 	static constexpr uint32_t OFFSET_MASK = MAX_OFFSET;
+	
+	// Note: We add 1 to offset in constructor to reserve handle 0 as invalid,
+	// which means the actual usable offset range is [0, MAX_OFFSET - 1]
+	static constexpr uint32_t MAX_USABLE_OFFSET = MAX_OFFSET - 1;  // 16777214 bytes
 	
 	uint32_t handle = 0;  // Packed: chunk_index (high 8 bits) + offset (low 24 bits)
 
@@ -41,7 +45,7 @@ struct StringHandle {
 	// Construct from chunk index and offset
 	explicit StringHandle(uint32_t chunk_idx, uint32_t offset) {
 		assert(chunk_idx <= MAX_CHUNK_INDEX && "Chunk index must fit in 8 bits");
-		assert(offset <= MAX_OFFSET && "Offset must fit in 24 bits");
+		assert(offset <= MAX_USABLE_OFFSET && "Offset exceeds usable range (need to reserve 0 as invalid)");
 		// Add 1 to offset so that handle 0 is reserved as invalid
 		handle = (chunk_idx << OFFSET_BITS) | (offset + 1);
 	}
@@ -113,6 +117,16 @@ public:
 	/**
 	 * @brief Create a new string handle (does not check for duplicates)
 	 * Use this for strings that are known to be unique.
+	 * 
+	 * Note: This uses findChunkIndex() which performs a linear search.
+	 * Performance: O(n) where n = number of chunks. In practice, this is
+	 * very fast because:
+	 * 1. Number of chunks is typically small (few chunks even for large programs)
+	 * 2. Default chunk size is 64MB, so even 1GB of strings = only 16 chunks
+	 * 3. The search is cache-friendly (sequential pointer comparisons)
+	 * 
+	 * Future optimization: If profiling shows this is a bottleneck, consider
+	 * caching the last chunk index or using a more sophisticated data structure.
 	 */
 	static StringHandle createStringHandle(std::string_view str) {
 		// Calculate total allocation size: hash + length + content + null
