@@ -303,7 +303,7 @@ class FunctionDeclarationNode;
 
 // Struct member function information
 struct StructMemberFunction {
-	std::variant<std::string, StringHandle> name;
+	StringHandle name;
 	ASTNode function_decl;  // FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 	AccessSpecifier access; // Access level (public/protected/private)
 	bool is_constructor;    // True if this is a constructor
@@ -322,23 +322,19 @@ struct StructMemberFunction {
 	bool is_const = false;          // True if const member function (e.g., void foo() const)
 	bool is_volatile = false;       // True if volatile member function (e.g., void foo() volatile)
 
-	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
-	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
-		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
-		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
-	
-	// StringHandle constructor - Phase 7A
 	StructMemberFunction(StringHandle n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
 	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
 		: name(n), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
 		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
 	
+	// Convenience constructor that interns string_view
+	StructMemberFunction(std::string_view n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
+	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
+		: name(StringTable::getOrInternStringHandle(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
+		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
+	
 	std::string_view getName() const {
-		if (std::holds_alternative<std::string>(name)) {
-			return std::get<std::string>(name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(name));
-		}
+		return StringTable::getStringView(name);
 	}
 };
 
@@ -526,9 +522,9 @@ struct StructTypeInfo {
 	RTTITypeInfo* rtti_info = nullptr;  // Runtime type information (for polymorphic classes)
 
 	// Friend declarations support (Phase 2)
-	std::vector<std::string> friend_functions_;      // Friend function names
-	std::vector<std::string> friend_classes_;        // Friend class names
-	std::vector<std::pair<std::string, std::string>> friend_member_functions_;  // (class, function)
+	std::vector<StringHandle> friend_functions_;      // Friend function names
+	std::vector<StringHandle> friend_classes_;        // Friend class names
+	std::vector<std::pair<StringHandle, StringHandle>> friend_member_functions_;  // (class, function)
 
 	// Nested class support (Phase 2)
 	std::vector<StructTypeInfo*> nested_classes_;    // Nested classes
@@ -602,15 +598,6 @@ struct StructTypeInfo {
 		alignment = std::max(alignment, effective_alignment);
 	}
 
-	void addMemberFunction(std::string_view function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
-	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
-		auto& func = member_functions.emplace_back(std::string(function_name), function_decl, access, false, false);
-		func.is_virtual = is_virtual;
-		func.is_pure_virtual = is_pure_virtual;
-		func.is_override = is_override;
-		func.is_final = is_final;
-	}
-
 	// StringHandle overload for addMemberFunction - Phase 7A
 	void addMemberFunction(StringHandle function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
 	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
@@ -622,11 +609,14 @@ struct StructTypeInfo {
 	}
 
 	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		member_functions.emplace_back(std::string(getName()), constructor_decl, access, true, false);
+		StringHandle ctor_name = StringTable::getOrInternStringHandle(getName());
+		member_functions.emplace_back(ctor_name, constructor_decl, access, true, false);
 	}
 
 	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public, bool is_virtual = false) {
-		auto& dtor = member_functions.emplace_back("~" + std::string(getName()), destructor_decl, access, false, true, false, "");
+		std::string dtor_name = "~" + std::string(getName());
+		StringHandle dtor_name_handle = StringTable::getOrInternStringHandle(dtor_name);
+		auto& dtor = member_functions.emplace_back(dtor_name_handle, destructor_decl, access, false, true, false, "");
 		dtor.is_virtual = is_virtual;
 	}
 
@@ -634,7 +624,8 @@ struct StructTypeInfo {
 	                         bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
 		std::string op_name = "operator";
 		op_name += operator_symbol;
-		auto& func = member_functions.emplace_back(op_name, function_decl, access, false, false, true, operator_symbol);
+		StringHandle op_name_handle = StringTable::getOrInternStringHandle(op_name);
+		auto& func = member_functions.emplace_back(op_name_handle, function_decl, access, false, false, true, operator_symbol);
 		func.is_virtual = is_virtual;
 		func.is_pure_virtual = is_pure_virtual;
 		func.is_override = is_override;
@@ -739,15 +730,6 @@ struct StructTypeInfo {
 		return nullptr;
 	}
 
-	const StructMemberFunction* findMemberFunction(std::string_view name) const {
-		for (const auto& func : member_functions) {
-			if (func.getName() == name) {
-				return &func;
-			}
-		}
-		return nullptr;
-	}
-
 	// StringHandle overload for findMemberFunction - Phase 7A
 	const StructMemberFunction* findMemberFunction(StringHandle name) const {
 		std::string_view name_view = StringTable::getStringView(name);
@@ -759,66 +741,54 @@ struct StructTypeInfo {
 		return nullptr;
 	}
 
-	// Friend declaration support methods
-	void addFriendFunction(std::string_view func_name) {
-		friend_functions_.push_back(std::string(func_name));
+	// Convenience overload that interns string_view
+	const StructMemberFunction* findMemberFunction(std::string_view name) const {
+		return findMemberFunction(StringTable::getOrInternStringHandle(name));
 	}
 
-	// StringHandle overload for addFriendFunction - Phase 7A
+	// Friend declaration support methods - Phase 7A (StringHandle only)
 	void addFriendFunction(StringHandle func_name) {
-		friend_functions_.push_back(std::string(StringTable::getStringView(func_name)));
+		friend_functions_.push_back(func_name);
 	}
 
-	void addFriendClass(std::string_view class_name) {
-		friend_classes_.push_back(std::string(class_name));
-	}
-
-	// StringHandle overload for addFriendClass - Phase 7A
 	void addFriendClass(StringHandle class_name) {
-		friend_classes_.push_back(std::string(StringTable::getStringView(class_name)));
+		friend_classes_.push_back(class_name);
 	}
 
-	void addFriendMemberFunction(std::string_view class_name, std::string_view func_name) {
-		friend_member_functions_.emplace_back(std::string(class_name), std::string(func_name));
-	}
-
-	// StringHandle overload for addFriendMemberFunction - Phase 7A
 	void addFriendMemberFunction(StringHandle class_name, StringHandle func_name) {
-		friend_member_functions_.emplace_back(
-			std::string(StringTable::getStringView(class_name)),
-			std::string(StringTable::getStringView(func_name))
-		);
+		friend_member_functions_.emplace_back(class_name, func_name);
 	}
 
 	bool isFriendFunction(std::string_view func_name) const {
-		return std::find(friend_functions_.begin(), friend_functions_.end(), func_name) != friend_functions_.end();
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		return std::find(friend_functions_.begin(), friend_functions_.end(), func_name_handle) != friend_functions_.end();
 	}
 
 	bool isFriendClass(std::string_view class_name) const {
-		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name) != friend_classes_.end();
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
+		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name_handle) != friend_classes_.end();
 	}
 
 	// StringHandle overload for isFriendClass - Phase 7A
 	bool isFriendClass(StringHandle class_name) const {
-		std::string_view class_name_view = StringTable::getStringView(class_name);
-		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name_view) != friend_classes_.end();
+		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name) != friend_classes_.end();
 	}
 
 	bool isFriendMemberFunction(std::string_view class_name, std::string_view func_name) const {
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
-		                       [class_name, func_name](const auto& pair) {
-		                           return pair.first == class_name && pair.second == func_name;
+		                       [class_name_handle, func_name_handle](const auto& pair) {
+		                           return pair.first == class_name_handle && pair.second == func_name_handle;
 		                       });
 		return it != friend_member_functions_.end();
 	}
 
 	// StringHandle overload for isFriendMemberFunction - Phase 7A
 	bool isFriendMemberFunction(StringHandle class_name, StringHandle func_name) const {
-		std::string_view class_name_view = StringTable::getStringView(class_name);
-		std::string_view func_name_view = StringTable::getStringView(func_name);
 		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
-		                       [class_name_view, func_name_view](const auto& pair) {
-		                           return pair.first == class_name_view && pair.second == func_name_view;
+		                       [class_name, func_name](const auto& pair) {
+		                           return pair.first == class_name && pair.second == func_name;
 		                       });
 		return it != friend_member_functions_.end();
 	}
