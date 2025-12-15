@@ -2886,12 +2886,23 @@ private:
 
 		// Look up the range object in the symbol table
 		const std::optional<ASTNode> range_symbol = symbol_table.lookup(range_name);
-		if (!range_symbol.has_value() || !range_symbol->is<DeclarationNode>()) {
+		if (!range_symbol.has_value()) {
 			FLASH_LOG(Codegen, Error, "Range object '", range_name, "' not found in symbol table");
 			return;
 		}
 
-		const DeclarationNode& range_decl = range_symbol->as<DeclarationNode>();
+		// Extract the DeclarationNode from either DeclarationNode or VariableDeclarationNode
+		const DeclarationNode* range_decl_ptr = nullptr;
+		if (range_symbol->is<DeclarationNode>()) {
+			range_decl_ptr = &range_symbol->as<DeclarationNode>();
+		} else if (range_symbol->is<VariableDeclarationNode>()) {
+			range_decl_ptr = &range_symbol->as<VariableDeclarationNode>().declaration();
+		} else {
+			FLASH_LOG(Codegen, Error, "Range object '", range_name, "' is not a variable declaration");
+			return;
+		}
+
+		const DeclarationNode& range_decl = *range_decl_ptr;
 		const TypeSpecifierNode& range_type = range_decl.type_node().as<TypeSpecifierNode>();
 
 		// C++ standard: pointers are NOT valid range expressions (no size information)
@@ -2953,14 +2964,15 @@ private:
 		const TypeSpecifierNode& array_type = array_decl.type_node().as<TypeSpecifierNode>();
 		
 		// Create pointer type for begin/end (element_type*)
+		// Pointers are always 64-bit, regardless of element type size
 		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			array_type.type(), array_type.type_index(), array_type.size_in_bits(), Token()
+			array_type.type(), array_type.type_index(), 64, Token()  // 64-bit for pointer
 		);
 		begin_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
 
 		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			array_type.type(), array_type.type_index(), array_type.size_in_bits(), Token()
+			array_type.type(), array_type.type_index(), 64, Token()  // 64-bit for pointer
 		);
 		end_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
@@ -3023,23 +3035,40 @@ private:
 		// Loop body label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
-		// Declare and initialize the loop variable: T x = *__begin
-		auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
-		auto deref_expr = ASTNode::emplace_node<ExpressionNode>(
-			UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_deref_expr, true)
-		);
-
-		// Create the loop variable declaration with initialization
-		// loop_var_decl is a VariableDeclarationNode from the parser
-		// We need to extract its DeclarationNode and create a new VariableDeclarationNode with the initializer
+		// Declare and initialize the loop variable
+		// For references (T& x or const T& x), we need the pointer value directly
+		// For non-references (T x), we need the dereferenced value (*__begin)
+		
+		// Check if the loop variable is a reference
 		if (!loop_var_decl.is<VariableDeclarationNode>()) {
 			FLASH_LOG(Codegen, Error, "loop_var_decl is not a VariableDeclarationNode!");
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
+		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
 		
-		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, deref_expr);
+		ASTNode init_expr;
+		// For range-based for loops, __range_begin is a pointer to the element
+		// For reference loop variables (T& x), use the pointer value directly (don't dereference)
+		// For value loop variables (T x), dereference to get the value
+		bool loop_var_is_reference = loop_type.is_reference() || loop_type.is_rvalue_reference();
+		
+		if (loop_var_is_reference) {
+			// Reference: use the iterator pointer value directly (bind to what it points to)
+			// Since __range_begin is a pointer, and we want to bind the reference to what it points to,
+			// we need to load the pointer value and use it as the reference's pointer
+			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		} else {
+			// Value: dereference the iterator to get the element value
+			auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			init_expr = ASTNode::emplace_node<ExpressionNode>(
+				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_deref_expr, true)
+			);
+		}
+		
+		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
 		// Generate IR for loop variable declaration
 		// Note: visitVariableDeclarationNode will add it to the symbol table
@@ -3198,13 +3227,10 @@ private:
 		// Loop body label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
-		// Declare and initialize the loop variable: T x = *__begin
-		// Create dereference: *__begin
-		auto begin_ident_deref = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
-		auto deref_expr = ASTNode::emplace_node<ExpressionNode>(
-			UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_ident_deref, true)
-		);
-
+		// Declare and initialize the loop variable
+		// For references (T& x or const T& x), we need the iterator value directly
+		// For non-references (T x), we need the dereferenced value (*__begin)
+		
 		// Create the loop variable declaration with initialization
 		if (!loop_var_decl.is<VariableDeclarationNode>()) {
 			assert(false && "loop_var_decl must be a VariableDeclarationNode");
@@ -3212,8 +3238,23 @@ private:
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
+		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
 		
-		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, deref_expr);
+		ASTNode init_expr;
+		if (loop_type.is_reference() || loop_type.is_rvalue_reference()) {
+			// For reference variables, use the iterator directly (no dereference)
+			// The reference will bind to the object pointed to by __begin
+			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+		} else {
+			// For non-reference variables, dereference the iterator: *__begin
+			auto begin_ident_deref = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			init_expr = ASTNode::emplace_node<ExpressionNode>(
+				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_ident_deref, true)
+			);
+		}
+		
+		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
 		// Generate IR for loop variable declaration
 		visit(loop_var_with_init);

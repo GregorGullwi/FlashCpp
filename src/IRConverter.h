@@ -3132,15 +3132,19 @@ public:
 
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::FunctionDecl");
 				handleFunctionDecl(instruction);
 				break;
 			case IrOpcode::VariableDecl:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::VariableDecl");
 				handleVariableDecl(instruction);
 				break;
 			case IrOpcode::Return:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::Return");
 				handleReturn(instruction);
 				break;
 			case IrOpcode::FunctionCall:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::FunctionCall");
 				handleFunctionCall(instruction);
 				break;
 			case IrOpcode::StackAlloc:
@@ -3303,9 +3307,11 @@ public:
 				handleShlAssign(instruction);
 				break;
 			case IrOpcode::ShrAssign:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::ShrAssign");
 				handleShrAssign(instruction);
 				break;
 			case IrOpcode::Assignment:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::Assignment");
 				handleAssignment(instruction);
 				break;
 			case IrOpcode::Label:
@@ -3795,9 +3801,22 @@ private:
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
-						// For integers, use regular MOV
-						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second.offset, ctx.operand_size_in_bits);
+						// Check if this is a reference - if so, we need to dereference it
+						auto ref_it = reference_stack_info_.find(lhs_var_id->second.offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// This is a reference - load the pointer first, then dereference
+							ctx.result_physical_reg = allocateRegisterWithSpilling();
+							// Load the pointer into the register
+							emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
+							// Now dereference: load from [register + 0]
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0, value_size_bytes);
+						} else {
+							// Not a reference, load normally
+							// For integers, use regular MOV
+							ctx.result_physical_reg = allocateRegisterWithSpilling();
+							emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second.offset, ctx.operand_size_in_bits);
+						}
 						regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 					}
 				}
@@ -3824,6 +3843,25 @@ private:
 				} else {
 					// Check if this is a reference - if so, we need to dereference it
 					auto ref_it = reference_stack_info_.find(lhs_stack_var_addr);
+					
+					// If not found with TempVar offset, try looking up by name
+					if (ref_it == reference_stack_info_.end()) {
+						std::string_view var_name = lhs_var_op.name();
+						// Remove the '%' prefix if present
+						if (!var_name.empty() && var_name[0] == '%') {
+							var_name = var_name.substr(1);
+						}
+						auto named_var_it = variable_scopes.back().variables.find(var_name);
+						if (named_var_it != variable_scopes.back().variables.end()) {
+							int32_t named_offset = named_var_it->second.offset;
+							ref_it = reference_stack_info_.find(named_offset);
+							if (ref_it != reference_stack_info_.end()) {
+								// Found it! Update lhs_stack_var_addr to use the named variable offset
+								lhs_stack_var_addr = named_offset;
+							}
+						}
+					}
+					
 					if (ref_it != reference_stack_info_.end()) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -3931,9 +3969,22 @@ private:
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
-						// For integers, use regular MOV
-						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, ctx.operand_size_in_bits);
+						// Check if this is a reference - if so, we need to dereference it
+						auto ref_it = reference_stack_info_.find(rhs_var_id->second.offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// This is a reference - load the pointer first, then dereference
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							// Load the pointer into the register
+							emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
+							// Now dereference: load from [register + 0]
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
+						} else {
+							// Not a reference, load normally
+							// For integers, use regular MOV
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, ctx.operand_size_in_bits);
+						}
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 					}
 				}
@@ -3960,26 +4011,33 @@ private:
 				} else {
 					// Check if this is a reference - if so, we need to dereference it
 					auto ref_it = reference_stack_info_.find(rhs_stack_var_addr);
+					
+					// If not found with TempVar offset, try looking up by name
+					if (ref_it == reference_stack_info_.end()) {
+						std::string_view var_name = rhs_var_op.name();
+						// Remove the '%' prefix if present
+						if (!var_name.empty() && var_name[0] == '%') {
+							var_name = var_name.substr(1);
+						}
+						auto named_var_it = variable_scopes.back().variables.find(var_name);
+						if (named_var_it != variable_scopes.back().variables.end()) {
+							int32_t named_offset = named_var_it->second.offset;
+							ref_it = reference_stack_info_.find(named_offset);
+							if (ref_it != reference_stack_info_.end()) {
+								// Found it! Update rhs_stack_var_addr to use the named variable offset
+								rhs_stack_var_addr = named_offset;
+							}
+						}
+					}
+					
 					if (ref_it != reference_stack_info_.end()) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 						// Load the pointer into the register
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 						// Now dereference: load from [register + 0]
-						int value_size_bits = ref_it->second.value_size_bits;
-						OpCodeWithSize deref_opcodes;
-						if (value_size_bits == 64) {
-							deref_opcodes = generateMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-						} else if (value_size_bits == 32) {
-							deref_opcodes = generateMovFromMemory32(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-						} else if (value_size_bits == 16) {
-							deref_opcodes = generateMovFromMemory16(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-						} else if (value_size_bits == 8) {
-							deref_opcodes = generateMovFromMemory8(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0);
-						} else {
-							assert(false && "Unsupported reference value size");
-						}
-						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+						int value_size_bytes = ref_it->second.value_size_bits / 8;
+						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
@@ -4136,18 +4194,34 @@ private:
 			// If the result is a named variable, find its stack offset
 			int final_result_offset = variable_scopes.back().variables[std::get<std::string_view>(ctx.result_value.value)].offset;
 
-			// Store the computed result from actual_source_reg to memory
-			if (is_float_type) {
-				// Use SSE movss/movsd for float/double
-				bool is_single_precision = (ctx.result_value.type == Type::Float);
-				auto store_opcodes = generateFloatMovToFrame(actual_source_reg, final_result_offset, is_single_precision);
-				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			// Check if this is a reference - if so, we need to store through the pointer
+			auto ref_it = reference_stack_info_.find(final_result_offset);
+			if (ref_it != reference_stack_info_.end()) {
+				// This is a reference - load the pointer, then store the value through it
+				X64Register ptr_reg = allocateRegisterWithSpilling();
+				// Load the pointer into the register
+				auto load_ptr = generatePtrMovFromFrame(ptr_reg, final_result_offset);
+				textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
+				int value_size_bits = ref_it->second.value_size_bits;
+				int value_size_bytes = value_size_bits / 8;
+				emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
+				regAlloc.release(ptr_reg);
 			} else {
-				emitMovToFrameSized(
-					SizedRegister{actual_source_reg, 64, false},  // source: 64-bit register
-					SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
-				);
+				// Not a reference, store normally
+				// Store the computed result from actual_source_reg to memory
+				if (is_float_type) {
+					// Use SSE movss/movsd for float/double
+					bool is_single_precision = (ctx.result_value.type == Type::Float);
+					auto store_opcodes = generateFloatMovToFrame(actual_source_reg, final_result_offset, is_single_precision);
+					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
+					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				} else {
+					emitMovToFrameSized(
+						SizedRegister{actual_source_reg, 64, false},  // source: 64-bit register
+						SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+					);
+				}
 			}
 			// For named variables, we can release the source register since the value is now in memory
 			should_release_source = true;
@@ -4156,51 +4230,67 @@ private:
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
 			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op);
 			
-			// IMPORTANT: Clear any stale register mappings for this stack variable BEFORE checking
-			// This prevents using an old register value that was from a previous unrelated operation
-			for (size_t i = 0; i < regAlloc.registers.size(); ++i) {
-				auto& r = regAlloc.registers[i];
-				if (r.stackVariableOffset == res_stack_var_addr && r.reg != actual_source_reg) {
-					r.stackVariableOffset = INT_MIN; // Clear the mapping
-					r.isDirty = false;
-				}
-			}
-			
-			if (auto res_reg = regAlloc.tryGetStackVariableRegister(res_stack_var_addr); res_reg.has_value()) {
-				if (res_reg != actual_source_reg) {
-					if (is_float_type) {
-						// For float types, use SSE mov instructions for register-to-register moves
-						// TODO: Implement SSE register-to-register moves if needed
-						// For now, assert false since we shouldn't hit this path with current code
-						assert(false && "Float register-to-register move not yet implemented");
-					} else {
-						auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits / 8);
-						textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
+			// Check if this is a reference - if so, we need to store through the pointer
+			auto ref_it = reference_stack_info_.find(res_stack_var_addr);
+			if (ref_it != reference_stack_info_.end()) {
+				// This is a reference - load the pointer, then store the value through it
+				X64Register ptr_reg = allocateRegisterWithSpilling();
+				// Load the pointer into the register
+				emitMovFromFrame(ptr_reg, res_stack_var_addr);
+				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
+				int value_size_bits = ref_it->second.value_size_bits;
+				int value_size_bytes = value_size_bits / 8;
+				emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
+				regAlloc.release(ptr_reg);
+				should_release_source = true;
+			} else {
+				// Not a reference, handle as before
+				// IMPORTANT: Clear any stale register mappings for this stack variable BEFORE checking
+				// This prevents using an old register value that was from a previous unrelated operation
+				for (size_t i = 0; i < regAlloc.registers.size(); ++i) {
+					auto& r = regAlloc.registers[i];
+					if (r.stackVariableOffset == res_stack_var_addr && r.reg != actual_source_reg) {
+						r.stackVariableOffset = INT_MIN; // Clear the mapping
+						r.isDirty = false;
 					}
 				}
-				// Result is already in the correct register, no move needed
-				// Can release source register since result is now tracked in the destination register
-				should_release_source = true;
-			}
-			else {
-				// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
-				// NOTE: The flushing of old register values is now handled in setupAndLoadArithmeticOperation
-				// before the register is reassigned to the result TempVar's offset.
 				
-				// Tell the register allocator that this register now holds this temp variable
-				assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
-				regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits);
-				
-				// For floating-point types, we MUST write to memory immediately because the register
-				// allocator doesn't properly track XMM registers across all operations.
-				// Without this, subsequent loads from the stack location will read garbage.
-				if (is_float_type) {
-					bool is_single_precision = (ctx.result_value.type == Type::Float);
-					emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
+				if (auto res_reg = regAlloc.tryGetStackVariableRegister(res_stack_var_addr); res_reg.has_value()) {
+					if (res_reg != actual_source_reg) {
+						if (is_float_type) {
+							// For float types, use SSE mov instructions for register-to-register moves
+							// TODO: Implement SSE register-to-register moves if needed
+							// For now, assert false since we shouldn't hit this path with current code
+							assert(false && "Float register-to-register move not yet implemented");
+						} else {
+							auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits / 8);
+							textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
+						}
+					}
+					// Result is already in the correct register, no move needed
+					// Can release source register since result is now tracked in the destination register
+					should_release_source = true;
 				}
-				// For integer types: Don't store to memory - keep the value in the register for subsequent operations
-				// DON'T release the source register for integer temps - keeping value in register for optimization
-				should_release_source = false;
+				else {
+					// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
+					// NOTE: The flushing of old register values is now handled in setupAndLoadArithmeticOperation
+					// before the register is reassigned to the result TempVar's offset.
+					
+					// Tell the register allocator that this register now holds this temp variable
+					assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
+					regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits);
+					
+					// For floating-point types, we MUST write to memory immediately because the register
+					// allocator doesn't properly track XMM registers across all operations.
+					// Without this, subsequent loads from the stack location will read garbage.
+					if (is_float_type) {
+						bool is_single_precision = (ctx.result_value.type == Type::Float);
+						emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
+					}
+					// For integer types: Don't store to memory - keep the value in the register for subsequent operations
+					// DON'T release the source register for integer temps - keeping value in register for optimization
+					should_release_source = false;
+				}
 			}
 
 		}
@@ -4510,13 +4600,34 @@ private:
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
 			auto it = variable_scopes.back().variables.find(tempVar.name());
+			FLASH_LOG(Codegen, Debug, "getStackOffsetFromTempVar: Looking up '", tempVar.name(), "'");
 			if (it != variable_scopes.back().variables.end() && it->second.offset != INT_MIN) {
+				FLASH_LOG(Codegen, Debug, "  Found with valid offset: ", it->second.offset);
 				return it->second.offset;  // Use pre-allocated offset (if it's been properly set)
+			}
+			
+			// CRITICAL FIX: If TempVar entry has INT_MIN, check if it corresponds to the most recently
+			// allocated named variable (tracked in handleVariableDecl)
+			// This handles the duplicate entry problem where named variables get both a name entry
+			// and a TempVar entry
+			if (it != variable_scopes.back().variables.end() && it->second.offset == INT_MIN) {
+				FLASH_LOG(Codegen, Debug, "  Found with INT_MIN, last_allocated_variable: '", last_allocated_variable_name_, "', offset: ", last_allocated_variable_offset_);
+				if (!last_allocated_variable_name_.empty() && last_allocated_variable_offset_ != 0) {
+					// Use the last allocated variable's offset for this TempVar
+					// Update the TempVar entry so future lookups are O(1)
+					it->second.offset = last_allocated_variable_offset_;
+					FLASH_LOG(Codegen, Debug, "  Linked '", tempVar.name(), 
+					         "' to named variable '", last_allocated_variable_name_, "' at offset ", last_allocated_variable_offset_);
+					return last_allocated_variable_offset_;
+				}
+			} else {
+				FLASH_LOG(Codegen, Debug, "  Not found in variables map");
 			}
 		}
 		// Allocate TempVars sequentially after named_vars + shadow space
 		// Use next_temp_var_offset_ to track the next available slot
 		// Each TempVar gets 8 bytes (conservative sizing for x64)
+		FLASH_LOG(Codegen, Debug, "  Allocating new offset");
 		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
 		next_temp_var_offset_ += 8;
 		
@@ -6842,6 +6953,16 @@ private:
 		bool is_array = op.is_array;
 		bool is_initialized = op.initializer.has_value();
 
+		FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", offset=", var_it->second.offset);
+
+		// Store mapping from variable name to offset for reference lookups
+		variable_name_to_offset_[var_name_str] = var_it->second.offset;
+
+		// REMOVED: Flawed TempVar linking heuristic
+		// Track the most recently allocated named variable for TempVar linking
+		//last_allocated_variable_name_ = var_name_str;
+		//last_allocated_variable_offset_ = var_it->second.offset;
+
 		if (is_reference) {
 			reference_stack_info_[var_it->second.offset] = ReferenceInfo{
 				.value_type = var_type,
@@ -6858,14 +6979,50 @@ private:
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
 					int src_offset = getStackOffsetFromTempVar(temp_var);
-					// Load address of the source variable
-					emitLeaFromFrame(pointer_reg, src_offset);
+					// Check if source is itself a pointer/reference - if so, load the value
+					// Otherwise, take the address
+					auto src_ref_it = reference_stack_info_.find(src_offset);
+					if (src_ref_it != reference_stack_info_.end()) {
+						// Source is a reference - copy the pointer value
+						emitMovFromFrame(pointer_reg, src_offset);
+					} else {
+						// Check if it's a 64-bit value (likely a pointer)
+						// For __range_begin_ and similar, which are int64 pointers
+						bool is_likely_pointer = (init.size_in_bits == 64 && 
+						                          (init.type == Type::Long || init.type == Type::Int || 
+						                           init.type == Type::UnsignedLong || init.type == Type::LongLong));
+						if (is_likely_pointer) {
+							// Load the pointer value
+							emitMovFromFrame(pointer_reg, src_offset);
+						} else {
+							// Load address of the source variable
+							emitLeaFromFrame(pointer_reg, src_offset);
+						}
+					}
 					pointer_initialized = true;
 				} else if (std::holds_alternative<std::string_view>(init.value)) {
 					auto rvalue_var_name = std::get<std::string_view>(init.value);
+					
 					auto src_it = current_scope.variables.find(rvalue_var_name);
 					if (src_it != current_scope.variables.end()) {
-						emitLeaFromFrame(pointer_reg, src_it->second.offset);
+						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", rvalue_var_name, "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
+						// Check if source is a reference
+						auto src_ref_it = reference_stack_info_.find(src_it->second.offset);
+						if (src_ref_it != reference_stack_info_.end()) {
+							// Source is a reference - copy the pointer value
+							FLASH_LOG(Codegen, Debug, "Using MOV (source is reference)");
+							emitMovFromFrame(pointer_reg, src_it->second.offset);
+						} else if (init.size_in_bits == 64 && 
+						           (init.type == Type::Long || init.type == Type::Int || 
+						            init.type == Type::UnsignedLong || init.type == Type::LongLong)) {
+							// 64-bit value, likely a pointer
+							FLASH_LOG(Codegen, Debug, "Using MOV (64-bit type)");
+							emitMovFromFrame(pointer_reg, src_it->second.offset);
+						} else {
+							// Regular value - take its address
+							FLASH_LOG(Codegen, Debug, "Using LEA (regular value)");
+							emitLeaFromFrame(pointer_reg, src_it->second.offset);
+						}
 						pointer_initialized = true;
 					}
 				}
@@ -7883,30 +8040,44 @@ private:
 					if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
 						
-						// Get the actual size of the variable being returned
-						int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
-						
-						if (is_float_return) {
-							// Load floating-point value into XMM0
-							bool is_float = (ret_op.return_size == 32);
-							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+						// Check if this is a reference variable - if so, dereference it
+						auto ref_it = reference_stack_info_.find(var_offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// This is a reference - load pointer and dereference
+							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing reference at offset ", var_offset);
+							X64Register ptr_reg = X64Register::RAX;
+							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
+							// Dereference to get the value
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+							// Value is now in RAX, ready to return
 						} else {
-							// Integer/pointer return
-							if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
-								if (reg_var.value() != X64Register::RAX) {
-									auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
-									for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
+							// Not a reference - normal variable return
+							// Get the actual size of the variable being returned
+							int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
+							
+							if (is_float_return) {
+								// Load floating-point value into XMM0
+								bool is_float = (ret_op.return_size == 32);
+								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+							} else {
+								// Integer/pointer return
+								if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+									if (reg_var.value() != X64Register::RAX) {
+										auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
+										for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
+										}
+										logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
+										textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+									} else {
 									}
-									logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
-									textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
-								} else {
 								}
-							}
-							else {
-								// Load from stack using RBP-relative addressing
-								// Use actual variable size for proper zero/sign extension
-								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+								else {
+									// Load from stack using RBP-relative addressing
+									// Use actual variable size for proper zero/sign extension
+									emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
+									regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+								}
 							}
 						}
 					} else {
@@ -7936,22 +8107,36 @@ private:
 					if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
 						
-						// Get the actual size of the variable being returned
-						int var_size = getActualVariableSize(var_name, ret_op.return_size);
-						
-						// Check if return type is float/double
-						bool is_float_return = ret_op.return_type.has_value() && 
-						                        is_floating_point_type(ret_op.return_type.value());
-						
-						if (is_float_return) {
-							// Load floating-point value into XMM0
-							bool is_float = (ret_op.return_size == 32);
-							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+						// Check if this is a reference variable - if so, dereference it
+						auto ref_it = reference_stack_info_.find(var_offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// This is a reference - load pointer and dereference
+							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", var_name, "' at offset ", var_offset);
+							X64Register ptr_reg = X64Register::RAX;
+							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
+							// Dereference to get the value
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+							// Value is now in RAX, ready to return
 						} else {
-							// Load integer/pointer value into RAX
-							// Use actual variable size for proper zero/sign extension
-							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							// Not a reference - normal variable return
+							// Get the actual size of the variable being returned
+							int var_size = getActualVariableSize(var_name, ret_op.return_size);
+							
+							// Check if return type is float/double
+							bool is_float_return = ret_op.return_type.has_value() && 
+							                        is_floating_point_type(ret_op.return_type.value());
+							
+							if (is_float_return) {
+								// Load floating-point value into XMM0
+								bool is_float = (ret_op.return_size == 32);
+								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+							} else {
+								// Load integer/pointer value into RAX
+								// Use actual variable size for proper zero/sign extension
+								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
+								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							}
 						}
 					}
 				}
@@ -9868,7 +10053,9 @@ private:
 
 	void handleAssignment(const IrInstruction& instruction) {
 		// Use typed payload format
-		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();		Type lhs_type = op.lhs.type;
+		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();
+		FLASH_LOG(Codegen, Debug, "handleAssignment called");
+		Type lhs_type = op.lhs.type;
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
 		// Special handling for pointer store (assignment through pointer)
@@ -10109,6 +10296,115 @@ private:
 			return;
 		}
 
+		// Check if LHS is a reference - if so, we're initializing a reference binding
+		auto lhs_ref_it = reference_stack_info_.find(lhs_offset);
+		
+		// Debug: check what type LHS is
+		if (std::holds_alternative<std::string_view>(op.lhs.value)) {
+			FLASH_LOG(Codegen, Debug, "LHS is string_view: '", std::get<std::string_view>(op.lhs.value), "'");
+		} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
+			FLASH_LOG(Codegen, Debug, "LHS is TempVar: '", std::get<TempVar>(op.lhs.value).name(), "'");
+		} else {
+			FLASH_LOG(Codegen, Debug, "LHS is other type");
+		}
+		
+		// If not found with TempVar offset and LHS is a TempVar, try looking up by name
+		if (lhs_ref_it == reference_stack_info_.end() && std::holds_alternative<TempVar>(op.lhs.value)) {
+			TempVar lhs_var = std::get<TempVar>(op.lhs.value);
+			std::string_view var_name = lhs_var.name();
+			FLASH_LOG(Codegen, Debug, "LHS is TempVar with name: '", var_name, "'");
+			// Remove the '%' prefix if present
+			if (!var_name.empty() && var_name[0] == '%') {
+				var_name = var_name.substr(1);
+				FLASH_LOG(Codegen, Debug, "After removing %, name: '", var_name, "'");
+			}
+			auto named_var_it = variable_scopes.back().variables.find(var_name);
+			if (named_var_it != variable_scopes.back().variables.end()) {
+				int32_t named_offset = named_var_it->second.offset;
+				FLASH_LOG(Codegen, Debug, "Found in named vars at offset: ", named_offset);
+				lhs_ref_it = reference_stack_info_.find(named_offset);
+				if (lhs_ref_it != reference_stack_info_.end()) {
+					// Found it! Update lhs_offset to use the named variable offset
+					lhs_offset = named_offset;
+					FLASH_LOG(Codegen, Debug, "Found reference info at named offset!");
+				}
+			} else {
+				FLASH_LOG(Codegen, Debug, "Not found in named vars");
+			}
+		}
+		
+		FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", (lhs_ref_it != reference_stack_info_.end()));
+		if (lhs_ref_it != reference_stack_info_.end()) {
+			// LHS is a reference - we need to store the ADDRESS of RHS, not its value
+			// Exception: if RHS is already a pointer/reference, we want the pointer value itself
+			X64Register addr_reg = X64Register::RAX;
+			
+			// Get address of RHS or pointer value
+			if (std::holds_alternative<std::string_view>(op.rhs.value)) {
+				std::string_view rhs_var_name = std::get<std::string_view>(op.rhs.value);
+				FLASH_LOG(Codegen, Debug, "Reference assignment: LHS is ref, RHS is string_view: '", rhs_var_name, "'");
+				auto it = variable_scopes.back().variables.find(rhs_var_name);
+				if (it != variable_scopes.back().variables.end()) {
+					int32_t rhs_offset = it->second.offset;
+					// Check if RHS is itself a pointer or reference
+					// For pointers and references, we want the VALUE (the pointer), not the address of the variable
+					// For regular values, we want the ADDRESS
+					// Special case: __range_begin_ and __range_end_ are always pointers
+					bool is_range_iterator = false;
+					if (rhs_var_name.size() >= 15 && rhs_var_name.substr(0, 15) == "__range_begin_") {
+						is_range_iterator = true;
+					} else if (rhs_var_name.size() >= 13 && rhs_var_name.substr(0, 13) == "__range_end_") {
+						is_range_iterator = true;
+					}
+					// Pointers are typically stored as 64-bit values (Type::Long or Type::Int with 64 bits)
+					if (is_range_iterator || (op.rhs.size_in_bits == 64 && (op.rhs.type == Type::Int || op.rhs.type == Type::Long || 
+					    op.rhs.type == Type::UnsignedLong || op.rhs.type == Type::LongLong || op.rhs.type == Type::UnsignedLongLong))) {
+						// This is a 64-bit integer type or known pointer - likely a pointer value, load it
+						emitMovFromFrame(addr_reg, rhs_offset);
+					} else {
+						// Regular value - take its address
+						emitLeaFromFrame(addr_reg, rhs_offset);
+					}
+				} else {
+					FLASH_LOG(Codegen, Error, "RHS variable '", rhs_var_name, "' not found for reference initialization");
+					return;
+				}
+			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
+				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
+				FLASH_LOG(Codegen, Debug, "Reference assignment: LHS is ref, RHS is TempVar: '", rhs_var.name(), "'");
+				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
+				// Check if RHS itself is a reference - if so, load the pointer value
+				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
+				if (rhs_ref_it != reference_stack_info_.end()) {
+					// RHS is also a reference - just copy the pointer value
+					emitMovFromFrame(addr_reg, rhs_offset);
+				} else if (op.rhs.size_in_bits == 64 && (op.rhs.type == Type::Int || op.rhs.type == Type::Long || 
+				           op.rhs.type == Type::UnsignedLong || op.rhs.type == Type::LongLong || op.rhs.type == Type::UnsignedLongLong)) {
+					// This is a 64-bit integer type - likely a pointer value, load it
+					emitMovFromFrame(addr_reg, rhs_offset);
+				} else {
+					// RHS is a regular value - get its address
+					emitLeaFromFrame(addr_reg, rhs_offset);
+				}
+			} else if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
+				// Immediate value can't be bound to a reference (except for const ref to temporary, which we don't support here)
+				FLASH_LOG(Codegen, Error, "Cannot bind reference to immediate value in this context");
+				return;
+			} else {
+				FLASH_LOG(Codegen, Error, "Unsupported RHS type for reference initialization");
+				return;
+			}
+			
+			// Store the address to the reference (LHS)
+			emitMovToFrameSized(
+				SizedRegister{addr_reg, 64, false},  // source: 64-bit register (pointer)
+				SizedStackSlot{lhs_offset, 64, false}  // dest: 64-bit reference (pointer)
+			);
+			
+			return;  // Done with reference assignment
+		}
+
+		// For non-reference LHS, proceed with normal assignment
 		// Get RHS source
 		Type rhs_type = op.rhs.type;
 		X64Register source_reg = X64Register::RAX;
@@ -10120,7 +10416,17 @@ private:
 			if (it != variable_scopes.back().variables.end()) {
 				int32_t rhs_offset = it->second.offset;
 				
-				if (is_floating_point_type(rhs_type)) {
+				// Check if RHS is a reference - if so, dereference it
+				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
+				if (rhs_ref_it != reference_stack_info_.end()) {
+					// RHS is a reference - load pointer and dereference
+					X64Register ptr_reg = allocateRegisterWithSpilling();
+					emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
+					// Dereference to get the value
+					int value_size_bytes = rhs_ref_it->second.value_size_bits / 8;
+					emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+					source_reg = ptr_reg;
+				} else if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (rhs_type == Type::Float);
 					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
@@ -10136,8 +10442,42 @@ private:
 			TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
-			// Check if the value is already in a register
-			if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
+			// Check if RHS is a reference - if so, dereference it
+			auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
+			
+			// If not found with TempVar offset, try looking up by name
+			// This handles the case where TempVar offset differs from named variable offset
+			if (rhs_ref_it == reference_stack_info_.end()) {
+				std::string_view var_name = rhs_var.name();
+				// Remove the '%' prefix if present
+				if (!var_name.empty() && var_name[0] == '%') {
+					var_name = var_name.substr(1);
+				}
+				// Only try to match if this looks like it could be a named variable
+				// (not a pure temporary like "temp_10")
+				if (!var_name.empty() && var_name.find("temp_") != 0) {
+					auto named_var_it = variable_scopes.back().variables.find(var_name);
+					if (named_var_it != variable_scopes.back().variables.end()) {
+						int32_t named_offset = named_var_it->second.offset;
+						rhs_ref_it = reference_stack_info_.find(named_offset);
+						if (rhs_ref_it != reference_stack_info_.end()) {
+							// Found it! Update rhs_offset to use the named variable offset
+							rhs_offset = named_offset;
+						}
+					}
+				}
+			}
+			
+			if (rhs_ref_it != reference_stack_info_.end()) {
+				// RHS is a reference - load pointer and dereference
+				X64Register ptr_reg = allocateRegisterWithSpilling();
+				emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
+				// Dereference to get the value
+				int value_size_bytes = rhs_ref_it->second.value_size_bits / 8;
+				emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+				source_reg = ptr_reg;
+			} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
+				// Check if the value is already in a register
 				source_reg = rhs_reg.value();
 			} else {
 				if (is_floating_point_type(rhs_type)) {
@@ -12699,9 +13039,15 @@ private:
 
 	// Track which stack offsets hold references (parameters or locals)
 	std::unordered_map<int32_t, ReferenceInfo> reference_stack_info_;
+	// Map from variable names to their offsets (for reference lookup by name)
+	std::unordered_map<std::string, int32_t> variable_name_to_offset_;
 
 	// Track if dynamic_cast runtime helpers need to be emitted
 	bool needs_dynamic_cast_runtime_ = false;
+
+	// Track most recently allocated named variable for TempVar linking
+	std::string last_allocated_variable_name_;
+	int32_t last_allocated_variable_offset_ = 0;
 
 	// Prologue patching for stack allocation
 	uint32_t current_function_prologue_offset_ = 0;  // Offset of SUB RSP instruction for patching
