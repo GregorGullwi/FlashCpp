@@ -10445,27 +10445,27 @@ private:
 			// Check if RHS is a reference - if so, dereference it
 			auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
 			
-			// If not found with TempVar offset, try looking up by checking all reference entries
+			// If not found with TempVar offset, try looking up by name
 			// This handles the case where TempVar offset differs from named variable offset
-			if (rhs_ref_it == reference_stack_info_.end() && !reference_stack_info_.empty()) {
-				// Try to find the variable name and look it up
+			if (rhs_ref_it == reference_stack_info_.end()) {
 				std::string_view var_name = rhs_var.name();
-				// TempVar names are like "temp_5", but we want to check if any named variable
-				// in the variables map has a corresponding reference
-				for (const auto& [ref_offset, ref_info] : reference_stack_info_) {
-					// Check if this reference offset corresponds to a named variable
-					// that might match our TempVar
-					for (const auto& [name, var_info] : variable_scopes.back().variables) {
-						if (var_info.offset == ref_offset && var_info.offset != rhs_offset) {
-							// Found a named variable with a reference at a different offset
-							// Update rhs_offset to use this offset instead
-							rhs_offset = ref_offset;
-							rhs_ref_it = reference_stack_info_.find(rhs_offset);
-							goto found_reference;
+				// Remove the '%' prefix if present
+				if (!var_name.empty() && var_name[0] == '%') {
+					var_name = var_name.substr(1);
+				}
+				// Only try to match if this looks like it could be a named variable
+				// (not a pure temporary like "temp_10")
+				if (!var_name.empty() && var_name.find("temp_") != 0) {
+					auto named_var_it = variable_scopes.back().variables.find(var_name);
+					if (named_var_it != variable_scopes.back().variables.end()) {
+						int32_t named_offset = named_var_it->second.offset;
+						rhs_ref_it = reference_stack_info_.find(named_offset);
+						if (rhs_ref_it != reference_stack_info_.end()) {
+							// Found it! Update rhs_offset to use the named variable offset
+							rhs_offset = named_offset;
 						}
 					}
 				}
-				found_reference:;
 			}
 			
 			if (rhs_ref_it != reference_stack_info_.end()) {
