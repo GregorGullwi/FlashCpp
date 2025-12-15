@@ -25,7 +25,8 @@ When adding new test cases and files, verify that they are valid C++20 source fi
 Delete binaries, dumps, and logs before you summarize your work. Feel free to leave debug output in the source code. Purge `x64/`, `Debug/`, `output/`, and any ad-hoc `.obj`, `.exe`, `.pdb`, or `.lst`; `git status --short` should show only intentional edits.
 
 ## Debugging & Reference Tips
-Use `dumpbin.exe`, locate the path with `where.exe`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `x64/Debug/FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source. Output file will end up in the working folder.
+Use `strace` to get more information regarding coredumps, since gdb or lldb isn't available. Prefer logging.
+Run `FlashCpp with -v` to emit dependency and IR traces without editing source. Output file will end up in the working folder.
 
 ## Logging Configuration
 - Use FLASH_LOG_FORMAT(cat, level, fmt, ...) - uses std::format for cleaner syntax when all arguments are formattable
