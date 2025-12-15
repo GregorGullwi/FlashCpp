@@ -358,7 +358,9 @@ struct TempVar
 	size_t var_number = 1;  // 1-based: first temp var is number 1
 };
 
-using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type, TempVar>;
+#include "StringTable.h"  // For StringHandle support
+
+using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type, TempVar, StringHandle>;
 
 // ============================================================================
 // OperandStorage - Abstraction for storing IR instruction operands
@@ -555,7 +557,7 @@ private:
 // ============================================================================
 
 // Type alias for operand values (subset of IrOperand variant)
-using IrValue = std::variant<unsigned long long, double, TempVar, std::string_view>;
+using IrValue = std::variant<unsigned long long, double, TempVar, std::string_view, StringHandle>;
 
 // Typed value - combines IrValue with its type information
 struct TypedValue {
@@ -579,6 +581,11 @@ inline void printTypedValue(std::ostringstream& oss, const TypedValue& typedValu
 		oss << '%' << std::get<TempVar>(typedValue.value).var_number;
 	else if (std::holds_alternative<std::string_view>(typedValue.value))
 		oss << '%' << std::get<std::string_view>(typedValue.value);
+	else if (std::holds_alternative<StringHandle>(typedValue.value)) {
+		// Resolve StringHandle to string_view for printing
+		StringHandle handle = std::get<StringHandle>(typedValue.value);
+		oss << '%' << StringTable::getStringView(handle);
+	}
 	else
 		assert(false && "unsupported typed value");
 }
