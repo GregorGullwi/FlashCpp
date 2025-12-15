@@ -705,8 +705,9 @@ struct ArrayElementAddressOp {
 	TempVar result;                                  // Result temp var (pointer to element)
 	Type element_type;                               // Element type
 	int element_size_in_bits;                        // Element size
-	std::variant<std::string_view, TempVar> array;   // Array (variable name or temp)
+	std::variant<StringHandle, TempVar> array;   // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;                                // Index value (type + value)
+	bool is_pointer_to_array;                        // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
 };
 
 // Address-of operator (&x)

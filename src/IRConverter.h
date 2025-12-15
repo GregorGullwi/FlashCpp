@@ -3753,8 +3753,8 @@ private:
 
 		ctx.result_physical_reg = X64Register::Count;
 		if (std::holds_alternative<StringHandle>(bin_op.lhs.value)) {
-			auto lhs_var_op = std::get<StringHandle>(bin_op.lhs.value);
-			auto lhs_var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(lhs_var_op));
+			StringHandle lhs_var_op = std::get<StringHandle>(bin_op.lhs.value);
+			auto lhs_var_id = variable_scopes.back().variables.find(lhs_var_op);
 			if (lhs_var_id != variable_scopes.back().variables.end()) {
 				if (auto var_reg = regAlloc.tryGetStackVariableRegister(lhs_var_id->second.offset); var_reg.has_value()) {
 					ctx.result_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
@@ -3921,8 +3921,8 @@ private:
 		
 		ctx.rhs_physical_reg = X64Register::Count;
 		if (std::holds_alternative<StringHandle>(bin_op.rhs.value)) {
-			auto rhs_var_op = std::get<StringHandle>(bin_op.rhs.value);
-			auto rhs_var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_op));
+			StringHandle rhs_var_op = std::get<StringHandle>(bin_op.rhs.value);
+			auto rhs_var_id = variable_scopes.back().variables.find(rhs_var_op);
 			if (rhs_var_id != variable_scopes.back().variables.end()) {
 				if (auto var_reg = regAlloc.tryGetStackVariableRegister(rhs_var_id->second.offset); var_reg.has_value()) {
 					ctx.rhs_physical_reg = var_reg.value();	// value is already in a register, we can use it without a move!
@@ -6236,7 +6236,8 @@ private:
 			const TempVar temp_var = std::get<TempVar>(dtor_op.object);
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
-			const std::string& var_name = std::get<std::string>(dtor_op.object);
+			StringHandle var_name_handle = std::get<StringHandle>(dtor_op.object);
+			std::string_view var_name = StringTable::getStringView(var_name_handle);
 			object_offset = variable_scopes.back().variables[var_name_handle].offset;
 		}
 
@@ -6252,12 +6253,12 @@ private:
 		size_t last_colon_pos = struct_name.rfind("::");
 		if (last_colon_pos != std::string::npos) {
 			// Nested class: "Outer::Inner" -> class="Outer", function="~Inner"
-			class_name = struct_name.substr(0, last_colon_pos);
-			function_name = "~" + struct_name.substr(last_colon_pos + 2);
+			class_name = std::string(struct_name.substr(0, last_colon_pos));
+			function_name = std::string("~") + std::string(struct_name.substr(last_colon_pos + 2));
 		} else {
 			// Regular class: function_name = "~ClassName", class_name = struct_name
-			function_name = "~" + struct_name;
-			class_name = struct_name;
+			function_name = std::string("~") + std::string(struct_name);
+			class_name = std::string(struct_name);
 		}
 		
 		std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
@@ -8572,8 +8573,8 @@ private:
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			}
 		} else if (std::holds_alternative<StringHandle>(result_operand)) {
-			auto result_var_name = std::get<StringHandle>(result_operand);
-			auto var_id = variable_scopes.back().variables.find(result_var_name_handle);
+			StringHandle result_var_name = std::get<StringHandle>(result_operand);
+			auto var_id = variable_scopes.back().variables.find(result_var_name);
 			if (var_id != variable_scopes.back().variables.end()) {
 				auto store_opcodes = generatePtrMovToFrame(result_physical_reg, var_id->second.offset);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(), store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
@@ -8945,8 +8946,8 @@ private:
 				regAlloc.flushSingleDirtyRegister(reg);
 			}
 		} else if (std::holds_alternative<StringHandle>(typed_value.value)) {
-			auto var_name = std::get<StringHandle>(typed_value.value);
-			auto var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
+			StringHandle var_name = std::get<StringHandle>(typed_value.value);
+			auto var_id = variable_scopes.back().variables.find(var_name);
 			if (var_id != variable_scopes.back().variables.end()) {
 				if (auto ref_it = reference_stack_info_.find(var_id->second.offset); ref_it != reference_stack_info_.end()) {
 					reg = allocateRegisterWithSpilling();
@@ -9366,11 +9367,11 @@ private:
 		}
 
 		if (std::holds_alternative<StringHandle>(typed_value.value)) {
-			auto name = std::get<StringHandle>(typed_value.value);
+			StringHandle name = std::get<StringHandle>(typed_value.value);
 			if (auto offset = findIdentifierStackOffset(name); offset.has_value()) {
 				return UnaryOperandLocation::stack(offset.value());
 			}
-			return UnaryOperandLocation::global(std::string(name));
+			return UnaryOperandLocation::global(std::string(StringTable::getStringView(name)));
 		}
 
 		// IrValue can also contain immediate values (unsigned long long, double)
@@ -9481,7 +9482,7 @@ private:
 		} else if (std::holds_alternative<StringHandle>(unary_op.value.value)) {
 			// Load from variable (could be local or global)
 			result_physical_reg = allocateRegisterWithSpilling();
-			auto var_name = std::get<StringHandle>(unary_op.value.value);
+			StringHandle var_name = std::get<StringHandle>(unary_op.value.value);
 		
 			// Check if it's a local variable first
 			auto var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
@@ -9733,7 +9734,7 @@ private:
 				emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 			}
 		} else if (std::holds_alternative<StringHandle>(op.from.value)) {
-			auto var_name = std::get<StringHandle>(op.from.value);
+			StringHandle var_name = std::get<StringHandle>(op.from.value);
 			auto var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			assert(var_it != variable_scopes.back().variables.end() && "Variable not found in variables");
 			// Check if the value is already in an XMM register
@@ -9830,7 +9831,7 @@ private:
 			bool is_float = (op.from.type == Type::Float);
 			emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 		} else if (std::holds_alternative<StringHandle>(op.from.value)) {
-			auto var_name = std::get<StringHandle>(op.from.value);
+			StringHandle var_name = std::get<StringHandle>(op.from.value);
 			auto var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 			assert(var_it != variable_scopes.back().variables.end());
 			source_xmm = allocateXMMRegisterWithSpilling();
@@ -12055,7 +12056,7 @@ private:
 				condition_reg = X64Register::RAX;
 			}
 		} else if (std::holds_alternative<StringHandle>(condition_value)) {
-			auto var_name = std::get<StringHandle>(condition_value);
+			StringHandle var_name = std::get<StringHandle>(condition_value);
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
 			if (it != current_scope.variables.end()) {
