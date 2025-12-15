@@ -3837,6 +3837,25 @@ private:
 				} else {
 					// Check if this is a reference - if so, we need to dereference it
 					auto ref_it = reference_stack_info_.find(lhs_stack_var_addr);
+					
+					// If not found with TempVar offset, try looking up by name
+					if (ref_it == reference_stack_info_.end()) {
+						std::string_view var_name = lhs_var_op.name();
+						// Remove the '%' prefix if present
+						if (!var_name.empty() && var_name[0] == '%') {
+							var_name = var_name.substr(1);
+						}
+						auto named_var_it = variable_scopes.back().variables.find(var_name);
+						if (named_var_it != variable_scopes.back().variables.end()) {
+							int32_t named_offset = named_var_it->second.offset;
+							ref_it = reference_stack_info_.find(named_offset);
+							if (ref_it != reference_stack_info_.end()) {
+								// Found it! Update lhs_stack_var_addr to use the named variable offset
+								lhs_stack_var_addr = named_offset;
+							}
+						}
+					}
+					
 					if (ref_it != reference_stack_info_.end()) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -3986,6 +4005,25 @@ private:
 				} else {
 					// Check if this is a reference - if so, we need to dereference it
 					auto ref_it = reference_stack_info_.find(rhs_stack_var_addr);
+					
+					// If not found with TempVar offset, try looking up by name
+					if (ref_it == reference_stack_info_.end()) {
+						std::string_view var_name = rhs_var_op.name();
+						// Remove the '%' prefix if present
+						if (!var_name.empty() && var_name[0] == '%') {
+							var_name = var_name.substr(1);
+						}
+						auto named_var_it = variable_scopes.back().variables.find(var_name);
+						if (named_var_it != variable_scopes.back().variables.end()) {
+							int32_t named_offset = named_var_it->second.offset;
+							ref_it = reference_stack_info_.find(named_offset);
+							if (ref_it != reference_stack_info_.end()) {
+								// Found it! Update rhs_stack_var_addr to use the named variable offset
+								rhs_stack_var_addr = named_offset;
+							}
+						}
+					}
+					
 					if (ref_it != reference_stack_info_.end()) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
