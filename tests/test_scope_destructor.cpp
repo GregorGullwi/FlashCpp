@@ -31,20 +31,11 @@ int main() {
     
     // Test 2: Multiple scopes to simulate loop iterations
     printf("Simulating loop iterations\n");
+	for (int i = 0; i < 2; i++)
     {
         printf("Iteration 0\n");
-        ScopedObject obj10(10);
-        printf("End of iteration 0\n");
-    }
-    {
-        printf("Iteration 1\n");
-        ScopedObject obj11(11);
-        printf("End of iteration 1\n");
-    }
-    {
-        printf("Iteration 2\n");
-        ScopedObject obj12(12);
-        printf("End of iteration 2\n");
+        ScopedObject obj(10);
+        printf("End of iteration %d\n", i);
     }
     printf("Loop simulation finished\n");
     
