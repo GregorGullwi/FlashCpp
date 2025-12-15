@@ -648,7 +648,7 @@ public:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = std::string_view(member.name);
+							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1353,7 +1353,7 @@ private:
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
 							member_load.object = std::string_view("other");  // Load from 'other' parameter
-							member_load.member_name = std::string_view(member.name);
+							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
 							member_load.is_rvalue_reference = member.is_rvalue_reference;
@@ -1368,7 +1368,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = std::string_view(member.name);
+							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1874,7 +1874,7 @@ private:
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
 							member_load.object = "other"sv;  // Load from 'other' parameter
-							member_load.member_name = std::string_view(member.name);
+							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
 							member_load.is_rvalue_reference = member.is_rvalue_reference;
@@ -1889,7 +1889,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = "this"sv;
-							member_store.member_name = std::string_view(member.name);
+							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1955,7 +1955,7 @@ private:
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
 							member_store.object = std::string_view("this");
-							member_store.member_name = std::string_view(member.name);
+							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -1981,7 +1981,7 @@ private:
 						// Determine the initial value
 						IrValue member_value;
 						// Check for explicit initializer first (highest precedence)
-						auto explicit_it = explicit_inits.find(member.name);
+						auto explicit_it = explicit_inits.find(std::string(member.getName()));
 						if (explicit_it != explicit_inits.end()) {
 							// Special handling for reference members initialized with reference variables/parameters
 							// When initializing a reference member (int& ref) with a reference parameter (int& r),
@@ -2078,7 +2078,7 @@ private:
 						member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 						member_store.value.value = member_value;
 						member_store.object = std::string_view("this");
-						member_store.member_name = std::string_view(member.name);
+						member_store.member_name = member.getName();
 						member_store.offset = static_cast<int>(member.offset);
 						member_store.is_reference = member.is_reference;
 						member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -4033,7 +4033,7 @@ private:
 									} else {
 										// Positional initializer - map to member by index
 										if (positional_index < struct_info.members.size()) {
-											const std::string& member_name = struct_info.members[positional_index].name;
+											const std::string& member_name = std::string(struct_info.members[positional_index].getName());
 											member_values[member_name] = &initializers[i];
 											positional_index++;
 										}
@@ -4045,8 +4045,9 @@ private:
 									// Determine the initial value
 									IrValue member_value;
 									// Check if this member has an initializer
-									if (member_values.count(member.name)) {
-										const ASTNode& init_expr = *member_values[member.name];
+									std::string member_name_str(member.getName());
+									if (member_values.count(member_name_str)) {
+										const ASTNode& init_expr = *member_values[member_name_str];
 										std::vector<IrOperand> init_operands;
 										if (init_expr.is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
@@ -4080,7 +4081,7 @@ private:
 									member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 									member_store.value.value = member_value;
 									member_store.object = decl.identifier_token().value();
-									member_store.member_name = std::string_view(member.name);
+									member_store.member_name = member.getName();
 									member_store.offset = static_cast<int>(member.offset);
 									member_store.is_reference = member.is_reference;
 									member_store.is_rvalue_reference = member.is_rvalue_reference;
@@ -6367,7 +6368,7 @@ private:
 						const StructMember* member_info = nullptr;
 					
 						for (const auto& member : struct_info->members) {
-							if (member.name == final_member_name) {
+							if (member.getName() == final_member_name) {
 								member_offset = static_cast<int>(member.offset);  // Already in bytes
 								member_info = &member;
 								found_member = true;
@@ -6433,7 +6434,7 @@ private:
 										TempVar ret_var = var_counter.next();
 										std::vector<IrOperand> call_operands;
 										call_operands.emplace_back(ret_var);
-										call_operands.emplace_back(copy_assign_op->name);  // "operator="
+										call_operands.emplace_back(std::string(copy_assign_op->getName()));  // "operator="
 
 										// Add 'this' pointer (the LHS object)
 										call_operands.emplace_back(lhs_type.type());
@@ -8683,7 +8684,7 @@ private:
 				// Find the member function in the struct
 				std::string_view func_name = func_decl_node.identifier_token().value();
 				for (const auto& member_func : struct_info->member_functions) {
-					if (member_func.name == func_name) {
+					if (member_func.getName() == func_name) {
 						called_member_func = &member_func;
 						if (member_func.is_virtual) {
 							is_virtual_call = true;
@@ -8696,7 +8697,7 @@ private:
 				// If not found as member function, check if it's a function pointer data member
 				if (!called_member_func) {
 					for (const auto& member : struct_info->members) {
-						if (member.name == func_name && member.type == Type::FunctionPointer) {
+						if (member.getName() == func_name && member.type == Type::FunctionPointer) {
 							// This is a call through a function pointer member!
 							// Generate an indirect call instead of a member function call
 							// TODO: Get actual return type from function signature stored in member's TypeSpecifierNode
@@ -8956,7 +8957,7 @@ private:
 			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context, current_function)) {
 				std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
 				std::string context_str = current_context ? (std::string(" from '") + std::string(current_context->getName()) + "'") : "";
-				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->name, 
+				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(), 
 				          "' of '", struct_info->getName(), "'", context_str);
 				assert(false && "Access control violation");
 				return { Type::Int, 32, TempVar{0} };
@@ -10002,7 +10003,7 @@ private:
 			std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name() << "'\n";
 			std::cerr << "  available members:\n";
 			for (const auto& m : struct_info->members) {
-				std::cerr << "    - " << m.name << "\n";
+				std::cerr << "    - " << m.getName() << "\n";
 			}
 			return {};
 		}
