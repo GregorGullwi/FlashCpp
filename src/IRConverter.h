@@ -6958,9 +6958,10 @@ private:
 		// Store mapping from variable name to offset for reference lookups
 		variable_name_to_offset_[var_name_str] = var_it->second.offset;
 
+		// REMOVED: Flawed TempVar linking heuristic
 		// Track the most recently allocated named variable for TempVar linking
-		last_allocated_variable_name_ = var_name_str;
-		last_allocated_variable_offset_ = var_it->second.offset;
+		//last_allocated_variable_name_ = var_name_str;
+		//last_allocated_variable_offset_ = var_it->second.offset;
 
 		if (is_reference) {
 			reference_stack_info_[var_it->second.offset] = ReferenceInfo{
