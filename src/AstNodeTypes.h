@@ -614,17 +614,18 @@ struct StructTypeInfo {
 	}
 
 	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public, bool is_virtual = false) {
-		std::string dtor_name = "~" + std::string(getName());
-		StringHandle dtor_name_handle = StringTable::getOrInternStringHandle(dtor_name);
+		StringBuilder sb;
+		sb.append('~').append(getName());
+		StringHandle dtor_name_handle = StringTable::getOrInternStringHandle(sb.commit());
 		auto& dtor = member_functions.emplace_back(dtor_name_handle, destructor_decl, access, false, true, false, "");
 		dtor.is_virtual = is_virtual;
 	}
 
 	void addOperatorOverload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
 	                         bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
-		std::string op_name = "operator";
-		op_name += operator_symbol;
-		StringHandle op_name_handle = StringTable::getOrInternStringHandle(op_name);
+		StringBuilder sb;
+		sb.append("operator").append(operator_symbol);
+		StringHandle op_name_handle = StringTable::getOrInternStringHandle(sb.commit());
 		auto& func = member_functions.emplace_back(op_name_handle, function_decl, access, false, false, true, operator_symbol);
 		func.is_virtual = is_virtual;
 		func.is_pure_virtual = is_pure_virtual;
@@ -721,9 +722,11 @@ struct StructTypeInfo {
 
 	// StringHandle overload for findMember - Phase 7A
 	const StructMember* findMember(StringHandle name) const {
-		std::string_view name_view = StringTable::getStringView(name);
 		for (const auto& member : members) {
-			if (member.getName() == name_view) {
+			// Compare by handle directly for O(1) comparison
+			if (std::holds_alternative<StringHandle>(member.name) && std::get<StringHandle>(member.name) == name) {
+				return &member;
+			} else if (std::holds_alternative<std::string>(member.name) && member.getName() == StringTable::getStringView(name)) {
 				return &member;
 			}
 		}
@@ -732,9 +735,9 @@ struct StructTypeInfo {
 
 	// StringHandle overload for findMemberFunction - Phase 7A
 	const StructMemberFunction* findMemberFunction(StringHandle name) const {
-		std::string_view name_view = StringTable::getStringView(name);
 		for (const auto& func : member_functions) {
-			if (func.getName() == name_view) {
+			// Compare by handle directly for O(1) comparison
+			if (func.name == name) {
 				return &func;
 			}
 		}
