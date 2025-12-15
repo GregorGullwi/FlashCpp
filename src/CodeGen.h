@@ -3051,12 +3051,14 @@ private:
 		
 		ASTNode init_expr;
 		// For range-based for loops, __range_begin is a pointer to the element
-		// For reference loop variables (T& x), use the pointer directly
+		// For reference loop variables (T& x), use the pointer value directly (don't dereference)
 		// For value loop variables (T x), dereference to get the value
 		bool loop_var_is_reference = loop_type.is_reference() || loop_type.is_rvalue_reference();
 		
 		if (loop_var_is_reference) {
-			// Reference: bind directly to the iterator pointer (don't dereference)
+			// Reference: use the iterator pointer value directly (bind to what it points to)
+			// Since __range_begin is a pointer, and we want to bind the reference to what it points to,
+			// we need to load the pointer value and use it as the reference's pointer
 			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		} else {
 			// Value: dereference the iterator to get the element value
