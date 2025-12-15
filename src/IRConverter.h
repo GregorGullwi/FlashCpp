@@ -10313,7 +10313,17 @@ private:
 			if (it != variable_scopes.back().variables.end()) {
 				int32_t rhs_offset = it->second.offset;
 				
-				if (is_floating_point_type(rhs_type)) {
+				// Check if RHS is a reference - if so, dereference it
+				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
+				if (rhs_ref_it != reference_stack_info_.end()) {
+					// RHS is a reference - load pointer and dereference
+					X64Register ptr_reg = allocateRegisterWithSpilling();
+					emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
+					// Dereference to get the value
+					int value_size_bytes = rhs_ref_it->second.value_size_bits / 8;
+					emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+					source_reg = ptr_reg;
+				} else if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (rhs_type == Type::Float);
 					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
@@ -10329,8 +10339,37 @@ private:
 			TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
-			// Check if the value is already in a register
-			if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
+			// Check if RHS is a reference - if so, dereference it
+			auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
+			
+			// If not found with TempVar offset, try looking up by name
+			if (rhs_ref_it == reference_stack_info_.end()) {
+				std::string_view var_name = rhs_var.name();
+				// Remove the '%' prefix if present
+				if (!var_name.empty() && var_name[0] == '%') {
+					var_name = var_name.substr(1);
+				}
+				auto named_var_it = variable_scopes.back().variables.find(var_name);
+				if (named_var_it != variable_scopes.back().variables.end()) {
+					int32_t named_offset = named_var_it->second.offset;
+					rhs_ref_it = reference_stack_info_.find(named_offset);
+					if (rhs_ref_it != reference_stack_info_.end()) {
+						// Found it! Update rhs_offset to use the named variable offset
+						rhs_offset = named_offset;
+					}
+				}
+			}
+			
+			if (rhs_ref_it != reference_stack_info_.end()) {
+				// RHS is a reference - load pointer and dereference
+				X64Register ptr_reg = allocateRegisterWithSpilling();
+				emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
+				// Dereference to get the value
+				int value_size_bytes = rhs_ref_it->second.value_size_bits / 8;
+				emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+				source_reg = ptr_reg;
+			} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
+				// Check if the value is already in a register
 				source_reg = rhs_reg.value();
 			} else {
 				if (is_floating_point_type(rhs_type)) {

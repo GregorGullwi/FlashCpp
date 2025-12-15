@@ -2964,14 +2964,15 @@ private:
 		const TypeSpecifierNode& array_type = array_decl.type_node().as<TypeSpecifierNode>();
 		
 		// Create pointer type for begin/end (element_type*)
+		// Pointers are always 64-bit, regardless of element type size
 		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			array_type.type(), array_type.type_index(), array_type.size_in_bits(), Token()
+			array_type.type(), array_type.type_index(), 64, Token()  // 64-bit for pointer
 		);
 		begin_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
 
 		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			array_type.type(), array_type.type_index(), array_type.size_in_bits(), Token()
+			array_type.type(), array_type.type_index(), 64, Token()  // 64-bit for pointer
 		);
 		end_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
