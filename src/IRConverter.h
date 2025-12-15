@@ -3132,15 +3132,19 @@ public:
 
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::FunctionDecl");
 				handleFunctionDecl(instruction);
 				break;
 			case IrOpcode::VariableDecl:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::VariableDecl");
 				handleVariableDecl(instruction);
 				break;
 			case IrOpcode::Return:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::Return");
 				handleReturn(instruction);
 				break;
 			case IrOpcode::FunctionCall:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::FunctionCall");
 				handleFunctionCall(instruction);
 				break;
 			case IrOpcode::StackAlloc:
@@ -3303,9 +3307,11 @@ public:
 				handleShlAssign(instruction);
 				break;
 			case IrOpcode::ShrAssign:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::ShrAssign");
 				handleShrAssign(instruction);
 				break;
 			case IrOpcode::Assignment:
+				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::Assignment");
 				handleAssignment(instruction);
 				break;
 			case IrOpcode::Label:
@@ -8033,30 +8039,44 @@ private:
 					if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
 						
-						// Get the actual size of the variable being returned
-						int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
-						
-						if (is_float_return) {
-							// Load floating-point value into XMM0
-							bool is_float = (ret_op.return_size == 32);
-							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+						// Check if this is a reference variable - if so, dereference it
+						auto ref_it = reference_stack_info_.find(var_offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// This is a reference - load pointer and dereference
+							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing reference at offset ", var_offset);
+							X64Register ptr_reg = X64Register::RAX;
+							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
+							// Dereference to get the value
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+							// Value is now in RAX, ready to return
 						} else {
-							// Integer/pointer return
-							if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
-								if (reg_var.value() != X64Register::RAX) {
-									auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
-									for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
+							// Not a reference - normal variable return
+							// Get the actual size of the variable being returned
+							int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
+							
+							if (is_float_return) {
+								// Load floating-point value into XMM0
+								bool is_float = (ret_op.return_size == 32);
+								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+							} else {
+								// Integer/pointer return
+								if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+									if (reg_var.value() != X64Register::RAX) {
+										auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
+										for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
+										}
+										logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
+										textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+									} else {
 									}
-									logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
-									textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
-								} else {
 								}
-							}
-							else {
-								// Load from stack using RBP-relative addressing
-								// Use actual variable size for proper zero/sign extension
-								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+								else {
+									// Load from stack using RBP-relative addressing
+									// Use actual variable size for proper zero/sign extension
+									emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
+									regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+								}
 							}
 						}
 					} else {
@@ -8086,22 +8106,36 @@ private:
 					if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
 						
-						// Get the actual size of the variable being returned
-						int var_size = getActualVariableSize(var_name, ret_op.return_size);
-						
-						// Check if return type is float/double
-						bool is_float_return = ret_op.return_type.has_value() && 
-						                        is_floating_point_type(ret_op.return_type.value());
-						
-						if (is_float_return) {
-							// Load floating-point value into XMM0
-							bool is_float = (ret_op.return_size == 32);
-							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+						// Check if this is a reference variable - if so, dereference it
+						auto ref_it = reference_stack_info_.find(var_offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// This is a reference - load pointer and dereference
+							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", var_name, "' at offset ", var_offset);
+							X64Register ptr_reg = X64Register::RAX;
+							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
+							// Dereference to get the value
+							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+							// Value is now in RAX, ready to return
 						} else {
-							// Load integer/pointer value into RAX
-							// Use actual variable size for proper zero/sign extension
-							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							// Not a reference - normal variable return
+							// Get the actual size of the variable being returned
+							int var_size = getActualVariableSize(var_name, ret_op.return_size);
+							
+							// Check if return type is float/double
+							bool is_float_return = ret_op.return_type.has_value() && 
+							                        is_floating_point_type(ret_op.return_type.value());
+							
+							if (is_float_return) {
+								// Load floating-point value into XMM0
+								bool is_float = (ret_op.return_size == 32);
+								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+							} else {
+								// Load integer/pointer value into RAX
+								// Use actual variable size for proper zero/sign extension
+								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
+								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							}
 						}
 					}
 				}
@@ -10018,7 +10052,9 @@ private:
 
 	void handleAssignment(const IrInstruction& instruction) {
 		// Use typed payload format
-		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();		Type lhs_type = op.lhs.type;
+		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();
+		FLASH_LOG(Codegen, Debug, "handleAssignment called");
+		Type lhs_type = op.lhs.type;
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
 		// Special handling for pointer store (assignment through pointer)
