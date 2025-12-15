@@ -7484,7 +7484,7 @@ private:
 					// Phase 4: Use helper
 					std::string_view unmangled_func_name = func_decl.getFunctionName();
 					for (const auto& func : struct_info->member_functions) {
-						if (func.name == unmangled_func_name) {
+						if (func.getName() == unmangled_func_name) {
 							member_func = &func;
 							break;
 						}

@@ -11930,7 +11930,7 @@ ParseResult Parser::parse_primary_expression()
 									// Check member functions in this base class
 									// StructMemberFunction has function_decl which is an ASTNode
 									for (const auto& member_func : base_struct_info->member_functions) {
-										if (member_func.name == idenfifier_token.value()) {
+										if (member_func.getName() == idenfifier_token.value()) {
 											// Found matching member function in base class
 											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 												gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
@@ -15145,7 +15145,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						// Look up the member function
 						std::string_view func_name = decl.decl_node().identifier_token().value();
 						for (const auto& member_func : struct_info->member_functions) {
-							if (member_func.name == func_name && 
+							if (member_func.getName() == func_name && 
 								member_func.function_decl.is<FunctionDeclarationNode>()) {
 								// Found the real function - use its return type
 								const FunctionDeclarationNode& real_func = 
