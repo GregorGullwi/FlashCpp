@@ -913,9 +913,9 @@ struct EnumTypeInfo {
 struct TypeInfo
 {
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
-	TypeInfo(std::string name, Type type, TypeIndex idx) : name_(std::move(name)), type_(type), type_index_(idx) {}
+	TypeInfo(std::string name, Type type, TypeIndex idx) : name_(StringTable::getOrInternStringHandle(name)), type_(type), type_index_(idx) {}
 
-	std::variant<std::string, StringHandle> name_;
+	StringHandle name_;  // Pure StringHandle
 	Type type_;
 	TypeIndex type_index_;
 
@@ -932,11 +932,7 @@ struct TypeInfo
 	size_t pointer_depth_ = 0;
 
 	std::string_view name() const { 
-		if (std::holds_alternative<std::string>(name_)) {
-			return std::get<std::string>(name_);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(name_));
-		}
+		return StringTable::getStringView(name_);
 	};
 
 	// Helper methods for struct types

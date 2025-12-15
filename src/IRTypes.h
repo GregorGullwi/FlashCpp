@@ -360,7 +360,7 @@ struct TempVar
 
 #include "StringTable.h"  // For StringHandle support
 
-using IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type, TempVar, StringHandle>;
+using IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>;
 
 // ============================================================================
 // OperandStorage - Abstraction for storing IR instruction operands
@@ -557,7 +557,7 @@ private:
 // ============================================================================
 
 // Type alias for operand values (subset of IrOperand variant)
-using IrValue = std::variant<unsigned long long, double, TempVar, std::string_view, StringHandle>;
+using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle>;
 
 // Typed value - combines IrValue with its type information
 struct TypedValue {
@@ -598,31 +598,23 @@ struct BinaryOp {
 
 // Conditional branch (If)
 struct CondBranchOp {
-	std::variant<std::string_view, StringHandle> label_true;     // Phase 4: Migrating to StringHandle
-	std::variant<std::string_view, StringHandle> label_false;    // Phase 4: Migrating to StringHandle
+	StringHandle label_true;     // Pure StringHandle
+	StringHandle label_false;    // Pure StringHandle
 	TypedValue condition;            // 40 bytes (value + type)
 	
 	// Helper methods
 	std::string_view getLabelTrue() const {
-		if (std::holds_alternative<std::string_view>(label_true)) {
-			return std::get<std::string_view>(label_true);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(label_true));
-		}
+		return StringTable::getStringView(label_true);
 	}
 	
 	std::string_view getLabelFalse() const {
-		if (std::holds_alternative<std::string_view>(label_false)) {
-			return std::get<std::string_view>(label_false);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(label_false));
-		}
+		return StringTable::getStringView(label_false);
 	}
 };
 
 // Function call
 struct CallOp {
-	std::variant<std::string, StringHandle> function_name;  // Phase 4: Adding StringHandle support
+	StringHandle function_name;  // Pure StringHandle
 	std::vector<TypedValue> args;         // 24 bytes (using TypedValue instead of CallArg)
 	TempVar result;                       // 4 bytes
 	Type return_type;                     // 4 bytes
@@ -632,18 +624,14 @@ struct CallOp {
 	
 	// Helper to get function_name as string_view
 	std::string_view getFunctionName() const {
-		if (std::holds_alternative<std::string>(function_name)) {
-			return std::get<std::string>(function_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(function_name));
-		}
+		return StringTable::getStringView(function_name);
 	}
 };
 
 // Member access (load member from struct/class)
 struct MemberLoadOp {
 	TypedValue result;                              // The loaded member value (type, size, result_var)
-	std::variant<std::string_view, TempVar> object; // Base object instance
+	std::variant<StringHandle, TempVar> object; // Base object instance
 	StringHandle member_name;                       // Which member to access
 	int offset;                                     // Byte offset in struct
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
@@ -654,7 +642,7 @@ struct MemberLoadOp {
 // Member store (store value to struct/class member)
 struct MemberStoreOp {
 	TypedValue value;                               // Value to store (type, size, value_var)
-	std::variant<std::string_view, TempVar> object; // Target object instance
+	std::variant<StringHandle, TempVar> object; // Target object instance
 	StringHandle member_name;                       // Which member to store to
 	int offset;                                     // Byte offset in struct
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
@@ -665,29 +653,21 @@ struct MemberStoreOp {
 
 // Label definition
 struct LabelOp {
-	std::variant<std::string_view, StringHandle> label_name;  // Phase 4: Migrating to StringHandle
+	StringHandle label_name;  // Pure StringHandle
 	
 	// Helper to get label_name as string_view
 	std::string_view getLabelName() const {
-		if (std::holds_alternative<std::string_view>(label_name)) {
-			return std::get<std::string_view>(label_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(label_name));
-		}
+		return StringTable::getStringView(label_name);
 	}
 };
 
 // Unconditional branch
 struct BranchOp {
-	std::variant<std::string_view, StringHandle> target_label;  // Phase 4: Migrating to StringHandle
+	StringHandle target_label;  // Pure StringHandle
 	
 	// Helper to get target_label as string_view
 	std::string_view getTargetLabel() const {
-		if (std::holds_alternative<std::string_view>(target_label)) {
-			return std::get<std::string_view>(target_label);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(target_label));
-		}
+		return StringTable::getStringView(target_label);
 	}
 };
 
@@ -703,7 +683,7 @@ struct ArrayAccessOp {
 	TempVar result;                                  // Result temp var
 	Type element_type;                               // Element type
 	int element_size_in_bits;                        // Element size
-	std::variant<std::string, std::string_view, TempVar> array;   // Array (owned string for member arrays, view for simple, or temp)
+	std::variant<StringHandle, TempVar> array;   // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;                                // Index value (type + value)
 	int64_t member_offset;                           // Offset in bytes for member arrays (0 for non-member)
 	bool is_pointer_to_array;                        // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
@@ -713,7 +693,7 @@ struct ArrayAccessOp {
 struct ArrayStoreOp {
 	Type element_type;                               // Element type
 	int element_size_in_bits;                        // Element size
-	std::variant<std::string, std::string_view, TempVar> array;   // Array (owned string for member arrays, view for simple, or temp)
+	std::variant<StringHandle, TempVar> array;   // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;                                // Index value (type + value)
 	TypedValue value;                                // Value to store
 	int64_t member_offset;                           // Offset in bytes for member arrays (0 for non-member)
@@ -734,7 +714,7 @@ struct AddressOfOp {
 	TempVar result;                                  // Result temp var (pointer)
 	Type pointee_type;                               // Type of the variable we're taking address of
 	int pointee_size_in_bits;                        // Size of pointee
-	std::variant<std::string, std::string_view, TempVar> operand;  // Variable or temp to take address of
+	std::variant<StringHandle, TempVar> operand;  // Variable or temp to take address of
 };
 
 // Dereference operator (*ptr)
@@ -742,7 +722,7 @@ struct DereferenceOp {
 	TempVar result;                                  // Result temp var
 	Type pointee_type;                               // Type being dereferenced to
 	int pointee_size_in_bits;                        // Size of dereferenced value
-	std::variant<std::string_view, TempVar> pointer; // Pointer to dereference
+	std::variant<StringHandle, TempVar> pointer; // Pointer to dereference
 };
 
 // Dereference store operator (*ptr = value)
@@ -750,20 +730,20 @@ struct DereferenceStoreOp {
 	TypedValue value;                                // Value to store
 	Type pointee_type;                               // Type being stored to
 	int pointee_size_in_bits;                        // Size of value
-	std::variant<std::string_view, TempVar> pointer; // Pointer to store through
+	std::variant<StringHandle, TempVar> pointer; // Pointer to store through
 };
 
 // Constructor call (invoke constructor on object)
 struct ConstructorCallOp {
-	std::string struct_name;                         // Name of struct/class
-	std::variant<std::string_view, TempVar> object;  // Object instance ('this' or temp)
+	StringHandle struct_name;                         // Pure StringHandle
+	std::variant<StringHandle, TempVar> object;  // Object instance ('this' or temp)
 	std::vector<TypedValue> arguments;               // Constructor arguments
 };
 
 // Destructor call (invoke destructor on object)
 struct DestructorCallOp {
-	std::string struct_name;                         // Name of struct/class
-	std::variant<std::string, TempVar> object;       // Object instance ('this' or temp)
+	StringHandle struct_name;                         // Pure StringHandle
+	std::variant<StringHandle, TempVar> object;       // Object instance ('this' or temp)
 };
 
 // Virtual function call through vtable
@@ -771,20 +751,20 @@ struct VirtualCallOp {
 	TypedValue result;                               // Return value (type, size, and result temp var)
 	Type object_type;                                // Type of the object
 	int object_size;                                 // Size of object in bits
-	std::variant<std::string_view, TempVar> object;  // Object instance ('this')
+	std::variant<StringHandle, TempVar> object;  // Object instance ('this')
 	int vtable_index;                                // Index into vtable
 	std::vector<TypedValue> arguments;               // Call arguments
 };
 
 // String literal
 struct StringLiteralOp {
-	std::variant<std::string_view, TempVar> result;  // Result variable
+	std::variant<StringHandle, TempVar> result;  // Result variable
 	std::string_view content;                         // String content
 };
 
 // Stack allocation
 struct StackAllocOp {
-	std::variant<std::string_view, TempVar> result;  // Variable name
+	std::variant<StringHandle, TempVar> result;  // Result variable
 	Type type = Type::Void;                           // Type being allocated
 	int size_in_bits = 0;                             // Size in bits
 };
@@ -797,7 +777,7 @@ struct StackAllocOp {
 // 2. Assignment through pointer: *ptr = 5 (lhs is pointer, is_pointer_store=true)
 // 3. Reference member assignment: obj.ref = 5 (loads ref pointer, then stores through it)
 struct AssignmentOp {
-	std::variant<std::string_view, TempVar> result;  // Result variable (usually same as lhs)
+	std::variant<StringHandle, TempVar> result;  // Result variable (usually same as lhs)
 	TypedValue lhs;                                   // Left-hand side (destination)
 	TypedValue rhs;                                   // Right-hand side (source)
 	bool is_pointer_store = false;                    // True if lhs is a pointer and we should store through it
@@ -815,18 +795,14 @@ struct FunctionParam {
 	Type type = Type::Void;
 	int size_in_bits = 0;
 	int pointer_depth = 0;
-	std::variant<std::string, StringHandle> name;  // Phase 4: Adding StringHandle support
+	StringHandle name;  // Pure StringHandle
 	bool is_reference = false;
 	bool is_rvalue_reference = false;
 	CVQualifier cv_qualifier = CVQualifier::None;
 	
 	// Helper to get name as string_view
 	std::string_view getName() const {
-		if (std::holds_alternative<std::string>(name)) {
-			return std::get<std::string>(name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(name));
-		}
+		return StringTable::getStringView(name);
 	}
 };
 
@@ -835,37 +811,25 @@ struct FunctionDeclOp {
 	Type return_type = Type::Void;
 	int return_size_in_bits = 0;
 	int return_pointer_depth = 0;
-	std::variant<std::string, StringHandle> function_name;  // Phase 4: Adding StringHandle support
-	std::variant<std::string, StringHandle> struct_name;  // Phase 4: Empty for non-member functions
+	StringHandle function_name;  // Pure StringHandle
+	StringHandle struct_name;  // Empty for non-member functions
 	Linkage linkage = Linkage::None;
 	bool is_variadic = false;
-	std::variant<std::string_view, StringHandle> mangled_name;  // Phase 4: Adding StringHandle support
+	StringHandle mangled_name;  // Pure StringHandle
 	std::vector<FunctionParam> parameters;
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)
 	
 	// Helper methods
 	std::string_view getFunctionName() const {
-		if (std::holds_alternative<std::string>(function_name)) {
-			return std::get<std::string>(function_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(function_name));
-		}
+		return StringTable::getStringView(function_name);
 	}
 	
 	std::string_view getStructName() const {
-		if (std::holds_alternative<std::string>(struct_name)) {
-			return std::get<std::string>(struct_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(struct_name));
-		}
+		return StringTable::getStringView(struct_name);
 	}
 	
 	std::string_view getMangledName() const {
-		if (std::holds_alternative<std::string_view>(mangled_name)) {
-			return std::get<std::string_view>(mangled_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(mangled_name));
-		}
+		return StringTable::getStringView(mangled_name);
 	}
 };
 
@@ -892,8 +856,8 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 	// Operand value
 	if (std::holds_alternative<TempVar>(op.value.value)) {
 		oss << '%' << std::get<TempVar>(op.value.value).var_number;
-	} else if (std::holds_alternative<std::string_view>(op.value.value)) {
-		oss << '%' << std::get<std::string_view>(op.value.value);
+	} else if (std::holds_alternative<StringHandle>(op.value.value)) {
+		oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.value.value));
 	} else if (std::holds_alternative<unsigned long long>(op.value.value)) {
 		oss << std::get<unsigned long long>(op.value.value);
 	}
@@ -912,40 +876,28 @@ struct ConversionOp {
 // Global variable load
 struct GlobalLoadOp {
 	TypedValue result;           // Result with type, size, and temp var
-	std::variant<std::string_view, StringHandle> global_name;  // Phase 4: Name of global variable
+	StringHandle global_name;  // Pure StringHandle
 	bool is_array = false;       // If true, load address (LEA) instead of value (MOV)
 	
 	// Helper to get global_name as string_view
 	std::string_view getGlobalName() const {
-		if (std::holds_alternative<std::string_view>(global_name)) {
-			return std::get<std::string_view>(global_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(global_name));
-		}
+		return StringTable::getStringView(global_name);
 	}
 };
 
 // Function address (get address of a function)
 struct FunctionAddressOp {
 	TypedValue result;           // Result with type, size, and temp var (function pointer)
-	std::variant<std::string_view, StringHandle> function_name;  // Phase 4: Function name
-	std::variant<std::string_view, StringHandle> mangled_name;   // Phase 4: Pre-computed mangled name (optional, for lambdas)
+	StringHandle function_name;  // Pure StringHandle
+	StringHandle mangled_name;   // Pure StringHandle (optional, for lambdas)
 	
 	// Helper methods
 	std::string_view getFunctionName() const {
-		if (std::holds_alternative<std::string_view>(function_name)) {
-			return std::get<std::string_view>(function_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(function_name));
-		}
+		return StringTable::getStringView(function_name);
 	}
 	
 	std::string_view getMangledName() const {
-		if (std::holds_alternative<std::string_view>(mangled_name)) {
-			return std::get<std::string_view>(mangled_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(mangled_name));
-		}
+		return StringTable::getStringView(mangled_name);
 	}
 };
 
@@ -953,7 +905,7 @@ struct FunctionAddressOp {
 struct VariableDeclOp {
 	Type type = Type::Void;
 	int size_in_bits = 0;
-	std::variant<std::string_view, std::string, StringHandle> var_name;  // Phase 4: Adding StringHandle support
+	StringHandle var_name;  // Pure StringHandle
 	unsigned long long custom_alignment = 0;
 	bool is_reference = false;
 	bool is_rvalue_reference = false;
@@ -965,15 +917,9 @@ struct VariableDeclOp {
 	// Initializer (if present)
 	std::optional<TypedValue> initializer;
 	
-	// Helper to get var_name as string_view regardless of storage type
+	// Helper to get var_name as string_view
 	std::string_view getVarName() const {
-		if (std::holds_alternative<std::string_view>(var_name)) {
-			return std::get<std::string_view>(var_name);
-		} else if (std::holds_alternative<std::string>(var_name)) {
-			return std::get<std::string>(var_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(var_name));
-		}
+		return StringTable::getStringView(var_name);
 	}
 };
 
@@ -981,18 +927,14 @@ struct VariableDeclOp {
 struct GlobalVariableDeclOp {
 	Type type = Type::Void;
 	int size_in_bits = 0;          // Size of one element in bits
-	std::variant<std::string_view, StringHandle> var_name;  // Support both for gradual migration
+	StringHandle var_name;  // Pure StringHandle
 	bool is_initialized = false;
 	size_t element_count = 1;       // Number of elements (1 for scalars, N for arrays)
 	std::vector<char> init_data;    // Raw bytes for initialized data
 	
-	// Helper to get var_name as string_view regardless of storage type
+	// Helper to get var_name as string_view
 	std::string_view getVarName() const {
-		if (std::holds_alternative<std::string_view>(var_name)) {
-			return std::get<std::string_view>(var_name);
-		} else {
-			return StringTable::getStringView(std::get<StringHandle>(var_name));
-		}
+		return StringTable::getStringView(var_name);
 	}
 };
 
@@ -1043,7 +985,7 @@ struct TypeConversionOp {
 // RTTI: typeid operation
 struct TypeidOp {
 	TempVar result;              // Result variable (pointer to type_info)
-	std::variant<std::string_view, TempVar> operand;  // Type name (string_view) or expression (TempVar)
+	std::variant<StringHandle, TempVar> operand;  // Type name (StringHandle) or expression (TempVar)
 	bool is_type = false;        // true if typeid(Type), false if typeid(expr)
 };
 
@@ -1058,7 +1000,7 @@ struct DynamicCastOp {
 // Function pointer call
 struct IndirectCallOp {
 	TempVar result;                      // Result variable
-	std::variant<std::string_view, TempVar> function_pointer;  // Function pointer variable
+	std::variant<StringHandle, TempVar> function_pointer;  // Function pointer variable
 	std::vector<TypedValue> arguments;   // Arguments with type information
 };
 

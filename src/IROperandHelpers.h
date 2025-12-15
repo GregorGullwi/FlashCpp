@@ -8,9 +8,9 @@
 // This file only contains helper functions for working with those types
 
 // Helper function to extract IrValue from IrOperand using index-based mapping
-// IrOperand = std::variant<int, unsigned long long, double, bool, char, std::string, std::string_view, Type, TempVar>
-// IrValue   = std::variant<unsigned long long, double, TempVar, std::string_view>
-// Index mapping: IrOperand[1] -> IrValue[0], IrOperand[2] -> IrValue[1], IrOperand[6] -> IrValue[3], IrOperand[8] -> IrValue[2]
+// IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>
+// IrValue   = std::variant<unsigned long long, double, TempVar, StringHandle>
+// Index mapping: IrOperand[1] -> IrValue[0], IrOperand[2] -> IrValue[1], IrOperand[6] -> IrValue[2], IrOperand[7] -> IrValue[3]
 inline IrValue toIrValue(const IrOperand& operand) {
 	// Map IrOperand variant indices to IrValue variant indices
 	switch (operand.index()) {
@@ -20,12 +20,12 @@ inline IrValue toIrValue(const IrOperand& operand) {
 		case 2:  // IrOperand[2] = double -> IrValue[1] = double
 			assert(std::holds_alternative<double>(operand) && "Expected double");
 			return std::get<2>(operand);
-		case 6:  // IrOperand[6] = std::string_view -> IrValue[3] = std::string_view
-			assert(std::holds_alternative<std::string_view>(operand) && "Expected std::string_view");
-			return std::get<6>(operand);
-		case 8:  // IrOperand[8] = TempVar -> IrValue[2] = TempVar
+		case 6:  // IrOperand[6] = TempVar -> IrValue[2] = TempVar
 			assert(std::holds_alternative<TempVar>(operand) && "Expected TempVar");
-			return std::get<8>(operand);
+			return std::get<6>(operand);
+		case 7:  // IrOperand[7] = StringHandle -> IrValue[3] = StringHandle
+			assert(std::holds_alternative<StringHandle>(operand) && "Expected StringHandle");
+			return std::get<7>(operand);
 		default:
 			assert(false && "IrOperand does not contain a value type compatible with IrValue");
 			return static_cast<unsigned long long>(0);  // Unreachable, but prevents warning
@@ -112,14 +112,14 @@ inline bool parseCondBranchOp(const IrInstruction& inst, CondBranchOp& out) {
 	if (!inst.isOperandType<int>(1)) return false;
 	out.condition.size_in_bits = inst.getOperandAs<int>(1);
 
-	// condition_value can be unsigned long long, TempVar, or string_view
+	// condition_value can be unsigned long long, TempVar, or StringHandle
 	out.condition.value = toIrValue(inst.getOperand(2));
 
-	if (!inst.isOperandType<std::string>(3)) return false;
-	out.label_true = inst.getOperandAs<std::string>(3);
+	if (!inst.isOperandType<StringHandle>(3)) return false;
+	out.label_true = inst.getOperandAs<StringHandle>(3);
 
-	if (!inst.isOperandType<std::string>(4)) return false;
-	out.label_false = inst.getOperandAs<std::string>(4);
+	if (!inst.isOperandType<StringHandle>(4)) return false;
+	out.label_false = inst.getOperandAs<StringHandle>(4);
 
 	return true;
 }
@@ -134,8 +134,8 @@ inline bool parseCallOp(const IrInstruction& inst, CallOp& out) {
 	if (!inst.isOperandType<TempVar>(0)) return false;
 	out.result = inst.getOperandAs<TempVar>(0);
 
-	if (!inst.isOperandType<std::string>(1)) return false;
-	out.function_name = inst.getOperandAs<std::string>(1);
+	if (!inst.isOperandType<StringHandle>(1)) return false;
+	out.function_name = inst.getOperandAs<StringHandle>(1);
 
 	// Parse arguments (triples of type, size, value)
 	size_t operand_count = inst.getOperandCount();
@@ -165,12 +165,10 @@ inline bool parseCallOp(const IrInstruction& inst, CallOp& out) {
 inline bool parseLabelOp(const IrInstruction& inst, LabelOp& out) {
 	if (inst.getOperandCount() != 1) return false;
 
-	// Label name can be string or string_view
+	// Label name should be StringHandle
 	const auto& label_operand = inst.getOperand(0);
-	if (std::holds_alternative<std::string>(label_operand)) {
-		out.label_name = std::get<std::string>(label_operand);
-	} else if (std::holds_alternative<std::string_view>(label_operand)) {
-		out.label_name = std::string(std::get<std::string_view>(label_operand));
+	if (std::holds_alternative<StringHandle>(label_operand)) {
+		out.label_name = std::get<StringHandle>(label_operand);
 	} else {
 		return false;
 	}
@@ -182,12 +180,10 @@ inline bool parseLabelOp(const IrInstruction& inst, LabelOp& out) {
 inline bool parseBranchOp(const IrInstruction& inst, BranchOp& out) {
 	if (inst.getOperandCount() != 1) return false;
 
-	// Target label can be string or string_view
+	// Target label should be StringHandle
 	const auto& label_operand = inst.getOperand(0);
-	if (std::holds_alternative<std::string>(label_operand)) {
-		out.target_label = std::get<std::string>(label_operand);
-	} else if (std::holds_alternative<std::string_view>(label_operand)) {
-		out.target_label = std::string(std::get<std::string_view>(label_operand));
+	if (std::holds_alternative<StringHandle>(label_operand)) {
+		out.target_label = std::get<StringHandle>(label_operand);
 	} else {
 		return false;
 	}
@@ -216,14 +212,14 @@ inline bool parseReturnOp(const IrInstruction& inst, ReturnOp& out) {
 	if (!inst.isOperandType<int>(1)) return false;
 	out.return_size = inst.getOperandAs<int>(1);
 
-	// Extract return value (can be unsigned long long, TempVar, or string_view)
+	// Extract return value (can be unsigned long long, TempVar, or StringHandle)
 	const auto& value_operand = inst.getOperand(2);
 	if (std::holds_alternative<unsigned long long>(value_operand)) {
 		out.return_value = std::get<unsigned long long>(value_operand);
 	} else if (std::holds_alternative<TempVar>(value_operand)) {
 		out.return_value = std::get<TempVar>(value_operand);
-	} else if (std::holds_alternative<std::string_view>(value_operand)) {
-		out.return_value = std::get<std::string_view>(value_operand);
+	} else if (std::holds_alternative<StringHandle>(value_operand)) {
+		out.return_value = std::get<StringHandle>(value_operand);
 	} else {
 		return false;
 	}
@@ -277,17 +273,17 @@ inline bool parseMemberLoadOp(const IrInstruction& inst, MemberLoadOp& out) {
 	if (!inst.isOperandType<int>(2)) return false;
 	out.result.size_in_bits = inst.getOperandAs<int>(2);
 
-	// Object can be string_view or TempVar
-	if (inst.isOperandType<std::string_view>(3)) {
-		out.object = inst.getOperandAs<std::string_view>(3);
+	// Object can be StringHandle or TempVar
+	if (inst.isOperandType<StringHandle>(3)) {
+		out.object = inst.getOperandAs<StringHandle>(3);
 	} else if (inst.isOperandType<TempVar>(3)) {
 		out.object = inst.getOperandAs<TempVar>(3);
 	} else {
 		return false;
 	}
 
-	if (!inst.isOperandType<std::string_view>(4)) return false;
-	out.member_name = StringTable::getOrInternStringHandle(inst.getOperandAs<std::string_view>(4));
+	if (!inst.isOperandType<StringHandle>(4)) return false;
+	out.member_name = inst.getOperandAs<StringHandle>(4);
 
 	if (!inst.isOperandType<int>(5)) return false;
 	out.offset = inst.getOperandAs<int>(5);
@@ -342,11 +338,9 @@ inline bool parseGlobalLoadOp(const IrInstruction& inst, GlobalLoadOp& out) {
 	if (!inst.isOperandType<TempVar>(0)) return false;
 	out.result.value = inst.getOperandAs<TempVar>(0);
 
-	// Global name can be string or string_view
-	if (inst.isOperandType<std::string>(1)) {
-		out.global_name = inst.getOperandAs<std::string>(1);
-	} else if (inst.isOperandType<std::string_view>(1)) {
-		out.global_name = inst.getOperandAs<std::string_view>(1);
+	// Global name should be StringHandle
+	if (inst.isOperandType<StringHandle>(1)) {
+		out.global_name = inst.getOperandAs<StringHandle>(1);
 	} else {
 		return false;
 	}
@@ -368,8 +362,8 @@ inline bool parseFunctionAddressOp(const IrInstruction& inst, FunctionAddressOp&
 	if (!inst.isOperandType<TempVar>(0)) return false;
 	out.result.value = inst.getOperandAs<TempVar>(0);
 
-	if (!inst.isOperandType<std::string_view>(1)) return false;
-	out.function_name = inst.getOperandAs<std::string_view>(1);
+	if (!inst.isOperandType<StringHandle>(1)) return false;
+	out.function_name = inst.getOperandAs<StringHandle>(1);
 
 	return true;
 }
