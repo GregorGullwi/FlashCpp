@@ -913,7 +913,7 @@ struct EnumTypeInfo {
 struct TypeInfo
 {
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
-	TypeInfo(std::string name, Type type, TypeIndex idx) : name_(StringTable::getOrInternStringHandle(name)), type_(type), type_index_(idx) {}
+	TypeInfo(std::string_view name, Type type, TypeIndex idx) : name_(StringTable::getOrInternStringHandle(name)), type_(type), type_index_(idx) {}
 
 	StringHandle name_;  // Pure StringHandle
 	Type type_;
@@ -931,8 +931,8 @@ struct TypeInfo
 	// For typedef of pointer types, store the pointer depth
 	size_t pointer_depth_ = 0;
 
-	std::string_view name() const { 
-		return StringTable::getStringView(name_);
+	StringHandle name() const { 
+		return name_;
 	};
 
 	// Helper methods for struct types

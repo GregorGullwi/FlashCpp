@@ -1200,7 +1200,7 @@ public:
 		if (type_info == gNativeTypes.end())
 			return "";
 
-		return type_info->second->name();
+		return StringTable::getStringView(type_info->second->name());
 	}
 
 	template<class TClass>

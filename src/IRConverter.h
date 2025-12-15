@@ -10726,12 +10726,12 @@ private:
 		// Get the array base address (from stack or register)
 		int64_t array_base_offset = 0;
 		bool is_array_pointer = op.is_pointer_to_array;  // Use flag from codegen
+		StringHandle array_name_handle;
 		std::string_view array_name_view;
 			
-		if (std::holds_alternative<std::string>(op.array)) {
-			array_name_view = std::get<std::string>(op.array);
-		} else if (std::holds_alternative<StringHandle>(op.array)) {
-			array_name_view = std::get<StringHandle>(op.array);
+		if (std::holds_alternative<StringHandle>(op.array)) {
+			array_name_handle = std::get<StringHandle>(op.array);
+			array_name_view = StringTable::getStringView(array_name_handle);
 		} else if (std::holds_alternative<TempVar>(op.array)) {
 			TempVar array_temp_var = std::get<TempVar>(op.array);
 			array_base_offset = getStackOffsetFromTempVar(array_temp_var);
@@ -10752,10 +10752,11 @@ private:
 				object_name = array_name_view.substr(0, dot_pos);
 				member_name = array_name_view.substr(dot_pos + 1);
 				// Update array_base_offset to point to the object
+				StringHandle object_name_handle = StringTable::getOrInternStringHandle(object_name);
 				array_base_offset = variable_scopes.back().variables[object_name_handle].offset;
 			} else {
 				// Regular array/pointer - get offset directly
-				array_base_offset = variable_scopes.back().variables[array_name_view_handle].offset;
+				array_base_offset = variable_scopes.back().variables[array_name_handle].offset;
 			}
 		}
 			
@@ -10997,13 +10998,13 @@ private:
 			bool is_pointer_to_array = op.is_pointer_to_array;
 			
 			// Get the array base address
+			StringHandle array_name_handle;
 			std::string_view array_name_view;
 			int64_t array_base_offset = 0;
 			
-			if (std::holds_alternative<std::string>(op.array)) {
-				array_name_view = std::get<std::string>(op.array);
-			} else if (std::holds_alternative<StringHandle>(op.array)) {
-				array_name_view = std::get<StringHandle>(op.array);
+			if (std::holds_alternative<StringHandle>(op.array)) {
+				array_name_handle = std::get<StringHandle>(op.array);
+				array_name_view = StringTable::getStringView(array_name_handle);
 			}
 			
 			// Check if this is a member array access (object.member format)
