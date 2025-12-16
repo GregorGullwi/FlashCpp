@@ -11684,10 +11684,8 @@ private:
 				std::string_view operand_str;
 				if (std::holds_alternative<StringHandle>(op.operand)) {
 					operand_str = StringTable::getStringView(std::get<StringHandle>(op.operand));
-				} else if (std::holds_alternative<std::string>(op.operand)) {
-					operand_str = std::get<std::string>(op.operand);
 				} else {
-					assert(false && "AddressOf operand must be string_view, string, or TempVar");
+					assert(std::holds_alternative<TempVar>(op.operand) && "AddressOf operand must be StringHandle or TempVar");
 					return;
 				}
 

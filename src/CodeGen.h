@@ -3733,7 +3733,7 @@ private:
 					VariableDeclOp decl_op;
 					decl_op.type = type_node.type();
 					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
-					decl_op.var_name = decl.identifier_token().value();
+					decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 					decl_op.is_reference = type_node.is_reference();
 					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
@@ -3776,7 +3776,7 @@ private:
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
 		int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 		operands.emplace_back(size_in_bits);
-		operands.emplace_back(decl.identifier_token().value());
+		operands.emplace_back(StringTable::getOrInternStringHandle(decl.identifier_token().value()));
 		operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
 		operands.emplace_back(type_node.is_reference());
 		operands.emplace_back(type_node.is_rvalue_reference());
@@ -3834,7 +3834,7 @@ private:
 				VariableDeclOp decl_op;
 				decl_op.type = type_node.type();
 				decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
-				decl_op.var_name = decl.identifier_token().value();
+				decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.is_reference = type_node.is_reference();
 				decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
@@ -4193,7 +4193,7 @@ private:
 		VariableDeclOp decl_op;
 		decl_op.type = type_node.type();
 		decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
-		decl_op.var_name = decl.identifier_token().value();
+		decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 		decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 		decl_op.is_reference = type_node.is_reference();
 		decl_op.is_rvalue_reference = type_node.is_rvalue_reference();

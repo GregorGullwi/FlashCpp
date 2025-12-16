@@ -6090,8 +6090,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 					
 					// Create a TypeInfo for the alias that points to the underlying type
-					std::string alias_name(alias_token->value());
-					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
+					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token->value()), type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
 					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
@@ -15739,7 +15738,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(tparam.name(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(StringTable::getStringView(tparam.name())), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
@@ -21537,7 +21536,7 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = gTypeInfo.emplace_back(
-				std::string(qualified_alias_name),
+				StringTable::getOrInternStringHandle(qualified_alias_name),
 				substituted_type,
 				gTypeInfo.size()
 			);
