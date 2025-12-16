@@ -18842,7 +18842,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name(), &type_info);
+				gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -18916,7 +18916,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name(), &type_info);
+				gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -19657,7 +19657,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
-			gTypesByName.emplace(type_info.name(), &type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
@@ -20155,7 +20155,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					type_info.type_size_ = 0;  // Will be resolved later
 				}
 			}
-			gTypesByName.emplace(type_info.name(), &type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 			template_scope.addParameter(&type_info);
 		}
 		
@@ -20223,7 +20223,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					type_info.type_size_ = 0;  // Will be resolved later
 				}
 			}
-			gTypesByName.emplace(type_info.name(), &type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 			template_scope2.addParameter(&type_info);
 		}
 		
@@ -20382,7 +20382,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
-			gTypesByName.emplace(type_info.name(), &type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
@@ -23225,7 +23225,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
-		gTypesByName.emplace(type_info.name(), &type_info);
+		gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -23598,7 +23598,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
-		gTypesByName.emplace(type_info.name(), &type_info);
+		gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 

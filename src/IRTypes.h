@@ -1879,7 +1879,7 @@ public:
 			else if (std::holds_alternative<unsigned long long>(op.count))
 				oss << std::get<unsigned long long>(op.count);
 			else if (std::holds_alternative<StringHandle>(op.count))
-				oss << '%' << std::get<std::string_view>(op.count);
+				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.count));
 		}
 		break;
 		
@@ -1915,7 +1915,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.address))
 				oss << '%' << std::get<TempVar>(op.address).var_number;
 			else if (std::holds_alternative<StringHandle>(op.address))
-				oss << '%' << std::get<std::string_view>(op.address);
+				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.address));
 			else if (std::holds_alternative<unsigned long long>(op.address))
 				oss << std::get<unsigned long long>(op.address);
 			oss << " [" << static_cast<int>(op.type) << "][" << op.size_in_bytes << "]";
@@ -1928,7 +1928,7 @@ public:
 			auto& op = getTypedPayload<TypeidOp>();
 			oss << '%' << op.result.var_number << " = typeid ";
 			if (std::holds_alternative<StringHandle>(op.operand)) {
-				oss << std::get<std::string_view>(op.operand);
+				oss << StringTable::getStringView(std::get<StringHandle>(op.operand));
 			} else {
 				oss << '%' << std::get<TempVar>(op.operand).var_number;
 			}
@@ -2085,7 +2085,7 @@ public:
 				else if (std::holds_alternative<TempVar>(init.value))
 					oss << '%' << std::get<TempVar>(init.value).var_number;
 				else if (std::holds_alternative<StringHandle>(init.value))
-					oss << '%' << std::get<std::string_view>(init.value);
+					oss << '%' << StringTable::getStringView(std::get<StringHandle>(init.value));
 			}
 			break;
 		}
@@ -2153,7 +2153,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.function_pointer)) {
 				oss << '%' << std::get<TempVar>(op.function_pointer).var_number;
 			} else {
-				oss << '%' << std::get<std::string_view>(op.function_pointer);
+				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.function_pointer));
 			}
 
 			// Arguments with type information
@@ -2199,7 +2199,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.from.value)) {
 				oss << '%' << std::get<TempVar>(op.from.value).var_number;
 			} else if (std::holds_alternative<StringHandle>(op.from.value)) {
-				oss << '%' << std::get<std::string_view>(op.from.value);
+				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.from.value));
 			} else if (std::holds_alternative<unsigned long long>(op.from.value)) {
 				oss << std::get<unsigned long long>(op.from.value);
 			} else if (std::holds_alternative<double>(op.from.value)) {
