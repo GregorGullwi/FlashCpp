@@ -1399,7 +1399,7 @@ public:
 				// Name (Phase 4: Use helper)
 				StringHandle param_name_handle = param.getName();
 				if (param_name_handle.id != 0) {
-					oss << " %" << param_name;
+					oss << " %" << StringTable::getStringView(param_name_handle);
 				}
 			}
 		
@@ -1412,7 +1412,7 @@ public:
 		
 			// Struct context (Phase 4: Use helper)
 			StringHandle struct_name_handle = op.getStructName();
-			if (!struct_name_view.empty()) {
+			if (struct_name_handle.id != 0) {
 				oss << " [" << struct_name_view << "]";
 			}
 		}
