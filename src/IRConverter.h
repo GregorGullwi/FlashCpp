@@ -10842,7 +10842,7 @@ private:
 			regAlloc.release(index_reg);
 		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
 			// Variable index stored as identifier name
-			std::string index_var_name_str = std::string(std::get<StringHandle>(op.index.value));
+			StringHandle index_var_name_handle = std::get<StringHandle>(op.index.value);
 			auto index_it = variable_scopes.back().variables.find(index_var_name_handle);
 			assert(index_it != variable_scopes.back().variables.end() && "Index variable not found");
 			int64_t index_var_offset = index_it->second.offset;
