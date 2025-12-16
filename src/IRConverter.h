@@ -5657,7 +5657,6 @@ private:
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						} else if (std::holds_alternative<StringHandle>(arg.value)) {
 							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
 							int var_offset = variable_scopes.back().variables[var_name_handle].offset;
 							bool is_float = (arg.type == Type::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
@@ -5741,7 +5740,6 @@ private:
 				if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
 					// Load ADDRESS of object using LEA instead of value
 					StringHandle object_name_handle = std::get<StringHandle>(arg.value);
-			std::string_view object_name = StringTable::getStringView(object_name_handle);
 					int object_offset = variable_scopes.back().variables[object_name_handle].offset;
 					emitLEAFromFrame(textSectionData, target_reg, object_offset);
 					continue;
@@ -6238,7 +6236,6 @@ private:
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(dtor_op.object);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
-			object_offset = variable_scopes.back().variables[var_name_handle].offset;
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
@@ -6301,7 +6298,6 @@ private:
 			StringHandle var_name_handle = std::get<StringHandle>(op.object);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
 			object_offset = variable_scopes.back().variables[var_name_handle].offset;
-		}
 
 		// Virtual call sequence:
 		// 1. Load vptr from object: vptr = [object + 0]  (vptr is at offset 0)
@@ -6416,7 +6412,6 @@ private:
 		} else if (std::holds_alternative<StringHandle>(op.count)) {
 			// Count is an identifier (variable name) - load from stack
 			StringHandle count_name_handle = std::get<StringHandle>(op.count);
-			std::string_view count_name = StringTable::getStringView(count_name_handle);
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(count_name));
 			if (it == current_scope.variables.end()) {
@@ -6572,7 +6567,6 @@ private:
 		} else if (std::holds_alternative<StringHandle>(op.address)) {
 			// Address is an identifier (variable name) - load from stack
 			StringHandle address_name_handle = std::get<StringHandle>(op.address);
-			std::string_view address_name = StringTable::getStringView(address_name_handle);
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(address_name));
 			if (it == current_scope.variables.end()) {
@@ -6981,7 +6975,6 @@ private:
 					pointer_initialized = true;
 				} else if (std::holds_alternative<StringHandle>(init.value)) {
 					StringHandle rvalue_var_name_handle = std::get<StringHandle>(init.value);
-				std::string_view rvalue_var_name = StringTable::getStringView(rvalue_var_name_handle);
 					
 					auto src_it = current_scope.variables.find(rvalue_var_name_handle);
 					if (src_it != current_scope.variables.end()) {
@@ -7090,7 +7083,6 @@ private:
 					src_offset = getStackOffsetFromTempVar(temp_var);
 				} else if (std::holds_alternative<StringHandle>(init.value)) {
 					StringHandle rvalue_var_name_handle = std::get<StringHandle>(init.value);
-				std::string_view rvalue_var_name = StringTable::getStringView(rvalue_var_name_handle);
 					auto src_it = current_scope.variables.find(rvalue_var_name_handle);
 					if (src_it == current_scope.variables.end()) {
 						FLASH_LOG(Codegen, Error, "Variable '", rvalue_var_name, "' not found in symbol table");

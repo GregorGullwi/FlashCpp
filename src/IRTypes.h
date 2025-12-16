@@ -601,12 +601,12 @@ struct CondBranchOp {
 	TypedValue condition;            // 40 bytes (value + type)
 	
 	// Helper methods
-	std::string_view getLabelTrue() const {
-		return StringTable::getStringView(label_true);
+	StringHandle getLabelTrue() const {
+		return label_true;
 	}
 	
-	std::string_view getLabelFalse() const {
-		return StringTable::getStringView(label_false);
+	StringHandle getLabelFalse() const {
+		return label_false;
 	}
 };
 
@@ -620,9 +620,9 @@ struct CallOp {
 	bool is_member_function = false;      // 1 byte
 	bool is_variadic = false;             // 1 byte (+ 2 bytes padding)
 	
-	// Helper to get function_name as string_view
-	std::string_view getFunctionName() const {
-		return StringTable::getStringView(function_name);
+	// Helper to get function_name as StringHandle
+	StringHandle getFunctionName() const {
+		return function_name;
 	}
 };
 
@@ -653,9 +653,9 @@ struct MemberStoreOp {
 struct LabelOp {
 	StringHandle label_name;  // Pure StringHandle
 	
-	// Helper to get label_name as string_view
-	std::string_view getLabelName() const {
-		return StringTable::getStringView(label_name);
+	// Helper to get label_name as StringHandle
+	StringHandle getLabelName() const {
+		return label_name;
 	}
 };
 
@@ -663,9 +663,9 @@ struct LabelOp {
 struct BranchOp {
 	StringHandle target_label;  // Pure StringHandle
 	
-	// Helper to get target_label as string_view
-	std::string_view getTargetLabel() const {
-		return StringTable::getStringView(target_label);
+	// Helper to get target_label as StringHandle
+	StringHandle getTargetLabel() const {
+		return target_label;
 	}
 };
 
@@ -799,9 +799,9 @@ struct FunctionParam {
 	bool is_rvalue_reference = false;
 	CVQualifier cv_qualifier = CVQualifier::None;
 	
-	// Helper to get name as string_view
-	std::string_view getName() const {
-		return StringTable::getStringView(name);
+	// Helper to get name as StringHandle
+	StringHandle getName() const {
+		return name;
 	}
 };
 
@@ -819,16 +819,16 @@ struct FunctionDeclOp {
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)
 	
 	// Helper methods
-	std::string_view getFunctionName() const {
-		return StringTable::getStringView(function_name);
+	StringHandle getFunctionName() const {
+		return function_name;
 	}
 	
-	std::string_view getStructName() const {
-		return StringTable::getStringView(struct_name);
+	StringHandle getStructName() const {
+		return struct_name;
 	}
 	
-	std::string_view getMangledName() const {
-		return StringTable::getStringView(mangled_name);
+	StringHandle getMangledName() const {
+		return mangled_name;
 	}
 };
 
@@ -878,9 +878,9 @@ struct GlobalLoadOp {
 	StringHandle global_name;  // Pure StringHandle
 	bool is_array = false;       // If true, load address (LEA) instead of value (MOV)
 	
-	// Helper to get global_name as string_view
-	std::string_view getGlobalName() const {
-		return StringTable::getStringView(global_name);
+	// Helper to get global_name as StringHandle
+	StringHandle getGlobalName() const {
+		return global_name;
 	}
 };
 
@@ -891,12 +891,12 @@ struct FunctionAddressOp {
 	StringHandle mangled_name;   // Pure StringHandle (optional, for lambdas)
 	
 	// Helper methods
-	std::string_view getFunctionName() const {
-		return StringTable::getStringView(function_name);
+	StringHandle getFunctionName() const {
+		return function_name;
 	}
 	
-	std::string_view getMangledName() const {
-		return StringTable::getStringView(mangled_name);
+	StringHandle getMangledName() const {
+		return mangled_name;
 	}
 };
 
@@ -931,9 +931,9 @@ struct GlobalVariableDeclOp {
 	size_t element_count = 1;       // Number of elements (1 for scalars, N for arrays)
 	std::vector<char> init_data;    // Raw bytes for initialized data
 	
-	// Helper to get var_name as string_view
-	std::string_view getVarName() const {
-		return StringTable::getStringView(var_name);
+	// Helper to get var_name as StringHandle
+	StringHandle getVarName() const {
+		return var_name;
 	}
 };
 
@@ -1360,9 +1360,9 @@ public:
 		
 			// Function name (Phase 4: Use helper)
 			oss << "@";
-			std::string_view mangled = op.getMangledName();
+			StringHandle mangled = op.getMangledName();
 			if (!mangled.empty()) {
-				oss << mangled;
+				oss << StringTable::getStringView(mangled);
 			} else {
 				oss << op.getFunctionName();
 			}
@@ -1397,8 +1397,8 @@ public:
 				}
 			
 				// Name (Phase 4: Use helper)
-				std::string_view param_name = param.getName();
-				if (!param_name.empty()) {
+				StringHandle param_name_handle = param.getName();
+				if (param_name_handle.id != 0) {
 					oss << " %" << param_name;
 				}
 			}
@@ -1411,7 +1411,7 @@ public:
 			oss << ")";
 		
 			// Struct context (Phase 4: Use helper)
-			std::string_view struct_name_view = op.getStructName();
+			StringHandle struct_name_handle = op.getStructName();
 			if (!struct_name_view.empty()) {
 				oss << " [" << struct_name_view << "]";
 			}
@@ -2103,7 +2103,8 @@ public:
 		case IrOpcode::GlobalVariableDecl:
 		{
 			const GlobalVariableDeclOp& op = getTypedPayload<GlobalVariableDeclOp>();
-			std::string_view var_name = op.getVarName();  // Use helper for backward compatibility
+			StringHandle var_name_handle = op.getVarName();
+		std::string_view var_name = StringTable::getStringView(var_name_handle);  // Use helper for backward compatibility
 			
 			oss << "global_var ";
 			auto type_info = gNativeTypes.find(op.type);
