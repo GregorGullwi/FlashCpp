@@ -5730,7 +5730,7 @@ ParseResult Parser::parse_typedef_declaration()
 	// Register the typedef alias in the type system
 	// The typedef should resolve to the underlying type, not be a new UserDefined type
 	// We create a TypeInfo entry that mirrors the underlying type
-	auto& alias_type_info = gTypeInfo.emplace_back(std::string(qualified_alias_name), type_spec.type(), gTypeInfo.size());
+	auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
@@ -15739,7 +15739,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(tparam.name(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
@@ -18831,7 +18831,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(tparam.name(), Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
@@ -18905,7 +18905,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(tparam.name(), Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
@@ -19645,7 +19645,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			std::string_view param_name = param_names[i];
 			Type concrete_type = template_args[i].type_value;
 
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
 			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
@@ -20130,7 +20130,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			
 			// Add this template parameter -> concrete type mapping
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
 			// instead of staying as UserDefined, which would cause toString() to return "unknown"
@@ -20200,7 +20200,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
 			std::string_view param_name = param_names[i];
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef
 			// Only call getBasicTypeSizeInBits for basic types (Void through LongDouble)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::LongDouble) {
@@ -20370,7 +20370,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			std::string_view param_name = param_names[i];
 			Type concrete_type = template_args[i].type_value;
 
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
 			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
@@ -20828,8 +20828,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			
 			// Create a NEW ConstructorDeclarationNode with the instantiated struct name
 			auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-				instantiated_name,  // Set correct parent struct name
-				orig_ctor.name()    // Constructor name
+				StringTable::getOrInternStringHandle(instantiated_name),  // Set correct parent struct name
+				StringTable::getOrInternStringHandle(orig_ctor.name())    // Constructor name
 			);
 			
 			// Copy parameters
@@ -20857,7 +20857,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			const DestructorDeclarationNode& orig_dtor = mem_func.function_declaration.as<DestructorDeclarationNode>();
 			
 			auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
-				instantiated_name,
+				StringTable::getOrInternStringHandle(instantiated_name),
 				StringTable::getOrInternStringHandle(orig_dtor.name())
 			);
 			
@@ -21576,8 +21576,8 @@ if (struct_type_info.getStructInfo()) {
 				
 				// Create a NEW ConstructorDeclarationNode with the instantiated struct name
 				auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-					instantiated_name,  // Set correct parent struct name
-					orig_ctor.name()    // Constructor name (same as template name)
+					StringTable::getOrInternStringHandle(instantiated_name),  // Set correct parent struct name
+					StringTable::getOrInternStringHandle(orig_ctor.name())    // Constructor name (same as template name)
 				);
 				
 				// Copy parameters
@@ -22395,8 +22395,8 @@ if (struct_type_info.getStructInfo()) {
 					
 					// Create a new constructor declaration with substituted body
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-						instantiated_name,
-						instantiated_name
+						StringTable::getOrInternStringHandle(instantiated_name),
+						StringTable::getOrInternStringHandle(instantiated_name)
 					);
 					
 					// Substitute and copy parameters
@@ -22506,7 +22506,7 @@ if (struct_type_info.getStructInfo()) {
 						.append(instantiated_name)
 						.commit();
 					auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
-						instantiated_name,
+						StringTable::getOrInternStringHandle(instantiated_name),
 						StringTable::getOrInternStringHandle(specialized_dtor_name)
 					);
 					
@@ -23213,7 +23213,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		std::string_view param_name = param_names[i];
 		Type concrete_type = template_args[i].type_value;
 
-		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
 		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
@@ -23586,7 +23586,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		Type concrete_type = template_args[i].type_value;
 
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
-		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
 		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths

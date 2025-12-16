@@ -2570,7 +2570,7 @@ private:
 		}
 
 		// Branch back to loop start
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
 
 		// Loop end label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
@@ -2609,7 +2609,7 @@ private:
 
 		// Loop start: evaluate condition
 		LabelOp start_lbl;
-		start_lbl.label_name = loop_start_label;
+		start_lbl.label_name = StringTable::getOrInternStringHandle(loop_start_label);
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, std::move(start_lbl), Token()));
 
 		// Evaluate condition
@@ -2632,7 +2632,7 @@ private:
 
 		// Branch back to loop start (re-evaluate condition)
 		BranchOp branch_to_start;
-		branch_to_start.target_label = loop_start_label;
+		branch_to_start.target_label = StringTable::getOrInternStringHandle(loop_start_label);
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_start), Token()));
 
 		// Loop end label
@@ -2773,7 +2773,7 @@ private:
 
 			// Next check label
 			LabelOp next_lbl;
-			next_lbl.label_name = next_check_label;
+			next_lbl.label_name = StringTable::getOrInternStringHandle(next_check_label);
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, std::move(next_lbl), Token()));
 			check_index++;
 		}
@@ -3100,7 +3100,7 @@ private:
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 
 		// Branch back to loop start
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
 
 		// Loop end label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
@@ -3285,7 +3285,7 @@ private:
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 
 		// Branch back to loop start
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
 
 		// Loop end label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
