@@ -2425,10 +2425,10 @@ private:
 			return;
 		}
 
-	// Regular if statement (runtime conditional)
-	// Generate unique labels for this if statement
-	static size_t if_counter = 0;
-	size_t current_if = if_counter++;
+		// Regular if statement (runtime conditional)
+		// Generate unique labels for this if statement
+		static size_t if_counter = 0;
+		size_t current_if = if_counter++;
 	
 	// Use a single StringBuilder and commit each label before starting the next
 	// to avoid buffer overwrites in the shared allocator

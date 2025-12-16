@@ -2442,7 +2442,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			return ParseResult::error("Expected alias name after 'using'", peek_token().value_or(Token()));
 		}
 		
-		std::string_view alias_name = alias_token->value();
+		StringHandle alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 		consume_token(); // consume alias name
 		
 		// Check for '='
@@ -2473,7 +2473,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		
 		// Also register it globally
 		const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-		auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+		auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 		alias_type_info.type_index_ = type_spec.type_index();
 		alias_type_info.type_size_ = type_spec.size_in_bits();
 		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
@@ -2520,28 +2520,28 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			consume_token(); // consume 'struct' or 'class'
 			
 			// Check if there's a struct name or if it's anonymous
-			std::string_view struct_name;
+			std::string_view struct_name_view;
 			
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-				struct_name = peek_token()->value();
+				struct_name_view = peek_token()->value();
 				consume_token(); // consume struct name
 			} else {
 				// Anonymous struct - generate a unique name using StringBuilder for persistent storage
-				struct_name = StringBuilder()
+				struct_name_view = StringBuilder()
 					.append("__anonymous_typedef_struct_")
 					.append(ast_nodes_.size())
 					.commit();
 			}
 			
 			// Register the struct type early
-			TypeInfo& struct_type_info = add_struct_type(std::string(struct_name));
+			StringHandle struct_name = StringTable::getOrInternStringHandle(struct_name_view);
+			TypeInfo& struct_type_info = add_struct_type(struct_name);
 			TypeIndex struct_type_index = struct_type_info.type_index_;
-			
 			// Create struct declaration node
 			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 			
 			// Create StructTypeInfo
-			auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(struct_name), is_class ? AccessSpecifier::Private : AccessSpecifier::Public);
+			auto struct_info = std::make_unique<StructTypeInfo>(struct_name, is_class ? AccessSpecifier::Private : AccessSpecifier::Public);
 			
 			// Expect opening brace
 			if (!consume_punctuator("{")) {
@@ -2693,7 +2693,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected alias name after struct definition", *current_token_);
 			}
-			std::string_view alias_name = alias_token->value();
+			auto alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 			
 			// Consume semicolon
 			if (!consume_punctuator(";")) {
@@ -2715,7 +2715,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the alias globally
-			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
@@ -2728,21 +2728,20 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			consume_token(); // consume 'enum'
 			
 			// Check if there's an enum name or if it's anonymous
-			std::string_view enum_name;
+			StringHandle enum_name;
 			
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-				enum_name = peek_token()->value();
+				enum_name = StringTable::getOrInternStringHandle(peek_token()->value());
 				consume_token(); // consume enum name
 			} else {
 				// Anonymous enum - generate a unique name using StringBuilder for persistent storage
-				enum_name = StringBuilder()
+				enum_name = StringTable::getOrInternStringHandle(StringBuilder()
 					.append("__anonymous_typedef_enum_")
-					.append(std::to_string(ast_nodes_.size()))
-					.commit();
+					.append(ast_nodes_.size()));
 			}
 			
 			// Register the enum type early
-			TypeInfo& enum_type_info = add_enum_type(std::string(enum_name));
+			TypeInfo& enum_type_info = add_enum_type(enum_name);
 			TypeIndex enum_type_index = enum_type_info.type_index_;
 			
 			// Create enum declaration node
@@ -2767,7 +2766,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Create enum type info
-			auto enum_info = std::make_unique<EnumTypeInfo>(StringTable::getOrInternStringHandle(enum_name), is_scoped);
+			auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
 			
 			// Determine underlying type
 			Type underlying_type = Type::Int;
@@ -2859,7 +2858,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected alias name after enum definition", *current_token_);
 			}
-			std::string_view alias_name = alias_token->value();
+			auto alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 			
 			// Consume semicolon
 			if (!consume_punctuator(";")) {
@@ -2877,7 +2876,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the alias globally
-			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
@@ -2922,7 +2921,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		return ParseResult::error("Expected alias name in typedef", peek_token().value_or(Token()));
 	}
 	
-	std::string_view alias_name = alias_token->value();
+	auto alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 	consume_token(); // consume alias name
 	
 	// Consume semicolon
@@ -2939,7 +2938,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	}
 	
 	// Also register it globally
-	auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+	auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
 	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
@@ -2976,7 +2975,7 @@ ParseResult Parser::parse_struct_declaration()
 		return ParseResult::error("Expected struct/class name", name_token.value_or(Token()));
 	}
 
-	std::string_view struct_name = name_token->value();
+	auto struct_name = StringTable::getOrInternStringHandle(name_token->value());
 
 	// Check for template specialization arguments after struct name
 	// e.g., struct MyStruct<int>, struct MyStruct<T&>
@@ -3006,19 +3005,18 @@ ParseResult Parser::parse_struct_declaration()
 	// Create a persistent qualified name for nested classes (e.g., "Outer::Inner")
 	// This is used when creating member functions so they reference the correct struct type
 	// For top-level classes, qualified_struct_name equals struct_name
-	std::string_view qualified_struct_name = struct_name;
-	std::string type_name = std::string(struct_name);
+	StringHandle qualified_struct_name = struct_name;
+	StringHandle type_name = struct_name;
 	if (is_nested_class) {
 		// We're inside a struct, so this is a nested class
 		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
 		const auto& context = struct_parsing_context_stack_.back();
 		// Build the qualified name using StringBuilder for a persistent allocation
-		qualified_struct_name = StringBuilder()
+		qualified_struct_name = StringTable::getOrInternStringHandle(StringBuilder()
 			.append(context.struct_name)
 			.append("::")
-			.append(struct_name)
-			.commit();
-		type_name = std::string(qualified_struct_name);
+			.append(struct_name));
+		type_name = qualified_struct_name;
 	}
 
 	TypeInfo& struct_type_info = add_struct_type(type_name);
@@ -3026,7 +3024,7 @@ ParseResult Parser::parse_struct_declaration()
 	// For nested classes, also register with the simple name so it can be referenced
 	// from within the nested class itself (e.g., in constructors)
 	if (is_nested_class) {
-		gTypesByName.emplace(std::string(struct_name), &struct_type_info);
+		gTypesByName.emplace(struct_name, &struct_type_info);
 	}
 
 	// Check for alignas specifier after struct name (if not already specified)
@@ -3038,10 +3036,10 @@ ParseResult Parser::parse_struct_declaration()
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 
 	// Push struct parsing context for nested class support
-	struct_parsing_context_stack_.push_back({struct_name, &struct_ref});
+	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref});
 
 	// Create StructTypeInfo early so we can add base classes to it
-	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(struct_name), struct_ref.default_access());
+	auto struct_info = std::make_unique<StructTypeInfo>(struct_name, struct_ref.default_access());
 	struct_info->is_union = is_union;
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
@@ -3263,17 +3261,14 @@ ParseResult Parser::parse_struct_declaration()
 					// Add to StructTypeInfo
 					const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
 					if (friend_decl.kind() == FriendKind::Class) {
-						// Phase 7B: Intern friend class name and use StringHandle overload
-						StringHandle friend_class_name_handle = StringTable::getOrInternStringHandle(friend_decl.name());
+						StringHandle friend_class_name_handle = friend_decl.name();
 						struct_info->addFriendClass(friend_class_name_handle);
 					} else if (friend_decl.kind() == FriendKind::Function) {
-						// Phase 7B: Intern friend function name and use StringHandle overload
-						StringHandle friend_func_name_handle = StringTable::getOrInternStringHandle(friend_decl.name());
+						StringHandle friend_func_name_handle = friend_decl.name();
 						struct_info->addFriendFunction(friend_func_name_handle);
 					} else if (friend_decl.kind() == FriendKind::MemberFunction) {
-						// Phase 7B: Intern names and use StringHandle overload
-						StringHandle friend_class_name_handle = StringTable::getOrInternStringHandle(friend_decl.class_name());
-						StringHandle friend_func_name_handle = StringTable::getOrInternStringHandle(friend_decl.name());
+						StringHandle friend_class_name_handle = friend_decl.class_name();
+						StringHandle friend_func_name_handle = friend_decl.name();
 						struct_info->addFriendMemberFunction(
 							friend_class_name_handle,
 							friend_func_name_handle);
@@ -3395,7 +3390,7 @@ ParseResult Parser::parse_struct_declaration()
 							body_start,
 							{},       // initializer_list_start (not used)
 							false,    // has_initializer_list
-							struct_name,
+							StringTable::getStringView(struct_name),
 							struct_type_idx,
 							&struct_ref,
 							false,  // is_constructor
@@ -3505,7 +3500,7 @@ ParseResult Parser::parse_struct_declaration()
 
 						// Also register the qualified name using the StructDeclarationNode's qualified_name()
 						// This ensures consistency with the type lookup
-						std::string qualified_name = nested_struct.qualified_name();
+						auto qualified_name = StringTable::getOrInternStringHandle(qualified_nested_name);
 						if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
 							gTypesByName.emplace(qualified_name, nested_type_it->second);
 						}
@@ -3702,7 +3697,7 @@ ParseResult Parser::parse_struct_declaration()
 						body_start,
 						initializer_list_start,  // Save position of initializer list
 						has_initializer_list,     // Flag if initializer list exists
-						struct_name,
+						StringTable::getStringView(struct_name),
 						struct_type_index,
 						&struct_ref,
 						true,  // is_constructor
@@ -3844,7 +3839,7 @@ ParseResult Parser::parse_struct_declaration()
 					body_start,
 					{},       // initializer_list_start (not used)
 					false,    // has_initializer_list
-					struct_name,
+					StringTable::getStringView(struct_name),
 					struct_type_index,
 					&struct_ref,
 					false,  // is_constructor
@@ -4029,7 +4024,7 @@ ParseResult Parser::parse_struct_declaration()
 					body_start,
 					{},       // initializer_list_start (not used)
 					false,    // has_initializer_list
-					struct_name,
+					StringTable::getStringView(struct_name),
 					struct_type_index,
 					&struct_ref,
 					false,  // is_constructor
@@ -4268,7 +4263,7 @@ ParseResult Parser::parse_struct_declaration()
 				Type::Struct,
 				struct_type_info.type_index_,
 				static_cast<unsigned char>(0),  // Size will be set later
-				Token(Token::Type::Identifier, struct_name, var_name_token->line(), var_name_token->column(), var_name_token->file_index())
+				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), var_name_token->line(), var_name_token->column(), var_name_token->file_index())
 			);
 
 			auto var_decl = emplace_node<DeclarationNode>(var_type_spec, *var_name_token);
@@ -4883,7 +4878,7 @@ ParseResult Parser::parse_struct_declaration()
 
 	// If this is a nested class, also register it with its qualified name
 	if (struct_ref.is_nested()) {
-		std::string qualified_name = struct_ref.qualified_name();
+		auto qualified_name = struct_ref.qualified_name();
 		// Register the qualified name as an alias in gTypesByName
 		// It points to the same TypeInfo as the simple name
 		if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
@@ -4996,26 +4991,25 @@ ParseResult Parser::parse_enum_declaration()
 	}
 
 	// Parse enum name (optional for anonymous enums)
-	std::string_view enum_name;
+	StringHandle enum_name;
 	//bool is_anonymous = false;
 	
 	// Check if next token is an identifier (name) or : or { (anonymous enum)
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 		auto name_token = consume_token();
-		enum_name = name_token->value();
+		enum_name = StringTable::getOrInternStringHandle(name_token->value());
 	} else if (peek_token().has_value() && 
 	           (peek_token()->value() == ":" || peek_token()->value() == "{")) {
 		// Anonymous enum - generate a unique name
 		static int anonymous_enum_counter = 0;
-		static std::string temp_string;
-		enum_name = temp_string = "__anonymous_enum_" + std::to_string(anonymous_enum_counter++);
+		enum_name = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_enum_"sv.append(anonymous_enum_counter++)));
 		//is_anonymous = true;
 	} else {
 		return ParseResult::error("Expected enum name, ':', or '{'", *peek_token());
 	}
 
 	// Register the enum type in the global type system EARLY
-	TypeInfo& enum_type_info = add_enum_type(std::string(enum_name));
+	TypeInfo& enum_type_info = add_enum_type(enum_name);
 
 	// Create enum declaration node
 	auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
@@ -5236,15 +5230,13 @@ ParseResult Parser::parse_typedef_declaration()
 	// Check if this is an inline struct/class definition: typedef struct { ... } alias;
 	// or typedef struct Name { ... } alias;
 	bool is_inline_struct = false;
-	std::string struct_name_for_typedef_storage;  // Storage for generated names
-	std::string_view struct_name_for_typedef;
+	StringHandle struct_name_for_typedef;
 	TypeIndex struct_type_index = 0;
 
 	// Check if this is an inline enum definition: typedef enum { ... } alias;
 	// or typedef enum _Name { ... } alias;
 	bool is_inline_enum = false;
-	std::string enum_name_for_typedef_storage;
-	std::string_view enum_name_for_typedef;
+	StringHandle enum_name_for_typedef;
 	TypeIndex enum_type_index = 0;
 
 	if (peek_token().has_value() && peek_token()->value() == "enum") {
@@ -5267,8 +5259,7 @@ ParseResult Parser::parse_typedef_declaration()
 		if (peek_token().has_value() && peek_token()->value() == "{") {
 			// Pattern 1: typedef enum { ... } alias;
 			is_inline_enum = true;
-			enum_name_for_typedef_storage = "__anonymous_typedef_enum_" + std::to_string(ast_nodes_.size());
-			enum_name_for_typedef = enum_name_for_typedef_storage;
+			enum_name_for_typedef = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_typedef_enum_"sv).append(ast_nodes_.size()));
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 			auto enum_name_token = peek_token();
 			consume_token(); // consume enum name
@@ -5278,7 +5269,7 @@ ParseResult Parser::parse_typedef_declaration()
 				// Pattern 2: typedef enum _Name { ... } alias;
 				// or typedef enum _Name : type { ... } alias;
 				is_inline_enum = true;
-				enum_name_for_typedef = enum_name_token->value();
+				enum_name_for_typedef = StringTable::getOrInternStringHandle(enum_name_token->value());
 			} else {
 				// Not an inline definition, restore position and parse normally
 				current_token_ = next_pos;
@@ -5305,8 +5296,7 @@ ParseResult Parser::parse_typedef_declaration()
 			is_inline_struct = true;
 			// Use a unique temporary name for the struct/union (will be replaced by typedef alias)
 			// Use the current AST size to make it unique
-			struct_name_for_typedef_storage = "__anonymous_typedef_struct_" + std::to_string(ast_nodes_.size());
-			struct_name_for_typedef = struct_name_for_typedef_storage;
+			struct_name_for_typedef = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_typedef_struct_"sv).append(ast_nodes_.size()));
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 			auto struct_name_token = peek_token();
 			consume_token(); // consume struct/union name
@@ -5314,7 +5304,7 @@ ParseResult Parser::parse_typedef_declaration()
 			if (peek_token().has_value() && peek_token()->value() == "{") {
 				// Pattern 2/4: typedef struct/union Name { ... } alias;
 				is_inline_struct = true;
-				struct_name_for_typedef = struct_name_token->value();
+				struct_name_for_typedef = StringTable::getOrInternStringHandle(struct_name_token->value());
 			} else {
 				// Not an inline definition, restore position and parse normally
 				current_token_ = next_pos;
@@ -5335,7 +5325,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// We need to manually parse the enum body since we already consumed the keyword and name
 
 		// Register the enum type early
-		TypeInfo& enum_type_info = add_enum_type(std::string(enum_name_for_typedef));
+		TypeInfo& enum_type_info = add_enum_type(enum_name_for_typedef);
 		enum_type_index = enum_type_info.type_index_;
 
 		// Create enum declaration node
@@ -5364,7 +5354,7 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Create enum type info
-		auto enum_info = std::make_unique<EnumTypeInfo>(StringTable::getOrInternStringHandle(enum_name_for_typedef), is_scoped);
+		auto enum_info = std::make_unique<EnumTypeInfo>(enum_name_for_typedef, is_scoped);
 
 		// Determine underlying type (default is int)
 		Type underlying_type = Type::Int;
@@ -5467,17 +5457,17 @@ ParseResult Parser::parse_typedef_declaration()
 		// We need to manually parse the struct body since we already consumed the keyword and name
 
 		// Register the struct type early
-		TypeInfo& struct_type_info = add_struct_type(std::string(struct_name_for_typedef));
+		TypeInfo& struct_type_info = add_struct_type(struct_name_for_typedef);
 		struct_type_index = struct_type_info.type_index_;
 
 		// Create struct declaration node
 		auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name_for_typedef, false);
 
 		// Push struct parsing context
-		struct_parsing_context_stack_.push_back({struct_name_for_typedef, &struct_ref});
+		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref});
 
 		// Create StructTypeInfo
-		auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(struct_name_for_typedef), AccessSpecifier::Public);
+		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public);
 
 		// Apply pack alignment from #pragma pack
 		size_t pack_alignment = context_.getCurrentPackAlignment();
@@ -6559,7 +6549,7 @@ ParseResult Parser::parse_type_specifier()
 			                          current_token_opt.value_or(Token()));
 		}
 
-		std::string type_name(current_token_opt->value());
+		StringHandle type_name = StringTable::getOrInternStringHandle(current_token_opt->value());
 		Token type_name_token = *current_token_opt;
 		consume_token();
 
@@ -11510,7 +11500,7 @@ ParseResult Parser::parse_primary_expression()
 					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", inst_struct.name());
 					
 					// Look up the instantiated template
-					identifierType = gSymbolTable.lookup(inst_struct.name());
+					identifierType = gSymbolTable.lookup(StringTable::getStringView(inst_struct.name()));
 					
 					// Check for :: after template arguments (Template<T>::member)
 					if (peek_token().has_value() && peek_token()->value() == "::") {
@@ -11523,7 +11513,7 @@ ParseResult Parser::parse_primary_expression()
 					}
 					
 					// Return identifier reference to the instantiated template
-					Token inst_token(Token::Type::Identifier, inst_struct.name(), 
+					Token inst_token(Token::Type::Identifier, StringTable::getStringView(inst_struct.name()), 
 					                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 					result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 					return ParseResult::success(*result);
@@ -14365,13 +14355,13 @@ ParseResult Parser::parse_lambda_expression() {
     // Register the lambda closure type in the type system immediately
     // This allows auto type deduction to work
     const auto& lambda = lambda_node.as<LambdaExpressionNode>();
-    std::string closure_name = lambda.generate_lambda_name();
+    auto closure_name = lambda.generate_lambda_name();
 
     // Get captures from the lambda node (since we moved them above)
     const auto& lambda_captures = lambda.captures();
 
     TypeInfo& closure_type = add_struct_type(closure_name);
-    auto closure_struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(closure_name), AccessSpecifier::Public);
+    auto closure_struct_info = std::make_unique<StructTypeInfo>(closure_name, AccessSpecifier::Public);
 
     // For non-capturing lambdas, create a 1-byte struct (like Clang does)
     if (lambda_captures.empty()) {
@@ -15043,7 +15033,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	// Handle lambda expressions directly (not wrapped in ExpressionNode)
 	if (expr_node.is<LambdaExpressionNode>()) {
 		const auto& lambda = expr_node.as<LambdaExpressionNode>();
-		std::string closure_name = lambda.generate_lambda_name();
+		auto closure_name = lambda.generate_lambda_name();
 
 		// Look up the closure type in the type system
 		auto type_it = gTypesByName.find(closure_name);
@@ -15202,7 +15192,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<LambdaExpressionNode>(expr)) {
 		// For lambda expressions, return the closure struct type
 		const auto& lambda = std::get<LambdaExpressionNode>(expr);
-		std::string closure_name = lambda.generate_lambda_name();
+		auto closure_name = lambda.generate_lambda_name();
 
 		// Look up the closure type in the type system
 		auto type_it = gTypesByName.find(closure_name);
@@ -16121,7 +16111,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Now parse the class body as a regular struct
 			// But we need to give it a unique name that includes the template arguments
-			std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+			auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 
 			// Create a struct node with the instantiated name
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -16130,10 +16120,10 @@ ParseResult Parser::parse_template_declaration() {
 			);
 
 			// Create struct type info first so we can reference it
-			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 
 			// Create struct info for tracking members - required before parsing static members
-			auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), struct_ref.default_access());
+			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -16252,7 +16242,7 @@ if (struct_type_info.getStructInfo()) {
 
 			// Set up member function context so functions know they're in a class
 			member_function_context_stack_.push_back({
-				instantiated_name,
+				StringTable::getStringView(instantiated_name),
 				struct_type_info.type_index_,
 				&struct_ref
 			});
@@ -16638,7 +16628,7 @@ if (struct_type_info.getStructInfo()) {
 							body_start,
 							{},       // initializer_list_start (not used)
 							false,    // has_initializer_list
-							instantiated_name,
+							StringTable::getStringView(instantiated_name),
 							struct_type_info.type_index_,
 							&struct_ref,
 							false,  // is_constructor
@@ -16977,7 +16967,7 @@ if (struct_type_info.getStructInfo()) {
 					pattern_name += "V";
 				}
 			}
-			std::string_view instantiated_name = StringBuilder().append(pattern_name).commit();
+			auto instantiated_name = StringTable::getOrInternStringHandle(StringBuilder().append(pattern_name));
 			
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -16986,10 +16976,10 @@ if (struct_type_info.getStructInfo()) {
 			);
 			
 			// Create struct type info early so we can add base classes
-			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 			
 			// Create StructTypeInfo for this specialization
-			auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), struct_ref.default_access());
+			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -17100,7 +17090,7 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Set up member function context
 			member_function_context_stack_.push_back({
-				instantiated_name,
+				StringTable::getStringView(instantiated_name),
 				struct_type_info.type_index_,
 				&struct_ref
 			});
@@ -17393,7 +17383,7 @@ if (struct_type_info.getStructInfo()) {
 								body_start,
 								{},
 								false,
-								instantiated_name,
+								StringTable::getStringView(instantiated_name),
 								struct_type_index,
 								&struct_ref,
 								true,  // is_constructor
@@ -17453,7 +17443,7 @@ if (struct_type_info.getStructInfo()) {
 					
 					// Create a new FunctionDeclarationNode with member function info
 					auto [member_func_node, member_func_ref] =
-						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, instantiated_name);
+						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, StringTable::getStringView(instantiated_name));
 					
 					// Copy parameters from the parsed function
 					for (const auto& param : func_decl.parameter_nodes()) {
@@ -17474,7 +17464,7 @@ if (struct_type_info.getStructInfo()) {
 							body_start,
 							{},       // initializer_list_start (not used)
 							false,    // has_initializer_list
-							instantiated_name,
+							StringTable::getStringView(instantiated_name),
 							struct_type_info.type_index_,
 							&struct_ref,
 							false,  // is_constructor
@@ -20811,7 +20801,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Copy static members
 	// Look up the specialization's StructTypeInfo to get static members
 	// (The specialization should have been parsed and its TypeInfo registered already)
-	std::string spec_name_lookup = std::string(spec_struct.name());
+	auto spec_name_lookup = spec_struct.name();
 	auto spec_type_it = gTypesByName.find(spec_name_lookup);
 	if (spec_type_it != gTypesByName.end()) {
 		const StructTypeInfo* spec_struct_info = spec_type_it->second->getStructInfo();
@@ -21019,7 +21009,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	
 	// Generate the instantiated class name first
-	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+	auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
@@ -21079,8 +21069,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// For now, if members use template parameters, we substitute them
 		
 		// Create struct type info first
-		TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
-		auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), pattern_struct.default_access());
+		TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
 		
 		// Handle base classes from the pattern
 		// Base classes need to be instantiated with concrete template arguments
@@ -21289,7 +21279,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Copy static members from the pattern
 		// Get the pattern's StructTypeInfo
-		auto pattern_type_it = gTypesByName.find(std::string(pattern_struct.name()));
+		auto pattern_type_it = gTypesByName.find(pattern_struct.name());
 		if (pattern_type_it != gTypesByName.end()) {
 			const TypeInfo* pattern_type_info = pattern_type_it->second;
 			const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
@@ -21739,7 +21729,7 @@ if (struct_type_info.getStructInfo()) {
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
 
 	// Generate the instantiated class name (again, with filled args)
-	instantiated_name = get_instantiated_class_name(template_name, template_args_to_use);
+	instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args_to_use));
 
 	// Check if we already have this instantiation (after filling defaults)
 	existing_type = gTypesByName.find(instantiated_name);
@@ -21752,10 +21742,10 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	// Create a new struct type for the instantiation (but don't create AST node for template instantiations)
-	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+	TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 	
 	// Create StructTypeInfo
-	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), AccessSpecifier::Public);
+	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
 
 	// Copy members from the template, substituting template parameters with concrete types
 	for (const auto& member_decl : class_decl.members()) {
@@ -21965,10 +21955,10 @@ if (struct_type_info.getStructInfo()) {
 	for (const auto& nested_class : class_decl.nested_classes()) {
 		if (nested_class.is<StructDeclarationNode>()) {
 			const StructDeclarationNode& nested_struct = nested_class.as<StructDeclarationNode>();
-			std::string qualified_name = std::string(instantiated_name) + "::" + std::string(nested_struct.name());
+			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
 			
 			// Create a new StructTypeInfo for the nested class
-			auto nested_struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(qualified_name), nested_struct.default_access());
+			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access());
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
@@ -22050,16 +22040,16 @@ if (struct_type_info.getStructInfo()) {
 			// Register the nested class in the type system
 			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size());
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
-if (nested_type_info.getStructInfo()) {
-	nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
-}
+			if (nested_type_info.getStructInfo()) {
+				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
+			}
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 		}
 	}
 
 	// Copy type aliases from the template with template parameter substitution
 	for (const auto& type_alias : class_decl.type_aliases()) {
-		std::string qualified_alias_name = std::string(instantiated_name) + "::" + std::string(type_alias.alias_name);
+		auto qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(type_alias.alias_name));
 		
 		// Get the aliased type and substitute template parameters
 		const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
@@ -22589,7 +22579,7 @@ if (nested_type_info.getStructInfo()) {
 					// Set up member function context so member variables (like 'value') are resolved
 					// as this->value instead of causing "missing identifier" errors
 					member_function_context_stack_.push_back({
-						instantiated_name,
+						StringTable::getStringView(instantiated_name),
 						struct_type_info.type_index_,
 						&instantiated_struct_ref
 					});
@@ -22926,7 +22916,7 @@ if (nested_type_info.getStructInfo()) {
 			delayed.body_start = deferred.body_start;
 			delayed.initializer_list_start = deferred.initializer_list_start;
 			delayed.has_initializer_list = deferred.has_initializer_list;
-			delayed.struct_name = instantiated_name;  // Use INSTANTIATED name, not template name
+			delayed.struct_name = StringTable::getStringView(instantiated_name);  // Use INSTANTIATED name, not template name
 			delayed.struct_type_index = struct_type_info.type_index_;  // Now valid!
 			delayed.struct_node = &instantiated_struct_ref;  // Use instantiated struct
 			delayed.is_constructor = deferred.is_constructor;

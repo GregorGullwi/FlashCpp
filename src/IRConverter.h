@@ -3701,16 +3701,7 @@ private:
 	}
 
 	ArithmeticOperationContext setupAndLoadArithmeticOperation(const IrInstruction& instruction, const char* operation_name) {
-		// Extract binary operation (works for both typed and legacy instructions)
-		auto bin_op_opt = extractBinaryOp(instruction);
-		if (!bin_op_opt.has_value()) {
-			// Legacy assertion fallback
-			assert(instruction.getOperandCount() == 7 &&
-				   (std::string(operation_name) + " instruction must have exactly 7 operands: result_var, LHS_type,LHS_size,LHS_val,RHS_type,RHS_size,RHS_val").c_str());
-			return {}; // Should not reach
-		}
-		
-		const BinaryOp& bin_op = bin_op_opt.value();
+		const BinaryOp& bin_op = *getTypedPayload<BinaryOp>(instruction);
 		
 		// Determine result type based on operation
 		// For comparisons, result is bool (8 bits for code generation)
@@ -10016,7 +10007,7 @@ private:
 
 	void handleShlAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left assignment");
-		auto bin_op = extractBinaryOp(instruction).value();
+		auto bin_op = *getTypedPayload<BinaryOp>(instruction);
 		
 		// Move RHS to CL register (using RHS size for the move)
 		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits);
@@ -10029,7 +10020,7 @@ private:
 
 	void handleShrAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right assignment");
-		auto bin_op = extractBinaryOp(instruction).value();
+		auto bin_op = *getTypedPayload<BinaryOp>(instruction);
 		
 		// Move RHS to CL register (using RHS size for the move)
 		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits);
@@ -12035,8 +12026,8 @@ private:
 		assert(instruction.hasTypedPayload() && "ConditionalBranch instruction must use typed payload");
 		const auto& cond_branch_op = instruction.getTypedPayload<CondBranchOp>();
 		IrValue condition_value = cond_branch_op.condition.value;
-	std::string_view then_label = StringTable::getStringView(cond_branch_op.getLabelTrue());   // Phase 4: Use helper
-	std::string_view else_label = StringTable::getStringView(cond_branch_op.getLabelFalse());  // Phase 4: Use helper
+		auto then_label = cond_branch_op.getLabelTrue();
+		auto else_label = cond_branch_op.getLabelFalse();
 		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
 

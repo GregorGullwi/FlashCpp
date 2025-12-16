@@ -845,12 +845,12 @@ public:
 	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
 	
 	// Register mapping from instantiated name to pattern name (for partial specializations)
-	void register_instantiation_pattern(std::string_view instantiated_name, std::string_view pattern_name) {
-		instantiation_to_pattern_[std::string(instantiated_name)] = std::string(pattern_name);
+	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name) {
+		instantiation_to_pattern_[instantiated_name] = pattern_name;
 	}
 	
 	// Look up which pattern was used for an instantiation
-	std::optional<std::string_view> get_instantiation_pattern(std::string_view instantiated_name) const {
+	std::optional<StringHandle> get_instantiation_pattern(StringHandle instantiated_name) const {
 		auto it = instantiation_to_pattern_.find(instantiated_name);
 		if (it != instantiation_to_pattern_.end()) {
 			return it->second;
@@ -889,7 +889,7 @@ private:
 	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
 	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
 	// This allows looking up member aliases from the correct specialization
-	std::unordered_map<std::string, std::string, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
+	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
 };
 
 // Global template registry

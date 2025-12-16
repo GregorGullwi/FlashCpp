@@ -913,7 +913,7 @@ struct EnumTypeInfo {
 struct TypeInfo
 {
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
-	TypeInfo(std::string_view name, Type type, TypeIndex idx) : name_(StringTable::getOrInternStringHandle(name)), type_(type), type_index_(idx) {}
+	TypeInfo(StringHandle name, Type type, TypeIndex idx) : name_(name), type_(type), type_index_(idx) {}
 
 	StringHandle name_;  // Pure StringHandle
 	Type type_;
@@ -976,13 +976,13 @@ extern std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(std::string name);
+TypeInfo& add_user_type(StringHandle name);
 
-TypeInfo& add_function_type(std::string name, Type /*return_type*/);
+TypeInfo& add_function_type(StringHandle name, Type /*return_type*/);
 
-TypeInfo& add_struct_type(std::string name);
+TypeInfo& add_struct_type(StringHandle name);
 
-TypeInfo& add_enum_type(std::string name);
+TypeInfo& add_enum_type(StringHandle name);
 
 void initialize_native_types();
 
@@ -1932,16 +1932,16 @@ struct StructMemberFunctionDecl {
 class FriendDeclarationNode {
 public:
 	// Friend class declaration: friend class ClassName;
-	explicit FriendDeclarationNode(FriendKind kind, std::string_view name)
-		: kind_(kind), name_(name), class_name_("") {}
+	explicit FriendDeclarationNode(FriendKind kind, StringHandle name)
+		: kind_(kind), name_(name) {}
 
 	// Friend member function declaration: friend void ClassName::functionName();
-	FriendDeclarationNode(FriendKind kind, std::string_view name, std::string_view class_name)
+	FriendDeclarationNode(FriendKind kind, StringHandle name, StringHandle class_name)
 		: kind_(kind), name_(name), class_name_(class_name) {}
 
 	FriendKind kind() const { return kind_; }
-	std::string_view name() const { return name_; }
-	std::string_view class_name() const { return class_name_; }
+	StringHandle name() const { return name_; }
+	StringHandle class_name() const { return class_name_; }
 
 	// For friend functions, store the function declaration
 	void set_function_declaration(ASTNode decl) { function_decl_ = decl; }
@@ -1949,27 +1949,27 @@ public:
 
 private:
 	FriendKind kind_;
-	std::string_view name_;           // Function or class name
-	std::string_view class_name_;     // For member functions: the class name
+	StringHandle name_;           // Function or class name
+	StringHandle class_name_;     // For member functions: the class name
 	std::optional<ASTNode> function_decl_;  // For friend functions
 };
 
 // Type alias declaration (using alias = type;)
 struct TypeAliasDecl {
-	std::string_view alias_name;  // The alias name
+	StringHandle alias_name;  // The alias name
 	ASTNode type_node;            // TypeSpecifierNode representing the aliased type
 	AccessSpecifier access;       // Access specifier (public/private/protected)
 
-	TypeAliasDecl(std::string_view name, ASTNode type, AccessSpecifier acc)
+	TypeAliasDecl(StringHandle name, ASTNode type, AccessSpecifier acc)
 		: alias_name(name), type_node(type), access(acc) {}
 };
 
 class StructDeclarationNode {
 public:
-	explicit StructDeclarationNode(std::string_view name, bool is_class = false)
+	explicit StructDeclarationNode(StringHandle name, bool is_class = false)
 		: name_(name), is_class_(is_class) {}
 
-	std::string_view name() const { return name_; }
+	StringHandle name() const { return name_; }
 	const std::vector<StructMemberDecl>& members() const { return members_; }
 	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
 	std::vector<StructMemberFunctionDecl>& member_functions() { return member_functions_; }
@@ -2043,7 +2043,7 @@ public:
 	}
 
 	// Type alias support
-	void add_type_alias(std::string_view alias_name, ASTNode type_node, AccessSpecifier access) {
+	void add_type_alias(StringHandle alias_name, ASTNode type_node, AccessSpecifier access) {
 		type_aliases_.emplace_back(alias_name, type_node, access);
 	}
 
@@ -2064,15 +2064,15 @@ public:
 	}
 
 	// Get fully qualified name (e.g., "Outer::Inner")
-	std::string qualified_name() const {
+	StringHandle qualified_name() const {
 		if (enclosing_class_) {
-			return enclosing_class_->qualified_name() + "::" + std::string(name_);
+			return StringTable::getOrInternStringHandle(StringBuilder().append(enclosing_class_->qualified_name()).append("::"sv).append(name_).commit());
 		}
-		return std::string(name_);
+		return name_;
 	}
 
 private:
-	std::string_view name_;  // Points directly into source text from lexer token
+	StringHandle name_;  // Points directly into source text from lexer token
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
@@ -2729,8 +2729,8 @@ public:
 	size_t lambda_id() const { return lambda_id_; }
 
 	// Generate a unique name for the lambda's generated function
-	std::string generate_lambda_name() const {
-		return "__lambda_" + std::to_string(lambda_id_);
+	StringHandle generate_lambda_name() const {
+		return StringTable::getOrInternStringHandle(StringBuilder().append("__lambda_"sv).append(lambda_id_));
 	}
 
 private:
