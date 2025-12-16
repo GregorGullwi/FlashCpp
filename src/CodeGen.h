@@ -1132,7 +1132,7 @@ private:
 			return std::nullopt;
 		}
 
-		std::string closure_type_name = lambda_ptr->generate_lambda_name();
+		StringHandle closure_type_name = lambda_ptr->generate_lambda_name();
 		auto type_it = gTypesByName.find(closure_type_name);
 		if (type_it == gTypesByName.end()) {
 			return std::nullopt;
@@ -1225,21 +1225,15 @@ private:
 		// Use current_struct_name_ if set (for instantiated template specializations),
 		// otherwise use the function node's parent_struct_name
 		// For nested classes, we need to use the fully qualified name from TypeInfo
-		StringHandle struct_name_for_function;
+		std::string_view struct_name_for_function;
 		if (!current_struct_name_.empty()) {
-			struct_name_for_function = StringTable::getOrInternStringHandle(StringBuilder().append(*current_struct_name_));
+			struct_name_for_function = *current_struct_name_;
 		} else if (node.is_member_function()) {
-			// Try to get the fully qualified name from TypeInfo (for nested classes)
-			auto type_it = gTypesByName.find(node.parent_struct_name());
-			if (type_it != gTypesByName.end()) {
-				struct_name_for_function = StringTable::getOrInternStringHandle(type_it->second->name());
-			} else {
-				struct_name_for_function = node.parent_struct_name();
-			}
+			struct_name_for_function = node.parent_struct_name();
 		} else {
-			struct_name_for_function = StringHandle();
+			struct_name_for_function = "";
 		}
-		func_decl_op.struct_name = struct_name_for_function;
+		func_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_function);
 		
 		// Linkage and variadic flag
 		func_decl_op.linkage = node.linkage();
@@ -1601,13 +1595,13 @@ private:
 		var_counter = TempVar(2);
 
 		// Set current function name for static local variable mangling
-		current_function_name_ = std::string(node.name());
+		current_function_name_ = std::string(StringTable::getStringView(node.name()));
 		static_local_names_.clear();
 
 		// Create constructor declaration with typed payload
 		FunctionDeclOp ctor_decl_op;
 		// For nested classes, use current_struct_name_ which contains the fully qualified name
-		std::string_view struct_name_for_ctor = current_struct_name_.empty() ? node.struct_name() : current_struct_name_;
+		std::string_view struct_name_for_ctor = current_struct_name_.empty() ? StringTable::getStringView(node.struct_name()) : StringTable::getStringView(*current_struct_name_);
 		
 		// Extract just the last component of the class name for the constructor function name
 		// For "Outer::Inner", we want "Inner" as the function name
@@ -2124,8 +2118,8 @@ private:
 
 	// Create destructor declaration with typed payload
 	FunctionDeclOp dtor_decl_op;
-	dtor_decl_op.function_name = std::string("~") + std::string(node.struct_name());  // Destructor name
-	dtor_decl_op.struct_name = StringTable::getOrInternStringHandle(node.struct_name());  // Struct name for member function
+	dtor_decl_op.function_name = StringTable::getOrInternStringHandle(std::string("~") + std::string(StringTable::getStringView(node.struct_name())));  // Destructor name
+	dtor_decl_op.struct_name = StringTable::getOrInternStringHandle(node.struct_name());
 	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
 	dtor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
 	dtor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
@@ -3306,8 +3300,7 @@ private:
 
 	void visitGotoStatementNode(const GotoStatementNode& node) {
 		// Generate Branch IR instruction (unconditional jump) with the target label name
-		std::string label_name(node.label_name());
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = label_name}, node.goto_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(node.label_name())}, node.goto_token()));
 	}
 
 	void visitLabelStatementNode(const LabelStatementNode& node) {
@@ -3335,7 +3328,7 @@ private:
 		std::string_view end_label = end_sb.commit();
 
 		// Emit TryBegin marker
-		ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = handlers_label}, node.try_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
 
 		// Visit try block
 		visit(node.try_block());
@@ -3344,7 +3337,7 @@ private:
 		ir_.addInstruction(IrOpcode::TryEnd, {}, node.try_token());
 
 		// Jump to end after successful try block execution
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, node.try_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 
 		// Emit label for exception handlers
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
@@ -3434,7 +3427,7 @@ private:
 			symbol_table.exit_scope();
 
 			// Jump to end after catch block
-			ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, catch_clause.catch_token()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, catch_clause.catch_token()));
 
 			// Emit catch end label
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(catch_end_label)}, catch_clause.catch_token()));
@@ -3973,7 +3966,7 @@ private:
 														addr_op.result = addr_var;
 														addr_op.pointee_type = arg_type.type();
 														addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
-														addr_op.operand = identifier.name();
+														addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 														ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 														
 														// Create TypedValue with the address
@@ -4086,7 +4079,7 @@ private:
 									member_store.value.type = member.type;
 									member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 									member_store.value.value = member_value;
-									member_store.object = decl.identifier_token().value();
+									member_store.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 									member_store.member_name = member.getName();
 									member_store.offset = static_cast<int>(member.offset);
 									member_store.is_reference = member.is_reference;
@@ -4101,7 +4094,7 @@ private:
 							if (struct_info.hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
-									std::string(type_info.name())
+									std::string(StringTable::getStringView(type_info.name()))
 								);
 							}
 						}
@@ -4232,7 +4225,7 @@ private:
 					ArrayStoreOp store_op;
 					store_op.element_type = type_node.type();
 					store_op.element_size_in_bits = size_in_bits;
-					store_op.array = std::string_view(decl.identifier_token().value());
+					store_op.array = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 					store_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
 					store_op.value = toTypedValue(init_operands);
 					store_op.member_offset = 0;
@@ -4363,7 +4356,7 @@ private:
 												addr_op.result = addr_var;
 												addr_op.pointee_type = arg_type.type();
 												addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
-												addr_op.operand = identifier.name();
+												addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 												ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 												
 												// Create TypedValue with the address
@@ -8134,7 +8127,7 @@ private:
 					addr_op.result = addr_var;
 					addr_op.pointee_type = type_node.type();
 					addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
-					addr_op.operand = identifier.name();
+					addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 					// Add the pointer (address) to the function call operands
@@ -8158,7 +8151,7 @@ private:
 						addr_op.result = addr_var;
 						addr_op.pointee_type = type_node.type();
 						addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
-						addr_op.operand = identifier.name();
+						addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 						// Pass the address
@@ -9270,7 +9263,7 @@ private:
 								addr_op.result = addr_var;
 								addr_op.pointee_type = type_node.type();
 								addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
-								addr_op.operand = identifier.name();
+								addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 						
 								// Pass the address with pointer size
@@ -9314,7 +9307,7 @@ private:
 								addr_op.result = addr_var;
 								addr_op.pointee_type = type_node.type();
 								addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
-								addr_op.operand = identifier.name();
+								addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 						
 								// Pass the address with pointer size
@@ -13075,7 +13068,7 @@ private:
 							addr_op.result = addr_var;
 							addr_op.pointee_type = arg_type.type();
 							addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
-							addr_op.operand = identifier.name();
+							addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constructorCallNode.called_from()));
 							
 							// Create TypedValue with the address
