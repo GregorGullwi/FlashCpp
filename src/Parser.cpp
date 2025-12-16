@@ -6288,7 +6288,7 @@ if (type_info.getStructInfo()) {
 	type_info.type_size_ = type_info.getStructInfo()->total_size;
 }
 			
-			gTypesByName.emplace(type_info.name(), &type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 			FLASH_LOG(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", type_name_str, type_it->second);
 		}
 	}
@@ -15750,7 +15750,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name(), &type_info);
+				gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
 		}
@@ -20195,8 +20195,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				
 				// Check for placeholder/unknown types that indicate failed resolution
 				if (StringTable::getStringView(type_info.name()).find("_unknown") != std::string::npos) {
-					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(StringTable::getStringView(type_info.name())));
-					return std::nullopt;  // Substitution failure
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
+					return std::nullptr;  // Substitution failure
 				}
 			}
 		}

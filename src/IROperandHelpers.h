@@ -318,8 +318,8 @@ inline bool parseStringLiteralOp(const IrInstruction& inst, StringLiteralOp& out
 	if (!inst.isOperandType<TempVar>(0)) return false;
 	out.result = inst.getOperandAs<TempVar>(0);
 
-	if (!inst.isOperandType<std::string_view>(1)) return false;
-	out.content = inst.getOperandAs<std::string_view>(1);
+	if (!inst.isOperandType<StringHandle>(1)) return false;
+	out.content = StringTable::getStringView(inst.getOperandAs<StringHandle>(1));
 
 	return true;
 }
