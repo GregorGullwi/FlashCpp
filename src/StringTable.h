@@ -291,3 +291,8 @@ namespace std {
 		}
 	};
 }
+
+// StringBuilder extension for StringHandle support (defined here to avoid circular dependency)
+inline StringBuilder& StringBuilder::append(StringHandle sh) {
+	return append(StringTable::getStringView(sh));
+}

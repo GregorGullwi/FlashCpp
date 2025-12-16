@@ -2476,7 +2476,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 		alias_type_info.type_index_ = type_spec.type_index();
 		alias_type_info.type_size_ = type_spec.size_in_bits();
-		gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 		
 		return ParseResult::success();
 	}
@@ -2718,7 +2718,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
-			gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			return ParseResult::success();
 		}
@@ -2880,7 +2880,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
-			gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			return ParseResult::success();
 		}
@@ -2942,7 +2942,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
-	gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 	
 	return ParseResult::success();
 }
@@ -5744,7 +5744,7 @@ ParseResult Parser::parse_typedef_declaration()
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
-	gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
 	// Update the type_node with the modified type_spec (with pointers)
 	type_node = emplace_node<TypeSpecifierNode>(type_spec);
@@ -6104,7 +6104,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
-					gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 				}
 
 				// Return success (no AST node needed for type aliases)
@@ -6288,7 +6288,7 @@ if (type_info.getStructInfo()) {
 	type_info.type_size_ = type_info.getStructInfo()->total_size;
 }
 			
-			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			FLASH_LOG(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", type_name_str, type_it->second);
 		}
 	}
@@ -15750,7 +15750,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
 		}
@@ -18842,7 +18842,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -18916,7 +18916,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -19657,7 +19657,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
-			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
@@ -20155,7 +20155,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					type_info.type_size_ = 0;  // Will be resolved later
 				}
 			}
-			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);
 		}
 		
@@ -20223,7 +20223,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					type_info.type_size_ = 0;  // Will be resolved later
 				}
 			}
-			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope2.addParameter(&type_info);
 		}
 		
@@ -20382,7 +20382,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
-			gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
@@ -20749,7 +20749,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			);
 			alias_type_info.type_index_ = alias_type_spec.type_index();
 			alias_type_info.type_size_ = alias_type_spec.size_in_bits();
-			gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias: ", qualified_alias_name, 
 				" -> type=", static_cast<int>(alias_type_spec.type()), 
@@ -21554,7 +21554,7 @@ if (struct_type_info.getStructInfo()) {
 			);
 			alias_type_info.type_index_ = substituted_type_index;
 			alias_type_info.type_size_ = substituted_size;
-			gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name, 
 				" -> type=", static_cast<int>(substituted_type), 
@@ -22094,7 +22094,7 @@ if (nested_type_info.getStructInfo()) {
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, gTypeInfo.size());
 		alias_type_info.type_index_ = substituted_type_index;
 		alias_type_info.type_size_ = substituted_size;
-		gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
+		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 	}
 
 	// Finalize the struct layout
@@ -23225,7 +23225,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
-		gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -23598,7 +23598,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
 		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
-		gTypesByName.emplace(std::string(StringTable::getStringView(type_info.name())), &type_info);
+		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -23929,7 +23929,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 		);
 
 		// Register in global type lookup
-		gTypesByName[std::string(param_name)] = &type_info;
+		gTypesByName[StringTable::getOrInternStringHandle(param_name)] = &type_info;
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 

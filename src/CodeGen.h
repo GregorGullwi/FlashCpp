@@ -353,9 +353,9 @@ public:
 			if (!type_info->isStruct()) {
 				continue;
 			}
-			
 			// Skip pattern structs - they're templates and shouldn't generate code
-			if (type_name.find("_pattern_") != std::string::npos) {
+			std::string_view type_name_view = StringTable::getStringView(type_name);
+			if (type_name_view.find("_pattern_") != std::string::npos) {
 				continue;
 			}
 			
@@ -542,7 +542,8 @@ public:
 			}
 			
 			// Skip pattern structs
-			if (type_name.find("_pattern_") != std::string::npos) {
+			std::string_view type_name_view2 = StringTable::getStringView(type_name);
+			if (type_name_view2.find("_pattern_") != std::string::npos) {
 				continue;
 			}
 			
@@ -580,8 +581,8 @@ public:
 				// Use the pattern from visitConstructorDeclarationNode
 				// Create function declaration for constructor
 				FunctionDeclOp ctor_decl_op;
-				ctor_decl_op.function_name = std::string(type_info->name());
-				ctor_decl_op.struct_name = std::string(type_info->name());
+				ctor_decl_op.function_name = type_info->name();
+				ctor_decl_op.struct_name = type_info->name();
 				ctor_decl_op.return_type = Type::Void;
 				ctor_decl_op.return_size_in_bits = 0;
 				ctor_decl_op.return_pointer_depth = 0;
@@ -591,13 +592,13 @@ public:
 				// Generate mangled name for default constructor
 				TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 				std::vector<TypeSpecifierNode> empty_params;  // Explicit type to avoid ambiguity
-				ctor_decl_op.mangled_name = generateMangledNameForCall(
-					type_info->name(),
+				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
+					StringTable::getStringView(type_info->name()),
 					void_type,
 					empty_params,  // no parameters
 					false,  // not variadic
-					type_info->name()  // parent class name
-				);
+					StringTable::getStringView(type_info->name())  // parent class name
+				));
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
 				
@@ -610,8 +611,8 @@ public:
 						const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
 						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
 							ConstructorCallOp call_op;
-							call_op.struct_name = std::string(base_type_it->second->name());
-							call_op.object = std::string_view("this");
+							call_op.struct_name = base_type_it->second->name();
+							call_op.object = StringTable::getOrInternStringHandle("this");
 							// No arguments for default constructor
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
 						}
@@ -649,7 +650,7 @@ public:
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
-							member_store.object = std::string_view("this");
+							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
@@ -1060,7 +1061,7 @@ private:
 		load_op.result.value = copy_this_temp;
 		load_op.result.type = Type::Struct;
 		load_op.result.size_in_bits = static_cast<int>(copy_this_member->size * 8);
-		load_op.object = std::string_view("this");  // Lambda's this (the closure)
+		load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 		load_op.member_name = StringTable::getOrInternStringHandle("__copy_this");
 		load_op.offset = static_cast<int>(copy_this_member->offset);
 		load_op.is_reference = false;
@@ -1083,7 +1084,7 @@ private:
 		load_op.result.value = this_ptr;
 		load_op.result.type = Type::Void;
 		load_op.result.size_in_bits = 64;
-		load_op.object = std::string_view("this");  // Lambda's this (the closure)
+		load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 		load_op.member_name = StringTable::getOrInternStringHandle("__this");
 		load_op.offset = -1;  // Will be resolved during IR conversion
 		load_op.is_reference = false;
@@ -1369,7 +1370,7 @@ private:
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
-							member_store.object = std::string_view("this");
+							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
@@ -1535,7 +1536,7 @@ private:
 							// This ensures consistency with generateStaticMemberDeclarations() which uses
 							// the type name from gTypesByName iterator (important for template instantiations)
 							StringBuilder qualified_name_sb;
-							qualified_name_sb.append(type_info->name()).append("::").append(StringTable::getStringView(static_member.getName()));
+							qualified_name_sb.append(StringTable::getStringView(type_info->name())).append("::").append(StringTable::getStringView(static_member.getName()));
 							std::string qualified_name(qualified_name_sb.commit());
 							
 							// Skip if already emitted
@@ -1620,8 +1621,8 @@ private:
 			parent_class_name = struct_name_for_ctor;  // Not nested, use as-is
 		}
 		
-		ctor_decl_op.function_name = std::string(ctor_function_name);  // Constructor name (last component)
-		ctor_decl_op.struct_name = std::string(struct_name_for_ctor);  // Struct name for member function (fully qualified)
+		ctor_decl_op.function_name = StringTable::getOrInternStringHandle(ctor_function_name);  // Constructor name (last component)
+		ctor_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);  // Struct name for member function (fully qualified)
 		ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
 		ctor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
 		ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
@@ -1694,8 +1695,8 @@ private:
 			
 			// Build constructor call: StructName::StructName(this, args...)
 			ConstructorCallOp ctor_op;
-			ctor_op.struct_name = std::string(node.struct_name());
-			ctor_op.object = std::string_view("this");
+			ctor_op.struct_name = StringTable::getOrInternStringHandle(node.struct_name());
+			ctor_op.object = StringTable::getOrInternStringHandle("this");
 
 			// Add constructor arguments from delegating initializer
 			for (const auto& arg : delegating_init.arguments) {
@@ -1748,7 +1749,7 @@ private:
 					// Build constructor call: Base::Base(this, args...)
 					ConstructorCallOp ctor_op;
 					ctor_op.struct_name = base_type_info.name();
-					ctor_op.object = std::string_view("this");
+					ctor_op.object = StringTable::getOrInternStringHandle("this");
 
 					// Add constructor arguments from base initializer
 					if (base_init) {
@@ -1788,7 +1789,7 @@ private:
 					
 					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
 					MemberStoreOp vptr_store;
-					vptr_store.object = std::string_view("this");
+					vptr_store.object = StringTable::getOrInternStringHandle("this");
 					vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");  // Virtual pointer (synthetic member)
 					vptr_store.offset = 0;  // vptr is always at offset 0
 					vptr_store.struct_type_info = struct_type_info;  // Use TypeInfo pointer
@@ -1856,7 +1857,7 @@ private:
 							// For move constructors, pass 'other' as the move source
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = std::string(base_type_info.name());
-							ctor_op.object = std::string_view("this");  // 'this' pointer (base subobject is at offset 0 for now)
+							ctor_op.object = StringTable::getOrInternStringHandle("this");  // 'this' pointer (base subobject is at offset 0 for now)
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 							TypedValue other_arg;
@@ -1958,7 +1959,7 @@ private:
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
-							member_store.object = std::string_view("this");
+							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
@@ -2081,7 +2082,7 @@ private:
 						member_store.value.type = member.type;
 						member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 						member_store.value.value = member_value;
-						member_store.object = std::string_view("this");
+						member_store.object = StringTable::getOrInternStringHandle("this");
 						member_store.member_name = member.getName();
 						member_store.offset = static_cast<int>(member.offset);
 						member_store.is_reference = member.is_reference;
@@ -2124,7 +2125,7 @@ private:
 	// Create destructor declaration with typed payload
 	FunctionDeclOp dtor_decl_op;
 	dtor_decl_op.function_name = std::string("~") + std::string(node.struct_name());  // Destructor name
-	dtor_decl_op.struct_name = std::string(node.struct_name());  // Struct name for member function
+	dtor_decl_op.struct_name = StringTable::getOrInternStringHandle(node.struct_name());  // Struct name for member function
 	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
 	dtor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
 	dtor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
@@ -4657,7 +4658,7 @@ private:
 							member_load.result.value = ptr_temp;
 							member_load.result.type = member->type;  // Base type (e.g., Int)
 							member_load.result.size_in_bits = 64;  // pointer size in bits
-							member_load.object = std::string_view("this");
+							member_load.object = StringTable::getOrInternStringHandle("this");
 							member_load.member_name = member->getName();
 							member_load.offset = static_cast<int>(member->offset);
 							member_load.is_reference = member->is_reference;
@@ -4695,7 +4696,7 @@ private:
 							member_load.result.value = result_temp;
 							member_load.result.type = member->type;
 							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-							member_load.object = std::string_view("this");  // implicit this pointer
+							member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 							member_load.member_name = member->getName();
 							member_load.offset = static_cast<int>(member->offset);
 							member_load.is_reference = member->is_reference;
@@ -4774,7 +4775,7 @@ private:
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
 						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-						member_load.object = std::string_view("this");  // implicit this pointer
+						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(member->offset);
 						member_load.is_reference = member->is_reference;
@@ -6512,7 +6513,7 @@ private:
 						member_store.value.type = member->type;
 						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 						member_store.value.value = member_value;
-						member_store.object = std::string_view("this");  // implicit this pointer
+						member_store.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_store.member_name = StringTable::getOrInternStringHandle(lhs_name);
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.is_reference = member->is_reference;
@@ -6564,7 +6565,7 @@ private:
 									member_load.result.value = ptr_temp;
 									member_load.result.type = member->type;
 									member_load.result.size_in_bits = 64;  // pointer size
-									member_load.object = std::string_view("this");
+									member_load.object = StringTable::getOrInternStringHandle("this");
 									member_load.member_name = member->getName();
 									member_load.offset = static_cast<int>(member->offset);
 									member_load.is_reference = member->is_reference;
@@ -8927,8 +8928,8 @@ private:
 						if (template_func_decl.has_template_body_position()) {
 							TemplateInstantiationInfo inst_info;
 							inst_info.qualified_template_name = qualified_template_name;
-							inst_info.mangled_name = std::string(mangled_func_name);
-							inst_info.struct_name = std::string(StringTable::getStringView(struct_info->getName()));
+							inst_info.mangled_name = StringTable::getOrInternStringHandle(mangled_func_name);
+							inst_info.struct_name = struct_info->getName();
 							for (const auto& arg_type : arg_types) {
 								inst_info.template_args.push_back(arg_type);
 							}
@@ -12101,7 +12102,7 @@ private:
 									member_load.result.value = addr_temp;
 									member_load.result.type = orig_type.type();  // Use original type (pointer semantics handled by IR converter)
 									member_load.result.size_in_bits = 64;  // Pointer size
-									member_load.object = std::string_view("this");  // "this" is a string literal
+									member_load.object = StringTable::getOrInternStringHandle("this");  // "this" is a string literal
 									member_load.member_name = StringTable::getOrInternStringHandle(var_name);  // Intern to StringHandle
 									
 									// Look up the offset from the enclosing lambda's struct
@@ -12167,7 +12168,7 @@ private:
 							member_load.result.value = loaded_value;
 							member_load.result.type = member->type;
 							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-							member_load.object = std::string_view("this");  // "this" is a string literal
+							member_load.object = StringTable::getOrInternStringHandle("this");  // "this" is a string literal
 							member_load.member_name = StringTable::getOrInternStringHandle(var_name);  // Intern to StringHandle
 							
 							// Look up the offset from the enclosing lambda's struct
@@ -12295,7 +12296,7 @@ private:
 		// Generate function declaration for operator()
 		FunctionDeclOp func_decl_op;
 		func_decl_op.function_name = std::string("operator()");  // Phase 4: Variant needs explicit type
-		func_decl_op.struct_name = std::string(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
+		func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
 		func_decl_op.return_type = lambda_info.return_type;
 		func_decl_op.return_size_in_bits = lambda_info.return_size;
 		func_decl_op.return_pointer_depth = 0;  // pointer depth

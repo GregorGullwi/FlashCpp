@@ -961,14 +961,18 @@ struct StringHash {
 	using is_transparent = void;
 	size_t operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
 	size_t operator()(const std::string& s) const { return std::hash<std::string>{}(s); }
+	size_t operator()(StringHandle sh) const { return std::hash<uint32_t>{}(sh.handle); }
 };
 
 struct StringEqual {
 	using is_transparent = void;
 	bool operator()(std::string_view lhs, std::string_view rhs) const { return lhs == rhs; }
+	bool operator()(StringHandle lhs, StringHandle rhs) const { return lhs.handle == rhs.handle; }
+	bool operator()(StringHandle lhs, std::string_view rhs) const { return StringTable::getStringView(lhs) == rhs; }
+	bool operator()(std::string_view lhs, StringHandle rhs) const { return lhs == StringTable::getStringView(rhs); }
 };
 
-extern std::unordered_map<std::string, const TypeInfo*, StringHash, StringEqual> gTypesByName;
+extern std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 

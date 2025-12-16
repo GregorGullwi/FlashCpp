@@ -6982,7 +6982,7 @@ private:
 					
 					auto src_it = current_scope.variables.find(rvalue_var_name_handle);
 					if (src_it != current_scope.variables.end()) {
-						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", rvalue_var_name, "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
+						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", StringTable::getStringView(rvalue_var_name_handle), "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
 						// Check if source is a reference
 						auto src_ref_it = reference_stack_info_.find(src_it->second.offset);
 						if (src_ref_it != reference_stack_info_.end()) {
@@ -7089,7 +7089,7 @@ private:
 					StringHandle rvalue_var_name_handle = std::get<StringHandle>(init.value);
 					auto src_it = current_scope.variables.find(rvalue_var_name_handle);
 					if (src_it == current_scope.variables.end()) {
-						FLASH_LOG(Codegen, Error, "Variable '", rvalue_var_name, "' not found in symbol table");
+						FLASH_LOG(Codegen, Error, "Variable '", StringTable::getStringView(rvalue_var_name_handle), "' not found in symbol table");
 						FLASH_LOG(Codegen, Error, "Available variables in current scope:");
 						for (const auto& [name, var_info] : current_scope.variables) {
 							// Phase 5: Convert StringHandle to string_view for logging
@@ -7226,9 +7226,12 @@ private:
 		// otherwise use function_name. This is important for nested lambdas where multiple
 		// operator() functions would otherwise have the same name.
 		// Phase 4: Use helpers
-		std::string_view mangled = func_decl.getMangledName();
-		std::string_view func_name = mangled.empty() ? func_decl.getFunctionName() : mangled;
-		std::string_view struct_name = func_decl.getStructName();
+		StringHandle mangled_handle = func_decl.getMangledName();
+		StringHandle func_name_handle = func_decl.getFunctionName();
+		StringHandle struct_name_handle = func_decl.getStructName();
+		std::string_view mangled = StringTable::getStringView(mangled_handle);
+		std::string_view func_name = mangled_handle.handle != 0 ? mangled : StringTable::getStringView(func_name_handle);
+		std::string_view struct_name = StringTable::getStringView(struct_name_handle);
 		
 		// Construct return type
 		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits));
@@ -7248,7 +7251,7 @@ private:
 		
 		Linkage linkage = func_decl.linkage;
 		bool is_variadic = func_decl.is_variadic;
-		std::string_view mangled_name = func_decl.getMangledName();  // Phase 4: Use helper
+		std::string_view mangled_name = StringTable::getStringView(func_decl.getMangledName());  // Phase 4: Use helper
 
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
@@ -7490,9 +7493,9 @@ private:
 					const StructMemberFunction* member_func = nullptr;
 					// Use the unmangled function name for lookup (member_functions store unmangled names)
 					// Phase 4: Use helper
-					std::string_view unmangled_func_name = func_decl.getFunctionName();
+					StringHandle unmangled_func_name_handle = func_decl.getFunctionName();
 					for (const auto& func : struct_info->member_functions) {
-						if (func.getName() == StringTable::getOrInternStringHandle(unmangled_func_name)) {
+						if (func.getName() == unmangled_func_name_handle) {
 							member_func = &func;
 							break;
 						}
@@ -7736,7 +7739,7 @@ private:
 				}
 
 				// Phase 4: Use helper to get param name for map key
-				variable_scopes.back().variables[StringTable::getOrInternStringHandle(param.getName())].offset = offset;
+				variable_scopes.back().variables[param.getName()].offset = offset;
 
 				// Track reference parameters
 				if (param.is_reference) {
@@ -7763,7 +7766,7 @@ private:
 					}
 				}
 				// Phase 4: Use helper to get param name
-				std::string param_name_str(param.getName());
+				std::string param_name_str(StringTable::getStringView(param.getName()));
 				writer.add_function_parameter(param_name_str, param_type_index, offset);
 
 				// Check if parameter fits in a register using separate int/float counters
@@ -10571,7 +10574,7 @@ private:
 		// Label instruction: mark a position in code for jumps
 			assert(instruction.hasTypedPayload() && "Label instruction must use typed payload");
 		const auto& label_op = instruction.getTypedPayload<LabelOp>();
-		std::string_view label_name = label_op.getLabelName();  // Phase 4: Use helper
+		std::string_view label_name = StringTable::getStringView(label_op.getLabelName());  // Phase 4: Use helper
 
 		// Store the current code offset for this label
 		uint32_t label_offset = static_cast<uint32_t>(textSectionData.size());
@@ -10595,7 +10598,7 @@ private:
 	// Unconditional branch: jmp label
 	assert(instruction.hasTypedPayload() && "Branch instruction must use typed payload");
 	const auto& branch_op = instruction.getTypedPayload<BranchOp>();
-	std::string_view target_label = branch_op.getTargetLabel();  // Phase 4: Use helper
+	std::string_view target_label = StringTable::getStringView(branch_op.getTargetLabel());  // Phase 4: Use helper
 		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
 
@@ -11404,7 +11407,7 @@ private:
 			literal_double_value = std::get<double>(op.value.value);
 		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
 			is_variable = true;
-			variable_name = std::string(std::get<StringHandle>(op.value.value));
+			variable_name = std::string(StringTable::getStringView(std::get<StringHandle>(op.value.value)));
 		} else {
 			assert(false && "Value must be TempVar, unsigned long long, double, or string_view");
 			return;
@@ -11689,7 +11692,7 @@ private:
 				// Taking address of a named variable
 				std::string_view operand_str;
 				if (std::holds_alternative<StringHandle>(op.operand)) {
-					operand_str = std::get<StringHandle>(op.operand);
+					operand_str = StringTable::getStringView(std::get<StringHandle>(op.operand));
 				} else if (std::holds_alternative<std::string>(op.operand)) {
 					operand_str = std::get<std::string>(op.operand);
 				} else {
@@ -12033,7 +12036,7 @@ private:
 		const auto& cond_branch_op = instruction.getTypedPayload<CondBranchOp>();
 		IrValue condition_value = cond_branch_op.condition.value;
 	std::string_view then_label = cond_branch_op.getLabelTrue();   // Phase 4: Use helper
-	std::string_view else_label = cond_branch_op.getLabelFalse();  // Phase 4: Use helper
+	std::string_view else_label = StringTable::getStringView(cond_branch_op.getLabelFalse());  // Phase 4: Use helper
 		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
 
@@ -12144,7 +12147,7 @@ private:
 		// Add REL32 relocation for the function address (RIP-relative)
 		// All FunctionAddress instructions should now have the mangled name pre-computed
 		// Phase 4: Use helper
-		std::string_view mangled = op.getMangledName();
+		std::string_view mangled = StringTable::getStringView(op.getMangledName());
 		assert(!mangled.empty() && "FunctionAddress instruction missing mangled_name");
 		writer.add_relocation(reloc_position, mangled, IMAGE_REL_AMD64_REL32);
 

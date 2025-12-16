@@ -137,6 +137,9 @@ public:
         return *this;
     }
 
+    // Forward declaration - defined in StringTable.h to avoid circular dependency
+    StringBuilder& append(struct StringHandle sh);
+
     StringBuilder& append(char c) {
         assert((gCurrentStringBuilder == nullptr || gCurrentStringBuilder == this) && "More than one StringBuilder in the same scope detected. Call .commit() or .reset() before you start with the next string!");
         gCurrentStringBuilder = this;
