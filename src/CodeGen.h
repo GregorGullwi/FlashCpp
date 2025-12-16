@@ -2137,13 +2137,13 @@ private:
 	std::vector<TypeSpecifierNode> empty_params;
 	std::string dtor_name = std::string("~") + std::string(node.struct_name());
 	TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-	dtor_decl_op.mangled_name = generateMangledNameForCall(
+	dtor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
 		dtor_name,
 		void_type,
 		empty_params,
 		false,  // not variadic
 		std::string(node.struct_name())  // struct name for member function mangling
-	);
+	));
 
 	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 	// We don't add it here to avoid duplication
@@ -2202,7 +2202,7 @@ private:
 					// Build destructor call: Base::~Base(this)
 					DestructorCallOp dtor_op;
 					dtor_op.struct_name = base_type_info.name();
-					dtor_op.object = std::string("this");
+					dtor_op.object = StringTable::getOrInternStringHandle("this");
 
 					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), node.name_token()));
 				}
@@ -2455,13 +2455,13 @@ private:
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
-		cond_branch.label_true = then_label;
-		cond_branch.label_false = node.has_else() ? else_label : end_label;
+		cond_branch.label_true = StringTable::getOrInternStringHandle(then_label);
+		cond_branch.label_false = StringTable::getOrInternStringHandle(node.has_else() ? else_label : end_label);
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Then block
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = then_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(then_label)}, Token()));
 
 		// Visit then statement
 		auto then_stmt = node.get_then_statement();
@@ -2476,13 +2476,13 @@ private:
 		// Branch to end after then block (skip else)
 		if (node.has_else()) {
 			BranchOp branch_to_end;
-			branch_to_end.target_label = end_label;
+			branch_to_end.target_label = StringTable::getOrInternStringHandle(end_label);
 			ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_end), Token()));
 		}
 
 		// Else block (if present)
 		if (node.has_else()) {
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = else_label}, Token()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(else_label)}, Token()));
 
 			auto else_stmt = node.get_else_statement();
 			if (else_stmt.has_value()) {
@@ -2497,7 +2497,7 @@ private:
 		}
 
 		// End label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, Token()));
 	}
 
 	void visitForStatementNode(const ForStatementNode& node) {
@@ -2539,7 +2539,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
 
 		// Evaluate condition (if present, otherwise infinite loop)
 		if (node.has_condition()) {
@@ -2547,14 +2547,14 @@ private:
 
 			// Generate conditional branch: if true goto body, else goto end
 			CondBranchOp cond_branch;
-			cond_branch.label_true = loop_body_label;
-			cond_branch.label_false = loop_end_label;
+			cond_branch.label_true = StringTable::getOrInternStringHandle(loop_body_label);
+			cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
 			cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 		}
 
 		// Loop body label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_body_label)}, Token()));
 
 		// Visit loop body
 		// Always call visit() to let visitBlockNode handle scope creation if needed
@@ -2562,7 +2562,7 @@ private:
 		visit(body_stmt);
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_increment_label)}, Token()));
 
 		// Execute update/increment expression (if present)
 		if (node.has_update()) {
@@ -2573,7 +2573,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -2617,13 +2617,13 @@ private:
 
 		// Generate conditional branch: if true goto body, else goto end
 		CondBranchOp cond_branch;
-		cond_branch.label_true = loop_body_label;
-		cond_branch.label_false = loop_end_label;
+		cond_branch.label_true = StringTable::getOrInternStringHandle(loop_body_label);
+		cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_body_label)}, Token()));
 
 		// Visit loop body
 		// Always call visit() to let visitBlockNode handle scope creation if needed
@@ -2636,7 +2636,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_start), Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -2667,7 +2667,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: execute body first (do-while always executes at least once)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
 
 		// Visit loop body
 		// Always call visit() to let visitBlockNode handle scope creation if needed
@@ -2675,20 +2675,20 @@ private:
 		visit(body_stmt);
 
 		// Condition check label (for continue statements)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_condition_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_condition_label)}, Token()));
 
 		// Evaluate condition
 		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
 		// Generate conditional branch: if true goto start, else goto end
 		CondBranchOp cond_branch;
-		cond_branch.label_true = loop_start_label;
-		cond_branch.label_false = loop_end_label;
+		cond_branch.label_true = StringTable::getOrInternStringHandle(loop_start_label);
+		cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -2766,8 +2766,8 @@ private:
 			std::string_view next_check_label = next_check_sb.commit();
 
 			CondBranchOp cond_branch;
-			cond_branch.label_true = case_label;
-			cond_branch.label_false = next_check_label;
+			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);
+			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label);
 			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_result};
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
@@ -2799,7 +2799,7 @@ private:
 			std::string_view case_label = case_sb.commit();
 
 			// Case label
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = case_label}, Token()));				// Execute case statements
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(case_label)}, Token()));				// Execute case statements
 				if (case_node.has_statement()) {
 					auto case_stmt = case_node.get_statement();
 					if (case_stmt->is<BlockNode>()) {
@@ -2817,7 +2817,7 @@ private:
 			const DefaultLabelNode& default_node = stmt.as<DefaultLabelNode>();
 
 			// Default label
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = default_label}, Token()));				// Execute default statements
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(default_label)}, Token()));				// Execute default statements
 				if (default_node.has_statement()) {
 					auto default_stmt = default_node.get_statement();
 					if (default_stmt->is<BlockNode>()) {
@@ -2832,7 +2832,7 @@ private:
 		});
 
 		// Switch end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = switch_end_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(switch_end_label)}, Token()));
 
 		// Mark switch end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -3020,7 +3020,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition (__begin != __end)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
 
 		// Create condition: __begin != __end
 		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -3032,13 +3032,13 @@ private:
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
-		cond_branch.label_true = loop_body_label;
-		cond_branch.label_false = loop_end_label;
+		cond_branch.label_true = StringTable::getOrInternStringHandle(loop_body_label);
+		cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_body_label)}, Token()));
 
 		// Declare and initialize the loop variable
 		// For references (T& x or const T& x), we need the pointer value directly
@@ -3090,7 +3090,7 @@ private:
 		}
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_increment_label)}, Token()));
 
 		// Increment pointer: ++__begin
 		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -3103,7 +3103,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -3212,7 +3212,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition (__begin != __end)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
 
 		// Create condition: __begin != __end
 		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -3224,13 +3224,13 @@ private:
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
-		cond_branch.label_true = loop_body_label;
-		cond_branch.label_false = loop_end_label;
+		cond_branch.label_true = StringTable::getOrInternStringHandle(loop_body_label);
+		cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_body_label)}, Token()));
 
 		// Declare and initialize the loop variable
 		// For references (T& x or const T& x), we need the iterator value directly
@@ -3275,7 +3275,7 @@ private:
 		}
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_increment_label)}, Token()));
 
 		// Increment iterator: ++__begin
 		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -3288,7 +3288,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -3313,7 +3313,7 @@ private:
 	void visitLabelStatementNode(const LabelStatementNode& node) {
 		// Generate Label IR instruction with the label name
 		std::string label_name(node.label_name());
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label_name}, node.label_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(label_name)}, node.label_token()));
 	}
 
 	void visitTryStatementNode(const TryStatementNode& node) {
@@ -3347,7 +3347,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, node.try_token()));
 
 		// Emit label for exception handlers
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = handlers_label}, node.try_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
 
 		// Visit catch clauses
 		for (size_t catch_index = 0; catch_index < node.catch_clauses().size(); ++catch_index) {
@@ -3437,11 +3437,11 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, catch_clause.catch_token()));
 
 			// Emit catch end label
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = catch_end_label}, catch_clause.catch_token()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(catch_end_label)}, catch_clause.catch_token()));
 		}
 
 		// Emit end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, node.try_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 	}
 
 	void visitThrowStatementNode(const ThrowStatementNode& node) {
@@ -5918,13 +5918,13 @@ private:
 	
 		// Generate conditional branch: if condition true goto true_label, else goto false_label
 		CondBranchOp cond_branch;
-		cond_branch.label_true = true_label;
-		cond_branch.label_false = false_label;
+		cond_branch.label_true = StringTable::getOrInternStringHandle(true_label);
+		cond_branch.label_false = StringTable::getOrInternStringHandle(false_label);
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), ternaryNode.get_token()));
 
 		// True branch label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(true_label)}, ternaryNode.get_token()));
 		
 		// Evaluate true expression
 		auto true_operands = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
@@ -5947,7 +5947,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, ternaryNode.get_token()));
 
 		// False branch label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = false_label}, ternaryNode.get_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(false_label)}, ternaryNode.get_token()));
 	
 		// Evaluate false expression
 		auto false_operands = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
@@ -5962,7 +5962,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
 		
 		// End label (merge point)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, ternaryNode.get_token()));
 		
 		// Return the result variable
 		return { result_type, result_size, result_var, 0ULL };

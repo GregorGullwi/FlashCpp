@@ -1819,7 +1819,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
 		
 		// Create the FunctionDeclarationNode with parent struct name (marks it as member function)
-		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, class_name);
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, StringTable::getOrInternStringHandle(class_name));
 		
 		// Parse the function parameters using unified parameter list parsing (Phase 1)
 		FlashCpp::ParsedParameterList params;
@@ -3550,7 +3550,7 @@ ParseResult Parser::parse_struct_declaration()
 				discard_saved_token(saved_pos);
 				// This is a constructor
 				// Use qualified_struct_name for nested classes so the member function references the correct type
-				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(qualified_struct_name, ctor_name);
+				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(qualified_struct_name, StringTable::getOrInternStringHandle(ctor_name));
 
 				// Parse parameters using unified parameter list parsing (Phase 1)
 				FlashCpp::ParsedParameterList params;
@@ -3752,7 +3752,7 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Use qualified_struct_name for nested classes so the member function references the correct type
-			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(qualified_struct_name, dtor_name);
+			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(qualified_struct_name, StringTable::getOrInternStringHandle(dtor_name));
 
 			// Parse override/final specifiers for destructors
 			bool is_override = false;
@@ -5769,7 +5769,7 @@ ParseResult Parser::parse_friend_declaration()
 			return ParseResult::error("Expected ';' after friend class declaration", *current_token_);
 		}
 
-		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, class_name_token->value());
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, StringTable::getOrInternStringHandle(class_name_token->value()));
 		return saved_position.success(friend_node);
 	}
 
@@ -5829,10 +5829,10 @@ ParseResult Parser::parse_friend_declaration()
 	ASTNode friend_node;
 	if (last_qualifier.empty()) {
 		// Friend function
-		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, function_name);
+		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringTable::getOrInternStringHandle(function_name));
 	} else {
 		// Friend member function
-		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::MemberFunction, function_name, std::string(last_qualifier));
+		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::MemberFunction, StringTable::getOrInternStringHandle(function_name), StringTable::getOrInternStringHandle(std::string(last_qualifier)));
 	}
 
 	return saved_position.success(friend_node);
@@ -16395,7 +16395,7 @@ if (struct_type_info.getStructInfo()) {
 						discard_saved_token(saved_pos);
 						
 						// This is a constructor - use instantiated_name as the struct name
-						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, ctor_name);
+						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
 						
 						// Parse parameters using unified parse_parameter_list (Phase 1)
 						FlashCpp::ParsedParameterList params;
@@ -17236,7 +17236,7 @@ if (struct_type_info.getStructInfo()) {
 						discard_saved_token(saved_pos);
 						
 						// This is a constructor - use instantiated_name as the struct name
-						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, ctor_name);
+						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
 						
 						// Parse parameters using unified parse_parameter_list (Phase 1)
 						FlashCpp::ParsedParameterList params;
@@ -20858,7 +20858,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			
 			auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
 				instantiated_name,
-				orig_dtor.name()
+				StringTable::getOrInternStringHandle(orig_dtor.name())
 			);
 			
 			// Copy definition if present
@@ -22507,7 +22507,7 @@ if (struct_type_info.getStructInfo()) {
 						.commit();
 					auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
 						instantiated_name,
-						specialized_dtor_name
+						StringTable::getOrInternStringHandle(specialized_dtor_name)
 					);
 					
 					new_dtor_ref.set_definition(substituted_body);

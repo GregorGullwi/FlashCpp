@@ -1863,7 +1863,7 @@ private:
 class DestructorDeclarationNode {
 public:
 	DestructorDeclarationNode() = delete;
-	Destructor DeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
+	DestructorDeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
 		: struct_name_(StringTable::getStringView(struct_name_handle)), name_(StringTable::getStringView(name_handle)) {}
 
 	std::string_view struct_name() const { return struct_name_; }

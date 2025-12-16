@@ -12077,7 +12077,7 @@ private:
 
 		// Check if then_label is a backward reference (already defined)
 		// This happens in do-while loops where we jump back to the start when true
-		bool then_is_backward = label_positions_.find(StringTable::getOrInternStringHandle(then_label)) != label_positions_.end();
+		bool then_is_backward = label_positions_.find(then_label) != label_positions_.end();
 		
 		if (then_is_backward) {
 			// For do-while: then_label is backward (jump to loop start), else_label is forward (fall through to end)
@@ -12091,7 +12091,7 @@ private:
 			textSectionData.push_back(0x00);
 			textSectionData.push_back(0x00);
 
-			pending_branches_.push_back({StringTable::getOrInternStringHandle(then_label), then_patch_position});
+			pending_branches_.push_back({then_label, then_patch_position});
 			// Fall through to else block (loop end)
 		} else {
 			// For while/if: then_label is forward (fall through to body), else_label is forward (jump to end)
