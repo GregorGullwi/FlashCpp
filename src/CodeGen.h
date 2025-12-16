@@ -976,7 +976,7 @@ private:
 		op.result.type = Type::FunctionPointer;
 		op.result.size_in_bits = 64;
 		op.result.value = func_addr_var;
-		op.function_name = invoke_name;
+		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
 		op.mangled_name = mangled;
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 		
@@ -1277,7 +1277,7 @@ private:
 			// this direct value passing, while the is_rvalue_reference flag enables proper handling
 			// in both the caller (materialization + address-taking) and callee (dereferencing).
 			param_info.pointer_depth = pointer_depth;
-			param_info.name = std::string(param_decl.identifier_token().value());
+			param_info.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 			param_info.is_reference = param_type.is_reference();  // Tracks ANY reference (lvalue or rvalue)
 			param_info.is_rvalue_reference = param_type.is_rvalue_reference();  // Specific rvalue ref flag
 			param_info.cv_qualifier = param_type.cv_qualifier();
@@ -1355,7 +1355,7 @@ private:
 							member_load.result.value = member_value;
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
-							member_load.object = std::string_view("other");  // Load from 'other' parameter
+							member_load.object = StringTable::getOrInternStringHandle("other");  // Load from 'other' parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
@@ -1469,7 +1469,7 @@ private:
 		// For nested classes, we need to use the fully qualified name from TypeInfo
 		auto type_it = gTypesByName.find(std::string(struct_name));
 		if (type_it != gTypesByName.end()) {
-			current_struct_name_ = std::string(type_it->second->name());
+			current_struct_name_ = std::string(StringTable::getStringView(type_it->second->name()));
 		} else {
 			current_struct_name_ = std::string(struct_name);
 		}
@@ -1856,7 +1856,7 @@ private:
 							// For copy constructors, pass 'other' as the copy source (cast to base class reference)
 							// For move constructors, pass 'other' as the move source
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = std::string(base_type_info.name());
+							ctor_op.struct_name = base_type_info.name();
 							ctor_op.object = StringTable::getOrInternStringHandle("this");  // 'this' pointer (base subobject is at offset 0 for now)
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling

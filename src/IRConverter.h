@@ -12035,7 +12035,7 @@ private:
 		assert(instruction.hasTypedPayload() && "ConditionalBranch instruction must use typed payload");
 		const auto& cond_branch_op = instruction.getTypedPayload<CondBranchOp>();
 		IrValue condition_value = cond_branch_op.condition.value;
-	std::string_view then_label = cond_branch_op.getLabelTrue();   // Phase 4: Use helper
+	std::string_view then_label = StringTable::getStringView(cond_branch_op.getLabelTrue());   // Phase 4: Use helper
 	std::string_view else_label = StringTable::getStringView(cond_branch_op.getLabelFalse());  // Phase 4: Use helper
 		// Flush all dirty registers before branching
 		flushAllDirtyRegisters();
@@ -12126,7 +12126,7 @@ private:
 		flushAllDirtyRegisters();
 
 		auto result_var = std::get<TempVar>(op.result.value);
-		std::string_view func_name = op.getFunctionName();  // Phase 4: Use helper
+		std::string_view func_name = StringTable::getStringView(op.getFunctionName());  // Phase 4: Use helper
 
 		// Get result offset
 		int result_offset = getStackOffsetFromTempVar(result_var);
