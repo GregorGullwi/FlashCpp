@@ -6239,46 +6239,46 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	// and register it in gTypesByName so it can be used as a type
 	// Common C library types that need to be registered as opaque types
 	static const std::unordered_map<std::string_view, size_t> c_library_types = {
-		{"div_t", 64},      // struct with two ints
-		{"ldiv_t", 128},    // struct with two longs
-		{"lldiv_t", 128},   // struct with two long longs
-		{"size_t", 64},     // typically unsigned long
-		{"ptrdiff_t", 64},  // typically long
-		{"wchar_t", 32},    // typically int
-		{"mbstate_t", 64},  // opaque type
-		{"fpos_t", 128},    // opaque type
-		{"FILE", 128},      // opaque struct
-		{"time_t", 64},     // typically long
-		{"clock_t", 64},    // typically long
-		{"tm", 256}         // struct with multiple fields
+		{"div_t"sv, 64},      // struct with two ints
+		{"ldiv_t"sv, 128},    // struct with two longs
+		{"lldiv_t"sv, 128},   // struct with two long longs
+		{"size_t"sv, 64},     // typically unsigned long
+		{"ptrdiff_t"sv, 64},  // typically long
+		{"wchar_t"sv, 32},    // typically int
+		{"mbstate_t"sv, 64},  // opaque type
+		{"fpos_t"sv, 128},    // opaque type
+		{"FILE"sv, 128},      // opaque struct
+		{"time_t"sv, 64},     // typically long
+		{"clock_t"sv, 64},    // typically long
+		{"tm"sv, 256}         // struct with multiple fields
 	};
 	
-	std::string_view type_name = identifier_token.value();
-	auto type_it = c_library_types.find(type_name);
+	auto type_it = c_library_types.find(identifier_token.value());
 	// Check if this is from global namespace or __gnu_cxx namespace
 	bool is_from_global = namespace_path.empty();
 	bool is_from_gnu_cxx = (namespace_path.size() == 1 && 
 	                         namespace_path[0] == "__gnu_cxx");
 	
 	if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
+		StringHandle type_name = StringTable::getOrInternStringHandle(identifier_token.value());
+
 		// This is a C library type being brought in via using ::type; or using ::__gnu_cxx::type;
 		// Register it as a struct type (opaque) so it can be recognized
-		std::string type_name_str(type_name);
-		if (gTypesByName.find(type_name_str) == gTypesByName.end()) {
+		if (gTypesByName.find(type_name) == gTypesByName.end()) {
 			// Add the type to gTypeInfo as a struct type
-			auto& type_info = gTypeInfo.emplace_back(type_name_str, Type::Struct, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
 			type_info.type_size_ = type_it->second; // Set the size in bits
 			
 			// Create a minimal StructTypeInfo so it's recognized as a struct
-			auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(type_name_str), AccessSpecifier::Public);
+			auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
 			struct_info->total_size = type_it->second / 8; // Convert bits to bytes
 			type_info.setStructInfo(std::move(struct_info));
 if (type_info.getStructInfo()) {
 	type_info.type_size_ = type_info.getStructInfo()->total_size;
 }
 			
-			gTypesByName.emplace(type_info.name(), &type_info);
-			FLASH_LOG(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", type_name_str, type_it->second);
+			gTypesByName.emplace(type_name, &type_info);
+			FLASH_LOG_FORMAT(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", StringTable::getStringView(type_name), type_it->second);
 		}
 	}
 
@@ -15738,7 +15738,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(StringTable::getStringView(tparam.name())), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
@@ -18830,7 +18830,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(tparam.name(), Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
@@ -18904,7 +18904,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(tparam.name(), Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
@@ -21453,11 +21453,10 @@ if (struct_type_info.getStructInfo()) {
 		
 		for (const auto& type_alias : pattern_struct.type_aliases()) {
 			// Build the qualified name: enable_if_true_int::type
-			std::string_view qualified_alias_name = StringBuilder()
+			auto qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder()
 				.append(instantiated_name)
 				.append("::")
-				.append(type_alias.alias_name)
-				.commit();
+				.append(type_alias.alias_name));
 			
 			// Check if already registered
 			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
@@ -21536,7 +21535,7 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = gTypeInfo.emplace_back(
-				StringTable::getOrInternStringHandle(qualified_alias_name),
+				qualified_alias_name,
 				substituted_type,
 				gTypeInfo.size()
 			);
@@ -22082,7 +22081,7 @@ if (struct_type_info.getStructInfo()) {
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, gTypeInfo.size());
 		alias_type_info.type_index_ = substituted_type_index;
 		alias_type_info.type_size_ = substituted_size;
-		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+		gTypesByName.emplace(qualified_alias_name, &alias_type_info);
 	}
 
 	// Finalize the struct layout
@@ -23906,17 +23905,17 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	FlashCpp::TemplateParameterScope template_scope;
 	for (size_t i = 0; i < template_param_names.size() && i < concrete_types.size(); ++i) {
 		Type concrete_type = concrete_types[i];
-		std::string_view param_name = template_param_names[i];
+		auto param_name = StringTable::getOrInternStringHandle(template_param_names[i]);
 
 		// Add a TypeInfo for this concrete type with the template parameter name
 		auto& type_info = gTypeInfo.emplace_back(
-			std::string(param_name),
+			param_name,
 			concrete_type,
 			gTypeInfo.size()
 		);
 
 		// Register in global type lookup
-		gTypesByName[StringTable::getOrInternStringHandle(param_name)] = &type_info;
+		gTypesByName[param_name] = &type_info;
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 

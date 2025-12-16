@@ -977,7 +977,7 @@ private:
 		op.result.size_in_bits = 64;
 		op.result.value = func_addr_var;
 		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
-		op.mangled_name = mangled;
+		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 		
 		return func_addr_var;
@@ -1219,27 +1219,27 @@ private:
 		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
 		
 		// Function name
-		func_decl_op.function_name = std::string(func_decl.identifier_token().value());
+		func_decl_op.function_name = StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
 
 		// Add struct/class name for member functions
 		// Use current_struct_name_ if set (for instantiated template specializations),
 		// otherwise use the function node's parent_struct_name
 		// For nested classes, we need to use the fully qualified name from TypeInfo
-		std::string_view struct_name_for_function;
+		StringHandle struct_name_for_function;
 		if (!current_struct_name_.empty()) {
-			struct_name_for_function = current_struct_name_;
+			struct_name_for_function = StringTable::getOrInternStringHandle(StringBuilder().append(*current_struct_name_));
 		} else if (node.is_member_function()) {
 			// Try to get the fully qualified name from TypeInfo (for nested classes)
 			auto type_it = gTypesByName.find(node.parent_struct_name());
 			if (type_it != gTypesByName.end()) {
-				struct_name_for_function = type_it->second->name();
+				struct_name_for_function = StringTable::getOrInternStringHandle(type_it->second->name());
 			} else {
 				struct_name_for_function = node.parent_struct_name();
 			}
 		} else {
-			struct_name_for_function = "";
+			struct_name_for_function = StringHandle();
 		}
-		func_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_function);
+		func_decl_op.struct_name = struct_name_for_function;
 		
 		// Linkage and variadic flag
 		func_decl_op.linkage = node.linkage();
