@@ -20103,9 +20103,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				should_reparse = true;
 			} else if (orig_return_type.type_index() < gTypeInfo.size()) {
 				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
-				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", orig_type_info.name());
+				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", StringTable::getStringView(orig_type_info.name()));
 				// Re-parse if type contains _unknown (template-dependent marker)
-				should_reparse = (orig_type_info.name().find("_unknown") != std::string::npos);
+				should_reparse = (StringTable::getStringView(orig_type_info.name()).find("_unknown") != std::string::npos);
 			} else {
 				should_reparse = false;
 			}
@@ -20194,8 +20194,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 				
 				// Check for placeholder/unknown types that indicate failed resolution
-				if (type_info.name().find("_unknown") != std::string::npos) {
-					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
+				if (StringTable::getStringView(type_info.name()).find("_unknown") != std::string::npos) {
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(StringTable::getStringView(type_info.name())));
 					return std::nullopt;  // Substitution failure
 				}
 			}
@@ -22074,7 +22074,7 @@ if (nested_type_info.getStructInfo()) {
 			TypeIndex type_idx = alias_type_spec.type_index();
 			if (type_idx < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_idx];
-				std::string_view type_name = type_info.name();
+				std::string_view type_name = StringTable::getStringView(type_info.name());
 				
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23119,7 +23119,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = type_info.name();
+		std::string_view type_name = StringTable::getStringView(type_info.name());
 
 		// Try to find which template parameter this is
 		for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23166,7 +23166,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[param_type_index];
-				std::string_view type_name = type_info.name();
+				std::string_view type_name = StringTable::getStringView(type_info.name());
 
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23491,7 +23491,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = type_info.name();
+		std::string_view type_name = StringTable::getStringView(type_info.name());
 
 		// Try to find which template parameter this is
 		for (size_t i = 0; i < template_params.size(); ++i) {
