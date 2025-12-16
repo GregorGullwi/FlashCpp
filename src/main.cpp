@@ -139,7 +139,7 @@ int main(int argc, char *argv[]) {
     // Handle log level setting from command line
     if (argsparser.hasOption("log-level")) {
         auto level_str = argsparser.optionValue("log-level");
-        if (std::holds_alternative<std::string_view>(level_str)) {
+        if (std::holds_alternative<StringHandle>(level_str)) {
             std::string_view level_sv = std::get<std::string_view>(level_str);
             size_t colon_pos = level_sv.find(':');
             if (colon_pos != std::string_view::npos) {
@@ -171,7 +171,7 @@ int main(int argc, char *argv[]) {
 
     if (argsparser.hasOption("o")) {
         auto output_file = argsparser.optionValue("o");
-        if (std::holds_alternative<std::string_view>(output_file))
+        if (std::holds_alternative<StringHandle>(output_file))
             context.setOutputFile(std::get<std::string_view>(output_file));
     }
 
@@ -196,7 +196,7 @@ int main(int argc, char *argv[]) {
     // for cross-compilation support
     if (argsparser.hasOption("fmangling")) {
         auto mangling_opt = argsparser.optionValue("fmangling");
-        if (std::holds_alternative<std::string_view>(mangling_opt)) {
+        if (std::holds_alternative<StringHandle>(mangling_opt)) {
             std::string_view mangling_str = std::get<std::string_view>(mangling_opt);
             FLASH_LOG(General, Info, "Using name mangling style: ", mangling_str);
             if (mangling_str == "msvc") {

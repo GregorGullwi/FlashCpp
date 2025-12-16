@@ -2476,7 +2476,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 		alias_type_info.type_index_ = type_spec.type_index();
 		alias_type_info.type_size_ = type_spec.size_in_bits();
-		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+		gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 		
 		return ParseResult::success();
 	}
@@ -2718,7 +2718,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 			
 			return ParseResult::success();
 		}
@@ -2880,7 +2880,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 			
 			return ParseResult::success();
 		}
@@ -2942,7 +2942,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
-	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+	gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 	
 	return ParseResult::success();
 }
@@ -5744,7 +5744,7 @@ ParseResult Parser::parse_typedef_declaration()
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
-	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+	gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 
 	// Update the type_node with the modified type_spec (with pointers)
 	type_node = emplace_node<TypeSpecifierNode>(type_spec);
@@ -6104,7 +6104,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
-					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+					gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 				}
 
 				// Return success (no AST node needed for type aliases)
@@ -9025,7 +9025,7 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 		}
 		const auto& tparam = param_node.as<TemplateParameterNode>();
 		if (tparam.kind() == TemplateParameterKind::Type) {
-			template_params.emplace(tparam.name(), &tparam);
+			template_params.emplace(std::string(StringTable::getStringView(tparam.name())), &tparam);
 		}
 	}
 
@@ -14974,7 +14974,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 		// Look up the type name using type_index
 		if (result_type_index < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[result_type_index];
-			std::string_view type_name = type_info.name();
+			std::string_view type_name = StringTable::getStringView(type_info.name());
 
 			// Try to find which template parameter this is
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -15585,7 +15585,7 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 		case Type::Auto: result += "auto"; break;
 		case Type::Struct:
 			if (type.type_index() < gTypeInfo.size()) {
-				result += std::string(gTypeInfo[type.type_index()].name());
+				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index()].name()));
 			} else {
 				result += "struct";
 			}
@@ -19868,7 +19868,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					TypeIndex type_index = arg_type.type_index();
 					if (type_index < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_index];
-						std::string_view instantiated_name = type_info.name();
+						std::string_view instantiated_name = StringTable::getStringView(type_info.name());
 						
 						// Parse the instantiated name to extract template name and type arguments
 						// Format: template_name_type1_type2_...
@@ -20749,7 +20749,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			);
 			alias_type_info.type_index_ = alias_type_spec.type_index();
 			alias_type_info.type_size_ = alias_type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias: ", qualified_alias_name, 
 				" -> type=", static_cast<int>(alias_type_spec.type()), 
@@ -21554,7 +21554,7 @@ if (struct_type_info.getStructInfo()) {
 			);
 			alias_type_info.type_index_ = substituted_type_index;
 			alias_type_info.type_size_ = substituted_size;
-			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+			gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name, 
 				" -> type=", static_cast<int>(substituted_type), 
@@ -22094,7 +22094,7 @@ if (nested_type_info.getStructInfo()) {
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, gTypeInfo.size());
 		alias_type_info.type_index_ = substituted_type_index;
 		alias_type_info.type_size_ = substituted_size;
-		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+		gTypesByName.emplace(std::string(StringTable::getStringView(alias_type_info.name())), &alias_type_info);
 	}
 
 	// Finalize the struct layout
