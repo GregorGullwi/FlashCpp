@@ -1405,8 +1405,8 @@ public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
 		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
-	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
-		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+	FunctionDeclarationNode(DeclarationNode& decl_node, StringHandle parent_struct_name_handle)
+		: decl_node_(decl_node), parent_struct_name_(StringTable::getStringView(parent_struct_name_handle)), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
 		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 
@@ -1799,8 +1799,8 @@ struct DelegatingInitializer {
 class ConstructorDeclarationNode {
 public:
 	ConstructorDeclarationNode() = delete;
-	ConstructorDeclarationNode(std::string_view struct_name, std::string_view name)
-		: struct_name_(struct_name), name_(name), is_implicit_(false) {}
+	ConstructorDeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
+		: struct_name_(StringTable::getStringView(struct_name_handle)), name_(StringTable::getStringView(name_handle)), is_implicit_(false) {}
 
 	std::string_view struct_name() const { return struct_name_; }
 	std::string_view name() const { return name_; }
@@ -1863,8 +1863,8 @@ private:
 class DestructorDeclarationNode {
 public:
 	DestructorDeclarationNode() = delete;
-	DestructorDeclarationNode(std::string_view struct_name, std::string_view name)
-		: struct_name_(struct_name), name_(name) {}
+	Destructor DeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
+		: struct_name_(StringTable::getStringView(struct_name_handle)), name_(StringTable::getStringView(name_handle)) {}
 
 	std::string_view struct_name() const { return struct_name_; }
 	std::string_view name() const { return name_; }
@@ -2223,8 +2223,8 @@ private:
 // Enum declaration node - represents enum or enum class
 class EnumDeclarationNode {
 public:
-	explicit EnumDeclarationNode(std::string_view name, bool is_scoped = false)
-		: name_(name), is_scoped_(is_scoped), underlying_type_() {}
+	explicit EnumDeclarationNode(StringHandle name_handle, bool is_scoped = false)
+		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), underlying_type_() {}
 
 	std::string_view name() const { return name_; }
 	bool is_scoped() const { return is_scoped_; }  // true for enum class, false for enum
