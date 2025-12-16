@@ -5002,7 +5002,7 @@ ParseResult Parser::parse_enum_declaration()
 	           (peek_token()->value() == ":" || peek_token()->value() == "{")) {
 		// Anonymous enum - generate a unique name
 		static int anonymous_enum_counter = 0;
-		enum_name = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_enum_"sv.append(anonymous_enum_counter++)));
+		enum_name = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_enum_").append(std::to_string(anonymous_enum_counter++)));
 		//is_anonymous = true;
 	} else {
 		return ParseResult::error("Expected enum name, ':', or '{'", *peek_token());
@@ -5035,7 +5035,7 @@ ParseResult Parser::parse_enum_declaration()
 	}
 
 	// Create enum type info
-	auto enum_info = std::make_unique<EnumTypeInfo>(StringTable::getOrInternStringHandle(enum_name), is_scoped);
+	auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
 
 	// Determine underlying type (default is int)
 	Type underlying_type = Type::Int;
@@ -5657,7 +5657,7 @@ ParseResult Parser::parse_typedef_declaration()
 			Type::Struct,
 			struct_type_index,
 			static_cast<unsigned char>(struct_type_info.getStructInfo()->total_size * 8),
-			Token(Token::Type::Identifier, struct_name_for_typedef, 0, 0, 0)
+			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0)
 		);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	} else {
@@ -6819,7 +6819,7 @@ ParseResult Parser::parse_type_specifier()
 						
 						// If not found, check if this instantiation came from a partial specialization pattern
 						if (!member_alias_opt.has_value()) {
-							auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(instantiated_name);
+							auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(StringTable::getOrInternStringHandle(instantiated_name));
 							if (pattern_name_opt.has_value()) {
 								// This instantiation came from a partial specialization
 								// Look up the member alias from the pattern
@@ -11497,7 +11497,7 @@ ParseResult Parser::parse_primary_expression()
 				
 				if (instantiated.has_value()) {
 					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
-					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", inst_struct.name());
+					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", StringTable::getStringView(inst_struct.name()));
 					
 					// Look up the instantiated template
 					identifierType = gSymbolTable.lookup(StringTable::getStringView(inst_struct.name()));
@@ -18044,7 +18044,7 @@ if (struct_type_info.getStructInfo()) {
 		// Register the template in the template registry
 		// If we're in a namespace, register with both simple and qualified names
 		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
-		std::string_view simple_name = struct_decl.name();
+		std::string_view simple_name = StringTable::getStringView(struct_decl.name());
 		
 		// Register with simple name (for backward compatibility and unqualified lookups)
 		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
@@ -18854,7 +18854,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Add to struct as a member function template
 	// Register the template in the global registry with qualified name (ClassName::functionName)
-	std::string qualified_name = std::string(struct_node.name()) + "::" + std::string(decl_node.identifier_token().value());
+	std::string qualified_name = std::string(StringTable::getStringView(struct_node.name())) + "::" + std::string(decl_node.identifier_token().value());
 	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 
 	// template_scope automatically cleans up template parameters when it goes out of scope
@@ -20762,7 +20762,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	FLASH_LOG(Templates, Debug, "Instantiating full specialization: ", instantiated_name);
 	
 	// Create TypeInfo for the specialization
-	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name));
 	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access());
 	
 	// Copy members from the specialization

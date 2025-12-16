@@ -1239,7 +1239,7 @@ private:
 		} else {
 			struct_name_for_function = "";
 		}
-		func_decl_op.struct_name = std::string(struct_name_for_function);
+		func_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_function);
 		
 		// Linkage and variadic flag
 		func_decl_op.linkage = node.linkage();
@@ -1254,7 +1254,7 @@ private:
 			// Generate mangled name using the FunctionDeclarationNode overload
 			mangled_name = generateMangledNameForCall(node, struct_name_for_function, current_namespace_stack_);
 		}
-		func_decl_op.mangled_name = mangled_name;
+		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled_name);
 
 		// Add parameters to function declaration
 		for (const auto& param : node.parameter_nodes()) {
@@ -1390,7 +1390,7 @@ private:
 						deref_op.result = this_deref;
 						deref_op.pointee_type = Type::Struct;
 						deref_op.pointee_size_in_bits = static_cast<int>(struct_info->total_size * 8);
-						deref_op.pointer = std::string_view("this");
+						deref_op.pointer = StringTable::getOrInternStringHandle("this");
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
 
@@ -1451,7 +1451,7 @@ private:
 
 		// Skip pattern structs - they're templates and shouldn't generate code
 		// Pattern structs have "_pattern_" in their name
-		std::string_view struct_name = node.name();
+		std::string_view struct_name = StringTable::getStringView(node.name());
 		if (struct_name.find("_pattern_") != std::string_view::npos) {
 			return;
 		}
@@ -1518,7 +1518,7 @@ private:
 			}
 
 			// Generate global storage for static members
-			auto static_member_type_it = gTypesByName.find(std::string(node.name()));
+			auto static_member_type_it = gTypesByName.find(node.name());
 			if (static_member_type_it != gTypesByName.end()) {
 				const TypeInfo* type_info = static_member_type_it->second;
 				
@@ -1632,13 +1632,13 @@ private:
 		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
 		// For nested classes, use just the last component as the constructor name
 		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-		ctor_decl_op.mangled_name = generateMangledNameForCall(
+		ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
 			ctor_function_name,
 			void_type,
 			node.parameter_nodes(),  // Use parameter nodes directly
 			false,  // not variadic
 			parent_class_name  // parent class name for mangling (e.g., "Outer" for "Outer::Inner::Inner")
-		);
+		));
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -1652,7 +1652,7 @@ private:
 			func_param.type = param_type.type();
 			func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 			func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
-			func_param.name = std::string(param_decl.identifier_token().value());
+			func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 			func_param.is_reference = param_type.is_reference();
 			func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 			func_param.cv_qualifier = param_type.cv_qualifier();
@@ -1863,7 +1863,7 @@ private:
 							TypedValue other_arg;
 							other_arg.type = Type::Struct;  // Parameter type (struct reference)
 							other_arg.size_in_bits = static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8);
-							other_arg.value = "other"sv;  // Parameter value ('other' object)
+							other_arg.value = StringTable::getOrInternStringHandle("other");  // Parameter value ('other' object)
 							other_arg.type_index = base.type_index;  // Use BASE class type index for proper mangling
 							ctor_op.arguments.push_back(std::move(other_arg));
 
@@ -1878,7 +1878,7 @@ private:
 							member_load.result.value = member_value;
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
-							member_load.object = "other"sv;  // Load from 'other' parameter
+							member_load.object = StringTable::getOrInternStringHandle("other");  // Load from 'other' parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
@@ -12352,7 +12352,7 @@ private:
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
 				FunctionParam func_param;
-				func_param.name = std::string(param_decl.identifier_token().value());
+				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
@@ -12536,7 +12536,7 @@ private:
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
 				FunctionParam func_param;
-				func_param.name = std::string(param_decl.identifier_token().value());
+				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
@@ -12809,14 +12809,14 @@ private:
 					func_param.type = concrete_type;
 					func_param.size_in_bits = static_cast<int>(get_type_size_bits(concrete_type));
 					func_param.pointer_depth = 0;  // pointer depth
-					func_param.name = std::string(param_decl.identifier_token().value());
+					func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 				} else {
 					// Use original parameter type
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					func_param.type = param_type.type();
 					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 					func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
-					func_param.name = std::string(param_decl.identifier_token().value());
+					func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 				}
 				func_param.is_reference = false;
 				func_param.is_rvalue_reference = false;
