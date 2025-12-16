@@ -20196,7 +20196,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				// Check for placeholder/unknown types that indicate failed resolution
 				if (StringTable::getStringView(type_info.name()).find("_unknown") != std::string::npos) {
 					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
-					return std::nullptr;  // Substitution failure
+					return std::nullopt;  // Substitution failure
 				}
 			}
 		}
@@ -23538,7 +23538,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[param_type_index];
-				std::string_view type_name = type_info.name();
+				std::string_view type_name = StringTable::getStringView(type_info.name());
 
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -24279,7 +24279,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Check if this is a user-defined type that matches a template parameter
 		if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-			std::string_view type_name = type_info.name();
+			std::string_view type_name = StringTable::getStringView(type_info.name());
 
 			// Check if this type name matches a template parameter
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
