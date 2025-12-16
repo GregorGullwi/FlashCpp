@@ -4293,8 +4293,9 @@ private:
 				const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 				// Use mangled name if available (for member functions like lambda operator()),
 				// otherwise use function_name (Phase 4: Use helpers)
-				std::string_view mangled = func_decl.getMangledName();
-				current_func_name = mangled.empty() ? func_decl.getFunctionName() : mangled;
+				StringHandle mangled_handle = func_decl.getMangledName();
+				StringHandle func_name_handle = func_decl.getFunctionName();
+				current_func_name = mangled_handle.handle != 0 ? StringTable::getStringView(mangled_handle) : StringTable::getStringView(func_name_handle);
 				current_func_start = i + 1; // Instructions start after FunctionDecl
 			}
 		}
@@ -5894,7 +5895,8 @@ private:
 			textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 			
 			// Add relocation for function name (Phase 4: Use helper)
-			std::string mangled_name(call_op.getFunctionName());
+			StringHandle func_name_handle = call_op.getFunctionName();
+			std::string mangled_name(StringTable::getStringView(func_name_handle));
 			writer.add_relocation(textSectionData.size() - 4, mangled_name);
 			
 			// Invalidate caller-saved registers (function calls clobber them)
@@ -6298,6 +6300,7 @@ private:
 			StringHandle var_name_handle = std::get<StringHandle>(op.object);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
 			object_offset = variable_scopes.back().variables[var_name_handle].offset;
+		}
 
 		// Virtual call sequence:
 		// 1. Load vptr from object: vptr = [object + 0]  (vptr is at offset 0)
@@ -6413,7 +6416,7 @@ private:
 			// Count is an identifier (variable name) - load from stack
 			StringHandle count_name_handle = std::get<StringHandle>(op.count);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(count_name));
+			auto it = current_scope.variables.find(count_name_handle);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Array size variable not found in scope");
 				return;
@@ -6568,7 +6571,7 @@ private:
 			// Address is an identifier (variable name) - load from stack
 			StringHandle address_name_handle = std::get<StringHandle>(op.address);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(address_name));
+			auto it = current_scope.variables.find(address_name_handle);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Placement address variable not found in scope");
 				return;
@@ -6827,7 +6830,8 @@ private:
 		const GlobalLoadOp& op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
 		
 		TempVar result_temp = std::get<TempVar>(op.result.value);
-		std::string global_name(op.getGlobalName());  // Phase 4: Use helper
+		StringHandle global_name_handle = op.getGlobalName();
+		std::string global_name(StringTable::getStringView(global_name_handle));  // Phase 4: Use helper
 		int size_in_bits = op.result.size_in_bits;
 		Type result_type = op.result.type;
 		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);
@@ -13094,7 +13098,7 @@ private:
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
-};
+}; // End of IrToObjConverter class
 
 
 
